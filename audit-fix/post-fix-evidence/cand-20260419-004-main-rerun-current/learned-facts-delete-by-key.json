@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "DELETE",
+    "url": "http://127.0.0.1:3241/v1/uix/learned-facts/pref%3Adisplay_name",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "UIX_PREFERENCE_NOT_FOUND",
+        "message": "Learned fact 'pref:display_name' was not found",
+        "retryable": false
+      },
+      "requestId": "bff7a05e-b4ce-4c2b-a531-fd4ffb899acc"
+    }
+  },
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "UIX_PREFERENCE_NOT_FOUND",
+      "message": "Learned fact 'pref:display_name' was not found",
+      "retryable": false
+    },
+    "requestId": "bff7a05e-b4ce-4c2b-a531-fd4ffb899acc"
+  }
+}

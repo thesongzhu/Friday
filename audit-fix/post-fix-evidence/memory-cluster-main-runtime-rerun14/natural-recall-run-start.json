@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "f3f3c8b0-addf-4803-94f7-3289d0d2e86b",
+        "status": "completed",
+        "response": "I don't currently have a specific name to address you. Can you please provide one?",
+        "toolCallCount": 0,
+        "durationMs": 8631,
+        "usageInput": 11300,
+        "usageOutput": 19,
+        "finalResponse": "I don't currently have a specific name to address you. Can you please provide one?",
+        "eventStreamAvailable": true
+      },
+      "requestId": "19ee7707-3616-4109-b030-f2146e930ba0"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "f3f3c8b0-addf-4803-94f7-3289d0d2e86b",
+      "status": "completed",
+      "response": "I don't currently have a specific name to address you. Can you please provide one?",
+      "toolCallCount": 0,
+      "durationMs": 8631,
+      "usageInput": 11300,
+      "usageOutput": 19,
+      "finalResponse": "I don't currently have a specific name to address you. Can you please provide one?",
+      "eventStreamAvailable": true
+    },
+    "requestId": "19ee7707-3616-4109-b030-f2146e930ba0"
+  }
+}

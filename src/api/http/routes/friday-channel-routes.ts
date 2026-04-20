@@ -57,6 +57,18 @@ export function resetChannelPersonaStore(): void {
   channelPersonaStore.clear();
 }
 
+function requireRegisteredChannel(
+  deps: FridayChannelRoutesDeps,
+  kind: string,
+): void {
+  const channel = deps.registry.describe(kind);
+  if (!channel) {
+    throw new FridayDomainError("CHANNEL_NOT_FOUND", `Channel "${kind}" is not registered`, {
+      httpStatus: 404,
+    });
+  }
+}
+
 export function createFridayChannelRoutes(
   deps: FridayChannelRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -100,6 +112,7 @@ export function createFridayChannelRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       async handler(ctx) {
         const kind = String((ctx.params as Record<string, unknown>).kind ?? "").trim();
+        requireRegisteredChannel(deps, kind);
         const persona = channelPersonaStore.get(kind);
         return { kind, persona: persona ?? null };
       },
@@ -111,6 +124,7 @@ export function createFridayChannelRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       async handler(ctx) {
         const kind = String((ctx.params as Record<string, unknown>).kind ?? "").trim();
+        requireRegisteredChannel(deps, kind);
         const body = ctx.body as Record<string, unknown> | undefined;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });

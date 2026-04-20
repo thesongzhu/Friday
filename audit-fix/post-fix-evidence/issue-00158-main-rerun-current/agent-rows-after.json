@@ -1,0 +1,10 @@
+[
+  {
+    "id": "9d7d4d9c-1729-44d9-bb48-1b4c4856ca2d",
+    "status": "completed",
+    "provider_id": null,
+    "model": null,
+    "created_at": "2026-04-19T15:23:46.013Z",
+    "metadata_json": "{\"apiRequest\":{\"operationId\":\"agent.runs.start\",\"idempotencyKey\":\"issue-00158-agent-1776612225997\",\"payloadHash\":\"8c6a2dd783fc44758ce4e938abf1f550f4c28bc6885c624bb38b3f90809cae7d\",\"receivedAt\":\"2026-04-19T15:23:46.011Z\",\"principalId\":\"admin-001\"}}"
+  }
+]

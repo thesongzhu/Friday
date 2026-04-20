@@ -371,4 +371,19 @@ describe("createFridayAgentLoopService", () => {
     expect(run?.run.haltReason).toBe("policy_paused");
     expect(run?.run.cooldownUntil).toBeUndefined();
   });
+
+  it("rejects invalid expert-mode partial updates without persisting side effects", () => {
+    const { service } = createSubject();
+
+    expect(() =>
+      service.updateExpertMode({
+        expertModeEnabled: true,
+        probeBudget: 0,
+      })
+    ).toThrow(/probeBudget/);
+
+    const policy = service.getPolicy();
+    expect(policy.expertModeEnabled).toBe(false);
+    expect(policy.probeBudget).toBe(4);
+  });
 });

@@ -1,0 +1,390 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+          "task": "Call me MemoryAuditName-1776603060515.",
+          "status": "completed",
+          "sessionKey": "agent:run:ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+          "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/ebdde21b-918a-4bcd-b8d5-5e6064b0e699/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "createdAt": "2026-04-19T12:51:00.564Z",
+          "startedAt": "2026-04-19T12:51:00.577Z",
+          "completedAt": "2026-04-19T12:51:06.159Z",
+          "durationMs": 5595,
+          "usageInput": 481,
+          "usageOutput": 180,
+          "costUsd": 0.056072,
+          "planReview": {
+            "plan": {
+              "task": "Call me MemoryAuditName-1776603060515.",
+              "stepCount": 1,
+              "description": "Planning approach for: Call me MemoryAuditName-1776603060515."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:51:00.577Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "totalCostUsd": 0.056072,
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 33,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 33,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            },
+            "turns": [
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "model": "claude-sonnet-4-20250514",
+                "inputTokens": 156,
+                "outputTokens": 132,
+                "costUsd": 0.049656
+              },
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "model": "claude-sonnet-4-20250514",
+                "inputTokens": 325,
+                "outputTokens": 48,
+                "costUsd": 0.006416
+              }
+            ]
+          },
+          "responseText": "好的，MemoryAuditName-1776603060515！我已经记录了您的名称偏好。有什么我可以帮您做的吗？",
+          "summary": "好的，MemoryAuditName-1776603060515！我已经记录了您的名称偏好。有什么我可以帮您做的吗？",
+          "artifactDir": ".friday/agent-runs/ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+          "contextCostSummary": {
+            "totalEstimatedChars": 6983,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 4832,
+                "count": 3,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "healthy",
+            "rollbackAvailable": false,
+            "reasonCodes": []
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 6983,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "9f514feb-3993-4926-affc-86684efb14dd"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+        "task": "Call me MemoryAuditName-1776603060515.",
+        "status": "completed",
+        "sessionKey": "agent:run:ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+        "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/ebdde21b-918a-4bcd-b8d5-5e6064b0e699/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "createdAt": "2026-04-19T12:51:00.564Z",
+        "startedAt": "2026-04-19T12:51:00.577Z",
+        "completedAt": "2026-04-19T12:51:06.159Z",
+        "durationMs": 5595,
+        "usageInput": 481,
+        "usageOutput": 180,
+        "costUsd": 0.056072,
+        "planReview": {
+          "plan": {
+            "task": "Call me MemoryAuditName-1776603060515.",
+            "stepCount": 1,
+            "description": "Planning approach for: Call me MemoryAuditName-1776603060515."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:51:00.577Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+          "actualModel": "claude-sonnet-4-20250514",
+          "actualProviderKind": "anthropic",
+          "actualProviderApi": "anthropic-messages",
+          "backendKind": "http",
+          "totalCostUsd": 0.056072,
+          "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+          "routeDecisionTrace": {
+            "taskProfileId": "default",
+            "requiresNativeTools": true,
+            "learningAdjusted": false,
+            "learningSignalsPresent": true,
+            "orderingAdjusted": false,
+            "selectedAdjusted": false,
+            "reasonCode": "historical_bias",
+            "reasonText": "Historical route outcomes influenced candidate scoring.",
+            "historyWindow": {
+              "sampleLimit": 250
+            },
+            "selectedBeforeLearning": {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "providerKind": "anthropic",
+              "model": "claude-sonnet-4-20250514",
+              "backendKind": "http"
+            },
+            "selectedAfterLearning": {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "providerKind": "anthropic",
+              "model": "claude-sonnet-4-20250514",
+              "backendKind": "http"
+            },
+            "candidateScores": [
+              {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http",
+                "originalRank": 1,
+                "finalRank": 1,
+                "selected": true,
+                "eligible": true,
+                "ineligibilityReasons": [],
+                "pinned": false,
+                "historicalSuccessRate": 1,
+                "historicalFailureRate": 0,
+                "sampleCount": 33,
+                "baseRankScore": 1,
+                "historyScore": 5.25,
+                "patternScore": 0,
+                "lessonScore": 0,
+                "routePenaltyScore": 0,
+                "pinBonus": 0,
+                "finalScore": 6.25,
+                "historyStats": {
+                  "sampleCount": 33,
+                  "successRate": 1,
+                  "failureRate": 0
+                },
+                "matchedLessonIds": [],
+                "matchedPatternIds": []
+              }
+            ]
+          },
+          "turns": [
+            {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "model": "claude-sonnet-4-20250514",
+              "inputTokens": 156,
+              "outputTokens": 132,
+              "costUsd": 0.049656
+            },
+            {
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "model": "claude-sonnet-4-20250514",
+              "inputTokens": 325,
+              "outputTokens": 48,
+              "costUsd": 0.006416
+            }
+          ]
+        },
+        "responseText": "好的，MemoryAuditName-1776603060515！我已经记录了您的名称偏好。有什么我可以帮您做的吗？",
+        "summary": "好的，MemoryAuditName-1776603060515！我已经记录了您的名称偏好。有什么我可以帮您做的吗？",
+        "artifactDir": ".friday/agent-runs/ebdde21b-918a-4bcd-b8d5-5e6064b0e699",
+        "contextCostSummary": {
+          "totalEstimatedChars": 6983,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 4832,
+              "count": 3,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "healthy",
+          "rollbackAvailable": false,
+          "reasonCodes": []
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 6983,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "9f514feb-3993-4926-affc-86684efb14dd"
+  }
+}

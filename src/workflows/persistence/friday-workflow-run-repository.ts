@@ -25,6 +25,15 @@ export interface FridayWorkflowRunRepository {
     status: WorkflowRunStatus,
     nowIso: string,
     failure?: { code: string; message: string; details?: unknown },
+    metadata?: {
+      deadlineAt?: string;
+      pausedAt?: string;
+      resumedAt?: string;
+      finishedAt?: string;
+      clearPausedAt?: boolean;
+      clearResumedAt?: boolean;
+      clearFinishedAt?: boolean;
+    },
   ): void;
 
   finalizeRun(
@@ -65,6 +74,9 @@ function mapRunRow(row: FridayWorkflowRunRow): FridayWorkflowRunEntity {
     startedByUserId: row.started_by_user_id ?? undefined,
     startedBySatelliteId: row.started_by_satellite_id ?? undefined,
     startedAt: row.started_at,
+    deadlineAt: row.deadline_at ?? undefined,
+    pausedAt: row.paused_at ?? undefined,
+    resumedAt: row.resumed_at ?? undefined,
     finishedAt: row.finished_at ?? undefined,
     correlationId: row.correlation_id ?? undefined,
     context: safeJsonParse<JsonObject>(row.context_json),
@@ -89,9 +101,9 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
       db.prepare(
         `INSERT INTO workflow_runs (id, workflow_id, workflow_version_id, status, trigger_type,
          trigger_payload_json, started_by_user_id, started_by_satellite_id, started_at,
-         finished_at, correlation_id, context_json, failure_code, failure_message,
-         failure_details_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         deadline_at, paused_at, resumed_at, finished_at, correlation_id, context_json,
+         failure_code, failure_message, failure_details_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         entity.id,
         entity.workflowId,
@@ -102,6 +114,9 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
         entity.startedByUserId ?? null,
         entity.startedBySatelliteId ?? null,
         entity.startedAt,
+        entity.deadlineAt ?? null,
+        entity.pausedAt ?? null,
+        entity.resumedAt ?? null,
         entity.finishedAt ?? null,
         entity.correlationId ?? null,
         entity.context ? JSON.stringify(entity.context) : null,
@@ -122,19 +137,51 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
       return row ? mapRunRow(row) : null;
     },
 
-    updateRunStatus(db, id, status, nowIso, failure) {
+    updateRunStatus(db, id, status, nowIso, failure, metadata) {
       // P2-WF: Enforce state transition by including current status check in WHERE clause
       const result = db.prepare(
-        `UPDATE workflow_runs SET status = ?, failure_code = ?, failure_message = ?,
-         failure_details_json = ?, updated_at = ? WHERE id = ? AND status != ?`,
+        `UPDATE workflow_runs SET status = @status, failure_code = @failure_code, failure_message = @failure_message,
+         failure_details_json = @failure_details_json,
+         deadline_at = CASE
+           WHEN @deadline_at IS NOT NULL THEN @deadline_at
+           ELSE deadline_at
+         END,
+         paused_at = CASE
+           WHEN @clear_paused_at = 1 THEN NULL
+           WHEN @paused_at IS NOT NULL THEN @paused_at
+           ELSE paused_at
+         END,
+         resumed_at = CASE
+           WHEN @clear_resumed_at = 1 THEN NULL
+           WHEN @resumed_at IS NOT NULL THEN @resumed_at
+           ELSE resumed_at
+         END,
+         finished_at = CASE
+           WHEN @clear_finished_at = 1 THEN NULL
+           WHEN @finished_at IS NOT NULL THEN @finished_at
+           ELSE finished_at
+         END,
+         updated_at = @updated_at
+         WHERE id = @id AND status != @status_guard`,
       ).run(
-        status,
-        failure?.code ?? null,
-        failure?.message ?? null,
-        failure?.details !== undefined ? JSON.stringify(failure.details) : null,
-        nowIso,
-        id,
-        status, // Prevent no-op updates (same status)
+        {
+          id,
+          status,
+          failure_code: failure?.code ?? null,
+          failure_message: failure?.message ?? null,
+          failure_details_json: failure?.details !== undefined
+            ? JSON.stringify(failure.details)
+            : null,
+          deadline_at: metadata?.deadlineAt ?? null,
+          paused_at: metadata?.pausedAt ?? (status === "paused" ? nowIso : null),
+          resumed_at: metadata?.resumedAt ?? null,
+          finished_at: metadata?.finishedAt ?? null,
+          clear_paused_at: metadata?.clearPausedAt ? 1 : 0,
+          clear_resumed_at: metadata?.clearResumedAt ? 1 : 0,
+          clear_finished_at: metadata?.clearFinishedAt ? 1 : 0,
+          updated_at: nowIso,
+          status_guard: status,
+        },
       );
       if (result.changes === 0) {
         // Either the run doesn't exist or it's already in the target status — acceptable no-op

@@ -39,6 +39,8 @@ export interface LoadedFridayConfig {
   configPath: string;
   exists: boolean;
   rawText?: string;
+  runtimeStateDir?: string;
+  launchCwd?: string;
 }
 
 export interface LoadFridayConfigOptions {

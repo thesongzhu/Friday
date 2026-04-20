@@ -1,0 +1,59 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "accessToken": "eyJ0b2tlbklkIjoiZTlhNDM2ZWMtNzZjOC00YjRlLTk3ZTgtNjgwNWYzNmUzZjIyIiwicHJpbmNpcGFsVHlwZSI6InVzZXIiLCJwcmluY2lwYWxJZCI6ImFkbWluLTAwMSIsInRlbmFudElkIjoiYWRtaW4tMDAxIiwidXNlcklkIjoiYWRtaW4tMDAxIiwicm9sZSI6ImFkbWluIiwic2NvcGVzIjpbImh1Yi5hZG1pbiIsIndvcmtmbG93LnJlYWQiLCJ3b3JrZmxvdy53cml0ZSIsIndvcmtmbG93LnJ1biIsIndvcmtmbG93LmNvbmZsaWN0LnJlc29sdmUiLCJzYXRlbGxpdGUucmVhZCIsInNhdGVsbGl0ZS53cml0ZSIsImZsZWV0LnJlYWQiLCJzZWN1cml0eS5yZWFkIiwic2VjdXJpdHkud3JpdGUiLCJzZXNzaW9uLnJlYWQiLCJzZXNzaW9uLndyaXRlIiwiZGlhZ25vc2lzLnJlYWQiLCJkaWFnbm9zaXMud3JpdGUiLCJhZ2VudC5yZWFkIiwiYWdlbnQucnVuIiwiYWdlbnQud3JpdGUiLCJza2lsbC5yZWFkIiwic2tpbGwud3JpdGUiLCJwbHVnaW4ucmVhZCIsInBsdWdpbi53cml0ZSIsInBsdWdpbi5pbnN0YWxsIiwiZGVza3RvcC5yZWFkIiwiZGVza3RvcC53cml0ZSIsImRlc2t0b3AuZXhlY3V0ZSIsIm1hcmtldHBsYWNlLnJlYWQiLCJtYXJrZXRwbGFjZS53cml0ZSIsIm1hcmtldHBsYWNlLmFkbWluIiwicnVsZXMucmVhZCIsInJ1bGVzLndyaXRlIiwiZXhlY3V0aW9uLnJlYWQiLCJhY2NlcHRhbmNlLnJlYWQiLCJyZXRyeS5yZWFkIiwicGxheWJvb2sucmVhZCIsInBsYXlib29rLndyaXRlIl0sImlhdCI6MTc3NjYyMzkzNywiZXhwIjoxNzc2NjI3NTM3LCJzaWQiOiJhN2E4Y2ViMC1lNjIyLTRjOGYtOTZjYS1mMGRhM2ZhYTgzN2IifQ.wTAWpweN4_LlBERngGYovxxK5-l2_HHN8WNBIkwNil4",
+      "refreshToken": "973baa33-cfe7-4bf0-8884-2ecc8642f43d",
+      "expiresInSec": 3600,
+      "user": {
+        "id": "admin-001",
+        "email": "admin@friday.dev",
+        "displayName": "Admin",
+        "role": "admin"
+      }
+    },
+    "requestId": "30deb2c1-d0e0-498a-bd92-48c4d3bbb47b"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3243/v1/auth/login",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "local": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "1378",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 18:38:57 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "10",
+      "x-ratelimit-remaining": "9",
+      "x-ratelimit-reset": "2026-04-19T18:39:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "accessToken": "<redacted>",
+        "refreshToken": "<redacted>",
+        "expiresInSec": 3600,
+        "user": {
+          "id": "admin-001",
+          "email": "admin@friday.dev",
+          "displayName": "Admin",
+          "role": "admin"
+        }
+      },
+      "requestId": "30deb2c1-d0e0-498a-bd92-48c4d3bbb47b"
+    }
+  }
+}

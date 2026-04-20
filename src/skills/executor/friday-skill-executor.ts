@@ -14,7 +14,12 @@ import {
   isFridayAnthropicBearerAuthMode,
 } from "#providers";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
-import { createFridayNodeExecutor } from "./friday-node-executor.js";
+import {
+  createFridayNodeExecutor,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+} from "./friday-node-executor.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
 import { resolve } from "node:path";
 
@@ -400,6 +405,23 @@ export function createFridaySkillExecutor(
             }
 
             case "node": {
+              if (!isFridayUnisolatedNodeSkillsEnabled()) {
+                execResult = {
+                  runId,
+                  status: "failed",
+                  output: {
+                    code: "CAPABILITY_DISABLED",
+                    capability: "skill_node_runtime",
+                    runtimeKind: "node",
+                    gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+                  },
+                  stdout: "",
+                  stderr: getFridayUnisolatedNodeSkillsDisabledMessage(),
+                  durationMs: 0,
+                };
+                break;
+              }
+
               // Build optional AI helper context for BYOK-backed node skills
               let aiHelper: FridaySkillAiHelperContext | undefined;
               if (deps.providerService) {

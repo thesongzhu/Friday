@@ -1,0 +1,62 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "items": [
+        {
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "providerKind": "openai",
+          "lane": "primary",
+          "enabled": true,
+          "defaultModel": "gpt-4o",
+          "backendKind": "http",
+          "authMode": "bearer-token",
+          "backendHealth": "healthy",
+          "authHealth": "healthy",
+          "routingEligible": true,
+          "validationStatus": "never",
+          "circuitState": "closed",
+          "reasons": [],
+          "suggestedAction": "Keep this provider healthy; it is the current default lane."
+        }
+      ]
+    },
+    "requestId": "ef74bae7-00b9-4659-aa41-552157a65b57"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/providers/health",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "items": [
+          {
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "providerKind": "openai",
+            "lane": "primary",
+            "enabled": true,
+            "defaultModel": "gpt-4o",
+            "backendKind": "http",
+            "authMode": "bearer-token",
+            "backendHealth": "healthy",
+            "authHealth": "healthy",
+            "routingEligible": true,
+            "validationStatus": "never",
+            "circuitState": "closed",
+            "reasons": [],
+            "suggestedAction": "Keep this provider healthy; it is the current default lane."
+          }
+        ]
+      },
+      "requestId": "ef74bae7-00b9-4659-aa41-552157a65b57"
+    }
+  }
+}

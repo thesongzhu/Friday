@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayLearningEventLedger } from "#ledger";
@@ -220,6 +220,53 @@ describe("FridaySelfLearningPipelineService", () => {
     expect(result.factsUpdated).toHaveLength(1);
     expect(result.factsUpdated[0]!.key).toBe("pref:language");
     expect(result.factsUpdated[0]!.value).toBe("Python");
+  });
+
+  it("does not duplicate learned preferences into exported memory", () => {
+    const memoryWriter = {
+      store: vi.fn(),
+    };
+    const ledger = createFridayLearningEventLedger({ db });
+    const factRepo = createFridayPreferenceFactRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const events = createFridayLearningEventCollectionService({ ledger });
+    const extraction = createFridayPreferenceExtractionService({
+      idGenerator: idGen,
+    });
+    const facts = createFridayPreferenceFactService({
+      db,
+      factRepo,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+    const lifecycle = createFridayLearningLifecycleService({
+      db,
+      factRepo,
+    });
+    const pipelineWithoutPreferenceExports = createFridaySelfLearningPipelineService({
+      db,
+      events,
+      extraction,
+      facts,
+      lifecycle,
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      memoryWriter,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    const result = pipelineWithoutPreferenceExports.processEvent(makeEvent({
+      kind: "user_message",
+      payload: { text: "Call me Codex." },
+    }));
+
+    expect(result.factsUpdated).toHaveLength(1);
+    expect(result.factsUpdated[0]!.key).toBe("pref:display_name");
+    expect(memoryWriter.store).not.toHaveBeenCalled();
   });
 
   it("processEvent creates incidents for error signals", () => {
@@ -477,7 +524,7 @@ describe("Phase 7 pipeline integration", () => {
     }));
 
     expect(result.inserted).toBe(true);
-    expect(result.incidentsCreated).toHaveLength(1);
+    expect(result.incidentsCreated).toHaveLength(0);
     expect(result.diagnosisCreated).toHaveLength(1);
 
     // Should create auto_fix_actions
@@ -515,14 +562,143 @@ describe("Phase 7 pipeline integration", () => {
       }),
     );
 
-    expect(result.incidentsCreated).toHaveLength(1);
-    expect(result.incidentsCreated[0]!.severity).toBe("high");
+    expect(result.incidentsCreated).toHaveLength(0);
+    const openIncident = db.writer.prepare(
+      "SELECT severity FROM error_incidents WHERE user_id = ? AND signature = ? AND status = 'open'",
+    ).get("test-user", signature) as { severity: string } | undefined;
+    expect(openIncident?.severity).toBe("high");
 
     // High severity → Tier 2 → approval request should be created
     const approvalCount = db.writer
       .prepare("SELECT COUNT(*) as cnt FROM approval_requests")
       .get() as { cnt: number };
     expect(approvalCount.cnt).toBe(1);
+  });
+
+  it("reuses the same open incident and suppresses duplicate planned actions for a fingerprint", () => {
+    const firstResult = pipeline.processEvent(makeEvent({ eventId: "evt-p7-dedup-seed" }));
+    const signature = firstResult.incidentsCreated[0]!.signature;
+
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-dedup",
+      fingerprint: signature,
+      title: "Auto-fixed: Auto-fix: retry workflow",
+      cause: "Known workflow timeout",
+      fix: "Retry the workflow step",
+      nowIso: NOW,
+    });
+
+    pipeline.processEvent(makeEvent({ eventId: "evt-p7-dedup-first" }));
+    const dedupResult = pipeline.processEvent(makeEvent({ eventId: "evt-p7-dedup-second" }));
+
+    const incidentCount = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM error_incidents WHERE signature = ?").get(signature) as { cnt: number }
+    ).cnt;
+    const diagnosisCount = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM diagnosis_records WHERE error_fingerprint = ?").get(signature) as { cnt: number }
+    ).cnt;
+    const actionCount = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM auto_fix_actions").get() as { cnt: number }
+    ).cnt;
+
+    expect(dedupResult.incidentsCreated).toHaveLength(0);
+    expect(incidentCount).toBe(1);
+    expect(diagnosisCount).toBe(3);
+    expect(actionCount).toBe(1);
+  });
+
+  it("does not create a new planned action when fingerprint history is already in cooldown", () => {
+    const seedResult = pipeline.processEvent(makeEvent({ eventId: "evt-p7-cooldown-seed" }));
+    const signature = seedResult.incidentsCreated[0]!.signature;
+    const incidentId = db.writer.prepare(
+      "SELECT incident_id FROM error_incidents WHERE signature = ? LIMIT 1",
+    ).get(signature) as { incident_id: string };
+
+    const lessonRepo = createFridayLearnedLessonRepository();
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-cooldown",
+      fingerprint: signature,
+      title: "Known timeout issue",
+      cause: "Repeated timeout",
+      fix: "Retry the node",
+      nowIso: NOW,
+    });
+
+    const actionRepo = createFridayAutoFixActionRepository();
+    actionRepo.insert(db.writer, {
+      actionId: "action-cooldown-1",
+      incidentId: incidentId.incident_id,
+      userId: "test-user",
+      riskTier: 0,
+      plan: {
+        title: "Auto-fix: retry tool",
+        summary: "Retry the failed tool operation",
+        steps: [
+          {
+            stepId: "step-cooldown-1",
+            kind: "retry_node",
+            target: "tool",
+            payload: {},
+            verify: { method: "error_absent", timeoutMs: 5000 },
+          },
+        ],
+        evidence: {
+          fingerprint: signature,
+          matchedLessonIds: [],
+          diagnosisId: "diag-cooldown-1",
+          recurrenceCount: 1,
+        },
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: "2025-06-15T09:00:00.000Z",
+      updatedAt: "2025-06-15T09:00:00.000Z",
+    });
+    actionRepo.markRejected(db.writer, "action-cooldown-1", "2025-06-15T09:05:00.000Z");
+
+    actionRepo.insert(db.writer, {
+      actionId: "action-cooldown-2",
+      incidentId: incidentId.incident_id,
+      userId: "test-user",
+      riskTier: 0,
+      plan: {
+        title: "Auto-fix: retry tool",
+        summary: "Retry the failed tool operation",
+        steps: [
+          {
+            stepId: "step-cooldown-2",
+            kind: "retry_node",
+            target: "tool",
+            payload: {},
+            verify: { method: "error_absent", timeoutMs: 5000 },
+          },
+        ],
+        evidence: {
+          fingerprint: signature,
+          matchedLessonIds: [],
+          diagnosisId: "diag-cooldown-2",
+          recurrenceCount: 1,
+        },
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: "2025-06-15T09:10:00.000Z",
+      updatedAt: "2025-06-15T09:10:00.000Z",
+    });
+    actionRepo.markRejected(db.writer, "action-cooldown-2", "2025-06-15T09:15:00.000Z");
+
+    pipeline.processEvent(makeEvent({ eventId: "evt-p7-cooldown-final" }));
+
+    const plannedCount = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM auto_fix_actions WHERE status = 'planned'").get() as { cnt: number }
+    ).cnt;
+    const totalCount = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM auto_fix_actions").get() as { cnt: number }
+    ).cnt;
+
+    expect(plannedCount).toBe(0);
+    expect(totalCount).toBe(2);
   });
 
   it("does NOT create lessons during ingestion (Phase 7 path)", () => {

@@ -323,6 +323,52 @@ describe("createFridayWorkflowProductService", () => {
     expect(visualization.nodeTimeline[0]?.nodeId).toBe("step-1");
   });
 
+  it("surfaces latest run failure details and node error messages in overview", () => {
+    const { service, workflowRuntime } = makeDeps();
+    vi.mocked(workflowRuntime.execution.listRuns).mockReturnValueOnce([
+      {
+        id: "run-failed-1",
+        workflowId: "wf-1",
+        workflowVersionId: "version-1",
+        triggerType: "manual",
+        status: "failed",
+        startedAt: NOW,
+        finishedAt: NOW,
+        failure: {
+          code: "WORKFLOW_FAILED",
+          message: "Unsupported start node",
+          details: { nodeId: "step-1" },
+        },
+      },
+    ] as never);
+    vi.mocked(workflowRuntime.execution.getRunNodes).mockReturnValueOnce([
+      {
+        nodeId: "step-1",
+        attempt: 1,
+        status: "failed",
+        updatedAt: NOW,
+        finishedAt: NOW,
+        error: {
+          code: "WORKFLOW_FAILED",
+          message: "Unsupported start node",
+        },
+      },
+    ] as never);
+
+    const overview = service.getOverview({ workflowId: "wf-1", recentRunLimit: 4 });
+
+    expect(overview.latestRun?.failure).toEqual({
+      code: "WORKFLOW_FAILED",
+      message: "Unsupported start node",
+      details: { nodeId: "step-1" },
+    });
+    expect(overview.latestRunNodeTimeline[0]).toMatchObject({
+      nodeId: "step-1",
+      status: "failed",
+      message: "Unsupported start node",
+    });
+  });
+
   it("restores a deployable draft from a saved workflow generator session", async () => {
     const { service, builderRuntime, workflowGenerator } = makeDeps();
     vi.mocked(workflowGenerator.getSession).mockResolvedValueOnce({

@@ -13,8 +13,13 @@ import type { FridayWorkflowBuilderLockRepository } from "../persistence/friday-
 
 export interface FridayWorkflowBuilderCollaborationService {
   acquireLock(input: FridayWorkflowLockAcquireInput): FridayWorkflowLockAcquireResult;
-  renewLock(workflowId: UUID, lockToken: string, ttlSec: number): FridayWorkflowEditLock;
-  releaseLock(workflowId: UUID, lockToken: string): void;
+  renewLock(
+    workflowId: UUID,
+    lockToken: string,
+    ttlSec: number,
+    ownerUserId?: UUID,
+  ): FridayWorkflowEditLock;
+  releaseLock(workflowId: UUID, lockToken: string, ownerUserId?: UUID): void;
   getLock(workflowId: UUID): FridayWorkflowEditLock | null;
   assertLock(workflowId: UUID, lockToken: string): void;
   /** Assert lock using a specific DB connection (for use inside write transactions). */
@@ -67,11 +72,18 @@ export function createFridayWorkflowBuilderCollaborationService(
       });
     },
 
-    renewLock(workflowId, lockToken, ttlSec) {
+    renewLock(workflowId, lockToken, ttlSec, ownerUserId) {
       return deps.db.withWriteTransaction((db) => {
         const existing = deps.lockRepo.getLock(db, workflowId);
         if (!existing || existing.lockToken !== lockToken) {
           throw new FridayDomainError("WORKFLOW_EDIT_LOCK_MISMATCH", "Lock token mismatch", { httpStatus: 409 });
+        }
+        if (ownerUserId && existing.ownerUserId !== ownerUserId) {
+          throw new FridayDomainError(
+            "WORKFLOW_EDIT_LOCK_FORBIDDEN",
+            "Only the lock owner can renew this workflow lock",
+            { httpStatus: 403 },
+          );
         }
 
         const now = deps.nowIso();
@@ -88,12 +100,19 @@ export function createFridayWorkflowBuilderCollaborationService(
       });
     },
 
-    releaseLock(workflowId, lockToken) {
+    releaseLock(workflowId, lockToken, ownerUserId) {
       deps.db.withWriteTransaction((db) => {
         const existing = deps.lockRepo.getLock(db, workflowId);
         if (!existing) return;
         if (existing.lockToken !== lockToken) {
           throw new FridayDomainError("WORKFLOW_EDIT_LOCK_MISMATCH", "Lock token mismatch", { httpStatus: 409 });
+        }
+        if (ownerUserId && existing.ownerUserId !== ownerUserId) {
+          throw new FridayDomainError(
+            "WORKFLOW_EDIT_LOCK_FORBIDDEN",
+            "Only the lock owner can release this workflow lock",
+            { httpStatus: 403 },
+          );
         }
         deps.lockRepo.deleteLock(db, workflowId);
       });

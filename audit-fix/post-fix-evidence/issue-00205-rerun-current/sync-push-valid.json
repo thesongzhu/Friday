@@ -1,0 +1,59 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "acceptedAcks": [
+        {
+          "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+          "seq": 1
+        }
+      ],
+      "conflicts": []
+    },
+    "requestId": "2dba2ccb-ee46-4af1-b442-67659f421271"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/satellites/7e24bd8b-d5f4-4918-9663-c62b171eebc6/sync/push",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "acks": [
+        {
+          "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+          "seq": 1,
+          "epoch": 40
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "173",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 16:02:37 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "acceptedAcks": [
+          {
+            "streamId": "satellite:7e24bd8b-d5f4-4918-9663-c62b171eebc6",
+            "seq": 1
+          }
+        ],
+        "conflicts": []
+      },
+      "requestId": "2dba2ccb-ee46-4af1-b442-67659f421271"
+    }
+  }
+}

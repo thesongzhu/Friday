@@ -1,0 +1,62 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "9d7d4d9c-1729-44d9-bb48-1b4c4856ca2d",
+      "status": "completed",
+      "response": "idempotent-ok",
+      "toolCallCount": 0,
+      "durationMs": 2660,
+      "usageInput": 10768,
+      "usageOutput": 6,
+      "finalResponse": "idempotent-ok",
+      "eventStreamAvailable": true
+    },
+    "requestId": "b1753504-9f80-47f3-a954-384c73aa907a"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "idempotency-key": "issue-00158-agent-1776612225997",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Reply with the exact text idempotent-ok and nothing else.",
+      "timeoutMs": 120000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "297",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:23:48 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "10",
+      "x-ratelimit-remaining": "9",
+      "x-ratelimit-reset": "2026-04-19T15:24:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "9d7d4d9c-1729-44d9-bb48-1b4c4856ca2d",
+        "status": "completed",
+        "response": "idempotent-ok",
+        "toolCallCount": 0,
+        "durationMs": 2660,
+        "usageInput": 10768,
+        "usageOutput": 6,
+        "finalResponse": "idempotent-ok",
+        "eventStreamAvailable": true
+      },
+      "requestId": "b1753504-9f80-47f3-a954-384c73aa907a"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "1090a380-0d47-447c-b46f-0ec6d2f0d5a7",
+      "status": "failed",
+      "response": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or \": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 127.0.0.1. Final response: The request was blocked with the exact blocking reason: \"SSRF guard: blocked private IPv4 — 127.0.0.1\"",
+      "toolCallCount": 1,
+      "durationMs": 4559,
+      "usageInput": 733,
+      "usageOutput": 123,
+      "finalResponse": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or \": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 127.0.0.1. Final response: The request was blocked with the exact blocking reason: \"SSRF guard: blocked private IPv4 — 127.0.0.1\"",
+      "eventStreamAvailable": true
+    },
+    "requestId": "ec675423-2d8c-44bb-830b-ed34c776bd08"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or any other network tool. If the request is blocked, reply with the exact blocking reason. If it succeeds, reply with the first line of the body only.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+      "model": "claude-sonnet-4-20250514",
+      "timeoutMs": 120000
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "1088",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:32:24 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "10",
+      "x-ratelimit-remaining": "9",
+      "x-ratelimit-reset": "2026-04-19T15:33:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "1090a380-0d47-447c-b46f-0ec6d2f0d5a7",
+        "status": "failed",
+        "response": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or \": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 127.0.0.1. Final response: The request was blocked with the exact blocking reason: \"SSRF guard: blocked private IPv4 — 127.0.0.1\"",
+        "toolCallCount": 1,
+        "durationMs": 4559,
+        "usageInput": 733,
+        "usageOutput": 123,
+        "finalResponse": "Evidence closure failed for web task \"Use the web_fetch tool on this exact URL: http://127.0.0.1:39190/ssrf-loopback-probe Do not use browser, web_search, or \": 1 tool call(s), 1 failed, no successful evidence. Last failure: Fetch error: SSRF guard: blocked private IPv4 — 127.0.0.1. Final response: The request was blocked with the exact blocking reason: \"SSRF guard: blocked private IPv4 — 127.0.0.1\"",
+        "eventStreamAvailable": true
+      },
+      "requestId": "ec675423-2d8c-44bb-830b-ed34c776bd08"
+    }
+  }
+}

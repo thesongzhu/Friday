@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FridayHttpContext, FridayRouteDefinition } from "#api";
 import {
@@ -35,6 +35,28 @@ function findRoute(
 }
 
 describe("createFridayChannelWebhookRoutes", () => {
+  it("returns CAPABILITY_DISABLED when LINE listener is absent", async () => {
+    const routes = createFridayChannelWebhookRoutes({});
+    const route = findRoute(routes, "channels.webhooks.line");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({ destination: "x", events: [] }),
+          headers: {},
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CAPABILITY_DISABLED",
+      httpStatus: 501,
+      details: {
+        capability: "channel_webhook_listener",
+        surface: "/v1/channel-webhooks/line",
+        channel: "line",
+      },
+    });
+  });
+
   it("validates LINE X-Line-Signature and dispatches payload", async () => {
     const relay = createLineWebhookListenerService();
     let receivedText = "";
@@ -185,6 +207,8 @@ describe("createFridayChannelWebhookRoutes", () => {
   it("handles Lark url_verification and event relay", async () => {
     const relay = createLarkWebhookRelayService();
     let dispatched = false;
+    relay.setVerificationToken("lark-verify-token");
+    relay.setEncryptKey("lark-encrypt-key");
     await relay.start(() => {
       dispatched = true;
     });
@@ -198,23 +222,62 @@ describe("createFridayChannelWebhookRoutes", () => {
       makeCtx({
         rawBody: JSON.stringify({
           type: "url_verification",
+          token: "lark-verify-token",
           challenge: "lark-challenge",
         }),
       }),
     ) as { challenge: string };
     expect(verifyResult.challenge).toBe("lark-challenge");
 
+    const rawBody = JSON.stringify({
+      header: {
+        event_type: "im.message.receive_v1",
+        token: "lark-verify-token",
+      },
+      event: {},
+    });
+    const signature = createHash("sha256")
+      .update(`1700000000nonce-1lark-encrypt-key${rawBody}`, "utf-8")
+      .digest("hex");
     const eventResult = await route.handler(
       makeCtx({
-        rawBody: JSON.stringify({
-          header: {
-            event_type: "im.message.receive_v1",
-          },
-          event: {},
-        }),
+        rawBody,
+        headers: {
+          "x-lark-signature": signature,
+          "x-lark-request-timestamp": "1700000000",
+          "x-lark-request-nonce": "nonce-1",
+        },
       }),
     ) as { accepted: boolean };
     expect(eventResult.accepted).toBe(true);
     expect(dispatched).toBe(true);
+  });
+
+  it("rejects Lark webhook when verification token is invalid", async () => {
+    const relay = createLarkWebhookRelayService();
+    relay.setVerificationToken("lark-verify-token");
+    await relay.start(() => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      larkWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.lark");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({
+            header: {
+              event_type: "im.message.receive_v1",
+              token: "wrong-token",
+            },
+            event: {},
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "LARK_TOKEN_INVALID",
+      httpStatus: 403,
+    });
   });
 });

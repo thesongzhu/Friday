@@ -1,0 +1,51 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Persist and recall the marker below.\nUse memory_store exactly once with:\n- namespace: \"agent\"\n- content: \"ISSUE-00150-MARKER-1776622470250\"\n- tags: [\"issue-00150\", \"audit\"]\nThen use memory_search exactly once with:\n- namespace: \"agent\"\n- query: \"ISSUE-00150-MARKER-1776622470250\"\n- limit: 5\nIf the search result contains \"ISSUE-00150-MARKER-1776622470250\", reply with exactly: FOUND ISSUE-00150-MARKER-1776622470250\nOtherwise reply with exactly: MISSING ISSUE-00150-MARKER-1776622470250\nDo not use any other tools and do not add any extra words.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+      "constraints": {
+        "readOnly": false,
+        "operationalMode": "execute"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+        "status": "completed",
+        "response": "FOUND ISSUE-00150-MARKER-1776622470250",
+        "toolCallCount": 2,
+        "durationMs": 6330,
+        "usageInput": 13548,
+        "usageOutput": 126,
+        "finalResponse": "FOUND ISSUE-00150-MARKER-1776622470250",
+        "eventStreamAvailable": true
+      },
+      "requestId": "2b8f75e1-47b9-4cc8-952b-751c859e383c"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "f77e9f68-16d4-4fad-a054-f54c00b0c4d9",
+      "status": "completed",
+      "response": "FOUND ISSUE-00150-MARKER-1776622470250",
+      "toolCallCount": 2,
+      "durationMs": 6330,
+      "usageInput": 13548,
+      "usageOutput": 126,
+      "finalResponse": "FOUND ISSUE-00150-MARKER-1776622470250",
+      "eventStreamAvailable": true
+    },
+    "requestId": "2b8f75e1-47b9-4cc8-952b-751c859e383c"
+  }
+}

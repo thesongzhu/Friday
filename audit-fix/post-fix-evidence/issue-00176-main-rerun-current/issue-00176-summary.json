@@ -1,0 +1,39 @@
+{
+  "baseUrl": "http://127.0.0.1:3241",
+  "journalBefore": 99,
+  "journalAfter": 102,
+  "journalDelta": 3,
+  "focusStatus": 400,
+  "focusError": {
+    "code": "VALIDATION_ERROR",
+    "message": "Unsafe AppleScript app identifier: line breaks are not allowed",
+    "retryable": false
+  },
+  "launchStatus": 400,
+  "launchError": {
+    "code": "VALIDATION_ERROR",
+    "message": "Unsafe AppleScript app identifier: line breaks are not allowed",
+    "retryable": false
+  },
+  "passed": true,
+  "journalEvents": [
+    {
+      "seq": 100,
+      "event_name": "system.control.acquired",
+      "payload_json": "{\"leaseId\":\"1350b83b-2f14-4e04-82f1-a1e6956cfa59\",\"ownerId\":\"system-api\",\"ownerKind\":\"api\",\"action\":\"focus\"}",
+      "emitted_at": "2026-04-19T17:04:09.301Z"
+    },
+    {
+      "seq": 101,
+      "event_name": "system.intent.failed",
+      "payload_json": "{\"action\":\"focus\",\"message\":\"Unsafe AppleScript app identifier: line breaks are not allowed\"}",
+      "emitted_at": "2026-04-19T17:04:09.302Z"
+    },
+    {
+      "seq": 102,
+      "event_name": "system.intent.failed",
+      "payload_json": "{\"action\":\"launch_app\",\"message\":\"Unsafe AppleScript app identifier: line breaks are not allowed\"}",
+      "emitted_at": "2026-04-19T17:04:09.304Z"
+    }
+  ]
+}

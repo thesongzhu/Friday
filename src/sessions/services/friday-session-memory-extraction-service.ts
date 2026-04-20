@@ -149,6 +149,24 @@ export function createFridaySessionMemoryExtractionService(
     });
   }
 
+  function splitManuallyProcessableMessages(messages: FridaySessionMessageRecord[]): {
+    processable: FridaySessionMessageRecord[];
+    alreadyExtracted: FridaySessionMessageRecord[];
+  } {
+    const processable: FridaySessionMessageRecord[] = [];
+    const alreadyExtracted: FridaySessionMessageRecord[] = [];
+
+    for (const message of messages) {
+      if (message.memoryExtractStatus === "extracted") {
+        alreadyExtracted.push(message);
+        continue;
+      }
+      processable.push(message);
+    }
+
+    return { processable, alreadyExtracted };
+  }
+
   async function processInline(
     sessionKey: string,
     trigger: FridaySessionMemoryExtractionTrigger,
@@ -466,10 +484,18 @@ export function createFridaySessionMemoryExtractionService(
         );
       }
 
-      return processInline(sessionKey, "manual", messages, {
-        batchSize: messages.length,
+      const { processable, alreadyExtracted } = splitManuallyProcessableMessages(messages);
+
+      const result = await processInline(sessionKey, "manual", processable, {
+        batchSize: processable.length,
         maxBatches: 1,
       });
+
+      if (alreadyExtracted.length > 0) {
+        result.skippedMessageCount += alreadyExtracted.length;
+      }
+
+      return result;
     },
 
     async getExtractionStatus(sessionKey) {

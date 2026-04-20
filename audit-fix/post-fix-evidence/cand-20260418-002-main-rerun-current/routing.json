@@ -1,0 +1,32 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "PROVIDER_NOT_FOUND",
+      "message": "Provider not found",
+      "retryable": false
+    },
+    "requestId": "30baeeb5-a8be-460a-92d2-253a7a9aa5a6"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/providers/routing",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "PROVIDER_NOT_FOUND",
+        "message": "Provider not found",
+        "retryable": false
+      },
+      "requestId": "30baeeb5-a8be-460a-92d2-253a7a9aa5a6"
+    }
+  }
+}

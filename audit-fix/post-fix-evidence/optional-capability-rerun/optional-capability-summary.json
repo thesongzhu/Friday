@@ -1,0 +1,20 @@
+{
+  "healthStatus": 200,
+  "packagingEnabled": false,
+  "mcpEnabled": false,
+  "channelWebhookEndpoints": {
+    "line": false,
+    "whatsapp": false,
+    "lark": false
+  },
+  "packagesStatus": 501,
+  "packagesErrorCode": "CAPABILITY_DISABLED",
+  "mcpStatus": 501,
+  "mcpErrorCode": "CAPABILITY_DISABLED",
+  "lineWebhookStatus": 501,
+  "lineWebhookErrorCode": "CAPABILITY_DISABLED",
+  "marketplacePluginsStatus": 200,
+  "marketplacePluginsTotal": 0,
+  "marketplaceSourcesCount": 0,
+  "pluginMarketplaceSourcesCount": 0
+}

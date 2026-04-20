@@ -6,6 +6,7 @@ import type {
 } from "#channels";
 import { createFridayHttpRawTextResponse } from "../friday-http-raw-response.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 
 export interface FridayChannelWebhookRoutesDeps {
   lineWebhookRelay?: LineWebhookListenerService;
@@ -36,12 +37,13 @@ export function createFridayChannelWebhookRoutes(
       auth: { public: true },
       async handler(ctx) {
         const relay = deps.lineWebhookRelay;
-        if (!relay?.handleHttpWebhook) {
-          throwChannelWebhookError(
-            "LINE_LISTENER_INACTIVE",
-            "LINE webhook listener is not active",
-            503,
-          );
+        if (!relay?.handleHttpWebhook || relay.isListening() !== true) {
+          throwFridayCapabilityDisabled({
+            capability: "channel_webhook_listener",
+            surface: "/v1/channel-webhooks/line",
+            message: "LINE webhook listener is disabled in this runtime",
+            details: { channel: "line" },
+          });
         }
         const result = relay.handleHttpWebhook(
           ctx.rawBody ?? "",
@@ -85,12 +87,13 @@ export function createFridayChannelWebhookRoutes(
       auth: { public: true },
       async handler(ctx) {
         const relay = deps.whatsappWebhookRelay;
-        if (!relay?.handleVerificationChallenge) {
-          throwChannelWebhookError(
-            "WHATSAPP_LISTENER_INACTIVE",
-            "WhatsApp webhook listener is not active",
-            503,
-          );
+        if (!relay?.handleVerificationChallenge || relay.isListening() !== true) {
+          throwFridayCapabilityDisabled({
+            capability: "channel_webhook_listener",
+            surface: "/v1/channel-webhooks/whatsapp",
+            message: "WhatsApp webhook listener is disabled in this runtime",
+            details: { channel: "whatsapp" },
+          });
         }
         const query = ctx.query as Record<string, unknown>;
         const result = relay.handleVerificationChallenge(
@@ -117,12 +120,13 @@ export function createFridayChannelWebhookRoutes(
       auth: { public: true },
       async handler(ctx) {
         const relay = deps.whatsappWebhookRelay;
-        if (!relay?.handleHttpWebhook) {
-          throwChannelWebhookError(
-            "WHATSAPP_LISTENER_INACTIVE",
-            "WhatsApp webhook listener is not active",
-            503,
-          );
+        if (!relay?.handleHttpWebhook || relay.isListening() !== true) {
+          throwFridayCapabilityDisabled({
+            capability: "channel_webhook_listener",
+            surface: "/v1/channel-webhooks/whatsapp",
+            message: "WhatsApp webhook listener is disabled in this runtime",
+            details: { channel: "whatsapp" },
+          });
         }
         const result = relay.handleHttpWebhook(
           ctx.rawBody ?? "",
@@ -166,12 +170,13 @@ export function createFridayChannelWebhookRoutes(
       auth: { public: true },
       async handler(ctx) {
         const relay = deps.larkWebhookRelay;
-        if (!relay) {
-          throwChannelWebhookError(
-            "LARK_LISTENER_INACTIVE",
-            "Lark webhook listener is not active",
-            503,
-          );
+        if (!relay || relay.isListening() !== true) {
+          throwFridayCapabilityDisabled({
+            capability: "channel_webhook_listener",
+            surface: "/v1/channel-webhooks/lark",
+            message: "Lark webhook listener is disabled in this runtime",
+            details: { channel: "lark" },
+          });
         }
         const result = relay.handleHttpWebhook(
           ctx.rawBody ?? "",
@@ -181,6 +186,13 @@ export function createFridayChannelWebhookRoutes(
         );
         if (!result.accepted) {
           if (result.statusCode === 401) {
+            if (result.code === "LARK_TOKEN_MISSING") {
+              throwChannelWebhookError(
+                result.code,
+                "Lark webhook verification token is missing",
+                401,
+              );
+            }
             throwChannelWebhookError(
               result.code ?? "LARK_SIGNATURE_MISSING",
               "Lark webhook signature headers are missing",
@@ -188,6 +200,13 @@ export function createFridayChannelWebhookRoutes(
             );
           }
           if (result.statusCode === 403) {
+            if (result.code === "LARK_TOKEN_INVALID") {
+              throwChannelWebhookError(
+                result.code,
+                "Lark webhook verification token is invalid",
+                403,
+              );
+            }
             throwChannelWebhookError(
               result.code ?? "LARK_SIGNATURE_INVALID",
               "Lark webhook signature is invalid",
@@ -199,6 +218,13 @@ export function createFridayChannelWebhookRoutes(
               result.code ?? "LARK_PAYLOAD_INVALID",
               "Lark webhook payload is invalid JSON",
               400,
+            );
+          }
+          if (result.code === "LARK_TOKEN_UNCONFIGURED") {
+            throwChannelWebhookError(
+              result.code,
+              "Lark webhook verification token is not configured",
+              503,
             );
           }
           throwChannelWebhookError(

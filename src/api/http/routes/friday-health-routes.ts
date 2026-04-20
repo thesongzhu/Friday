@@ -27,6 +27,17 @@ export interface FridayHealthCapabilities {
   channels: {
     supportedKinds: string[];
     enabledKinds: string[];
+    webhookEndpoints?: {
+      line: boolean;
+      whatsapp: boolean;
+      lark: boolean;
+    };
+  };
+  mcp?: {
+    enabled: boolean;
+  };
+  packaging?: {
+    enabled: boolean;
   };
   search: {
     provider: string;
@@ -74,6 +85,17 @@ export function createFridayHealthRoutes(
     channels: {
       supportedKinds: [],
       enabledKinds: [],
+      webhookEndpoints: {
+        line: false,
+        whatsapp: false,
+        lark: false,
+      },
+    },
+    mcp: {
+      enabled: false,
+    },
+    packaging: {
+      enabled: false,
     },
     search: {
       provider: "duckduckgo_html",
@@ -86,6 +108,28 @@ export function createFridayHealthRoutes(
     },
   };
 
+  async function buildHealthPayload(includeCapabilities: boolean) {
+    const uptimeSeconds = deps.getUptimeSeconds
+      ? deps.getUptimeSeconds()
+      : Math.floor((Date.now() - startTime) / 1000);
+    if (!includeCapabilities) {
+      return {
+        status: "ok",
+        version: deps.version,
+        uptime: uptimeSeconds,
+      };
+    }
+    const capabilities = deps.getCapabilities
+      ? await deps.getCapabilities()
+      : defaultCapabilities;
+    return {
+      status: "ok",
+      version: deps.version,
+      uptime: uptimeSeconds,
+      capabilities,
+    };
+  }
+
   return [
     {
       operationId: "health.check",
@@ -93,19 +137,16 @@ export function createFridayHealthRoutes(
       path: "/v1/health",
       auth: { public: true },
       async handler() {
-        const uptimeSeconds = deps.getUptimeSeconds
-          ? deps.getUptimeSeconds()
-          : Math.floor((Date.now() - startTime) / 1000);
-        const capabilities = deps.getCapabilities
-          ? await deps.getCapabilities()
-          : defaultCapabilities;
-
-        return {
-          status: "ok",
-          version: deps.version,
-          uptime: uptimeSeconds,
-          capabilities,
-        };
+        return buildHealthPayload(false);
+      },
+    },
+    {
+      operationId: "health.capabilities",
+      method: "GET",
+      path: "/v1/health/capabilities",
+      auth: { public: false, anyOfScopes: ["session.read"] },
+      async handler() {
+        return buildHealthPayload(true);
       },
     },
   ];

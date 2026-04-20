@@ -24,6 +24,36 @@ export interface FridayTuiApiClientDeps {
   readonly baseUrl: string;
 }
 
+interface FridayApiEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+}
+
+interface FridaySessionListEnvelope {
+  items?: Array<{
+    id: string;
+    key: string;
+    channel: string;
+    status: string;
+    createdAt: string;
+    lastActivityAt?: string | null;
+  }>;
+}
+
+interface FridaySatellitePairingEnvelope {
+  requestId?: string;
+  satelliteId: string;
+  displayName: string;
+  type: string;
+  pairingCode: string;
+  status?: string;
+  expiresAt: string;
+}
+
 // ─── Result ───
 
 export type FridayTuiApiResult<T> =
@@ -49,6 +79,28 @@ export function createFridayTuiApiClient(
 ): FridayTuiApiClient {
   const { fetchJson, baseUrl } = deps;
 
+  async function requestData<T>(
+    path: string,
+    init?: {
+      method?: string;
+      body?: string;
+      headers?: Record<string, string>;
+    },
+  ): Promise<T> {
+    const response = await fetchJson<FridayApiEnvelope<T>>(`${baseUrl}${path}`, init);
+    if (!response || typeof response !== "object") {
+      throw new Error(`Invalid API response from ${path}`);
+    }
+    if (response.ok !== true) {
+      const code = typeof response.error?.code === "string" ? response.error.code : "INTERNAL_ERROR";
+      const message = typeof response.error?.message === "string"
+        ? response.error.message
+        : `Request failed for ${path}`;
+      throw new Error(`${code}: ${message}`);
+    }
+    return response.data as T;
+  }
+
   async function safeCall<T>(fn: () => Promise<T>): Promise<FridayTuiApiResult<T>> {
     try {
       const data = await fn();
@@ -61,31 +113,46 @@ export function createFridayTuiApiClient(
   return {
     getHubStatus() {
       return safeCall(() =>
-        fetchJson<FridayTuiHubStatus>(`${baseUrl}/v1/status`),
+        requestData<FridayTuiHubStatus>("/v1/status"),
       );
     },
 
     listSessions() {
-      return safeCall(() =>
-        fetchJson<FridayTuiSessionSummary[]>(`${baseUrl}/v1/sessions`),
-      );
+      return safeCall(async () => {
+        const response = await requestData<FridaySessionListEnvelope>("/v1/sessions");
+        return (response.items ?? []).map((session) => ({
+          sessionId: session.id,
+          channelId: session.channel,
+          status: session.status,
+          createdAt: session.createdAt,
+          lastActivityAt: session.lastActivityAt ?? null,
+        }));
+      });
     },
 
     listJobs() {
       return safeCall(() =>
-        fetchJson<FridayTuiJobSummary[]>(`${baseUrl}/v1/jobs`),
+        requestData<FridayTuiJobSummary[]>("/v1/jobs"),
       );
     },
 
     listPendingPairings() {
-      return safeCall(() =>
-        fetchJson<FridayTuiPairingSummary[]>(`${baseUrl}/v1/satellites/pairing`),
-      );
+      return safeCall(async () => {
+        const response = await requestData<FridaySatellitePairingEnvelope[]>("/v1/satellites/pairing");
+        return response.map((pairing) => ({
+          satelliteId: pairing.satelliteId,
+          displayName: pairing.displayName,
+          type: pairing.type,
+          pairingCode: pairing.pairingCode,
+          status: pairing.status ?? "pending_approval",
+          expiresAt: pairing.expiresAt,
+        }));
+      });
     },
 
     approvePairing(satelliteId: string) {
       return safeCall(() =>
-        fetchJson<{ token: string }>(`${baseUrl}/v1/satellites/${satelliteId}/pairing/approve`, {
+        requestData<{ token: string }>(`/v1/satellites/${satelliteId}/pairing/approve`, {
           method: "POST",
           body: "{}",
           headers: { "Content-Type": "application/json" },
@@ -95,7 +162,7 @@ export function createFridayTuiApiClient(
 
     rejectPairing(satelliteId: string, reason?: string) {
       return safeCall(() =>
-        fetchJson<{ rejectedAt: string }>(`${baseUrl}/v1/satellites/${satelliteId}/pairing/reject`, {
+        requestData<{ rejectedAt: string }>(`/v1/satellites/${satelliteId}/pairing/reject`, {
           method: "POST",
           body: JSON.stringify({ reason }),
           headers: { "Content-Type": "application/json" },
@@ -105,7 +172,7 @@ export function createFridayTuiApiClient(
 
     triggerHeartbeat() {
       return safeCall(() =>
-        fetchJson<{ triggered: boolean }>(`${baseUrl}/v1/heartbeat/trigger`, {
+        requestData<{ triggered: boolean }>(`/v1/heartbeat/trigger`, {
           method: "POST",
           body: "{}",
           headers: { "Content-Type": "application/json" },

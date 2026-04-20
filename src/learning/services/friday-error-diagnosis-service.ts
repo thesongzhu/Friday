@@ -14,6 +14,7 @@ import type {
   FridayAutoFixPlan,
   FridayDiagnosisOutcome,
 } from "../model/friday-auto-fix.types.js";
+import { buildAutoFixPlanTitle } from "./friday-auto-fix-title-helpers.js";
 
 export interface FridayErrorDiagnosisService {
   /** Diagnose within an existing transaction (caller provides db handle). */
@@ -50,6 +51,60 @@ const INTERNAL_RUNTIME_AUTO_FIX_SOURCES = new Set([
   "skill_generator",
 ]);
 
+const NON_RETRYABLE_WORKFLOW_FAILURE_PATTERNS = [
+  "ACTION NODE MISSING SKILLID OR REF",
+  "UNKNOWN NODE TYPE",
+  "MISSING WORKFLOW EXPRESSION CONTEXT",
+] as const;
+
+function readIncidentContextString(
+  incident: FridayErrorIncidentEntity,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = incident.context[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function isNonRetryableWorkflowRuntimeFailure(
+  incident: FridayErrorIncidentEntity,
+): boolean {
+  if (incident.category !== "workflow") {
+    return false;
+  }
+  const source = typeof incident.context.source === "string"
+    ? incident.context.source
+    : undefined;
+  if (source !== "workflow_runtime") {
+    return false;
+  }
+  const retryable = incident.context.failedNodeRetryable;
+  if (typeof retryable === "boolean") {
+    return !retryable;
+  }
+  const combinedMessage = [
+    readIncidentContextString(incident, "failedNodeErrorMessage"),
+    readIncidentContextString(incident, "failureMessage"),
+    readIncidentContextString(incident, "message"),
+  ]
+    .filter((entry): entry is string => typeof entry === "string")
+    .join(" ")
+    .toUpperCase();
+  if (combinedMessage.length === 0) {
+    return false;
+  }
+  if (combinedMessage.includes("SKILL '") && combinedMessage.includes("NOT FOUND")) {
+    return true;
+  }
+  return NON_RETRYABLE_WORKFLOW_FAILURE_PATTERNS.some((pattern) =>
+    combinedMessage.includes(pattern)
+  );
+}
+
 function isStructuredInternalRuntimeFailure(
   incident: FridayErrorIncidentEntity,
 ): boolean {
@@ -63,6 +118,9 @@ function isStructuredInternalRuntimeFailure(
     return true;
   }
   if (source !== "workflow_runtime" || incident.category !== "workflow") {
+    return false;
+  }
+  if (isNonRetryableWorkflowRuntimeFailure(incident)) {
     return false;
   }
   return typeof incident.runId === "string" && incident.runId.trim().length > 0
@@ -108,6 +166,7 @@ export function createFridayErrorDiagnosisService(
   ): FridayDiagnosisOutcome {
     const { incident, nowIso } = input;
     const fingerprint = incident.signature;
+    const nonRetryableWorkflowRuntimeFailure = isNonRetryableWorkflowRuntimeFailure(incident);
 
     // 1. Look up matching lessons
     const lesson = deps.lessonRepo.getByFingerprint(db, fingerprint);
@@ -143,15 +202,14 @@ export function createFridayErrorDiagnosisService(
       fingerprint,
       50,
     );
-    const recurrenceCount = recentIncidents.length;
-
-    // 3. Historical diagnoses for confidence boost
     const historicalDiagnoses = deps.diagnosisRepo.listByFingerprint(
       db,
       fingerprint,
-      5,
+      50,
     );
+    const recurrenceCount = Math.max(recentIncidents.length, historicalDiagnoses.length + 1);
 
+    // 3. Historical diagnoses for confidence boost
     // 4. Compute confidence using deterministic scoring (always in [0, 1])
     const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
     let confidence = incident.severity === "high" ? 0.5 : 0.3;
@@ -191,6 +249,12 @@ export function createFridayErrorDiagnosisService(
       matchedLessonIds: matchedLessons.map((l) => l.id),
       recurrenceCount,
       autoDetected: true,
+      ...(nonRetryableWorkflowRuntimeFailure
+        ? {
+            autoFixSuppressedReason:
+              "workflow runtime reported a deterministic non-retryable node failure",
+          }
+        : {}),
     };
 
     const diagnosis: FridayDiagnosisRecordEntity = {
@@ -208,7 +272,8 @@ export function createFridayErrorDiagnosisService(
     deps.diagnosisRepo.insert(db, diagnosis);
 
     // 6. Determine auto-fix eligibility
-    const autoFixEligible = confidence >= AUTO_FIX_CONFIDENCE_THRESHOLD;
+    const autoFixEligible = !nonRetryableWorkflowRuntimeFailure
+      && confidence >= AUTO_FIX_CONFIDENCE_THRESHOLD;
 
     // 7. Build candidate plans from matched lessons
     const candidatePlans: FridayAutoFixPlan[] = [];
@@ -231,7 +296,7 @@ export function createFridayErrorDiagnosisService(
         const planStepKind = derivePlanStepKind(incident);
         const target = derivePlanTarget(incident, planStepKind);
         const plan: FridayAutoFixPlan = {
-          title: `Auto-fix: ${l.title}`,
+          title: buildAutoFixPlanTitle(l.title),
           summary: l.fix,
           steps: [
             {

@@ -3,6 +3,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const apiProxyTarget = process.env.FRIDAY_UI_API_PROXY_TARGET ?? "http://127.0.0.1:3141";
+
 function hasPackageSegment(id: string, packageName: string): boolean {
   const normalized = id.replaceAll("\\", "/");
   return normalized.includes(`/node_modules/${packageName}/`);
@@ -95,7 +97,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/v1": {
-        target: "http://127.0.0.1:3141",
+        target: apiProxyTarget,
         changeOrigin: false,
         secure: false,
       },

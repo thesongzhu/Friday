@@ -1,0 +1,40 @@
+{
+  "checkedAt": "2026-04-19T14:12:40.808Z",
+  "workflowId": "248c0a97-365c-4e21-afcb-028d2d013dc7",
+  "versionId": "13f123df-59ba-43e2-8872-deff360879f2",
+  "timeoutNodeId": "timeout-node-mo5ui769",
+  "runs": [
+    {
+      "runId": "da1f9976-9afa-43bb-9193-33f1fe799c4f",
+      "finalStatus": "failed",
+      "finalFailureCode": "WORKFLOW_FAILED"
+    },
+    {
+      "runId": "dbf75268-c6ed-48e8-beb9-c307eb2d8b82",
+      "finalStatus": "failed",
+      "finalFailureCode": "WORKFLOW_FAILED"
+    },
+    {
+      "runId": "bd5838a5-02b5-4df7-99e4-1218317109d4",
+      "finalStatus": "failed",
+      "finalFailureCode": "WORKFLOW_FAILED"
+    }
+  ],
+  "finalRunId": "bd5838a5-02b5-4df7-99e4-1218317109d4",
+  "finalRunStatus": "failed",
+  "evidenceRetryTraceCount": 1,
+  "evidenceRetryEventCount": 2,
+  "evidenceCircuitOpened": true,
+  "retryTracesStatus": 200,
+  "retryTracesCount": 1,
+  "retryTracesNonEmpty": true,
+  "retryEscalationsStatus": 200,
+  "retryEscalationsCount": 3,
+  "retryEscalationsNonEmpty": true,
+  "retryCircuitBreakersStatus": 200,
+  "retryCircuitBreakersCount": 1,
+  "retryCircuitBreakerOpenVisible": true,
+  "dbRetryTracesCount": 7,
+  "dbRetryEscalationsCount": 3,
+  "dbRetryCircuitBreakersCount": 1
+}

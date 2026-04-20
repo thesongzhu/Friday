@@ -1,0 +1,10 @@
+[
+  {
+    "id": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+    "status": "completed",
+    "provider_id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "model": "claude-sonnet-4-20250514",
+    "created_at": "2026-04-19T15:24:55.833Z",
+    "metadata_json": "{\"apiRequest\":{\"operationId\":\"agent.runs.start\",\"idempotencyKey\":\"issue-00158-agent-1776612295813\",\"payloadHash\":\"c4bf035f1bfcd005c9476fda080516caff0f13c11b28e3e7d14a200929f481c5\",\"receivedAt\":\"2026-04-19T15:24:55.829Z\",\"principalId\":\"admin-001\"}}"
+  }
+]

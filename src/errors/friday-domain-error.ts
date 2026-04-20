@@ -1,3 +1,5 @@
+import { mapFridayErrorToHttpStatus } from "./friday-error-codes.js";
+
 /**
  * Base class for all structured Friday domain errors.
  *
@@ -20,7 +22,7 @@ export class FridayDomainError extends Error {
     },
   ) {
     super(message, { cause: options?.cause });
-    this.httpStatus = options?.httpStatus ?? 500;
+    this.httpStatus = options?.httpStatus ?? mapFridayErrorToHttpStatus(code);
     this.retryable = options?.retryable ?? false;
     this.details = options?.details ?? {};
   }

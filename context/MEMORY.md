@@ -1,6 +1,6 @@
 # Stable Workspace Facts
 
-- Friday loads workspace context fresh on each agent run from `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, `memory/YYYY-MM-DD.md`, and exported memory items under `.friday/exports/memory/`.
+- Friday loads workspace context fresh on each agent run from `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, `memory/YYYY-MM-DD.md`, and prompt-safe exports under `.friday/exports/memory/` such as compaction summaries. Durable user facts and preferences stay behind explicit memory surfaces.
 - In this repository, `skills` are the main extensibility backbone.
 - `skill.manifest.json` is the structured source of truth for a skill package. `SKILL.md` is lightweight human/model guidance.
 - Repo-wide routing and behavior rules belong in `AGENTS.md`.

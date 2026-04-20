@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T12:34:02.010Z",
+  "baseUrl": "http://127.0.0.1:3241",
+  "providerKind": "openai",
+  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+  "auditName": "MemoryAuditName-1776602010672",
+  "teachRunId": "58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": null,
+  "learnedFactPresentAfterTeach": false,
+  "memoryListShowsLearnedFactAfterTeach": false,
+  "memorySearchShowsLearnedFactAfterTeach": false,
+  "naturalRecall": {
+    "runId": "30e610f0-a6c9-4347-ad07-e00bc1635576",
+    "status": "completed",
+    "responseText": "I don't have a specific name for you. Could you please let me know how you'd like to be addressed?",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "explicitRecall": {
+    "runId": "ca30ca84-87f8-4a19-8097-f409412dd75e",
+    "status": "failed",
+    "responseText": "Validation criteria not met",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[]",
+    "answeredExpectedName": false
+  },
+  "deleteByKeyStatus": 404,
+  "deletedFactKey": null,
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

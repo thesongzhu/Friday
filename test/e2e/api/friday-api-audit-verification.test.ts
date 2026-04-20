@@ -147,6 +147,68 @@ describe("API Audit Verification", () => {
         expect(res.status).toBe(404);
       }
     });
+
+    it("POST /v1/security/tokens/revoke revokes a real session access token by tokenId", async () => {
+      const { accessToken } = await loginTestUser(env.baseUrl);
+      const payloadB64 = accessToken.split(".")[0];
+      const claims = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8")) as {
+        tokenId: string;
+        sid?: string;
+      };
+
+      const beforeRevocation = env.db.writer.prepare(
+        "SELECT COUNT(*) as count FROM revoked_access_tokens WHERE token_id = ?",
+      ).get(claims.tokenId) as { count: number };
+      const trackedToken = env.db.writer.prepare(
+        "SELECT session_id, revoked_at FROM auth_access_tokens WHERE token_id = ?",
+      ).get(claims.tokenId) as { session_id: string; revoked_at: string | null } | undefined;
+
+      expect(beforeRevocation.count).toBe(0);
+      expect(trackedToken).toBeDefined();
+      expect(trackedToken?.session_id).toBe(claims.sid);
+      expect(trackedToken?.revoked_at).toBeNull();
+
+      const revokeRes = await fetch(`${env.baseUrl}/v1/security/tokens/revoke`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ tokenId: claims.tokenId }),
+      });
+      const revokeJson = (await revokeRes.json()) as {
+        ok: boolean;
+        data?: { revoked: boolean; tokenId: string };
+      };
+
+      expect(revokeRes.status).toBe(200);
+      expect(revokeJson.ok).toBe(true);
+      expect(revokeJson.data?.revoked).toBe(true);
+      expect(revokeJson.data?.tokenId).toBe(claims.tokenId);
+
+      const revokedRow = env.db.writer.prepare(
+        "SELECT token_id FROM revoked_access_tokens WHERE token_id = ?",
+      ).get(claims.tokenId) as { token_id: string } | undefined;
+      const trackedAfter = env.db.writer.prepare(
+        "SELECT revoked_at FROM auth_access_tokens WHERE token_id = ?",
+      ).get(claims.tokenId) as { revoked_at: string | null } | undefined;
+      const sessionAfter = env.db.writer.prepare(
+        "SELECT revoked_at FROM auth_sessions WHERE id = ?",
+      ).get(claims.sid) as { revoked_at: string | null } | undefined;
+
+      expect(revokedRow?.token_id).toBe(claims.tokenId);
+      expect(trackedAfter?.revoked_at).not.toBeNull();
+      expect(sessionAfter?.revoked_at).not.toBeNull();
+
+      const meRes = await fetch(`${env.baseUrl}/v1/auth/me`, {
+        headers: authHeaders(accessToken),
+      });
+      const meJson = (await meRes.json()) as {
+        ok: boolean;
+        error?: { code: string };
+      };
+
+      expect(meRes.status).toBe(401);
+      expect(meJson.ok).toBe(false);
+      expect(meJson.error?.code).toBe("TOKEN_REVOKED");
+    });
   });
 
   // ────────────────────────────────────────────────────────────────────────

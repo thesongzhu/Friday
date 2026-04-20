@@ -173,10 +173,79 @@ describe("createFridayObservabilityApiService", () => {
     const overview = await service.routes.overview.get();
     const traces = service.routes.traces.search({ module: "learning" });
     const audit = service.routes.audit.search({ module: "learning" });
+    const metrics = service.routes.metrics.getSnapshot();
 
     expect(overview.overview.audit.totalEntries).toBeGreaterThanOrEqual(1);
     expect(traces.items.some((trace) => trace.name.includes("agent-loop"))).toBe(true);
     expect(audit.items.some((entry) => entry.description.includes("Agent loop"))).toBe(true);
+    expect(metrics.metrics["friday.agent_loop.runs.total"]).toBe(1);
+  });
+
+  it("counts each loop run once even when multiple lifecycle events are recorded", async () => {
+    const service = createService();
+    const details = {
+      run: {
+        loopRunId: "loop-run-1",
+        userId: "user-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        fingerprint: "fp-1",
+        trigger: "incident_opened" as const,
+        status: "verified" as const,
+        riskTier: 0,
+        approvalRequired: false,
+        attemptNumber: 1,
+        expertModeEnabled: true,
+        riskClass: "safe_probe" as const,
+        requiresFinalApproval: false,
+        assumptions: [],
+        unknowns: [],
+        hypotheses: [],
+        probeSteps: [],
+        probeBudget: 4,
+        objective: "Verify deduped counting",
+        planSummary: "Observe started and completed events for one loop run",
+        verificationPassed: true,
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+      incident: null,
+      action: null,
+    };
+
+    await service.recordAgentLoopEvent({
+      event: "agent-loop.run.started",
+      run: {
+        loopRunId: "loop-run-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        status: "running",
+        attemptNumber: 1,
+        riskClass: "safe_probe",
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+      },
+      details,
+    });
+    await service.recordAgentLoopEvent({
+      event: "agent-loop.run.completed",
+      run: {
+        loopRunId: "loop-run-1",
+        incidentId: "incident-1",
+        actionId: "action-1",
+        status: "verified",
+        attemptNumber: 1,
+        riskClass: "safe_probe",
+        rollbackAttempted: false,
+        rollbackSucceeded: false,
+      },
+      details,
+    });
+
+    const metrics = service.routes.metrics.getSnapshot();
+    expect(metrics.metrics["friday.agent_loop.runs.total"]).toBe(1);
   });
 
   it("searches audit entries after multiple recorded events without mutating the frozen trail", async () => {

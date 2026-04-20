@@ -137,6 +137,26 @@ describe("FridayAutoFixActionRepository", () => {
     expect(filtered[0]!.incidentId).toBe("inc-001");
   });
 
+  it("findLatestByFingerprint returns the newest matching action", () => {
+    repo.insert(db.writer, baseAction);
+    insertIncident("inc-002");
+    repo.insert(db.writer, {
+      ...baseAction,
+      actionId: "action-002",
+      incidentId: "inc-002",
+      createdAt: "2025-06-15T11:00:00.000Z",
+      updatedAt: "2025-06-15T11:00:00.000Z",
+    });
+
+    const result = repo.findLatestByFingerprint(db.writer, {
+      userId: "test-user",
+      fingerprint: "sig-abc",
+      statuses: ["planned"],
+    });
+
+    expect(result?.actionId).toBe("action-002");
+  });
+
   it("markApplied transitions planned to applied", () => {
     repo.insert(db.writer, baseAction);
     const result = repo.markApplied(db.writer, "action-001", "success", NOW);

@@ -1,0 +1,20 @@
+{
+  "issueId": "ISSUE-00153",
+  "canonicalFixId": "ISSUE-00153",
+  "phase": "phase3c-agent-provider-family",
+  "status": "verified_targeted_tests",
+  "verifiedAt": "2026-04-19T19:27:06Z",
+  "evidenceType": "targeted_agent_runtime_abort_regression_test",
+  "summary": "The agent runtime now routes externally aborted in-flight LLM-stream failures through the cancelled terminal path instead of persisting failed, and targeted regression coverage proves the stored run status is cancelled with no persisted errorCode after API-style abort.",
+  "artifacts": [
+    "src/agent/runtime/friday-agent-runtime.ts",
+    "test/unit/agent/runtime/friday-agent-runtime.test.ts"
+  ],
+  "tests": [
+    {
+      "command": "npm exec vitest run test/unit/agent/runtime/friday-agent-runtime.test.ts -t \"persists cancelled status when the LLM stream aborts mid-run\"",
+      "status": "passed",
+      "details": "1 file passed, 118 tests passed, Type Errors: no errors"
+    }
+  ]
+}

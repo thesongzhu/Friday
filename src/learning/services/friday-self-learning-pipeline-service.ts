@@ -85,6 +85,31 @@ function computeIncidentSignature(
 export function createFridaySelfLearningPipelineService(
   deps: CreateSelfLearningPipelineServiceDeps,
 ): FridaySelfLearningPipelineService {
+  function shouldCreateAutoFixAction(
+    db: Parameters<FridayAutoFixActionRepository["insert"]>[0],
+    incident: FridayErrorIncidentEntity,
+    riskAssessment: {
+      requiresApproval: boolean;
+      autoApplyAllowed: boolean;
+    },
+  ): boolean {
+    if (!deps.actionRepo) {
+      return false;
+    }
+
+    const existingPlannedAction = deps.actionRepo.findLatestByFingerprint(db, {
+      userId: incident.userId,
+      fingerprint: incident.signature,
+      statuses: ["planned"],
+    });
+
+    if (existingPlannedAction) {
+      return false;
+    }
+
+    return riskAssessment.requiresApproval || riskAssessment.autoApplyAllowed;
+  }
+
   function processOne(
     event: FridayLearningEventAppendInput,
   ): FridaySelfLearningProcessResult {
@@ -116,27 +141,6 @@ export function createFridaySelfLearningPipelineService(
       nowIso,
     });
 
-    // 3b. Persist preference signals to memory for cross-session retrieval
-    if (deps.memoryWriter) {
-      const preferenceSignals = extractedSignals.filter(
-        (s) => s.kind === "preference" || s.kind === "correction",
-      );
-      for (const signal of preferenceSignals) {
-        const content = typeof signal.value === "string"
-          ? `${signal.key}: ${signal.value}`
-          : `${signal.key}: ${JSON.stringify(signal.value)}`;
-        // Fire-and-forget: must not block the synchronous pipeline
-        void deps.memoryWriter.store("learning.preferences", content, {
-          source: `learning:${event.userId}:${event.eventId}`,
-          key: `pref:${signal.key}`,
-          tags: ["learning", "auto", "preference", event.userId],
-          memoryType: "preference",
-          confidence: signal.confidence,
-          ttlSeconds: 30 * 24 * 60 * 60, // 30 days
-        }).catch(() => {/* non-fatal */});
-      }
-    }
-
     // 4. Classify/create incidents if error signals exist
     const errorSignals = extractedSignals.filter((s) => s.kind === "error");
     const incidentsCreated: FridayErrorIncidentEntity[] = [];
@@ -164,23 +168,43 @@ export function createFridaySelfLearningPipelineService(
           ) as FridayErrorIncidentEntity["severity"];
 
           // Create incident (auto-fix eligibility determined below)
-          const incident: FridayErrorIncidentEntity = {
-            incidentId: deps.idGenerator(),
-            userId: signal.userId,
-            runId: signalRunId,
-            nodeId: signalNodeId,
-            ts: signal.ts,
-            category: category as FridayErrorIncidentEntity["category"],
-            severity: derivedSeverity,
+          const refreshedIncident = deps.incidentRepo.findLatestOpenBySignature(
+            db,
+            signal.userId,
             signature,
-            context: signalValue,
-            autoFixEligible: false,
-            status: "open",
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          };
+          );
+          let incident: FridayErrorIncidentEntity;
+          if (refreshedIncident) {
+            incident = deps.incidentRepo.refreshOpenIncident(db, {
+              incidentId: refreshedIncident.incidentId,
+              runId: signalRunId,
+              nodeId: signalNodeId,
+              ts: signal.ts,
+              category: category as FridayErrorIncidentEntity["category"],
+              severity: derivedSeverity,
+              context: signalValue,
+              nowIso,
+            }) ?? refreshedIncident;
+          } else {
+            incident = {
+              incidentId: deps.idGenerator(),
+              userId: signal.userId,
+              runId: signalRunId,
+              nodeId: signalNodeId,
+              ts: signal.ts,
+              category: category as FridayErrorIncidentEntity["category"],
+              severity: derivedSeverity,
+              signature,
+              context: signalValue,
+              autoFixEligible: false,
+              status: "open",
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
 
-          deps.incidentRepo.insert(db, incident);
+            deps.incidentRepo.insert(db, incident);
+            incidentsCreated.push(incident);
+          }
 
           // Phase 7: Use diagnosis service if available
           if (deps.diagnosisService && deps.planService && deps.riskService && deps.actionRepo) {
@@ -222,41 +246,43 @@ export function createFridaySelfLearningPipelineService(
                 nowIso,
               });
 
-              const action: FridayAutoFixActionEntity = {
-                actionId: deps.idGenerator(),
-                incidentId: incident.incidentId,
-                userId: incident.userId,
-                riskTier: riskAssessment.riskTier,
-                plan: bestPlan,
-                rollbackPlan: bestPlan.rollbackPlan,
-                status: "planned",
-                outcome: null,
-                createdAt: nowIso,
-                updatedAt: nowIso,
-              };
-
-              deps.actionRepo.insert(db, action);
-
-              // Create approval request for Tier 2
-              if (riskAssessment.requiresApproval && deps.approvalRepo) {
-                const expiresAt = new Date(
-                  new Date(nowIso).getTime() + 24 * 60 * 60 * 1000,
-                ).toISOString();
-                const approvalRequest: FridayApprovalRequestEntity = {
-                  requestId: deps.idGenerator(),
-                  actionId: action.actionId,
-                  runId: incident.runId,
+              if (shouldCreateAutoFixAction(db, incident, riskAssessment)) {
+                const action: FridayAutoFixActionEntity = {
+                  actionId: deps.idGenerator(),
+                  incidentId: incident.incidentId,
                   userId: incident.userId,
-                  description: `Approval needed: ${bestPlan.title}`,
-                  riskTier: 2,
+                  riskTier: riskAssessment.riskTier,
                   plan: bestPlan,
-                  requestedAt: nowIso,
-                  expiresAt,
-                  status: "pending",
+                  rollbackPlan: bestPlan.rollbackPlan,
+                  status: "planned",
+                  outcome: null,
                   createdAt: nowIso,
                   updatedAt: nowIso,
                 };
-                deps.approvalRepo.insert(db, approvalRequest);
+
+                deps.actionRepo.insert(db, action);
+
+                // Create approval request for Tier 2
+                if (riskAssessment.requiresApproval && deps.approvalRepo) {
+                  const expiresAt = new Date(
+                    new Date(nowIso).getTime() + 24 * 60 * 60 * 1000,
+                  ).toISOString();
+                  const approvalRequest: FridayApprovalRequestEntity = {
+                    requestId: deps.idGenerator(),
+                    actionId: action.actionId,
+                    runId: incident.runId,
+                    userId: incident.userId,
+                    description: `Approval needed: ${bestPlan.title}`,
+                    riskTier: 2,
+                    plan: bestPlan,
+                    requestedAt: nowIso,
+                    expiresAt,
+                    status: "pending",
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                  };
+                  deps.approvalRepo.insert(db, approvalRequest);
+                }
               }
             }
 
@@ -295,8 +321,6 @@ export function createFridaySelfLearningPipelineService(
             });
             lessonsUpdated.push(lesson);
           }
-
-          incidentsCreated.push(incident);
         }
       });
     }

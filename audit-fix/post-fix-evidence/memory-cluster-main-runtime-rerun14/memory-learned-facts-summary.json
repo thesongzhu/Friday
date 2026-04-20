@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-04-19T13:01:21.895Z",
+  "baseUrl": "http://127.0.0.1:3241",
+  "providerKind": "openai",
+  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+  "auditName": "MemoryAuditName-1776603654745",
+  "teachRunId": "44b66a91-58b8-4ebb-9e60-e098e1a91578",
+  "teachRunStatus": "completed",
+  "learnedFactKeyAfterTeach": "pref:user_name",
+  "learnedFactPresentAfterTeach": true,
+  "memoryListShowsLearnedFactAfterTeach": true,
+  "memorySearchShowsLearnedFactAfterTeach": true,
+  "naturalRecall": {
+    "runId": "f3f3c8b0-addf-4803-94f7-3289d0d2e86b",
+    "status": "completed",
+    "responseText": "I don't currently have a specific name to address you. Can you please provide one?",
+    "usedMemorySearch": false,
+    "memorySearchSummary": null,
+    "answeredExpectedName": false
+  },
+  "explicitRecall": {
+    "runId": "73a4ec69-b8d7-4081-8796-9f3db3d0ccee",
+    "status": "completed",
+    "responseText": "MemoryAuditName-1776603654745",
+    "usedMemorySearch": true,
+    "memorySearchSummary": "[\n  {\n    \"content\": \"MemoryAuditName-1776603654745\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:user_name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\"",
+    "answeredExpectedName": true
+  },
+  "deleteByKeyStatus": 200,
+  "deletedFactKey": "pref:user_name",
+  "learnedFactPresentAfterDelete": false,
+  "memoryListShowsLearnedFactAfterDelete": false
+}

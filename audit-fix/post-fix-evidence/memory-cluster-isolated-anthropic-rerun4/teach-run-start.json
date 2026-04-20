@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Call me MemoryAuditName-1776600445743.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "456d48a0-4f53-455a-abb0-1d251e10100a",
+        "status": "completed",
+        "response": "好的，MemoryAuditName-1776600445743！我已经记录了您的姓名偏好。以后的对话中我会用这个名字称呼您。\n\n有什么我可以帮您的吗？",
+        "toolCallCount": 1,
+        "durationMs": 6291,
+        "usageInput": 490,
+        "usageOutput": 208,
+        "finalResponse": "好的，MemoryAuditName-1776600445743！我已经记录了您的姓名偏好。以后的对话中我会用这个名字称呼您。\n\n有什么我可以帮您的吗？",
+        "eventStreamAvailable": true
+      },
+      "requestId": "c566041b-2f26-4a19-8b9a-8405723bae30"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "456d48a0-4f53-455a-abb0-1d251e10100a",
+      "status": "completed",
+      "response": "好的，MemoryAuditName-1776600445743！我已经记录了您的姓名偏好。以后的对话中我会用这个名字称呼您。\n\n有什么我可以帮您的吗？",
+      "toolCallCount": 1,
+      "durationMs": 6291,
+      "usageInput": 490,
+      "usageOutput": 208,
+      "finalResponse": "好的，MemoryAuditName-1776600445743！我已经记录了您的姓名偏好。以后的对话中我会用这个名字称呼您。\n\n有什么我可以帮您的吗？",
+      "eventStreamAvailable": true
+    },
+    "requestId": "c566041b-2f26-4a19-8b9a-8405723bae30"
+  }
+}

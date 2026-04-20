@@ -1,0 +1,480 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3242/v1/agent/runs/4f6b03e4-2a63-4628-8e37-d681ff71fc15/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:19:11.025Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "task": "Call me MemoryAuditName-1776601150975.",
+              "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T12:19:14.842Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "actualModel": "claude-sonnet-4-20250514",
+              "actualProviderKind": "anthropic",
+              "actualProviderApi": "anthropic-messages",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                    "providerKind": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 15,
+                    "baseRankScore": 1,
+                    "historyScore": 5.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 6.25,
+                    "historyStats": {
+                      "sampleCount": 15,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T12:19:14.844Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "toolName": "memory_store",
+              "toolCallId": "toolu_01Vpy9jkNekJ1tTpcZLDN5Gj",
+              "params": {
+                "content": "用户希望被称为 \"MemoryAuditName-1776601150975\"",
+                "tags": [
+                  "user_preference",
+                  "name"
+                ]
+              }
+            }
+          },
+          {
+            "seq": 13,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T12:19:14.845Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "toolName": "memory_store",
+              "toolCallId": "toolu_01Vpy9jkNekJ1tTpcZLDN5Gj",
+              "durationMs": 0,
+              "isError": false,
+              "summary": "{\n  \"itemId\": \"1c8e42a6-c370-4bc8-84a8-381398755bbf\",\n  \"stored\": true\n}",
+              "routeId": "agent.execute.tool",
+              "correlationId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "toolCallSummary": {
+                "toolName": "memory_store",
+                "argKeys": [
+                  "content",
+                  "tags"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 72,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 19,
+            "type": "agent.run.route_selected",
+            "timestamp": "2026-04-19T12:19:17.415Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "taskProfileId": "default",
+              "modelSelectionSource": "route_default",
+              "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+              "actualModel": "claude-sonnet-4-20250514",
+              "actualProviderKind": "anthropic",
+              "actualProviderApi": "anthropic-messages",
+              "backendKind": "http",
+              "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+              "learningAdjusted": false,
+              "routeDecisionTrace": {
+                "taskProfileId": "default",
+                "requiresNativeTools": true,
+                "learningAdjusted": false,
+                "learningSignalsPresent": true,
+                "orderingAdjusted": false,
+                "selectedAdjusted": false,
+                "reasonCode": "historical_bias",
+                "reasonText": "Historical route outcomes influenced candidate scoring.",
+                "historyWindow": {
+                  "sampleLimit": 250
+                },
+                "selectedBeforeLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "selectedAfterLearning": {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http"
+                },
+                "candidateScores": [
+                  {
+                    "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                    "providerKind": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "backendKind": "http",
+                    "originalRank": 1,
+                    "finalRank": 1,
+                    "selected": true,
+                    "eligible": true,
+                    "ineligibilityReasons": [],
+                    "pinned": false,
+                    "historicalSuccessRate": 1,
+                    "historicalFailureRate": 0,
+                    "sampleCount": 15,
+                    "baseRankScore": 1,
+                    "historyScore": 5.25,
+                    "patternScore": 0,
+                    "lessonScore": 0,
+                    "routePenaltyScore": 0,
+                    "pinBonus": 0,
+                    "finalScore": 6.25,
+                    "historyStats": {
+                      "sampleCount": 15,
+                      "successRate": 1,
+                      "failureRate": 0
+                    },
+                    "matchedLessonIds": [],
+                    "matchedPatternIds": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seq": 22,
+            "type": "agent.run.completed",
+            "timestamp": "2026-04-19T12:19:17.419Z",
+            "payload": {
+              "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+              "durationMs": 6402,
+              "toolCallCount": 1,
+              "testsPassed": true,
+              "artifacts": [
+                {
+                  "type": "run_record",
+                  "path": ".friday/agent-runs/4f6b03e4-2a63-4628-8e37-d681ff71fc15/run.json"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "requestId": "ac5c2858-9c07-44ba-a0d0-9ca49fca4681"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:19:11.025Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "task": "Call me MemoryAuditName-1776601150975.",
+            "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T12:19:14.842Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 15,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 15,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T12:19:14.844Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "toolName": "memory_store",
+            "toolCallId": "toolu_01Vpy9jkNekJ1tTpcZLDN5Gj",
+            "params": {
+              "content": "用户希望被称为 \"MemoryAuditName-1776601150975\"",
+              "tags": [
+                "user_preference",
+                "name"
+              ]
+            }
+          }
+        },
+        {
+          "seq": 13,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T12:19:14.845Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "toolName": "memory_store",
+            "toolCallId": "toolu_01Vpy9jkNekJ1tTpcZLDN5Gj",
+            "durationMs": 0,
+            "isError": false,
+            "summary": "{\n  \"itemId\": \"1c8e42a6-c370-4bc8-84a8-381398755bbf\",\n  \"stored\": true\n}",
+            "routeId": "agent.execute.tool",
+            "correlationId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "toolCallSummary": {
+              "toolName": "memory_store",
+              "argKeys": [
+                "content",
+                "tags"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 72,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 19,
+          "type": "agent.run.route_selected",
+          "timestamp": "2026-04-19T12:19:17.415Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "requestedProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+            "actualModel": "claude-sonnet-4-20250514",
+            "actualProviderKind": "anthropic",
+            "actualProviderApi": "anthropic-messages",
+            "backendKind": "http",
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "learningAdjusted": false,
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                "providerKind": "anthropic",
+                "model": "claude-sonnet-4-20250514",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+                  "providerKind": "anthropic",
+                  "model": "claude-sonnet-4-20250514",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 15,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 15,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "seq": 22,
+          "type": "agent.run.completed",
+          "timestamp": "2026-04-19T12:19:17.419Z",
+          "payload": {
+            "runId": "4f6b03e4-2a63-4628-8e37-d681ff71fc15",
+            "durationMs": 6402,
+            "toolCallCount": 1,
+            "testsPassed": true,
+            "artifacts": [
+              {
+                "type": "run_record",
+                "path": ".friday/agent-runs/4f6b03e4-2a63-4628-8e37-d681ff71fc15/run.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "requestId": "ac5c2858-9c07-44ba-a0d0-9ca49fca4681"
+  }
+}

@@ -73,6 +73,15 @@ describe("classifyFridayExecution", () => {
       expect(result.handler).toBe("capabilities");
     });
 
+    it("does not treat blocked-or-disabled tool instructions as capability queries", () => {
+      const result = classifyFridayExecution({
+        task: 'Use the skill_run tool on skillId "system-health-snapshot" with input {}. Do not summarize the system manually. If the tool is blocked or disabled, report the exact blocker and stop.',
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
     it("does not treat plain deployment facts as capability queries", () => {
       const result = classifyFridayExecution({
         task: "Turn 3 fact: the deployment region is us-west-2.",

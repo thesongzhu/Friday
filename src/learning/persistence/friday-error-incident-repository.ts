@@ -35,6 +35,26 @@ export interface FridayErrorIncidentRepository {
     limit?: number,
   ): FridayErrorIncidentEntity[];
 
+  findLatestOpenBySignature(
+    db: Database.Database,
+    userId: string,
+    signature: string,
+  ): FridayErrorIncidentEntity | null;
+
+  refreshOpenIncident(
+    db: Database.Database,
+    input: {
+      incidentId: string;
+      runId?: string;
+      nodeId?: string;
+      ts: string;
+      category: FridayErrorIncidentEntity["category"];
+      severity: FridayErrorIncidentEntity["severity"];
+      context: JsonObject;
+      nowIso: string;
+    },
+  ): FridayErrorIncidentEntity | null;
+
   setAutoFixEligibility(
     db: Database.Database,
     incidentId: string,
@@ -139,6 +159,45 @@ export function createFridayErrorIncidentRepository(): FridayErrorIncidentReposi
         )
         .all(userId, signature, limit) as FridayErrorIncidentRow[];
       return rows.map(rowToEntity);
+    },
+
+    findLatestOpenBySignature(db, userId, signature) {
+      const row = db
+        .prepare(
+          `SELECT * FROM error_incidents
+           WHERE user_id = ? AND signature = ? AND status = 'open'
+           ORDER BY ts DESC
+           LIMIT 1`,
+        )
+        .get(userId, signature) as FridayErrorIncidentRow | undefined;
+      return row ? rowToEntity(row) : null;
+    },
+
+    refreshOpenIncident(db, input) {
+      const changes = db
+        .prepare(
+          `UPDATE error_incidents
+           SET run_id = COALESCE(?, run_id),
+               node_id = COALESCE(?, node_id),
+               ts = ?,
+               category = ?,
+               severity = ?,
+               context_json = ?,
+               updated_at = ?
+           WHERE incident_id = ? AND status = 'open'`,
+        )
+        .run(
+          input.runId ?? null,
+          input.nodeId ?? null,
+          input.ts,
+          input.category,
+          input.severity,
+          JSON.stringify(input.context),
+          input.nowIso,
+          input.incidentId,
+        ).changes;
+      if (changes === 0) return null;
+      return this.getById(db, input.incidentId);
     },
 
     setAutoFixEligibility(db, incidentId, eligible, nowIso) {

@@ -1,4 +1,5 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 
 export interface FridayMcpServerToolDescriptor {
   name: string;
@@ -173,8 +174,19 @@ function extractErrorCorrelationId(error: unknown): string | undefined {
 }
 
 export function createFridayMcpServerRoutes(
-  deps: FridayMcpServerRoutesDeps,
+  deps?: FridayMcpServerRoutesDeps,
 ): Route[] {
+  function requireEnabled(): FridayMcpServerRoutesDeps {
+    if (!deps) {
+      throwFridayCapabilityDisabled({
+        capability: "mcp_server",
+        surface: "/v1/mcp",
+        message: "MCP server surface is disabled in this runtime",
+      });
+    }
+    return deps;
+  }
+
   return [
     {
       operationId: "mcp.server.rpc",
@@ -182,6 +194,7 @@ export function createFridayMcpServerRoutes(
       path: "/v1/mcp",
       auth: { public: false, anyOfScopes: ["agent.run"] },
       handler: async (ctx) => {
+        const services = requireEnabled();
         const request = asRecord(ctx.body);
         const id = asId(request.id);
         const method = typeof request.method === "string" ? request.method : "";
@@ -214,16 +227,16 @@ export function createFridayMcpServerRoutes(
                 body: makeJsonRpcResult(id, {
                   protocolVersion: MCP_PROTOCOL_VERSION,
                   serverInfo: {
-                    name: deps.serverInfo?.name ?? "friday",
-                    version: deps.serverInfo?.version ?? "1.0.0",
+                    name: services.serverInfo?.name ?? "friday",
+                    version: services.serverInfo?.version ?? "1.0.0",
                   },
                   capabilities: {
                     tools: { listChanged: false },
                     resources: { listChanged: false },
                     prompts: { listChanged: false },
                   },
-                  ...(deps.serverInfo?.instructions
-                    ? { instructions: deps.serverInfo.instructions }
+                  ...(services.serverInfo?.instructions
+                    ? { instructions: services.serverInfo.instructions }
                     : {}),
                 }),
               };
@@ -235,7 +248,7 @@ export function createFridayMcpServerRoutes(
               };
             }
             case "tools/list": {
-              const tools = await deps.listTools();
+              const tools = await services.listTools();
               return {
                 status: 200,
                 body: makeJsonRpcResult(id, {
@@ -270,7 +283,7 @@ export function createFridayMcpServerRoutes(
                 ? rawArgs as Record<string, unknown>
                 : {};
 
-              const toolResult = await deps.callTool({
+              const toolResult = await services.callTool({
                 name,
                 args,
                 routeId,
@@ -299,8 +312,8 @@ export function createFridayMcpServerRoutes(
               };
             }
             case "resources/list": {
-              const resources = deps.listResources
-                ? await deps.listResources({
+              const resources = services.listResources
+                ? await services.listResources({
                     routeId,
                     correlationId,
                     requestId: ctx.requestId,
@@ -312,7 +325,7 @@ export function createFridayMcpServerRoutes(
               };
             }
             case "resources/read": {
-              if (!deps.readResource) {
+              if (!services.readResource) {
                 return {
                   status: 200,
                   body: makeJsonRpcError(id, -32601, "Method not found"),
@@ -335,7 +348,7 @@ export function createFridayMcpServerRoutes(
                   ),
                 };
               }
-              const result = await deps.readResource({
+              const result = await services.readResource({
                 uri,
                 routeId,
                 correlationId,
@@ -349,8 +362,8 @@ export function createFridayMcpServerRoutes(
               };
             }
             case "prompts/list": {
-              const prompts = deps.listPrompts
-                ? await deps.listPrompts({
+              const prompts = services.listPrompts
+                ? await services.listPrompts({
                     routeId,
                     correlationId,
                     requestId: ctx.requestId,
@@ -362,7 +375,7 @@ export function createFridayMcpServerRoutes(
               };
             }
             case "prompts/get": {
-              if (!deps.getPrompt) {
+              if (!services.getPrompt) {
                 return {
                   status: 200,
                   body: makeJsonRpcError(id, -32601, "Method not found"),
@@ -389,7 +402,7 @@ export function createFridayMcpServerRoutes(
               const args = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)
                 ? rawArgs as Record<string, unknown>
                 : {};
-              const prompt = await deps.getPrompt({
+              const prompt = await services.getPrompt({
                 name,
                 args,
                 routeId,

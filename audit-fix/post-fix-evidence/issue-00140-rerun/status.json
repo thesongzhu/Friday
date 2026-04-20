@@ -1,0 +1,36 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "version": "1.0.0",
+      "uptime": 471,
+      "activeSessions": 3,
+      "runningJobs": 0,
+      "connectedSatellites": 0
+    },
+    "requestId": "c9a3cffe-f438-4713-8c9c-9a2906080a79"
+  },
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/status",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "version": "1.0.0",
+        "uptime": 471,
+        "activeSessions": 3,
+        "runningJobs": 0,
+        "connectedSatellites": 0
+      },
+      "requestId": "c9a3cffe-f438-4713-8c9c-9a2906080a79"
+    }
+  }
+}

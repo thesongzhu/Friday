@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "What should you call me? Reply with only the name.",
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "88db021e-ff31-4dbc-9365-aad9558bd359",
+        "status": "failed",
+        "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "toolCallCount": 0,
+        "durationMs": 5,
+        "usageInput": 0,
+        "usageOutput": 0,
+        "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "f3cff3a3-3121-48d4-af3f-49b53a10a064"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "88db021e-ff31-4dbc-9365-aad9558bd359",
+      "status": "failed",
+      "response": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+      "toolCallCount": 0,
+      "durationMs": 5,
+      "usageInput": 0,
+      "usageOutput": 0,
+      "finalResponse": "I'm experiencing a temporary connection issue with my AI service. Please try again in a moment, or let me know how you'd like to proceed.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "f3cff3a3-3121-48d4-af3f-49b53a10a064"
+  }
+}

@@ -17,7 +17,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createTestDb, createTestIdGenerator } from "../helpers/friday-test-db.helper.js";
 import type { FridaySqliteLayer } from "#state";
-import { createFridayWorkflowRuntime } from "#workflows";
+import {
+  createFridayWorkflowRuntime,
+  type FridayCompiledWorkflowGraphV2,
+} from "#workflows";
 import { createFridayMemoryFileSyncService, createFridayMemoryFileSyncRepository } from "#memory";
 import { createFridayJobSchedulerService } from "../../src/jobs/scheduler/friday-job-scheduler-service.js";
 import { createFridayJobSchedulerRepository } from "../../src/jobs/scheduler/friday-job-scheduler-repository.js";
@@ -27,6 +30,35 @@ import { createFridaySessionService } from "../../src/sessions/services/friday-s
 
 describe("TEST-27: Workflow Run Double-Submit Race", () => {
   let db: FridaySqliteLayer;
+
+  function makeWorkflowGraph(
+    workflowId: string,
+    versionId = "placeholder",
+  ): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: versionId,
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "action-1",
+            type: "action",
+            label: "Action 1",
+            config: { skillId: "noop" },
+          },
+        ],
+        edges: [
+          { id: "edge-1", sourceNodeId: "trigger", targetNodeId: "action-1" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+  }
 
   beforeEach(() => {
     db = createTestDb();
@@ -58,10 +90,7 @@ describe("TEST-27: Workflow Run Double-Submit Race", () => {
       description: "Test workflow for concurrency",
     });
 
-    runtime.crud.createVersion(workflow.id, {
-      version: 2,
-      graph: { nodes: [], edges: [] },
-    });
+    runtime.crud.createVersion(workflow.id, makeWorkflowGraph(workflow.id));
 
     runtime.crud.publishVersion(workflow.id);
 

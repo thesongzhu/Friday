@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-04-19T13:49:56.123Z",
+  "missingBundleStatus": 404,
+  "missingBundleErrorCode": "RULES_BUNDLE_NOT_FOUND",
+  "missingBundleBlocked": true,
+  "validBundleId": "f968facb-a530-408f-b3f3-b9db2c8696b9",
+  "validEvaluateStatus": 200,
+  "validDecision": "allow",
+  "evaluationLogBefore": 95,
+  "evaluationLogAfter": 96,
+  "missingCallDidNotSilentlyAllow": true
+}

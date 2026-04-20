@@ -38,6 +38,18 @@ import {
   type FridayRuleRow,
 } from "#rules";
 import type {
+  FridayFailureCategory,
+  FridayRetryCircuitBreakerRecord,
+  FridayRetryEscalationTarget,
+  FridayRetryPolicy,
+  FridayRetryPolicyRow,
+} from "../../retry/model/friday-retry-engine.types.js";
+import { createFridayRetryRepository } from "../../retry/persistence/friday-retry-repository.js";
+import {
+  buildDefaultRetryPolicy,
+  DEFAULT_UNIFIED_RETRY_POLICY_ID,
+} from "../../retry/engine/friday-default-retry-policy.js";
+import type {
   JsonObject,
 } from "../model/friday-workflow.types.js";
 import type { FridayCompiledWorkflowGraphV2 } from "../model/friday-workflow-graph.types.js";
@@ -106,6 +118,8 @@ const ACCEPTANCE_ARTIFACT_TYPES: readonly FridayAcceptanceArtifactType[] = [
   "audio",
   "video",
 ] as const;
+const ZERO_RETRY_COST = { tokens: 0, apiCalls: 0, computeMs: 0 } as const;
+const DEFAULT_UNIFIED_RETRY_POLICY_ETAG = `${DEFAULT_UNIFIED_RETRY_POLICY_ID}-v1`;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -115,6 +129,57 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function isRetryCategoryRetryable(category: FridayFailureCategory): boolean {
+  return category === "timeout" || category === "transient" || category === "rate_limit";
+}
+
+function toRetryFailureSeverity(category: FridayFailureCategory): "critical" | "major" | "minor" | "info" {
+  switch (category) {
+    case "auth":
+    case "rate_limit":
+      return "critical";
+    case "timeout":
+    case "transient":
+    case "resource":
+    case "logic":
+      return "major";
+    case "unknown":
+      return "minor";
+  }
+}
+
+function toRetryEscalationTarget(category: FridayFailureCategory): FridayRetryEscalationTarget {
+  switch (category) {
+    case "logic":
+    case "transient":
+    case "unknown":
+      return "developer";
+    default:
+      return "operator";
+  }
+}
+
+function toWorkflowRetryTraceStatus(decision: {
+  shouldRetry: boolean;
+  budgetExhausted: boolean;
+  escalateToDlq: boolean;
+}): "in_progress" | "budget_exceeded" | "escalated" | "exhausted" {
+  if (decision.shouldRetry) {
+    return "in_progress";
+  }
+  if (decision.budgetExhausted) {
+    return "budget_exceeded";
+  }
+  if (decision.escalateToDlq) {
+    return "escalated";
+  }
+  return "exhausted";
+}
+
+function buildRetryTargetId(workflowId: string, nodeId: string): string {
+  return `${workflowId}:${nodeId}`;
 }
 
 function toEvidenceModule(value: string): FridayWorkflowEvidenceModule | null {
@@ -389,6 +454,7 @@ export function createFridayWorkflowRuntime(
   const nodeRepo = createFridayWorkflowRunNodeRepository();
   const artifactRepo = createFridayWorkflowArtifactRepository();
   const evidenceRepo = createFridayWorkflowEvidenceRepository();
+  const retryRepository = createFridayRetryRepository();
   const resolvedDbPath = typeof deps.db.dbPath === "string" && deps.db.dbPath.length > 0
     ? deps.db.dbPath
     : ":memory:";
@@ -427,6 +493,98 @@ export function createFridayWorkflowRuntime(
         markEvidenceUnavailable();
       }
     }
+  };
+  let publicRetryPersistenceAvailable = true;
+  let publicRetryDisabledAt = 0;
+  const PUBLIC_RETRY_RETRY_INTERVAL_MS = 60_000;
+  const isPublicRetryAvailable = (): boolean => {
+    if (publicRetryPersistenceAvailable) return true;
+    if (Date.now() - publicRetryDisabledAt >= PUBLIC_RETRY_RETRY_INTERVAL_MS) {
+      publicRetryPersistenceAvailable = true;
+      return true;
+    }
+    return false;
+  };
+  const markPublicRetryUnavailable = (): void => {
+    publicRetryPersistenceAvailable = false;
+    publicRetryDisabledAt = Date.now();
+  };
+  const persistPublicRetrySafely = (write: () => void): void => {
+    if (!isPublicRetryAvailable()) {
+      return;
+    }
+    try {
+      write();
+    } catch (error) {
+      if (shouldDisableEvidencePersistence(error)) {
+        markPublicRetryUnavailable();
+      }
+    }
+  };
+  const ensureDefaultPublicRetryPolicy = (db: Parameters<FridaySqliteLayer["withWriteTransaction"]>[0] extends (db: infer T) => unknown ? T : never): FridayRetryPolicy => {
+    const existing = retryRepository.getPolicyById(db, DEFAULT_UNIFIED_RETRY_POLICY_ID);
+    if (existing) {
+      return existing;
+    }
+    const policy = buildDefaultRetryPolicy(deps.nowIso(), DEFAULT_UNIFIED_RETRY_POLICY_ETAG);
+    const row: FridayRetryPolicyRow = {
+      id: policy.id,
+      name: policy.name,
+      description: policy.description ?? null,
+      version: policy.version,
+      priority: policy.priority,
+      enabled: policy.enabled ? 1 : 0,
+      tags_json: JSON.stringify(policy.tags),
+      cost_budget_json: JSON.stringify(policy.costBudget),
+      strategies_json: JSON.stringify(policy.strategies),
+      etag: policy.etag,
+      created_at: policy.createdAt,
+      updated_at: policy.updatedAt,
+      deleted_at: null,
+    };
+    retryRepository.insertPolicy(db, row);
+    retryRepository.insertPolicyVersion(db, {
+      id: deps.idGenerator(),
+      policy_id: row.id,
+      version: row.version,
+      snapshot_json: JSON.stringify(policy),
+      changed_by: "workflow-runtime",
+      change_note: "Provisioned unified workflow retry policy",
+      created_at: row.created_at,
+    });
+    return policy;
+  };
+  let unifiedRetryBridge: ReturnType<typeof createWorkflowUnifiedRetryBridge>;
+  const upsertWorkflowRetryCircuitBreaker = (
+    db: Parameters<FridaySqliteLayer["withWriteTransaction"]>[0] extends (db: infer T) => unknown ? T : never,
+    input: {
+      workflowId: string;
+      nodeId: string;
+      updatedAt: string;
+      openedAt?: string;
+    },
+  ): void => {
+    const targetId = buildRetryTargetId(input.workflowId, input.nodeId);
+    const existing = retryRepository.listCircuitBreakers(db).find((item) => item.targetId === targetId) ?? null;
+    const state = unifiedRetryBridge.isCircuitOpen(input.nodeId) ? "open" : "closed";
+    const tripCount = state === "open"
+      ? existing?.state === "open"
+        ? existing.tripCount
+        : (existing?.tripCount ?? 0) + 1
+      : existing?.tripCount ?? 0;
+    retryRepository.upsertCircuitBreaker(db, {
+      target_id: targetId,
+      state,
+      consecutive_failures: unifiedRetryBridge.getConsecutiveFailures(input.nodeId),
+      failure_threshold: pipelineRetryConfig.circuitBreakerThreshold,
+      last_opened_at: state === "open"
+        ? existing?.state === "open"
+          ? existing.lastOpenedAt ?? input.openedAt ?? input.updatedAt
+          : input.openedAt ?? input.updatedAt
+        : null,
+      trip_count: tripCount,
+      updated_at: input.updatedAt,
+    });
   };
   const readEvidenceSafely = <T>(read: () => T, fallback: T): T => {
     if (!isEvidenceAvailable()) {
@@ -740,7 +898,7 @@ export function createFridayWorkflowRuntime(
     nowIso: deps.nowIso,
   });
 
-  const unifiedRetryBridge = createWorkflowUnifiedRetryBridge({
+  unifiedRetryBridge = createWorkflowUnifiedRetryBridge({
     maxAttempts: pipelineRetryConfig.maxAttempts,
     baseDelayMs: pipelineRetryConfig.baseDelayMs,
     retryBudgetMax: pipelineRetryConfig.retryBudgetMax,
@@ -759,6 +917,127 @@ export function createFridayWorkflowRuntime(
             decision_json: JSON.stringify(trace.decision),
             timestamp: trace.timestamp,
           });
+        });
+      });
+      persistPublicRetrySafely(() => {
+        deps.db.withWriteTransaction((db) => {
+          const run = runRepo.getRunById(db, trace.runId);
+          if (!run) {
+            return;
+          }
+          const policy = ensureDefaultPublicRetryPolicy(db);
+          const traceId = deps.idGenerator();
+          const status = toWorkflowRetryTraceStatus(trace.decision);
+          const escalationTarget = toRetryEscalationTarget(trace.category);
+          const decisionRecord = {
+            shouldRetry: trace.decision.shouldRetry,
+            nextAttemptNumber: trace.decision.shouldRetry ? trace.attempt + 1 : trace.attempt,
+            delayMs: trace.decision.delayMs,
+            reason: trace.decision.reason,
+            failureCategory: trace.category,
+            strategyType: trace.decision.shouldRetry ? "exponential" : "none",
+            rulesOverride: false,
+            budgetConstrained: trace.decision.budgetExhausted,
+            escalate: trace.decision.escalateToDlq,
+            escalationChannel: trace.decision.escalateToDlq ? escalationTarget : undefined,
+            idempotencyKey: `workflow:${trace.runId}:${trace.nodeId}:${trace.attempt}`,
+            decidedAt: trace.timestamp,
+          };
+          const classifiedFailure = {
+            classificationId: deps.idGenerator(),
+            category: trace.category,
+            severity: toRetryFailureSeverity(trace.category),
+            classificationSource: trace.errorMessage ? "error_message" : "error_code",
+            confidence: trace.errorMessage ? 95 : 85,
+            originalErrorCode: trace.errorCode,
+            originalErrorMessage: trace.errorMessage,
+            retryable: isRetryCategoryRetryable(trace.category),
+            classifiedAt: trace.timestamp,
+            metadata: {
+              source: "workflow_runtime",
+              bridge: "unified_retry_bridge",
+            },
+          };
+          retryRepository.insertTrace(db, {
+            id: traceId,
+            run_id: trace.runId,
+            workflow_id: run.workflowId,
+            node_id: trace.nodeId,
+            status,
+            policy_id: policy.id,
+            original_failure_category: trace.category,
+            original_error_code: trace.errorCode,
+            original_error_message: trace.errorMessage ?? null,
+            attempts_json: "[]",
+            total_attempts: trace.attempt,
+            cost_summary_json: JSON.stringify({ budget: policy.costBudget }),
+            duration_ms: 0,
+            first_failure_at: trace.timestamp,
+            resolved_at: trace.decision.shouldRetry ? null : trace.timestamp,
+            created_at: trace.timestamp,
+            updated_at: trace.timestamp,
+          });
+          retryRepository.insertAttempt(db, {
+            id: deps.idGenerator(),
+            trace_id: traceId,
+            attempt_number: trace.attempt,
+            classified_failure_json: JSON.stringify(classifiedFailure),
+            decision_json: JSON.stringify(decisionRecord),
+            delay_ms: trace.decision.delayMs,
+            execution_id: null,
+            outcome: trace.decision.shouldRetry ? "failure" : status,
+            cost_record_json: JSON.stringify(ZERO_RETRY_COST),
+            rules_result_json: null,
+            error_code: trace.errorCode,
+            error_message: trace.errorMessage ?? null,
+            started_at: trace.timestamp,
+            completed_at: trace.timestamp,
+            metadata_json: JSON.stringify({
+              source: "workflow_runtime",
+              workflowId: run.workflowId,
+            }),
+          });
+          retryRepository.insertCostRecord(db, {
+            id: deps.idGenerator(),
+            trace_id: traceId,
+            attempt_number: trace.attempt,
+            run_id: trace.runId,
+            node_id: trace.nodeId,
+            cost_tokens: 0,
+            cost_api_calls: 0,
+            cost_compute_ms: 0,
+            cumulative_tokens: 0,
+            cumulative_api_calls: 0,
+            cumulative_compute_ms: 0,
+            per_attempt_budget_exceeded: 0,
+            total_budget_exceeded: trace.decision.budgetExhausted ? 1 : 0,
+            recorded_at: trace.timestamp,
+          });
+          if (trace.decision.escalateToDlq) {
+            retryRepository.insertEscalation(db, {
+              id: deps.idGenerator(),
+              trace_id: traceId,
+              target: escalationTarget,
+              channel: escalationTarget,
+              reason: trace.decision.reason,
+              failure_category: trace.category,
+              attempt_count: trace.attempt,
+              total_cost_tokens: 0,
+              total_cost_api_calls: 0,
+              total_cost_compute_ms: 0,
+              acknowledged: 0,
+              escalated_at: trace.timestamp,
+              acknowledged_at: null,
+            });
+          }
+          if (trace.decision.circuitOpen) {
+            upsertWorkflowRetryCircuitBreaker(db, {
+              workflowId: run.workflowId,
+              nodeId: trace.nodeId,
+              updatedAt: trace.timestamp,
+              openedAt: trace.timestamp,
+            });
+          }
         });
       });
     },
@@ -1003,6 +1282,7 @@ export function createFridayWorkflowRuntime(
         nodeId: input.nodeId,
         attempt: input.attempt,
         errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
       });
       const correlation = {
         runId: input.runId,
@@ -1067,6 +1347,22 @@ export function createFridayWorkflowRuntime(
           ? "transient"
           : classifyWorkflowError(input.errorCode ?? "NODE_EXECUTION_FAILED"),
         success: input.status === "completed",
+      });
+      if (input.status !== "failed") {
+        return;
+      }
+      persistPublicRetrySafely(() => {
+        deps.db.withWriteTransaction((db) => {
+          const run = runRepo.getRunById(db, input.runId);
+          if (!run) {
+            return;
+          }
+          upsertWorkflowRetryCircuitBreaker(db, {
+            workflowId: run.workflowId,
+            nodeId: input.nodeId,
+            updatedAt: deps.nowIso(),
+          });
+        });
       });
     } : undefined,
     onRunCompleted: async (input) => {

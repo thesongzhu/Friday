@@ -1,0 +1,60 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "expertMode": {
+        "enabled": true,
+        "activeForCurrentRuntime": true,
+        "allowedUserIds": [],
+        "allowedWorkspaceIds": [],
+        "allowedEnvironments": [],
+        "contextInferenceAllowed": true,
+        "multiStepHypothesisSearchAllowed": true,
+        "safeProbeExecutionAllowed": true,
+        "crossSurfaceOrchestrationAllowed": true,
+        "highRiskFinalApprovalRequired": true,
+        "productionDestructiveActionApprovalRequired": true,
+        "probeBudget": 6,
+        "timeBudgetMinutes": 25
+      }
+    },
+    "requestId": "57359b8d-8a02-482e-bb42-fd9c95c03a0f"
+  },
+  "request": {
+    "method": "PUT",
+    "url": "http://127.0.0.1:3241/v1/agent-loop/expert-mode",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "enabled": true,
+      "probeBudget": 6,
+      "timeBudgetMinutes": 25
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "expertMode": {
+          "enabled": true,
+          "activeForCurrentRuntime": true,
+          "allowedUserIds": [],
+          "allowedWorkspaceIds": [],
+          "allowedEnvironments": [],
+          "contextInferenceAllowed": true,
+          "multiStepHypothesisSearchAllowed": true,
+          "safeProbeExecutionAllowed": true,
+          "crossSurfaceOrchestrationAllowed": true,
+          "highRiskFinalApprovalRequired": true,
+          "productionDestructiveActionApprovalRequired": true,
+          "probeBudget": 6,
+          "timeBudgetMinutes": 25
+        }
+      },
+      "requestId": "57359b8d-8a02-482e-bb42-fd9c95c03a0f"
+    }
+  }
+}

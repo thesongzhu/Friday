@@ -1,0 +1,64 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "approval": {
+        "id": "ca587ec5-41d6-46d8-b998-c1046c631557",
+        "workflowId": "0dc2519c-8840-4262-a473-bda805a0bd6d",
+        "workflowVersionId": "c3d76558-5319-4247-b713-db8dffd6a7fb",
+        "runId": "5373d599-6417-49df-a9ea-5cb07cf70056",
+        "runNodeAttemptId": "4d28f880-d38c-4568-b3bc-788f966a581f",
+        "nodeId": "approval1",
+        "approverRole": "admin",
+        "status": "approved",
+        "requestPayload": {},
+        "timeoutAt": "2026-04-19T10:16:31.705Z",
+        "decidedAt": "2026-04-19T09:16:31.708Z",
+        "decidedByUserId": "admin-001",
+        "decisionComment": "approve for blocker-group1 rerun validation",
+        "createdAt": "2026-04-19T09:16:31.705Z",
+        "updatedAt": "2026-04-19T09:16:31.708Z"
+      },
+      "resumed": true
+    },
+    "requestId": "0c8e3039-9a7c-43b7-876f-41c4a57df886"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflow-approvals/ca587ec5-41d6-46d8-b998-c1046c631557/approve",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "comment": "approve for blocker-group1 rerun validation"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "approval": {
+          "id": "ca587ec5-41d6-46d8-b998-c1046c631557",
+          "workflowId": "0dc2519c-8840-4262-a473-bda805a0bd6d",
+          "workflowVersionId": "c3d76558-5319-4247-b713-db8dffd6a7fb",
+          "runId": "5373d599-6417-49df-a9ea-5cb07cf70056",
+          "runNodeAttemptId": "4d28f880-d38c-4568-b3bc-788f966a581f",
+          "nodeId": "approval1",
+          "approverRole": "admin",
+          "status": "approved",
+          "requestPayload": {},
+          "timeoutAt": "2026-04-19T10:16:31.705Z",
+          "decidedAt": "2026-04-19T09:16:31.708Z",
+          "decidedByUserId": "admin-001",
+          "decisionComment": "approve for blocker-group1 rerun validation",
+          "createdAt": "2026-04-19T09:16:31.705Z",
+          "updatedAt": "2026-04-19T09:16:31.708Z"
+        },
+        "resumed": true
+      },
+      "requestId": "0c8e3039-9a7c-43b7-876f-41c4a57df886"
+    }
+  }
+}

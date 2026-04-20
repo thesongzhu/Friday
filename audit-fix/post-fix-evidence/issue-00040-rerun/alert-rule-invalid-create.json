@@ -1,0 +1,34 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "condition is required",
+      "retryable": false
+    },
+    "requestId": "57e7a730-63e7-42df-9aba-874c2f358bcc"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/observability/alert-rules",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "name": "min"
+    }
+  },
+  "response": {
+    "status": 422,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "condition is required",
+        "retryable": false
+      },
+      "requestId": "57e7a730-63e7-42df-9aba-874c2f358bcc"
+    }
+  }
+}

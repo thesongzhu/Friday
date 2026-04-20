@@ -381,6 +381,78 @@ describe("FridayAgentLlmClient", () => {
     expect(values.items).toBeDefined();
   });
 
+  it("maps assistant tool_use and user tool_result history into OpenAI Responses function-call items", async () => {
+    const sseEvents = ["[DONE]"];
+    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "gpt-4o-mini",
+      systemPrompt: "System prompt",
+      messages: [
+        { role: "user", content: "What should you call me?" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "call-memory-1", name: "memory_search", input: { query: "user name", limit: 1 } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "call-memory-1", content: "[{\"content\":\"Captain Friday\"}]" },
+          ],
+        },
+      ],
+      tools: [{
+        name: "memory_search",
+        description: "Memory search tool",
+        parameters: {
+          properties: {
+            query: { type: "string" },
+          },
+        },
+        async execute() { return { content: "" }; },
+      }],
+      signal: new AbortController().signal,
+    });
+
+    for await (const _event of stream) {
+      // drain
+    }
+
+    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(options.body as string) as Record<string, unknown>;
+    const input = body.input as Array<Record<string, unknown>>;
+
+    expect(input).toEqual([
+      {
+        role: "system",
+        content: [{ type: "input_text", text: "System prompt" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "What should you call me?" }],
+      },
+      {
+        type: "function_call",
+        call_id: "call-memory-1",
+        name: "memory_search",
+        arguments: JSON.stringify({ query: "user name", limit: 1 }),
+      },
+      {
+        type: "function_call_output",
+        call_id: "call-memory-1",
+        output: "[{\"content\":\"Captain Friday\"}]",
+      },
+    ]);
+  });
+
   it("parses real OpenAI Responses text SSE shape", async () => {
     const fetchImpl = createMockFetch(200, createRawSSEStream(
       buildRealOpenAIResponsesTextSSE("Hello from responses"),

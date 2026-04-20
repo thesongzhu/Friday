@@ -1,0 +1,32 @@
+[
+  {
+    "id": "95f377b3-1f80-4a9a-98aa-50247bfcb871",
+    "provider_id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "provider_kind": "anthropic",
+    "provider_api": "anthropic-messages",
+    "model": "claude-sonnet-4-20250514",
+    "input_tokens": 210,
+    "output_tokens": 84,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 9856,
+    "total_tokens": 294,
+    "cost_usd": 0.031458,
+    "metadata_json": "{\"source\":\"agent-runtime\"}",
+    "created_at": "2026-04-19T15:32:26.725Z"
+  },
+  {
+    "id": "1b7589f3-2310-4be1-a3ff-01ce402e480e",
+    "provider_id": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+    "provider_kind": "anthropic",
+    "provider_api": "anthropic-messages",
+    "model": "claude-sonnet-4-20250514",
+    "input_tokens": 498,
+    "output_tokens": 91,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 9856,
+    "total_tokens": 589,
+    "cost_usd": 0.032427,
+    "metadata_json": "{\"source\":\"agent-runtime\"}",
+    "created_at": "2026-04-19T15:32:29.577Z"
+  }
+]

@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
+import { assertSafeAppleScriptIdentifier } from "../friday-applescript.js";
 
 import type { DesktopSessionManager } from "../../desktop/engine/session-manager.js";
 import type {
@@ -1771,7 +1772,10 @@ export async function createFridaySystemService(
           }
 
           case "launch_app": {
-            const appIdentifier = requireNonEmpty(input.appIdentifier ?? input.target, "appIdentifier");
+            const appIdentifier = assertSafeAppleScriptIdentifier(
+              requireNonEmpty(input.appIdentifier ?? input.target, "appIdentifier"),
+              "app identifier",
+            );
             const companionPayload = await launchAppViaCompanion(appIdentifier);
             const payload = companionPayload
               ?? (companionAllowsFallback(companion, "launch_app")
@@ -1907,8 +1911,11 @@ export async function createFridaySystemService(
 
           case "focus": {
             const appIdentifier = input.appIdentifier ?? input.target;
+            const safeAppIdentifier = appIdentifier
+              ? assertSafeAppleScriptIdentifier(appIdentifier, "app identifier")
+              : undefined;
             const payload = await focusTargetViaCompanion({
-              appIdentifier,
+              appIdentifier: safeAppIdentifier,
               windowId: input.targetKind === "app" ? undefined : input.target,
             });
             if (!payload) {
@@ -1919,7 +1926,7 @@ export async function createFridaySystemService(
                   companionSupportsAction(companion, "focus")
                     ? "companion_focus_failed_without_fallback"
                     : "focus_unavailable",
-                  { appIdentifier: appIdentifier ?? "" },
+                  { appIdentifier: safeAppIdentifier ?? "" },
                   undefined,
                   controlLease?.id,
                 );
@@ -1927,12 +1934,12 @@ export async function createFridaySystemService(
               return executeIntent({
                 ...input,
                 action: "launch_app",
-                appIdentifier,
+                appIdentifier: safeAppIdentifier,
               });
             }
             await emitEvent("system.intent.completed", {
               action: input.action,
-              appIdentifier,
+              appIdentifier: safeAppIdentifier,
             });
             return buildIntentResult(input, "completed", `Focused ${appIdentifier ?? "target"}`, payload, undefined, controlLease?.id);
           }

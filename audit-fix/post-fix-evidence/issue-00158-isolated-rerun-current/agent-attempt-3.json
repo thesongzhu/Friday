@@ -1,0 +1,132 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+      "status": "completed",
+      "response": "idempotent-ok",
+      "toolCallCount": 0,
+      "durationMs": 2090,
+      "usageInput": 155,
+      "usageOutput": 9,
+      "finalResponse": "idempotent-ok",
+      "contextCostSummary": {
+        "totalEstimatedChars": 4284,
+        "components": [
+          {
+            "kind": "workspace_context",
+            "estimatedChars": 2133,
+            "count": 2,
+            "metadata": {
+              "pathRuleCount": 0,
+              "candidatePaths": []
+            }
+          },
+          {
+            "kind": "starter_skills",
+            "estimatedChars": 2055,
+            "count": 8
+          },
+          {
+            "kind": "subagents",
+            "estimatedChars": 96,
+            "count": 1,
+            "metadata": {
+              "enabled": true
+            }
+          }
+        ]
+      },
+      "taskProfile": {
+        "id": "default",
+        "label": "Balanced",
+        "description": "General-purpose execution profile for standard assistant turns.",
+        "reasoningEffort": "medium",
+        "model": "claude-sonnet-4-20250514"
+      },
+      "eventStreamAvailable": true
+    },
+    "requestId": "3639d619-c28a-4408-920c-55c47e0c2ee9"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3242/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "idempotency-key": "issue-00158-agent-1776612295813",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Reply with the exact text idempotent-ok and nothing else.",
+      "timeoutMs": 120000,
+      "providerId": "66fef3c5-6032-4891-bb0c-e36fc08e6228",
+      "model": "claude-sonnet-4-20250514"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "connection": "keep-alive",
+      "content-length": "801",
+      "content-type": "application/json; charset=utf-8",
+      "date": "Sun, 19 Apr 2026 15:24:57 GMT",
+      "keep-alive": "timeout=5",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=63072000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "x-ratelimit-limit": "10",
+      "x-ratelimit-remaining": "7",
+      "x-ratelimit-reset": "2026-04-19T15:25:00.000Z"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "e3cd727c-31a2-4e5b-89a3-06f4a2e7eda0",
+        "status": "completed",
+        "response": "idempotent-ok",
+        "toolCallCount": 0,
+        "durationMs": 2090,
+        "usageInput": 155,
+        "usageOutput": 9,
+        "finalResponse": "idempotent-ok",
+        "contextCostSummary": {
+          "totalEstimatedChars": 4284,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 2133,
+              "count": 2,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium",
+          "model": "claude-sonnet-4-20250514"
+        },
+        "eventStreamAvailable": true
+      },
+      "requestId": "3639d619-c28a-4408-920c-55c47e0c2ee9"
+    }
+  }
+}

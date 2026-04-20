@@ -45,6 +45,16 @@ describe("FridayResumeCursorSigner", () => {
     expect(() => signer.verify(tampered)).toThrow("HMAC verification failed");
   });
 
+  it("rejects mismatched signature lengths without throwing a buffer-length error", () => {
+    const cursor = signer.sign(payload);
+    const [payloadB64, sig] = cursor.split(".");
+    const shorter = `${payloadB64}.${sig!.slice(0, -4)}`;
+    const longer = `${payloadB64}.${sig}abcd`;
+
+    expect(() => signer.verify(shorter)).toThrow("HMAC verification failed");
+    expect(() => signer.verify(longer)).toThrow("HMAC verification failed");
+  });
+
   it("rejects cursor without separator", () => {
     expect(() => signer.verify("noseparatorhere")).toThrow("missing signature separator");
   });

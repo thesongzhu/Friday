@@ -78,6 +78,7 @@ import {
   FridayMetricsCollector,
   FridayTraceManager,
 } from "../engine/index.js";
+import { createFridayObservabilityAuditRepository } from "../persistence/friday-observability-audit-repository.js";
 import type { FridayObservabilityRoutesDeps } from "../../api/http/routes/friday-observability-routes.js";
 import type {
   FridayIncidentDiagnosisDetails,
@@ -736,7 +737,10 @@ export function createFridayObservabilityApiService(
   deps: CreateFridayObservabilityApiServiceDeps,
 ): FridayObservabilityApiService {
   const traces = new FridayTraceManager();
-  const audit = new FridayAuditTrail();
+  const auditStore = deps.db
+    ? createFridayObservabilityAuditRepository({ db: deps.db })
+    : undefined;
+  const audit = new FridayAuditTrail({ store: auditStore });
   const metrics = new FridayMetricsCollector();
   const alerts = new FridayAlertEngine();
   const health = new FridayHealthCheckManager();
@@ -757,6 +761,7 @@ export function createFridayObservabilityApiService(
   const inMemorySecrets = new Map<string, string>();
   const dispatchHistoryByKey = new Map<string, AlertDispatchAttemptRecord>();
   const resolvedAlertIds = new Set<string>();
+  const observedAgentLoopRunIds = new Set<string>();
 
   for (const metric of COUNTER_METRICS) {
     metrics.registerCounter(metric.name, metric.module);
@@ -2510,7 +2515,8 @@ export function createFridayObservabilityApiService(
       }, async () => input.result ?? input.intent ?? null);
     },
     async recordAgentLoopEvent(input) {
-      if (input.event.includes("started")) {
+      if (!observedAgentLoopRunIds.has(input.run.loopRunId)) {
+        observedAgentLoopRunIds.add(input.run.loopRunId);
         incrementCounter("friday.agent_loop.runs.total");
       }
       if (input.run.status === "halted") {

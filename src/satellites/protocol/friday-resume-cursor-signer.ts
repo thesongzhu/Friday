@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { FridayDomainError } from "#errors";
 import type { FridayResumeCursorPayload } from "../model/friday-satellite-protocol.types.js";
 
@@ -33,7 +33,12 @@ export function createFridayResumeCursorSigner(secretKey: string): FridayResumeC
       const sig = cursor.substring(dotIndex + 1);
 
       const expectedSig = computeHmac(payloadB64);
-      if (sig !== expectedSig) {
+      const receivedSigBuf = Buffer.from(sig);
+      const expectedSigBuf = Buffer.from(expectedSig);
+      if (
+        receivedSigBuf.length !== expectedSigBuf.length
+        || !timingSafeEqual(receivedSigBuf, expectedSigBuf)
+      ) {
         throw new FridayDomainError("CURSOR_VALIDATION_ERROR", "Invalid cursor: HMAC verification failed", { httpStatus: 403 });
       }
 

@@ -164,6 +164,159 @@ function addMinutes(nowIso: string, minutes: number): string {
   return new Date(new Date(nowIso).getTime() + minutes * 60_000).toISOString();
 }
 
+function readOptionalBoolean(field: string, value: unknown): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new FridayDomainError("VALIDATION_ERROR", `${field} must be a boolean`, {
+      httpStatus: 400,
+    });
+  }
+  return value;
+}
+
+function readOptionalInteger(
+  field: string,
+  value: unknown,
+  minimum: number,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} must be an integer greater than or equal to ${minimum}`,
+      { httpStatus: 400 },
+    );
+  }
+  return value;
+}
+
+function readOptionalStringArray(field: string, value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new FridayDomainError("VALIDATION_ERROR", `${field} must be an array of strings`, {
+      httpStatus: 400,
+    });
+  }
+  const normalized = value.map((item) => {
+    if (typeof item !== "string" || item.trim() === "") {
+      throw new FridayDomainError("VALIDATION_ERROR", `${field} must contain non-empty strings`, {
+        httpStatus: 400,
+      });
+    }
+    return item.trim();
+  });
+  return Array.from(new Set(normalized));
+}
+
+function normalizePolicyPatch(
+  input: Partial<Omit<FridayAgentLoopPolicyEntity, "id" | "updatedAt">>,
+): Partial<Omit<FridayAgentLoopPolicyEntity, "id" | "updatedAt">> {
+  const normalized: Partial<Omit<FridayAgentLoopPolicyEntity, "id" | "updatedAt">> = {};
+
+  const paused = readOptionalBoolean("paused", input.paused);
+  if (paused !== undefined) normalized.paused = paused;
+
+  const autoApplyLowRisk = readOptionalBoolean("autoApplyLowRisk", input.autoApplyLowRisk);
+  if (autoApplyLowRisk !== undefined) normalized.autoApplyLowRisk = autoApplyLowRisk;
+
+  const maxAttemptsPerFingerprint = readOptionalInteger(
+    "maxAttemptsPerFingerprint",
+    input.maxAttemptsPerFingerprint,
+    1,
+  );
+  if (maxAttemptsPerFingerprint !== undefined) {
+    normalized.maxAttemptsPerFingerprint = maxAttemptsPerFingerprint;
+  }
+
+  const cooldownMinutes = readOptionalInteger("cooldownMinutes", input.cooldownMinutes, 0);
+  if (cooldownMinutes !== undefined) normalized.cooldownMinutes = cooldownMinutes;
+
+  const requireRollbackPlan = readOptionalBoolean("requireRollbackPlan", input.requireRollbackPlan);
+  if (requireRollbackPlan !== undefined) normalized.requireRollbackPlan = requireRollbackPlan;
+
+  const requireAcceptanceCheck = readOptionalBoolean("requireAcceptanceCheck", input.requireAcceptanceCheck);
+  if (requireAcceptanceCheck !== undefined) normalized.requireAcceptanceCheck = requireAcceptanceCheck;
+
+  const expertModeEnabled = readOptionalBoolean("expertModeEnabled", input.expertModeEnabled);
+  if (expertModeEnabled !== undefined) normalized.expertModeEnabled = expertModeEnabled;
+
+  const expertModeUserIds = readOptionalStringArray("expertModeUserIds", input.expertModeUserIds);
+  if (expertModeUserIds !== undefined) normalized.expertModeUserIds = expertModeUserIds;
+
+  const expertModeWorkspaceIds = readOptionalStringArray(
+    "expertModeWorkspaceIds",
+    input.expertModeWorkspaceIds,
+  );
+  if (expertModeWorkspaceIds !== undefined) normalized.expertModeWorkspaceIds = expertModeWorkspaceIds;
+
+  const expertModeEnvironments = readOptionalStringArray(
+    "expertModeEnvironments",
+    input.expertModeEnvironments,
+  );
+  if (expertModeEnvironments !== undefined) normalized.expertModeEnvironments = expertModeEnvironments;
+
+  const contextInferenceAllowed = readOptionalBoolean(
+    "contextInferenceAllowed",
+    input.contextInferenceAllowed,
+  );
+  if (contextInferenceAllowed !== undefined) normalized.contextInferenceAllowed = contextInferenceAllowed;
+
+  const multiStepHypothesisSearchAllowed = readOptionalBoolean(
+    "multiStepHypothesisSearchAllowed",
+    input.multiStepHypothesisSearchAllowed,
+  );
+  if (multiStepHypothesisSearchAllowed !== undefined) {
+    normalized.multiStepHypothesisSearchAllowed = multiStepHypothesisSearchAllowed;
+  }
+
+  const safeProbeExecutionAllowed = readOptionalBoolean(
+    "safeProbeExecutionAllowed",
+    input.safeProbeExecutionAllowed,
+  );
+  if (safeProbeExecutionAllowed !== undefined) {
+    normalized.safeProbeExecutionAllowed = safeProbeExecutionAllowed;
+  }
+
+  const crossSurfaceOrchestrationAllowed = readOptionalBoolean(
+    "crossSurfaceOrchestrationAllowed",
+    input.crossSurfaceOrchestrationAllowed,
+  );
+  if (crossSurfaceOrchestrationAllowed !== undefined) {
+    normalized.crossSurfaceOrchestrationAllowed = crossSurfaceOrchestrationAllowed;
+  }
+
+  const highRiskFinalApprovalRequired = readOptionalBoolean(
+    "highRiskFinalApprovalRequired",
+    input.highRiskFinalApprovalRequired,
+  );
+  if (highRiskFinalApprovalRequired !== undefined) {
+    normalized.highRiskFinalApprovalRequired = highRiskFinalApprovalRequired;
+  }
+
+  const productionDestructiveActionApprovalRequired = readOptionalBoolean(
+    "productionDestructiveActionApprovalRequired",
+    input.productionDestructiveActionApprovalRequired,
+  );
+  if (productionDestructiveActionApprovalRequired !== undefined) {
+    normalized.productionDestructiveActionApprovalRequired =
+      productionDestructiveActionApprovalRequired;
+  }
+
+  const probeBudget = readOptionalInteger("probeBudget", input.probeBudget, 1);
+  if (probeBudget !== undefined) normalized.probeBudget = probeBudget;
+
+  const timeBudgetMinutes = readOptionalInteger("timeBudgetMinutes", input.timeBudgetMinutes, 1);
+  if (timeBudgetMinutes !== undefined) normalized.timeBudgetMinutes = timeBudgetMinutes;
+
+  return normalized;
+}
+
 function currentWorkspaceId(): string {
   return process.env.FRIDAY_WORKSPACE_ID?.trim() || "default-workspace";
 }
@@ -704,9 +857,10 @@ export function createFridayAgentLoopService(
 
     updatePolicy(input) {
       const current = ensurePolicy();
+      const normalized = normalizePolicyPatch(input);
       const next: FridayAgentLoopPolicyEntity = {
         ...current,
-        ...input,
+        ...normalized,
         id: DEFAULT_POLICY_ID,
         updatedAt: deps.nowIso(),
       };
@@ -719,10 +873,11 @@ export function createFridayAgentLoopService(
 
     updateExpertMode(input) {
       const current = ensurePolicy();
+      const normalized = normalizePolicyPatch(input);
       const next = deps.db.withWriteTransaction((db) =>
         deps.loopRepo.upsertPolicy(db, {
           ...current,
-          ...input,
+          ...normalized,
           id: DEFAULT_POLICY_ID,
           updatedAt: deps.nowIso(),
         }),

@@ -1,0 +1,10 @@
+{
+  "invalidUpdateStatus": 400,
+  "invalidUpdateErrorCode": "VALIDATION_ERROR",
+  "invalidDbUnchanged": true,
+  "invalidResponseUnchanged": true,
+  "validUpdateStatus": 200,
+  "validUpdatedProbeBudget": 6,
+  "validUpdatedTimeBudgetMinutes": 25,
+  "revertedToInitial": true
+}

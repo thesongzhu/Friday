@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-04-19T20:55:40Z",
+  "issueId": "ISSUE-00085",
+  "status": "verified_targeted_tests",
+  "routeFile": "src/api/http/routes/friday-diagnosis-routes.ts",
+  "testCommands": [
+    "npm exec vitest run test/unit/api/http/routes/friday-diagnosis-routes.test.ts",
+    "npm exec -- vitest run test/contracts/api/friday-api-route-contract.snapshot.test.ts -u"
+  ],
+  "testFiles": [
+    "test/unit/api/http/routes/friday-diagnosis-routes.test.ts",
+    "test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap"
+  ],
+  "testsPassed": {
+    "unit": 9,
+    "contract": 5
+  },
+  "typeErrors": "none",
+  "summary": "Friday now exposes canonical `/v1/learning/*` read routes for incidents, per-incident diagnosis, and overview by aliasing the existing diagnosis handlers, and both the route unit test plus API contract snapshot now lock that learning namespace in place."
+}

@@ -1,0 +1,178 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/e2a007f5-3a24-4154-a131-d0eb371db462/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:37:22.854Z",
+            "payload": {
+              "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T12:37:36.216Z",
+            "payload": {
+              "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+              "toolName": "memory_search",
+              "toolCallId": "call_X4eKkamMUcWrN5ycE94VlbJ9",
+              "params": {
+                "query": "user's preferred name",
+                "namespace": "agent",
+                "limit": 1
+              }
+            }
+          },
+          {
+            "seq": 10,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T12:37:36.216Z",
+            "payload": {
+              "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+              "toolName": "memory_search",
+              "toolCallId": "call_X4eKkamMUcWrN5ycE94VlbJ9",
+              "durationMs": 1,
+              "isError": false,
+              "summary": "[\n  {\n    \"content\": \"MemoryAuditName-1776602222290\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:user_name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\"",
+              "routeId": "agent.execute.tool",
+              "correlationId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+              "toolCallSummary": {
+                "toolName": "memory_search",
+                "argKeys": [
+                  "query",
+                  "namespace",
+                  "limit"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 326,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T12:37:36.218Z",
+            "payload": {
+              "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+              "error": {
+                "code": "AGENT_LLM_ERROR",
+                "message": "Validation criteria not met"
+              },
+              "durationMs": 13364,
+              "routeId": "agent.execute.run.delegated",
+              "correlationId": "599a98d3-7faa-4f11-a649-5897a3518544"
+            }
+          }
+        ]
+      },
+      "requestId": "3672e37f-5935-4bae-ab59-7c2f7e7b66d7"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:37:22.854Z",
+          "payload": {
+            "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T12:37:36.216Z",
+          "payload": {
+            "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+            "toolName": "memory_search",
+            "toolCallId": "call_X4eKkamMUcWrN5ycE94VlbJ9",
+            "params": {
+              "query": "user's preferred name",
+              "namespace": "agent",
+              "limit": 1
+            }
+          }
+        },
+        {
+          "seq": 10,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T12:37:36.216Z",
+          "payload": {
+            "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+            "toolName": "memory_search",
+            "toolCallId": "call_X4eKkamMUcWrN5ycE94VlbJ9",
+            "durationMs": 1,
+            "isError": false,
+            "summary": "[\n  {\n    \"content\": \"MemoryAuditName-1776602222290\",\n    \"score\": 0.95,\n    \"metadata\": {\n      \"id\": \"learned-fact:pref:user_name\",\n      \"namespace\": \"preference\",\n      \"tags\": [\n        \"learned\"",
+            "routeId": "agent.execute.tool",
+            "correlationId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+            "toolCallSummary": {
+              "toolName": "memory_search",
+              "argKeys": [
+                "query",
+                "namespace",
+                "limit"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 326,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T12:37:36.218Z",
+          "payload": {
+            "runId": "e2a007f5-3a24-4154-a131-d0eb371db462",
+            "error": {
+              "code": "AGENT_LLM_ERROR",
+              "message": "Validation criteria not met"
+            },
+            "durationMs": 13364,
+            "routeId": "agent.execute.run.delegated",
+            "correlationId": "599a98d3-7faa-4f11-a649-5897a3518544"
+          }
+        }
+      ]
+    },
+    "requestId": "3672e37f-5935-4bae-ab59-7c2f7e7b66d7"
+  }
+}

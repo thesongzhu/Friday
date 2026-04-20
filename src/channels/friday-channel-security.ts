@@ -175,7 +175,13 @@ export function getFridayChannelSecretFieldDescriptors(
       ];
     case "lark":
     case "feishu":
-      return [
+      return config.receiveMode === "webhook"
+        ? [
+        { field: "appSecret", required: true },
+        { field: "verificationToken", required: true },
+        { field: "encryptKey", required: false },
+      ]
+        : [
         { field: "appSecret", required: true },
       ];
     case "discord":

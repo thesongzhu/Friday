@@ -1,0 +1,35 @@
+{
+  "rawBody": {
+    "ok": false,
+    "error": {
+      "code": "WORKFLOW_NOT_FOUND",
+      "message": "Workflow not found",
+      "retryable": false
+    },
+    "requestId": "4917026b-7d47-44c0-a9f6-91d56a4f2732"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows/nonexistent-workflow/locks/acquire",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "ownerUserId": "admin-001",
+      "ttlSec": 120
+    }
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "ok": false,
+      "error": {
+        "code": "WORKFLOW_NOT_FOUND",
+        "message": "Workflow not found",
+        "retryable": false
+      },
+      "requestId": "4917026b-7d47-44c0-a9f6-91d56a4f2732"
+    }
+  }
+}

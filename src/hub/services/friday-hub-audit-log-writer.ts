@@ -7,6 +7,10 @@
  * and converts to `FridayAuditRecord` for the security layer.
  */
 
+import { existsSync } from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+
 import {
   appendFridayAuditLog as appendSecurityAuditLog,
   buildFridayAuditRecordBase,
@@ -57,6 +61,51 @@ function toAuditRecord(entry: FridayAuditLogWrite): FridayAuditRecord {
   });
 }
 
+function resolveFridayAuditSqlitePath(filePath: string): string | null {
+  const auditDir = path.dirname(filePath);
+  if (path.basename(filePath) !== "audit.jsonl" || path.basename(auditDir) !== ".friday") {
+    return null;
+  }
+  return path.join(path.dirname(auditDir), "friday.db");
+}
+
+async function appendFridayAuditSqliteMirror(
+  filePath: string,
+  record: FridayAuditRecord,
+): Promise<void> {
+  const sqlitePath = resolveFridayAuditSqlitePath(filePath);
+  if (!sqlitePath || !existsSync(sqlitePath)) {
+    return;
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(sqlitePath);
+    db.pragma("busy_timeout = 1000");
+    db.prepare(
+      `INSERT OR IGNORE INTO audit_logs
+       (id, ts, actor_type, actor_id, action, resource_type, resource_id, request_id, trace_id, ip, details_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.id,
+      record.ts,
+      record.actorType,
+      record.actorId ?? null,
+      record.action,
+      record.resourceType,
+      record.resourceId ?? null,
+      record.requestId ?? null,
+      record.traceId ?? null,
+      record.ip ?? null,
+      record.details ? JSON.stringify(record.details) : null,
+    );
+  } catch (err) {
+    console.warn("[friday][audit-log] sqlite mirror failed:", err instanceof Error ? err.message : String(err));
+  } finally {
+    db?.close();
+  }
+}
+
 // ─── Writer (legacy compatibility wrapper) ───
 
 /**
@@ -75,4 +124,5 @@ export async function appendFridayAuditLog(
     ? { maxBytes: options.maxBytes, keepLines: options.keepLines }
     : undefined;
   await appendSecurityAuditLog(filePath, record, securityOptions);
+  await appendFridayAuditSqliteMirror(filePath, record);
 }

@@ -58,7 +58,7 @@ export interface FridayHttpServer {
 
 // ─── Helpers ───
 
-const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH"]);
+const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
 
 /** Base security headers applied to every response. */

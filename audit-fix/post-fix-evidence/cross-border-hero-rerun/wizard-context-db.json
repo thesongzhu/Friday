@@ -1,0 +1,14 @@
+[
+  {
+    "id": "2b804e47-9f42-4c1b-86d8-85ddd4f1e6c4",
+    "workflow_id": "cross-border-hero",
+    "principal_id": "admin-001",
+    "channel_id": "guided:default:admin-001-cross-border-hero",
+    "status": "awaiting_input",
+    "current_step_index": 1,
+    "session_data_json": "{\"wizard\":{\"wizardId\":\"cross-border-hero\",\"contextId\":\"2b804e47-9f42-4c1b-86d8-85ddd4f1e6c4\",\"title\":\"Cross-border Hero\",\"status\":\"awaiting_input\",\"currentStepId\":\"clarification\",\"steps\":[{\"id\":\"goal\",\"title\":\"Describe your goal\",\"prompt\":\"What cross-border operating goal should Friday help with first? Friday will set up the profile, workflow, and next actions.\",\"inputKey\":\"goal\"},{\"id\":\"clarification\",\"title\":\"Answer a follow-up\",\"prompt\":\"If Friday needs more detail, answer the follow-up question.\",\"inputKey\":\"answer\"}],\"collectedValues\":{\"goal\":\"Set up a cross-border shop operating plan for TikTok Shop US.\",\"questions\":[\"What specific tasks should the operating plan include?\",\"Are there any specific inputs or data sources required for the plan?\",\"What format or platform should the output be delivered in?\"]},\"nextActionLabel\":\"Continue\"},\"objective\":\"Set up a cross-border shop operating plan for TikTok Shop US.\",\"assumptions\":[\"Friday will use the current workspace and runtime defaults unless you override them.\",\"Friday will prefer rollback-backed, observable actions when it can proceed safely.\"],\"unknowns\":[],\"successTest\":\"Friday will reach a verified next step. Objective: Set up a cross-border shop operating plan for TikTok Shop US..\",\"fallbackPath\":\"Ask one decisive follow-up question or surface a blocked issue card with the missing detail.\",\"skillSessionId\":\"a4382274-c26b-45ac-ba3a-d58c6165a7ab\",\"flowKind\":\"skill\",\"resolvedIntent\":\"general_help\",\"assistantSessionKey\":\"guided:default:admin-001-cross-border-hero\",\"tenantContext\":{\"hubId\":\"admin-001\",\"userId\":\"admin-001\",\"channelKind\":\"assistant\"}}",
+    "started_at": "2026-04-19T09:38:37.431Z",
+    "updated_at": "2026-04-19T09:38:39.816Z",
+    "finished_at": null
+  }
+]

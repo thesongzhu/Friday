@@ -1,0 +1,376 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "run": {
+          "id": "58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+          "task": "Call me MemoryAuditName-1776602010672.",
+          "status": "completed",
+          "sessionKey": "agent:run:58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+          "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+          "attempt": 0,
+          "maxAttempts": 3,
+          "artifacts": [
+            {
+              "type": "run_record",
+              "path": ".friday/agent-runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb/run.json"
+            }
+          ],
+          "testResults": [
+            {
+              "strategy": "llm_eval",
+              "passed": true,
+              "errors": [],
+              "durationMs": 0
+            }
+          ],
+          "createdAt": "2026-04-19T12:33:30.713Z",
+          "startedAt": "2026-04-19T12:33:30.726Z",
+          "completedAt": "2026-04-19T12:33:33.955Z",
+          "durationMs": 3242,
+          "usageInput": 11217,
+          "usageOutput": 34,
+          "costUsd": 0.011353,
+          "planReview": {
+            "plan": {
+              "task": "Call me MemoryAuditName-1776602010672.",
+              "stepCount": 1,
+              "description": "Planning approach for: Call me MemoryAuditName-1776602010672."
+            },
+            "decision": {
+              "approved": true,
+              "mode": "off",
+              "reason": "No review required",
+              "reviewedAt": "2026-04-19T12:33:30.726Z"
+            }
+          },
+          "actualExecution": {
+            "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfileId": "default",
+            "modelSelectionSource": "route_default",
+            "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+            "actualModel": "gpt-4o",
+            "actualProviderKind": "openai",
+            "actualProviderApi": "openai-responses",
+            "backendKind": "http",
+            "totalCostUsd": 0.011353,
+            "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+            "routeDecisionTrace": {
+              "taskProfileId": "default",
+              "requiresNativeTools": true,
+              "learningAdjusted": false,
+              "learningSignalsPresent": true,
+              "orderingAdjusted": false,
+              "selectedAdjusted": false,
+              "reasonCode": "historical_bias",
+              "reasonText": "Historical route outcomes influenced candidate scoring.",
+              "historyWindow": {
+                "sampleLimit": 250
+              },
+              "selectedBeforeLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "selectedAfterLearning": {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http"
+              },
+              "candidateScores": [
+                {
+                  "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                  "providerKind": "openai",
+                  "model": "gpt-4o",
+                  "backendKind": "http",
+                  "originalRank": 1,
+                  "finalRank": 1,
+                  "selected": true,
+                  "eligible": true,
+                  "ineligibilityReasons": [],
+                  "pinned": false,
+                  "historicalSuccessRate": 1,
+                  "historicalFailureRate": 0,
+                  "sampleCount": 16,
+                  "baseRankScore": 1,
+                  "historyScore": 5.25,
+                  "patternScore": 0,
+                  "lessonScore": 0,
+                  "routePenaltyScore": 0,
+                  "pinBonus": 0,
+                  "finalScore": 6.25,
+                  "historyStats": {
+                    "sampleCount": 16,
+                    "successRate": 1,
+                    "failureRate": 0
+                  },
+                  "matchedLessonIds": [],
+                  "matchedPatternIds": []
+                }
+              ]
+            },
+            "turns": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "model": "gpt-4o",
+                "inputTokens": 11217,
+                "outputTokens": 34,
+                "costUsd": 0.011353
+              }
+            ]
+          },
+          "responseText": "Got it! I'll refer to you as MemoryAuditName-1776602010672. If there's anything specific you need, feel free to let me know!",
+          "summary": "Got it! I'll refer to you as MemoryAuditName-1776602010672. If there's anything specific you need, feel free to let me know!",
+          "artifactDir": ".friday/agent-runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+          "contextCostSummary": {
+            "totalEstimatedChars": 6983,
+            "components": [
+              {
+                "kind": "workspace_context",
+                "estimatedChars": 4832,
+                "count": 3,
+                "metadata": {
+                  "pathRuleCount": 0,
+                  "candidatePaths": []
+                }
+              },
+              {
+                "kind": "starter_skills",
+                "estimatedChars": 2055,
+                "count": 8
+              },
+              {
+                "kind": "subagents",
+                "estimatedChars": 96,
+                "count": 1,
+                "metadata": {
+                  "enabled": true
+                }
+              }
+            ]
+          },
+          "taskProfile": {
+            "id": "default",
+            "label": "Balanced",
+            "description": "General-purpose execution profile for standard assistant turns.",
+            "reasoningEffort": "medium"
+          },
+          "rollbackAvailable": false,
+          "health": {
+            "state": "healthy",
+            "rollbackAvailable": false,
+            "reasonCodes": []
+          },
+          "contextSummary": {
+            "taskProfileId": "default",
+            "taskProfileLabel": "Balanced",
+            "totalEstimatedChars": 6983,
+            "dominantContextKinds": [
+              "workspace_context",
+              "starter_skills"
+            ],
+            "learningAdjusted": false,
+            "fallbackAttemptCount": 0,
+            "blockedToolCount": 0,
+            "modelSelectionSource": "route_default"
+          }
+        }
+      },
+      "requestId": "1fb5a4ad-7578-4850-be2b-f6f276f69194"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "run": {
+        "id": "58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+        "task": "Call me MemoryAuditName-1776602010672.",
+        "status": "completed",
+        "sessionKey": "agent:run:58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+        "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+        "attempt": 0,
+        "maxAttempts": 3,
+        "artifacts": [
+          {
+            "type": "run_record",
+            "path": ".friday/agent-runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb/run.json"
+          }
+        ],
+        "testResults": [
+          {
+            "strategy": "llm_eval",
+            "passed": true,
+            "errors": [],
+            "durationMs": 0
+          }
+        ],
+        "createdAt": "2026-04-19T12:33:30.713Z",
+        "startedAt": "2026-04-19T12:33:30.726Z",
+        "completedAt": "2026-04-19T12:33:33.955Z",
+        "durationMs": 3242,
+        "usageInput": 11217,
+        "usageOutput": 34,
+        "costUsd": 0.011353,
+        "planReview": {
+          "plan": {
+            "task": "Call me MemoryAuditName-1776602010672.",
+            "stepCount": 1,
+            "description": "Planning approach for: Call me MemoryAuditName-1776602010672."
+          },
+          "decision": {
+            "approved": true,
+            "mode": "off",
+            "reason": "No review required",
+            "reviewedAt": "2026-04-19T12:33:30.726Z"
+          }
+        },
+        "actualExecution": {
+          "requestedProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "taskProfileId": "default",
+          "modelSelectionSource": "route_default",
+          "actualProviderId": "33525000-9455-4093-bb23-708db1235b0f",
+          "actualModel": "gpt-4o",
+          "actualProviderKind": "openai",
+          "actualProviderApi": "openai-responses",
+          "backendKind": "http",
+          "totalCostUsd": 0.011353,
+          "routingDecisionReason": "Historical route outcomes influenced candidate scoring.",
+          "routeDecisionTrace": {
+            "taskProfileId": "default",
+            "requiresNativeTools": true,
+            "learningAdjusted": false,
+            "learningSignalsPresent": true,
+            "orderingAdjusted": false,
+            "selectedAdjusted": false,
+            "reasonCode": "historical_bias",
+            "reasonText": "Historical route outcomes influenced candidate scoring.",
+            "historyWindow": {
+              "sampleLimit": 250
+            },
+            "selectedBeforeLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "selectedAfterLearning": {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "providerKind": "openai",
+              "model": "gpt-4o",
+              "backendKind": "http"
+            },
+            "candidateScores": [
+              {
+                "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+                "providerKind": "openai",
+                "model": "gpt-4o",
+                "backendKind": "http",
+                "originalRank": 1,
+                "finalRank": 1,
+                "selected": true,
+                "eligible": true,
+                "ineligibilityReasons": [],
+                "pinned": false,
+                "historicalSuccessRate": 1,
+                "historicalFailureRate": 0,
+                "sampleCount": 16,
+                "baseRankScore": 1,
+                "historyScore": 5.25,
+                "patternScore": 0,
+                "lessonScore": 0,
+                "routePenaltyScore": 0,
+                "pinBonus": 0,
+                "finalScore": 6.25,
+                "historyStats": {
+                  "sampleCount": 16,
+                  "successRate": 1,
+                  "failureRate": 0
+                },
+                "matchedLessonIds": [],
+                "matchedPatternIds": []
+              }
+            ]
+          },
+          "turns": [
+            {
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "model": "gpt-4o",
+              "inputTokens": 11217,
+              "outputTokens": 34,
+              "costUsd": 0.011353
+            }
+          ]
+        },
+        "responseText": "Got it! I'll refer to you as MemoryAuditName-1776602010672. If there's anything specific you need, feel free to let me know!",
+        "summary": "Got it! I'll refer to you as MemoryAuditName-1776602010672. If there's anything specific you need, feel free to let me know!",
+        "artifactDir": ".friday/agent-runs/58293138-c4d0-4f56-a60a-7ce9d598e8cb",
+        "contextCostSummary": {
+          "totalEstimatedChars": 6983,
+          "components": [
+            {
+              "kind": "workspace_context",
+              "estimatedChars": 4832,
+              "count": 3,
+              "metadata": {
+                "pathRuleCount": 0,
+                "candidatePaths": []
+              }
+            },
+            {
+              "kind": "starter_skills",
+              "estimatedChars": 2055,
+              "count": 8
+            },
+            {
+              "kind": "subagents",
+              "estimatedChars": 96,
+              "count": 1,
+              "metadata": {
+                "enabled": true
+              }
+            }
+          ]
+        },
+        "taskProfile": {
+          "id": "default",
+          "label": "Balanced",
+          "description": "General-purpose execution profile for standard assistant turns.",
+          "reasoningEffort": "medium"
+        },
+        "rollbackAvailable": false,
+        "health": {
+          "state": "healthy",
+          "rollbackAvailable": false,
+          "reasonCodes": []
+        },
+        "contextSummary": {
+          "taskProfileId": "default",
+          "taskProfileLabel": "Balanced",
+          "totalEstimatedChars": 6983,
+          "dominantContextKinds": [
+            "workspace_context",
+            "starter_skills"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "route_default"
+        }
+      }
+    },
+    "requestId": "1fb5a4ad-7578-4850-be2b-f6f276f69194"
+  }
+}

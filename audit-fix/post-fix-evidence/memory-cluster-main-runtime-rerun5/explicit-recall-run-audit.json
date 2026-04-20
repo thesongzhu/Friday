@@ -1,0 +1,178 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:3241/v1/agent/runs/05189d90-158e-41f4-bfc0-fc27d9d6ec89/audit",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+        "events": [
+          {
+            "seq": 1,
+            "type": "agent.run.started",
+            "timestamp": "2026-04-19T12:15:00.843Z",
+            "payload": {
+              "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+              "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+              "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+              "taskProfile": {
+                "id": "default",
+                "modelSelectionSource": "route_default"
+              }
+            }
+          },
+          {
+            "seq": 9,
+            "type": "agent.run.tool_start",
+            "timestamp": "2026-04-19T12:15:08.410Z",
+            "payload": {
+              "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+              "toolName": "memory_search",
+              "toolCallId": "call_TCSmGuRDG8QqUKFfvNeB1Z3P",
+              "params": {
+                "query": "What should I call you?",
+                "namespace": "agent",
+                "limit": 1
+              }
+            }
+          },
+          {
+            "seq": 10,
+            "type": "agent.run.tool_end",
+            "timestamp": "2026-04-19T12:15:08.410Z",
+            "payload": {
+              "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+              "toolName": "memory_search",
+              "toolCallId": "call_TCSmGuRDG8QqUKFfvNeB1Z3P",
+              "durationMs": 0,
+              "isError": false,
+              "summary": "[]",
+              "routeId": "agent.execute.tool",
+              "correlationId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+              "toolCallSummary": {
+                "toolName": "memory_search",
+                "argKeys": [
+                  "query",
+                  "namespace",
+                  "limit"
+                ],
+                "resultIsError": false,
+                "resultLengthChars": 2,
+                "outputShape": "json",
+                "toolCategory": "other",
+                "turnIndex": 0,
+                "toolIndex": 0
+              }
+            }
+          },
+          {
+            "seq": 11,
+            "type": "agent.run.failed",
+            "timestamp": "2026-04-19T12:15:08.413Z",
+            "payload": {
+              "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+              "error": {
+                "code": "AGENT_LLM_ERROR",
+                "message": "Validation criteria not met"
+              },
+              "durationMs": 7570,
+              "routeId": "agent.execute.run.delegated",
+              "correlationId": "dd964660-d8d0-4b1e-9e5d-d29f3c30a8b7"
+            }
+          }
+        ]
+      },
+      "requestId": "0fe5ea28-5cf8-4c17-af53-30fb43836f4e"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+      "events": [
+        {
+          "seq": 1,
+          "type": "agent.run.started",
+          "timestamp": "2026-04-19T12:15:00.843Z",
+          "payload": {
+            "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+            "task": "Use memory_search if needed. What should you call me? Reply with only the name.",
+            "providerId": "33525000-9455-4093-bb23-708db1235b0f",
+            "taskProfile": {
+              "id": "default",
+              "modelSelectionSource": "route_default"
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "type": "agent.run.tool_start",
+          "timestamp": "2026-04-19T12:15:08.410Z",
+          "payload": {
+            "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+            "toolName": "memory_search",
+            "toolCallId": "call_TCSmGuRDG8QqUKFfvNeB1Z3P",
+            "params": {
+              "query": "What should I call you?",
+              "namespace": "agent",
+              "limit": 1
+            }
+          }
+        },
+        {
+          "seq": 10,
+          "type": "agent.run.tool_end",
+          "timestamp": "2026-04-19T12:15:08.410Z",
+          "payload": {
+            "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+            "toolName": "memory_search",
+            "toolCallId": "call_TCSmGuRDG8QqUKFfvNeB1Z3P",
+            "durationMs": 0,
+            "isError": false,
+            "summary": "[]",
+            "routeId": "agent.execute.tool",
+            "correlationId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+            "toolCallSummary": {
+              "toolName": "memory_search",
+              "argKeys": [
+                "query",
+                "namespace",
+                "limit"
+              ],
+              "resultIsError": false,
+              "resultLengthChars": 2,
+              "outputShape": "json",
+              "toolCategory": "other",
+              "turnIndex": 0,
+              "toolIndex": 0
+            }
+          }
+        },
+        {
+          "seq": 11,
+          "type": "agent.run.failed",
+          "timestamp": "2026-04-19T12:15:08.413Z",
+          "payload": {
+            "runId": "05189d90-158e-41f4-bfc0-fc27d9d6ec89",
+            "error": {
+              "code": "AGENT_LLM_ERROR",
+              "message": "Validation criteria not met"
+            },
+            "durationMs": 7570,
+            "routeId": "agent.execute.run.delegated",
+            "correlationId": "dd964660-d8d0-4b1e-9e5d-d29f3c30a8b7"
+          }
+        }
+      ]
+    },
+    "requestId": "0fe5ea28-5cf8-4c17-af53-30fb43836f4e"
+  }
+}

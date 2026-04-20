@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-04-19T20:27:32Z",
+  "issueId": "ISSUE-00028",
+  "status": "verified_targeted_tests",
+  "routeFile": "src/api/http/routes/friday-uix-routes.ts",
+  "browserSurface": "ui/src/router.tsx",
+  "testCommands": [
+    "npm exec vitest run test/unit/api/http/routes/friday-uix-routes.test.ts",
+    "npm exec vitest run test/e2e/setup-wizard.e2e.test.ts -t \"A12b|A12c\""
+  ],
+  "testFiles": [
+    "test/unit/api/http/routes/friday-uix-routes.test.ts",
+    "test/e2e/setup-wizard.e2e.test.ts"
+  ],
+  "testsPassed": {
+    "unit": 13,
+    "e2e": 20
+  },
+  "typeErrors": "none",
+  "summary": "Setup-complete runtimes no longer loop authenticated app surfaces back to `/onboarding`: the user-profile read path now reflects setup completion even when `user.onboarded_at` was never written, and the setup-wizard browser rerun now lands on `/chat` after completion."
+}

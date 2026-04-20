@@ -1,0 +1,30 @@
+{
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "released": true
+    },
+    "requestId": "e9f951a1-5dee-4548-a6bc-a7027193e23a"
+  },
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/workflows/0dc2519c-8840-4262-a473-bda805a0bd6d/locks/release",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "lockToken": "a73a1836-d758-4983-9a43-9e7117b596cb"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "released": true
+      },
+      "requestId": "e9f951a1-5dee-4548-a6bc-a7027193e23a"
+    }
+  }
+}

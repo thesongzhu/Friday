@@ -17,6 +17,7 @@ export interface CreateFridayTokenValidatorDeps {
   tokenSecret: string;
   nowMs: () => number;
   lookupTokenRevocation: (tokenId: string) => boolean;
+  lookupSessionTokenState?: (claims: FridayAccessTokenClaims) => "active" | "revoked" | "unknown";
   lookupSatelliteTokenVersion?: (satelliteId: string) => number | null;
   resolveTenantId?: (claims: FridayAccessTokenClaims) => string | null | undefined;
 }
@@ -89,6 +90,19 @@ export function createFridayTokenValidator(
       // Revocation check
       if (deps.lookupTokenRevocation(claims.tokenId)) {
         throw new FridayTokenValidationError("TOKEN_REVOKED", "Token has been revoked");
+      }
+
+      if (deps.lookupSessionTokenState && claims.sid) {
+        const sessionTokenState = deps.lookupSessionTokenState(claims);
+        if (sessionTokenState === "revoked") {
+          throw new FridayTokenValidationError("TOKEN_REVOKED", "Token session has been revoked");
+        }
+        if (sessionTokenState === "unknown") {
+          throw new FridayTokenValidationError(
+            "TOKEN_UNTRACKED",
+            "Token was issued before access-token tracking was enabled and must be reissued",
+          );
+        }
       }
 
       // Satellite token version check

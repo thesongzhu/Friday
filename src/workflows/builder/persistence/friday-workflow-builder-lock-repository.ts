@@ -1,5 +1,4 @@
 import type Database from "better-sqlite3";
-import { safeJsonParse } from "#utilities";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import type { FridayWorkflowEditLock } from "../model/friday-workflow-builder-collaboration.types.js";
 
@@ -11,48 +10,76 @@ export interface FridayWorkflowBuilderLockRepository {
   deleteLock(db: Database.Database, workflowId: UUID): void;
 }
 
-// ─── Constants ───
-
-function lockKey(workflowId: UUID): string {
-  return `workflow_builder_lock:${workflowId}`;
-}
-
 // ─── Factory ───
 
 export function createFridayWorkflowBuilderLockRepository(): FridayWorkflowBuilderLockRepository {
   return {
     getLock(db, workflowId) {
       const row = db
-        .prepare(`SELECT value_json FROM hub_settings WHERE key = ?`)
-        .get(lockKey(workflowId)) as { value_json: string } | undefined;
-      return row ? safeJsonParse<FridayWorkflowEditLock>(row.value_json) ?? null : null;
+        .prepare(
+          `SELECT workflow_id, lock_token, owner_user_id, owner_session_id, acquired_at, heartbeat_at, expires_at
+           FROM workflow_locks
+           WHERE workflow_id = ?
+           ORDER BY updated_at DESC, acquired_at DESC
+           LIMIT 1`,
+        )
+        .get(workflowId) as
+        | {
+            workflow_id: UUID;
+            lock_token: string;
+            owner_user_id: UUID;
+            owner_session_id: string | null;
+            acquired_at: string;
+            heartbeat_at: string;
+            expires_at: string;
+          }
+        | undefined;
+
+      if (!row) {
+        return null;
+      }
+
+      return {
+        workflowId: row.workflow_id,
+        lockToken: row.lock_token,
+        ownerUserId: row.owner_user_id,
+        ownerSessionId: row.owner_session_id ?? undefined,
+        acquiredAt: row.acquired_at,
+        heartbeatAt: row.heartbeat_at,
+        expiresAt: row.expires_at,
+      };
     },
 
     setLock(db, lock) {
-      const key = lockKey(lock.workflowId);
-      const json = JSON.stringify(lock);
-      const now = lock.acquiredAt;
+      db.prepare(`DELETE FROM workflow_locks WHERE workflow_id = ?`).run(lock.workflowId);
 
-      // Upsert into hub_settings
-      const existing = db
-        .prepare(`SELECT key FROM hub_settings WHERE key = ?`)
-        .get(key) as { key: string } | undefined;
-
-      if (existing) {
-        db.prepare(
-          `UPDATE hub_settings SET value_json = ?, revision = revision + 1, updated_at = ?, updated_by = ?
-           WHERE key = ?`,
-        ).run(json, now, lock.ownerUserId, key);
-      } else {
-        db.prepare(
-          `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at, created_by, updated_by)
-           VALUES (?, ?, 1, ?, ?, ?, ?)`,
-        ).run(key, json, now, now, lock.ownerUserId, lock.ownerUserId);
-      }
+      db.prepare(
+        `INSERT INTO workflow_locks (
+           workflow_id,
+           lock_token,
+           owner_user_id,
+           owner_session_id,
+           acquired_at,
+           heartbeat_at,
+           expires_at,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        lock.workflowId,
+        lock.lockToken,
+        lock.ownerUserId,
+        lock.ownerSessionId ?? null,
+        lock.acquiredAt,
+        lock.heartbeatAt,
+        lock.expiresAt,
+        lock.acquiredAt,
+        lock.heartbeatAt,
+      );
     },
 
     deleteLock(db, workflowId) {
-      db.prepare(`DELETE FROM hub_settings WHERE key = ?`).run(lockKey(workflowId));
+      db.prepare(`DELETE FROM workflow_locks WHERE workflow_id = ?`).run(workflowId);
     },
   };
 }

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "http://127.0.0.1:3241/v1/agent/runs",
+    "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer <redacted>"
+    },
+    "body": {
+      "task": "Call me MemoryAuditName-1776601613628.",
+      "providerId": "33525000-9455-4093-bb23-708db1235b0f"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "runId": "bfdc6f78-5a51-4a01-bc72-9c8ca420d934",
+        "status": "completed",
+        "response": "Understood! I'll call you MemoryAuditName-1776601613628 from now on.",
+        "toolCallCount": 1,
+        "durationMs": 7208,
+        "usageInput": 22566,
+        "usageOutput": 65,
+        "finalResponse": "Understood! I'll call you MemoryAuditName-1776601613628 from now on.",
+        "eventStreamAvailable": true
+      },
+      "requestId": "d0466fe8-95c9-4218-95df-b397b2ad7277"
+    }
+  },
+  "rawBody": {
+    "ok": true,
+    "data": {
+      "runId": "bfdc6f78-5a51-4a01-bc72-9c8ca420d934",
+      "status": "completed",
+      "response": "Understood! I'll call you MemoryAuditName-1776601613628 from now on.",
+      "toolCallCount": 1,
+      "durationMs": 7208,
+      "usageInput": 22566,
+      "usageOutput": 65,
+      "finalResponse": "Understood! I'll call you MemoryAuditName-1776601613628 from now on.",
+      "eventStreamAvailable": true
+    },
+    "requestId": "d0466fe8-95c9-4218-95df-b397b2ad7277"
+  }
+}

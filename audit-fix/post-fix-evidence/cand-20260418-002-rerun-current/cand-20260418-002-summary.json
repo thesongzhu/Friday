@@ -1,0 +1,16 @@
+{
+  "checkedAt": "2026-04-19T13:23:43.424Z",
+  "runId": "b2b75c4f-b19d-443e-a328-ce69cb3a7b00",
+  "requestedProviderId": "1fd6a8d0-dbb1-47d1-995e-a48cd1d2e324",
+  "requestedModel": "gpt-4o",
+  "routingDefaultProviderId": null,
+  "defaultProviderDiffersFromAliasTarget": false,
+  "actualProviderId": "1fd6a8d0-dbb1-47d1-995e-a48cd1d2e324",
+  "actualProviderKind": "openai",
+  "actualModel": "gpt-4o",
+  "routeSelectedRequestedProviderId": "1fd6a8d0-dbb1-47d1-995e-a48cd1d2e324",
+  "routeSelectedRequestedModel": "gpt-4o",
+  "aliasHonored": true,
+  "finalStatus": "completed",
+  "responseText": "I'm unable to comply with that request."
+}

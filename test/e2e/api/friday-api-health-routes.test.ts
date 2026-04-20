@@ -1,14 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
+  authHeaders,
   createFridayApiTestEnv,
+  loginTestUser,
   type FridayApiTestEnv,
 } from "./_helpers/friday-api-test-server.helper.js";
 
 describe("GET /v1/health (e2e)", () => {
   let env: FridayApiTestEnv;
+  let accessToken: string;
 
   beforeAll(async () => {
     env = await createFridayApiTestEnv();
+    ({ accessToken } = await loginTestUser(env.baseUrl));
   });
 
   afterAll(async () => {
@@ -75,5 +79,38 @@ describe("GET /v1/health (e2e)", () => {
     const res = await fetch(`${env.baseUrl}/v1/health`);
     const contentType = res.headers.get("content-type");
     expect(contentType).toContain("application/json");
+  });
+
+  it("omits capability details for unauthenticated callers", async () => {
+    const res = await fetch(`${env.baseUrl}/v1/health`);
+    const json = await res.json() as {
+      ok: boolean;
+      data: { capabilities?: unknown };
+    };
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.data.capabilities).toBeUndefined();
+  });
+
+  it("returns capability details for authenticated callers", async () => {
+    const res = await fetch(`${env.baseUrl}/v1/health/capabilities`, {
+      headers: authHeaders(accessToken),
+    });
+    const json = await res.json() as {
+      ok: boolean;
+      data: {
+        capabilities?: {
+          auth?: {
+            allowPasswordlessLocalLogin?: boolean;
+            allowLocalBypassLogin?: boolean;
+          };
+        };
+      };
+    };
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.data.capabilities?.auth).toBeDefined();
   });
 });

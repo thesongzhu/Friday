@@ -39,6 +39,7 @@ describe("FridayAgentLearningBridge", () => {
     expect(event.payload).toEqual({
       agentRunId: "run-1",
       errorCode: "AGENT_LLM_ERROR",
+      message: "Model unavailable",
       errorMessage: "Model unavailable",
       durationMs: 1234,
     });

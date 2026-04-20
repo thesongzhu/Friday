@@ -14,6 +14,8 @@ import type {
   FridayDeepLinkPreviewResult,
 } from "./friday-deeplink-types.js";
 
+const REDACTED_SECRET_VALUE = "[redacted]";
+
 function isPrivateUrl(urlString: string): boolean {
   try {
     const parsed = new URL(urlString);
@@ -40,6 +42,20 @@ function isPrivateUrl(urlString: string): boolean {
 
 function isValidSha256(hash: string): boolean {
   return /^[a-f0-9]{64}$/i.test(hash);
+}
+
+function sanitizeDeepLinkPayloadForPreview(payload: FridayDeepLinkPayload): FridayDeepLinkPayload {
+  if (!payload.providerTemplate?.apiKey) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    providerTemplate: {
+      ...payload.providerTemplate,
+      apiKey: REDACTED_SECRET_VALUE,
+    },
+  };
 }
 
 export function validateFridayDeepLink(payload: FridayDeepLinkPayload): FridayDeepLinkPreviewResult {
@@ -106,7 +122,7 @@ export function validateFridayDeepLink(payload: FridayDeepLinkPayload): FridayDe
 
   return {
     valid: !hasBlocking,
-    payload,
+    payload: sanitizeDeepLinkPayloadForPreview(payload),
     verdict: hasBlocking ? "blocked" : hasWarning ? "needs_review" : "ready",
     checks,
     permissionSummary: permissions,
