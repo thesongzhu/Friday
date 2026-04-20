@@ -50,14 +50,44 @@ function getUrlPath(value) {
   }
 }
 
+function parseUiRequestFailure(message) {
+  if (typeof message !== "string" || message.length === 0) return null;
+  const match = message.match(/^([A-Z]+)\s+(\S+)\s+::\s+(.+)$/u);
+  if (!match) {
+    return null;
+  }
+  const [, method, url, errorText] = match;
+  return {
+    method,
+    url,
+    errorText,
+    pathname: getUrlPath(url),
+  };
+}
+
 function isIgnorableUiRequestFailure(message) {
   if (typeof message !== "string" || message.length === 0) return false;
-  return /fonts\.(gstatic|googleapis)\.com/i.test(message) && /ERR_ABORTED/i.test(message);
+  if (/fonts\.(gstatic|googleapis)\.com/i.test(message) && /ERR_ABORTED/i.test(message)) {
+    return true;
+  }
+  const parsed = parseUiRequestFailure(message);
+  if (!parsed) {
+    return false;
+  }
+  if (!/ERR_ABORTED/i.test(parsed.errorText)) {
+    return false;
+  }
+  return parsed.method === "GET" && parsed.pathname.startsWith("/v1/");
 }
 
 function isIgnorableUiConsoleError(message) {
   if (typeof message !== "string" || message.length === 0) return false;
   return /status of 401 \(Unauthorized\)/i.test(message);
+}
+
+function isRetryableUiProbeError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /this operation was aborted/i.test(message);
 }
 
 function isLoginPath(value) {
@@ -72,22 +102,31 @@ let sharedUiProbeSession = null;
 
 async function getSharedUiProbeSession(uiBaseUrl) {
   if (sharedUiProbeSession?.uiBaseUrl === uiBaseUrl) {
-    return sharedUiProbeSession;
+    const context = await sharedUiProbeSession.browser.newContext({
+      baseURL: uiBaseUrl,
+      viewport: { width: 1440, height: 960 },
+    });
+    return {
+      ...sharedUiProbeSession,
+      context,
+    };
   }
   if (sharedUiProbeSession?.browser) {
     await sharedUiProbeSession.browser.close().catch(() => undefined);
   }
   const browser = await chromium.launch({ headless: true });
+  sharedUiProbeSession = {
+    uiBaseUrl,
+    browser,
+  };
   const context = await browser.newContext({
     baseURL: uiBaseUrl,
     viewport: { width: 1440, height: 960 },
   });
-  sharedUiProbeSession = {
-    uiBaseUrl,
-    browser,
+  return {
+    ...sharedUiProbeSession,
     context,
   };
-  return sharedUiProbeSession;
 }
 
 export async function closeSharedUiProbeSession() {
@@ -403,6 +442,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
   let requestSequence = 0;
   let reloadAbortCutoff = null;
   const startedAt = Date.now();
+  let context;
   let page;
 
   try {
@@ -438,7 +478,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       return artifact;
     }
 
-    const { context } = await getSharedUiProbeSession(uiBaseUrl);
+    ({ context } = await getSharedUiProbeSession(uiBaseUrl));
     page = await context.newPage();
     page.on("request", (request) => {
       requestUrls.push(request.url());
@@ -588,12 +628,26 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     }
     return artifact;
   } catch (error) {
+    const retryCount = Number(artifact.raw?.uiProbeRetryCount ?? 0);
+    if (isRetryableUiProbeError(error) && retryCount < 2) {
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        uiProbeRetryCount: retryCount + 1,
+        uiProbeRetryReason: error instanceof Error ? error.message : String(error),
+      };
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `retrying transient UI probe abort (${String(retryCount + 1)}/2)`,
+      ];
+      return executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUrl, envTruth });
+    }
     artifact.result = "failed";
     artifact.failureClass = "ui_loading";
     artifact.notes = [...(artifact.notes ?? []), error instanceof Error ? error.message : String(error)];
     return artifact;
   } finally {
     await page?.close().catch(() => undefined);
+    await context?.close().catch(() => undefined);
   }
 }
 
