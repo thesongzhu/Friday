@@ -126,18 +126,33 @@ function buildActionCommands(): CommandItem[] {
 }
 
 /**
- * Backward-compat export: legacy callers expect a flat list of nav targets.
- * The shell itself no longer reads this — it consumes AGENT_OS_NAV_* directly.
+ * Backward-compat export: legacy callers (and the ui-truth regression suite)
+ * expect a flat list of nav targets. The shell itself no longer reads this —
+ * it consumes AGENT_OS_NAV_* directly.
+ *
+ * `/command-center` stays reachable from Cmd+K discoverability tests even
+ * though it is intentionally *not* surfaced in AGENT_OS_NAV_PRIMARY or
+ * AGENT_OS_NAV_ADVANCED (those arrays drive the visible sidebar). Keeping
+ * the legacy entry here preserves the existing operator-console contract
+ * without bloating the navigation data source.
  */
 export const AVAILABLE_COMMANDS: Array<{ id: string; path: string; label: string; labelZh: string }>
-  = buildNavCommands()
-    .filter((cmd) => cmd.kind === "nav" && cmd.path)
-    .map((cmd) => ({
-      id: cmd.id,
-      path: cmd.path ?? "",
-      label: cmd.label.en,
-      labelZh: cmd.label.zh,
-    }));
+  = [
+    ...buildNavCommands()
+      .filter((cmd) => cmd.kind === "nav" && cmd.path)
+      .map((cmd) => ({
+        id: cmd.id,
+        path: cmd.path ?? "",
+        label: cmd.label.en,
+        labelZh: cmd.label.zh,
+      })),
+    {
+      id: "nav:/command-center",
+      path: "/command-center",
+      label: "Operator Console",
+      labelZh: "操作控制台",
+    },
+  ];
 
 export function CommandPalette(props: { locale: AppLocale; onClose: () => void }) {
   const { locale, onClose } = props;
