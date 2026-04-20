@@ -1,0 +1,6 @@
+{
+  "shadow.card": "0 10px 30px rgba(68, 50, 32, 0.08)",
+  "shadow.overlay": "0 20px 50px rgba(31, 24, 19, 0.18)",
+  "shadow.rail": "inset -1px 0 0 rgba(47, 36, 26, 0.06)",
+  "shadow.focus": "0 0 0 3px rgba(24, 111, 101, 0.18)"
+}
