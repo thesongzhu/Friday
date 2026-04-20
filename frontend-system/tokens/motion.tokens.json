@@ -1,0 +1,8 @@
+{
+  "duration.fast": "120ms",
+  "duration.base": "180ms",
+  "duration.slow": "260ms",
+  "easing.standard": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  "easing.emphasis": "cubic-bezier(0.16, 1, 0.3, 1)",
+  "stagger.base": "40ms"
+}

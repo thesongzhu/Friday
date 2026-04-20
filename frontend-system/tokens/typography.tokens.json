@@ -1,0 +1,17 @@
+{
+  "font.display": "\"Iowan Old Style\", \"Palatino Linotype\", serif",
+  "font.body": "\"IBM Plex Sans\", \"Avenir Next\", sans-serif",
+  "font.mono": "\"IBM Plex Mono\", \"SFMono-Regular\", monospace",
+  "size.xs": "12px",
+  "size.sm": "14px",
+  "size.md": "16px",
+  "size.lg": "20px",
+  "size.xl": "28px",
+  "size.2xl": "36px",
+  "line.tight": 1.2,
+  "line.base": 1.5,
+  "line.relaxed": 1.7,
+  "weight.medium": 500,
+  "weight.semibold": 600,
+  "weight.bold": 700
+}

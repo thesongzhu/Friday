@@ -1,0 +1,12 @@
+export { homeBlueprint } from "./home";
+export { chatBlueprint } from "./chat";
+export { assistantBlueprint } from "./assistant";
+export { workflowsBlueprint } from "./workflows";
+export { automationsBlueprint } from "./automations";
+export { memoryBlueprint } from "./memory";
+export { integrationsBlueprint } from "./integrations";
+export { observabilityBlueprint } from "./observability";
+export { fleetBlueprint } from "./fleet";
+export { settingsBlueprint } from "./settings";
+export { workflowBuilderBlueprint } from "./workflow-builder";
+export { integrationsDetailBlueprint } from "./integrations-detail";
