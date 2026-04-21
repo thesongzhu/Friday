@@ -63,27 +63,27 @@
   "artifacts": [
     {
       "path": "screenshots/polish/b03-home-empty.png",
-      "sha256": "7d28d3f5d0a9193978cd93b478fd010f8f2ad36831391e1669f43e3e10ea73c5",
+      "sha256": "0881ed40bb959e257701b099b95e014d32fc99dba91198bd690173a939d203cc",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b03-channels-empty.png",
-      "sha256": "296075e7e9db10472bed2de4b1c3648ba8dd74c9f10021ca67b8ef3d252c4c01",
+      "sha256": "5762798fd1f8d5419412f9dca70ccf5add37a52d9240b1c0d230bf1a34ed527d",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b03-automations-empty.png",
-      "sha256": "c508c7f201e3ee1b4e0c8c4783bc631c509b68ecf5199081e4a53ffb4957dba8",
+      "sha256": "9719e8f5b72bdb5c8c43c954e22ffe6a320aa187ca28396c5ac63b97513f4c50",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b03-sessions-empty.png",
-      "sha256": "207a55127d05e87b2e585ab9e3f493148194f145ac630595ef96680af935b935",
+      "sha256": "38dae93d136fd688f4660603d3a222d62785689915633c5fba5dd2463857a1e9",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b03-command-center-empty.png",
-      "sha256": "6964aaacb49acdcc26addd0e6673f39017ee6186077df051aee955f8e9e031d4",
+      "sha256": "ffc428da9ed18409fcee56c36fa470864dd94c904d35e0c0005a9537fe6e6b8a",
       "kind": "png"
     }
   ]

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-21T19:36:05.448Z",
+  "generatedAt": "2026-04-21T19:53:40.041Z",
   "playwrightVersion": "1.58.2",
   "passCount": 24,
   "failCount": 0,
@@ -40,7 +40,7 @@
       "artifacts": [
         {
           "path": "screenshots/polish/a-01-evidence.json",
-          "sha256": "a129d09db2dde3c2c4994bf6d8d5520513f46f05992c83e8b85c04cb7bd82d92",
+          "sha256": "95b11e366cd60d729c692246fd3622625ce1df44fde652865645cc2464797c06",
           "kind": "json"
         },
         {
@@ -50,12 +50,12 @@
         },
         {
           "path": "screenshots/polish/a01-rail-1440.png",
-          "sha256": "e416233ed10c51ea62bc8436bcd5945c0966661c986865d023b0bbc63cdf87a3",
+          "sha256": "d1a8d480a948658ed431fdc218c28cfb88ca92969db787065d39daea090e7003",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/a01-rail-1920.png",
-          "sha256": "4c94357e26eadc35ce91702588ee404751388ff59135a77ac5bef3a6ff0f9909",
+          "sha256": "50e675a61f0ff155e08ed216e28a3141e0e7e9dbb947f89ab77cb469c5b5658c",
           "kind": "png"
         }
       ],
@@ -65,36 +65,36 @@
       "code": "A-02",
       "title": "Home hydrates from loading to normal in under 1 second without manual dev intervention",
       "status": "PASS",
-      "summary": "loading at 405.4ms; normal at 756.6ms",
+      "summary": "loading at 358.5ms; normal at 681.2ms",
       "observed": {
         "loadingSample": {
-          "atMs": 405.4,
+          "atMs": 358.5,
           "stateName": "loading",
           "skeletonCount": 6,
           "runCardCount": 0
         },
         "normalSample": {
-          "atMs": 756.6,
+          "atMs": 681.2,
           "stateName": "normal",
           "skeletonCount": 0,
           "runCardCount": 3
         },
-        "traceLength": 18
+        "traceLength": 17
       },
       "artifacts": [
         {
           "path": "screenshots/polish/a-02-evidence.json",
-          "sha256": "e8c4caa20ecd5f501f3b025677ccb7fddb2761b2068b015c9ea2ef8d51531048",
+          "sha256": "8c5fff27cf2cd1d72e310d395560ca72ed803d835b3f5269708d1524433717f3",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/a02-home-loading.png",
-          "sha256": "1676f91fb2eb327ff7c96fee817dd2a2b6d54b3563569f5d8e0fdec80ce071b4",
+          "sha256": "0aae2e223e1b7316d4309e94a79ef001776f989a3a7916c188efa599325f854c",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/a02-home-normal.png",
-          "sha256": "478ebe40d6e83529de625bcc5415ed1d733c932ed0ebec991d077a04065e4a88",
+          "sha256": "841e871e302131da2877df2795e3aae87e21e385257cd6f661d90cea9c7d5af1",
           "kind": "png"
         }
       ],
@@ -173,12 +173,12 @@
       "artifacts": [
         {
           "path": "screenshots/polish/b-01-evidence.json",
-          "sha256": "b63538c311323973968fd2a22ee80e677a70d3f852a422332387422f56709622",
+          "sha256": "c836c36ae0e30e126bcf38bdcf24b553b11bc174fe0d3d1873f49448eae7f960",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/b01-command-center.png",
-          "sha256": "d929311db139a2806a9bf61521a2739cdbbdb566ae2a9c23b3cf10f9fc9c95ae",
+          "sha256": "742024a267d4bde02948e568df527046c5e5158ab7d47a6f1c4e3d439fcd097a",
           "kind": "png"
         }
       ],
@@ -206,17 +206,17 @@
       "artifacts": [
         {
           "path": "screenshots/polish/b-02-evidence.json",
-          "sha256": "3a7afac96a4034b67a085964b5f023d24add38eb441f953c1b62c0075860278f",
+          "sha256": "f18af4b2928fd01b1436d5f9a8adc663634d23f806eee8f90a6a9c366e761a91",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/b02-home-loading.png",
-          "sha256": "2a04aaa16e2f630ab3f3f2a41a7bafa070e7b11a5a3a86f957b56808be30f588",
+          "sha256": "506b6aff8a88737d39f781e197873a8a97adcbd50b28fb9d123da2a324d5111e",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b02-assistant-loading.png",
-          "sha256": "01cf47e60a8b10275b6cb91dc9fe9534e00d84901e984d5e9f8799dc04500e33",
+          "sha256": "817858e5b2d724a85658379b189290122977f155adf7f3b2fcfe53c22afb02e0",
           "kind": "png"
         }
       ],
@@ -287,32 +287,32 @@
       "artifacts": [
         {
           "path": "screenshots/polish/b-03-evidence.json",
-          "sha256": "cae38b58128acd066d0e0608aa0f85cb1b3d20ab005397ddc8ca25d9eab4354f",
+          "sha256": "cbbb08bf234e015421d174f7eea94d122a278e6b97b9be24825742f2918fceae",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/b03-home-empty.png",
-          "sha256": "7d28d3f5d0a9193978cd93b478fd010f8f2ad36831391e1669f43e3e10ea73c5",
+          "sha256": "0881ed40bb959e257701b099b95e014d32fc99dba91198bd690173a939d203cc",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b03-channels-empty.png",
-          "sha256": "296075e7e9db10472bed2de4b1c3648ba8dd74c9f10021ca67b8ef3d252c4c01",
+          "sha256": "5762798fd1f8d5419412f9dca70ccf5add37a52d9240b1c0d230bf1a34ed527d",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b03-automations-empty.png",
-          "sha256": "c508c7f201e3ee1b4e0c8c4783bc631c509b68ecf5199081e4a53ffb4957dba8",
+          "sha256": "9719e8f5b72bdb5c8c43c954e22ffe6a320aa187ca28396c5ac63b97513f4c50",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b03-sessions-empty.png",
-          "sha256": "207a55127d05e87b2e585ab9e3f493148194f145ac630595ef96680af935b935",
+          "sha256": "38dae93d136fd688f4660603d3a222d62785689915633c5fba5dd2463857a1e9",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b03-command-center-empty.png",
-          "sha256": "6964aaacb49acdcc26addd0e6673f39017ee6186077df051aee955f8e9e031d4",
+          "sha256": "ffc428da9ed18409fcee56c36fa470864dd94c904d35e0c0005a9537fe6e6b8a",
           "kind": "png"
         }
       ],
@@ -352,7 +352,7 @@
           ],
           "lines": [
             "发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。",
-            "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 1UPPE6F。",
+            "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 ZCGOZRO。",
             "你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
           ]
         },
@@ -376,22 +376,22 @@
       "artifacts": [
         {
           "path": "screenshots/polish/b-04-evidence.json",
-          "sha256": "92d39b8a95ed588e5bec196e2eed4b19069c0e8f31e0766e82d5278a5276bdfc",
+          "sha256": "cedeb4c2040e4cc6b7fe2b8c05c75d4f97165aa0f1b22c1ecc946b69574e3aa5",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/b04-home-error.png",
-          "sha256": "d38826ade96cf6896e4bce48a586135f87146cc38620d490cfd4206eb680988d",
+          "sha256": "798c440177f72aebf831339c6b7a5a9ca094d9532624e80cea2558262470be9e",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b04-observability-error.png",
-          "sha256": "828752d6136d45016d9ab84353d1ff49d832dff5a00df6eb541cbee0958277da",
+          "sha256": "9365f9f49ef50903eee8e4bd07a743a442befca5c17c1e32f5ffcdc1c087712f",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b04-packs-error.png",
-          "sha256": "adb9d0957da7c5298e6b258a86237ba45af5eeb43bfa1569b84dab183d853d72",
+          "sha256": "e35abfe84e1829731cc39e01f1c9fa1a0aa2188931e4375cd719cf9efdbcc6dd",
           "kind": "png"
         }
       ],
@@ -422,17 +422,17 @@
       "artifacts": [
         {
           "path": "screenshots/polish/b-05-evidence.json",
-          "sha256": "4e28ba2b7ad8d0a1dc8b1b0874dbd1d4d12d4461877c8c34146e6f372adc204c",
+          "sha256": "915251b2be448ae80fd7bd0fe79abebd59452179531b22f4541efb460efe7371",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/b05-approvals-before.png",
-          "sha256": "6d729ccc95e3a5200a1a32a3a47c4480df8389ba834de97b2ee316f73097d1a3",
+          "sha256": "d6883f8ed5113376511b483479b8b963983b093adb65052e1af5d9307c319a81",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/b05-approvals-after.png",
-          "sha256": "89bbf92ef60a25debf35af2006f363f5f1728765b51ac9cb78439b6315f6b273",
+          "sha256": "266eea0508e68d9db5501864554254d2b33c40a4428e610e662f9cf6921639b7",
           "kind": "png"
         }
       ],
@@ -460,17 +460,17 @@
       "artifacts": [
         {
           "path": "screenshots/polish/c-01-evidence.json",
-          "sha256": "7f4979b7bf447be636fd932b77e9074e1716693aea352669baee61fde807a5e2",
+          "sha256": "b3ae30964b3c3828d93685a3478d925858824a54643cae0474aaa4605eac53b5",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/c01-cozy.png",
-          "sha256": "8809e574f6b35c7e69e8137c46fff91b6dd3584997e41fda5791beb8259b17ea",
+          "sha256": "0a536739dfe42c9c43658d56536625a25486ef7e0ae52f6fdc0a5c2205734a02",
           "kind": "png"
         },
         {
           "path": "screenshots/polish/c01-compact.png",
-          "sha256": "d223cd60555cff8a3658ed4b377a61fdb163d9fe04ecd65b1d1445b54f6c787e",
+          "sha256": "e39118294c5efc61fd39340bc5badcf1bcab12db5aac1b263ca300ee610abe5e",
           "kind": "png"
         }
       ],
@@ -522,12 +522,12 @@
       "artifacts": [
         {
           "path": "screenshots/polish/c-02-evidence.json",
-          "sha256": "26f3adf71c02d70f54c6e0ebccae0a0902b81d8454b32556a6a70dd8b2a3e3e4",
+          "sha256": "d04ceae1e3a304679b531fbf46998a07ba656d542078df4affb87bdf86b2986f",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/c02-tabular-numerals.png",
-          "sha256": "9993741c07ad1cdca6f3672501744464ff2bbec6464d3c47006f8f290d6fd78f",
+          "sha256": "65ca65a016c1e37159081839e1a9e9c8aa92ff4729c857b922e812e1c1a6e508",
           "kind": "png"
         }
       ],
@@ -652,12 +652,12 @@
       "artifacts": [
         {
           "path": "screenshots/polish/d-03-evidence.json",
-          "sha256": "4ba30c9e38295ab951682ba7ae55dbc51f9a2ed2f9ce99b9a87d92774d668a72",
+          "sha256": "4765a5aec5602ccbfc4b2f99d28185511145c2c125f5230d477a80b6dc60931f",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/d03-assistant-packid.png",
-          "sha256": "dea4c2e89581eb6634889e3d426b236297ed753493b6d2cde005a0900c75f722",
+          "sha256": "2d4a427f01afd47fc45e80168ab5d69fbc35a37485486980546ccf70483638fe",
           "kind": "png"
         }
       ],
@@ -729,12 +729,12 @@
       "artifacts": [
         {
           "path": "screenshots/polish/e-02-evidence.json",
-          "sha256": "d1cc64df1f1dc6aca2929129053ff67bce0a3a81a27657f3de122978baaa7d5a",
+          "sha256": "f6beda82391d33f25d2f8bbfd18e8dd5ad8fd5c8cac82eeb95e73b4893abdbc3",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/e02-command-palette.png",
-          "sha256": "eea7c7a6dd08ba72a892bc57b640efa25b79424f23f4a46c92edaf3a42423235",
+          "sha256": "86c217e5bc4292b2e141ae2aa3bfdac97a824593de5a09e9d6cb2ba14e33c1c6",
           "kind": "png"
         }
       ],
@@ -841,31 +841,31 @@
             "tag": "A",
             "text": "打开自动化 清晨库存同步",
             "x": 272,
-            "y": 1084
+            "y": 1085
           },
           {
             "tag": "A",
             "text": "打开自动化 风险汇总简报",
             "x": 272,
-            "y": 1139
+            "y": 1142
           },
           {
             "tag": "A",
             "text": "打开自动化 周利润复盘",
             "x": 272,
-            "y": 1212
+            "y": 1213
           },
           {
             "tag": "A",
             "text": "+1 更多",
             "x": 272,
-            "y": 1282
+            "y": 1285
           },
           {
             "tag": "A",
             "text": "继续去 Assistant",
             "x": 272,
-            "y": 1325
+            "y": 1329
           }
         ],
         "monotonic": true
@@ -873,7 +873,7 @@
       "artifacts": [
         {
           "path": "screenshots/polish/e-03-evidence.json",
-          "sha256": "3fc87a937fc91d95e3eb681fa2cd8beffc31723a8d9eff242d01dbd3338e3e70",
+          "sha256": "9991bd02707e995b240a95d7cad00ea13b2da1ac463be55ba85417cadb159706",
           "kind": "json"
         }
       ],
@@ -1032,12 +1032,12 @@
       "artifacts": [
         {
           "path": "screenshots/polish/f-03-evidence.json",
-          "sha256": "1f22712bcffa851591bb78391a3fc6c816112d539b2f2349ca7635111a1acdda",
+          "sha256": "e05102e7932f93f9903983fda55711fc33d9ca0c213f1c3271ce74940d0f1b3a",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/f03-compact-run-card.png",
-          "sha256": "27a467adc07e3f94598f9982b3b63605a5eb25defdbb7d6233fb0d8acaf873dc",
+          "sha256": "45f81c2404ba787823e1466fd620153aa3557087935ffcce1c0588517fb81076",
           "kind": "png"
         }
       ],
@@ -1077,26 +1077,26 @@
       "artifacts": [
         {
           "path": "screenshots/polish/g-01-evidence.json",
-          "sha256": "3372f0c0fee6ae725e41ae94a3348cb75fd76e49929390fb5c777278c460e123",
+          "sha256": "ed3dcea80d9c9eefdbb4e56cc40392164ded56399c8ca2d7254a1ba1eaf8f2d5",
           "kind": "json"
         },
         {
           "path": "screenshots/polish/g01-home.pdf",
-          "sha256": "97e5702b094e5f657b3b276488fcd12a48c5ca10503aa411072a55db4ecb6d4e",
+          "sha256": "b15bdfadf5b9a4a87ce6e10f2ac3cbc23478da4b31dd7754aebea4e914965329",
           "kind": "pdf",
           "bytes": 692209,
           "pageCount": 2
         },
         {
           "path": "screenshots/polish/g01-assistant.pdf",
-          "sha256": "ffbf671896655e279bd556dc093c370f478710bf178484f9ccf8680261d21000",
+          "sha256": "e146252e5e1b11c79f2ed0f91a3fed4078c7826c83464ec4146e2b717097a77c",
           "kind": "pdf",
           "bytes": 135959,
           "pageCount": 1
         },
         {
           "path": "screenshots/polish/g01-observability.pdf",
-          "sha256": "14d8cd19c65d6fcc6116e1a9fbaf17783f1d922a9806a2a96bcc9b2c456d3349",
+          "sha256": "ccd76e8c84e7b7904b835e6e736eb70abc85d01c39dcbdd4bf8c236b270f8e0b",
           "kind": "pdf",
           "bytes": 508380,
           "pageCount": 1

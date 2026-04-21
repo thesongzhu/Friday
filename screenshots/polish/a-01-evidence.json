@@ -39,12 +39,12 @@
     },
     {
       "path": "screenshots/polish/a01-rail-1440.png",
-      "sha256": "e416233ed10c51ea62bc8436bcd5945c0966661c986865d023b0bbc63cdf87a3",
+      "sha256": "d1a8d480a948658ed431fdc218c28cfb88ca92969db787065d39daea090e7003",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/a01-rail-1920.png",
-      "sha256": "4c94357e26eadc35ce91702588ee404751388ff59135a77ac5bef3a6ff0f9909",
+      "sha256": "50e675a61f0ff155e08ed216e28a3141e0e7e9dbb947f89ab77cb469c5b5658c",
       "kind": "png"
     }
   ]

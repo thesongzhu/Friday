@@ -7346,13 +7346,13 @@ async function verifyP2B06(baseUrl) {
         modalOpen: Boolean(document.querySelector(".settings-modal")),
         ariaModal: document.querySelector(".settings-modal")?.getAttribute("aria-modal") ?? null,
         activeId: document.activeElement?.id ?? null,
-        secretType: document.querySelector("#provider-secret-input")?.getAttribute("type") ?? null
+        credentialType: document.querySelector("#provider-credential-input")?.getAttribute("type") ?? null
       }));
       const shot = await captureScreenshot(page, "screenshots/P2B-06/p06-edit-key-modal.png");
       await page.click('[data-action="provider-toggle-secret"]');
       await page.waitForTimeout(60);
       const shownObserved = await page.evaluate(() => ({
-        secretType: document.querySelector("#provider-secret-input")?.getAttribute("type") ?? null,
+        credentialType: document.querySelector("#provider-credential-input")?.getAttribute("type") ?? null,
         toggleText: document.querySelector('[data-action="provider-toggle-secret"]')?.textContent?.trim() ?? null
       }));
       await context.close();
@@ -7367,10 +7367,10 @@ async function verifyP2B06(baseUrl) {
           hiddenObserved.modalOpen === true &&
           hiddenObserved.ariaModal === "true" &&
           hiddenObserved.activeId === "provider-modal-name" &&
-          hiddenObserved.secretType === "password" &&
-          shownObserved.secretType === "text" &&
+          hiddenObserved.credentialType === "password" &&
+          shownObserved.credentialType === "text" &&
           shownObserved.toggleText === "隐藏",
-        summary: `secret=${hiddenObserved.secretType} -> ${shownObserved.secretType}`,
+        summary: `credential=${hiddenObserved.credentialType} -> ${shownObserved.credentialType}`,
         artifacts: [probe, shot],
         observed: { hiddenObserved, shownObserved }
       };

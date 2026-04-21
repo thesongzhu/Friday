@@ -7333,7 +7333,7 @@
             cooldownMs: 0,
             cooldownRemainingMs: 0,
             enabled: true,
-            apiKey: "sk-live-openai-ops-5412",
+            apiKey: "redacted-openai-key-5412", // pragma: allowlist secret
             baseUrl: "https://api.openai.com/v1"
           },
           {
@@ -7355,7 +7355,7 @@
             cooldownMs: 0,
             cooldownRemainingMs: 0,
             enabled: true,
-            apiKey: "sk-live-anthropic-ops-7718",
+            apiKey: "redacted-anthropic-key-7718", // pragma: allowlist secret
             baseUrl: "https://api.anthropic.com"
           },
           {
@@ -7377,7 +7377,7 @@
             cooldownMs: 0,
             cooldownRemainingMs: 0,
             enabled: true,
-            apiKey: "sk-live-azure-ops-6321",
+            apiKey: "redacted-azure-key-6321", // pragma: allowlist secret
             baseUrl: "https://friday-azure.openai.azure.com"
           },
           {
@@ -7399,7 +7399,7 @@
             cooldownMs: 305000,
             cooldownRemainingMs: 305000,
             enabled: true,
-            apiKey: "local-runtime-token",
+            apiKey: "redacted-local-runtime-credential", // pragma: allowlist secret
             baseUrl: "http://127.0.0.1:11434"
           },
           {
@@ -7421,7 +7421,7 @@
             cooldownMs: 0,
             cooldownRemainingMs: 0,
             enabled: true,
-            apiKey: "sk-live-mistral-ops-8842",
+            apiKey: "redacted-mistral-key-8842", // pragma: allowlist secret
             baseUrl: "https://api.mistral.ai"
           }
         ];
@@ -12042,13 +12042,13 @@
                 name: provider.name,
                 baseUrl: provider.baseUrl,
                 model: provider.defaultModel,
-                secret: provider.apiKey
+                credential: provider.apiKey
               }
             : {
                 name: SETTINGS_PROVIDER_PRESETS[0].name,
                 baseUrl: SETTINGS_PROVIDER_PRESETS[0].baseUrl,
                 model: SETTINGS_PROVIDER_PRESETS[0].model,
-                secret: "sk-new-provider-0001"
+                credential: "redacted-provider-key-0001"
               };
         }
 
@@ -12063,8 +12063,8 @@
           uiState.settings.providers.modalDraft.name = preset.name;
           uiState.settings.providers.modalDraft.baseUrl = preset.baseUrl;
           uiState.settings.providers.modalDraft.model = preset.model;
-          if (!uiState.settings.providers.modalDraft.secret) {
-            uiState.settings.providers.modalDraft.secret = "sk-new-provider-0001";
+          if (!uiState.settings.providers.modalDraft.credential) {
+            uiState.settings.providers.modalDraft.credential = "redacted-provider-key-0001";
           }
         }
 
@@ -12080,7 +12080,7 @@
                 name: draft.name,
                 baseUrl: draft.baseUrl,
                 defaultModel: draft.model,
-                apiKey: draft.secret
+                apiKey: draft.credential
               });
             });
             pushToast("success", "Provider 密钥已更新", "Provider key updated");
@@ -12106,7 +12106,7 @@
                 cooldownMs: 0,
                 cooldownRemainingMs: 0,
                 enabled: true,
-                apiKey: draft.secret,
+                apiKey: draft.credential,
                 baseUrl: draft.baseUrl
               }
             ]);
@@ -12137,7 +12137,7 @@
                   '<div class="settings-field"><label for="provider-modal-url"><span>' + escapeHtml(localize(uiState.locale, "Base URL", "Base URL")) + '</span><input id="provider-modal-url" data-provider-field="baseUrl" class="settings-input" aria-label="' + escapeHtml(localize(uiState.locale, "Base URL", "Base URL")) + '" value="' + escapeHtml(providerModalDraftValue("baseUrl", preset.baseUrl || "")) + '" /></label><p class="settings-hint-text">' + escapeHtml(localize(uiState.locale, "保留真实 endpoint 文案，避免示意填充值。", "Keep the real endpoint wording and avoid filler hints.")) + "</p></div>" +
                   '<div class="settings-field"><label for="provider-modal-model"><span>' + escapeHtml(localize(uiState.locale, "默认模型", "Default model")) + '</span><input id="provider-modal-model" data-provider-field="model" class="settings-input" aria-label="' + escapeHtml(localize(uiState.locale, "默认模型", "Default model")) + '" value="' + escapeHtml(providerModalDraftValue("model", preset.model || "")) + '" /></label><p class="settings-hint-text">' + escapeHtml(localize(uiState.locale, "保存后会写回 provider 行。", "This writes back into the provider row after save.")) + "</p></div>" +
                 "</div>" +
-                '<div class="settings-field"><label for="provider-secret-input"><span>' + escapeHtml(localize(uiState.locale, "密钥", "Secret")) + '</span><div class="provider-secret-row"><input id="provider-secret-input" data-provider-field="secret" class="settings-input" aria-label="' + escapeHtml(localize(uiState.locale, "密钥", "Secret")) + '" type="' + escapeHtml(uiState.settings.providers.revealSecret ? "text" : "password") + '" value="' + escapeHtml(providerModalDraftValue("secret", "")) + '" /><button type="button" class="action-button action-button-secondary" data-action="provider-toggle-secret" aria-label="' + escapeHtml(localize(uiState.locale, "切换密钥显示", "Toggle key visibility")) + '">' + escapeHtml(uiState.settings.providers.revealSecret ? localize(uiState.locale, "隐藏", "Hide") : localize(uiState.locale, "显示", "Show")) + "</button></div></label><p class=\"settings-hint-text\">" + escapeHtml(localize(uiState.locale, "默认以密码输入框隐藏，切换后才显示原始值。", "The field stays hidden by default and only reveals the raw value after toggling.")) + "</p></div>" +
+                '<div class="settings-field"><label for="provider-credential-input"><span>' + escapeHtml(localize(uiState.locale, "密钥", "Secret")) + '</span><div class="provider-secret-row"><input id="provider-credential-input" data-provider-field="credential" class="settings-input" aria-label="' + escapeHtml(localize(uiState.locale, "密钥", "Secret")) + '" type="' + escapeHtml(uiState.settings.providers.revealSecret ? "text" : "password") + '" value="' + escapeHtml(providerModalDraftValue("credential", "")) + '" /><button type="button" class="action-button action-button-secondary" data-action="provider-toggle-secret" aria-label="' + escapeHtml(localize(uiState.locale, "切换密钥显示", "Toggle key visibility")) + '">' + escapeHtml(uiState.settings.providers.revealSecret ? localize(uiState.locale, "隐藏", "Hide") : localize(uiState.locale, "显示", "Show")) + "</button></div></label><p class=\"settings-hint-text\">" + escapeHtml(localize(uiState.locale, "默认以密码输入框隐藏，切换后才显示原始值。", "The field stays hidden by default and only reveals the raw value after toggling.")) + "</p></div>" +
                 '<div class="settings-modal-actions">' +
                   ActionButton({ tone: "secondary", children: escapeHtml(localize(uiState.locale, "取消", "Cancel")), dataAction: "close-overlays", ariaLabel: localize(uiState.locale, "取消", "Cancel") }) +
                   ActionButton({ children: escapeHtml(isEdit ? localize(uiState.locale, "保存 Key", "Save key") : localize(uiState.locale, "添加 Provider", "Add provider")), dataAction: "provider-modal-save", ariaLabel: isEdit ? localize(uiState.locale, "保存 Provider Key", "Save provider key") : localize(uiState.locale, "添加 Provider", "Add provider") }) +
@@ -18796,7 +18796,7 @@
               overlay.querySelector("#provider-modal-name") ||
               overlay.querySelector("#observability-alert-name") ||
               overlay.querySelector("#observability-alert-threshold-value") ||
-              overlay.querySelector("#provider-secret-input") ||
+              overlay.querySelector("#provider-credential-input") ||
               overlay.querySelector("#skill-publish-name") ||
               overlay.querySelector("#builder-version-input") ||
               overlay.querySelector("#plugin-add-value") ||

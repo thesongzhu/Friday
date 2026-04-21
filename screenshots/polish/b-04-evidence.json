@@ -32,7 +32,7 @@
       ],
       "lines": [
         "发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。",
-        "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 1UPPE6F。",
+        "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 ZCGOZRO。",
         "你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
       ]
     },
@@ -56,17 +56,17 @@
   "artifacts": [
     {
       "path": "screenshots/polish/b04-home-error.png",
-      "sha256": "d38826ade96cf6896e4bce48a586135f87146cc38620d490cfd4206eb680988d",
+      "sha256": "798c440177f72aebf831339c6b7a5a9ca094d9532624e80cea2558262470be9e",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b04-observability-error.png",
-      "sha256": "828752d6136d45016d9ab84353d1ff49d832dff5a00df6eb541cbee0958277da",
+      "sha256": "9365f9f49ef50903eee8e4bd07a743a442befca5c17c1e32f5ffcdc1c087712f",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b04-packs-error.png",
-      "sha256": "adb9d0957da7c5298e6b258a86237ba45af5eeb43bfa1569b84dab183d853d72",
+      "sha256": "e35abfe84e1829731cc39e01f1c9fa1a0aa2188931e4375cd719cf9efdbcc6dd",
       "kind": "png"
     }
   ]
