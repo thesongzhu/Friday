@@ -2560,25 +2560,13 @@ export async function createFridayHub(
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
-  // ── Media Understanding pipeline (opt-in, requires providers) ──
-  // The media-understanding module is fully implemented but requires external
-  // providers (e.g., vision models) to be useful. Instantiate when configured.
+  // ── Media Understanding pipeline (opt-in) ──
+  // Keep this surface honest until media-understanding providers can actually
+  // be registered through the runtime.
   if (process.env.FRIDAY_MEDIA_UNDERSTANDING_ENABLED === "true") {
-    const { createFridayMediaUnderstandingService } = await import("#media-understanding");
-    const muService = createFridayMediaUnderstandingService({
-      providers: [], // No built-in providers yet; users must register providers via plugins
-      fetchContent: async (attachment) => {
-        const fsModule = await import("node:fs");
-        if (attachment.sourceUrl.startsWith("file://")) {
-          return fsModule.readFileSync(new URL(attachment.sourceUrl));
-        }
-        const response = await fetch(attachment.sourceUrl);
-        return Buffer.from(await response.arrayBuffer());
-      },
-    });
-    console.log("[friday] Media understanding pipeline enabled (0 providers registered).");
-    // muService is available for future agent tool integration
-    void muService;
+    console.warn(
+      "[friday] Media understanding flag ignored: no provider registration path is wired for media-understanding yet.",
+    );
   }
 
   // ── Link Understanding pipeline ──

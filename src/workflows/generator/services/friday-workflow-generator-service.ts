@@ -221,17 +221,33 @@ function normalizeVisualLayout(
 
 function buildFallbackTests(spec: FridayWorkflowSpecV1): FridayWorkflowSpecTestCase[] {
   const firstOutput = spec.outputs[0];
+  const firstStepId = spec.startStepId || spec.steps[0]?.id;
+  const fallbackInputs = firstOutput || firstStepId
+    ? {}
+    : { __friday_smoke__: true };
   return [
     {
       name: "smoke",
       description: "Auto-generated smoke test",
-      inputs: {},
+      inputs: fallbackInputs,
       assertions: [
-        {
-          path: firstOutput ? `outputs.${firstOutput.key}` : "run.status",
-          operator: "!=",
-          expected: null,
-        },
+        firstOutput
+          ? {
+            path: `outputs.${firstOutput.key}`,
+            operator: "!=",
+            expected: null,
+          }
+          : firstStepId
+            ? {
+              path: `steps.${firstStepId}.status`,
+              operator: "==",
+              expected: "completed",
+            }
+            : {
+              path: "inputs.__friday_smoke__",
+              operator: "==",
+              expected: true,
+            },
       ],
     },
   ];

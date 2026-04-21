@@ -248,7 +248,7 @@ function makeRequirementsResponse(state: "needs_clarification" | "ready_for_gene
   };
 }
 
-function makeSpecResponse() {
+function makeSpecResponse(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: "1.0",
     workflowId: "send-emails",
@@ -262,6 +262,7 @@ function makeSpecResponse() {
     outputs: [{ key: "result", fromStep: "send", path: "messageId" }],
     errorPolicy: { onFailure: "fail_fast", notifyUser: false },
     tests: [],
+    ...overrides,
   };
 }
 
@@ -441,6 +442,30 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(Array.isArray(result.draft!.tests)).toBe(true);
       expect(result.draft!.tests.length).toBeGreaterThanOrEqual(1);
       expect(result.draft!.tests[0]!.assertions.length).toBeGreaterThanOrEqual(1);
+      expect(result.draft!.tests[0]!.assertions[0]!.path).toBe("outputs.result");
+    });
+
+    it("falls back to a valid step-status smoke test when the workflow has no outputs", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeSpecResponse({ outputs: [] }),
+        makeVisualResponse(),
+        { tests: { bad: true } },
+      ]);
+
+      const result = await service.startSession({
+        goal: "Send emails",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(result.mode).toBe("preview_ready");
+      expect(result.draft).toBeDefined();
+      expect(result.draft!.tests[0]!.assertions[0]).toEqual({
+        path: "steps.send.status",
+        operator: "==",
+        expected: "completed",
+      });
     });
 
     it("normalizes top-level transform fields into step.args before compilation", async () => {

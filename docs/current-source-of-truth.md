@@ -60,7 +60,8 @@ This document is the current architecture reference for steady-state Friday runt
 - `mock-contract`, `mock-hub`, and `browser-mock-hub` evidence remain valid for fast regression detection, but they are not release proof and must not be presented as ship-readiness proof.
 - `npm run release:verify:repo` is the repo-ready verification path. It is not sufficient by itself to claim real-world release proof.
 - `npm run release:verify` is reserved for the real proof pack (`ops:real-green-gate` + no-mock leak scan + truth audit).
-- `/v1/packages*`, `/v1/security/tenants*`, and media-understanding runtime wiring are code-present but env-gated. They are only active on runtimes started with `FRIDAY_PACKAGING_ENABLED=true`, `FRIDAY_MULTI_TENANT_ENABLED=true`, or `FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true`.
+- `/v1/packages*` and `/v1/security/tenants*` are code-present but env-gated. They are only active on runtimes started with `FRIDAY_PACKAGING_ENABLED=true` or `FRIDAY_MULTI_TENANT_ENABLED=true`.
+- Media-understanding primitives exist in the repo, but the current hub runtime does not expose a real provider-registration path for that surface yet. `FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true` must not be treated as proof of a live end-user capability on its own.
 - When those gates are off, docs, UI copy, and release notes must describe them as unavailable on the current runtime rather than "implemented" or "ready by default".
 
 ## Self-healing and beginner product surfaces
@@ -242,7 +243,8 @@ This document is the current architecture reference for steady-state Friday runt
 ## Deep link protocol
 
 - `friday://` is the canonical import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets.
-- All deep link imports must go through `POST /v1/deeplink/preview` (parse + validate + permission summary) before `POST /v1/deeplink/apply` (confirmed import).
+- All deep link imports must go through `POST /v1/deeplink/preview` (parse + validate + permission summary) before `POST /v1/deeplink/apply`.
+- `POST /v1/deeplink/apply` currently performs real imports for `provider-template`, `skill-source`, and `workflow-template` bundle URLs. `mcp-server` and `marketplace-asset` payloads remain previewable but return an explicit unsupported apply result until dedicated install/config surfaces are wired.
 - Deep link payloads require `version: 1`, a valid resource type, and type-specific required fields. Incomplete or high-risk payloads are rejected by the validator.
 - Private/localhost URLs in deep link payloads produce warnings. Missing integrity hashes produce advisories.
 - The deep link parser accepts both URI format (`friday://skill-source?url=...`) and JSON payload format for POST bodies.

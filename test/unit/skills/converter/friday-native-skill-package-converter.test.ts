@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createNativeSkillPackageConverter } from "#skills/converter";
+import { createFridaySkillPackageArchiver, createNativeSkillPackageConverter } from "#skills/converter";
 import type { FridaySkillConverterContext } from "#skills/converter";
 import type { SkillManifestV2 } from "#skills";
 
@@ -64,6 +64,7 @@ function makeValidManifest(overrides: Partial<SkillManifestV2> = {}): SkillManif
 describe("NativeSkillPackageConverter", () => {
   let testDir: string;
   const converter = createNativeSkillPackageConverter();
+  const archiver = createFridaySkillPackageArchiver();
 
   beforeEach(() => {
     testDir = join(tmpdir(), `friday-test-native-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -191,6 +192,30 @@ describe("NativeSkillPackageConverter", () => {
       // Conversion report
       expect(draft.conversionReport.sourceFormat).toBe("friday-package");
       expect(draft.conversionReport.convertedAt).toBe(NOW_ISO);
+    });
+
+    it("unpacks and converts a .friday.tgz archive produced by friday pack", async () => {
+      const skillDir = join(testDir, "native-skill");
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(makeValidManifest(), null, 2));
+      writeFileSync(join(skillDir, "skill.ui.json"), JSON.stringify({
+        schemaVersion: "1.0",
+        title: "Test Skill",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      }, null, 2));
+      writeFileSync(join(skillDir, "run.sh"), "#!/bin/bash\necho archive");
+      chmodSync(join(skillDir, "run.sh"), 0o755);
+
+      const archive = archiver.packSkill(skillDir, join(testDir, "packed-skill")).packageFile;
+      const result = await converter.convert({ uri: archive }, makeCtx());
+
+      expect(result.detectedFormat).toBe("friday-package");
+      expect(result.drafts).toHaveLength(1);
+      expect(result.drafts[0]!.manifest.id).toBe("test-skill");
+      expect(result.drafts[0]!.files.map((f) => f.path)).toContain("run.sh");
     });
 
     it("generates minimal UI schema when skill.ui.json is missing", async () => {

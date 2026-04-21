@@ -1,11 +1,11 @@
 import type Database from "better-sqlite3";
 import {
-  defaultFridayAutonomyUpgradeFields,
-  type FridayAutonomyCanaryStats,
-  type FridayAutonomyUpgradeFields,
-  type FridayAutonomyUpgradePatch,
-  mergeFridayAutonomyUpgradeFields,
-} from "../../autonomy/model/friday-autonomy-upgrade.types.js";
+  defaultFridayProviderUpgradeFields,
+  type FridayProviderCanaryStats,
+  type FridayProviderUpgradeFields,
+  type FridayProviderUpgradePatch,
+  mergeFridayProviderUpgradeFields,
+} from "../model/friday-provider-upgrade.types.js";
 import { safeJsonParse } from "#utilities";
 
 import type {
@@ -23,7 +23,7 @@ export interface FridayProviderProfileRepository {
   getById(db: Database.Database, id: string): FridayProviderProfile | null;
   insert(db: Database.Database, profile: FridayProviderProfile): void;
   update(db: Database.Database, profile: FridayProviderProfile): void;
-  setUpgradeMetadata(db: Database.Database, id: string, patch: FridayAutonomyUpgradePatch, nowIso: string): FridayProviderProfile | null;
+  setUpgradeMetadata(db: Database.Database, id: string, patch: FridayProviderUpgradePatch, nowIso: string): FridayProviderProfile | null;
   deleteById(db: Database.Database, id: string): boolean;
 }
 
@@ -51,8 +51,8 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     keySource: config.keySource ?? { kind: "none" },
     supportedModels: normalizeFridayProviderSupportedModels(config.supportedModels),
   };
-  const canaryStats = safeJsonParse<FridayAutonomyCanaryStats>(row.canary_stats_json);
-  const upgradeDefaults = defaultFridayAutonomyUpgradeFields();
+  const canaryStats = safeJsonParse<FridayProviderCanaryStats>(row.canary_stats_json);
+  const upgradeDefaults = defaultFridayProviderUpgradeFields();
 
   return {
     id: row.id,
@@ -65,9 +65,9 @@ function rowToProfile(row: FridayProviderProfileRow): FridayProviderProfile {
     lastVerifiedAt: row.last_verified_at ?? undefined,
     lastVerifiedRuntimeVersion: row.last_verified_runtime_version ?? undefined,
     lastVerifiedProviderModel: row.last_verified_provider_model ?? undefined,
-    compatibilityStatus: (row.compatibility_status as FridayAutonomyUpgradeFields["compatibilityStatus"] | undefined)
+    compatibilityStatus: (row.compatibility_status as FridayProviderUpgradeFields["compatibilityStatus"] | undefined)
       ?? upgradeDefaults.compatibilityStatus,
-    promotionChannel: (row.promotion_channel as FridayAutonomyUpgradeFields["promotionChannel"] | undefined)
+    promotionChannel: (row.promotion_channel as FridayProviderUpgradeFields["promotionChannel"] | undefined)
       ?? upgradeDefaults.promotionChannel,
     shadowVersionId: row.shadow_version_id ?? undefined,
     canaryStats: canaryStats && Object.keys(canaryStats).length > 0 ? canaryStats : undefined,
@@ -95,7 +95,7 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
     },
 
     insert(db, profile) {
-      const upgrade = mergeFridayAutonomyUpgradeFields(profile, {});
+      const upgrade = mergeFridayProviderUpgradeFields(profile, {});
       db.prepare(
         `INSERT INTO provider_profiles
          (id, kind, display_name, endpoint_url, enabled, default_model, config_json,
@@ -124,7 +124,7 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
     },
 
     update(db, profile) {
-      const upgrade = mergeFridayAutonomyUpgradeFields(profile, {});
+      const upgrade = mergeFridayProviderUpgradeFields(profile, {});
       db.prepare(
         `UPDATE provider_profiles
          SET kind = ?, display_name = ?, endpoint_url = ?, enabled = ?,
@@ -157,7 +157,7 @@ export function createFridayProviderProfileRepository(): FridayProviderProfileRe
       if (!existing) {
         return null;
       }
-      const merged = mergeFridayAutonomyUpgradeFields(existing, patch);
+      const merged = mergeFridayProviderUpgradeFields(existing, patch);
       db.prepare(
         `UPDATE provider_profiles
          SET last_verified_at = ?,

@@ -6,7 +6,10 @@ import type { FridayAgentRunStatus } from "#agent";
 import type { FridayTemplateHarnessSummary } from "#harness";
 import type { FridaySessionService } from "#sessions";
 import type { FridaySqliteLayer } from "#state";
-import type { FridaySkillExecutor } from "#skills";
+import {
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  type FridaySkillExecutor,
+} from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkflowGeneratorService, FridayWorkflowProductService } from "#workflows";
@@ -1338,6 +1341,28 @@ export function createFridayUixSurfaceService(
     };
   }
 
+  function isStarterSkillCapabilityDisabledResult(result: {
+    status: string;
+    output?: unknown;
+    stderr?: string;
+  }): boolean {
+    if (result.status === "completed") {
+      return false;
+    }
+    const output = asOutputRecord(result.output);
+    return output.code === "CAPABILITY_DISABLED"
+      && output.capability === "skill_node_runtime"
+      && (
+        output.gate === FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV
+        || (typeof result.stderr === "string" && result.stderr.includes(FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV))
+      );
+  }
+
+  function isStarterSkillCapabilityDisabledError(error: unknown): boolean {
+    return error instanceof FridayDomainError
+      && error.code === "UIX_STARTER_SKILL_CAPABILITY_DISABLED";
+  }
+
   async function executeStarterSkillTemplate(input: {
     templateId: string;
     userId: string;
@@ -1368,6 +1393,19 @@ export function createFridayUixSurfaceService(
       },
     });
     const result = await handle.result;
+    if (isStarterSkillCapabilityDisabledResult(result)) {
+      throw new FridayDomainError(
+        "UIX_STARTER_SKILL_CAPABILITY_DISABLED",
+        result.stderr || `Starter skill "${input.skillId}" is disabled by runtime safety policy`,
+        {
+          httpStatus: 503,
+          details: {
+            skillId: input.skillId,
+            gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+          },
+        },
+      );
+    }
     if (result.status !== "completed") {
       throw new FridayDomainError(
         "UIX_STARTER_SKILL_FAILED",
@@ -1955,41 +1993,47 @@ export function createFridayUixSurfaceService(
         }
         case "recover-failed-deploy": {
           if (deps.skillExecutor) {
-            const executed = await executeStarterSkillTemplate({
-              templateId: input.templateId,
-              userId: input.userId,
-              tenantContext: input.tenantContext,
-              skillId: "failed-deploy-recovery-brief",
-              guidanceText: "Recover failed deploy",
-              intent: "review_issues",
-              defaultSummary: "Friday summarized the current failed deploy recovery path.",
-            });
-            const details = asOutputRecord(executed.output.details);
-            const action = asOutputRecord(details.action);
-            const responsePayload: FridayUixTemplateExecutionResponse = {
-              ...executed.response,
-              workflow: executed.output.summary
-                ? blockedWorkflowCard({
-                  workflowName: "Workflow deploy",
-                  summary: typeof executed.output.nextStep === "string" && executed.output.nextStep.trim().length > 0
-                    ? `${executed.output.summary} ${executed.output.nextStep}`.trim()
-                    : executed.response.summary,
-                })
-                : undefined,
-              result: {
-                ...executed.response.result,
-                requiresApproval: Boolean(action.requiresApproval),
-                recommendedSkillId: details.recommendedSkillId,
-                recommendedTemplateId: details.recommendedTemplateId,
-              },
-            };
-            await deps.observability?.recordAssistantEvent({
-              userId: input.userId,
-              event: "template_executed",
-              summary: responsePayload.summary,
-              result: responsePayload,
-            });
-            return responsePayload;
+            try {
+              const executed = await executeStarterSkillTemplate({
+                templateId: input.templateId,
+                userId: input.userId,
+                tenantContext: input.tenantContext,
+                skillId: "failed-deploy-recovery-brief",
+                guidanceText: "Recover failed deploy",
+                intent: "review_issues",
+                defaultSummary: "Friday summarized the current failed deploy recovery path.",
+              });
+              const details = asOutputRecord(executed.output.details);
+              const action = asOutputRecord(details.action);
+              const responsePayload: FridayUixTemplateExecutionResponse = {
+                ...executed.response,
+                workflow: executed.output.summary
+                  ? blockedWorkflowCard({
+                    workflowName: "Workflow deploy",
+                    summary: typeof executed.output.nextStep === "string" && executed.output.nextStep.trim().length > 0
+                      ? `${executed.output.summary} ${executed.output.nextStep}`.trim()
+                      : executed.response.summary,
+                  })
+                  : undefined,
+                result: {
+                  ...executed.response.result,
+                  requiresApproval: Boolean(action.requiresApproval),
+                  recommendedSkillId: details.recommendedSkillId,
+                  recommendedTemplateId: details.recommendedTemplateId,
+                },
+              };
+              await deps.observability?.recordAssistantEvent({
+                userId: input.userId,
+                event: "template_executed",
+                summary: responsePayload.summary,
+                result: responsePayload,
+              });
+              return responsePayload;
+            } catch (err) {
+              if (!isStarterSkillCapabilityDisabledError(err)) {
+                throw err;
+              }
+            }
           }
           const issues = deps.selfHealing.listIssueCards({ userId: input.userId, limit: 10 });
           const workflowIssue = issues.find((issue) => issue.title.toLowerCase().includes("workflow"))
@@ -2028,23 +2072,29 @@ export function createFridayUixSurfaceService(
         }
         case "review-issues": {
           if (deps.skillExecutor) {
-            const executed = await executeStarterSkillTemplate({
-              templateId: input.templateId,
-              userId: input.userId,
-              tenantContext: input.tenantContext,
-              skillId: "review-open-issues",
-              parameters: { limit: 10 },
-              guidanceText: "Review detected issues",
-              intent: "review_issues",
-              defaultSummary: "Friday reviewed the current issue queue.",
-            });
-            await deps.observability?.recordAssistantEvent({
-              userId: input.userId,
-              event: "template_executed",
-              summary: executed.response.summary,
-              result: executed.response,
-            });
-            return executed.response;
+            try {
+              const executed = await executeStarterSkillTemplate({
+                templateId: input.templateId,
+                userId: input.userId,
+                tenantContext: input.tenantContext,
+                skillId: "review-open-issues",
+                parameters: { limit: 10 },
+                guidanceText: "Review detected issues",
+                intent: "review_issues",
+                defaultSummary: "Friday reviewed the current issue queue.",
+              });
+              await deps.observability?.recordAssistantEvent({
+                userId: input.userId,
+                event: "template_executed",
+                summary: executed.response.summary,
+                result: executed.response,
+              });
+              return executed.response;
+            } catch (err) {
+              if (!isStarterSkillCapabilityDisabledError(err)) {
+                throw err;
+              }
+            }
           }
           const issues = deps.selfHealing.listIssueCards({ userId: input.userId, limit: 10 });
           const responsePayload: FridayUixTemplateExecutionResponse = applyGuidance({

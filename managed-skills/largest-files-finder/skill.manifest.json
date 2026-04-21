@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "2.0",
+  "id": "largest-files-finder",
+  "name": "Largest Files Finder",
+  "description": "List the top 3 largest files in a given directory",
+  "version": "1.0.0",
+  "kind": "workflow",
+  "category": "filesystem",
+  "author": {
+    "name": "Friday Platform"
+  },
+  "tags": [
+    "generated",
+    "cli-backed",
+    "skill.stabilized"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 30000
+  },
+  "triggers": {
+    "intents": [
+      "find_largest_files",
+      "disk_usage_analysis"
+    ],
+    "phrases": [
+      "largest files",
+      "biggest files",
+      "top files by size"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ],
+    "mcpServers": []
+  },
+  "inputs": [
+    {
+      "key": "directory_path",
+      "type": "string",
+      "required": true,
+      "label": "Directory path to analyze"
+    }
+  ],
+  "outputs": [
+    {
+      "key": "largest_files",
+      "type": "array",
+      "description": "Array of up to 3 largest files with their sizes and paths"
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": [
+      "filesystem"
+    ]
+  },
+  "telemetry": {
+    "events": []
+  }
+}
