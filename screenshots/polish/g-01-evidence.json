@@ -32,21 +32,21 @@
   "artifacts": [
     {
       "path": "screenshots/polish/g01-home.pdf",
-      "sha256": "97e5702b094e5f657b3b276488fcd12a48c5ca10503aa411072a55db4ecb6d4e",
+      "sha256": "b15bdfadf5b9a4a87ce6e10f2ac3cbc23478da4b31dd7754aebea4e914965329",
       "kind": "pdf",
       "bytes": 692209,
       "pageCount": 2
     },
     {
       "path": "screenshots/polish/g01-assistant.pdf",
-      "sha256": "ffbf671896655e279bd556dc093c370f478710bf178484f9ccf8680261d21000",
+      "sha256": "e146252e5e1b11c79f2ed0f91a3fed4078c7826c83464ec4146e2b717097a77c",
       "kind": "pdf",
       "bytes": 135959,
       "pageCount": 1
     },
     {
       "path": "screenshots/polish/g01-observability.pdf",
-      "sha256": "14d8cd19c65d6fcc6116e1a9fbaf17783f1d922a9806a2a96bcc9b2c456d3349",
+      "sha256": "ccd76e8c84e7b7904b835e6e736eb70abc85d01c39dcbdd4bf8c236b270f8e0b",
       "kind": "pdf",
       "bytes": 508380,
       "pageCount": 1
