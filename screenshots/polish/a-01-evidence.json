@@ -1,0 +1,51 @@
+{
+  "code": "A-01",
+  "title": "Rail responsive breakpoints keep 64/240/240 widths while topbar stays visible",
+  "status": "PASS",
+  "summary": "rail widths 64/240/240; topbar visible true",
+  "observed": {
+    "widths": [
+      {
+        "viewport": {
+          "width": 1280,
+          "height": 960
+        },
+        "railWidth": 64,
+        "topbarVisible": true
+      },
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 1100
+        },
+        "railWidth": 240,
+        "topbarVisible": true
+      },
+      {
+        "viewport": {
+          "width": 1920,
+          "height": 1200
+        },
+        "railWidth": 240,
+        "topbarVisible": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/a01-rail-1280.png",
+      "sha256": "9265554b59b7f51ed8e25612198765ff1549d7ddc1d41c1842532c475ee958e2",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/a01-rail-1440.png",
+      "sha256": "1e5a564986fc3549d41af9a586fb18f2e216e0e6e1b5bc6a797e3b1e5e912ac6",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/a01-rail-1920.png",
+      "sha256": "e2a91f8651043b67d18b50fa5392f684b6290d46e7cff0f751ad51aaef9e9e60",
+      "kind": "png"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "code": "D-03",
+  "title": "Assistant deep link keeps packId across reload and lands on the cross-border handoff",
+  "status": "PASS",
+  "summary": "search ?packId=cross-border -> ?packId=cross-border; handoff true",
+  "observed": {
+    "before": {
+      "search": "?packId=cross-border",
+      "handoffVisible": true
+    },
+    "after": {
+      "search": "?packId=cross-border",
+      "handoffVisible": true
+    }
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/d03-assistant-packid.png",
+      "sha256": "afe4104e47f0b5855d9c3fdf7be724edba1d87b5c365498d07a99174a09990b1",
+      "kind": "png"
+    }
+  ]
+}

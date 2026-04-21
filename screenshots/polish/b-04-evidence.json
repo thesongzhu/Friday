@@ -1,0 +1,73 @@
+{
+  "code": "B-04",
+  "title": "Error surfaces expose copyable errorId plus three readable why lines",
+  "status": "PASS",
+  "summary": "3/3 error states expose 3 readable reason lines",
+  "observed": [
+    {
+      "route": "/home?dev=1&__state=snapshot-error",
+      "hasErrorShell": true,
+      "copyButton": true,
+      "lineCount": 3,
+      "lineLengths": [
+        46,
+        55,
+        62
+      ],
+      "lines": [
+        "发生了什么：首页快照在这次轮询里没有通过静态校验，所以 Friday 先保留上一份可用数据。",
+        "我们正在做什么：系统保留 shell、最近一次稳定快照和当前滚动位置，并把这次失败挂到同一个 errorId。",
+        "你可以做什么：先点刷新；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
+      ]
+    },
+    {
+      "route": "/observability?focus=traces&dev=1&__state=error",
+      "hasErrorShell": true,
+      "copyButton": true,
+      "lineCount": 3,
+      "lineLengths": [
+        31,
+        48,
+        61
+      ],
+      "lines": [
+        "发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。",
+        "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 ZYEUJVX。",
+        "你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
+      ]
+    },
+    {
+      "route": "/packs?dev=1&__state=error",
+      "hasErrorShell": true,
+      "copyButton": true,
+      "lineCount": 3,
+      "lineLengths": [
+        26,
+        45,
+        49
+      ],
+      "lines": [
+        "发生了什么：Pack 搜索请求这次没有返回可用结果。",
+        "我们正在做什么：Friday 继续保留当前目录、筛选条件和置顶顺序，不让工作台退回空白页。",
+        "你可以做什么：先重试；如果仍失败，就改用 Skills 或 Assistant 继续进入对应入口。"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "screenshots/polish/b04-home-error.png",
+      "sha256": "c67d3b1491f1cfdc56b6a76e0c1ed3ca0058bad12958daccee374db262db0a52",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b04-observability-error.png",
+      "sha256": "30370ed9118a9cd2e5907a4e69e356cda109e353560fcf2ee387d30bd3010ef3",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b04-packs-error.png",
+      "sha256": "d078b634e24db016af25f13a6fc277f6d7a8ca1b56e9ab6d1a768cce35f2dc44",
+      "kind": "png"
+    }
+  ]
+}

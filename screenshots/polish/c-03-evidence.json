@@ -1,0 +1,36 @@
+{
+  "code": "C-03",
+  "title": "CJK copy uses pretty wrapping and avoids one-character last lines in repeated re-renders",
+  "status": "PASS",
+  "summary": "source rule true; last-line estimates 5.4, 4, 4",
+  "observed": {
+    "sourceHasRule": true,
+    "samples": [
+      {
+        "rectCount": 4,
+        "lastLineWidth": 59.41,
+        "charWidth": 11,
+        "estimatedLastLineChars": 5.4,
+        "textWrap": "pretty",
+        "hangingPunctuation": ""
+      },
+      {
+        "rectCount": 5,
+        "lastLineWidth": 64,
+        "charWidth": 16,
+        "estimatedLastLineChars": 4,
+        "textWrap": "pretty",
+        "hangingPunctuation": ""
+      },
+      {
+        "rectCount": 5,
+        "lastLineWidth": 64,
+        "charWidth": 16,
+        "estimatedLastLineChars": 4,
+        "textWrap": "pretty",
+        "hangingPunctuation": ""
+      }
+    ]
+  },
+  "artifacts": []
+}

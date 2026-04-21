@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Friday Polish Report</title>
+  <style>
+    :root {
+      --bg: #f7efe4;
+      --panel: #ffffff;
+      --ink: #2d2118;
+      --ink-2: rgba(45, 33, 24, 0.72);
+      --border: rgba(45, 33, 24, 0.12);
+      --accent: #9a5d25;
+      --pass: #2f7a49;
+      --fail: #a53028;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 40px 24px 64px;
+      font: 14px/1.6 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #fbf4ea 0%, #f1e4d4 100%);
+    }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 28px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--ink-2);
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.82);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+    thead th {
+      text-align: left;
+      padding: 14px 16px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.94);
+    }
+    tbody td {
+      vertical-align: top;
+      padding: 14px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .details-row td {
+      padding-top: 0;
+      background: rgba(248, 243, 236, 0.64);
+    }
+    .status-pass,
+    .status-fail {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+    .status-pass {
+      color: var(--pass);
+      background: rgba(47, 122, 73, 0.12);
+    }
+    .status-fail {
+      color: var(--fail);
+      background: rgba(165, 48, 40, 0.12);
+    }
+    details summary {
+      cursor: pointer;
+      user-select: none;
+    }
+    pre {
+      margin: 10px 0 0;
+      padding: 12px;
+      border-radius: 12px;
+      background: #17120f;
+      color: #f7efe4;
+      overflow: auto;
+      font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    code {
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Friday Polish Report</h1>
+      <div class="meta">
+        <span class="chip">Generated 2026-04-21T19:18:25.409Z</span>
+        <span class="chip">Playwright 1.58.2</span>
+        <span class="chip">PASS 24</span>
+        <span class="chip">FAIL 0</span>
+      </div>
+    </header>
+    <table>
+      <thead>
+        <tr>
+          <th>Rule</th>
+          <th>Status</th>
+          <th>Checklist</th>
+          <th>Summary</th>
+          <th>Artifacts</th>
+        </tr>
+      </thead>
+      <tbody>
+      <tr>
+        <td><strong>A-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Rail responsive breakpoints keep 64/240/240 widths while topbar stays visible</td>
+        <td>rail widths 64/240/240; topbar visible true</td>
+        <td><a href="screenshots/polish/a-01-evidence.json">a-01-evidence.json</a> <code>69dd15cab573</code> · <a href="screenshots/polish/a01-rail-1280.png">a01-rail-1280.png</a> <code>9265554b59b7</code> · <a href="screenshots/polish/a01-rail-1440.png">a01-rail-1440.png</a> <code>1e5a564986fc</code> · <a href="screenshots/polish/a01-rail-1920.png">a01-rail-1920.png</a> <code>e2a91f865104</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;widths&quot;: [
+    {
+      &quot;viewport&quot;: {
+        &quot;width&quot;: 1280,
+        &quot;height&quot;: 960
+      },
+      &quot;railWidth&quot;: 64,
+      &quot;topbarVisible&quot;: true
+    },
+    {
+      &quot;viewport&quot;: {
+        &quot;width&quot;: 1440,
+        &quot;height&quot;: 1100
+      },
+      &quot;railWidth&quot;: 240,
+      &quot;topbarVisible&quot;: true
+    },
+    {
+      &quot;viewport&quot;: {
+        &quot;width&quot;: 1920,
+        &quot;height&quot;: 1200
+      },
+      &quot;railWidth&quot;: 240,
+      &quot;topbarVisible&quot;: true
+    }
+  ]
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>A-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Home hydrates from loading to normal in under 1 second without manual dev intervention</td>
+        <td>loading at 335.9ms; normal at 942.6ms</td>
+        <td><a href="screenshots/polish/a-02-evidence.json">a-02-evidence.json</a> <code>25547eedd44e</code> · <a href="screenshots/polish/a02-home-loading.png">a02-home-loading.png</a> <code>6966a9db3f44</code> · <a href="screenshots/polish/a02-home-normal.png">a02-home-normal.png</a> <code>47266b0a8712</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;loadingSample&quot;: {
+    &quot;atMs&quot;: 335.9,
+    &quot;stateName&quot;: &quot;loading&quot;,
+    &quot;skeletonCount&quot;: 6,
+    &quot;runCardCount&quot;: 0
+  },
+  &quot;normalSample&quot;: {
+    &quot;atMs&quot;: 942.6,
+    &quot;stateName&quot;: &quot;normal&quot;,
+    &quot;skeletonCount&quot;: 0,
+    &quot;runCardCount&quot;: 3
+  },
+  &quot;traceLength&quot;: 31
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>A-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Topbar right cluster is status pill, Cmd+K trigger, and settings menu with locale plus tweaks</td>
+        <td>status &quot;Friday 运行中&quot;, command &quot;Cmd+K 全局搜索⌘K&quot;, menu items 2</td>
+        <td><a href="screenshots/polish/a-03-evidence.json">a-03-evidence.json</a> <code>d5dcad12bd4f</code> · <a href="screenshots/polish/a03-topbar-menu.png">a03-topbar-menu.png</a> <code>2fbbcacb5157</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;statusText&quot;: &quot;Friday 运行中&quot;,
+  &quot;commandText&quot;: &quot;Cmd+K 全局搜索⌘K&quot;,
+  &quot;menuItems&quot;: [
+    &quot;语言中文 / English⌘L&quot;,
+    &quot;视图偏好密度、动效、圆角⚙&quot;
+  ]
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>A-04</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Assistant deep link breadcrumb keeps root and tail labels readable</td>
+        <td>Friday / 助手收件箱 / 待审批</td>
+        <td><a href="screenshots/polish/a-04-evidence.json">a-04-evidence.json</a> <code>3b2873fd4f2c</code> · <a href="screenshots/polish/a04-breadcrumb.png">a04-breadcrumb.png</a> <code>03ce146fa5e1</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;role&quot;: &quot;root&quot;,
+    &quot;text&quot;: &quot;Friday&quot;
+  },
+  {
+    &quot;role&quot;: &quot;middle&quot;,
+    &quot;text&quot;: &quot;助手收件箱&quot;
+  },
+  {
+    &quot;role&quot;: &quot;tail&quot;,
+    &quot;text&quot;: &quot;待审批&quot;
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>B-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Command Center keeps a 3-column shell even when the center lane is sparse</td>
+        <td>grid 280px 488px 320px</td>
+        <td><a href="screenshots/polish/b-01-evidence.json">b-01-evidence.json</a> <code>9949cd80d109</code> · <a href="screenshots/polish/b01-command-center.png">b01-command-center.png</a> <code>a75e2d68b832</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;gridColumns&quot;: &quot;280px 488px 320px&quot;,
+  &quot;asideCount&quot;: 2,
+  &quot;sectionCount&quot;: 5
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>B-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Home and Assistant loading skeletons share the same shimmer gradient and 1.6s loop</td>
+        <td>gradient match true; duration 1.6s</td>
+        <td><a href="screenshots/polish/b-02-evidence.json">b-02-evidence.json</a> <code>7991f3c13696</code> · <a href="screenshots/polish/b02-home-loading.png">b02-home-loading.png</a> <code>abe3f9c5edbf</code> · <a href="screenshots/polish/b02-assistant-loading.png">b02-assistant-loading.png</a> <code>d7a76d34728a</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/home?dev=1&amp;__state=loading&quot;,
+    &quot;skeletonCount&quot;: 6,
+    &quot;backgroundImage&quot;: &quot;linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none&quot;,
+    &quot;animationDuration&quot;: &quot;1.6s&quot;
+  },
+  {
+    &quot;route&quot;: &quot;/assistant?dev=1&amp;__state=loading&quot;,
+    &quot;skeletonCount&quot;: 12,
+    &quot;backgroundImage&quot;: &quot;linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none&quot;,
+    &quot;animationDuration&quot;: &quot;1.6s&quot;
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>B-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Each empty surface exposes a visible CTA and clicking it performs a route or overlay action</td>
+        <td>5/5 empty states expose a working CTA</td>
+        <td><a href="screenshots/polish/b-03-evidence.json">b-03-evidence.json</a> <code>5b74b83953d0</code> · <a href="screenshots/polish/b03-home-empty.png">b03-home-empty.png</a> <code>f71ce8d9eb94</code> · <a href="screenshots/polish/b03-channels-empty.png">b03-channels-empty.png</a> <code>5762798fd1f8</code> · <a href="screenshots/polish/b03-automations-empty.png">b03-automations-empty.png</a> <code>36528fd53276</code> · <a href="screenshots/polish/b03-sessions-empty.png">b03-sessions-empty.png</a> <code>a942a0cc08bf</code> · <a href="screenshots/polish/b03-command-center-empty.png">b03-command-center-empty.png</a> <code>c69c7f56f651</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/home?dev=1&amp;__state=empty&quot;,
+    &quot;hasCta&quot;: true,
+    &quot;text&quot;: &quot;去对话→&quot;,
+    &quot;href&quot;: &quot;/chat&quot;,
+    &quot;action&quot;: null,
+    &quot;beforePath&quot;: &quot;/home?dev=1&amp;__state=empty&quot;,
+    &quot;afterPath&quot;: &quot;/chat&quot;,
+    &quot;quickSheetOpen&quot;: false,
+    &quot;overlayOpen&quot;: false
+  },
+  {
+    &quot;route&quot;: &quot;/channels?dev=1&amp;__state=empty&quot;,
+    &quot;hasCta&quot;: true,
+    &quot;text&quot;: &quot;添加渠道→&quot;,
+    &quot;href&quot;: null,
+    &quot;action&quot;: &quot;channel-add&quot;,
+    &quot;beforePath&quot;: &quot;/channels?dev=1&amp;__state=empty&quot;,
+    &quot;afterPath&quot;: &quot;/channels?dev=1&amp;__state=empty&quot;,
+    &quot;quickSheetOpen&quot;: false,
+    &quot;overlayOpen&quot;: true
+  },
+  {
+    &quot;route&quot;: &quot;/automations?dev=1&amp;__state=empty&quot;,
+    &quot;hasCta&quot;: true,
+    &quot;text&quot;: &quot;去设置自动化→&quot;,
+    &quot;href&quot;: &quot;/settings?tab=runtime&quot;,
+    &quot;action&quot;: null,
+    &quot;beforePath&quot;: &quot;/automations?dev=1&amp;__state=empty&quot;,
+    &quot;afterPath&quot;: &quot;/settings?tab=runtime&quot;,
+    &quot;quickSheetOpen&quot;: false,
+    &quot;overlayOpen&quot;: false
+  },
+  {
+    &quot;route&quot;: &quot;/sessions?dev=1&amp;__state=empty&quot;,
+    &quot;hasCta&quot;: true,
+    &quot;text&quot;: &quot;去对话&quot;,
+    &quot;href&quot;: &quot;/chat&quot;,
+    &quot;action&quot;: null,
+    &quot;beforePath&quot;: &quot;/sessions?dev=1&amp;__state=empty&quot;,
+    &quot;afterPath&quot;: &quot;/chat&quot;,
+    &quot;quickSheetOpen&quot;: false,
+    &quot;overlayOpen&quot;: false
+  },
+  {
+    &quot;route&quot;: &quot;/command-center?dev=1&amp;__state=idle&quot;,
+    &quot;hasCta&quot;: true,
+    &quot;text&quot;: &quot;去工作流→&quot;,
+    &quot;href&quot;: &quot;/workflows&quot;,
+    &quot;action&quot;: null,
+    &quot;beforePath&quot;: &quot;/command-center?dev=1&amp;__state=idle&quot;,
+    &quot;afterPath&quot;: &quot;/workflows&quot;,
+    &quot;quickSheetOpen&quot;: false,
+    &quot;overlayOpen&quot;: false
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>B-04</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Error surfaces expose copyable errorId plus three readable why lines</td>
+        <td>3/3 error states expose 3 readable reason lines</td>
+        <td><a href="screenshots/polish/b-04-evidence.json">b-04-evidence.json</a> <code>ef2ec80a0e2b</code> · <a href="screenshots/polish/b04-home-error.png">b04-home-error.png</a> <code>c67d3b1491f1</code> · <a href="screenshots/polish/b04-observability-error.png">b04-observability-error.png</a> <code>30370ed9118a</code> · <a href="screenshots/polish/b04-packs-error.png">b04-packs-error.png</a> <code>d078b634e24d</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/home?dev=1&amp;__state=snapshot-error&quot;,
+    &quot;hasErrorShell&quot;: true,
+    &quot;copyButton&quot;: true,
+    &quot;lineCount&quot;: 3,
+    &quot;lineLengths&quot;: [
+      46,
+      55,
+      62
+    ],
+    &quot;lines&quot;: [
+      &quot;发生了什么：首页快照在这次轮询里没有通过静态校验，所以 Friday 先保留上一份可用数据。&quot;,
+      &quot;我们正在做什么：系统保留 shell、最近一次稳定快照和当前滚动位置，并把这次失败挂到同一个 errorId。&quot;,
+      &quot;你可以做什么：先点刷新；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。&quot;
+    ]
+  },
+  {
+    &quot;route&quot;: &quot;/observability?focus=traces&amp;dev=1&amp;__state=error&quot;,
+    &quot;hasErrorShell&quot;: true,
+    &quot;copyButton&quot;: true,
+    &quot;lineCount&quot;: 3,
+    &quot;lineLengths&quot;: [
+      31,
+      48,
+      61
+    ],
+    &quot;lines&quot;: [
+      &quot;发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。&quot;,
+      &quot;我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 ZYEUJVX。&quot;,
+      &quot;你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。&quot;
+    ]
+  },
+  {
+    &quot;route&quot;: &quot;/packs?dev=1&amp;__state=error&quot;,
+    &quot;hasErrorShell&quot;: true,
+    &quot;copyButton&quot;: true,
+    &quot;lineCount&quot;: 3,
+    &quot;lineLengths&quot;: [
+      26,
+      45,
+      49
+    ],
+    &quot;lines&quot;: [
+      &quot;发生了什么：Pack 搜索请求这次没有返回可用结果。&quot;,
+      &quot;我们正在做什么：Friday 继续保留当前目录、筛选条件和置顶顺序，不让工作台退回空白页。&quot;,
+      &quot;你可以做什么：先重试；如果仍失败，就改用 Skills 或 Assistant 继续进入对应入口。&quot;
+    ]
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>B-05</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Approval strip appends a new fade-in slot without reordering the original three items</td>
+        <td>new approval index 3; first three stable true</td>
+        <td><a href="screenshots/polish/b-05-evidence.json">b-05-evidence.json</a> <code>689f5526aa91</code> · <a href="screenshots/polish/b05-approvals-before.png">b05-approvals-before.png</a> <code>aff26efa4376</code> · <a href="screenshots/polish/b05-approvals-after.png">b05-approvals-after.png</a> <code>f831254c77f0</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;before&quot;: [
+    &quot;approval-warehouse&quot;,
+    &quot;approval-provider&quot;,
+    &quot;approval-policy&quot;
+  ],
+  &quot;after&quot;: [
+    &quot;approval-warehouse&quot;,
+    &quot;approval-provider&quot;,
+    &quot;approval-policy&quot;,
+    &quot;approval-test-new&quot;
+  ],
+  &quot;newIndex&quot;: 3,
+  &quot;firstThreeStable&quot;: true,
+  &quot;animationName&quot;: &quot;run-fade&quot;,
+  &quot;animationDuration&quot;: &quot;0.5s&quot;
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>C-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Compact density tightens topbar height, radius, card padding, and eyebrow size</td>
+        <td>topbar 56px -&gt; 48px; radius 28px -&gt; 20px; padding 26px -&gt; 18px; eyebrow 11px -&gt; 10px</td>
+        <td><a href="screenshots/polish/c-01-evidence.json">c-01-evidence.json</a> <code>79b32086b261</code> · <a href="screenshots/polish/c01-cozy.png">c01-cozy.png</a> <code>f1966d76f967</code> · <a href="screenshots/polish/c01-compact.png">c01-compact.png</a> <code>a1aa761ea52c</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;cozy&quot;: {
+    &quot;topbarHeight&quot;: &quot;56px&quot;,
+    &quot;radius&quot;: &quot;28px&quot;,
+    &quot;cardPadding&quot;: &quot;26px&quot;,
+    &quot;eyebrowFont&quot;: &quot;11px&quot;
+  },
+  &quot;compact&quot;: {
+    &quot;topbarHeight&quot;: &quot;48px&quot;,
+    &quot;radius&quot;: &quot;20px&quot;,
+    &quot;cardPadding&quot;: &quot;18px&quot;,
+    &quot;eyebrowFont&quot;: &quot;10px&quot;
+  }
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>C-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Run metrics use tabular numerals</td>
+        <td>9 metric nodes report tabular-nums</td>
+        <td><a href="screenshots/polish/c-02-evidence.json">c-02-evidence.json</a> <code>44784d595250</code> · <a href="screenshots/polish/c02-tabular-numerals.png">c02-tabular-numerals.png</a> <code>c3de0d04e99c</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;text&quot;: &quot;18 分 0 秒&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;当前阶段 · 执行中&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;任务档位 Planning · 上下文约 6400 字符 · 已根据历史经验调路由 · 回退 1 次&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;26 分 0 秒&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;当前阶段 · 待批准计划&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;任务档位 Review · 上下文约 8200 字符&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;7 分 0 秒&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;当前阶段 · 验证中&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  },
+  {
+    &quot;text&quot;: &quot;任务档位 Deterministic · 上下文约 2800 字符&quot;,
+    &quot;fontVariantNumeric&quot;: &quot;tabular-nums&quot;
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>C-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>CJK copy uses pretty wrapping and avoids one-character last lines in repeated re-renders</td>
+        <td>source rule true; last-line estimates 5.4, 4, 4</td>
+        <td><a href="screenshots/polish/c-03-evidence.json">c-03-evidence.json</a> <code>3dc17d0e4674</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;sourceHasRule&quot;: true,
+  &quot;samples&quot;: [
+    {
+      &quot;rectCount&quot;: 4,
+      &quot;lastLineWidth&quot;: 59.41,
+      &quot;charWidth&quot;: 11,
+      &quot;estimatedLastLineChars&quot;: 5.4,
+      &quot;textWrap&quot;: &quot;pretty&quot;,
+      &quot;hangingPunctuation&quot;: &quot;&quot;
+    },
+    {
+      &quot;rectCount&quot;: 5,
+      &quot;lastLineWidth&quot;: 64,
+      &quot;charWidth&quot;: 16,
+      &quot;estimatedLastLineChars&quot;: 4,
+      &quot;textWrap&quot;: &quot;pretty&quot;,
+      &quot;hangingPunctuation&quot;: &quot;&quot;
+    },
+    {
+      &quot;rectCount&quot;: 5,
+      &quot;lastLineWidth&quot;: 64,
+      &quot;charWidth&quot;: 16,
+      &quot;estimatedLastLineChars&quot;: 4,
+      &quot;textWrap&quot;: &quot;pretty&quot;,
+      &quot;hangingPunctuation&quot;: &quot;&quot;
+    }
+  ]
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>D-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Document title updates per route and always ends with Friday</td>
+        <td>/home:首页 · Friday | /chat:对话 · Friday | /assistant:助手收件箱 · Friday | /observability:可观测性 · Friday | /settings:设置 · Friday</td>
+        <td><a href="screenshots/polish/d-01-evidence.json">d-01-evidence.json</a> <code>0945e575173b</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;titles&quot;: [
+    {
+      &quot;route&quot;: &quot;/home&quot;,
+      &quot;title&quot;: &quot;首页 · Friday&quot;
+    },
+    {
+      &quot;route&quot;: &quot;/chat&quot;,
+      &quot;title&quot;: &quot;对话 · Friday&quot;
+    },
+    {
+      &quot;route&quot;: &quot;/assistant&quot;,
+      &quot;title&quot;: &quot;助手收件箱 · Friday&quot;
+    },
+    {
+      &quot;route&quot;: &quot;/observability&quot;,
+      &quot;title&quot;: &quot;可观测性 · Friday&quot;
+    },
+    {
+      &quot;route&quot;: &quot;/settings&quot;,
+      &quot;title&quot;: &quot;设置 · Friday&quot;
+    }
+  ]
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>D-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Browser back restores scroll position after a client-side route change</td>
+        <td>scroll 134 -&gt; 134 (diff 0)</td>
+        <td><a href="screenshots/polish/d-02-evidence.json">d-02-evidence.json</a> <code>dbf019150911</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;before&quot;: 134,
+  &quot;after&quot;: 134,
+  &quot;diff&quot;: 0,
+  &quot;routeAfter&quot;: &quot;/chat&quot;
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>D-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Assistant deep link keeps packId across reload and lands on the cross-border handoff</td>
+        <td>search ?packId=cross-border -&gt; ?packId=cross-border; handoff true</td>
+        <td><a href="screenshots/polish/d-03-evidence.json">d-03-evidence.json</a> <code>ec165ffd29ac</code> · <a href="screenshots/polish/d03-assistant-packid.png">d03-assistant-packid.png</a> <code>afe4104e47f0</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;before&quot;: {
+    &quot;search&quot;: &quot;?packId=cross-border&quot;,
+    &quot;handoffVisible&quot;: true
+  },
+  &quot;after&quot;: {
+    &quot;search&quot;: &quot;?packId=cross-border&quot;,
+    &quot;handoffVisible&quot;: true
+  }
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>E-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Focus ring appears only for keyboard focus-visible, not for mouse clicks</td>
+        <td>mouse outline &quot;rgba(45, 33, 24, 0.875) none 3px&quot;, keyboard outline &quot;rgb(154, 93, 37) solid 2px&quot;</td>
+        <td><a href="screenshots/polish/e-01-evidence.json">e-01-evidence.json</a> <code>2e1434b0efea</code> · <a href="screenshots/polish/e01-mouse-focus.png">e01-mouse-focus.png</a> <code>5ec6f23d6e80</code> · <a href="screenshots/polish/e01-keyboard-focus.png">e01-keyboard-focus.png</a> <code>d7130b40031d</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;mouse&quot;: {
+    &quot;outline&quot;: &quot;rgba(45, 33, 24, 0.875) none 3px&quot;,
+    &quot;boxShadow&quot;: &quot;none&quot;
+  },
+  &quot;keyboard&quot;: {
+    &quot;isSettingsButton&quot;: true,
+    &quot;outline&quot;: &quot;rgb(154, 93, 37) solid 2px&quot;,
+    &quot;boxShadow&quot;: &quot;none&quot;
+  }
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>E-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Cmd+K opens a real command palette with page, action, and skill results, then Enter routes to /packs</td>
+        <td>5 results; kinds page, page, action, skill, skill; Enter -&gt; /packs</td>
+        <td><a href="screenshots/polish/e-02-evidence.json">e-02-evidence.json</a> <code>14730df7e97e</code> · <a href="screenshots/polish/e02-command-palette.png">e02-command-palette.png</a> <code>4f79410183a1</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;before&quot;: {
+    &quot;activeTag&quot;: &quot;INPUT&quot;,
+    &quot;resultCount&quot;: 5,
+    &quot;kinds&quot;: [
+      &quot;page&quot;,
+      &quot;page&quot;,
+      &quot;action&quot;,
+      &quot;skill&quot;,
+      &quot;skill&quot;
+    ],
+    &quot;labels&quot;: [
+      &quot;入口库&quot;,
+      &quot;跨境向导&quot;,
+      &quot;查看跨境 Pack 待办&quot;,
+      &quot;Pack health review&quot;,
+      &quot;Launch pack checklist&quot;
+    ]
+  },
+  &quot;after&quot;: {
+    &quot;path&quot;: &quot;/packs&quot;
+  }
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>E-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>First 20 tab stops on Home move downward naturally without bouncing between regions</td>
+        <td>tab trail monotonic true</td>
+        <td><a href="screenshots/polish/e-03-evidence.json">e-03-evidence.json</a> <code>742eb798489f</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;trail&quot;: [
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;打开命令面板&quot;,
+      &quot;x&quot;: 878,
+      &quot;y&quot;: 10
+    },
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;打开顶栏设置&quot;,
+      &quot;x&quot;: 1043,
+      &quot;y&quot;: 10
+    },
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;正在进行中&quot;,
+      &quot;x&quot;: 285,
+      &quot;y&quot;: 92
+    },
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;等你决定&quot;,
+      &quot;x&quot;: 466,
+      &quot;y&quot;: 92
+    },
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;总览脉冲&quot;,
+      &quot;x&quot;: 634,
+      &quot;y&quot;: 92
+    },
+    {
+      &quot;tag&quot;: &quot;BUTTON&quot;,
+      &quot;text&quot;: &quot;接下来&quot;,
+      &quot;x&quot;: 791,
+      &quot;y&quot;: 92
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开运行 复核北美仓补货告警并决定是否提前切换供应商&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 207
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开运行 验证图像生成 provider 熔断窗口并补一轮降级策略&quot;,
+      &quot;x&quot;: 484,
+      &quot;y&quot;: 207
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开运行 重新跑 Home snapshot polling 节奏并确认后台 60 秒回落&quot;,
+      &quot;x&quot;: 696,
+      &quot;y&quot;: 207
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;全部查看 (4)&quot;,
+      &quot;x&quot;: 1030,
+      &quot;y&quot;: 564
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;处理审批 提前切换补货供应商需要你确认预算边界&quot;,
+      &quot;x&quot;: 1011,
+      &quot;y&quot;: 613
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;处理审批 是否允许 Friday 在 provider 降级后自动改用次优模型&quot;,
+      &quot;x&quot;: 1011,
+      &quot;y&quot;: 699
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;处理审批 跨租户规则审计将读取历史 30 天执行记录&quot;,
+      &quot;x&quot;: 1011,
+      &quot;y&quot;: 785
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开自动化 午后审批窗口&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 925
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开自动化 渠道健康巡检&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1007
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开自动化 清晨库存同步&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1085
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开自动化 风险汇总简报&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1143
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;打开自动化 周利润复盘&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1214
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;+1 更多&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1286
+    },
+    {
+      &quot;tag&quot;: &quot;A&quot;,
+      &quot;text&quot;: &quot;继续去 Assistant&quot;,
+      &quot;x&quot;: 272,
+      &quot;y&quot;: 1332
+    }
+  ],
+  &quot;monotonic&quot;: true
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>F-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>English locale leaves no Chinese text nodes across all shipped routes</td>
+        <td>21/21 routes contain no Chinese text in en locale</td>
+        <td><a href="screenshots/polish/f-01-evidence.json">f-01-evidence.json</a> <code>df6462973897</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/home&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/chat&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/assistant&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/observability&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/packs&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/skills&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/skills/generator&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/workflows&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/workflows/builder&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/plugins&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/mcp&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/channels&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/automations&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/sessions&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/usage&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/memory&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/fleet&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/settings&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/command-center&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/onboarding&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  },
+  {
+    &quot;route&quot;: &quot;/setup&quot;,
+    &quot;count&quot;: 0,
+    &quot;sample&quot;: []
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>F-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Brand word Friday stays untranslated while surrounding copy localizes</td>
+        <td>runtime &quot;Friday 运行中&quot; -&gt; &quot;Friday running&quot;; standalone Friday keys 0</td>
+        <td><a href="screenshots/polish/f-02-evidence.json">f-02-evidence.json</a> <code>8862d78f1e78</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;zhText&quot;: &quot;Friday 运行中&quot;,
+  &quot;enText&quot;: &quot;Friday running&quot;,
+  &quot;fridayAsStandaloneKeyCount&quot;: 0,
+  &quot;runningTemplatePresent&quot;: true
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>F-03</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Compact density hides the third run meta line</td>
+        <td>third meta display none</td>
+        <td><a href="screenshots/polish/f-03-evidence.json">f-03-evidence.json</a> <code>1a0a5bfe7362</code> · <a href="screenshots/polish/f03-compact-run-card.png">f03-compact-run-card.png</a> <code>4d78fd33c8e8</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;childCount&quot;: 3,
+  &quot;thirdDisplay&quot;: &quot;none&quot;
+}</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>G-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Print mode exports Home, Assistant, and Observability to readable PDFs capped at two pages each</td>
+        <td>/home?dev=1&amp;__state=normal:2p | /assistant?dev=1&amp;__state=pending:1p | /observability?focus=alerts:1p</td>
+        <td><a href="screenshots/polish/g-01-evidence.json">g-01-evidence.json</a> <code>fdb63d306194</code> · <a href="screenshots/polish/g01-home.pdf">g01-home.pdf</a> <code>f86d42293dd0</code> · <a href="screenshots/polish/g01-assistant.pdf">g01-assistant.pdf</a> <code>41234d666556</code> · <a href="screenshots/polish/g01-observability.pdf">g01-observability.pdf</a> <code>96a33580cd77</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/home?dev=1&amp;__state=normal&quot;,
+    &quot;pageHeightPx&quot;: 1755,
+    &quot;pageHeightMm&quot;: 464.3,
+    &quot;pageCount&quot;: 2,
+    &quot;bytes&quot;: 692209,
+    &quot;printHeaderVisible&quot;: true
+  },
+  {
+    &quot;route&quot;: &quot;/assistant?dev=1&amp;__state=pending&quot;,
+    &quot;pageHeightPx&quot;: 3877,
+    &quot;pageHeightMm&quot;: 1025.8,
+    &quot;pageCount&quot;: 1,
+    &quot;bytes&quot;: 135959,
+    &quot;printHeaderVisible&quot;: true
+  },
+  {
+    &quot;route&quot;: &quot;/observability?focus=alerts&quot;,
+    &quot;pageHeightPx&quot;: 1447,
+    &quot;pageHeightMm&quot;: 382.9,
+    &quot;pageCount&quot;: 1,
+    &quot;bytes&quot;: 508382,
+    &quot;printHeaderVisible&quot;: true
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>G-02</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Usage, Audit, and Alerts each export a non-empty Blob with a stable sha256</td>
+        <td>/usage:6d013e1fbb2a | /observability?focus=audit:d6387ebad4d2 | /observability?focus=alerts:efebb085eb9a</td>
+        <td><a href="screenshots/polish/g-02-evidence.json">g-02-evidence.json</a> <code>1fa1771e77f1</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>[
+  {
+    &quot;route&quot;: &quot;/usage&quot;,
+    &quot;size&quot;: 590,
+    &quot;type&quot;: &quot;text/csv;charset=utf-8&quot;,
+    &quot;sha256&quot;: &quot;6d013e1fbb2a970f88a8aa45dfbe15265ae42aa0b9e8df959f993ffe9be6a659&quot;
+  },
+  {
+    &quot;route&quot;: &quot;/observability?focus=audit&quot;,
+    &quot;size&quot;: 1479,
+    &quot;type&quot;: &quot;application/json&quot;,
+    &quot;sha256&quot;: &quot;d6387ebad4d2dee81cb94d58afb390aa1f317a0b4f46e37fcd9eb5526d780d16&quot;
+  },
+  {
+    &quot;route&quot;: &quot;/observability?focus=alerts&quot;,
+    &quot;size&quot;: 3690,
+    &quot;type&quot;: &quot;application/json&quot;,
+    &quot;sha256&quot;: &quot;efebb085eb9ab8546376190c8c99e0656a56e608769c0aa007a7fdc2c702cebc&quot;
+  }
+]</pre></details></td>
+      </tr>
+      <tr>
+        <td><strong>H-01</strong></td>
+        <td><span class="status-pass">PASS</span></td>
+        <td>Prod build strips QA globals and keeps only version plus health hooks</td>
+        <td>prod mock undefined; qa undefined; version string; health function</td>
+        <td><a href="screenshots/polish/h-01-evidence.json">h-01-evidence.json</a> <code>0190336cee87</code></td>
+      </tr>
+      <tr class="details-row">
+        <td colspan="5"><details><summary>Observed</summary><pre>{
+  &quot;runtime&quot;: {
+    &quot;mockType&quot;: &quot;undefined&quot;,
+    &quot;qaType&quot;: &quot;undefined&quot;,
+    &quot;versionType&quot;: &quot;string&quot;,
+    &quot;healthType&quot;: &quot;function&quot;,
+    &quot;title&quot;: &quot;首页 · Friday&quot;
+  },
+  &quot;sourceHasMock&quot;: false,
+  &quot;sourceHasQa&quot;: false,
+  &quot;sourceHasVersion&quot;: true,
+  &quot;sourceHasHealth&quot;: true
+}</pre></details></td>
+      </tr></tbody>
+    </table>
+  </main>
+</body>
+</html>

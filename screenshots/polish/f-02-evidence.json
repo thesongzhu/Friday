@@ -1,0 +1,13 @@
+{
+  "code": "F-02",
+  "title": "Brand word Friday stays untranslated while surrounding copy localizes",
+  "status": "PASS",
+  "summary": "runtime \"Friday 运行中\" -> \"Friday running\"; standalone Friday keys 0",
+  "observed": {
+    "zhText": "Friday 运行中",
+    "enText": "Friday running",
+    "fridayAsStandaloneKeyCount": 0,
+    "runningTemplatePresent": true
+  },
+  "artifacts": []
+}
