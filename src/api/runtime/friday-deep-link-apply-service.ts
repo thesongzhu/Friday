@@ -1,8 +1,8 @@
 import { FridayDomainError } from "#errors";
 import {
-  getFridayProviderTemplate,
   type FridayProviderAuthMode,
   type FridayProviderService,
+  getFridayProviderTemplate,
 } from "#providers";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type {

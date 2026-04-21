@@ -101,7 +101,7 @@ describe("createFridayDeepLinkApplyService", () => {
       label: "Imported OpenAI",
       providerTemplate: {
         providerKind: "openai",
-        apiKey: "sk-test",
+        apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
         model: "gpt-4o-mini",
       },
     });
