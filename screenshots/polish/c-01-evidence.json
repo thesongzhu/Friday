@@ -20,12 +20,12 @@
   "artifacts": [
     {
       "path": "screenshots/polish/c01-cozy.png",
-      "sha256": "f1966d76f9677e4ffa9d08c38afe94745b213e57711255c5466996e43645a53e",
+      "sha256": "8809e574f6b35c7e69e8137c46fff91b6dd3584997e41fda5791beb8259b17ea",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/c01-compact.png",
-      "sha256": "a1aa761ea52ce0b0c9f1281c394ce0ab08b01ee8b7ef42fd0e3788a3850c017c",
+      "sha256": "d223cd60555cff8a3658ed4b377a61fdb163d9fe04ecd65b1d1445b54f6c787e",
       "kind": "png"
     }
   ]

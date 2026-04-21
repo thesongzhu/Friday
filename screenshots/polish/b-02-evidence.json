@@ -20,12 +20,12 @@
   "artifacts": [
     {
       "path": "screenshots/polish/b02-home-loading.png",
-      "sha256": "abe3f9c5edbfde6f75a816c4f44e587918f60f72d95cf99f31e4c3c43c0209ad",
+      "sha256": "2a04aaa16e2f630ab3f3f2a41a7bafa070e7b11a5a3a86f957b56808be30f588",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b02-assistant-loading.png",
-      "sha256": "d7a76d34728a20456a9b852ee84b8be3fa5689894bb40af674b12ed31b6fda4e",
+      "sha256": "01cf47e60a8b10275b6cb91dc9fe9534e00d84901e984d5e9f8799dc04500e33",
       "kind": "png"
     }
   ]

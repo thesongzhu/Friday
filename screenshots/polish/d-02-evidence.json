@@ -2,10 +2,10 @@
   "code": "D-02",
   "title": "Browser back restores scroll position after a client-side route change",
   "status": "PASS",
-  "summary": "scroll 134 -> 134 (diff 0)",
+  "summary": "scroll 124 -> 124 (diff 0)",
   "observed": {
-    "before": 134,
-    "after": 134,
+    "before": 124,
+    "after": 124,
     "diff": 0,
     "routeAfter": "/chat"
   },

@@ -23,12 +23,12 @@
   "artifacts": [
     {
       "path": "screenshots/polish/b05-approvals-before.png",
-      "sha256": "aff26efa4376c0c50eb3d125110e31c91abc29d9274f36b239d9d839eb328943",
+      "sha256": "6d729ccc95e3a5200a1a32a3a47c4480df8389ba834de97b2ee316f73097d1a3",
       "kind": "png"
     },
     {
       "path": "screenshots/polish/b05-approvals-after.png",
-      "sha256": "f831254c77f08dfbc4c3b823b45016ecb78b9afe33fc55b389f9638e6a9a671f",
+      "sha256": "89bbf92ef60a25debf35af2006f363f5f1728765b51ac9cb78439b6315f6b273",
       "kind": "png"
     }
   ]
