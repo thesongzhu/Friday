@@ -964,129 +964,68 @@ async function* parseOpenAIResponsesSSEStream(
   let buffer = "";
   const toolCalls = new Map<string, { id: string; itemId?: string; callId?: string; name: string; args: string; emitted: boolean }>();
   const toolCallKeyByCallId = new Map<string, string>();
+  const assistantMessages = new Map<string, { emittedText: string }>();
   let inputTokens = 0;
   let outputTokens = 0;
   let messageEnded = false;
 
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
+  const appendAssistantText = (itemId: string, text: string) => {
+    if (!itemId || text.length === 0) {
+      return;
+    }
+    const tracked = assistantMessages.get(itemId) ?? { emittedText: "" };
+    tracked.emittedText += text;
+    assistantMessages.set(itemId, tracked);
+  };
 
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+  const emitAssistantTextFromFinalText = async function* (
+    itemId: string,
+    finalText: string,
+    source: string,
+  ): AsyncGenerator<FridayAgentLlmStreamEvent, void, void> {
+    if (!itemId || finalText.length === 0) {
+      return;
+    }
+    const tracked = assistantMessages.get(itemId) ?? { emittedText: "" };
+    const emittedText = tracked.emittedText;
+    if (finalText === emittedText) {
+      assistantMessages.set(itemId, tracked);
+      return;
+    }
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const data = line.slice(6).trim();
+    let missingText = "";
+    if (emittedText.length === 0) {
+      missingText = finalText;
+    } else if (finalText.startsWith(emittedText)) {
+      missingText = finalText.slice(emittedText.length);
+    } else {
+      console.warn(`[friday][agent-llm-client] OpenAI Responses ${source} text mismatch; using completed text as fallback`, {
+        itemId,
+      });
+      missingText = finalText;
+    }
 
-      if (data === "[DONE]") {
-        if (!messageEnded) {
-          const hasToolCalls = toolCalls.size > 0;
-          yield* emitOpenAIResponsesToolCalls(toolCalls);
-          yield {
-            type: "message_end",
-            stopReason: hasToolCalls ? "tool_use" : "end_turn",
-            inputTokens,
-            outputTokens,
-          };
-          messageEnded = true;
-        }
-        return;
-      }
+    if (missingText.length > 0) {
+      yield { type: "text_delta", text: missingText };
+      tracked.emittedText = finalText;
+      assistantMessages.set(itemId, tracked);
+    }
+  };
 
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(data) as Record<string, unknown>;
-      } catch (err) {
-        console.warn("[friday][agent-llm-client] Responses SSE event parse failed:", err instanceof Error ? err.message : String(err));
-        continue;
-      }
+  const emitAssistantTextFromItem = async function* (
+    itemId: string,
+    item: Record<string, unknown>,
+  ): AsyncGenerator<FridayAgentLlmStreamEvent, void, void> {
+    const finalText = extractOpenAIResponsesMessageText(item);
+    yield* emitAssistantTextFromFinalText(itemId, finalText, "message item");
+  };
 
-      const type = typeof event.type === "string" ? event.type : "";
+  const processLine = async function* (line: string): AsyncGenerator<FridayAgentLlmStreamEvent, void, void> {
+    if (!line.startsWith("data: ")) return;
+    const data = line.slice(6).trim();
 
-      if (type === "response.output_text.delta") {
-        const delta = typeof event.delta === "string" ? event.delta : "";
-        if (delta) {
-          yield { type: "text_delta", text: delta };
-        }
-        continue;
-      }
-
-      if (type === "response.output_item.added" || type === "response.output_item.done") {
-        const item = event.item as Record<string, unknown> | undefined;
-        if (item?.type === "function_call") {
-          const itemId = typeof item.id === "string" ? item.id : "";
-          const callId = typeof item.call_id === "string" ? item.call_id : "";
-          const toolKey = itemId
-            || (callId ? toolCallKeyByCallId.get(callId) ?? callId : "");
-          if (toolKey) {
-            if (callId && itemId) {
-              toolCallKeyByCallId.set(callId, toolKey);
-            }
-            const existing = toolCalls.get(toolKey) ?? {
-              id: callId || itemId,
-              itemId: itemId || undefined,
-              callId: callId || undefined,
-              name: "",
-              args: "",
-              emitted: false,
-            };
-            if (itemId) {
-              existing.itemId = itemId;
-            }
-            if (callId) {
-              existing.callId = callId;
-              existing.id = callId;
-            } else if (itemId && existing.id.trim().length === 0) {
-              existing.id = itemId;
-            }
-            if (typeof item.name === "string" && item.name) {
-              existing.name = item.name;
-            }
-            if (typeof item.arguments === "string") {
-              existing.args = item.arguments;
-            }
-            toolCalls.set(toolKey, existing);
-
-            if (type === "response.output_item.done" && !existing.emitted && existing.name.trim().length > 0) {
-              const input = parseOpenAIToolCallArgs(existing.args);
-              yield {
-                type: "tool_use",
-                id: existing.id,
-                name: existing.name,
-                input,
-              };
-              existing.emitted = true;
-            }
-          }
-        }
-        continue;
-      }
-
-      if (type === "response.function_call_arguments.delta") {
-        const itemId = typeof event.item_id === "string" ? event.item_id : "";
-        const delta = typeof event.delta === "string" ? event.delta : "";
-        if (!itemId || !delta) continue;
-        const existing = toolCalls.get(itemId) ?? {
-          id: itemId,
-          itemId,
-          callId: undefined,
-          name: "",
-          args: "",
-          emitted: false,
-        };
-        existing.args += delta;
-        toolCalls.set(itemId, existing);
-        continue;
-      }
-
-      if (type === "response.completed" && !messageEnded) {
-        const response = event.response as Record<string, unknown> | undefined;
-        const usage = response?.usage as Record<string, unknown> | undefined;
-        if (usage) {
-          if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
-          if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
-        }
-
+    if (data === "[DONE]") {
+      if (!messageEnded) {
         const hasToolCalls = toolCalls.size > 0;
         yield* emitOpenAIResponsesToolCalls(toolCalls);
         yield {
@@ -1097,7 +1036,204 @@ async function* parseOpenAIResponsesSSEStream(
         };
         messageEnded = true;
       }
+      return;
     }
+
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(data) as Record<string, unknown>;
+    } catch (err) {
+      console.warn("[friday][agent-llm-client] Responses SSE event parse failed:", err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    const type = typeof event.type === "string" ? event.type : "";
+
+    if (type === "error") {
+      const error = event.error as Record<string, unknown> | undefined;
+      const code = typeof error?.code === "string" ? error.code : "unknown_error";
+      const message = typeof error?.message === "string" ? error.message : "OpenAI streaming error";
+      throw new FridayDomainError(
+        FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+        `LLM stream error (${code}): ${message}`,
+        { httpStatus: 502 },
+      );
+    }
+
+    if (type === "response.failed" || type === "response.incomplete") {
+      const response = event.response as Record<string, unknown> | undefined;
+      const error = response?.error as Record<string, unknown> | undefined;
+      const incomplete = response?.incomplete_details as Record<string, unknown> | undefined;
+      const code = typeof error?.code === "string"
+        ? error.code
+        : typeof incomplete?.reason === "string"
+          ? incomplete.reason
+          : type;
+      const message = typeof error?.message === "string"
+        ? error.message
+        : typeof incomplete?.message === "string"
+          ? incomplete.message
+          : `OpenAI response ended with status ${type}`;
+      throw new FridayDomainError(
+        FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+        `LLM response failed (${code}): ${message}`,
+        { httpStatus: 502 },
+      );
+    }
+
+    if (type === "response.output_text.delta") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (delta) {
+        appendAssistantText(itemId, delta);
+        yield { type: "text_delta", text: delta };
+      }
+      return;
+    }
+
+    if (type === "response.output_text.done") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const text = typeof event.text === "string" ? event.text : "";
+      yield* emitAssistantTextFromFinalText(itemId, text, "output_text.done");
+      return;
+    }
+
+    if (type === "response.refusal.delta") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (delta) {
+        appendAssistantText(itemId, delta);
+        yield { type: "text_delta", text: delta };
+      }
+      return;
+    }
+
+    if (type === "response.refusal.done") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const refusal = typeof event.refusal === "string" ? event.refusal : "";
+      yield* emitAssistantTextFromFinalText(itemId, refusal, "refusal.done");
+      return;
+    }
+
+    if (type === "response.content_part.done") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const part = event.part as Record<string, unknown> | undefined;
+      const finalText = extractOpenAIResponsesContentPartText(part);
+      yield* emitAssistantTextFromFinalText(itemId, finalText, "content_part.done");
+      return;
+    }
+
+    if (type === "response.output_item.added" || type === "response.output_item.done") {
+      const item = event.item as Record<string, unknown> | undefined;
+      if (item?.type === "message") {
+        const itemId = typeof item.id === "string" ? item.id : "";
+        if (type === "response.output_item.done") {
+          yield* emitAssistantTextFromItem(itemId, item);
+        }
+        return;
+      }
+
+      if (item?.type === "function_call") {
+        const itemId = typeof item.id === "string" ? item.id : "";
+        const callId = typeof item.call_id === "string" ? item.call_id : "";
+        const toolKey = itemId
+          || (callId ? toolCallKeyByCallId.get(callId) ?? callId : "");
+        if (toolKey) {
+          if (callId && itemId) {
+            toolCallKeyByCallId.set(callId, toolKey);
+          }
+          const existing = toolCalls.get(toolKey) ?? {
+            id: callId || itemId,
+            itemId: itemId || undefined,
+            callId: callId || undefined,
+            name: "",
+            args: "",
+            emitted: false,
+          };
+          if (itemId) {
+            existing.itemId = itemId;
+          }
+          if (callId) {
+            existing.callId = callId;
+            existing.id = callId;
+          } else if (itemId && existing.id.trim().length === 0) {
+            existing.id = itemId;
+          }
+          if (typeof item.name === "string" && item.name) {
+            existing.name = item.name;
+          }
+          if (typeof item.arguments === "string") {
+            existing.args = item.arguments;
+          }
+          toolCalls.set(toolKey, existing);
+
+          if (type === "response.output_item.done" && !existing.emitted && existing.name.trim().length > 0) {
+            const input = parseOpenAIToolCallArgs(existing.args);
+            yield {
+              type: "tool_use",
+              id: existing.id,
+              name: existing.name,
+              input,
+            };
+            existing.emitted = true;
+          }
+        }
+      }
+      return;
+    }
+
+    if (type === "response.function_call_arguments.delta") {
+      const itemId = typeof event.item_id === "string" ? event.item_id : "";
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (!itemId || !delta) return;
+      const existing = toolCalls.get(itemId) ?? {
+        id: itemId,
+        itemId,
+        callId: undefined,
+        name: "",
+        args: "",
+        emitted: false,
+      };
+      existing.args += delta;
+      toolCalls.set(itemId, existing);
+      return;
+    }
+
+    if (type === "response.completed" && !messageEnded) {
+      const response = event.response as Record<string, unknown> | undefined;
+      const usage = response?.usage as Record<string, unknown> | undefined;
+      if (usage) {
+        if (typeof usage.input_tokens === "number") inputTokens = usage.input_tokens;
+        if (typeof usage.output_tokens === "number") outputTokens = usage.output_tokens;
+      }
+
+      const hasToolCalls = toolCalls.size > 0;
+      yield* emitOpenAIResponsesToolCalls(toolCalls);
+      yield {
+        type: "message_end",
+        stopReason: hasToolCalls ? "tool_use" : "end_turn",
+        inputTokens,
+        outputTokens,
+      };
+      messageEnded = true;
+      return;
+    }
+  };
+
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      yield* processLine(line);
+    }
+  }
+
+  const trailingLine = buffer.trim();
+  if (trailingLine.length > 0) {
+    yield* processLine(trailingLine);
   }
 }
 
@@ -1112,6 +1248,32 @@ function parseOpenAIToolCallArgs(args: string): Record<string, unknown> {
     console.warn("[friday][agent-llm-client] tool call args parse failed:", err instanceof Error ? err.message : String(err));
     return { _parseError: true, _rawJson: args };
   }
+}
+
+function extractOpenAIResponsesMessageText(item: Record<string, unknown>): string {
+  const content = Array.isArray(item.content) ? item.content : [];
+  const parts: string[] = [];
+  for (const part of content) {
+    const text = extractOpenAIResponsesContentPartText(part);
+    if (text) {
+      parts.push(text);
+    }
+  }
+  return parts.join("");
+}
+
+function extractOpenAIResponsesContentPartText(part: unknown): string {
+  if (!part || typeof part !== "object" || Array.isArray(part)) {
+    return "";
+  }
+  const record = part as Record<string, unknown>;
+  if ((record.type === "output_text" || record.type === "text") && typeof record.text === "string") {
+    return record.text;
+  }
+  if (record.type === "refusal" && typeof record.refusal === "string") {
+    return record.refusal;
+  }
+  return "";
 }
 
 async function* emitOpenAIResponsesToolCalls(

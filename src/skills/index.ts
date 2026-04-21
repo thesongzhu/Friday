@@ -308,6 +308,7 @@ export { createFridayShellExecutor } from "./executor/friday-shell-executor.js";
 export {
   createFridayNodeExecutor,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  canRunFridayBundledSystemNodeSkillWithoutGate,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./executor/friday-node-executor.js";

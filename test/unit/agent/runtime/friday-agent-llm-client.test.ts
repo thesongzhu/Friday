@@ -486,6 +486,288 @@ describe("FridayAgentLlmClient", () => {
     ]);
   });
 
+  it("falls back to completed OpenAI Responses message content when no text deltas are emitted", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          id: "msg_done_only",
+          type: "message",
+          status: "in_progress",
+          role: "assistant",
+          content: [],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.output_item.done",
+        item: {
+          id: "msg_done_only",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "output_text", text: "OK" }],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 9,
+            output_tokens: 1,
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Reply with OK only." }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text_delta", text: "OK" },
+      {
+        type: "message_end",
+        stopReason: "end_turn",
+        inputTokens: 9,
+        outputTokens: 1,
+      },
+    ]);
+  });
+
+  it("parses the final OpenAI Responses event even when the stream closes without a trailing newline", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          id: "msg_no_newline",
+          type: "message",
+          status: "in_progress",
+          role: "assistant",
+          content: [],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.output_item.done",
+        item: {
+          id: "msg_no_newline",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "output_text", text: "FILE_NOT_FOUND" }],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 14,
+            output_tokens: 2,
+          },
+        },
+      }),
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Read the missing file and answer exactly FILE_NOT_FOUND." }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text_delta", text: "FILE_NOT_FOUND" },
+      {
+        type: "message_end",
+        stopReason: "end_turn",
+        inputTokens: 14,
+        outputTokens: 2,
+      },
+    ]);
+  });
+
+  it("parses OpenAI Responses refusal events as assistant text", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          id: "msg_refusal",
+          type: "message",
+          status: "in_progress",
+          role: "assistant",
+          content: [],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.refusal.delta",
+        item_id: "msg_refusal",
+        delta: "I'm sorry, ",
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.refusal.done",
+        item_id: "msg_refusal",
+        refusal: "I'm sorry, but I can't do that.",
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 15,
+            output_tokens: 8,
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Answer with exactly OK." }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text_delta", text: "I'm sorry, " },
+      { type: "text_delta", text: "but I can't do that." },
+      {
+        type: "message_end",
+        stopReason: "end_turn",
+        inputTokens: 15,
+        outputTokens: 8,
+      },
+    ]);
+  });
+
+  it("parses OpenAI Responses content_part.done text when no output_text events are emitted", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.output_item.added",
+        item: {
+          id: "msg_content_part",
+          type: "message",
+          status: "in_progress",
+          role: "assistant",
+          content: [],
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.content_part.done",
+        item_id: "msg_content_part",
+        part: {
+          type: "output_text",
+          text: "AUTOMATION_OK",
+        },
+      }) + "\n\n",
+      "data: " + JSON.stringify({
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 12,
+            output_tokens: 3,
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const events: FridayAgentLlmStreamEvent[] = [];
+    for await (const event of client.stream({
+      model: "gpt-4.1-mini",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Reply with exactly AUTOMATION_OK." }],
+      tools: [],
+      signal: new AbortController().signal,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text_delta", text: "AUTOMATION_OK" },
+      {
+        type: "message_end",
+        stopReason: "end_turn",
+        inputTokens: 12,
+        outputTokens: 3,
+      },
+    ]);
+  });
+
+  it("throws when OpenAI Responses emits response.failed", async () => {
+    const rawLines = [
+      "data: " + JSON.stringify({
+        type: "response.failed",
+        response: {
+          error: {
+            code: "rate_limit_exceeded",
+            message: "Rate limit reached.",
+          },
+        },
+      }) + "\n\n",
+    ];
+    const fetchImpl = createMockFetch(200, createRawSSEStream(rawLines));
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      api: "openai-responses",
+      fetchImpl,
+    });
+
+    const consume = async () => {
+      for await (const _event of client.stream({
+        model: "gpt-4.1-mini",
+        systemPrompt: "Test",
+        messages: [{ role: "user", content: "Say hi" }],
+        tools: [],
+        signal: new AbortController().signal,
+      })) {
+        // drain
+      }
+    };
+
+    await expect(consume()).rejects.toThrow(/rate_limit_exceeded/);
+  });
+
   it("parses real OpenAI Responses function-call SSE shape", async () => {
     const fetchImpl = createMockFetch(200, createRawSSEStream(
       buildRealOpenAIResponsesToolSSE("browser", { command: "open /tmp/demo" }, "call_real_1"),
