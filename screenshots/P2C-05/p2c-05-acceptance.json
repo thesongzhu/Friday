@@ -1,0 +1,508 @@
+{
+  "itemId": "P2C-05",
+  "route": "/workflows",
+  "generatedAt": "2026-04-21T10:33:54.669Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 11,
+    "pass": 11,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "W01",
+      "acceptance": "双列 · 左 workflow list 420 · 右 detail(最近运行 + 部署状态)flex",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w01-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w01-layout.json",
+          "sha256": "96cb2a221a71aa24e5ddb52c9306acebb2525b33c32c76dc1239a3aaf1aa3ea1"
+        },
+        {
+          "path": "screenshots/P2C-05/w01-layout.png",
+          "sha256": "ae0b96173123ca754e0e81e8ecb93854d7d30ad57ab00ad74f1740b61f8fcc8f"
+        }
+      ],
+      "summary": "left=420px",
+      "observed": {
+        "leftWidth": 420,
+        "rightExists": true,
+        "rightWidth": 388,
+        "containerDisplay": "grid",
+        "containerColumns": "420px 388px"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "W02",
+      "acceptance": "顶栏 · \"+ 新建\" 按钮跳 `/workflows/builder` + search + status filter",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w02-toolbar.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w02-toolbar.json",
+          "sha256": "714aa489939efa22c3de7c26cae9b6478f419a793e22556f50361d0d05c77001"
+        }
+      ],
+      "summary": "/workflows/builder / filters=3",
+      "observed": {
+        "newHref": "/workflows/builder",
+        "searchExists": true,
+        "filters": [
+          {
+            "payload": "running",
+            "active": false
+          },
+          {
+            "payload": "failed",
+            "active": false
+          },
+          {
+            "payload": "all",
+            "active": true
+          }
+        ]
+      }
+    },
+    {
+      "rule": 3,
+      "code": "W03",
+      "acceptance": "workflow row · 名称 + 当前版本 + 最近运行状态 + 下次触发时间 + menu(编辑 / 复制 / 归档)",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w03-workflow-row.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w03-workflow-row.json",
+          "sha256": "5b320ca9309ee1ae1aa47de26dc5ea80acd1eb323835a0c4415e7d1ac972bae2"
+        }
+      ],
+      "summary": "跨境上新守护 / 编辑/复制/归档",
+      "observed": {
+        "title": "跨境上新守护",
+        "meta": [
+          "v12",
+          "running",
+          "15:10"
+        ],
+        "actions": [
+          "编辑",
+          "复制",
+          "归档"
+        ]
+      }
+    },
+    {
+      "rule": 4,
+      "code": "W04",
+      "acceptance": "点 row · 右侧 detail 加载 · 无页面跳转",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w04-select-detail.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w04-select-detail.json",
+          "sha256": "5f60647c231c769453ed49853b420c6dc380f9a49d9d0c8d023e0e5af21be067"
+        }
+      ],
+      "summary": "workflow-cross-border-launch -> workflow-incident-brief",
+      "observed": {
+        "before": {
+          "stateName": "running",
+          "rows": [
+            {
+              "id": "workflow-cross-border-launch",
+              "name": {
+                "zh": "跨境上新守护",
+                "en": "Cross-border launch guard"
+              },
+              "version": "v12",
+              "status": "running",
+              "nextRun": "15:10",
+              "trigger": "cron"
+            },
+            {
+              "id": "workflow-incident-brief",
+              "name": {
+                "zh": "事故复盘简报",
+                "en": "Incident brief"
+              },
+              "version": "v7",
+              "status": "failed",
+              "nextRun": "manual",
+              "trigger": "manual"
+            },
+            {
+              "id": "workflow-support-drain",
+              "name": {
+                "zh": "客服工单消峰",
+                "en": "Support drain"
+              },
+              "version": "v4",
+              "status": "scheduled",
+              "nextRun": "16:00",
+              "trigger": "webhook"
+            }
+          ],
+          "selectedWorkflowId": "workflow-cross-border-launch",
+          "search": "",
+          "statusFilter": "all",
+          "archived": [
+            {
+              "id": "workflow-budget-scout",
+              "name": {
+                "zh": "预算预警巡检",
+                "en": "Budget scout"
+              },
+              "version": "v3",
+              "status": "archived",
+              "nextRun": "—",
+              "trigger": "manual"
+            }
+          ]
+        },
+        "after": {
+          "pathname": "/workflows",
+          "selectedWorkflowId": "workflow-incident-brief",
+          "detailTitle": "事故复盘简报"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "W05",
+      "acceptance": "detail · 顶 \"编辑\" 按钮(跳 builder) · 中 runs 表(最近 10)· 底 deploy 状态",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w05-detail-panel.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w05-detail-panel.json",
+          "sha256": "a22ca2a6bce1bb9614e7314e776ae4dcf6c202e542d2b3e97cb1611a011ca167"
+        },
+        {
+          "path": "screenshots/P2C-05/w05-detail-panel.png",
+          "sha256": "ae0b96173123ca754e0e81e8ecb93854d7d30ad57ab00ad74f1740b61f8fcc8f"
+        }
+      ],
+      "summary": "10 runs / 重新部署",
+      "observed": {
+        "editHref": "/workflows/builder?workflowId=workflow-cross-border-launch",
+        "runRows": 10,
+        "deployMeta": [
+          "模板版本: v12",
+          "prod-us",
+          "上次部署 14:02"
+        ],
+        "redeployLabel": "重新部署"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "W06",
+      "acceptance": "run 行 · 状态 pill + 时长 + 触发源 + logs 按钮 · 失败有 retry 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w06-run-row.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w06-run-row.json",
+          "sha256": "774a69e7719fba30b824aa411214f1537a1d1f832c466b846592eb08b45876b2"
+        }
+      ],
+      "summary": "failed -> running",
+      "observed": {
+        "before": {
+          "cells": [
+            "failed",
+            "07:12",
+            "manual",
+            "logsretry"
+          ],
+          "hasRetry": true,
+          "hasLogs": true,
+          "pillText": "failed"
+        },
+        "after": {
+          "stateName": "failed",
+          "rows": [
+            {
+              "id": "workflow-cross-border-launch",
+              "name": {
+                "zh": "跨境上新守护",
+                "en": "Cross-border launch guard"
+              },
+              "version": "v12",
+              "status": "running",
+              "nextRun": "15:10",
+              "trigger": "cron"
+            },
+            {
+              "id": "workflow-incident-brief",
+              "name": {
+                "zh": "事故复盘简报",
+                "en": "Incident brief"
+              },
+              "version": "v7",
+              "status": "running",
+              "nextRun": "刚刚",
+              "trigger": "manual"
+            },
+            {
+              "id": "workflow-support-drain",
+              "name": {
+                "zh": "客服工单消峰",
+                "en": "Support drain"
+              },
+              "version": "v4",
+              "status": "scheduled",
+              "nextRun": "16:00",
+              "trigger": "webhook"
+            }
+          ],
+          "selectedWorkflowId": "workflow-incident-brief",
+          "search": "",
+          "statusFilter": "all",
+          "archived": [
+            {
+              "id": "workflow-budget-scout",
+              "name": {
+                "zh": "预算预警巡检",
+                "en": "Budget scout"
+              },
+              "version": "v3",
+              "status": "archived",
+              "nextRun": "—",
+              "trigger": "manual"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "W07",
+      "acceptance": "running 状态 · 行底 2px 琥珀 progress bar · 宽度实时更新",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w07-running-progress.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w07-running-progress.json",
+          "sha256": "74b2c2c29945140d6080375caa93c40570694c5291bb1f1e0102845eae789cc4"
+        }
+      ],
+      "summary": "77% -> 82%",
+      "observed": {
+        "tokenColors": {
+          "--accent": "rgb(154, 93, 37)"
+        },
+        "before": {
+          "width": "77%",
+          "height": 2,
+          "color": "rgb(154, 93, 37)",
+          "tokenMatch": "--accent"
+        },
+        "after": {
+          "width": "82%"
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "W08",
+      "acceptance": "deploy 状态 · 显示 template version + env + 上次部署时间 · redeploy 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w08-deploy-state.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w08-deploy-state.json",
+          "sha256": "7d46737c9aa106a667916c3e139f1b383270ad5eaba7102b6548107fe5a5c14f"
+        }
+      ],
+      "summary": "模板版本: v12 | prod-us | 上次部署 14:02",
+      "observed": {
+        "deployCopy": "跨境上新守护",
+        "meta": [
+          "模板版本: v12",
+          "prod-us",
+          "上次部署 14:02"
+        ],
+        "redeployLabel": "重新部署"
+      }
+    },
+    {
+      "rule": 9,
+      "code": "W09",
+      "acceptance": "archive · 二次确认 · archived workflow 单独 section 显示 · 可 restore",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w09-archive-restore.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w09-archive-restore.json",
+          "sha256": "2ae75bbd4a0ab59f3ed5fab7cf937b4dfe508a72f293d6dc99070e3d9024daa5"
+        }
+      ],
+      "summary": "归档这个工作流? / restored=true",
+      "observed": {
+        "confirm": {
+          "title": "归档这个工作流?",
+          "confirmLabel": "归档"
+        },
+        "archived": {
+          "archivedTitles": [
+            "预算预警巡检",
+            "事故复盘简报",
+            "模板版本: v12",
+            "prod-us",
+            "上次部署 14:02"
+          ],
+          "restoreExists": true,
+          "rowExists": false
+        },
+        "restored": {
+          "stateName": "running",
+          "rows": [
+            {
+              "id": "workflow-cross-border-launch",
+              "name": {
+                "zh": "跨境上新守护",
+                "en": "Cross-border launch guard"
+              },
+              "version": "v12",
+              "status": "running",
+              "nextRun": "15:10",
+              "trigger": "cron"
+            },
+            {
+              "id": "workflow-support-drain",
+              "name": {
+                "zh": "客服工单消峰",
+                "en": "Support drain"
+              },
+              "version": "v4",
+              "status": "scheduled",
+              "nextRun": "16:00",
+              "trigger": "webhook"
+            },
+            {
+              "id": "workflow-incident-brief",
+              "name": {
+                "zh": "事故复盘简报",
+                "en": "Incident brief"
+              },
+              "version": "v7",
+              "status": "scheduled",
+              "nextRun": "18:30",
+              "trigger": "manual"
+            }
+          ],
+          "selectedWorkflowId": "workflow-cross-border-launch",
+          "search": "",
+          "statusFilter": "all",
+          "archived": [
+            {
+              "id": "workflow-budget-scout",
+              "name": {
+                "zh": "预算预警巡检",
+                "en": "Budget scout"
+              },
+              "version": "v3",
+              "status": "archived",
+              "nextRun": "—",
+              "trigger": "manual"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "W10",
+      "acceptance": "空态 · \"还没有工作流 · 从模板开始\" · 展示 5-6 个模板 card · 点击跳 builder preload template",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w10-empty-templates.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w10-empty-templates.json",
+          "sha256": "4fdd8b588421aa27a481b2e9d63bb3c11a516cf82daf83cb9c605929075f1086"
+        }
+      ],
+      "summary": "6 templates -> /workflows/builder?template=release-qa",
+      "observed": {
+        "before": {
+          "title": "还没有工作流 · 从模板开始",
+          "templates": [
+            {
+              "title": "发布 QA 守门",
+              "href": "/workflows/builder?template=release-qa"
+            },
+            {
+              "title": "库存漂移巡检",
+              "href": "/workflows/builder?template=inventory-drift"
+            },
+            {
+              "title": "Provider 路由巡检",
+              "href": "/workflows/builder?template=provider-routing"
+            },
+            {
+              "title": "客服工单消峰",
+              "href": "/workflows/builder?template=support-drain"
+            },
+            {
+              "title": "设备健康守护",
+              "href": "/workflows/builder?template=fleet-health"
+            },
+            {
+              "title": "预算预测审阅",
+              "href": "/workflows/builder?template=budget-forecast"
+            }
+          ]
+        },
+        "route": {
+          "pathname": "/workflows/builder",
+          "search": "?template=release-qa"
+        }
+      }
+    },
+    {
+      "rule": 11,
+      "code": "W11",
+      "acceptance": "多个 running 时 · 全局顶 banner \"N 个工作流正在运行\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-05/w11-running-banner.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-05/w11-running-banner.json",
+          "sha256": "efc83eba521e4e8a2f3057f39435656c3eec27d39383a30a87c442543aa8f643"
+        },
+        {
+          "path": "screenshots/P2C-05/w11-running-banner.png",
+          "sha256": "ae0b96173123ca754e0e81e8ecb93854d7d30ad57ab00ad74f1740b61f8fcc8f"
+        }
+      ],
+      "summary": "2 个工作流正在运行",
+      "observed": {
+        "bannerText": "2 个工作流正在运行",
+        "runningCount": 2
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2C-05/w01-layout.json",
+    "screenshots/P2C-05/w01-layout.png",
+    "screenshots/P2C-05/w02-toolbar.json",
+    "screenshots/P2C-05/w03-workflow-row.json",
+    "screenshots/P2C-05/w04-select-detail.json",
+    "screenshots/P2C-05/w05-detail-panel.json",
+    "screenshots/P2C-05/w05-detail-panel.png",
+    "screenshots/P2C-05/w06-run-row.json",
+    "screenshots/P2C-05/w07-running-progress.json",
+    "screenshots/P2C-05/w08-deploy-state.json",
+    "screenshots/P2C-05/w09-archive-restore.json",
+    "screenshots/P2C-05/w10-empty-templates.json",
+    "screenshots/P2C-05/w11-running-banner.json",
+    "screenshots/P2C-05/w11-running-banner.png"
+  ]
+}

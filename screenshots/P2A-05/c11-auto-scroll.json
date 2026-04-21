@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:30:26.372Z",
+  "observed": {
+    "nearBottom": {
+      "top": 5908,
+      "max": 5908,
+      "badge": false
+    },
+    "farUp": {
+      "top": 5488,
+      "gap": 829,
+      "badge": true
+    }
+  }
+}

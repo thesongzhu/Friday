@@ -1,0 +1,62 @@
+{
+  "generatedAt": "2026-04-21T10:39:43.784Z",
+  "guardrails": [
+    {
+      "id": "G01",
+      "pass": true
+    },
+    {
+      "id": "G02",
+      "pass": true
+    },
+    {
+      "id": "G03",
+      "pass": true
+    },
+    {
+      "id": "G04",
+      "pass": true
+    },
+    {
+      "id": "G05",
+      "pass": true
+    },
+    {
+      "id": "G06",
+      "pass": true
+    },
+    {
+      "id": "G07",
+      "pass": true
+    },
+    {
+      "id": "G08",
+      "pass": true
+    },
+    {
+      "id": "G09",
+      "pass": true
+    },
+    {
+      "id": "G10",
+      "pass": true
+    },
+    {
+      "id": "G11",
+      "pass": true
+    },
+    {
+      "id": "G12",
+      "pass": true
+    }
+  ],
+  "hardcodedHexMatches": [],
+  "phaseScriptIds": [
+    "2A",
+    "2B",
+    "2C",
+    "2D",
+    "2E",
+    "2F"
+  ]
+}

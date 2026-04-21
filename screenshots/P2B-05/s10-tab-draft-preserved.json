@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2026-04-21T10:31:57.964Z",
+  "diagnosticsObserved": {
+    "search": "?tab=diagnostics&__state=diagnostics",
+    "active": "诊断"
+  },
+  "restoredObserved": {
+    "search": "?tab=runtime&__state=runtime",
+    "active": "运行时",
+    "value": "15000",
+    "dirtyTabs": {
+      "runtime": [
+        "runtime-budget"
+      ]
+    }
+  }
+}

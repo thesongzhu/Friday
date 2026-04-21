@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2026-04-21T10:36:54.315Z",
+  "observed": {
+    "route": "/home",
+    "navError": {
+      "targetHref": "/assistant?tab=approvals",
+      "errorId": "UMERY42",
+      "title": "页面切换失败",
+      "detail": "Friday 保留了当前页面，你可以重试刚才的跳转。",
+      "reason": "目标页面在切换阶段没有通过静态检查，因此没有替换当前界面。"
+    },
+    "homeStillMounted": true,
+    "errorBarPresent": true,
+    "retryAction": "retry-last-navigation"
+  },
+  "screenshot": "screenshots/P2F-01/f01-08-nav-fail.png"
+}

@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:32:55.773Z",
+  "tokenBackgrounds": {
+    "--error-soft": "rgba(165, 48, 40, 0.14)"
+  },
+  "observed": {
+    "bannerText": "2 正在触发",
+    "rowBackground": "rgba(165, 48, 40, 0.14)",
+    "tokenMatch": "--error-soft",
+    "dotAnimation": "provider-dot-pulse"
+  },
+  "screenshot": "screenshots/P2B-09/m05-firing-banner.png"
+}

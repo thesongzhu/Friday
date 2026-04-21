@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:37:01.114Z",
+  "defaultObserved": {
+    "motion": "reduced",
+    "dataset": "reduced"
+  },
+  "observed": {
+    "full": {
+      "dataset": "full",
+      "swift": "160ms cubic-bezier(0.2, 0, 0, 1)",
+      "gentle": "240ms cubic-bezier(0.2, 0, 0, 1)"
+    },
+    "reduced": {
+      "dataset": "reduced",
+      "swift": "120ms cubic-bezier(0.2, 0, 0, 1)",
+      "gentle": "160ms cubic-bezier(0.2, 0, 0, 1)"
+    },
+    "none": {
+      "dataset": "none",
+      "swift": "0.01ms linear",
+      "gentle": "0.01ms linear"
+    }
+  }
+}

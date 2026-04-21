@@ -1,0 +1,862 @@
+{
+  "itemId": "P2F-05",
+  "route": "all",
+  "generatedAt": "2026-04-21T10:37:18.837Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 10,
+    "pass": 10,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "F05-01",
+      "acceptance": "Tab 顺序符合视觉顺序 · 无跳跃",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-01-tab-order.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-01-tab-order.json",
+          "sha256": "70eacab9b38c90498a558c0ccc4364c161d185df56ee8446e4ca3d491548574a"
+        }
+      ],
+      "summary": "导航已按响应式自动收起 -> 首页 -> 对话 -> 助手收件箱 -> 可观测性 -> 入口库 -> 技能 -> 工作流 -> 渠道 -> 自动化 -> 会话记录 -> 用量 -> 记忆 -> 设备 -> 插件 -> MCP",
+      "observed": {
+        "shellTrail": [
+          {
+            "tag": "BUTTON",
+            "id": "",
+            "label": "导航已按响应式自动收起",
+            "railLink": true,
+            "x": 193,
+            "y": 29
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "首页",
+            "railLink": true,
+            "x": 14,
+            "y": 120
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "对话",
+            "railLink": true,
+            "x": 14,
+            "y": 192
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "助手收件箱",
+            "railLink": true,
+            "x": 14,
+            "y": 264
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "可观测性",
+            "railLink": true,
+            "x": 14,
+            "y": 336
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "入口库",
+            "railLink": true,
+            "x": 14,
+            "y": 408
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "技能",
+            "railLink": true,
+            "x": 14,
+            "y": 480
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "工作流",
+            "railLink": true,
+            "x": 14,
+            "y": 552
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "渠道",
+            "railLink": true,
+            "x": 14,
+            "y": 666
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "自动化",
+            "railLink": true,
+            "x": 14,
+            "y": 738
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "会话记录",
+            "railLink": true,
+            "x": 14,
+            "y": 810
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "用量",
+            "railLink": true,
+            "x": 14,
+            "y": 882
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "记忆",
+            "railLink": true,
+            "x": 14,
+            "y": 954
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "设备",
+            "railLink": true,
+            "x": 14,
+            "y": 1026
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "插件",
+            "railLink": true,
+            "x": 14,
+            "y": 1098
+          },
+          {
+            "tag": "A",
+            "id": "",
+            "label": "MCP",
+            "railLink": true,
+            "x": 14,
+            "y": 1170
+          }
+        ],
+        "monotonicY": true,
+        "stableColumn": true,
+        "noDuplicateLoop": true,
+        "startsInRail": true
+      }
+    },
+    {
+      "rule": 2,
+      "code": "F05-02",
+      "acceptance": "focus ring 2px 琥珀 + 2px offset · 所有可交互元素",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-02-focus-ring.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-02-focus-ring.json",
+          "sha256": "a194a70915a38224f87939b5b19a4e221da7a5c24a8f4c0854cbd7d3733afb6c"
+        }
+      ],
+      "summary": "2px rgb(154, 93, 37) offset=2px",
+      "observed": {
+        "sourceRulePresent": true,
+        "observed": {
+          "focusedLabel": "导航已按响应式自动收起",
+          "outlineWidth": "2px",
+          "outlineStyle": "solid",
+          "outlineOffset": "2px",
+          "outlineColor": "rgb(154, 93, 37)",
+          "accentColor": "rgb(154, 93, 37)"
+        }
+      }
+    },
+    {
+      "rule": 3,
+      "code": "F05-03",
+      "acceptance": "所有 icon-only 按钮有 aria-label",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-03-icon-labels.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-03-icon-labels.json",
+          "sha256": "fba936388cd03c1f24fe855490b7ebfa5452b67cf293480fe217481223151a0e"
+        }
+      ],
+      "summary": "scanned=48 missing=0",
+      "observed": {
+        "scanned": [
+          {
+            "itemId": "P2A-01",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-02",
+            "href": "/home?dev=1&__state=active",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-03",
+            "href": "/home?dev=1&__state=empty",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-04",
+            "href": "/home?dev=1&__state=empty",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-05",
+            "href": "/chat?dev=1&__state=user-sent",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-06",
+            "href": "/chat?dev=1&__state=bubble",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-07",
+            "href": "/chat?dev=1&__state=idle",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2A-08",
+            "href": "/chat?dev=1&__state=first-visit",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-01",
+            "href": "/assistant?dev=1&__state=pending",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-02",
+            "href": "/assistant?dev=1&__state=pending",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-03",
+            "href": "/assistant?dev=1&__state=open",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-04",
+            "href": "/assistant?dev=1&__state=pending",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-04",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-05",
+            "href": "/settings?dev=1&__state=providers",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-06",
+            "href": "/settings?tab=providers&dev=1&__state=healthy",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-07",
+            "href": "/observability?dev=1&__state=active",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-08",
+            "href": "/observability?focus=traces&dev=1&__state=collapsed",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2B-09",
+            "href": "/observability?focus=alerts&dev=1&__state=list",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-01",
+            "href": "/packs?dev=1&__state=full-catalog",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-02",
+            "href": "/packs/cross-border/setup?dev=1&__state=step1-goals",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-03",
+            "href": "/skills?dev=1&__state=installed",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-04",
+            "href": "/skills/generator?dev=1&__state=draft",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-05",
+            "href": "/workflows?dev=1&__state=running",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-06",
+            "href": "/workflows/builder?dev=1&__state=editing",
+            "iconOnlyCount": 6
+          },
+          {
+            "itemId": "P2C-07",
+            "href": "/plugins?dev=1&__state=installed",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2C-08",
+            "href": "/mcp?dev=1&__state=loading",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2D-01",
+            "href": "/channels?dev=1&__state=healthy",
+            "iconOnlyCount": 2
+          },
+          {
+            "itemId": "P2D-02",
+            "href": "/automations?dev=1&__state=running",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2D-03",
+            "href": "/sessions?dev=1&__state=list",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2D-04",
+            "href": "/usage?dev=1&__state=this-month",
+            "iconOnlyCount": 21
+          },
+          {
+            "itemId": "P2D-05",
+            "href": "/memory?dev=1&__state=list",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2D-06",
+            "href": "/fleet?dev=1&__state=list",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2E-01",
+            "href": "/login?dev=1&__state=idle",
+            "iconOnlyCount": 0
+          },
+          {
+            "itemId": "P2E-02",
+            "href": "/setup?dev=1&__state=step1-profile",
+            "iconOnlyCount": 0
+          },
+          {
+            "itemId": "P2E-03",
+            "href": "/onboarding?dev=1&__state=welcome",
+            "iconOnlyCount": 4
+          },
+          {
+            "itemId": "P2E-04",
+            "href": "/flow/inventory-triage?dev=1&__state=step-intent",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2E-05",
+            "href": "/command-center?dev=1&__state=idle",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-01",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-02",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-03",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-04",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-05",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-06",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-08",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-08",
+            "href": "/assistant?dev=1&__state=pending",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-08",
+            "href": "/observability?dev=1&__state=active",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-09",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          },
+          {
+            "itemId": "P2F-10",
+            "href": "/home?dev=1&__state=normal",
+            "iconOnlyCount": 1
+          }
+        ],
+        "missing": []
+      }
+    },
+    {
+      "rule": 4,
+      "code": "F05-04",
+      "acceptance": "modal / drawer Escape 关 · 开时 focus trap · 关时 focus 回触发源",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-04-modal-drawer.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-04-modal-drawer.json",
+          "sha256": "24a9fef17e2be1c5b973504cab9cc40a402bab33ce2b216c219765c5f042e6dd"
+        }
+      ],
+      "summary": "modal=toggle-command-palette drawer=open-approval-drawer",
+      "observed": {
+        "modalTriggerBefore": "toggle-command-palette",
+        "modalOpen": {
+          "activeId": "command-palette-input",
+          "trapScope": "overlay-panel command-palette"
+        },
+        "modalTrap": {
+          "activeId": "",
+          "inOverlay": true
+        },
+        "modalClosed": {
+          "paletteOpen": false,
+          "activeAction": "toggle-command-palette"
+        },
+        "drawerTriggerBefore": "open-approval-drawer",
+        "drawerOpen": {
+          "activeText": "批准",
+          "inDrawer": true
+        },
+        "drawerTrap": {
+          "inDrawer": true
+        },
+        "drawerClosed": {
+          "drawerOpen": false,
+          "activeAction": "open-approval-drawer"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "F05-05",
+      "acceptance": "列表方向键 · ↑↓ 移动 · Home/End 首末",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-05-list-keys.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-05-list-keys.json",
+          "sha256": "fe213c8195e8b5bd5328e7662c3b8a79b1faecac59364ec41bf1f1dff7048c95"
+        }
+      ],
+      "summary": "首页 -> 对话 -> 打开 Workflow 测试面板",
+      "observed": {
+        "before": {
+          "activeDescendant": "command-palette-item-0",
+          "activeLabel": "首页",
+          "count": 27
+        },
+        "afterDown": {
+          "activeDescendant": "command-palette-item-1",
+          "activeLabel": "对话"
+        },
+        "afterHome": {
+          "activeDescendant": "command-palette-item-0",
+          "activeLabel": "首页"
+        },
+        "afterEnd": {
+          "activeDescendant": "command-palette-item-26",
+          "activeLabel": "打开 Workflow 测试面板"
+        },
+        "afterUp": {
+          "activeDescendant": "command-palette-item-25",
+          "activeLabel": "刷新首页快照"
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "F05-06",
+      "acceptance": "form label 关联 · input 有 id + label for",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-06-form-labels.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-06-form-labels.json",
+          "sha256": "93337d44425e6305e120e9a6e0bc3a281aaea0ded794e7864ca29e1448a0b5f5"
+        }
+      ],
+      "summary": "provider=4 alert=2",
+      "observed": {
+        "providerFields": [
+          {
+            "id": "provider-modal-name",
+            "labelCount": 1,
+            "labelFors": [
+              "provider-modal-name"
+            ]
+          },
+          {
+            "id": "provider-modal-url",
+            "labelCount": 1,
+            "labelFors": [
+              "provider-modal-url"
+            ]
+          },
+          {
+            "id": "provider-modal-model",
+            "labelCount": 1,
+            "labelFors": [
+              "provider-modal-model"
+            ]
+          },
+          {
+            "id": "provider-secret-input",
+            "labelCount": 1,
+            "labelFors": [
+              "provider-secret-input"
+            ]
+          }
+        ],
+        "alertFields": [
+          {
+            "id": "observability-alert-name",
+            "labelCount": 1,
+            "labelFors": [
+              "observability-alert-name"
+            ]
+          },
+          {
+            "id": "observability-alert-metric",
+            "labelCount": 1,
+            "labelFors": [
+              "observability-alert-metric"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rule": 7,
+      "code": "F05-07",
+      "acceptance": "错误与 input 用 aria-describedby 连",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-07-describedby.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-07-describedby.json",
+          "sha256": "98adf588560037c2f96f75c90b4b58e70dc86c1b35febbeb26e54ad3d97f2d1a"
+        }
+      ],
+      "summary": "observability-alert-name-error, observability-alert-threshold-error",
+      "observed": {
+        "step1": {
+          "nameDescribedBy": "observability-alert-name-error",
+          "metricDescribedBy": "observability-alert-metric-error",
+          "nameErrorText": "名称不能为空。",
+          "metricErrorText": "请选择指标。"
+        },
+        "step2": {
+          "thresholdDescribedBy": "observability-alert-threshold-error",
+          "thresholdErrorText": "阈值必须是数字。"
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "F05-08",
+      "acceptance": "运行 axe-core · 0 critical · 记录 report",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-08-axe-report.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-08-axe-report.json",
+          "sha256": "b85cdb1f495b895706828a2fdc4b15fc80362635e34e4095dd5961f5f65ab65f"
+        }
+      ],
+      "summary": "routes=33 critical=0",
+      "observed": {
+        "axeVersion": "4.11.3",
+        "routeCount": 33,
+        "criticalCount": 0
+      }
+    },
+    {
+      "rule": 9,
+      "code": "F05-09",
+      "acceptance": "色对比 WCAG AA · body text ≥ 4.5 · large ≥ 3",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-09-contrast.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-09-contrast.json",
+          "sha256": "40b569bbd02335cf3879317fa69001791d59408ad645a3310c07dfc053dae77f"
+        }
+      ],
+      "summary": "home-body:14.71, home-heading:14.33, assistant-heading:15.64, settings-hint:14.71, usage-table:14.71",
+      "observed": [
+        {
+          "label": "home-body",
+          "selector": ".empty-hero p",
+          "large": false,
+          "text": "如果你现在没有悬着的运行、审批或排程，就直接让 Friday 帮你开一个新的执行线程。",
+          "color": "rgba(45, 33, 24, 0.74)",
+          "background": "rgb(253, 247, 240)",
+          "fontSize": "15px",
+          "fontWeight": "400",
+          "ratio": 14.70531504242964
+        },
+        {
+          "label": "home-heading",
+          "selector": ".home-section-title",
+          "large": true,
+          "text": "正在进行中 (3)",
+          "color": "rgb(45, 33, 24)",
+          "background": "rgb(251, 244, 234)",
+          "fontSize": "26px",
+          "fontWeight": "600",
+          "ratio": 14.326216888783517
+        },
+        {
+          "label": "assistant-heading",
+          "selector": ".assistant-card-title",
+          "large": true,
+          "text": "提前切换补货供应商需要你确认预算边界",
+          "color": "rgb(45, 33, 24)",
+          "background": "rgba(255, 255, 255, 0.82)",
+          "fontSize": "20px",
+          "fontWeight": "700",
+          "ratio": 15.644674032369336
+        },
+        {
+          "label": "settings-hint",
+          "selector": ".settings-hint-text",
+          "large": false,
+          "text": "影响没有显式 pin route 的默认分配。",
+          "color": "rgba(45, 33, 24, 0.56)",
+          "background": "rgba(253, 247, 240, 0.82)",
+          "fontSize": "12px",
+          "fontWeight": "400",
+          "ratio": 14.70531504242964
+        },
+        {
+          "label": "usage-table",
+          "selector": "[data-usage-provider-table] td div",
+          "large": false,
+          "text": "US$4,280",
+          "color": "rgba(45, 33, 24, 0.56)",
+          "background": "rgba(253, 247, 240, 0.82)",
+          "fontSize": "13px",
+          "fontWeight": "400",
+          "ratio": 14.70531504242964
+        }
+      ]
+    },
+    {
+      "rule": 10,
+      "code": "F05-10",
+      "acceptance": "Cmd+K 可导航到所有路由 · 14+ 条目",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-05/f05-10-command-palette.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-05/f05-10-command-palette.json",
+          "sha256": "11a3c4ad08df804d8ffe27cd692b591176250ee0e60d733b5298e269df8ea46f"
+        }
+      ],
+      "summary": "count=27",
+      "observed": {
+        "observed": {
+          "open": true,
+          "count": 27,
+          "labels": [
+            "首页",
+            "对话",
+            "助手收件箱",
+            "可观测性",
+            "入口库",
+            "跨境向导",
+            "技能",
+            "技能生成器",
+            "工作流",
+            "工作流构建器",
+            "插件",
+            "MCP",
+            "渠道",
+            "自动化",
+            "会话记录",
+            "用量",
+            "记忆",
+            "设备",
+            "设置",
+            "登录",
+            "初始设置",
+            "引导",
+            "引导流",
+            "指挥中心",
+            "切换语言",
+            "刷新首页快照",
+            "打开 Workflow 测试面板"
+          ],
+          "ids": [
+            "route:/home",
+            "route:/chat",
+            "route:/assistant",
+            "route:/observability",
+            "route:/packs",
+            "route:/packs/cross-border/setup",
+            "route:/skills",
+            "route:/skills/generator",
+            "route:/workflows",
+            "route:/workflows/builder",
+            "route:/plugins",
+            "route:/mcp",
+            "route:/channels",
+            "route:/automations",
+            "route:/sessions",
+            "route:/usage",
+            "route:/memory",
+            "route:/fleet",
+            "route:/settings",
+            "route:/login",
+            "route:/setup",
+            "route:/onboarding",
+            "route:/flow/:wizardId",
+            "route:/command-center",
+            "utility:locale",
+            "utility:refresh-home",
+            "utility:builder-test"
+          ],
+          "routeIds": [
+            "route:/home",
+            "route:/chat",
+            "route:/assistant",
+            "route:/observability",
+            "route:/packs",
+            "route:/packs/cross-border/setup",
+            "route:/skills",
+            "route:/skills/generator",
+            "route:/workflows",
+            "route:/workflows/builder",
+            "route:/plugins",
+            "route:/mcp",
+            "route:/channels",
+            "route:/automations",
+            "route:/sessions",
+            "route:/usage",
+            "route:/memory",
+            "route:/fleet",
+            "route:/settings",
+            "route:/login",
+            "route:/setup",
+            "route:/onboarding",
+            "route:/flow/:wizardId",
+            "route:/command-center"
+          ]
+        },
+        "expectedRouteIds": [
+          "route:/home",
+          "route:/chat",
+          "route:/assistant",
+          "route:/observability",
+          "route:/packs",
+          "route:/packs/cross-border/setup",
+          "route:/skills",
+          "route:/skills/generator",
+          "route:/workflows",
+          "route:/workflows/builder",
+          "route:/plugins",
+          "route:/mcp",
+          "route:/channels",
+          "route:/automations",
+          "route:/sessions",
+          "route:/usage",
+          "route:/memory",
+          "route:/fleet",
+          "route:/settings",
+          "route:/login",
+          "route:/setup",
+          "route:/onboarding",
+          "route:/flow/:wizardId",
+          "route:/command-center"
+        ],
+        "settingsSearch": {
+          "activeId": "command-palette-item-0",
+          "labels": [
+            "设置",
+            "初始设置"
+          ]
+        },
+        "navigated": {
+          "pathname": "/settings",
+          "search": "",
+          "route": "/settings",
+          "commandPaletteOpen": false
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2F-05/f05-01-tab-order.json",
+    "screenshots/P2F-05/f05-02-focus-ring.json",
+    "screenshots/P2F-05/f05-03-icon-labels.json",
+    "screenshots/P2F-05/f05-04-modal-drawer.json",
+    "screenshots/P2F-05/f05-05-list-keys.json",
+    "screenshots/P2F-05/f05-06-form-labels.json",
+    "screenshots/P2F-05/f05-07-describedby.json",
+    "screenshots/P2F-05/f05-08-axe-report.json",
+    "screenshots/P2F-05/f05-09-contrast.json",
+    "screenshots/P2F-05/f05-10-command-palette.json"
+  ]
+}

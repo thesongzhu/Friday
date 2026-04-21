@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-04-21T10:35:32.259Z",
+  "observed": {
+    "overBudget": true,
+    "bannerText": "预测将超过预算上限调整预算",
+    "href": "/settings?tab=runtime"
+  }
+}

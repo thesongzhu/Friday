@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-04-21T10:30:48.287Z",
+  "observed": {
+    "slashCommands": [
+      "new",
+      "clear",
+      "skills",
+      "workflows",
+      "settings",
+      "help"
+    ],
+    "open": true,
+    "visibleItems": [
+      "/new新对话",
+      "/clear清除历史",
+      "/skills技能库",
+      "/workflows工作流",
+      "/settings设置",
+      "/help帮助"
+    ]
+  }
+}

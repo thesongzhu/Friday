@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-04-21T10:34:59.275Z",
+  "sourceObserved": {
+    "hookExport": true,
+    "routeHookUse": true,
+    "prototypeHelper": true
+  },
+  "observed": {
+    "sessionCount": 5,
+    "labels": [
+      "跨境补货监控",
+      "provider 熔断回补",
+      "发布值守回路",
+      "利润波动巡检",
+      "夜间自动化值守"
+    ]
+  }
+}

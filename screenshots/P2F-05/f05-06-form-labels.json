@@ -1,0 +1,49 @@
+{
+  "generatedAt": "2026-04-21T10:38:05.390Z",
+  "providerFields": [
+    {
+      "id": "provider-modal-name",
+      "labelCount": 1,
+      "labelFors": [
+        "provider-modal-name"
+      ]
+    },
+    {
+      "id": "provider-modal-url",
+      "labelCount": 1,
+      "labelFors": [
+        "provider-modal-url"
+      ]
+    },
+    {
+      "id": "provider-modal-model",
+      "labelCount": 1,
+      "labelFors": [
+        "provider-modal-model"
+      ]
+    },
+    {
+      "id": "provider-secret-input",
+      "labelCount": 1,
+      "labelFors": [
+        "provider-secret-input"
+      ]
+    }
+  ],
+  "alertFields": [
+    {
+      "id": "observability-alert-name",
+      "labelCount": 1,
+      "labelFors": [
+        "observability-alert-name"
+      ]
+    },
+    {
+      "id": "observability-alert-metric",
+      "labelCount": 1,
+      "labelFors": [
+        "observability-alert-metric"
+      ]
+    }
+  ]
+}

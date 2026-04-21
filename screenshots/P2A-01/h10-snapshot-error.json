@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:29:43.335Z",
+  "observed": {
+    "errorBarPresent": true,
+    "refreshButtonText": "刷新",
+    "topbarPresent": true,
+    "splashPresent": false
+  },
+  "screenshot": "screenshots/P2A-01/h10-snapshot-error.png"
+}

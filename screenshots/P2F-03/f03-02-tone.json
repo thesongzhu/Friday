@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-04-21T10:37:11.382Z",
+  "observed": [
+    {
+      "page": "Home",
+      "zh": "今天很清静,来开一场对话? 如果你现在没有悬着的运行、审批或排程，就直接让 friday 帮你开一个新的执行线程。",
+      "en": "it's quiet today. want to start a conversation? if there are no runs, approvals, or schedules hanging over you, let friday open a fresh execution thread."
+    },
+    {
+      "page": "Chat",
+      "zh": "从一个明确的目标开始 先把目标、边界和你想要的结果说清楚，friday 才能把对话变成一条可执行的线程。",
+      "en": "start with a concrete goal state the goal, boundary, and desired outcome clearly so friday can turn the chat into an executable thread."
+    },
+    {
+      "page": "Channels",
+      "zh": "连接你的第一个渠道 从 amazon、shopify、tiktok 或其他渠道开始，friday 才能把它们接进收件箱和自动化。",
+      "en": "connect your first channel start with amazon, shopify, tiktok, or another channel so friday can wire them into inboxes and automations."
+    },
+    {
+      "page": "Usage",
+      "zh": "还没有用量数据 开始对话后这里会出现详情。",
+      "en": "no usage data yet once you start chatting, the usage detail appears here."
+    },
+    {
+      "page": "Memory",
+      "zh": "friday 还没有记住任何事 当你确认偏好、规则和长期背景后，它们会按 scope 沉淀在这里。",
+      "en": "friday has not remembered anything yet once you confirm preferences, rules, and long-term context, they settle here by scope."
+    },
+    {
+      "page": "Fleet",
+      "zh": "还没有连接设备 把受信设备接进 fleet 后，friday 才能把远程执行和健康心跳接进控制台。",
+      "en": "no devices connected yet once trusted devices join fleet, friday can bring remote execution and health heartbeats into the console."
+    }
+  ]
+}

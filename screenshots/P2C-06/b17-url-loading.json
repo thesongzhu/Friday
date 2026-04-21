@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:34:27.736Z",
+  "workflowObserved": {
+    "sourceKey": "workflow:workflow-incident-brief",
+    "title": "事故复盘简报",
+    "nodeCount": 3
+  },
+  "templateObserved": {
+    "sourceKey": "template:release-qa",
+    "title": "发布 QA 守门",
+    "nodeCount": 5
+  }
+}

@@ -1,0 +1,895 @@
+{
+  "itemId": "P2A-05",
+  "route": "/chat",
+  "generatedAt": "2026-04-21T10:30:12.052Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 18,
+    "pass": 18,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "C01",
+      "acceptance": "empty · 首次进入 composer 居中(vertical + horizontal)· 快捷 prompt 3 张 · 点击填入 composer",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c01-empty-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c01-empty-layout.json",
+          "sha256": "a643a0528d45349fcc81c5ca7e141e3b0c514b373926df8120f99c39ef9ebd85"
+        },
+        {
+          "path": "screenshots/P2A-05/c01-empty-layout.png",
+          "sha256": "af58f894158feaa287acd323089a5620bb7c1b4e09689786af07d4b7bfd39ebb"
+        }
+      ],
+      "summary": "quickCards=3, prompt=\"复核今天的高风险运行\"",
+      "observed": {
+        "quickCards": [
+          "复核今天的高风险运行",
+          "把重复操作变成自动化",
+          "盘点预算和 provider 路由"
+        ],
+        "heroCenterX": 550,
+        "heroCenterY": 526.296875,
+        "mainCenterX": 550,
+        "mainCenterY": 628,
+        "after": "复核今天的高风险运行"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "C02",
+      "acceptance": "user-sent · 发送后 user bubble 右侧 · 紧接 \"Friday 在思考…\" 左侧 typing indicator · 3 个点循环动画 400ms 一轮",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c02-user-thinking.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c02-user-thinking.json",
+          "sha256": "8e04967ebc803cec290ee376fd1ddbe91d5dcc0a572e80666bc333905c60b262"
+        },
+        {
+          "path": "screenshots/P2A-05/c02-user-thinking.png",
+          "sha256": "1586122d69cd66a5b2c8737cc049126fb43d9616efffc2dd81c1153e01011c26"
+        }
+      ],
+      "summary": "rows=2, dots=3, duration=0.4s",
+      "observed": {
+        "rowCount": 2,
+        "firstRowUser": true,
+        "secondRowUser": false,
+        "dotCount": 3,
+        "dots": [
+          {
+            "duration": "0.4s",
+            "delay": "0s"
+          },
+          {
+            "duration": "0.4s",
+            "delay": "0.08s"
+          },
+          {
+            "duration": "0.4s",
+            "delay": "0.16s"
+          }
+        ]
+      }
+    },
+    {
+      "rule": 3,
+      "code": "C03",
+      "acceptance": "streaming · assistant bubble 字符逐字进入(每 30ms 一字)· 末尾光标闪烁 500ms 周期 · 流结束光标消失",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c03-streaming-timing.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c03-streaming-timing.json",
+          "sha256": "e0affce1ab5d9baae2c0078aaf70e371ead83afb205839f3c59c1d2838430580"
+        },
+        {
+          "path": "screenshots/P2A-05/c03-streaming-mid.png",
+          "sha256": "c13650780a9e516a3856495c61daadb762e4fdc2e77d9d83b49c37fcf4dc0f9a"
+        },
+        {
+          "path": "screenshots/P2A-05/c03-streaming-done.png",
+          "sha256": "b0dae4e8e2ea273ae5f50175c0c00f208f19cff336d4d3fafcc2ab2a7f50e5d0"
+        }
+      ],
+      "summary": "mean=30.07ms, stddev=0.76ms, caretStates=1",
+      "observed": {
+        "caretSamples": [
+          {
+            "sample": 1,
+            "at": 587.6000000238419,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 2,
+            "at": 720,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 3,
+            "at": 851.3000000715256,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 4,
+            "at": 988.7000000476837,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          }
+        ],
+        "runtime": {
+          "turnId": "turn-assistant-stream",
+          "fullText": "我先把库存、供应商和广告节奏交叉看一遍。",
+          "visibleChars": 19,
+          "samples": [
+            {
+              "at": 570.1000000238419,
+              "visibleChars": 1
+            },
+            {
+              "at": 600.3000000715256,
+              "visibleChars": 2
+            },
+            {
+              "at": 629.1000000238419,
+              "visibleChars": 3
+            },
+            {
+              "at": 659.7000000476837,
+              "visibleChars": 4
+            },
+            {
+              "at": 688.5,
+              "visibleChars": 5
+            },
+            {
+              "at": 719.8999999761581,
+              "visibleChars": 6
+            },
+            {
+              "at": 749.5,
+              "visibleChars": 7
+            },
+            {
+              "at": 779.5,
+              "visibleChars": 8
+            },
+            {
+              "at": 809.7000000476837,
+              "visibleChars": 9
+            },
+            {
+              "at": 839.2000000476837,
+              "visibleChars": 10
+            },
+            {
+              "at": 869.6000000238419,
+              "visibleChars": 11
+            },
+            {
+              "at": 899.8999999761581,
+              "visibleChars": 12
+            },
+            {
+              "at": 930.2000000476837,
+              "visibleChars": 13
+            },
+            {
+              "at": 959.3999999761581,
+              "visibleChars": 14
+            },
+            {
+              "at": 988.6000000238419,
+              "visibleChars": 15
+            },
+            {
+              "at": 1019,
+              "visibleChars": 16
+            },
+            {
+              "at": 1048.8999999761581,
+              "visibleChars": 17
+            },
+            {
+              "at": 1079.3999999761581,
+              "visibleChars": 18
+            },
+            {
+              "at": 1109.7000000476837,
+              "visibleChars": 19
+            }
+          ],
+          "startedAt": 538.3000000715256,
+          "completedAt": null,
+          "charIntervals": [
+            31.799999952316284,
+            30.200000047683716,
+            28.799999952316284,
+            30.600000023841858,
+            28.799999952316284,
+            31.399999976158142,
+            29.600000023841858,
+            30,
+            30.200000047683716,
+            29.5,
+            30.399999976158142,
+            30.299999952316284,
+            30.300000071525574,
+            29.199999928474426,
+            29.200000047683716,
+            30.399999976158142,
+            29.899999976158142,
+            30.5,
+            30.300000071525574
+          ],
+          "timerId": 1
+        },
+        "caretPresentAfterCompletion": false,
+        "intervalStats": {
+          "count": 19,
+          "min": 28.799999952316284,
+          "max": 31.799999952316284,
+          "mean": 30.07368420927148,
+          "stddev": 0.7593917998847755
+        },
+        "caretAnimation": "chat-caret-blink",
+        "caretDuration": "0.5s"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "C04",
+      "acceptance": "tool-call 展开 · ChatToolActivity 入流 · 默认折叠 · 显示工具名 + 状态 dot · 点击展开 parameters + result JSON",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c04-tool-call-expand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c04-tool-call-expand.json",
+          "sha256": "7323e0af86247c2577fe45d7941b10fa4d1a6e661f24192168fb1538489cff66"
+        },
+        {
+          "path": "screenshots/P2A-05/c04-tool-call-collapsed.png",
+          "sha256": "a83a295aa92c6dc370837dfd8096bff5492537a77b88e781156d270e0f8fab71"
+        }
+      ],
+      "summary": "tool=inventory.fetch, open=true",
+      "observed": {
+        "before": {
+          "open": false,
+          "toolName": "inventory.fetch",
+          "statusText": "completed",
+          "statusDot": "health-dot is-healthy"
+        },
+        "after": {
+          "open": true,
+          "jsonText": "{\n  \"parameters\": {\n    \"market\": \"EU\",\n    \"skuCount\": 42\n  },\n  \"result\": \"已拉回当前库存快照。\"\n}"
+        },
+        "parsed": {
+          "parameters": {
+            "market": "EU",
+            "skuCount": 42
+          },
+          "result": "已拉回当前库存快照。"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "C05",
+      "acceptance": "approval · ChatActionCard 流转 3 态 pending → approved → used · 状态变化有图标切换 + 底色过渡 250ms",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c05-approval-flow.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c05-approval-flow.json",
+          "sha256": "faac0e5259da6c7720cf41ddc918bd5c34c775533686622f44c5af918e4700e5"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-pending.png",
+          "sha256": "6ae2be1fd6f5483161936143d9eced1c8b27ca928ba59476985903dc173ad671"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-approved.png",
+          "sha256": "59d93f9635ea6f274dbbbca14d87ccaa0e872b345726277802f228cd7400da96"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-used.png",
+          "sha256": "03d9587806b7e8670bbca4eedee3e2c81200d736ed9b67d793fefbae85407f09"
+        }
+      ],
+      "summary": "等待决定 -> 已批准 -> 已使用",
+      "observed": {
+        "before": {
+          "className": "chat-action-shell is-pending",
+          "statusText": "等待决定",
+          "icon": "•",
+          "transitionDuration": "0.24s, 0.24s, 0.24s"
+        },
+        "approved": {
+          "className": "chat-action-shell is-approved",
+          "statusText": "已批准",
+          "icon": "✓"
+        },
+        "used": {
+          "className": "chat-action-shell is-used",
+          "statusText": "已使用",
+          "icon": "↗"
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "C06",
+      "acceptance": "autonomous-step · AutonomousStepIndicator 独立行 · \"步骤 3/7 · 正在查询渠道日志\" · 有小 spinner",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c06-step-indicator.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c06-step-indicator.json",
+          "sha256": "46ef9cfdbf7d1d2ab24bd65c3b22ee35103904fcfce0fd2cf25a1e979dfdb102"
+        },
+        {
+          "path": "screenshots/P2A-05/c06-step-indicator.png",
+          "sha256": "1a1d58a7266b50282fcab895d7a5f2c9b050a40049547c5e174eb3da2b18598f"
+        }
+      ],
+      "summary": "步骤 3/7 · 正在查询渠道日志",
+      "observed": {
+        "text": "步骤 3/7 · 正在查询渠道日志",
+        "spinnerDuration": "0.4s",
+        "spinnerName": "chat-spinner"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "C07",
+      "acceptance": "grant-evidence · grantId 悬浮卡 · 显示 { scope, expiresAt, source } · 空字段不显示 · 位置 top + 箭头",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c07-grant-tooltip.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c07-grant-tooltip.json",
+          "sha256": "6f094102113adf33a9925b910a22af4ef9bc016fec7468c384669342e53f8a65"
+        },
+        {
+          "path": "screenshots/P2A-05/c07-grant-tooltip-full.png",
+          "sha256": "53c6814685a945c4867f8d1ef9f6c5f2bd5d74f1bbfda826aec13abcd612a76b"
+        }
+      ],
+      "summary": "tooltip=\"Scope: supplier.switchExpires: 2026-04-20T15:10:00-07:00Source: approval-warehouse\"",
+      "observed": {
+        "full": {
+          "text": "Scope: supplier.switchExpires: 2026-04-20T15:10:00-07:00Source: approval-warehouse",
+          "opacity": "1",
+          "rowTop": 166.59375,
+          "tooltipBottom": 153.59375,
+          "arrowContent": "\"\"",
+          "arrowTransform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, -8.5, 0)"
+        },
+        "emptyField": {
+          "text": "Scope: supplier.switchExpires: 2026-04-20T15:10:00-07:00"
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "C08",
+      "acceptance": "session-resume · 刷新后 sessionKey 从 localStorage.getItem('friday-chat-session-key') 读 · 历史气泡顺序与刷新前一致",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c08-session-resume.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c08-session-resume.json",
+          "sha256": "16d1f2ebcb69299edbe1a5ccac304ea49d2116cfd1d3d3380b5637052abe8028"
+        }
+      ],
+      "summary": "hash=cd9e78dbb973…, session=chat:default:resume-evidence",
+      "observed": {
+        "before": {
+          "sessionKey": "chat:default:resume-evidence",
+          "hydratedJson": "[{\"id\":\"turn-resume-1\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:14:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 1\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:14:00.000Z\"},{\"id\":\"turn-resume-2\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:16:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 2\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:16:00.000Z\"},{\"id\":\"turn-resume-3\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:18:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 3\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:18:00.000Z\"},{\"id\":\"turn-resume-4\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:20:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 4\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:20:00.000Z\"},{\"id\":\"turn-resume-5\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:22:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 5\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:22:00.000Z\"},{\"id\":\"turn-resume-6\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:24:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 6\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:24:00.000Z\"},{\"id\":\"turn-resume-7\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:26:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 7\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:26:00.000Z\"},{\"id\":\"turn-resume-8\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:28:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 8\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:28:00.000Z\"},{\"id\":\"turn-resume-9\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:30:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 9\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:30:00.000Z\"},{\"id\":\"turn-resume-10\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:32:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 10\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:32:00.000Z\"},{\"id\":\"turn-resume-11\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:34:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 11\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:34:00.000Z\"},{\"id\":\"turn-resume-12\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:36:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 12\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:36:00.000Z\"},{\"id\":\"turn-resume-13\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:38:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 13\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:38:00.000Z\"},{\"id\":\"turn-resume-14\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:40:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 14\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:40:00.000Z\"},{\"id\":\"turn-resume-15\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:42:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 15\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:42:00.000Z\"},{\"id\":\"turn-resume-16\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:44:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 16\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:44:00.000Z\"},{\"id\":\"turn-resume-17\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:46:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 17\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:46:00.000Z\"},{\"id\":\"turn-resume-18\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:48:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 18\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:48:00.000Z\"},{\"id\":\"turn-resume-19\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:50:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 19\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:50:00.000Z\"},{\"id\":\"turn-resume-20\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:52:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 20\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:52:00.000Z\"},{\"id\":\"turn-resume-21\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:54:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 21\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:54:00.000Z\"},{\"id\":\"turn-resume-22\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:56:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 22\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:56:00.000Z\"},{\"id\":\"turn-resume-23\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:58:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 23\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:58:00.000Z\"},{\"id\":\"turn-resume-24\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:00:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 24\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:00:00.000Z\"},{\"id\":\"turn-resume-25\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:02:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 25\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:02:00.000Z\"},{\"id\":\"turn-resume-26\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:04:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 26\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:04:00.000Z\"},{\"id\":\"turn-resume-27\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:06:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 27\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:06:00.000Z\"},{\"id\":\"turn-resume-28\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:08:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 28\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:08:00.000Z\"},{\"id\":\"turn-resume-29\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:22:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 29\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:22:00.000Z\"},{\"id\":\"turn-resume-30\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:24:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 30\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:24:00.000Z\"},{\"id\":\"turn-resume-31\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:26:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 31\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:26:00.000Z\"},{\"id\":\"turn-resume-32\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:28:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 32\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:28:00.000Z\"},{\"id\":\"turn-resume-33\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:30:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 33\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:30:00.000Z\"},{\"id\":\"turn-resume-34\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:32:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 34\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:32:00.000Z\"},{\"id\":\"turn-resume-35\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:34:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 35\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:34:00.000Z\"},{\"id\":\"turn-resume-36\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:36:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 36\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:36:00.000Z\"},{\"id\":\"turn-resume-37\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:38:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 37\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:38:00.000Z\"},{\"id\":\"turn-resume-38\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:40:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 38\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:40:00.000Z\"},{\"id\":\"turn-resume-39\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:42:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 39\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:42:00.000Z\"},{\"id\":\"turn-resume-40\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:44:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 40\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:44:00.000Z\"},{\"id\":\"turn-resume-41\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:46:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 41\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:46:00.000Z\"},{\"id\":\"turn-resume-42\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:48:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 42\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:48:00.000Z\"},{\"id\":\"turn-resume-43\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:50:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 43\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:50:00.000Z\"},{\"id\":\"turn-resume-44\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:52:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 44\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:52:00.000Z\"},{\"id\":\"turn-resume-45\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:54:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 45\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:54:00.000Z\"},{\"id\":\"turn-resume-46\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:56:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 46\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:56:00.000Z\"},{\"id\":\"turn-resume-47\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:58:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 47\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:58:00.000Z\"},{\"id\":\"turn-resume-48\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:00:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 48\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:00:00.000Z\"},{\"id\":\"turn-resume-49\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:02:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 49\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:02:00.000Z\"},{\"id\":\"turn-resume-50\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:04:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 50\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:04:00.000Z\"},{\"id\":\"turn-resume-51\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:06:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 51\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:06:00.000Z\"},{\"id\":\"turn-resume-52\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:08:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 52\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:08:00.000Z\"},{\"id\":\"turn-resume-53\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:10:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 53\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:10:00.000Z\"},{\"id\":\"turn-resume-54\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:12:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 54\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:12:00.000Z\"},{\"id\":\"turn-resume-55\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:14:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 55\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:14:00.000Z\"},{\"id\":\"turn-resume-56\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:16:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 56\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:16:00.000Z\"}]",
+          "firstId": "turn-resume-1",
+          "lastId": "turn-resume-56",
+          "hydratedHash": "cd9e78dbb9735eb38145dd127be8cae56c76f48b0839b498dbf766827b49f0a5"
+        },
+        "after": {
+          "sessionKey": "chat:default:resume-evidence",
+          "hydratedJson": "[{\"id\":\"turn-resume-1\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:14:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 1\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:14:00.000Z\"},{\"id\":\"turn-resume-2\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:16:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 2\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:16:00.000Z\"},{\"id\":\"turn-resume-3\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:18:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 3\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:18:00.000Z\"},{\"id\":\"turn-resume-4\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:20:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 4\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:20:00.000Z\"},{\"id\":\"turn-resume-5\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:22:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 5\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:22:00.000Z\"},{\"id\":\"turn-resume-6\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:24:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 6\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:24:00.000Z\"},{\"id\":\"turn-resume-7\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:26:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 7\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:26:00.000Z\"},{\"id\":\"turn-resume-8\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:28:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 8\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:28:00.000Z\"},{\"id\":\"turn-resume-9\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:30:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 9\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:30:00.000Z\"},{\"id\":\"turn-resume-10\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:32:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 10\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:32:00.000Z\"},{\"id\":\"turn-resume-11\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:34:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 11\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:34:00.000Z\"},{\"id\":\"turn-resume-12\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:36:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 12\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:36:00.000Z\"},{\"id\":\"turn-resume-13\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:38:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 13\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:38:00.000Z\"},{\"id\":\"turn-resume-14\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:40:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 14\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:40:00.000Z\"},{\"id\":\"turn-resume-15\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:42:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 15\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:42:00.000Z\"},{\"id\":\"turn-resume-16\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:44:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 16\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:44:00.000Z\"},{\"id\":\"turn-resume-17\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:46:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 17\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:46:00.000Z\"},{\"id\":\"turn-resume-18\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:48:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 18\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:48:00.000Z\"},{\"id\":\"turn-resume-19\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:50:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 19\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:50:00.000Z\"},{\"id\":\"turn-resume-20\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:52:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 20\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:52:00.000Z\"},{\"id\":\"turn-resume-21\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:54:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 21\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:54:00.000Z\"},{\"id\":\"turn-resume-22\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:56:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 22\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:56:00.000Z\"},{\"id\":\"turn-resume-23\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T19:58:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 23\",\"status\":\"done\",\"timestamp\":\"2026-04-20T19:58:00.000Z\"},{\"id\":\"turn-resume-24\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:00:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 24\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:00:00.000Z\"},{\"id\":\"turn-resume-25\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:02:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 25\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:02:00.000Z\"},{\"id\":\"turn-resume-26\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:04:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 26\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:04:00.000Z\"},{\"id\":\"turn-resume-27\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:06:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 27\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:06:00.000Z\"},{\"id\":\"turn-resume-28\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:08:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 28\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:08:00.000Z\"},{\"id\":\"turn-resume-29\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:22:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 29\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:22:00.000Z\"},{\"id\":\"turn-resume-30\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:24:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 30\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:24:00.000Z\"},{\"id\":\"turn-resume-31\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:26:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 31\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:26:00.000Z\"},{\"id\":\"turn-resume-32\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:28:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 32\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:28:00.000Z\"},{\"id\":\"turn-resume-33\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:30:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 33\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:30:00.000Z\"},{\"id\":\"turn-resume-34\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:32:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 34\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:32:00.000Z\"},{\"id\":\"turn-resume-35\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:34:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 35\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:34:00.000Z\"},{\"id\":\"turn-resume-36\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:36:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 36\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:36:00.000Z\"},{\"id\":\"turn-resume-37\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:38:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 37\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:38:00.000Z\"},{\"id\":\"turn-resume-38\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:40:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 38\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:40:00.000Z\"},{\"id\":\"turn-resume-39\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:42:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 39\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:42:00.000Z\"},{\"id\":\"turn-resume-40\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:44:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 40\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:44:00.000Z\"},{\"id\":\"turn-resume-41\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:46:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 41\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:46:00.000Z\"},{\"id\":\"turn-resume-42\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:48:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 42\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:48:00.000Z\"},{\"id\":\"turn-resume-43\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:50:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 43\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:50:00.000Z\"},{\"id\":\"turn-resume-44\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:52:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 44\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:52:00.000Z\"},{\"id\":\"turn-resume-45\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:54:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 45\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:54:00.000Z\"},{\"id\":\"turn-resume-46\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:56:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 46\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:56:00.000Z\"},{\"id\":\"turn-resume-47\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T20:58:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 47\",\"status\":\"done\",\"timestamp\":\"2026-04-20T20:58:00.000Z\"},{\"id\":\"turn-resume-48\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:00:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 48\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:00:00.000Z\"},{\"id\":\"turn-resume-49\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:02:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 49\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:02:00.000Z\"},{\"id\":\"turn-resume-50\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:04:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 50\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:04:00.000Z\"},{\"id\":\"turn-resume-51\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:06:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 51\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:06:00.000Z\"},{\"id\":\"turn-resume-52\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:08:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 52\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:08:00.000Z\"},{\"id\":\"turn-resume-53\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:10:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 53\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:10:00.000Z\"},{\"id\":\"turn-resume-54\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:12:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 54\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:12:00.000Z\"},{\"id\":\"turn-resume-55\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:14:00.000Z\",\"role\":\"user\",\"content\":\"恢复的历史消息 55\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:14:00.000Z\"},{\"id\":\"turn-resume-56\",\"kind\":\"message\",\"createdAt\":\"2026-04-20T21:16:00.000Z\",\"role\":\"assistant\",\"content\":\"恢复的历史消息 56\",\"status\":\"done\",\"timestamp\":\"2026-04-20T21:16:00.000Z\"}]",
+          "firstId": "turn-resume-1",
+          "lastId": "turn-resume-56",
+          "hydratedHash": "cd9e78dbb9735eb38145dd127be8cae56c76f48b0839b498dbf766827b49f0a5"
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "C09",
+      "acceptance": "disconnected · WS 断开 3 秒内顶部红色条 \"连接已断开 · 正在重试 ({retry_count})\" · 重连成功后 500ms 淡出",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c09-disconnected-banner.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c09-disconnected-banner.json",
+          "sha256": "7c7a3807e8cea335f28c0f2c5aa19eaab49de4f0d12ce6aa9941efd19230e434"
+        },
+        {
+          "path": "screenshots/P2A-05/c09-disconnected-live.png",
+          "sha256": "746f684f76593c339e0388fd190075732ed42bab7695527df2114992befabad8"
+        },
+        {
+          "path": "screenshots/P2A-05/c09-disconnected-done.png",
+          "sha256": "9e69541e92192bd8cd84e6cd416082594cd1c3e46d7f1915539d520708860df6"
+        }
+      ],
+      "summary": "连接已断开 · 正在重试 (1) -> fading -> hidden",
+      "observed": {
+        "before": {
+          "text": "连接已断开 · 正在重试 (1)",
+          "color": "rgb(165, 48, 40)",
+          "transitionDuration": "0.5s"
+        },
+        "duringFade": {
+          "className": "chat-disconnected-banner is-fading",
+          "opacity": "0"
+        },
+        "after": {
+          "bannerVisible": false
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "C10",
+      "acceptance": "消息最大 840px · 中央对齐 · 左右各 flex gutter",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c10-message-width.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c10-message-width.json",
+          "sha256": "e36b9150c3e94e322722e7b20b6045b97318cb25e3048fea491f7504bc901ec2"
+        }
+      ],
+      "summary": "timeline=436px, bubble=288px",
+      "observed": {
+        "timelineWidth": 436,
+        "composerWidth": 436,
+        "timelineCenter": 550,
+        "composerCenter": 550,
+        "bubbleWidth": 288
+      }
+    },
+    {
+      "rule": 11,
+      "code": "C11",
+      "acceptance": "新消息自动滚底 · 若用户手动向上滚超过 200px · 不自动滚 · 改显右下 \"新消息 ↓\" 浮标",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c11-auto-scroll.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c11-auto-scroll.json",
+          "sha256": "1af3b561ad3fe1304abb437fb53cad2be0c77ba1518eaf90af2bd0503d026c55"
+        }
+      ],
+      "summary": "nearBottom=5908/5908, farGap=829",
+      "observed": {
+        "nearBottom": {
+          "top": 5908,
+          "max": 5908,
+          "badge": false
+        },
+        "farUp": {
+          "top": 5488,
+          "gap": 829,
+          "badge": true
+        }
+      }
+    },
+    {
+      "rule": 12,
+      "code": "C12",
+      "acceptance": "> 50 条消息启用虚拟化(react-window 或等价)· 滚动 FPS ≥ 55",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c12-virtualized-fps.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c12-virtualized-fps.json",
+          "sha256": "a95fc0abdf556c63fb88081a8c374e11c1b1b279b77f39c90bcdb5002b10417c"
+        }
+      ],
+      "summary": "rendered=21, fps=60.00",
+      "observed": {
+        "virtualized": "true",
+        "itemCount": 57,
+        "rendered": 21,
+        "viewportHeight": 0,
+        "frameDurations": [
+          16.700000000000045,
+          16.699999999999932,
+          16.700000000000045,
+          16.699999999999932,
+          16.600000000000136,
+          16.59999999999991,
+          16.799999999999955,
+          16.600000000000136,
+          16.699999999999818,
+          16.600000000000136,
+          16.700000000000045,
+          16.699999999999818,
+          16.600000000000136,
+          16.700000000000045,
+          16.699999999999818,
+          16.700000000000045,
+          16.700000000000045,
+          16.59999999999991,
+          16.700000000000045,
+          16.600000000000136,
+          16.699999999999818,
+          16.600000000000136,
+          16.700000000000045,
+          16.699999999999818,
+          16.600000000000136,
+          16.700000000000045,
+          16.59999999999991,
+          16.799999999999955,
+          16.600000000000136,
+          16.699999999999818,
+          16.700000000000045,
+          16.600000000000136,
+          16,
+          17.399999999999864,
+          16.700000000000045,
+          16.59999999999991,
+          16.600000000000136,
+          16.799999999999955,
+          16.59999999999991,
+          16.700000000000045,
+          16.200000000000045,
+          17.09999999999991,
+          16.700000000000045,
+          16.700000000000045,
+          16.5,
+          16.700000000000045,
+          16.700000000000045,
+          16.699999999999818,
+          16.600000000000136,
+          16.700000000000045,
+          16.699999999999818,
+          16.600000000000136,
+          16.09999999999991,
+          17.299999999999955,
+          16.700000000000045,
+          16.600000000000136,
+          16.699999999999818,
+          16.700000000000045,
+          16.700000000000045,
+          16.59999999999991,
+          16.700000000000045,
+          16.600000000000136,
+          15.699999999999818,
+          17.700000000000045,
+          16.600000000000136,
+          16.699999999999818,
+          16.700000000000273,
+          16.699999999999818,
+          16.59999999999991,
+          16.59999999999991,
+          16.800000000000182,
+          16.59999999999991,
+          16.59999999999991,
+          16.700000000000273,
+          16.699999999999818,
+          16.59999999999991,
+          16.700000000000273,
+          16.699999999999818,
+          16.700000000000273,
+          16.699999999999818,
+          16.59999999999991,
+          16.5,
+          16.800000000000182,
+          16.699999999999818,
+          16.700000000000273,
+          16.59999999999991,
+          16.699999999999818,
+          16.700000000000273,
+          16.699999999999818,
+          16.59999999999991
+        ],
+        "beforeIds": [
+          "turn-resume-37",
+          "turn-resume-38",
+          "turn-resume-39",
+          "turn-resume-40",
+          "turn-resume-41"
+        ],
+        "afterIds": [
+          "turn-resume-1",
+          "turn-resume-2",
+          "turn-resume-3",
+          "turn-resume-4",
+          "turn-resume-5"
+        ],
+        "finalTop": 0,
+        "frameStats": {
+          "count": 90,
+          "min": 15.699999999999818,
+          "max": 17.700000000000045,
+          "mean": 16.667777777777776,
+          "stddev": 0.2220249124048831
+        },
+        "fps": 59.9960002666489
+      }
+    },
+    {
+      "rule": 13,
+      "code": "C13",
+      "acceptance": "composer Enter 发 · Shift+Enter 换行 · / 唤起 slash 菜单 · Escape 关菜单",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c13-composer-keys.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c13-composer-keys.json",
+          "sha256": "de52a9fecb89d865ea2648361f969da356650e4da03d871e496a6c84d1ac0466"
+        }
+      ],
+      "summary": "newline preserved, slashItems=6, history=4",
+      "observed": {
+        "newlineState": {
+          "value": "第一行\n第二行",
+          "turns": 0
+        },
+        "slashOpened": {
+          "open": true,
+          "count": 6
+        },
+        "slashClosed": {
+          "open": false,
+          "value": ""
+        },
+        "afterSend": {
+          "route": "/chat?dev=1&__state=session-resume",
+          "composerValue": "",
+          "historyCount": 4
+        }
+      }
+    },
+    {
+      "rule": 14,
+      "code": "C14",
+      "acceptance": "composer 附件支持拖入 + 点击上传 · 上传中显示进度 bar · 失败有 retry",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c14-upload-flow.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c14-upload-flow.json",
+          "sha256": "169ce43853f612d7299463d63f76c0c878ceeecea2d1af1fc7723655935bb762"
+        },
+        {
+          "path": "screenshots/P2A-05/c14-upload-failed.png",
+          "sha256": "fe5865e902962af6e80fff4cc44ec24348f08c0f540ebcbc161f5b0f7838a985"
+        }
+      ],
+      "summary": "上传失败，可重试 -> 上传完成",
+      "observed": {
+        "dragState": true,
+        "uploading": {
+          "name": "brief.pdf",
+          "progressWidth": "width:38%;",
+          "status": "上传中 38%"
+        },
+        "failed": {
+          "status": "上传失败，可重试",
+          "retryVisible": true
+        },
+        "recovered": {
+          "status": "上传完成",
+          "retryVisible": false
+        }
+      }
+    },
+    {
+      "rule": 15,
+      "code": "C15",
+      "acceptance": "activity-rail 显示最近 10 个 session · 当前 session 高亮 · 点击切换不丢当前输入",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c15-session-rail.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c15-session-rail.json",
+          "sha256": "7f0f29f0a121170d4903b114d814250bb25177d4d586159f094fc372ce067182"
+        }
+      ],
+      "summary": "sessions=10, restored=\"draft-alpha\"",
+      "observed": {
+        "rowCount": 10,
+        "beforeActive": "session-replenish-watch",
+        "switchedActive": "session-provider-circuit",
+        "restoredValue": "draft-alpha"
+      }
+    },
+    {
+      "rule": 16,
+      "code": "C16",
+      "acceptance": "side-panel 显示 run 详情 / grant 详情 / trace · Ctrl+\\ 切换开关",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c16-side-panel-toggle.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c16-side-panel-toggle.json",
+          "sha256": "ed2cb9a3b0795b95d85edd5727237a9005cb9125b0bdcf9e44da8ba90a4d238d"
+        },
+        {
+          "path": "screenshots/P2A-05/c16-side-panel-open.png",
+          "sha256": "7f91c2d923864a12f3259374495ea632b098a72fed3ebd39830023a05df0310b"
+        }
+      ],
+      "summary": "Run detail运行侧栏run=session-replenish-watchgrant=grant-warehouse-budgettrace=trace-home-0420ws=1audit",
+      "observed": {
+        "before": {
+          "open": false,
+          "display": "none"
+        },
+        "after": {
+          "open": true,
+          "display": "block",
+          "text": "Run detail运行侧栏run=session-replenish-watchgrant=grant-warehouse-budgettrace=trace-home-0420ws=1audit"
+        }
+      }
+    },
+    {
+      "rule": 17,
+      "code": "C17",
+      "acceptance": "Data contract 严格用 useChatSession + useAgentRunEvents · 不开第二个 WS · Network panel 只 1 条 WS",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c17-data-contract.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c17-data-contract.json",
+          "sha256": "3fbc82e942d9935555fce577d2a8a86da13289db0c45e8be201386b2a3e93004"
+        }
+      ],
+      "summary": "logicalWs=1, networkWs=0, eventSources=0",
+      "observed": {
+        "sourceMatches": {
+          "chatHookHasStorageKeys": true,
+          "chatHookUsesRunHook": true,
+          "runHookDefinesConnectionState": true,
+          "prototypeUsesSingleLogicalWs": true
+        },
+        "runtime": {
+          "wsConnections": 1,
+          "historyKeyPresent": true,
+          "sessionKeyPresent": true
+        },
+        "websocketConnections": [],
+        "eventSourceRequests": []
+      }
+    },
+    {
+      "rule": 18,
+      "code": "C18",
+      "acceptance": "props 签名 grep diff · ChatMessageBubble / ChatToolActivity / ChatActionCard / AutonomousStepIndicator 四个组件字段集合 diff=0",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c18-props-diff.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c18-props-diff.json",
+          "sha256": "99b8acfc42dd8f2ea7a851dc7e29af411cce52534a53b53515f94f04ffe28ace"
+        },
+        {
+          "path": "screenshots/P2A-05/c18-props-grep.txt",
+          "sha256": "b7ad97b9d7591f3fd58127e0ea33e522d10a37b455a679624f9b4001ab83d79d"
+        }
+      ],
+      "summary": "ChatMessageBubble: missing=0, extra=0 | ChatToolActivity: missing=0, extra=0 | ChatActionCard: missing=0, extra=0 | AutonomousStepIndicator: missing=0, extra=0",
+      "observed": {
+        "comparisons": [
+          {
+            "component": "ChatMessageBubble",
+            "sourceFields": [
+              "message",
+              "onRetry",
+              "streamingText"
+            ],
+            "prototypeFields": [
+              "message",
+              "onRetry",
+              "streamingText"
+            ],
+            "missing": [],
+            "extra": []
+          },
+          {
+            "component": "ChatToolActivity",
+            "sourceFields": [
+              "activeTool",
+              "toolCalls"
+            ],
+            "prototypeFields": [
+              "activeTool",
+              "toolCalls"
+            ],
+            "missing": [],
+            "extra": []
+          },
+          {
+            "component": "ChatActionCard",
+            "sourceFields": [
+              "actions",
+              "onAction"
+            ],
+            "prototypeFields": [
+              "actions",
+              "onAction"
+            ],
+            "missing": [],
+            "extra": []
+          },
+          {
+            "component": "AutonomousStepIndicator",
+            "sourceFields": [
+              "goal",
+              "locale"
+            ],
+            "prototypeFields": [
+              "goal",
+              "locale"
+            ],
+            "missing": [],
+            "extra": []
+          }
+        ]
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2A-05/c01-empty-layout.json",
+    "screenshots/P2A-05/c01-empty-layout.png",
+    "screenshots/P2A-05/c02-user-thinking.json",
+    "screenshots/P2A-05/c02-user-thinking.png",
+    "screenshots/P2A-05/c03-streaming-timing.json",
+    "screenshots/P2A-05/c03-streaming-mid.png",
+    "screenshots/P2A-05/c03-streaming-done.png",
+    "screenshots/P2A-05/c04-tool-call-expand.json",
+    "screenshots/P2A-05/c04-tool-call-collapsed.png",
+    "screenshots/P2A-05/c05-approval-flow.json",
+    "screenshots/P2A-05/c05-approval-pending.png",
+    "screenshots/P2A-05/c05-approval-approved.png",
+    "screenshots/P2A-05/c05-approval-used.png",
+    "screenshots/P2A-05/c06-step-indicator.json",
+    "screenshots/P2A-05/c06-step-indicator.png",
+    "screenshots/P2A-05/c07-grant-tooltip.json",
+    "screenshots/P2A-05/c07-grant-tooltip-full.png",
+    "screenshots/P2A-05/c08-session-resume.json",
+    "screenshots/P2A-05/c09-disconnected-banner.json",
+    "screenshots/P2A-05/c09-disconnected-live.png",
+    "screenshots/P2A-05/c09-disconnected-done.png",
+    "screenshots/P2A-05/c10-message-width.json",
+    "screenshots/P2A-05/c11-auto-scroll.json",
+    "screenshots/P2A-05/c12-virtualized-fps.json",
+    "screenshots/P2A-05/c13-composer-keys.json",
+    "screenshots/P2A-05/c14-upload-flow.json",
+    "screenshots/P2A-05/c14-upload-failed.png",
+    "screenshots/P2A-05/c15-session-rail.json",
+    "screenshots/P2A-05/c16-side-panel-toggle.json",
+    "screenshots/P2A-05/c16-side-panel-open.png",
+    "screenshots/P2A-05/c17-data-contract.json",
+    "screenshots/P2A-05/c18-props-diff.json",
+    "screenshots/P2A-05/c18-props-grep.txt"
+  ]
+}

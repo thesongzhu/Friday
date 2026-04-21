@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:33:13.700Z",
+  "setupObserved": {
+    "pathname": "/packs/industry-cross-border-ecommerce/setup",
+    "route": "/packs/industry-cross-border-ecommerce/setup"
+  },
+  "toastObserved": {
+    "pathname": "/packs",
+    "toasts": [
+      "WARNING即将上线"
+    ]
+  }
+}

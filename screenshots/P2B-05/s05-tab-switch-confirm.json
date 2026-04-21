@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-04-21T10:31:47.833Z",
+  "firstDialog": {
+    "title": "放弃修改?",
+    "body": "切换 tab 前先确认：当前草稿会保留，但你会先离开这个编辑面。",
+    "route": "?dev=1&tab=runtime&__state=runtime"
+  },
+  "afterCancel": {
+    "route": "?dev=1&tab=runtime&__state=runtime",
+    "active": "运行时"
+  },
+  "afterConfirm": {
+    "route": "?tab=account&__state=account",
+    "active": "账号"
+  }
+}

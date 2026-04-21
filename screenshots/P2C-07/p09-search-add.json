@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-04-21T10:34:38.967Z",
+  "descriptionMatch": {
+    "search": "desktop",
+    "rowIds": [
+      "plugin-computer-use"
+    ]
+  },
+  "nameMatch": {
+    "search": "release",
+    "rowIds": [
+      "plugin-release-radar"
+    ]
+  },
+  "modal": {
+    "title": "添加插件",
+    "sources": [
+      "registry",
+      "upload"
+    ]
+  }
+}

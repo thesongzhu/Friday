@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-04-21T10:30:53.341Z",
+  "tokenColors": {
+    "--accent": "rgb(154, 93, 37)"
+  },
+  "empty": {
+    "opacity": "0.4",
+    "background": "rgb(154, 93, 37)",
+    "tokenMatch": "--accent"
+  },
+  "filled": {
+    "opacity": "1",
+    "background": "rgb(154, 93, 37)",
+    "tokenMatch": "--accent"
+  },
+  "pressed": "matrix(0.991181, 0, 0, 0.991181, 0, -0.706019)",
+  "released": "none"
+}

@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-04-21T10:34:57.165Z",
+  "before": {
+    "saveBarPresent": true,
+    "dirtyCopy": "有 1 项配置未保存",
+    "dirtyFields": "auth"
+  },
+  "diff": {
+    "channelId": "channel-amazon",
+    "before": {
+      "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+      "auth": "amz-live-9a2f",
+      "rateLimit": "120 rpm",
+      "timeout": "12s"
+    },
+    "after": {
+      "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+      "auth": "Bearer qa-rotated-token",
+      "rateLimit": "120 rpm",
+      "timeout": "12s"
+    },
+    "dirtyKeys": [
+      "auth"
+    ]
+  }
+}

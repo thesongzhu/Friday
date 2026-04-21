@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-04-21T10:33:46.474Z",
+  "before": {
+    "buttons": [
+      "取消",
+      "生成",
+      "run test",
+      "publish"
+    ]
+  },
+  "generating": {
+    "state": "generating",
+    "skeletonCount": 3
+  },
+  "preview": {
+    "state": "preview",
+    "preText": "name: release_guardian\nversion: 0.1.0\ninputs:\n  - release_plan\n  - target_url\noutputs:\n  - qa_report\n  - release_risk\ncode:\n  export async function run() { /* preview */ }"
+  },
+  "screenshot": "screenshots/P2C-04/g03-generate-preview.png"
+}

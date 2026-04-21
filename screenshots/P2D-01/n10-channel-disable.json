@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:35:00.695Z",
+  "confirm": {
+    "title": "停用这个渠道?",
+    "body": "停用后新 session 不再进入，但历史 session 仍会保留。"
+  },
+  "sessionCountBefore": 4,
+  "after": {
+    "opacity": "0.5",
+    "className": "obs-row is-active is-disabled",
+    "sessionCount": 4
+  }
+}

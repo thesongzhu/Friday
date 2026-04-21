@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:36:05.705Z",
+  "firstObserved": {
+    "prevText": null,
+    "nextText": "下一步"
+  },
+  "secondObserved": {
+    "prevText": "上一步",
+    "nextText": "下一步"
+  }
+}

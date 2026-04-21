@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-04-21T10:36:53.040Z",
+  "shortDelay": {
+    "splashVisible": false,
+    "route": "/observability"
+  },
+  "longDelay": {
+    "splashVisible": true,
+    "navSimulation": {
+      "navTarget": "/settings?tab=providers",
+      "splashVisible": true,
+      "delayMs": 650
+    }
+  },
+  "screenshot": "screenshots/P2F-01/f01-07-splash.png"
+}

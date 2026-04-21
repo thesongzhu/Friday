@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-04-21T10:33:47.457Z",
+  "observed": {
+    "position": "fixed",
+    "inputValue": "{\"release_plan\":\"qa\",\"target_url\":\"https://example.com\"}",
+    "copy": "Test runner输入测试 payload测试通过 · 输出了 3 条候选检查与 1 条回退建议。 · 780ms · 1364 tokensrun test"
+  }
+}

@@ -1,0 +1,267 @@
+{
+  "itemId": "P2A-07",
+  "route": "/chat",
+  "generatedAt": "2026-04-21T10:30:45.115Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 9,
+    "pass": 9,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "I01",
+      "acceptance": "textarea 初始 80px · 内容增多自动长到 320 · 超过出滚动条 · 不撑破 composer 容器",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i01-composer-height.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i01-composer-height.json",
+          "sha256": "e0e0d53d0134df5be125db3af0b1bbb757b307362f00d1340a8c8064c36d858f"
+        }
+      ],
+      "summary": "80 -> 320px -> 320px",
+      "observed": {
+        "initial": {
+          "height": "80px",
+          "overflowY": "hidden"
+        },
+        "grown": {
+          "height": "320px",
+          "overflowY": "auto",
+          "shellHeight": "80px"
+        },
+        "overflow": {
+          "height": "320px",
+          "overflowY": "auto"
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "I02",
+      "acceptance": "Enter 发送 · Shift+Enter 换行 · Cmd+Enter 也发送 · Escape 清空当前内容(需确认)",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i02-send-keys.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i02-send-keys.json",
+          "sha256": "dfc4e1e28fc945cf65936bcf5cefd96785c5eef35419ce9dd7e29d10258b8575"
+        }
+      ],
+      "summary": "newline ok, cmdSend=4, confirm=\"清空当前输入?\"",
+      "observed": {
+        "newline": "第一行\n第二行",
+        "cmdSend": {
+          "composer": "",
+          "count": 4
+        },
+        "confirm": {
+          "title": "清空当前输入?",
+          "action": "清空"
+        }
+      }
+    },
+    {
+      "rule": 3,
+      "code": "I03",
+      "acceptance": "/ 作为首字符唤起 slash 菜单 · 菜单条目从 slashCommands 静态数组来 · 至少 6 条",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i03-slash-source.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i03-slash-source.json",
+          "sha256": "6441c044159f5e077f97a4dafa5c74559b4adc2afac5e9f880cd4467dd51fb1a"
+        }
+      ],
+      "summary": "new, clear, skills, workflows, settings, help",
+      "observed": {
+        "slashCommands": [
+          "new",
+          "clear",
+          "skills",
+          "workflows",
+          "settings",
+          "help"
+        ],
+        "open": true,
+        "visibleItems": [
+          "/new新对话",
+          "/clear清除历史",
+          "/skills技能库",
+          "/workflows工作流",
+          "/settings设置",
+          "/help帮助"
+        ]
+      }
+    },
+    {
+      "rule": 4,
+      "code": "I04",
+      "acceptance": "slash 菜单在 composer 上方 · max-h 320 带滚动 · ↑↓ 选择 · Enter 确认 · Escape 关",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i04-slash-navigation.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i04-slash-navigation.json",
+          "sha256": "20c5d972a42372546da19b24ee64addaba3b9dabcaf39aa482bd31e9d2a38c30"
+        }
+      ],
+      "summary": "active=/skills技能库, value=\"/skills \"",
+      "observed": {
+        "before": {
+          "maxHeight": "320px",
+          "overflowY": "auto",
+          "menuBottom": 898.9375,
+          "composerTop": 923.9375,
+          "activeText": "/new新对话"
+        },
+        "activeAfterArrow": "/skills技能库",
+        "selectedValue": "/skills ",
+        "closed": {
+          "open": false,
+          "value": ""
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "I05",
+      "acceptance": "附件 · 支持拖入 composer 区域 · drop 区 dash border 琥珀 · 非允许类型 toast 错误",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i05-invalid-drop.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i05-invalid-drop.json",
+          "sha256": "86dd1150b49ff976c66d3beea895014191a6134d63d2f4651aed1593ca0a6ae9"
+        }
+      ],
+      "summary": "ERROR不支持的附件类型",
+      "observed": {
+        "tokenColors": {
+          "--accent": "rgb(154, 93, 37)"
+        },
+        "duringDrag": {
+          "active": true,
+          "borderStyle": "dashed",
+          "borderColor": "rgb(154, 93, 37)",
+          "tokenMatch": "--accent"
+        },
+        "toastText": "ERROR不支持的附件类型"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "I06",
+      "acceptance": "streaming 期间 composer disabled · placeholder 变 \"Friday 正在回答,请稍候\" · 发送按钮灰",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i06-streaming-disabled.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i06-streaming-disabled.json",
+          "sha256": "f49a451e9a8c760e79945f5d9c7fbedfec2c92bb394f3c1f3ef7a53e9fb0c339"
+        }
+      ],
+      "summary": "Friday 正在回答,请稍候, opacity=0.4",
+      "observed": {
+        "disabled": true,
+        "placeholder": "Friday 正在回答,请稍候",
+        "sendDisabled": true,
+        "sendOpacity": "0.4"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "I07",
+      "acceptance": "发送按钮 · 琥珀 fill · 空输入时 opacity 0.4 · 点击 200ms press feedback",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i07-send-feedback.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i07-send-feedback.json",
+          "sha256": "2d1f48f17a68ce6c808dd7a214d54d68c947a7773b56eb5971a122189ee58f8b"
+        }
+      ],
+      "summary": "empty=0.4, filled=rgb(154, 93, 37), pressed=matrix(0.991181, 0, 0, 0.991181, 0, -0.706019)",
+      "observed": {
+        "tokenColors": {
+          "--accent": "rgb(154, 93, 37)"
+        },
+        "empty": {
+          "opacity": "0.4",
+          "background": "rgb(154, 93, 37)",
+          "tokenMatch": "--accent"
+        },
+        "filled": {
+          "opacity": "1",
+          "background": "rgb(154, 93, 37)",
+          "tokenMatch": "--accent"
+        },
+        "pressed": "matrix(0.991181, 0, 0, 0.991181, 0, -0.706019)",
+        "released": "none"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "I08",
+      "acceptance": "字符计数 · 2000 字以下不显 · 超过显示 \"1923 / 2000\" · 超限红色 + 禁发",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i08-char-count.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i08-char-count.json",
+          "sha256": "69566bf8bfe5b4caef63c392bc0b436b5bc2c09be1ca6e8619422106372194eb"
+        }
+      ],
+      "summary": "1923 / 2000 / 2001 / 2000",
+      "observed": {
+        "hidden": {
+          "counterVisible": false
+        },
+        "visible": {
+          "text": "1923 / 2000"
+        },
+        "over": {
+          "text": "2001 / 2000",
+          "color": "rgb(165, 48, 40)",
+          "sendDisabled": true
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "I09",
+      "acceptance": "草稿 auto-save · 每 500ms debounce 写 localStorage['friday-chat-draft-' + sessionId] · 切换 session 恢复",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-07/i09-draft-save.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-07/i09-draft-save.json",
+          "sha256": "3579ecf0e68950edd80991109bd103035fdbc9468e91624c1f4d272c97687635"
+        }
+      ],
+      "summary": "drafts=draft-one/draft-two",
+      "observed": {
+        "firstStorage": "draft-one",
+        "secondStorage": "draft-two",
+        "restored": "draft-one"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2A-07/i01-composer-height.json",
+    "screenshots/P2A-07/i02-send-keys.json",
+    "screenshots/P2A-07/i03-slash-source.json",
+    "screenshots/P2A-07/i04-slash-navigation.json",
+    "screenshots/P2A-07/i05-invalid-drop.json",
+    "screenshots/P2A-07/i06-streaming-disabled.json",
+    "screenshots/P2A-07/i07-send-feedback.json",
+    "screenshots/P2A-07/i08-char-count.json",
+    "screenshots/P2A-07/i09-draft-save.json"
+  ]
+}

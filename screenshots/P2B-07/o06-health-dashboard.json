@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:32:21.345Z",
+  "observed": {
+    "helper": {
+      "primaryHealth": "queue",
+      "pollIntervalMs": 5000
+    },
+    "cards": [
+      {
+        "id": "cpu",
+        "primaryBadge": null
+      },
+      {
+        "id": "memory",
+        "primaryBadge": null
+      },
+      {
+        "id": "queue",
+        "primaryBadge": "主压力"
+      }
+    ],
+    "detailEmpty": true
+  }
+}

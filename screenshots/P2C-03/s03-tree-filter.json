@@ -1,0 +1,94 @@
+{
+  "generatedAt": "2026-04-21T10:33:33.957Z",
+  "initial": {
+    "nodes": [
+      {
+        "id": "all",
+        "marginLeft": 0
+      },
+      {
+        "id": "commerce",
+        "marginLeft": 0
+      },
+      {
+        "id": "operations",
+        "marginLeft": 14
+      },
+      {
+        "id": "support",
+        "marginLeft": 14
+      },
+      {
+        "id": "engineering",
+        "marginLeft": 0
+      },
+      {
+        "id": "release",
+        "marginLeft": 14
+      },
+      {
+        "id": "security",
+        "marginLeft": 14
+      },
+      {
+        "id": "finance",
+        "marginLeft": 0
+      }
+    ],
+    "expandedCategories": [
+      "commerce",
+      "operations",
+      "engineering",
+      "finance",
+      "support",
+      "security"
+    ]
+  },
+  "collapsed": {
+    "operationsVisible": false,
+    "expandedCategories": [
+      "operations",
+      "engineering",
+      "finance",
+      "support",
+      "security"
+    ]
+  },
+  "reexpanded": {
+    "operationsVisible": true,
+    "expandedCategories": [
+      "operations",
+      "engineering",
+      "finance",
+      "support",
+      "security",
+      "commerce"
+    ]
+  },
+  "filtered": {
+    "stateName": "installed",
+    "search": "",
+    "activeTreeNode": "operations",
+    "expandedCategories": [
+      "operations",
+      "engineering",
+      "finance",
+      "support",
+      "security",
+      "commerce"
+    ],
+    "discoveryOpen": true,
+    "viewMode": "grid",
+    "filteredSkillIds": [
+      "skill-cross-border-review"
+    ],
+    "registry": [
+      "skill-cross-border-review",
+      "skill-release-guardian",
+      "skill-finance-watch",
+      "skill-ticket-triage",
+      "skill-security-audit",
+      "skill-workflow-scaffold"
+    ]
+  }
+}

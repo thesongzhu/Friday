@@ -1,0 +1,282 @@
+{
+  "itemId": "P2F-09",
+  "route": "all",
+  "generatedAt": "2026-04-21T10:39:29.464Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 5,
+    "pass": 5,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "F09-01",
+      "acceptance": "grep 无裸中文 / 英文",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-09/f09-01-bare-string-grep.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-09/f09-01-bare-string-grep.json",
+          "sha256": "6436f1032cd05bb21fd612e1da2bc3e4a62277fb96d6a6e200dfc41b19a14fab"
+        }
+      ],
+      "summary": "matches=0",
+      "observed": {
+        "matches": []
+      }
+    },
+    {
+      "rule": 2,
+      "code": "F09-02",
+      "acceptance": "每 user-facing 字符串走 localize()",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-09/f09-02-localize-audit.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-09/f09-02-localize-audit.json",
+          "sha256": "baaa7f2f2bf6487f48a3f5fa41a86606a89f931a09ccf719c67cd5be4af193d0"
+        }
+      ],
+      "summary": "localize=1127 localizedText=315",
+      "observed": {
+        "counts": {
+          "localize": 1127,
+          "localizedText": 315,
+          "resolveLocalizedText": 149
+        },
+        "observed": [
+          {
+            "href": "/home?dev=1&__state=normal",
+            "zhHash": "10bcc400843494e57ea590ea128c30ac27e100e9cf07c2f5d50fc36825835f6b",
+            "enHash": "660d929e9df1690bf2fb4aecb2e58074dd70c111b29e8a21173ca83eccdd0ee2",
+            "changed": true
+          },
+          {
+            "href": "/assistant?dev=1&__state=pending&tab=approvals",
+            "zhHash": "94c34254d8f8852881166690e5f467e9e3ce69495b4fe3d4d9f8acfc7d9f622e",
+            "enHash": "b76d105f85b651c7d82d7fc6e435682e2fbf18f8912923aeeeb35e42cfe787d7",
+            "changed": true
+          },
+          {
+            "href": "/settings?dev=1&tab=providers&__state=providers",
+            "zhHash": "b796aaf6f081b91641cd97127185a36edfb7a66703ed1df3ac63c8b086eee6a2",
+            "enHash": "f5d5416a281da811f5104c5d46e0740f894276d618a3d987b3e7aa27397a48c0",
+            "changed": true
+          },
+          {
+            "href": "/usage?dev=1&__state=this-month",
+            "zhHash": "97fcaf686de6f0470af08774bee3991520dc49a3cc54b45e5a5c036c6892f93e",
+            "enHash": "b132b7e478f0cbc8a57b4c212b208aaec10b904c21ec21c3f283a887203e31a7",
+            "changed": true
+          },
+          {
+            "href": "/command-center?dev=1&__state=active-run",
+            "zhHash": "b3670ae8ca8a8515c3e131dee0695c958250159b5d2ae922b6fca7e2602a0aac",
+            "enHash": "7a4d10c88d885d69169b9934c4e7fd487e1ffdaad2b5081f6b471c57883f289d",
+            "changed": true
+          }
+        ]
+      }
+    },
+    {
+      "rule": 3,
+      "code": "F09-03",
+      "acceptance": "切换 locale 无 flash / FOUC",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-09/f09-03-locale-switch.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-09/f09-03-locale-switch.json",
+          "sha256": "8f4de75c61c05bead92e80edc4f9684328e8f64120d87d40c2daebb74a16bb8f"
+        }
+      ],
+      "summary": "latency=1.6ms",
+      "observed": {
+        "navBefore": 1,
+        "navAfter": 1,
+        "beforeTitle": "首页",
+        "afterTitle": "Home",
+        "latencyMs": 1.600000023841858,
+        "splashVisible": false,
+        "bodyChildrenBefore": 8,
+        "bodyChildrenAfter": 8
+      }
+    },
+    {
+      "rule": 4,
+      "code": "F09-04",
+      "acceptance": "日期 / 数字 / 货币 按 locale 格式",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-09/f09-04-locale-formatting.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-09/f09-04-locale-formatting.json",
+          "sha256": "e0450d5d6164b7c5c26b5098a6e41a78e052955ac6e691ce70233b9ab513fb76"
+        }
+      ],
+      "summary": "US$10,980 -> $10,980; 2026/04/21 -> 04/21/2026",
+      "observed": {
+        "usage": {
+          "zh": {
+            "spend": "US$10,980",
+            "providerSpend": "US$4,280"
+          },
+          "en": {
+            "spend": "$10,980",
+            "providerSpend": "$4,280"
+          }
+        },
+        "dateProbe": {
+          "sampleIso": "2026-04-21T15:32:00.000Z",
+          "zhDate": "2026/04/21",
+          "enDate": "04/21/2026",
+          "zhTime": "08:32",
+          "enTime": "08:32 AM"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "F09-05",
+      "acceptance": "中文长英文短(或反之)不裂 layout · test case 5 页面对比",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-09/f09-05-layout-compare.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-09/f09-05-layout-compare.json",
+          "sha256": "ee281ba2dc5891551a6b86f18d4b72b497c11a56a57527a8f6ab884c3dbdeb02"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-home-zh.png",
+          "sha256": "1df513ddef142210c9c94d0af2cb96428ecd16636a06ff192bd5cf0002bec60e"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-home-en.png",
+          "sha256": "347bc944c3123182557126193b76bb1a6b4059698539f181c82c474c36d79075"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-assistant-zh.png",
+          "sha256": "5a8c133c8de029b0f1e2a14862db4192235d3d18478d493778741fba0c521798"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-assistant-en.png",
+          "sha256": "18731e717370a4c9e39711b39cfde4dab4bb926f1fc7b1eabffa4c493670d9a9"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-observability-zh.png",
+          "sha256": "dcb2c7cbc0c7baeb4091e5a16f38b2acb329c850dfe54cedc381e92d8be6562a"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-observability-en.png",
+          "sha256": "9acfab033768c950f9f7f18b17e94746db324448b731989cb06514ba0a9f5b47"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-settings-zh.png",
+          "sha256": "28192c47d1f8533a2b09f5f0a2bd8ff1320f37d16c57869c2c974d625f276d80"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-settings-en.png",
+          "sha256": "e4151cf3b8c2ecfc229379f861d682b315d3c9da8e286620afc977cbf5d0f649"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-usage-zh.png",
+          "sha256": "52088905d7aa3c5008db7a5e10e2cd7dadd4af2b8248b77ddc12326f29205f2b"
+        },
+        {
+          "path": "screenshots/P2F-09/f09-05-usage-en.png",
+          "sha256": "8d56ca45c14aeba59073bfa357c071728c0b629fc83a0345f709dc3f6d561554"
+        }
+      ],
+      "summary": "home:1440/1440, assistant:1440/1440, observability:1440/1440, settings:1440/1440, usage:1440/1440",
+      "observed": [
+        {
+          "page": "home",
+          "zh": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "en": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "zhScreenshot": "screenshots/P2F-09/f09-05-home-zh.png",
+          "enScreenshot": "screenshots/P2F-09/f09-05-home-en.png"
+        },
+        {
+          "page": "assistant",
+          "zh": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "en": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "zhScreenshot": "screenshots/P2F-09/f09-05-assistant-zh.png",
+          "enScreenshot": "screenshots/P2F-09/f09-05-assistant-en.png"
+        },
+        {
+          "page": "observability",
+          "zh": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "en": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "zhScreenshot": "screenshots/P2F-09/f09-05-observability-zh.png",
+          "enScreenshot": "screenshots/P2F-09/f09-05-observability-en.png"
+        },
+        {
+          "page": "settings",
+          "zh": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "en": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "zhScreenshot": "screenshots/P2F-09/f09-05-settings-zh.png",
+          "enScreenshot": "screenshots/P2F-09/f09-05-settings-en.png"
+        },
+        {
+          "page": "usage",
+          "zh": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "en": {
+            "scrollWidth": 1440,
+            "viewportWidth": 1440
+          },
+          "zhScreenshot": "screenshots/P2F-09/f09-05-usage-zh.png",
+          "enScreenshot": "screenshots/P2F-09/f09-05-usage-en.png"
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2F-09/f09-01-bare-string-grep.json",
+    "screenshots/P2F-09/f09-02-localize-audit.json",
+    "screenshots/P2F-09/f09-03-locale-switch.json",
+    "screenshots/P2F-09/f09-04-locale-formatting.json",
+    "screenshots/P2F-09/f09-05-layout-compare.json",
+    "screenshots/P2F-09/f09-05-home-zh.png",
+    "screenshots/P2F-09/f09-05-home-en.png",
+    "screenshots/P2F-09/f09-05-assistant-zh.png",
+    "screenshots/P2F-09/f09-05-assistant-en.png",
+    "screenshots/P2F-09/f09-05-observability-zh.png",
+    "screenshots/P2F-09/f09-05-observability-en.png",
+    "screenshots/P2F-09/f09-05-settings-zh.png",
+    "screenshots/P2F-09/f09-05-settings-en.png",
+    "screenshots/P2F-09/f09-05-usage-zh.png",
+    "screenshots/P2F-09/f09-05-usage-en.png"
+  ]
+}

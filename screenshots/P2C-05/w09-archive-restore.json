@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-04-21T10:34:03.884Z",
+  "confirm": {
+    "title": "归档这个工作流?",
+    "confirmLabel": "归档"
+  },
+  "archived": {
+    "archivedTitles": [
+      "预算预警巡检",
+      "事故复盘简报",
+      "模板版本: v12",
+      "prod-us",
+      "上次部署 14:02"
+    ],
+    "restoreExists": true,
+    "rowExists": false
+  },
+  "restored": {
+    "stateName": "running",
+    "rows": [
+      {
+        "id": "workflow-cross-border-launch",
+        "name": {
+          "zh": "跨境上新守护",
+          "en": "Cross-border launch guard"
+        },
+        "version": "v12",
+        "status": "running",
+        "nextRun": "15:10",
+        "trigger": "cron"
+      },
+      {
+        "id": "workflow-support-drain",
+        "name": {
+          "zh": "客服工单消峰",
+          "en": "Support drain"
+        },
+        "version": "v4",
+        "status": "scheduled",
+        "nextRun": "16:00",
+        "trigger": "webhook"
+      },
+      {
+        "id": "workflow-incident-brief",
+        "name": {
+          "zh": "事故复盘简报",
+          "en": "Incident brief"
+        },
+        "version": "v7",
+        "status": "scheduled",
+        "nextRun": "18:30",
+        "trigger": "manual"
+      }
+    ],
+    "selectedWorkflowId": "workflow-cross-border-launch",
+    "search": "",
+    "statusFilter": "all",
+    "archived": [
+      {
+        "id": "workflow-budget-scout",
+        "name": {
+          "zh": "预算预警巡检",
+          "en": "Budget scout"
+        },
+        "version": "v3",
+        "status": "archived",
+        "nextRun": "—",
+        "trigger": "manual"
+      }
+    ]
+  }
+}

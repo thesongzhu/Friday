@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:29:33.803Z",
+  "observed": {
+    "getStateCalls": 1,
+    "navigationEntries": 1,
+    "route": "/home?dev=1&__state=normal"
+  },
+  "consoleMessages": [],
+  "pageErrors": []
+}

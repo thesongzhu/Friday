@@ -1,0 +1,178 @@
+{
+  "itemId": "P2A-08",
+  "route": "/chat",
+  "generatedAt": "2026-04-21T10:30:56.764Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 6,
+    "pass": 6,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "H01",
+      "acceptance": "localStorage 键名严格 · friday-chat-session-key + friday-chat-history · 命名不得变",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h01-storage-keys.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h01-storage-keys.json",
+          "sha256": "9cd508079d920322a61b404c2864147a570374180e50a70d020535d52026b7cd"
+        }
+      ],
+      "summary": "sessionKey=true, historyKey=true",
+      "observed": {
+        "hookSessionKey": true,
+        "hookHistoryKey": true,
+        "staticSessionKey": true,
+        "staticHistoryKey": true
+      }
+    },
+    {
+      "rule": 2,
+      "code": "H02",
+      "acceptance": "history 结构 · { sessionKey: string, turns: Turn[], updatedAt: number } · Turn 类型照真仓",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h02-history-shape.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h02-history-shape.json",
+          "sha256": "ef1aac548fa34bde6113f4e9c0564e9566a055201fa3052a3885b80b09563c62"
+        }
+      ],
+      "summary": "turns=2, updatedAt=1776767457634",
+      "observed": {
+        "sessionKey": "chat:default:history-shape",
+        "turns": [
+          {
+            "id": "msg-1",
+            "role": "user",
+            "content": "hello",
+            "timestamp": "2026-04-20T10:00:00.000Z",
+            "status": "done"
+          },
+          {
+            "id": "msg-2",
+            "role": "assistant",
+            "content": "world",
+            "timestamp": "2026-04-20T10:01:00.000Z",
+            "status": "streaming"
+          }
+        ],
+        "updatedAt": 1776767457634
+      }
+    },
+    {
+      "rule": 3,
+      "code": "H03",
+      "acceptance": "新建 session · 先 POST 后拿到 key 再写入 · 不得先写本地 fake key",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h03-create-session.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h03-create-session.json",
+          "sha256": "ac1e1c2e15a2d2cd9834bd13be84fa4424cdd65e0bb44880960c26a4a8978007"
+        }
+      ],
+      "summary": "sessionKey=chat:default:chat-mo8hgx7d-aqe77x",
+      "observed": {
+        "beforeKey": null,
+        "beforeHistory": null,
+        "immediate": {
+          "sessionKey": null,
+          "history": null
+        },
+        "created": {
+          "sessionKey": "chat:default:chat-mo8hgx7d-aqe77x",
+          "metrics": {
+            "requestedAt": 796.8000000715256,
+            "beforeStoredKey": null,
+            "beforeHistoryKeys": [],
+            "resolvedAt": 918.5,
+            "sessionKey": "chat:default:chat-mo8hgx7d-aqe77x"
+          }
+        },
+        "afterKey": "chat:default:chat-mo8hgx7d-aqe77x",
+        "afterHistoryKeys": [
+          "chat:default:chat-mo8hgx7d-aqe77x"
+        ]
+      }
+    },
+    {
+      "rule": 4,
+      "code": "H04",
+      "acceptance": "刷新后 turns 顺序 index === 刷新前 · 对比 JSON.stringify 结构等价",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h04-refresh-hash.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h04-refresh-hash.json",
+          "sha256": "ee9d27320b546c11206bbcf443ec9cb3fae309903f18de2b962ddc113abe01e4"
+        }
+      ],
+      "summary": "hash=2ab1bca10ee8…",
+      "observed": {
+        "beforeHash": "2ab1bca10ee89e968b0eef9658c01d4aaedfed4ba2cc4d5cef4f22eca4a71994",
+        "afterHash": "2ab1bca10ee89e968b0eef9658c01d4aaedfed4ba2cc4d5cef4f22eca4a71994"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "H05",
+      "acceptance": "过期(> 7 天 updatedAt)· 清除 · 进入空态 · 不报错",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h05-expired-history.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h05-expired-history.json",
+          "sha256": "ce1c71c9f2c86022a50d45c78f1bbb77182992dfb51f3342cd3b27f0f14d1b9c"
+        }
+      ],
+      "summary": "emptyVisible=true, history={}",
+      "observed": {
+        "observed": {
+          "emptyVisible": true,
+          "history": "{}"
+        },
+        "pageErrors": [],
+        "consoleMessages": []
+      }
+    },
+    {
+      "rule": 6,
+      "code": "H06",
+      "acceptance": "localStorage 不可用(隐身 / 禁用)· graceful 降级 · 页面可用 · 不得 crash",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-08/h06-storage-blocked.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-08/h06-storage-blocked.json",
+          "sha256": "2eac01263a890827b1dc30e1bb2bdb7f07fd09cbe60bcec7a3fae1cb6bace44d"
+        }
+      ],
+      "summary": "composer=\"still usable\", errors=0",
+      "observed": {
+        "observed": {
+          "composerValue": "still usable",
+          "pageHasApp": true,
+          "quickCards": 3
+        },
+        "pageErrors": [],
+        "consoleMessages": []
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2A-08/h01-storage-keys.json",
+    "screenshots/P2A-08/h02-history-shape.json",
+    "screenshots/P2A-08/h03-create-session.json",
+    "screenshots/P2A-08/h04-refresh-hash.json",
+    "screenshots/P2A-08/h05-expired-history.json",
+    "screenshots/P2A-08/h06-storage-blocked.json"
+  ]
+}

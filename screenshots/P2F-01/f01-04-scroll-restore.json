@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-04-21T10:36:48.177Z",
+  "before": {
+    "top": 1000,
+    "saved": {}
+  },
+  "assistantAfterNavigate": {
+    "top": 0,
+    "saved": {
+      "/home?dev=1&__state=normal": 1000
+    }
+  },
+  "restored": {
+    "top": 1000,
+    "route": "/home"
+  },
+  "forward": {
+    "top": 0,
+    "route": "/assistant"
+  },
+  "screenshot": "screenshots/P2F-01/f01-04-scroll-restore.png"
+}

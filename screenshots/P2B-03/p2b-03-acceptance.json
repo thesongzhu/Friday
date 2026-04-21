@@ -1,0 +1,239 @@
+{
+  "itemId": "P2B-03",
+  "route": "/assistant",
+  "generatedAt": "2026-04-21T10:31:30.215Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 8,
+    "pass": 8,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "I01",
+      "acceptance": "卡片结构 · 状态 dot + 标题 + \"根因\" 展开 + recovery 链 + 操作栏",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i01-card-structure.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i01-card-structure.json",
+          "sha256": "ec3fe0cc3617c8f0ab26fc3dd09d5588973aad5084a2153a13281958c394971b"
+        }
+      ],
+      "summary": "recoveryRows=2, timelineRows=3",
+      "observed": {
+        "hasDot": true,
+        "title": "图像生成 provider 触发熔断",
+        "rootCauseLabel": "根因",
+        "recoveryRows": 2,
+        "dismissText": "Dismiss",
+        "timelineRows": 3
+      }
+    },
+    {
+      "rule": 2,
+      "code": "I02",
+      "acceptance": "状态 · open(红 dot)/ investigating(黄 + spinner)/ recovered(绿 + 勾)/ dismissed(灰 + 叉)",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i02-status-variants.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i02-status-variants.json",
+          "sha256": "699ff69ebae8f50b38d2d66ea5e7417b7905f0c2bf537a94867feebc4821a0a6"
+        }
+      ],
+      "summary": "open=rgb(165, 48, 40), investigating=rgb(143, 84, 19), dismissed=rgba(45, 33, 24, 0.34)",
+      "observed": {
+        "before": {
+          "open": {
+            "className": "assistant-issue-card is-open",
+            "dotColor": "rgb(165, 48, 40)",
+            "iconText": null,
+            "iconClass": null
+          },
+          "investigating": {
+            "className": "assistant-issue-card is-investigating",
+            "dotColor": "rgb(143, 84, 19)",
+            "iconText": "",
+            "iconClass": "button-spinner"
+          },
+          "recovered": {
+            "className": "assistant-issue-card is-recovered",
+            "dotColor": "rgb(47, 122, 73)",
+            "iconText": "✓",
+            "iconClass": ""
+          }
+        },
+        "dismissed": {
+          "className": "assistant-issue-card is-dismissed",
+          "dotColor": "rgba(45, 33, 24, 0.34)",
+          "iconText": "×"
+        },
+        "tokens": {
+          "--error": "rgb(165, 48, 40)",
+          "--warning": "rgb(143, 84, 19)",
+          "--success": "rgb(47, 122, 73)",
+          "--ink-4": "rgba(45, 33, 24, 0.34)"
+        }
+      }
+    },
+    {
+      "rule": 3,
+      "code": "I03",
+      "acceptance": "根因展开 · 默认折叠 · 点击展开 technical detail · 不暴露堆栈 · 用 describeRunHealth 文字",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i03-root-cause-expand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i03-root-cause-expand.json",
+          "sha256": "ed35117b7676ce9f493f2dd2f52b280197098258e0689a0e749781f7a8b7779e"
+        }
+      ],
+      "summary": "这是阻塞性失败，需要先处理。",
+      "observed": {
+        "before": {
+          "open": false
+        },
+        "after": {
+          "open": true,
+          "detail": "这是阻塞性失败，需要先处理。"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "I04",
+      "acceptance": "recovery 链 · 最多 3 步 · 每步有 \"执行\" 按钮 · 执行中 disabled",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i04-recovery-chain.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i04-recovery-chain.json",
+          "sha256": "28b7135ccdc213e64206940b422f2449460142c2e98730d5cdd3cac6b6bb63af"
+        }
+      ],
+      "summary": "rows=2, spinner=2",
+      "observed": {
+        "before": {
+          "rowCount": 2,
+          "buttonLabels": [
+            "执行",
+            "执行"
+          ]
+        },
+        "busy": {
+          "spinnerCount": 2,
+          "disabled": true
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "I05",
+      "acceptance": "dismiss · 二次确认 · \"确定不追查?\" + 理由文本框(选填)",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i05-dismiss-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i05-dismiss-confirm.json",
+          "sha256": "1fe49609c72b2e778b647cae98e72706c6ea5fd5eb659ccf228a9296c721a12f"
+        }
+      ],
+      "summary": "确定不追查?, textarea=true",
+      "observed": {
+        "title": "确定不追查?",
+        "hasTextarea": true,
+        "textareaLabel": "原因(可选)"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "I06",
+      "acceptance": "时间线 · 事件有时间戳 · 倒序最新在上",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i06-timeline-order.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i06-timeline-order.json",
+          "sha256": "1b84efde344a5ea6247e76567df803928eec87a7ff9a9a46344f5804566ec422"
+        }
+      ],
+      "summary": "14:08 > 14:05 > 14:02",
+      "observed": {
+        "observed": [
+          "14:08",
+          "14:05",
+          "14:02"
+        ],
+        "numeric": [
+          1408,
+          1405,
+          1402
+        ],
+        "descending": true
+      }
+    },
+    {
+      "rule": 7,
+      "code": "I07",
+      "acceptance": "关联 runId · 点击跳 /sessions?runId=xxx",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i07-run-link.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i07-run-link.json",
+          "sha256": "8dbd0053fca13c3374504219cbf34676a680a26ca51a9dfe10d8ef8cb0dbe91f"
+        }
+      ],
+      "summary": "/sessions?runId=run-provider-circuit",
+      "observed": {
+        "href": "/sessions?runId=run-provider-circuit",
+        "dataNav": "/sessions?runId=run-provider-circuit"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "I08",
+      "acceptance": "recovered 后卡片 30 秒后自动 collapse 到 60 高 · 可展开",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-03/i08-recovered-collapse.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-03/i08-recovered-collapse.json",
+          "sha256": "565c602cfc4ad29276d04f23e2e67a7a07e3b6e2aef4696986ec6dda9d828e54"
+        }
+      ],
+      "summary": "collapsed=60, expanded=330.046875",
+      "observed": {
+        "recovered": {
+          "className": "assistant-issue-card is-recovered",
+          "buttonText": "保持展开"
+        },
+        "collapsed": {
+          "className": "assistant-issue-card is-recovered is-auto-collapsed",
+          "height": 60,
+          "buttonText": "展开"
+        },
+        "expanded": {
+          "className": "assistant-issue-card is-recovered",
+          "height": 330.046875
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2B-03/i01-card-structure.json",
+    "screenshots/P2B-03/i02-status-variants.json",
+    "screenshots/P2B-03/i03-root-cause-expand.json",
+    "screenshots/P2B-03/i04-recovery-chain.json",
+    "screenshots/P2B-03/i05-dismiss-confirm.json",
+    "screenshots/P2B-03/i06-timeline-order.json",
+    "screenshots/P2B-03/i07-run-link.json",
+    "screenshots/P2B-03/i08-recovered-collapse.json"
+  ]
+}

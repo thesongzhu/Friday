@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-04-21T10:29:53.319Z",
+  "tokenColors": {
+    "--warning": "rgb(143, 84, 19)",
+    "--error": "rgb(165, 48, 40)",
+    "--accent": "rgb(154, 93, 37)"
+  },
+  "observed": [
+    {
+      "id": "qa-progress-healthy",
+      "color": "rgb(154, 93, 37)",
+      "token": "--accent"
+    },
+    {
+      "id": "qa-progress-warning",
+      "color": "rgb(143, 84, 19)",
+      "token": "--warning"
+    },
+    {
+      "id": "qa-progress-error",
+      "color": "rgb(165, 48, 40)",
+      "token": "--error"
+    }
+  ],
+  "screenshot": "screenshots/P2A-02/l05-progress-colors.png"
+}

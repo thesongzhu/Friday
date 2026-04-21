@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-04-21T10:35:08.494Z",
+  "before": {
+    "autoScrollActive": true,
+    "scrollTop": 0,
+    "scrollHeight": 278,
+    "lineCount": 4
+  },
+  "mid": {
+    "autoScrollActive": false,
+    "scrollTop": 0,
+    "scrollHeight": 278
+  },
+  "after": {
+    "filteredCount": 1,
+    "emptyState": null
+  }
+}

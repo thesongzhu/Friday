@@ -1,0 +1,40 @@
+{
+  "generatedAt": "2026-04-21T10:32:25.656Z",
+  "states": [
+    {
+      "focus": "alerts",
+      "heading": "告警管理",
+      "errorTitle": "Observability 暂时不可用",
+      "splashPresent": false,
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "focus": "traces",
+      "heading": "追踪与时延",
+      "errorTitle": "Observability 暂时不可用",
+      "splashPresent": false,
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "focus": "audit",
+      "heading": "审计时间线",
+      "errorTitle": "Observability 暂时不可用",
+      "splashPresent": false,
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "focus": "health",
+      "heading": "系统健康大盘",
+      "errorTitle": "Observability 暂时不可用",
+      "splashPresent": false,
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "focus": "acceptance",
+      "heading": "验收聚合",
+      "errorTitle": "Observability 暂时不可用",
+      "splashPresent": false,
+      "mountId": "observability-shell-v1"
+    }
+  ]
+}

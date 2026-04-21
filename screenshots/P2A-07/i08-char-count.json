@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:30:54.220Z",
+  "hidden": {
+    "counterVisible": false
+  },
+  "visible": {
+    "text": "1923 / 2000"
+  },
+  "over": {
+    "text": "2001 / 2000",
+    "color": "rgb(165, 48, 40)",
+    "sendDisabled": true
+  }
+}

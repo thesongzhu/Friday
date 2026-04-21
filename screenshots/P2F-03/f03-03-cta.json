@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-04-21T10:37:11.383Z",
+  "observed": [
+    {
+      "page": "Home",
+      "cta": "去对话→",
+      "arrowCount": 1
+    },
+    {
+      "page": "Chat",
+      "cta": "复核今天的高风险运行→",
+      "arrowCount": 3
+    },
+    {
+      "page": "Channels",
+      "cta": "添加渠道→",
+      "arrowCount": 1
+    },
+    {
+      "page": "Usage",
+      "cta": "开始一次对话→",
+      "arrowCount": 1
+    },
+    {
+      "page": "Memory",
+      "cta": "告诉 Friday 一件事→",
+      "arrowCount": 1
+    },
+    {
+      "page": "Fleet",
+      "cta": "添加设备→",
+      "arrowCount": 1
+    }
+  ]
+}

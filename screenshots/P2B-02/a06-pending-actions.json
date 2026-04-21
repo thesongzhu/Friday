@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:31:26.019Z",
+  "buttons": {
+    "highApproveClass": "action-button action-button-secondary",
+    "highRejectText": "拒绝",
+    "mediumApproveClass": "action-button action-button-primary"
+  },
+  "confirm": {
+    "placeholder": "跨境经营动作板",
+    "confirmDisabled": true
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "generatedAt": "2026-04-21T10:31:04.545Z",
+  "invalid": {
+    "activeTab": "approvals",
+    "search": "?dev=1&__state=pending&tab=bogus"
+  },
+  "issues": {
+    "activeTab": "issues",
+    "search": "?dev=1&__state=pending&tab=issues"
+  },
+  "recovery": {
+    "activeTab": "recovery",
+    "search": "?dev=1&__state=pending&tab=recovery"
+  },
+  "backOne": {
+    "activeTab": "issues",
+    "search": "?dev=1&__state=pending&tab=issues"
+  },
+  "backTwo": {
+    "activeTab": "approvals",
+    "search": "?dev=1&__state=pending&tab=bogus"
+  },
+  "forward": {
+    "activeTab": "issues",
+    "search": "?dev=1&__state=pending&tab=issues"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-04-21T10:35:23.754Z",
+  "observed": [
+    {
+      "eyebrow": "Spend",
+      "value": "US$10,980",
+      "fontSize": "40px",
+      "fontFamily": "Fraunces, serif",
+      "delta": "本月 · 较上月 +12%"
+    },
+    {
+      "eyebrow": "Forecast",
+      "value": "US$12,298",
+      "fontSize": "40px",
+      "fontFamily": "Fraunces, serif",
+      "delta": "预测 · 若维持当前节奏"
+    },
+    {
+      "eyebrow": "Cap",
+      "value": "US$12,000",
+      "fontSize": "40px",
+      "fontFamily": "Fraunces, serif",
+      "delta": "上限 · 较上月 +0%"
+    }
+  ]
+}

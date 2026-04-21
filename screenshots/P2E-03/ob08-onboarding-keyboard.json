@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-04-21T10:36:20.227Z",
+  "sequence": [
+    {
+      "stateName": "profile-pick",
+      "screen": 1,
+      "profile": null,
+      "selectedPacks": [],
+      "recommendations": [
+        "industry-cross-border-ecommerce",
+        "task-revenue-recovery",
+        "task-support-ops"
+      ],
+      "userProfile": {
+        "profile": null,
+        "selectedPacks": [],
+        "source": "useUserProfile"
+      }
+    },
+    {
+      "stateName": "pack-pick",
+      "screen": 2,
+      "profile": null,
+      "selectedPacks": [],
+      "recommendations": [
+        "industry-cross-border-ecommerce",
+        "task-revenue-recovery",
+        "task-support-ops"
+      ],
+      "userProfile": {
+        "profile": null,
+        "selectedPacks": [],
+        "source": "useUserProfile"
+      }
+    },
+    {
+      "stateName": "profile-pick",
+      "screen": 1,
+      "profile": null,
+      "selectedPacks": [],
+      "recommendations": [
+        "industry-cross-border-ecommerce",
+        "task-revenue-recovery",
+        "task-support-ops"
+      ],
+      "userProfile": {
+        "profile": null,
+        "selectedPacks": [],
+        "source": "useUserProfile"
+      }
+    }
+  ],
+  "finalRoute": "/home"
+}
