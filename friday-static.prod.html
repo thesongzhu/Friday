@@ -726,56 +726,89 @@
         top: calc(var(--shell-topbar-height) + 12px);
         z-index: 12;
         display: flex;
-        align-items: center;
-        gap: 10px;
-        min-height: 64px;
-        padding: 10px 12px;
+        align-items: stretch;
+        gap: 4px;
+        padding: 6px;
         border: 1px solid var(--border);
-        border-radius: 22px;
-        background: rgba(245, 236, 219, 0.88);
-        backdrop-filter: blur(16px);
-        box-shadow: var(--shadow-soft);
+        border-radius: 16px;
+        background: rgba(250, 244, 231, 0.85);
+        backdrop-filter: blur(14px);
+        box-shadow: 0 1px 0 rgba(45,33,24,0.04);
         overflow-x: auto;
         scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
       }
-
-      .home-intent-ribbon::-webkit-scrollbar {
-        display: none;
-      }
+      .home-intent-ribbon::-webkit-scrollbar { display: none; }
 
       .intent-pill {
+        position: relative;
+        flex: 1 1 0;
+        min-width: 140px;
         display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-height: 40px;
-        padding: 0 14px;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 2px;
+        min-height: 44px;
+        padding: 7px 14px;
         border: 1px solid transparent;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.42);
+        border-radius: 11px;
+        background: transparent;
         color: var(--ink-2);
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.01em;
+        text-align: left;
         transition:
           border-color var(--motion-swift),
           background var(--motion-swift),
-          color var(--motion-swift),
-          transform var(--motion-swift);
+          color var(--motion-swift);
       }
-
-      .intent-pill:hover {
-        border-color: var(--border);
-        background: var(--bg-elevated);
+      .intent-pill-label {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 650;
+        letter-spacing: -0.005em;
         color: var(--ink);
-        transform: translateY(-1px);
+        line-height: 1.2;
       }
-
-      .intent-pill strong {
+      .intent-pill-detail {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--ink-3);
+        letter-spacing: 0.01em;
+        line-height: 1.3;
+      }
+      .intent-pill-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: rgba(200, 122, 60, 0.14);
         color: var(--accent);
         font-family: var(--font-mono);
-        font-size: 11px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
+        font-size: 10px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+      }
+      .intent-pill-count.is-warn {
+        background: rgba(184, 106, 23, 0.16);
+        color: var(--warning);
+      }
+      .intent-pill:hover {
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--ink);
+      }
+      .intent-pill[aria-current="true"] {
+        background: #fff;
+        border-color: var(--border);
+        box-shadow: 0 1px 2px rgba(45,33,24,0.06);
+      }
+      .intent-pill[aria-current="true"] .intent-pill-label {
+        color: var(--ink);
       }
 
       .home-body {
@@ -1019,6 +1052,13 @@
         gap: 12px;
         margin-bottom: 14px;
       }
+      .shell-card-header > *:first-child {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .shell-card-header > *:not(:first-child) {
+        flex: 0 0 auto;
+      }
 
       .shell-card-eyebrow {
         margin: 0 0 6px;
@@ -1037,45 +1077,65 @@
         letter-spacing: -0.02em;
       }
 
+      .usage-kpi {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-height: 156px;
+        height: 100%;
+        box-sizing: border-box;
+        align-self: stretch;
+        margin-top: 0 !important;
+      }
+      .usage-kpi .shell-card-eyebrow {
+        margin: 0;
+      }
+      .usage-kpi-value {
+        font-family: var(--font-display);
+        font-size: 34px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      .usage-kpi-caption {
+        margin-top: auto;
+        color: var(--ink-3);
+        font-size: 13px;
+      }
+
       .live-board-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
-        min-height: 200px;
-      }
-
-      @media (min-width: 1440px) {
-        .live-board-grid {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-        }
-      }
-
-      @media (min-width: 1920px) {
-        .live-board-grid {
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-        }
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 14px;
+        min-height: 0;
+        align-items: stretch;
       }
 
       .run-card {
         position: relative;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
-        gap: 18px;
-        min-height: 180px;
-        padding: 20px;
+        gap: 12px;
+        padding: 16px 16px 14px;
         border: 1px solid var(--border);
         border-radius: var(--radius-lg);
         background:
-          linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.66)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.7)),
           var(--bg-glass);
         box-shadow: var(--shadow-soft);
         text-align: left;
+        text-decoration: none;
         transition:
           border-color var(--motion-gentle),
           transform var(--motion-gentle),
           opacity var(--motion-fade),
-          background var(--motion-gentle);
+          background var(--motion-gentle),
+          box-shadow var(--motion-gentle);
+      }
+      .run-card:hover {
+        box-shadow: 0 8px 24px -14px rgba(45,33,24,0.24), var(--shadow-soft);
       }
 
       .run-card:hover {
@@ -1103,28 +1163,30 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
+        gap: 8px;
+        min-height: 18px;
       }
 
       .run-tone-icon {
-        width: 12px;
-        height: 12px;
+        width: 8px;
+        height: 8px;
         border-radius: 999px;
+        flex: 0 0 auto;
       }
 
       .run-tone-icon.is-healthy {
         background: var(--accent);
-        box-shadow: 0 0 0 4px rgba(200, 122, 60, 0.12);
+        box-shadow: 0 0 0 3px rgba(200, 122, 60, 0.14);
       }
 
       .run-tone-icon.is-warning {
         background: var(--warning);
-        box-shadow: 0 0 0 4px rgba(184, 106, 23, 0.12);
+        box-shadow: 0 0 0 3px rgba(184, 106, 23, 0.14);
       }
 
       .run-tone-icon.is-error {
         background: var(--error);
-        box-shadow: 0 0 0 4px rgba(165, 48, 40, 0.12);
+        box-shadow: 0 0 0 3px rgba(165, 48, 40, 0.14);
       }
 
       .run-card-title {
@@ -1143,19 +1205,41 @@
       .run-card-body {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 10px;
       }
 
       .run-meta {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
         color: var(--ink-2);
         font-size: 13px;
+        line-height: 1.4;
       }
-
       .run-meta strong {
         color: var(--ink);
+        font-weight: 600;
+      }
+      .run-meta-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 10px;
+        min-width: 0;
+      }
+      .run-meta-line > span,
+      .run-meta-line > strong {
+        min-width: 0;
+      }
+      .run-meta-sep {
+        color: var(--ink-4);
+        font-size: 11px;
+      }
+      .run-meta .friday-metric,
+      .run-meta .friday-count {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .friday-metric,
@@ -1164,18 +1248,33 @@
         font-variant-numeric: tabular-nums;
       }
 
+      .run-progress-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 2px;
+      }
       .run-progress-track {
-        width: 100%;
-        height: 4px;
+        flex: 1 1 auto;
+        height: 3px;
         border-radius: 999px;
         background: rgba(45, 33, 24, 0.08);
         overflow: hidden;
       }
-
       .run-progress-fill {
         height: 100%;
         border-radius: 999px;
         transition: width var(--motion-gentle), background var(--motion-gentle);
+      }
+      .run-progress-pct {
+        flex: 0 0 auto;
+        min-width: 52px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-3);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
       }
 
       .run-progress-fill.is-healthy {
@@ -1495,6 +1594,58 @@
         border-radius: var(--radius-xl);
         background: rgba(255, 255, 255, 0.64);
         box-shadow: var(--shadow-soft);
+      }
+
+      /* Packs page layout — responsive, no crushing */
+      .packs-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px 16px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+      .packs-toolbar-left {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+        flex: 1 1 420px;
+        min-width: 0;
+      }
+      .packs-toolbar-left .settings-input {
+        flex: 1 1 240px;
+        min-width: 200px;
+        max-width: 440px;
+      }
+      .packs-toolbar-right {
+        flex: 0 0 auto;
+        display: flex;
+      }
+
+      .packs-layout {
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        gap: 24px;
+        align-items: start;
+      }
+      @media (max-width: 1080px) {
+        .packs-layout {
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+      }
+
+      .packs-catalog-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 14px;
+        align-items: start;
+      }
+      @media (min-width: 1440px) {
+        .packs-catalog-grid {
+          grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        }
       }
 
       .pack-card-head {
@@ -1889,6 +2040,89 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
+      }
+
+      .skill-tree {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .skill-tree-node {
+        display: flex;
+        flex-direction: column;
+      }
+      .skill-tree-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 32px;
+      }
+      .skill-tree-toggle {
+        flex: 0 0 auto;
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--ink-3);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+      .skill-tree-toggle:hover {
+        background: var(--accent-soft);
+        color: var(--ink);
+      }
+      .skill-tree-toggle.is-leaf {
+        cursor: default;
+        color: var(--ink-4);
+      }
+      .skill-tree-toggle.is-leaf:hover {
+        background: transparent;
+        color: var(--ink-4);
+      }
+      .skill-tree-label {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink-2);
+        font-size: 13px;
+        font-weight: 500;
+        text-align: left;
+        letter-spacing: -0.005em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+        transition:
+          background var(--motion-swift),
+          color var(--motion-swift);
+      }
+      .skill-tree-label:hover {
+        background: var(--accent-soft);
+        color: var(--ink);
+      }
+      .skill-tree-label.is-active {
+        background: var(--accent-soft);
+        color: var(--ink);
+        font-weight: 700;
+      }
+      .skill-tree-children {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-top: 2px;
       }
 
       .settings-tab-header h2 {
@@ -5935,7 +6169,1085 @@
           animation: none !important;
         }
       }
-    </style>
+    
+
+/* ================================================================
+   POLISH LAYER — toggleable via html[data-polish-*] attributes
+   A: Hierarchy rework
+   B: Spacing & density
+   C: Neutral ivory tone
+   D: Type weight refinement
+================================================================ */
+
+/* ---------- B: Spacing & density (rhythm) ---------- */
+html[data-polish-b="on"] {
+  --shell-topbar-height: 64px;
+}
+html[data-polish-b="on"] .shell-topbar {
+  padding: 0 36px;
+}
+html[data-polish-b="on"] .shell-main > *,
+html[data-polish-b="on"] .shell-main-content,
+html[data-polish-b="on"] main,
+html[data-polish-b="on"] [role="main"] {
+  padding-left: 36px;
+  padding-right: 36px;
+}
+/* Generic breathing between sibling section-like blocks */
+html[data-polish-b="on"] .page-shell > section + section,
+html[data-polish-b="on"] .page-shell > article + article,
+html[data-polish-b="on"] .shell-main-content > section + section,
+html[data-polish-b="on"] .shell-main-content > article + article {
+  margin-top: 32px;
+}
+/* Card internal density */
+html[data-polish-b="on"] .topbar-chip {
+  padding: 8px 14px;
+}
+html[data-polish-b="on"] .rail-nav-link {
+  min-height: 40px;
+  padding: 9px 12px;
+}
+html[data-polish-b="on"] .brand-subtitle {
+  margin-top: 5px;
+}
+html[data-polish-b="on"] .topbar-breadcrumbs {
+  gap: 10px;
+}
+
+/* ---------- A: Hierarchy rework ---------- */
+/* Breadcrumb quieter */
+html[data-polish-a="on"] .topbar-breadcrumbs {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--ink-4);
+  opacity: 0.88;
+}
+html[data-polish-a="on"] .topbar-breadcrumb-sep {
+  opacity: 0.55;
+}
+/* Title a touch stronger */
+html[data-polish-a="on"] .topbar-title {
+  font-size: 15.5px;
+  letter-spacing: -0.012em;
+}
+/* Top chips/buttons lighter weight, smaller */
+html[data-polish-a="on"] .topbar-chip {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  border-color: var(--border);
+}
+html[data-polish-a="on"] .topbar-chip.is-status {
+  background: var(--bg-elevated);
+}
+html[data-polish-a="on"] .topbar-button {
+  font-weight: 500;
+  font-size: 11.5px;
+  background: transparent;
+}
+/* Rail meta info quieter; active state stronger */
+html[data-polish-a="on"] .rail-group-title {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  opacity: 0.72;
+}
+html[data-polish-a="on"] .rail-link-meta {
+  font-size: 10.5px;
+  opacity: 0.82;
+}
+html[data-polish-a="on"] .rail-nav-link.is-active {
+  background: var(--accent-soft-125, var(--accent-soft));
+  border-color: var(--accent-strong);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+html[data-polish-a="on"] .rail-nav-link.is-active .rail-link-title {
+  color: var(--ink);
+  font-weight: 700;
+}
+/* Larger, quieter section H1 & numeric chips */
+html[data-polish-a="on"] h1,
+html[data-polish-a="on"] .route-heading,
+html[data-polish-a="on"] [class*="section-heading"] h2,
+html[data-polish-a="on"] [class*="section-title"] {
+  letter-spacing: -0.022em;
+}
+/* Status dot gets subtle ring */
+html[data-polish-a="on"] .topbar-dot.is-live {
+  box-shadow: 0 0 0 3px rgba(47, 122, 73, 0.14);
+}
+
+/* ---------- D: Type weight refinement ---------- */
+html[data-polish-d="on"] {
+  --font-display: "Inter", "Noto Sans SC", sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+html[data-polish-d="on"] body {
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+html[data-polish-d="on"] .brand-title {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+html[data-polish-d="on"] .brand-subtitle {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+html[data-polish-d="on"] .topbar-title {
+  font-weight: 600;
+}
+html[data-polish-d="on"] .topbar-chip {
+  font-weight: 500;
+}
+html[data-polish-d="on"] .rail-link-title {
+  font-weight: 500;
+}
+html[data-polish-d="on"] .rail-nav-link.is-active .rail-link-title {
+  font-weight: 600;
+}
+/* Numerals use tabular + Fraunces for standout stats */
+html[data-polish-d="on"] [class*="stat"] [class*="value"],
+html[data-polish-d="on"] [class*="metric"] [class*="value"],
+html[data-polish-d="on"] [class*="count"]:not(button):not(a),
+html[data-polish-d="on"] [class*="number"]:not(button):not(a) {
+  font-feature-settings: "tnum", "lnum";
+  font-variant-numeric: tabular-nums;
+}
+/* Mono reserved: only in code/kbd/explicit mono class. Leave .rail-group-title alone since it IS meta. */
+html[data-polish-d="on"] .topbar-breadcrumbs {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+/* Rebalance h1/h2 to reduce heaviness */
+html[data-polish-d="on"] h1 {
+  font-weight: 600;
+}
+html[data-polish-d="on"] h2 {
+  font-weight: 600;
+}
+html[data-polish-d="on"] h3 {
+  font-weight: 600;
+}
+
+
+/* ---------- E: Topbar reshape ---------- */
+html[data-polish-e="on"] {
+  --shell-topbar-height: 56px;
+}
+html[data-polish-e="on"] .shell-topbar {
+  padding: 0 28px;
+  gap: 16px;
+}
+html[data-polish-e="on"] .topbar-chip {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-height: 30px;
+  padding: 4px 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  border-radius: 999px;
+}
+html[data-polish-e="on"] .topbar-chip.is-status {
+  gap: 6px;
+  padding-left: 10px;
+}
+html[data-polish-e="on"] .topbar-chip > *,
+html[data-polish-e="on"] .topbar-chip,
+html[data-polish-e="on"] .topbar-button,
+html[data-polish-e="on"] .topbar-button * {
+  white-space: nowrap !important;
+  overflow: visible;
+}
+html[data-polish-e="on"] .topbar-meta { flex-wrap: nowrap; flex-shrink: 0; }
+html[data-polish-e="on"] .topbar-leading { min-width: 0; flex-shrink: 1; }
+html[data-polish-e="on"] .topbar-heading { min-width: 0; }
+html[data-polish-e="on"] .topbar-breadcrumbs { overflow: hidden; }
+html[data-polish-e="on"] .topbar-breadcrumbs {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-4);
+}
+html[data-polish-e="on"] .topbar-title {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+html[data-polish-e="on"] .topbar-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+/* ⌘K pill — detect by presence of kbd-like child */
+html[data-polish-e="on"] .topbar-meta kbd,
+html[data-polish-e="on"] .topbar-meta [class*="kbd"],
+html[data-polish-e="on"] .topbar-meta [class*="shortcut"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+/* Prevent Friday 运行中 wrap */
+html[data-polish-e="on"] .topbar-chip {
+  max-width: none;
+}
+
+
+/* ================================================================
+   I: Friday Conversational Right Rail (chat-ified sidebar)
+================================================================ */
+
+/* Hide the existing right rail content when I is on */
+html[data-polish-i="on"] .app-shell:not(.is-command-center-route) .shell-right-rail > *:not(.friday-chat):not(.friday-chat-collapsed-strip) {
+  display: none !important;
+}
+html[data-polish-i="on"] .app-shell:not(.is-command-center-route) .shell-right-rail::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 0;
+}
+/* Resize the right rail to new custom width */
+html[data-polish-i="on"] .app-shell:not(.is-command-center-route) {
+  --friday-chat-width: var(--friday-chat-custom-width, 320px);
+}
+html[data-polish-i="on"] .app-shell:not(.is-command-center-route) .shell-right-rail {
+  width: var(--friday-chat-width);
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border-left: 1px solid var(--border) !important;
+}
+/* Collapsed state: shrink to 56px strip */
+html[data-polish-i="collapsed"] .app-shell:not(.is-command-center-route) .shell-right-rail {
+  width: 52px !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+html[data-polish-i="collapsed"] .app-shell:not(.is-command-center-route) .shell-right-rail > *:not(.friday-chat):not(.friday-chat-collapsed-strip) {
+  display: none !important;
+}
+
+/* ---- Chat panel (mounted by JS into the right rail) ---- */
+.friday-chat {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-shell, rgba(253, 247, 240, 0.94));
+  backdrop-filter: blur(18px);
+  font-family: var(--font-display, "Inter", "Noto Sans SC", sans-serif);
+  color: var(--ink, #2d2118);
+}
+.friday-chat[data-collapsed="1"] {
+  padding: 0;
+}
+.friday-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  min-height: var(--shell-topbar-height, 56px);
+}
+.friday-chat-head-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.friday-chat-head-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.friday-chat-head-context {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.friday-chat-head-context-dot {
+  width: 5px; height: 5px; border-radius: 999px;
+  background: var(--accent);
+}
+.friday-chat-icon-btn {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink-3);
+  background: transparent;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+  font-size: 14px;
+  font-family: var(--font-mono);
+}
+.friday-chat-icon-btn:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+  border-color: var(--border);
+}
+.friday-chat-scope {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.friday-chat-scope-btn {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+.friday-chat-scope-btn[data-active="1"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  color: var(--ink);
+}
+.friday-chat-scope-btn:hover:not([data-active="1"]) {
+  border-color: var(--border-strong);
+  color: var(--ink-2);
+}
+.friday-chat-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 14px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+}
+.friday-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+.friday-msg-meta {
+  font-size: 10px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.friday-msg-bubble {
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.friday-msg[data-role="user"] .friday-msg-bubble {
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  align-self: stretch;
+}
+.friday-msg[data-role="user"] .friday-msg-meta {
+  align-self: flex-end;
+}
+.friday-msg[data-role="friday"] .friday-msg-bubble {
+  background: var(--bg-elevated);
+}
+/* Special card-style messages (like the Learning Insight) */
+.friday-msg[data-kind="card"] .friday-msg-bubble {
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+.friday-msg-card {
+  padding: 11px 12px 12px;
+}
+.friday-msg-card-eyebrow {
+  font-size: 10px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.friday-msg-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--ink);
+}
+.friday-msg-card-body {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin: 0;
+}
+.friday-msg-card-body + .friday-msg-card-body { margin-top: 6px; }
+.friday-msg-card-list {
+  margin: 6px 0 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.friday-msg-card-list li {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  padding-left: 12px;
+  position: relative;
+}
+.friday-msg-card-list li::before {
+  content: "·";
+  position: absolute;
+  left: 2px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.friday-msg-card-foot {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.friday-msg-card-foot-btn {
+  padding: 3px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.friday-msg-card-foot-btn:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+}
+/* Hidden-card toggle */
+.friday-chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-shell);
+}
+.friday-chat-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.friday-chat-toolbar-btn:hover {
+  color: var(--ink);
+  border-color: var(--border-strong);
+}
+.friday-chat-toolbar-btn[data-active="1"] {
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+}
+.friday-chat-toolbar-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+}
+/* Composer: centered pill, inline send, compact height to match sidebar density */
+.friday-chat-input {
+  padding: 8px 12px 12px;
+  background: transparent;
+  display: flex;
+  justify-content: center;
+}
+.friday-chat-input-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.friday-chat-input-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.friday-chat-input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.friday-chat-input textarea {
+  resize: none;
+  width: 100%;
+  min-height: 20px;
+  max-height: 180px;
+  padding: 2px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  display: block;
+}
+.friday-chat-input textarea::placeholder { color: var(--ink-4); }
+.friday-chat-input textarea:focus { outline: none; }
+.friday-chat-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.friday-chat-input-hints {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.friday-chat-hint {
+  font-size: 9.5px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.friday-chat-hint-kbd {
+  color: var(--ink-3);
+  border: 1px solid var(--border);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+}
+.friday-chat-send {
+  width: 28px; height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.friday-chat-send:disabled { opacity: 0.35; cursor: not-allowed; }
+.friday-chat-send:hover:not(:disabled) { transform: translateY(-1px); }
+
+/* Resize handle on the left edge */
+.friday-chat-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.friday-chat-resize:hover,
+.friday-chat-resize[data-dragging="1"] {
+  background: linear-gradient(90deg, transparent, var(--accent-strong), transparent);
+}
+
+/* Collapsed strip (vertical icons) */
+.friday-chat-collapsed-strip {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0 14px;
+  gap: 10px;
+  background: var(--bg-shell);
+  border-left: 1px solid var(--border);
+}
+.friday-chat-collapsed-strip .friday-chat-icon-btn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+}
+.friday-chat-collapsed-title {
+  margin-top: 6px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+
+
+/* Force right rail visible when I is on, even at narrower viewports.
+   The app's own @media(max-width:1279px) hides .shell-right-rail — override. */
+@media (max-width: 1279px) {
+  html[data-polish-i="on"] .app-shell:not(.is-command-center-route) .shell-right-rail,
+  html[data-polish-i="collapsed"] .app-shell:not(.is-command-center-route) .shell-right-rail {
+    display: block !important;
+  }
+}
+/* When very narrow, let the chat overlay the content as a fixed drawer */
+@media (max-width: 900px) {
+  html[data-polish-i="on"] .app-shell:not(.is-command-center-route) .shell-right-rail,
+  html[data-polish-i="collapsed"] .app-shell:not(.is-command-center-route) .shell-right-rail {
+    position: fixed !important;
+    right: 0;
+    top: 0;
+    z-index: 40;
+    box-shadow: -18px 0 50px rgba(45,33,24,0.12);
+  }
+}
+
+/* ================================================================
+   Tweaks panel UI (always present; appearance toggled by host)
+================================================================ */
+#polish-tweaks {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9999;
+  width: 308px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 14px 14px 12px;
+  border: 1px solid rgba(45, 33, 24, 0.14);
+  border-radius: 16px;
+  background: rgba(253, 247, 240, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 20px 50px rgba(45, 33, 24, 0.16), 0 2px 6px rgba(45, 33, 24, 0.06);
+  font-family: "Inter", "Noto Sans SC", sans-serif;
+  color: #2d2118;
+  font-size: 12px;
+  line-height: 1.5;
+  display: none;
+}
+html[data-polish-c="on"] #polish-tweaks {
+  background: rgba(250, 248, 242, 0.96);
+  border-color: rgba(35, 28, 20, 0.12);
+  color: #231c14;
+}
+#polish-tweaks[data-open="1"] { display: block; }
+
+#polish-tweaks .pt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+#polish-tweaks .pt-title {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  font-weight: 600;
+  color: rgba(45, 33, 24, 0.6);
+  text-transform: uppercase;
+  font-family: "JetBrains Mono", monospace;
+}
+#polish-tweaks .pt-reset {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(45, 33, 24, 0.5);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+}
+#polish-tweaks .pt-reset:hover { color: #2d2118; }
+
+#polish-tweaks .pt-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+#polish-tweaks .pt-row:hover { background: rgba(45, 33, 24, 0.04); }
+#polish-tweaks .pt-row + .pt-row { border-top: 1px solid rgba(45, 33, 24, 0.06); }
+#polish-tweaks .pt-letter {
+  font-family: "Fraunces", serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9a5d25;
+  text-align: center;
+}
+#polish-tweaks .pt-label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+#polish-tweaks .pt-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2d2118;
+}
+#polish-tweaks .pt-desc {
+  font-size: 10.5px;
+  color: rgba(45, 33, 24, 0.55);
+}
+#polish-tweaks .pt-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(45, 33, 24, 0.16);
+  transition: background 160ms ease;
+  flex-shrink: 0;
+}
+#polish-tweaks .pt-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  transition: transform 160ms ease;
+}
+#polish-tweaks .pt-row[data-on="1"] .pt-switch {
+  background: #9a5d25;
+}
+html[data-polish-c="on"] #polish-tweaks .pt-row[data-on="1"] .pt-switch {
+  background: #8a5423;
+}
+#polish-tweaks .pt-row[data-on="1"] .pt-switch::after {
+  transform: translateX(12px);
+}
+
+#polish-tweaks .pt-foot {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(45, 33, 24, 0.08);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+#polish-tweaks .pt-preset {
+  flex: 1;
+  min-width: 56px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(45, 33, 24, 0.7);
+  border: 1px solid rgba(45, 33, 24, 0.12);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+}
+#polish-tweaks .pt-preset:hover {
+  border-color: #9a5d25;
+  color: #9a5d25;
+}
+
+/* Floating launcher (shown when panel closed AND edit mode is off) */
+#polish-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9998;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid rgba(45, 33, 24, 0.14);
+  border-radius: 999px;
+  background: rgba(253, 247, 240, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 10px 28px rgba(45, 33, 24, 0.1);
+  color: #2d2118;
+  font: 600 11.5px "Inter", "Noto Sans SC", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+}
+#polish-launcher:hover { border-color: #9a5d25; color: #9a5d25; }
+#polish-launcher .pl-dot {
+  width: 6px; height: 6px; border-radius: 999px; background: #9a5d25;
+}
+#polish-tweaks[data-open="1"] ~ #polish-launcher,
+body[data-polish-launcher="hide"] #polish-launcher { display: none; }
+
+/* /chat page: only the Friday conversation. Hide session list + side panel, collapse to single column. */
+.chat-page-shell { grid-template-columns: minmax(0, 1fr) !important; height: calc(100vh - 56px) !important; overflow-y: auto !important; position: relative !important; }
+.chat-page-shell > .chat-activity-rail,
+.chat-page-shell > .chat-side-panel { display: none !important; }
+/* The floating Friday quick-chat panel is redundant on /chat; hide it there */
+body:has(.chat-page-shell) .friday-chat,
+body:has(.chat-page-shell) .friday-chat-collapsed-strip { display: none !important; }
+/* Hide the right auxiliary rail on /chat — main conversation should feel like a clean chatbot */
+body:has(.chat-page-shell) .shell-right-rail { display: none !important; }
+/* Let the chat page use the full shell width so the conversation column breathes */
+body:has(.chat-page-shell) .shell-content-inner,
+body:has(.chat-page-shell) .shell-content-stack { max-width: none !important; }
+
+/* Chatbot-style empty state + composer polish on /chat */
+.chat-page-shell .chat-main-column {
+  gap: 28px;
+  padding-block: 32px 32px;
+  height: auto !important;
+  min-height: calc(100vh - 56px);
+  align-self: start;
+  /* Grid item stretches to row track by default; allow natural growth */
+  grid-row-start: auto !important;
+}
+.chat-page-shell .chat-main-column.is-empty {
+  justify-content: center;
+  min-height: calc(100vh - 56px - 80px);
+}
+/* Composer sticks to the bottom of the scroll container — like a CLI prompt line */
+.chat-page-shell .chat-main-column > .chat-composer-shell {
+  position: sticky;
+  bottom: 16px;
+  z-index: 20;
+  margin-top: auto;
+}
+/* Empty state: enlarged and vertically centered in the viewport */
+.chat-page-shell .chat-main-column.is-empty,
+.chat-page-shell .chat-main-column:has(> .chat-empty-hero) {
+  justify-content: center !important;
+  align-items: center !important;
+  min-height: calc(100vh - 56px) !important;
+  padding-block: 24px !important;
+}
+.chat-page-shell .chat-empty-hero {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: center;
+  width: min(880px, 100%) !important;
+  margin-inline: auto;
+}
+.chat-page-shell .chat-empty-hero > svg {
+  display: block;
+  margin: 0 auto 28px;
+  width: 160px !important;
+  height: 92px !important;
+  opacity: 0.6;
+}
+.chat-page-shell .chat-empty-hero h2 {
+  font-size: 52px !important;
+  line-height: 1.1 !important;
+  margin-bottom: 16px !important;
+  letter-spacing: -0.03em;
+  font-weight: 600 !important;
+}
+.chat-page-shell .chat-empty-hero > p {
+  max-width: 640px;
+  margin: 0 auto 40px;
+  color: var(--ink-3);
+  font-size: 17px;
+  line-height: 1.65;
+}
+.chat-page-shell .chat-quick-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.chat-page-shell .chat-quick-card {
+  border-radius: 16px;
+  padding: 18px 20px;
+  font-size: 14px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--border);
+  transition: transform var(--motion-gentle), border-color var(--motion-gentle), background var(--motion-gentle);
+}
+.chat-page-shell .chat-quick-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+/* Composer becomes a rounded floating bar */
+.chat-page-shell .chat-composer-shell {
+  width: min(720px, 100%) !important;
+  border-radius: 22px;
+  box-shadow: 0 14px 40px -24px rgba(76, 46, 20, 0.55);
+  border: 1px solid var(--border);
+  background: var(--bg-raised, #fff) !important;
+  padding: 14px 14px 12px;
+}
+
+/* =====================================================================
+   Claude Code-style chat aesthetic on /chat
+   - no bubbles, no avatars, no max-width cap on messages
+   - turns separated by small uppercase role labels and generous spacing
+   - assistant gets a thin accent left rail; user turns are plain
+   - mono/terminal vibe for labels + composer prefix
+   ===================================================================== */
+.chat-page-shell .chat-timeline-shell,
+.chat-page-shell .chat-timeline,
+.chat-page-shell .chat-main-column {
+  width: min(720px, 100%) !important;
+}
+/* Strip the timeline-shell card frame — page should scroll naturally */
+.chat-page-shell .chat-timeline-shell {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+  flex: 0 0 auto !important;
+}
+.chat-page-shell .chat-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 8px 4px 120px;
+}
+/* Hide avatars entirely */
+.chat-page-shell .chat-avatar { display: none !important; }
+/* Rows no longer align user to right; both sides left-aligned like Claude Code */
+.chat-page-shell .chat-bubble-row,
+.chat-page-shell .chat-bubble-row.is-user {
+  justify-content: flex-start !important;
+  gap: 0 !important;
+}
+/* Turn wrapper gets a role label via ::before */
+.chat-page-shell .chat-bubble-row {
+  position: relative;
+  padding-left: 14px;
+}
+.chat-page-shell .chat-bubble-row::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+.chat-page-shell .chat-bubble-row:has(.chat-bubble.is-assistant)::before {
+  background: var(--accent);
+}
+.chat-page-shell .chat-bubble-row:has(.chat-bubble.is-user)::before {
+  background: rgba(76, 46, 20, 0.22);
+}
+/* Strip bubble styling */
+.chat-page-shell .chat-bubble,
+.chat-page-shell .chat-bubble.is-assistant,
+.chat-page-shell .chat-bubble.is-user {
+  max-width: none !important;
+  width: 100% !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--ink);
+}
+/* Role label above each turn */
+.chat-page-shell .chat-bubble::before {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.chat-page-shell .chat-bubble.is-assistant::before { content: "FRIDAY"; color: var(--accent); }
+.chat-page-shell .chat-bubble.is-user::before { content: "你"; }
+:root[data-locale="en"] .chat-page-shell .chat-bubble.is-user::before { content: "YOU"; }
+/* Message body: slightly larger line-height, restrained type */
+.chat-page-shell .chat-bubble-copy {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+/* Composer: collapse to a minimal terminal-style row */
+.chat-page-shell .chat-composer-shell {
+  position: relative;
+  border-radius: 14px !important;
+  padding: 10px 14px 10px 32px !important;
+  box-shadow: 0 8px 24px -18px rgba(76, 46, 20, 0.3) !important;
+}
+.chat-page-shell .chat-composer-shell::before {
+  content: ">";
+  position: absolute;
+  left: 14px;
+  top: 18px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--accent);
+  line-height: 1;
+  pointer-events: none;
+}
+/* Strip inner textarea wrapper frame so it reads as one flat field */
+.chat-page-shell .chat-composer-shell .chat-composer-dropzone,
+.chat-page-shell .chat-composer-shell .chat-composer-field,
+.chat-page-shell .chat-composer-shell textarea {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+.chat-page-shell .chat-composer-shell textarea,
+.chat-page-shell .chat-composer-shell .chat-composer-input {
+  font-family: var(--font-mono) !important;
+  font-size: 14px !important;
+  min-height: 24px !important;
+}
+
+</style>
   </head>
   <body data-locale="zh">
     <div id="app"></div>
@@ -10317,6 +11629,15 @@
           "</div>";
         }
 
+        function stagePosition(status) {
+          var STAGES = ['pending','planning','awaiting_clarification','awaiting_plan_approval','awaiting_tool_approval','executing','testing','fixing'];
+          var terminal = { completed: true, failed: true, failed_tests: true, cancelled: true };
+          if (terminal[status]) return { index: STAGES.length, total: STAGES.length, isTerminal: true };
+          var idx = STAGES.indexOf(status);
+          if (idx < 0) idx = 0;
+          return { index: idx + 1, total: STAGES.length, isTerminal: false };
+        }
+
         function renderRunCard(run, nowMs) {
           var meta = RUN_STATUS_META[run.status] || RUN_STATUS_META.pending;
           var tone = toneForRunHealth(run);
@@ -10336,11 +11657,23 @@
               '<div class="run-card-body">' +
                 '<h3 class="run-card-title">' + escapeHtml(runTask) + "</h3>" +
                 '<div class="run-meta">' +
-                  '<strong class="friday-timer">' + escapeHtml(formatRunDuration(run, uiState.locale, nowMs)) + "</strong>" +
-                  '<span class="friday-metric">' + escapeHtml(stepLabel) + "</span>" +
+                  '<div class="run-meta-line">' +
+                    '<strong class="friday-timer">' + escapeHtml(formatRunDuration(run, uiState.locale, nowMs)) + "</strong>" +
+                    '<span class="run-meta-sep" aria-hidden="true">·</span>' +
+                    '<span class="friday-metric">' + escapeHtml(stepLabel) + "</span>" +
+                  "</div>" +
                   '<span class="friday-count">' + escapeHtml(context) + "</span>" +
                 "</div>" +
-                '<div class="run-progress-track"><span class="run-progress-fill is-' + escapeHtml(tone) + '" style="width: ' + String(progress) + '%;"></span></div>' +
+                (function(){
+                  var sp = stagePosition(run.status);
+                  var stageLabel = sp.isTerminal
+                    ? localize(uiState.locale, '已完成', 'Done')
+                    : localize(uiState.locale, '阶段 ' + sp.index + '/' + sp.total, 'Stage ' + sp.index + '/' + sp.total);
+                  return '<div class="run-progress-row" title="' + escapeHtml(localize(uiState.locale, '流程阶段进度', 'Workflow stage progress')) + '">' +
+                    '<div class="run-progress-track"><span class="run-progress-fill is-' + escapeHtml(tone) + '" style="width: ' + String(progress) + '%;"></span></div>' +
+                    '<span class="run-progress-pct">' + escapeHtml(stageLabel) + '</span>' +
+                  "</div>";
+                })() +
               "</div>" +
             "</a>"
           );
@@ -10496,9 +11829,23 @@
             }
           };
 
-          return '<nav class="home-intent-ribbon" aria-label="' + escapeHtml(localize(uiState.locale, "首页意图导航", "Home intent ribbon")) + '">' + widgets.map(function (widgetId, index) {
+          var counts = {
+            active_now: snapshot.runs.filter(function(r){ return isActiveRunStatus(r.status); }).length,
+            pending_approvals: snapshot.pendingApprovals.length,
+            scheduled_soon: snapshot.scheduledAutomations.filter(function(a){ return a.enabled && a.nextRunAt; }).length,
+            overview: 0
+          };
+          var warnKeys = { pending_approvals: true };
+          return '<nav class="home-intent-ribbon" aria-label="' + escapeHtml(localize(uiState.locale, "首页意图导航", "Home intent ribbon")) + '">' + widgets.map(function (widgetId) {
             var item = labels[widgetId];
-            return '<button type="button" class="intent-pill" data-action="scroll-section" data-payload="' + escapeHtml(item.target) + '" aria-label="' + escapeHtml(item.title) + '"><strong>' + escapeHtml(String(index + 1)) + '</strong><span>' + escapeHtml(item.title) + "</span><span style=\"color: var(--ink-3); font-size: 11px;\">" + escapeHtml(item.detail) + "</span></button>";
+            var n = counts[widgetId] || 0;
+            var badge = n > 0
+              ? '<span class="intent-pill-count' + (warnKeys[widgetId] ? ' is-warn' : '') + '" aria-label="' + escapeHtml(String(n)) + '">' + escapeHtml(String(n)) + '</span>'
+              : '';
+            return '<button type="button" class="intent-pill" data-action="scroll-section" data-payload="' + escapeHtml(item.target) + '" aria-label="' + escapeHtml(item.title) + (n > 0 ? ', ' + n : '') + '">' +
+              '<span class="intent-pill-label">' + escapeHtml(item.title) + badge + '</span>' +
+              '<span class="intent-pill-detail">' + escapeHtml(item.detail) + '</span>' +
+              '</button>';
           }).join("") + "</nav>";
         }
 
@@ -13411,22 +14758,24 @@
           return (
             '<div class="page-shell">' +
               packErrorBar +
-              '<div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;">' +
-                '<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">' +
-                  '<input id="packs-search" class="settings-input" value="' + escapeHtml(uiState.packs.search) + '" aria-label="' + escapeHtml(localize(uiState.locale, "搜索 pack", "Search packs")) + '" style="width:400px;" />' +
+              '<div class="packs-toolbar">' +
+                '<div class="packs-toolbar-left">' +
+                  '<input id="packs-search" class="settings-input" value="' + escapeHtml(uiState.packs.search) + '" aria-label="' + escapeHtml(localize(uiState.locale, "搜索 pack", "Search packs")) + '" placeholder="' + escapeHtml(localize(uiState.locale, "搜索 pack…", "Search packs…")) + '" />' +
                   ["cross-border", "release", "security", "finance", "support", "workflow"].map(function (filter) {
                     return '<button type="button" class="route-tab-chip' + (uiState.packs.activeFilters.indexOf(filter) >= 0 ? " is-active" : "") + '" data-action="toggle-pack-filter" data-payload="' + escapeHtml(filter) + '">' + escapeHtml(filter) + "</button>";
                   }).join("") +
                   (uiState.packs.activeFilters.length > 0 ? '<button type="button" class="inline-link-button" data-action="clear-pack-filters">' + escapeHtml(localize(uiState.locale, "clear all", "clear all")) + "</button>" : "") +
                 "</div>" +
-                ActionButton({
-                  tone: "secondary",
-                  children: escapeHtml(localize(uiState.locale, "+ 自定义 pack", "+ Custom pack")),
-                  dataAction: "open-custom-pack-builder",
-                  ariaLabel: localize(uiState.locale, "打开自定义 pack 构建器", "Open custom pack builder")
-                }) +
+                '<div class="packs-toolbar-right">' +
+                  ActionButton({
+                    tone: "secondary",
+                    children: escapeHtml(localize(uiState.locale, "+ 自定义 pack", "+ Custom pack")),
+                    dataAction: "open-custom-pack-builder",
+                    ariaLabel: localize(uiState.locale, "打开自定义 pack 构建器", "Open custom pack builder")
+                  }) +
+                "</div>" +
               "</div>" +
-              '<div class="packs-layout" style="display:grid; grid-template-columns:280px minmax(0,1fr); gap:24px; align-items:start;">' +
+              '<div class="packs-layout">' +
                 '<aside>' +
                   ShellCard({
                     eyebrow: localize(uiState.locale, "Pinned", "Pinned"),
@@ -13438,7 +14787,7 @@
                       }).join("") + "</div>"
                   }) +
                 "</aside>" +
-                '<section class="packs-catalog-grid" data-pack-catalog-grid="true" style="display:grid; grid-template-columns:' + catalogColumns + '; gap:16px;">' + (catalog.length === 0
+                '<section class="packs-catalog-grid" data-pack-catalog-grid="true">' + (catalog.length === 0
                   ? '<div style="grid-column:1 / -1;">' + renderEmptyState({
                     title: localize(uiState.locale, "没找到相关 pack · 试试其他关键词", "No matching pack found. Try another keyword."),
                     body: localize(uiState.locale, "试试按 pack 名称、描述或标签再搜一遍。", "Try searching by pack title, description, or tags."),
@@ -13599,15 +14948,17 @@
           return nodes.map(function (node) {
             var expanded = uiState.skills.expandedCategories.indexOf(node.id) >= 0;
             var active = uiState.skills.activeTreeNode === node.id;
+            var hasChildren = node.children && node.children.length > 0;
+            var indent = 8 + depth * 14;
             return (
-              '<div class="skill-tree-node" data-skill-tree-node="' + escapeHtml(node.id) + '" style="margin-left:' + String(depth * 14) + 'px;">' +
-                '<div style="display:flex; align-items:center; gap:8px;">' +
-                  (node.children && node.children.length > 0
-                    ? '<button type="button" class="inline-link-button" data-action="skills-toggle-tree" data-payload="' + escapeHtml(node.id) + '">' + escapeHtml(expanded ? "−" : "+") + '</button>'
-                    : '<span style="width:18px; display:inline-flex; justify-content:center; color: var(--ink-3);">·</span>') +
-                  '<button type="button" class="settings-side-link' + (active ? " is-active" : "") + '" data-action="skills-category" data-payload="' + escapeHtml(node.id) + '">' + escapeHtml(resolveLocalizedText(node.label, uiState.locale)) + "</button>" +
-                "</div>" +
-                (node.children && node.children.length > 0 && expanded ? '<div class="skill-tree-children">' + renderSkillTreeNodes(node.children, depth + 1) + "</div>" : "") +
+              '<div class="skill-tree-node" data-skill-tree-node="' + escapeHtml(node.id) + '">' +
+                '<div class="skill-tree-row" style="padding-left:' + String(indent) + 'px;">' +
+                  (hasChildren
+                    ? '<button type="button" class="skill-tree-toggle" data-action="skills-toggle-tree" data-payload="' + escapeHtml(node.id) + '" aria-label="' + escapeHtml(expanded ? "collapse" : "expand") + '">' + (expanded ? "−" : "+") + '</button>'
+                    : '<span class="skill-tree-toggle is-leaf" aria-hidden="true">·</span>') +
+                  '<button type="button" class="skill-tree-label' + (active ? " is-active" : "") + '" data-action="skills-category" data-payload="' + escapeHtml(node.id) + '">' + escapeHtml(resolveLocalizedText(node.label, uiState.locale)) + '</button>' +
+                '</div>' +
+                (hasChildren && expanded ? '<div class="skill-tree-children">' + renderSkillTreeNodes(node.children, depth + 1) + "</div>" : "") +
               "</div>"
             );
           }).join("");
@@ -13636,7 +14987,7 @@
                 '<aside>' + ShellCard({
                   eyebrow: localize(uiState.locale, "Categories", "Categories"),
                   title: escapeHtml(localize(uiState.locale, "技能分类", "Skill categories")),
-                  children: '<div style="display:flex; flex-direction:column; gap:8px;">' + renderSkillTreeNodes(SKILL_CATEGORY_TREE, 0) + "</div>"
+                  children: '<div class="skill-tree">' + renderSkillTreeNodes(SKILL_CATEGORY_TREE, 0) + "</div>"
                 }) + "</aside>" +
                 '<section style="display:grid; grid-template-columns:' + (uiState.skills.viewMode === "grid" ? "repeat(3, minmax(0,1fr))" : "minmax(0,1fr)") + '; gap:16px;" data-skills-list="' + escapeHtml(uiState.skills.viewMode) + '">' + filteredSkills.map(function (skill) {
                   return '<a href="' + escapeHtml(buildSkillHref(skill)) + '" data-nav="' + escapeHtml(buildSkillHref(skill)) + '" class="pack-catalog-card" data-skill-card="' + escapeHtml(skill.id) + '" style="min-height:240px; display:flex; flex-direction:column; gap:10px;"><div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;"><strong>' + escapeHtml(skill.name) + '</strong><span style="color: var(--ink-3);">v' + escapeHtml(skill.version) + '</span></div>' + StatusPill({ tone: skillStatusTone(skill.status), children: escapeHtml(skill.status) }) + '<p style="color: var(--ink-2); margin:0;">' + escapeHtml(skill.category) + '</p><div style="display:flex; gap:8px; flex-wrap:wrap;">' + (skill.tags || []).map(function (tag) { return '<span class="capability-chip">' + escapeHtml(tag) + "</span>"; }).join("") + '</div><div style="margin-top:auto; display:flex; justify-content:space-between; gap:8px; align-items:center;"><span style="color: var(--ink-3);" data-skill-footer-copy="' + escapeHtml(skill.id) + '">' + escapeHtml(skill.status === "deprecated" ? localize(uiState.locale, "已弃用，不可启用", "Deprecated, cannot enable") : localize(uiState.locale, "点击进入详情", "Open detail")) + '</span><span class="action-button action-button-secondary" aria-hidden="true" data-skill-action-label="' + escapeHtml(skill.id) + '">' + escapeHtml(skill.status === "deprecated" ? localize(uiState.locale, "替换", "Replace") : localize(uiState.locale, "打开", "Open")) + "</span></div></a>";
@@ -14139,12 +15490,13 @@
           }).join(" ");
           var areaPath = path + " L " + String(70 + (points.length - 1) * stepX) + " " + String(height - 44) + " L 70 " + String(height - 44) + " Z";
           var hovered = points[uiState.usage.hoveredPointIndex == null ? points.length - 1 : uiState.usage.hoveredPointIndex] || null;
-          var tooltip = hovered
-            ? '<div class="shell-card" data-usage-tooltip="true" style="position:absolute; top:20px; right:24px; min-width:220px; z-index:3;"><strong>' + escapeHtml(hovered.label) + '</strong><div style="margin-top:6px; font-family:var(--font-serif); font-size:28px;">' + escapeHtml(formatMoney(hovered.total, uiState.locale)) + '</div><div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">' + Object.keys(hovered.byProvider).map(function (name) { return '<div style="display:flex; justify-content:space-between; gap:10px;"><span>' + escapeHtml(name) + '</span><strong>' + escapeHtml(formatMoney(hovered.byProvider[name], uiState.locale)) + "</strong></div>"; }).join("") + '</div></div>'
+          var tooltipHeader = hovered
+            ? '<div data-usage-tooltip="true" style="display:flex; justify-content:space-between; align-items:flex-end; gap:24px; flex-wrap:wrap; padding:0 8px 12px; border-bottom:1px solid var(--border); margin-bottom:14px;"><div style="display:flex; flex-direction:column; gap:4px;"><span class="shell-card-eyebrow">' + escapeHtml(hovered.label) + '</span><strong style="font-size:22px; letter-spacing:-0.01em;">' + escapeHtml(formatMoney(hovered.total, uiState.locale)) + '</strong></div><div style="display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--ink-3); font-size:13px;">' + Object.keys(hovered.byProvider).map(function (name) { return '<span style="display:inline-flex; gap:6px;"><span>' + escapeHtml(name) + '</span><strong style="color:var(--ink);">' + escapeHtml(formatMoney(hovered.byProvider[name], uiState.locale)) + "</strong></span>"; }).join("") + '</div></div>'
             : "";
           return (
-            '<div data-usage-chart="true" style="position:relative; height:320px;">' +
-              tooltip +
+            '<div data-usage-chart="true" style="position:relative;">' +
+              tooltipHeader +
+              '<div style="position:relative; height:320px;">' +
               '<svg viewBox="0 0 900 320" style="width:100%; height:320px; display:block;" aria-label="' + escapeHtml(localize(uiState.locale, "用量趋势图", "Usage trend chart")) + '">' +
                 '<line x1="70" y1="' + String(capY) + '" x2="830" y2="' + String(capY) + '" stroke="var(--error)" stroke-dasharray="6 6"></line>' +
                 '<text x="834" y="' + String(capY + 4) + '" fill="var(--error)" font-size="12">budget cap</text>' +
@@ -14161,6 +15513,7 @@
                 points.map(function (point, index) {
                   return '<button type="button" data-usage-point-index="' + String(index) + '" aria-label="' + escapeHtml(point.label + " " + formatMoney(point.total, uiState.locale)) + '" style="opacity:0; border:0; background:none; cursor:pointer;"></button>';
                 }).join("") +
+              '</div>' +
               '</div>' +
             '</div>'
           );
@@ -14285,7 +15638,7 @@
           var budget = useBudgetStatus();
           var points = usagePointsForRange(range);
           var providerRows = usageRowsForRender();
-          return '<div class="page-shell"><div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:16px;">' + (budget.overBudget ? '<div class="firing-banner" data-usage-budget-banner="true"><span class="health-dot is-error"></span><span>' + escapeHtml(localize(uiState.locale, "预测将超过预算上限", "Forecast will exceed the budget cap")) + '</span><a href="/settings?tab=runtime" data-nav="/settings?tab=runtime" class="inline-link-button">' + escapeHtml(localize(uiState.locale, "调整预算", "Adjust budget")) + '</a></div>' : '<span></span>') + '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + ["this-month", "last-30d", "custom"].map(function (item) { return '<a href="/usage?dev=1&__state=' + escapeHtml(currentPageState()) + '&range=' + escapeHtml(item) + '" data-nav="/usage?dev=1&__state=' + escapeHtml(currentPageState()) + '&range=' + escapeHtml(item) + '" class="route-tab-chip' + (range === item ? " is-active" : "") + '" data-usage-range="' + escapeHtml(item) + '">' + escapeHtml(item) + '</a>'; }).join("") + '</div></div><div style="display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:16px;">' + '<section class="shell-card"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Spend", "Spend")) + '</p><div style="font-family:var(--font-serif); font-size:40px; line-height:1; margin-top:6px;">' + escapeHtml(formatMoney(budget.spend, uiState.locale)) + '</div><div style="margin-top:8px; color:var(--ink-3);">' + escapeHtml(localize(uiState.locale, "本月", "This month")) + " · " + escapeHtml(localize(uiState.locale, "较上月 +12%", "+12% vs last month")) + '</div></section>' + '<section class="shell-card"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Forecast", "Forecast")) + '</p><div style="font-family:var(--font-serif); font-size:40px; line-height:1; margin-top:6px;">' + escapeHtml(formatMoney(budget.forecast, uiState.locale)) + '</div><div style="margin-top:8px; color:var(--ink-3);">' + escapeHtml(localize(uiState.locale, "预测", "Forecast")) + " · " + escapeHtml(localize(uiState.locale, "若维持当前节奏", "At current pace")) + '</div></section>' + '<section class="shell-card"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Cap", "Cap")) + '</p><div style="font-family:var(--font-serif); font-size:40px; line-height:1; margin-top:6px;">' + escapeHtml(formatMoney(budget.cap, uiState.locale)) + '</div><div style="margin-top:8px; color:var(--ink-3);">' + escapeHtml(localize(uiState.locale, "上限", "Budget cap")) + " · " + escapeHtml(localize(uiState.locale, "较上月 +0%", "+0% vs last month")) + '</div></section>' + '</div><div style="margin-top:24px;">' + ShellCard({ eyebrow: localize(uiState.locale, "Usage", "Usage"), title: escapeHtml(localize(uiState.locale, "成本趋势", "Spend trend")), children: UsageCharts({ points: points, cap: 1100 }) }) + '</div><div style="margin-top:24px;">' + ShellCard({ eyebrow: localize(uiState.locale, "Providers", "Providers"), title: escapeHtml(localize(uiState.locale, "Provider 拆分", "Provider breakdown")), aside: '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + cloneJson(PROVIDER_ROWS).map(function (provider) { return '<button type="button" class="route-tab-chip' + (uiState.usage.providerFilters.indexOf(provider.id) >= 0 ? " is-active" : "") + '" data-action="usage-provider-filter" data-payload="' + escapeHtml(provider.id) + '">' + escapeHtml(provider.name) + '</button>'; }).join("") + '</div>', children: '<table class="simple-data-table" data-usage-provider-table="true"><thead><tr><th><button type="button" class="inline-link-button" data-action="usage-sort" data-payload="cost">cost</button></th><th><button type="button" class="inline-link-button" data-action="usage-sort" data-payload="usage">usage</button></th><th>%</th><th>trend</th></tr></thead><tbody>' + providerRows.map(function (provider) { return '<tr data-usage-provider-row="' + escapeHtml(provider.id) + '"><td><strong>' + escapeHtml(provider.name) + '</strong><div style="color:var(--ink-3);">' + escapeHtml(formatMoney(provider.spend, uiState.locale)) + '</div></td><td>' + escapeHtml(String(provider.usage)) + '</td><td><span style="display:flex; align-items:center; gap:8px;"><span style="display:inline-flex; width:96px; height:8px; border-radius:999px; background:var(--bg-sunken);"><span style="display:inline-flex; width:' + String(provider.share) + '%; border-radius:999px; background:var(--accent);"></span></span><span>' + escapeHtml(String(provider.share) + "%") + '</span></span></td><td>' + escapeHtml(provider.trend) + '</td></tr>'; }).join("") + '</tbody></table><div style="margin-top:12px;">' + ActionButton({ tone: "secondary", children: escapeHtml(localize(uiState.locale, "导出 CSV", "Export CSV")), dataAction: "usage-export", ariaLabel: localize(uiState.locale, "导出 CSV", "Export CSV") }) + '</div>' }) + '</div></div>';
+          return '<div class="page-shell"><div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:16px;">' + (budget.overBudget ? '<div class="firing-banner" data-usage-budget-banner="true"><span class="health-dot is-error"></span><span>' + escapeHtml(localize(uiState.locale, "预测将超过预算上限", "Forecast will exceed the budget cap")) + '</span><a href="/settings?tab=runtime" data-nav="/settings?tab=runtime" class="inline-link-button">' + escapeHtml(localize(uiState.locale, "调整预算", "Adjust budget")) + '</a></div>' : '<span></span>') + '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + ["this-month", "last-30d", "custom"].map(function (item) { return '<a href="/usage?dev=1&__state=' + escapeHtml(currentPageState()) + '&range=' + escapeHtml(item) + '" data-nav="/usage?dev=1&__state=' + escapeHtml(currentPageState()) + '&range=' + escapeHtml(item) + '" class="route-tab-chip' + (range === item ? " is-active" : "") + '" data-usage-range="' + escapeHtml(item) + '">' + escapeHtml(item) + '</a>'; }).join("") + '</div></div><div style="display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:16px;">' + '<section class="shell-card usage-kpi"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Spend", "Spend")) + '</p><div class="usage-kpi-value">' + escapeHtml(formatMoney(budget.spend, uiState.locale)) + '</div><div class="usage-kpi-caption">' + escapeHtml(localize(uiState.locale, "本月", "This month")) + " · " + escapeHtml(localize(uiState.locale, "较上月 +12%", "+12% vs last month")) + '</div></section>' + '<section class="shell-card usage-kpi"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Forecast", "Forecast")) + '</p><div class="usage-kpi-value">' + escapeHtml(formatMoney(budget.forecast, uiState.locale)) + '</div><div class="usage-kpi-caption">' + escapeHtml(localize(uiState.locale, "预测", "Forecast")) + " · " + escapeHtml(localize(uiState.locale, "若维持当前节奏", "At current pace")) + '</div></section>' + '<section class="shell-card usage-kpi"><p class="shell-card-eyebrow">' + escapeHtml(localize(uiState.locale, "Cap", "Cap")) + '</p><div class="usage-kpi-value">' + escapeHtml(formatMoney(budget.cap, uiState.locale)) + '</div><div class="usage-kpi-caption">' + escapeHtml(localize(uiState.locale, "上限", "Budget cap")) + " · " + escapeHtml(localize(uiState.locale, "较上月 +0%", "+0% vs last month")) + '</div></section>' + '</div><div style="margin-top:24px;">' + ShellCard({ eyebrow: localize(uiState.locale, "Usage", "Usage"), title: escapeHtml(localize(uiState.locale, "成本趋势", "Spend trend")), children: UsageCharts({ points: points, cap: 1100 }) }) + '</div><div style="margin-top:24px;">' + ShellCard({ eyebrow: localize(uiState.locale, "Providers", "Providers"), title: escapeHtml(localize(uiState.locale, "Provider 拆分", "Provider breakdown")), aside: '<div style="display:flex; gap:8px; flex-wrap:wrap;">' + cloneJson(PROVIDER_ROWS).map(function (provider) { return '<button type="button" class="route-tab-chip' + (uiState.usage.providerFilters.indexOf(provider.id) >= 0 ? " is-active" : "") + '" data-action="usage-provider-filter" data-payload="' + escapeHtml(provider.id) + '">' + escapeHtml(provider.name) + '</button>'; }).join("") + '</div>', children: '<table class="simple-data-table" data-usage-provider-table="true"><thead><tr><th><button type="button" class="inline-link-button" data-action="usage-sort" data-payload="cost">cost</button></th><th><button type="button" class="inline-link-button" data-action="usage-sort" data-payload="usage">usage</button></th><th>%</th><th>trend</th></tr></thead><tbody>' + providerRows.map(function (provider) { return '<tr data-usage-provider-row="' + escapeHtml(provider.id) + '"><td><strong>' + escapeHtml(provider.name) + '</strong><div style="color:var(--ink-3);">' + escapeHtml(formatMoney(provider.spend, uiState.locale)) + '</div></td><td>' + escapeHtml(String(provider.usage)) + '</td><td><span style="display:flex; align-items:center; gap:8px;"><span style="display:inline-flex; width:96px; height:8px; border-radius:999px; background:var(--bg-sunken);"><span style="display:inline-flex; width:' + String(provider.share) + '%; border-radius:999px; background:var(--accent);"></span></span><span>' + escapeHtml(String(provider.share) + "%") + '</span></span></td><td>' + escapeHtml(provider.trend) + '</td></tr>'; }).join("") + '</tbody></table><div style="margin-top:12px;">' + ActionButton({ tone: "secondary", children: escapeHtml(localize(uiState.locale, "导出 CSV", "Export CSV")), dataAction: "usage-export", ariaLabel: localize(uiState.locale, "导出 CSV", "Export CSV") }) + '</div>' }) + '</div></div>';
         }
 
         function renderMemoryPage() {
@@ -15802,7 +17155,9 @@
         }
 
         function usesCompactRail(route) {
-          return route === "/chat";
+          // Previously collapsed the left rail on /chat. User wants the full console
+          // visible on every route, so always return false.
+          return false;
         }
 
         function renderRightRailSlot() {
@@ -16512,7 +17867,7 @@
               "</div>"
             );
           }
-          var primary = ["/home", "/chat", "/assistant", "/observability", "/packs", "/skills", "/workflows"];
+          var primary = ["/home", "/assistant", "/observability", "/packs", "/skills", "/workflows"];
           var secondary = ["/channels", "/automations", "/sessions", "/usage", "/memory", "/fleet", "/plugins", "/mcp", "/settings", "/command-center"];
           var breadcrumbSegments = currentBreadcrumbSegments();
           var railNavigation =
@@ -16637,17 +17992,17 @@
         }
 
         function bindPackCatalogInteractions() {
+          // Pack quick sheet now opens on explicit click only (hover was too intrusive).
           Array.prototype.forEach.call(document.querySelectorAll("[data-pack-hover]"), function (node) {
-            node.addEventListener("mouseenter", function () {
+            node.addEventListener("click", function (event) {
+              // Ignore clicks that originated from nested interactive elements (pin buttons, links, chips).
+              var t = event.target;
+              if (t && t.closest && t.closest('button, a, [data-action], input, select, textarea')) {
+                return;
+              }
               var packId = node.getAttribute("data-pack-hover");
-              window.clearTimeout(uiState.hoverTimer);
-              uiState.hoverTimer = window.setTimeout(function () {
-                uiState.selectedPackId = packId;
-                renderApp();
-              }, 350);
-            });
-            node.addEventListener("mouseleave", function () {
-              window.clearTimeout(uiState.hoverTimer);
+              uiState.selectedPackId = packId;
+              renderApp();
             });
           });
           Array.prototype.forEach.call(document.querySelectorAll('[data-pack-draggable="true"]'), function (node) {
@@ -24116,5 +25471,534 @@
   ]
 }
     </script>
-  <script>window.__fridayVersion = "1.0.0";window.__fridayHealth = function fridayHealth() {  return {    ok: true,    build: 'prod-static',    version: window.__fridayVersion,    route: window.location.pathname + window.location.search,    title: document.title,    generatedAt: new Date().toISOString()  };};</script></body>
+  
+<div id="polish-tweaks" data-open="0" aria-label="视觉打磨开关">
+  <div class="pt-head">
+    <span class="pt-title">Polish · 打磨</span>
+    <button type="button" class="pt-reset" data-pt-action="close">收起</button>
+  </div>
+  <label class="pt-row" data-pt="a" data-on="1">
+    <span class="pt-letter">A</span>
+    <span class="pt-label">
+      <span class="pt-name">层级重排</span>
+      <span class="pt-desc">面包屑压低 · chip 去重 · 侧栏激活态更清</span>
+    </span>
+    <span class="pt-switch" aria-hidden="true"></span>
+  </label>
+  <label class="pt-row" data-pt="b" data-on="0">
+    <span class="pt-letter">B</span>
+    <span class="pt-label">
+      <span class="pt-name">间距 & 密度</span>
+      <span class="pt-desc">8 倍数节拍 · gutter 加大 · 卡片呼吸</span>
+    </span>
+    <span class="pt-switch" aria-hidden="true"></span>
+  </label>
+  <label class="pt-row" data-pt="d" data-on="0">
+    <span class="pt-letter">D</span>
+    <span class="pt-label">
+      <span class="pt-name">字重精修</span>
+      <span class="pt-desc">600/500 替 700 · Fraunces 斜体点缀</span>
+    </span>
+    <span class="pt-switch" aria-hidden="true"></span>
+  </label>
+  <label class="pt-row" data-pt="e" data-on="0">
+    <span class="pt-letter">E</span>
+    <span class="pt-label">
+      <span class="pt-name">顶栏修形</span>
+      <span class="pt-desc">Friday chip 不换行 · ⌘K 紧凑 · 行高 56px</span>
+    </span>
+    <span class="pt-switch" aria-hidden="true"></span>
+  </label>
+  <div style="height:6px;border-top:1px dashed rgba(45,33,24,0.12);margin:6px 0;"></div>
+  <label class="pt-row" data-pt="i" data-on="0">
+    <span class="pt-letter">I</span>
+    <span class="pt-label">
+      <span class="pt-name">Friday 对话栏</span>
+      <span class="pt-desc">右栏 → 对话 · 页面感知 · 可折叠/调宽</span>
+    </span>
+    <span class="pt-switch" aria-hidden="true"></span>
+  </label>
+  
+  <div class="pt-foot">
+    <button type="button" class="pt-preset" data-pt-preset="none">关</button>
+    <button type="button" class="pt-preset" data-pt-preset="all">全开</button>
+  </div>
+</div>
+<button id="polish-launcher" type="button" aria-label="打开打磨面板">
+  <span class="pl-dot"></span> Polish
+</button>
+
+<script>
+(function(){
+  var TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "polish_a": true,
+    "polish_b": true,
+    "polish_c": false,
+    "polish_d": true,
+    "polish_e": true,
+    "polish_f": false,
+    "polish_g": false,
+    "polish_h": false,
+    "polish_i": true
+  }/*EDITMODE-END*/;
+
+  var KEYS = ['a','b','d','e','i'];
+  var STORAGE_KEY = 'friday.polish.v1';
+
+  function loadState(){
+    try {
+      var s = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (s && typeof s === 'object') return s;
+    } catch(e){}
+    return {
+      a: !!TWEAK_DEFAULTS.polish_a,
+      b: !!TWEAK_DEFAULTS.polish_b,
+      d: !!TWEAK_DEFAULTS.polish_d,
+      e: !!TWEAK_DEFAULTS.polish_e,
+      i: !!TWEAK_DEFAULTS.polish_i
+    };
+  }
+  function saveState(s){
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch(e){}
+  }
+
+  var state = loadState();
+  var root = document.documentElement;
+  var panel = document.getElementById('polish-tweaks');
+  var launcher = document.getElementById('polish-launcher');
+
+  function apply(){
+    KEYS.forEach(function(k){
+      if (k === 'i') {
+        // I is managed by the chat script (uses 'on'/'collapsed'/'off')
+        if (!state.i) root.setAttribute('data-polish-i', 'off');
+        else {
+          var cur = root.getAttribute('data-polish-i');
+          if (cur !== 'on' && cur !== 'collapsed') root.setAttribute('data-polish-i', 'on');
+        }
+        try { window.__fridayChat && window.__fridayChat.setEnabled(!!state.i); } catch(e){}
+      } else {
+        root.setAttribute('data-polish-' + k, state[k] ? 'on' : 'off');
+      }
+      var row = panel.querySelector('[data-pt="' + k + '"]');
+      if (row) row.setAttribute('data-on', state[k] ? '1' : '0');
+    });
+  }
+
+  function openPanel(){ panel.setAttribute('data-open','1'); }
+  function closePanel(){ panel.setAttribute('data-open','0'); }
+
+  panel.addEventListener('click', function(e){
+    var action = e.target.getAttribute && e.target.getAttribute('data-pt-action');
+    if (action === 'close') { closePanel(); return; }
+    var preset = e.target.getAttribute && e.target.getAttribute('data-pt-preset');
+    if (preset) {
+      if (preset === 'none') state = {a:false,b:false,d:false,e:false,i:false};
+      else if (preset === 'all') state = {a:true,b:true,d:true,e:true,i:true};
+      saveState(state); apply(); persistToHost(); return;
+    }
+    var row = e.target.closest && e.target.closest('[data-pt]');
+    if (row) {
+      e.preventDefault();
+      var k = row.getAttribute('data-pt');
+      state[k] = !state[k];
+      saveState(state); apply(); persistToHost();
+    }
+  });
+
+  launcher.addEventListener('click', openPanel);
+
+  // Keyboard shortcut: Shift+P
+  document.addEventListener('keydown', function(e){
+    if (e.shiftKey && (e.key === 'P' || e.key === 'p') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      var tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (panel.getAttribute('data-open') === '1') closePanel(); else openPanel();
+    }
+  });
+
+  // ---- Host Tweaks protocol ----
+  var hostActive = false;
+  function persistToHost(){
+    if (!hostActive) return;
+    try {
+      window.parent.postMessage({ type:'__edit_mode_set_keys', edits: {
+        polish_a: state.a, polish_b: state.b, polish_d: state.d, polish_e: state.e, polish_i: state.i
+      }}, '*');
+    } catch(e){}
+  }
+  window.addEventListener('message', function(e){
+    var d = e.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === '__activate_edit_mode') {
+      hostActive = true;
+      openPanel();
+    } else if (d.type === '__deactivate_edit_mode') {
+      hostActive = false;
+      closePanel();
+    }
+  });
+  try {
+    window.parent.postMessage({ type:'__edit_mode_available' }, '*');
+  } catch(e){}
+
+  apply();
+})();
+</script>
+
+
+<script>
+(function(){
+  var STORAGE_KEY = 'friday.chat.v1';
+  var WIDTH_KEY = 'friday.chat.width';
+  var COLLAPSE_KEY = 'friday.chat.collapsed';
+  var SCOPE_KEY = 'friday.chat.scope';
+
+  // Seed content — the Learning Insight card becomes a chat card
+  var SEED = [
+    { id:'learn-1', role:'friday', kind:'card', ts: Date.now() - 1000*60*60*12, card: {
+      eyebrow: 'Learning Loop · 学习反馈',
+      title: 'Friday 最近学到了什么',
+      body: [
+        'Friday 最近学会把高风险运行先送到审批，再把可自动恢复的问题直接回补。',
+      ],
+      list: [
+        '14 次自动回补修复，平均耗时 2 分 30 秒',
+        '3 次审批路由升级，减少 18% 人工介入',
+        '最近一周工具失败率下降到 4.2%'
+      ]
+    }},
+    { id:'hi-1', role:'friday', kind:'text', ts: Date.now() - 1000*60*30,
+      text: '我在这儿。你可以直接让我执行页面上的操作，或者问我整体的状态。' }
+  ];
+
+  function loadState() {
+    var stored = null;
+    try {
+      var raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      if (Array.isArray(raw)) stored = raw;
+    } catch(e){}
+    if (!stored) return SEED.slice();
+    // Merge: make sure every SEED id is present (earlier versions removed them on dismiss).
+    var storedIds = {};
+    stored.forEach(function(m){ if (m && m.id) storedIds[m.id] = true; });
+    var missing = SEED.filter(function(m){ return !storedIds[m.id]; });
+    if (missing.length) {
+      // Seeds go first, in original order, then the existing stream.
+      return missing.concat(stored);
+    }
+    return stored;
+  }
+  function saveState(arr) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch(e){}
+  }
+
+  var DISMISSED_KEY = 'friday.chat.dismissed';
+  function loadDismissed(){
+    try { var o = JSON.parse(localStorage.getItem(DISMISSED_KEY)||'null'); if (o && typeof o==='object') return o; } catch(e){}
+    return {};
+  }
+  function saveDismissed(o){ try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(o)); } catch(e){} }
+  var state = {
+    messages: loadState(),
+    width: parseInt(localStorage.getItem(WIDTH_KEY)||'320', 10),
+    collapsed: localStorage.getItem(COLLAPSE_KEY) === '1',
+    dismissed: loadDismissed(),
+    showCards: true
+  };
+
+  function currentPageLabel() {
+    // Use topbar title if available, fallback to breadcrumb last segment
+    var t = document.querySelector('.topbar-title');
+    if (t && t.textContent.trim()) return t.textContent.trim();
+    var crumbs = document.querySelectorAll('.topbar-breadcrumb');
+    if (crumbs.length) return crumbs[crumbs.length-1].textContent.trim();
+    return '首页';
+  }
+  function isCommandCenter() {
+    return document.querySelector('.app-shell.is-command-center-route') !== null;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function fmtTime(ts){
+    var d = new Date(ts);
+    var hh = String(d.getHours()).padStart(2,'0');
+    var mm = String(d.getMinutes()).padStart(2,'0');
+    return hh+':'+mm;
+  }
+
+  function renderMsg(m) {
+    if (m.kind === 'card') {
+      if (!state.showCards) return '';
+      if (state.dismissed && state.dismissed[m.id]) return '';
+      var card = m.card || {};
+      var listHtml = (card.list||[]).map(function(li){
+        return '<li>'+escapeHtml(li)+'</li>';
+      }).join('');
+      var bodyHtml = (Array.isArray(card.body) ? card.body : [card.body||'']).map(function(p){
+        return '<p class="friday-msg-card-body">'+escapeHtml(p)+'</p>';
+      }).join('');
+      return ''+
+        '<div class="friday-msg" data-role="friday" data-kind="card" data-id="'+escapeHtml(m.id)+'">'+
+          '<span class="friday-msg-meta">Friday · '+fmtTime(m.ts)+'</span>'+
+          '<div class="friday-msg-bubble">'+
+            '<div class="friday-msg-card">'+
+              '<div class="friday-msg-card-eyebrow">'+escapeHtml(card.eyebrow||'')+'</div>'+
+              '<h4 class="friday-msg-card-title">'+escapeHtml(card.title||'')+'</h4>'+
+              bodyHtml+
+              (listHtml ? '<ul class="friday-msg-card-list">'+listHtml+'</ul>' : '')+
+              '<div class="friday-msg-card-foot">'+
+                '<button class="friday-msg-card-foot-btn" data-card-action="dismiss" data-id="'+escapeHtml(m.id)+'">隐藏</button>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+        '</div>';
+    }
+    var role = m.role === 'user' ? 'user' : 'friday';
+    var who = role === 'user' ? '你' : 'Friday';
+    return ''+
+      '<div class="friday-msg" data-role="'+role+'">'+
+        '<span class="friday-msg-meta">'+who+' · '+fmtTime(m.ts)+'</span>'+
+        '<div class="friday-msg-bubble">'+escapeHtml(m.text||'')+'</div>'+
+      '</div>';
+  }
+
+  function renderPanel(rail) {
+    var collapsed = state.collapsed;
+    var html = collapsed
+      ? buildCollapsedHtml()
+      : buildExpandedHtml();
+    rail.innerHTML = html;
+    if (!collapsed) attachExpandedHandlers(rail);
+    else attachCollapsedHandlers(rail);
+    applyWidth();
+  }
+
+  function buildExpandedHtml() {
+    var page = currentPageLabel();
+    var cardCount = state.messages.filter(function(m){return m.kind==='card' && !(state.dismissed && state.dismissed[m.id]);}).length;
+    var stream = state.messages.slice().sort(function(a,b){return a.ts-b.ts;}).map(renderMsg).join('');
+    return ''+
+      '<div class="friday-chat" data-collapsed="0" style="position:relative">'+
+        '<div class="friday-chat-resize" data-role="resize"></div>'+
+        '<div class="friday-chat-head">'+
+          '<div class="friday-chat-head-title">'+
+            '<span class="friday-chat-head-name">Friday</span>'+
+            '<span class="friday-chat-head-context"><span class="friday-chat-head-context-dot"></span>正在看 · '+escapeHtml(page)+'</span>'+
+          '</div>'+
+          '<button class="friday-chat-icon-btn" data-role="collapse" title="折叠">›</button>'+
+        '</div>'+
+
+        '<div class="friday-chat-stream" data-role="stream">'+stream+'</div>'+
+        (function(){
+          var hiddenCount = Object.keys(state.dismissed||{}).length;
+          var restoreBtn = hiddenCount
+            ? '<button class="friday-chat-toolbar-btn" data-card-action="restore-all">恢复隐藏卡片 ('+hiddenCount+')</button>'
+            : '';
+          return '<div class="friday-chat-toolbar">'+
+            '<button class="friday-chat-toolbar-btn" data-role="toggle-cards" data-active="'+(state.showCards?1:0)+'">'+
+              (state.showCards ? '隐藏所有卡片' : '显示所有卡片')+
+            '</button>'+
+            restoreBtn+
+            '<span class="friday-chat-toolbar-count">'+state.messages.length+' 条 · '+cardCount+' 卡片</span>'+
+          '</div>';
+        })()+
+        '<div class="friday-chat-input">'+
+          '<div class="friday-chat-input-wrap">'+
+            '<div class="friday-chat-input-box">'+
+              '<textarea data-role="input" rows="1" placeholder="让 Friday 做点什么…"></textarea>'+
+              '<div class="friday-chat-input-row">'+
+                '<div class="friday-chat-input-hints">'+
+                  '<span class="friday-chat-hint">作用域 · '+escapeHtml(page)+'</span>'+
+                  '<span class="friday-chat-hint"><span class="friday-chat-hint-kbd">⌘↩</span> 发送</span>'+
+                '</div>'+
+                '<button class="friday-chat-send" data-role="send" title="发送 (⌘↩)" disabled>↑</button>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+  }
+
+  function buildCollapsedHtml() {
+    return ''+
+      '<div class="friday-chat-collapsed-strip">'+
+        '<button class="friday-chat-icon-btn" data-role="expand" title="展开">‹</button>'+
+        '<span class="friday-chat-collapsed-title">Friday</span>'+
+      '</div>';
+  }
+
+  function attachExpandedHandlers(rail) {
+    var stream = rail.querySelector('[data-role="stream"]');
+    if (stream) stream.scrollTop = stream.scrollHeight;
+
+    var input = rail.querySelector('[data-role="input"]');
+    var send = rail.querySelector('[data-role="send"]');
+    function autosize(){
+      if (!input) return;
+      input.style.height = 'auto';
+      input.style.height = Math.min(110, input.scrollHeight) + 'px';
+    }
+    if (input) {
+      autosize();
+      input.addEventListener('input', function(){
+        send.disabled = !input.value.trim();
+        autosize();
+      });
+      input.addEventListener('keydown', function(e){
+        if ((e.metaKey||e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          doSend();
+        }
+      });
+    }
+    if (send) send.addEventListener('click', doSend);
+
+    function doSend(){
+      var text = (input.value||'').trim();
+      if (!text) return;
+      state.messages.push({ id:'u-'+Date.now(), role:'user', kind:'text', ts:Date.now(), text:text });
+      // Simulated Friday reply
+      var page = currentPageLabel();
+      var reply = '好，我会在「'+page+'」里处理这件事。';
+      state.messages.push({ id:'f-'+Date.now(), role:'friday', kind:'text', ts:Date.now()+1, text:reply });
+      saveState(state.messages);
+      input.value = '';
+      send.disabled = true;
+      autosize();
+      remount();
+    }
+
+
+    var collapseBtn = rail.querySelector('[data-role="collapse"]');
+    if (collapseBtn) collapseBtn.addEventListener('click', function(){
+      state.collapsed = true;
+      try { localStorage.setItem(COLLAPSE_KEY, '1'); } catch(e){}
+      applyCollapse();
+      remount();
+    });
+
+    var cardToggle = rail.querySelector('[data-role="toggle-cards"]');
+    if (cardToggle) cardToggle.addEventListener('click', function(){
+      state.showCards = !state.showCards;
+      remount();
+    });
+
+    rail.querySelectorAll('[data-card-action="dismiss"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = btn.getAttribute('data-id');
+        state.dismissed[id] = true;
+        saveDismissed(state.dismissed);
+        remount();
+      });
+    });
+    rail.querySelectorAll('[data-card-action="restore-all"]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        state.dismissed = {};
+        saveDismissed(state.dismissed);
+        remount();
+      });
+    });
+
+    // Resize
+    var handle = rail.querySelector('[data-role="resize"]');
+    if (handle) {
+      var startX=0, startW=0, dragging=false;
+      handle.addEventListener('mousedown', function(e){
+        dragging=true; startX=e.clientX; startW=state.width; handle.setAttribute('data-dragging','1');
+        document.body.style.userSelect='none';
+      });
+      window.addEventListener('mousemove', function(e){
+        if (!dragging) return;
+        var dx = startX - e.clientX;
+        var w = Math.max(260, Math.min(520, startW + dx));
+        state.width = w;
+        applyWidth();
+      });
+      window.addEventListener('mouseup', function(){
+        if (!dragging) return;
+        dragging=false; handle.removeAttribute('data-dragging');
+        document.body.style.userSelect='';
+        try { localStorage.setItem(WIDTH_KEY, String(state.width)); } catch(e){}
+      });
+    }
+  }
+
+  function attachCollapsedHandlers(rail) {
+    var expandBtn = rail.querySelector('[data-role="expand"]');
+    if (expandBtn) expandBtn.addEventListener('click', function(){
+      state.collapsed = false;
+      try { localStorage.setItem(COLLAPSE_KEY, '0'); } catch(e){}
+      applyCollapse();
+      remount();
+    });
+  }
+
+  function applyWidth(){
+    var appShell = document.querySelector('.app-shell');
+    if (appShell) appShell.style.setProperty('--friday-chat-custom-width', state.width+'px');
+  }
+  function applyCollapse(){
+    var root = document.documentElement;
+    if (!state.collapsed) root.setAttribute('data-polish-i','on');
+    else root.setAttribute('data-polish-i','collapsed');
+  }
+
+  // Find the right rail and mount
+  function mountIfNeeded(){
+    var root = document.documentElement;
+    if (root.getAttribute('data-polish-i') !== 'on' && root.getAttribute('data-polish-i') !== 'collapsed') return;
+    if (isCommandCenter()) return;
+    var rail = document.querySelector('.shell-right-rail');
+    if (!rail) return;
+    if (rail.getAttribute('data-friday-chat') === '1') return;
+    rail.setAttribute('data-friday-chat','1');
+    renderPanel(rail);
+  }
+
+  function remount(){
+    var rail = document.querySelector('.shell-right-rail[data-friday-chat="1"]');
+    if (rail) renderPanel(rail);
+  }
+
+  // Observe DOM to re-mount after the app's re-render (SPA navigation replaces the rail)
+  var mo = new MutationObserver(function(){
+    var rail = document.querySelector('.shell-right-rail');
+    if (rail && rail.getAttribute('data-friday-chat') !== '1') mountIfNeeded();
+  });
+
+  function init() {
+    applyCollapse();
+    mountIfNeeded();
+    mo.observe(document.body, { childList:true, subtree:true });
+    // Cross-tab sync
+    window.addEventListener('storage', function(e){
+      if (e.key === STORAGE_KEY) {
+        try { var arr = JSON.parse(e.newValue||'null'); if (Array.isArray(arr)) { state.messages = arr; remount(); } } catch(err){}
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+
+  // Expose a tiny API for the polish-tweaks toggle
+  window.__fridayChat = {
+    setEnabled: function(on){
+      document.documentElement.setAttribute('data-polish-i', on ? (state.collapsed?'collapsed':'on') : 'off');
+      if (on) mountIfNeeded();
+      else {
+        var rail = document.querySelector('.shell-right-rail[data-friday-chat="1"]');
+        if (rail) { rail.removeAttribute('data-friday-chat'); rail.innerHTML=''; }
+        // force app to re-render native right-rail by triggering a resize or route noop
+      }
+    }
+  };
+})();
+</script>
+<script>window.__fridayVersion = "1.0.0";window.__fridayHealth = function fridayHealth() {  return {    ok: true,    build: 'prod-static',    version: window.__fridayVersion,    route: window.location.pathname + window.location.search,    title: document.title,    generatedAt: new Date().toISOString()  };};</script></body>
 </html>
