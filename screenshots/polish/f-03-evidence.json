@@ -1,0 +1,17 @@
+{
+  "code": "F-03",
+  "title": "Compact density hides the third run meta line",
+  "status": "PASS",
+  "summary": "third meta display none",
+  "observed": {
+    "childCount": 3,
+    "thirdDisplay": "none"
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/f03-compact-run-card.png",
+      "sha256": "27a467adc07e3f94598f9982b3b63605a5eb25defdbb7d6233fb0d8acaf873dc",
+      "kind": "png"
+    }
+  ]
+}

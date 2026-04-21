@@ -1,0 +1,90 @@
+{
+  "code": "B-03",
+  "title": "Each empty surface exposes a visible CTA and clicking it performs a route or overlay action",
+  "status": "PASS",
+  "summary": "5/5 empty states expose a working CTA",
+  "observed": [
+    {
+      "route": "/home?dev=1&__state=empty",
+      "hasCta": true,
+      "text": "去对话→",
+      "href": "/chat",
+      "action": null,
+      "beforePath": "/home?dev=1&__state=empty",
+      "afterPath": "/chat",
+      "quickSheetOpen": false,
+      "overlayOpen": false
+    },
+    {
+      "route": "/channels?dev=1&__state=empty",
+      "hasCta": true,
+      "text": "添加渠道→",
+      "href": null,
+      "action": "channel-add",
+      "beforePath": "/channels?dev=1&__state=empty",
+      "afterPath": "/channels?dev=1&__state=empty",
+      "quickSheetOpen": false,
+      "overlayOpen": true
+    },
+    {
+      "route": "/automations?dev=1&__state=empty",
+      "hasCta": true,
+      "text": "去设置自动化→",
+      "href": "/settings?tab=runtime",
+      "action": null,
+      "beforePath": "/automations?dev=1&__state=empty",
+      "afterPath": "/settings?tab=runtime",
+      "quickSheetOpen": false,
+      "overlayOpen": false
+    },
+    {
+      "route": "/sessions?dev=1&__state=empty",
+      "hasCta": true,
+      "text": "去对话",
+      "href": "/chat",
+      "action": null,
+      "beforePath": "/sessions?dev=1&__state=empty",
+      "afterPath": "/chat",
+      "quickSheetOpen": false,
+      "overlayOpen": false
+    },
+    {
+      "route": "/command-center?dev=1&__state=idle",
+      "hasCta": true,
+      "text": "去工作流→",
+      "href": "/workflows",
+      "action": null,
+      "beforePath": "/command-center?dev=1&__state=idle",
+      "afterPath": "/workflows",
+      "quickSheetOpen": false,
+      "overlayOpen": false
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "screenshots/polish/b03-home-empty.png",
+      "sha256": "7d28d3f5d0a9193978cd93b478fd010f8f2ad36831391e1669f43e3e10ea73c5",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b03-channels-empty.png",
+      "sha256": "296075e7e9db10472bed2de4b1c3648ba8dd74c9f10021ca67b8ef3d252c4c01",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b03-automations-empty.png",
+      "sha256": "c508c7f201e3ee1b4e0c8c4783bc631c509b68ecf5199081e4a53ffb4957dba8",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b03-sessions-empty.png",
+      "sha256": "207a55127d05e87b2e585ab9e3f493148194f145ac630595ef96680af935b935",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b03-command-center-empty.png",
+      "sha256": "6964aaacb49acdcc26addd0e6673f39017ee6186077df051aee955f8e9e031d4",
+      "kind": "png"
+    }
+  ]
+}

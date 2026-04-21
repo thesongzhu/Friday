@@ -1,0 +1,20 @@
+{
+  "code": "H-01",
+  "title": "Prod build strips QA globals and keeps only version plus health hooks",
+  "status": "PASS",
+  "summary": "prod mock undefined; qa undefined; version string; health function",
+  "observed": {
+    "runtime": {
+      "mockType": "undefined",
+      "qaType": "undefined",
+      "versionType": "string",
+      "healthType": "function",
+      "title": "首页 · Friday"
+    },
+    "sourceHasMock": false,
+    "sourceHasQa": false,
+    "sourceHasVersion": true,
+    "sourceHasHealth": true
+  },
+  "artifacts": []
+}

@@ -1,0 +1,32 @@
+{
+  "code": "B-02",
+  "title": "Home and Assistant loading skeletons share the same shimmer gradient and 1.6s loop",
+  "status": "PASS",
+  "summary": "gradient match true; duration 1.6s",
+  "observed": [
+    {
+      "route": "/home?dev=1&__state=loading",
+      "skeletonCount": 6,
+      "backgroundImage": "linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none",
+      "animationDuration": "1.6s"
+    },
+    {
+      "route": "/assistant?dev=1&__state=loading",
+      "skeletonCount": 12,
+      "backgroundImage": "linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none",
+      "animationDuration": "1.6s"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "screenshots/polish/b02-home-loading.png",
+      "sha256": "2a04aaa16e2f630ab3f3f2a41a7bafa070e7b11a5a3a86f957b56808be30f588",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b02-assistant-loading.png",
+      "sha256": "01cf47e60a8b10275b6cb91dc9fe9534e00d84901e984d5e9f8799dc04500e33",
+      "kind": "png"
+    }
+  ]
+}
