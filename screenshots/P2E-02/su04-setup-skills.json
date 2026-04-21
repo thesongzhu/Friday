@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-04-21T10:36:03.282Z",
+  "before": {
+    "cards": [
+      "Cross-border Review",
+      "Release Guardian",
+      "Finance Watch"
+    ],
+    "nextDisabled": true,
+    "skipPresent": true
+  },
+  "after": {
+    "nextDisabled": false,
+    "selectedSkills": [
+      "skill-cross-border-review"
+    ]
+  },
+  "skipped": {
+    "stateName": "step4-done",
+    "step": 4,
+    "draft": {
+      "name": "Jarvis",
+      "role": "Operator",
+      "company": "Friday Labs",
+      "providers": {
+        "openai": {
+          "key": "sk-live-openai-demo",
+          "configured": true,
+          "testStatus": "idle",
+          "testedAt": null
+        },
+        "anthropic": {
+          "key": "",
+          "configured": false,
+          "testStatus": "idle",
+          "testedAt": null
+        },
+        "local": {
+          "key": "http://localhost:11434",
+          "configured": true,
+          "testStatus": "idle",
+          "testedAt": null
+        }
+      },
+      "selectedSkills": [],
+      "skippedSkills": true
+    },
+    "status": {
+      "lastCompletedStep": 3,
+      "updatedAt": "2026-04-20T21:18:00.000Z"
+    },
+    "statusQuery": {
+      "lastCompletedStep": 3,
+      "nextStep": 4,
+      "updatedAt": "2026-04-20T21:18:00.000Z",
+      "source": "useSetupStatusQuery"
+    },
+    "statusQueryTrace": [
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 0,
+        "nextStep": 1,
+        "updatedAt": null,
+        "source": "useSetupStatusQuery"
+      },
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 3,
+        "nextStep": 4,
+        "updatedAt": "2026-04-20T21:18:00.000Z",
+        "source": "useSetupStatusQuery"
+      },
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 3,
+        "nextStep": 4,
+        "updatedAt": "2026-04-20T21:18:00.000Z",
+        "source": "useSetupStatusQuery"
+      }
+    ],
+    "connectionTests": [],
+    "completeTrace": [],
+    "pendingComplete": false,
+    "currentUrl": "/setup?dev=1&__state=step4-done&step=4",
+    "confirmDialog": null
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-04-21T10:35:45.096Z",
+  "tokenColors": {
+    "--success": "rgb(47, 122, 73)",
+    "--ink-3": "rgba(45, 33, 24, 0.56)",
+    "--warning": "rgb(143, 84, 19)"
+  },
+  "observed": [
+    {
+      "id": "device-mac-mini",
+      "color": "rgb(47, 122, 73)",
+      "tokenMatch": "--success"
+    },
+    {
+      "id": "device-apac-gateway",
+      "color": "rgba(45, 33, 24, 0.56)",
+      "tokenMatch": "--ink-3"
+    },
+    {
+      "id": "device-eu-runner",
+      "color": "rgb(143, 84, 19)",
+      "tokenMatch": "--warning"
+    }
+  ]
+}

@@ -1,0 +1,234 @@
+{
+  "itemId": "P2F-08",
+  "route": "Home+Assistant+Observability",
+  "generatedAt": "2026-04-21T10:39:21.097Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 5,
+    "pass": 5,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "F08-01",
+      "acceptance": "Ctrl+P · Home / Assistant / Observability 三页支持 · 其他页显示 \"该页不支持打印\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-08/f08-01-supported-routes.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-08/f08-01-supported-routes.json",
+          "sha256": "99e498b2870d843eb4f0d392dda574649a9000da6405afe7785bba3cb1981c8c"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-01-unsupported-settings.png",
+          "sha256": "300c9174f05850e48a0c0eae161b69975603eee8aff991ef8c9b6037e91a70d5"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-01-home.pdf",
+          "sha256": "6a87850ef238716039e4768c703702f6e5512bfa4ed4f9e30e249d646c57ded0"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-01-assistant.pdf",
+          "sha256": "767df88a1c925a8ac63824533f15c7d5883d3157a7eef5d5b46e462b83a83df3"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-01-observability.pdf",
+          "sha256": "219b7cf1d69a79c129628832679985d03f76b37afc4034ab67131013b6f98bff"
+        }
+      ],
+      "summary": "supported=3 unsupported=该页不支持打印",
+      "observed": {
+        "supported": [
+          {
+            "key": "home",
+            "href": "/home?dev=1&__state=normal",
+            "observed": {
+              "printSupported": "true",
+              "headerVisible": "flex"
+            },
+            "path": "screenshots/P2F-08/f08-01-home.pdf",
+            "sha256": "6a87850ef238716039e4768c703702f6e5512bfa4ed4f9e30e249d646c57ded0"
+          },
+          {
+            "key": "assistant",
+            "href": "/assistant?dev=1&__state=pending&tab=approvals",
+            "observed": {
+              "printSupported": "true",
+              "headerVisible": "flex"
+            },
+            "path": "screenshots/P2F-08/f08-01-assistant.pdf",
+            "sha256": "767df88a1c925a8ac63824533f15c7d5883d3157a7eef5d5b46e462b83a83df3"
+          },
+          {
+            "key": "observability",
+            "href": "/observability?dev=1&focus=alerts&window=15m&__state=active",
+            "observed": {
+              "printSupported": "true",
+              "headerVisible": "flex"
+            },
+            "path": "screenshots/P2F-08/f08-01-observability.pdf",
+            "sha256": "219b7cf1d69a79c129628832679985d03f76b37afc4034ab67131013b6f98bff"
+          }
+        ],
+        "unsupported": {
+          "printSupported": "false",
+          "unsupportedDisplay": "block",
+          "unsupportedText": "该页不支持打印"
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "F08-02",
+      "acceptance": "print CSS · rail + topbar + tweaks 隐藏 · 主内容满宽",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-08/f08-02-print-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-08/f08-02-print-layout.json",
+          "sha256": "c7a24818c31d2196ec7a361f95b73065c609e83518e258a9326c5b041e754c9b"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-02-print-layout.png",
+          "sha256": "64c694a11ba2a594a537bb7fa2463faa5d674ca33156d9972af81db3cad08cf0"
+        }
+      ],
+      "summary": "main=1440/1440",
+      "observed": {
+        "railDisplay": "none",
+        "topbarDisplay": "none",
+        "rightDisplay": "none",
+        "tweaksDisplay": "none",
+        "mainWidth": 1440,
+        "viewportWidth": 1440
+      }
+    },
+    {
+      "rule": 3,
+      "code": "F08-03",
+      "acceptance": "分页正确 · 卡片不被裁断 · 加 page-break-inside: avoid",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-08/f08-03-page-breaks.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-08/f08-03-page-breaks.json",
+          "sha256": "2c78c03a2d020fbca3f0b256a2683aa8acd27f82b54e1e933e23c888b386cac3"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-03-observability.pdf",
+          "sha256": "34b26c67480d7570df7da535edf5d3bc8846bdef8c638a47be456fbd6c56c8bd"
+        }
+      ],
+      "summary": ".obs-row:avoid",
+      "observed": [
+        {
+          "selector": ".shell-card",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".run-card",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".obs-row",
+          "exists": true,
+          "breakInside": "avoid",
+          "pageBreakInside": "avoid"
+        },
+        {
+          "selector": ".pack-catalog-card",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".chat-bubble",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".chat-message-row",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".settings-save-bar",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        },
+        {
+          "selector": ".home-section",
+          "exists": false,
+          "breakInside": null,
+          "pageBreakInside": null
+        }
+      ]
+    },
+    {
+      "rule": 4,
+      "code": "F08-04",
+      "acceptance": "颜色 · 保留琥珀 accent · 其他灰度",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-08/f08-04-print-colors.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-08/f08-04-print-colors.json",
+          "sha256": "6efdd769dc99d5e6f802d5cd7d3112879bc2578c08d004363335f55c19793656"
+        }
+      ],
+      "summary": "accent=rgb(154, 93, 37) status=rgba(82, 82, 82, 0.86)",
+      "observed": {
+        "accentColor": "rgb(154, 93, 37)",
+        "statusColor": "rgba(82, 82, 82, 0.86)"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "F08-05",
+      "acceptance": "print 顶部加 \"Friday · {pageName} · {date}\" 眉头",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-08/f08-05-print-header.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-08/f08-05-print-header.json",
+          "sha256": "9e9a382ccdaf482afc6e37896a740d9d44d3d095a6106c4a337fe128dfca679e"
+        },
+        {
+          "path": "screenshots/P2F-08/f08-05-print-header.png",
+          "sha256": "3440ef73ba9fd70b6913001d72dbfaa499e7205c8994c29c121958cef5b6e3b9"
+        }
+      ],
+      "summary": "Friday首页2026/04/21",
+      "observed": {
+        "display": "flex",
+        "text": "Friday首页2026/04/21"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2F-08/f08-01-supported-routes.json",
+    "screenshots/P2F-08/f08-01-unsupported-settings.png",
+    "screenshots/P2F-08/f08-01-home.pdf",
+    "screenshots/P2F-08/f08-01-assistant.pdf",
+    "screenshots/P2F-08/f08-01-observability.pdf",
+    "screenshots/P2F-08/f08-02-print-layout.json",
+    "screenshots/P2F-08/f08-02-print-layout.png",
+    "screenshots/P2F-08/f08-03-page-breaks.json",
+    "screenshots/P2F-08/f08-03-observability.pdf",
+    "screenshots/P2F-08/f08-04-print-colors.json",
+    "screenshots/P2F-08/f08-05-print-header.json",
+    "screenshots/P2F-08/f08-05-print-header.png"
+  ]
+}

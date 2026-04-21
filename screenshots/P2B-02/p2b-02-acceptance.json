@@ -1,0 +1,264 @@
+{
+  "itemId": "P2B-02",
+  "route": "/assistant",
+  "generatedAt": "2026-04-21T10:31:19.677Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 10,
+    "pass": 10,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "A01",
+      "acceptance": "卡片宽满列 · min-h 180 · padding 20 · radius 14",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a01-card-box.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a01-card-box.json",
+          "sha256": "ba69a2ebf27ba0e962aa4f5d566ed45d228fa5c119ce3c706468544d9a0d7dda"
+        }
+      ],
+      "summary": "width=448px, radius=14px",
+      "observed": {
+        "cardWidth": 448,
+        "parentWidth": 448,
+        "minHeight": "180px",
+        "paddingTop": "20px",
+        "borderRadius": "14px"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "A02",
+      "acceptance": "顶行 · 风险 badge(low/med/high)+ 来源 channel + 时间 · 右侧 Copy ID 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a02-top-row.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a02-top-row.json",
+          "sha256": "2bb82115329883ba61c1d832976e0602f61d6ce6ed418df61afe35c0d4796c07"
+        }
+      ],
+      "summary": "high, 邮件 · 9 分钟前",
+      "observed": {
+        "riskText": "high",
+        "metaText": "邮件 · 9 分钟前",
+        "copyText": "Copy ID"
+      }
+    },
+    {
+      "rule": 3,
+      "code": "A03",
+      "acceptance": "标题行 · h3 font serif 20 · 不截断 · 允许 2 行",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a03-title-wrap.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a03-title-wrap.json",
+          "sha256": "83240ef1510a3fc759fc6d5b28ecae82b573508d868791ded54f3e9e15d89941"
+        },
+        {
+          "path": "screenshots/P2B-02/a03-title-wrap.png",
+          "sha256": "097e77ca99fe087df03b311e029c8ba947270355fc0ed1abbe42bbba80c22ed1"
+        }
+      ],
+      "summary": "lineCount=1.00, font=20px",
+      "observed": {
+        "text": "供应商成本突然上升 18% 需要确认切换策略",
+        "fontSize": "20px",
+        "fontFamily": "Fraunces, serif",
+        "textOverflow": "clip",
+        "lineClamp": "none",
+        "lineCount": 0.9995039682539683
+      }
+    },
+    {
+      "rule": 4,
+      "code": "A04",
+      "acceptance": "Capabilities 列表 · tag 样式 · 每个 capability 有图标 + 文字 · 悬浮 tooltip scope 描述",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a04-capability-tooltip.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a04-capability-tooltip.json",
+          "sha256": "60960152315675196a97bde112a52c312c409d9af728f13219d8c646cfa36de7"
+        },
+        {
+          "path": "screenshots/P2B-02/a04-capability-tooltip.png",
+          "sha256": "92c295e18baf9543b17e8b94fa51600c1ede0d7b1f50dad1089d01d7baaf96f8"
+        }
+      ],
+      "summary": "icon=◎, tooltip=\"允许 Friday 在本次补货决策里读取并比较预算方案。\"",
+      "observed": {
+        "chipText": "◎预算边界允许 Friday 在本次补货决策里读取并比较预算方案。",
+        "icon": "◎",
+        "tooltipText": "允许 Friday 在本次补货决策里读取并比较预算方案。",
+        "opacity": "1",
+        "chipCenter": 343,
+        "chipTop": 877.875,
+        "tooltipBottom": 864.875,
+        "tooltipCenter": 343,
+        "arrowTransform": "matrix(0.707107, 0.707107, -0.707107, 0.707107, -8.5, 0)"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "A05",
+      "acceptance": "Evidence 展开 · 默认折叠 · 点 \"查看证据\" 展开 · 显示 grantId / toolCalls / timestamps",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a05-evidence-expand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a05-evidence-expand.json",
+          "sha256": "29a9b6f36deef7def344829ca20e04cd35ba232d0a16a1b92b66009d685de048"
+        }
+      ],
+      "summary": "grantId=grant-warehouse-shift-2042, calls=3",
+      "observed": {
+        "before": {
+          "open": false
+        },
+        "after": {
+          "open": true,
+          "parsed": {
+            "grantId": "grant-warehouse-shift-2042",
+            "toolCalls": [
+              "inventory.fetch",
+              "supplier.rank",
+              "budget.compare"
+            ],
+            "timestamps": [
+              "2026-04-20T21:09:00.000Z",
+              "2026-04-20T21:18:00.000Z"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "A06",
+      "acceptance": "pending 状态 · 主按钮 \"批准\" + 次按钮 \"拒绝\" · high-risk 时主按钮灰 · 需输入确认词",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a06-pending-actions.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a06-pending-actions.json",
+          "sha256": "9886d0b5c9a5469dd86b242651e01b388593310041498ea13b5631748de0e0c2"
+        }
+      ],
+      "summary": "high=action-button action-button-secondary, medium=action-button action-button-primary",
+      "observed": {
+        "buttons": {
+          "highApproveClass": "action-button action-button-secondary",
+          "highRejectText": "拒绝",
+          "mediumApproveClass": "action-button action-button-primary"
+        },
+        "confirm": {
+          "placeholder": "跨境经营动作板",
+          "confirmDisabled": true
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "A07",
+      "acceptance": "approving/denying 中 · 按钮 spinner 图标 + 禁用 · 250ms 内给反馈",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a07-busy-feedback.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a07-busy-feedback.json",
+          "sha256": "5d49ccb777efc6a87a2346df5c3dc53c4f8a939410808804125b25e8284eb975"
+        }
+      ],
+      "summary": "elapsed=3.7ms",
+      "observed": {
+        "elapsed": 3.700000047683716,
+        "spinnerText": "处理中",
+        "disabled": true
+      }
+    },
+    {
+      "rule": 8,
+      "code": "A08",
+      "acceptance": "approved · 整卡 opacity 0.6 · 顶部勾图标 · 文字 \"已批准 · {time}\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a08-approved-card.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a08-approved-card.json",
+          "sha256": "bb15f272e3da335993e16cd76b1dc5ec52fd5e75bd34e14fac38f1582d69a309"
+        },
+        {
+          "path": "screenshots/P2B-02/a08-approved-card.png",
+          "sha256": "5981d38c5c3862ac8a4a2e880337ec0469e4481da5cc8f3be665b67575bced3e"
+        }
+      ],
+      "summary": "opacity=0.6, icon=✓",
+      "observed": {
+        "opacity": "0.6",
+        "icon": "✓",
+        "text": "medSlack · 22 分钟前✓Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已批准 · 14:20"
+      }
+    },
+    {
+      "rule": 9,
+      "code": "A09",
+      "acceptance": "denied · 整卡红底 · 文字 \"已拒绝 · {reason}\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a09-denied-card.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a09-denied-card.json",
+          "sha256": "a240d7154674309deb7edf806fba9a55cd79532bed776e8bcda9f3057a2504c7"
+        }
+      ],
+      "summary": "medSlack · 22 分钟前×Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已拒绝 · 暂不接受降级到次优模型",
+      "observed": {
+        "background": "rgba(165, 48, 40, 0.12)",
+        "text": "medSlack · 22 分钟前×Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已拒绝 · 暂不接受降级到次优模型"
+      }
+    },
+    {
+      "rule": 10,
+      "code": "A10",
+      "acceptance": "expired · 虚线 border · 文字 \"已过期 · 请重新请求\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-02/a10-expired-card.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-02/a10-expired-card.json",
+          "sha256": "24c8017cf342404977e9e3da45a6253247b8815a4c3712a8eaf61b3dd01e6ab9"
+        }
+      ],
+      "summary": "medSlack · 22 分钟前Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已过期 · 请重新请求",
+      "observed": {
+        "borderStyle": "dashed",
+        "text": "medSlack · 22 分钟前Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已过期 · 请重新请求"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2B-02/a01-card-box.json",
+    "screenshots/P2B-02/a02-top-row.json",
+    "screenshots/P2B-02/a03-title-wrap.json",
+    "screenshots/P2B-02/a03-title-wrap.png",
+    "screenshots/P2B-02/a04-capability-tooltip.json",
+    "screenshots/P2B-02/a04-capability-tooltip.png",
+    "screenshots/P2B-02/a05-evidence-expand.json",
+    "screenshots/P2B-02/a06-pending-actions.json",
+    "screenshots/P2B-02/a07-busy-feedback.json",
+    "screenshots/P2B-02/a08-approved-card.json",
+    "screenshots/P2B-02/a08-approved-card.png",
+    "screenshots/P2B-02/a09-denied-card.json",
+    "screenshots/P2B-02/a10-expired-card.json"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-04-21T10:39:27.530Z",
+  "observed": [
+    {
+      "selector": ".shell-card",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".run-card",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".obs-row",
+      "exists": true,
+      "breakInside": "avoid",
+      "pageBreakInside": "avoid"
+    },
+    {
+      "selector": ".pack-catalog-card",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".chat-bubble",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".chat-message-row",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".settings-save-bar",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    },
+    {
+      "selector": ".home-section",
+      "exists": false,
+      "breakInside": null,
+      "pageBreakInside": null
+    }
+  ],
+  "pdf": "screenshots/P2F-08/f08-03-observability.pdf"
+}

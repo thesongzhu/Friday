@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-04-21T10:32:22.340Z",
+  "beforeObserved": [
+    {
+      "id": "acceptance-2a",
+      "title": "Phase 2A 验收",
+      "stats": [
+        "PASS 8",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2a"
+    },
+    {
+      "id": "acceptance-2b",
+      "title": "Phase 2B 验收",
+      "stats": [
+        "PASS 9",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2b"
+    },
+    {
+      "id": "acceptance-2c",
+      "title": "Phase 2C 验收",
+      "stats": [
+        "PASS 8",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2c"
+    },
+    {
+      "id": "acceptance-2d",
+      "title": "Phase 2D 验收",
+      "stats": [
+        "PASS 6",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2d"
+    },
+    {
+      "id": "acceptance-2e",
+      "title": "Phase 2E 验收",
+      "stats": [
+        "PASS 5",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2e"
+    },
+    {
+      "id": "acceptance-2f",
+      "title": "Phase 2F 验收",
+      "stats": [
+        "PASS 9",
+        "FAIL 0",
+        "PENDING 0"
+      ],
+      "href": "/assistant?tab=approvals&phase=2f"
+    }
+  ],
+  "afterObserved": {
+    "route": "/assistant?tab=approvals&phase=2a"
+  }
+}

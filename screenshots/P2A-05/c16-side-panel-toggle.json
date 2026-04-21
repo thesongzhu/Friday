@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:30:34.767Z",
+  "before": {
+    "open": false,
+    "display": "none"
+  },
+  "after": {
+    "open": true,
+    "display": "block",
+    "text": "Run detail运行侧栏run=session-replenish-watchgrant=grant-warehouse-budgettrace=trace-home-0420ws=1audit"
+  },
+  "screenshot": "screenshots/P2A-05/c16-side-panel-open.png"
+}

@@ -1,0 +1,643 @@
+{
+  "itemId": "P2C-01",
+  "route": "/packs",
+  "generatedAt": "2026-04-21T10:33:02.401Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 13,
+    "pass": 13,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "P01",
+      "acceptance": "双列 · 左 pinned 280(单列 card)· 右 catalog flex(3 列 grid)· 1920 下 4 列",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p01-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p01-layout.json",
+          "sha256": "01a4ea3522be9f17d6759b31c5a76ab361f06b568c832fcb919f11c964aeb4c2"
+        },
+        {
+          "path": "screenshots/P2C-01/p01-layout-1440.png",
+          "sha256": "d7dca72330e2b71787cfa47359d66d4a4917b0b0d7f504f926a593e55a57cf6a"
+        },
+        {
+          "path": "screenshots/P2C-01/p01-layout-1920.png",
+          "sha256": "8701b2874476b66d8f092a853daacb192dd958f0c365b730569af3dde57bf923"
+        }
+      ],
+      "summary": "1440=3 cols, 1920=4 cols",
+      "observed": {
+        "observed1440": {
+          "layoutColumns": "280px 528px",
+          "pinnedWidth": 280,
+          "catalogColumnCount": 3,
+          "cardCount": 6
+        },
+        "observed1920": {
+          "catalogColumnCount": 4,
+          "viewport": {
+            "width": 1920,
+            "height": 1200
+          }
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "P02",
+      "acceptance": "顶部 · search input 400 + category filter chips(6-8 个)+ \"+ 自定义 pack\" 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p02-topbar.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p02-topbar.json",
+          "sha256": "6c8a929cdd018cfdb77b344fc0e9f4856c15bc5db939cbf66e8e6fd251b2c31d"
+        }
+      ],
+      "summary": "search=400px, chips=6",
+      "observed": {
+        "searchWidth": 400,
+        "chipCount": 6,
+        "chips": [
+          "cross-border",
+          "release",
+          "security",
+          "finance",
+          "support",
+          "workflow"
+        ],
+        "buttonLabel": "+ 自定义 pack"
+      }
+    },
+    {
+      "rule": 3,
+      "code": "P03",
+      "acceptance": "search 即时过滤(debounce 150ms)· 匹配 pack.title + description + tags",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p03-search-debounce.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p03-search-debounce.json",
+          "sha256": "0dcad4ba29ed3835f97d7c4fdfd2f6455b61fd733b701082194c57032b46d673"
+        }
+      ],
+      "summary": "title=task-support-ops description=task-release-ops",
+      "observed": {
+        "total": {
+          "stateName": "full-catalog",
+          "search": "",
+          "committedSearch": "",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        },
+        "beforeCommit": {
+          "stateName": "full-catalog",
+          "search": "支持台",
+          "committedSearch": "",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        },
+        "titleMatch": {
+          "stateName": "full-catalog",
+          "search": "支持台",
+          "committedSearch": "支持台",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        },
+        "descriptionMatch": {
+          "stateName": "full-catalog",
+          "search": "回滚",
+          "committedSearch": "回滚",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "task-release-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        },
+        "tagMatch": {
+          "stateName": "full-catalog",
+          "search": "security",
+          "committedSearch": "security",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "task-release-ops",
+            "task-security-review"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "P04",
+      "acceptance": "filter chips 多选 · active 琥珀底 · clear all 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p04-filter-chips.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p04-filter-chips.json",
+          "sha256": "5338df2773257883b28f90dccb0a3f7bc4fbbafec4fb751e577df3741410073e"
+        }
+      ],
+      "summary": "active=release/security",
+      "observed": {
+        "tokenColors": {
+          "--accent-soft": "rgba(200, 122, 60, 0.14)"
+        },
+        "activeObserved": {
+          "active": [
+            {
+              "label": "release",
+              "background": "rgba(200, 122, 60, 0.14)",
+              "tokenMatch": "--accent-soft"
+            },
+            {
+              "label": "security",
+              "background": "rgba(200, 122, 60, 0.14)",
+              "tokenMatch": "--accent-soft"
+            }
+          ],
+          "clearAllVisible": true
+        },
+        "cleared": {
+          "stateName": "full-catalog",
+          "search": "",
+          "committedSearch": "",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "P05",
+      "acceptance": "pack card · 240 高 · 顶部产品预览(PackProductPreview 24)· 中标题 · 底 meta + \"打开\" 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p05-pack-card.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p05-pack-card.json",
+          "sha256": "c06f5bcd6985afbd4970b6644806d33df2d7c52d8ac075e54afe0775b79d0c79"
+        },
+        {
+          "path": "screenshots/P2C-01/p05-pack-card.png",
+          "sha256": "d7dca72330e2b71787cfa47359d66d4a4917b0b0d7f504f926a593e55a57cf6a"
+        }
+      ],
+      "summary": "height=998.375, tiles=4",
+      "observed": {
+        "height": 998.375,
+        "previewTiles": [
+          {
+            "width": 24,
+            "height": 24,
+            "label": "库存"
+          },
+          {
+            "width": 24,
+            "height": 24,
+            "label": "利润"
+          },
+          {
+            "width": 24,
+            "height": 24,
+            "label": "审批"
+          },
+          {
+            "width": 24,
+            "height": 24,
+            "label": "风险"
+          }
+        ],
+        "title": "跨境经营动作板",
+        "openLabel": "打开"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "P06",
+      "acceptance": "pinned 列 · 拖拽重排 · 拖后写 `useHomeSurfacePreferences`",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p06-pinned-drag.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p06-pinned-drag.json",
+          "sha256": "226d51748c3ab25e6caf4915c6dad5222a920f08ba1c0f91b4f5e34673b53248"
+        }
+      ],
+      "summary": "industry-cross-border-ecommerce -> task-ship-fast => task-ship-fast -> industry-cross-border-ecommerce",
+      "observed": {
+        "before": {
+          "stateName": "full-catalog",
+          "search": "",
+          "committedSearch": "",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast"
+          ],
+          "filteredPackIds": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": []
+          }
+        },
+        "after": {
+          "stateName": "full-catalog",
+          "search": "",
+          "committedSearch": "",
+          "activeFilters": [],
+          "pinnedOrder": [
+            "task-ship-fast",
+            "industry-cross-border-ecommerce"
+          ],
+          "filteredPackIds": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "registry": [
+            "industry-cross-border-ecommerce",
+            "task-ship-fast",
+            "task-revenue-recovery",
+            "task-release-ops",
+            "task-security-review",
+            "task-support-ops"
+          ],
+          "selectedPackId": null,
+          "homePreferences": {
+            "pinnedPackIds": [
+              "task-ship-fast",
+              "industry-cross-border-ecommerce"
+            ]
+          }
+        },
+        "storageObserved": {
+          "raw": "[\"task-ship-fast\",\"industry-cross-border-ecommerce\"]",
+          "homePreferences": {
+            "pinnedPackIds": [
+              "task-ship-fast",
+              "industry-cross-border-ecommerce"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "P07",
+      "acceptance": "卡片 hover · 显 PackQuickSheet tooltip(350ms delay)",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p07-hover-sheet.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p07-hover-sheet.json",
+          "sha256": "8486b30148b50c2f285eded7c6d823614b60e4d83d0a31fed3c426ab47d4750b"
+        },
+        {
+          "path": "screenshots/P2C-01/p07-hover-sheet.png",
+          "sha256": "e91979e41f48dfa476e3c601e86648d1467c94c4a135b008bafad57dba1c5898"
+        }
+      ],
+      "summary": "delay=356.5ms, visible@300=false, visible@420=true",
+      "observed": {
+        "targetSelector": "[data-pack-location=\"catalog\"][data-pack-id=\"task-release-ops\"]",
+        "initial": {
+          "visible": false,
+          "selectedPackId": null
+        },
+        "enterAt": 1019.3999999761581,
+        "visibleAt": 1375.8999999761581,
+        "visibleDelayMs": 356.5,
+        "firstVisible": {
+          "selectedPackId": "task-release-ops",
+          "ariaLabel": "发布值守剧本"
+        },
+        "samples": {
+          "300": {
+            "sampleMs": 300,
+            "at": 1320.8999999761581,
+            "visible": false,
+            "selectedPackId": null,
+            "ariaLabel": null
+          },
+          "360": {
+            "sampleMs": 360,
+            "at": 1392.1999999284744,
+            "visible": true,
+            "selectedPackId": "task-release-ops",
+            "ariaLabel": "发布值守剧本"
+          },
+          "420": {
+            "sampleMs": 420,
+            "at": 1440.7999999523163,
+            "visible": true,
+            "selectedPackId": "task-release-ops",
+            "ariaLabel": "发布值守剧本"
+          }
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "P08",
+      "acceptance": "点击 pack · 跳 `/packs/{packId}/setup`(目前只 cross-border 有 setup · 其他 toast \"即将上线\")",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p08-launch-route.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p08-launch-route.json",
+          "sha256": "13b6820b4da957ed9d45905097d4410639142e05fcb1674ee3990abe998d2a09"
+        }
+      ],
+      "summary": "/packs/industry-cross-border-ecommerce/setup / toast=WARNING即将上线",
+      "observed": {
+        "setupObserved": {
+          "pathname": "/packs/industry-cross-border-ecommerce/setup",
+          "route": "/packs/industry-cross-border-ecommerce/setup"
+        },
+        "toastObserved": {
+          "pathname": "/packs",
+          "toasts": [
+            "WARNING即将上线"
+          ]
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "P09",
+      "acceptance": "cross-border pack 显示特殊 badge \"专属引导\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p09-guided-badge.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p09-guided-badge.json",
+          "sha256": "e157270cd322bb33441c87153d52c2540f293ca39941de22d6e4e15a9f436356"
+        },
+        {
+          "path": "screenshots/P2C-01/p09-guided-badge.png",
+          "sha256": "d7dca72330e2b71787cfa47359d66d4a4917b0b0d7f504f926a593e55a57cf6a"
+        }
+      ],
+      "summary": "badge=专属引导",
+      "observed": {
+        "badgeText": "专属引导"
+      }
+    },
+    {
+      "rule": 10,
+      "code": "P10",
+      "acceptance": "空态(search 无结果)· \"没找到相关 pack · 试试其他关键词\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p10-empty-search.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p10-empty-search.json",
+          "sha256": "688fe742d6d8815bf135a627456dc6412aed5255c90a23dda107a7ba416bc077"
+        },
+        {
+          "path": "screenshots/P2C-01/p10-empty-search.png",
+          "sha256": "f1080ffcae455ee00f4d0b3ea3e8031c6c5c9ad541f2be3f1f2a0697014a83cd"
+        }
+      ],
+      "summary": "filtered=0",
+      "observed": {
+        "filtered": [],
+        "title": "没找到相关 pack · 试试其他关键词"
+      }
+    },
+    {
+      "rule": 11,
+      "code": "P11",
+      "acceptance": "empty pinned · 左列显示 \"置顶你常用的 pack\" 空态 · 有拖拽动画提示",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p11-empty-pinned.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p11-empty-pinned.json",
+          "sha256": "16b7e208fb32960e45d756eb638ed817f93f9a77457fdefa9611122e9522362b"
+        },
+        {
+          "path": "screenshots/P2C-01/p11-empty-pinned.png",
+          "sha256": "1274642f5184db405884073c8b19b0986ae99b03fea7b319e652c030457800d9"
+        }
+      ],
+      "summary": "title=置顶你常用的 pack",
+      "observed": {
+        "exists": true,
+        "title": "置顶你常用的 pack",
+        "hint": [
+          "拖拽提示"
+        ]
+      }
+    },
+    {
+      "rule": 12,
+      "code": "P12",
+      "acceptance": "custom pack 入口 · 跳 `CustomPackBuilder` modal(复用 core/custom-pack-builder.tsx)",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p12-custom-pack-modal.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p12-custom-pack-modal.json",
+          "sha256": "4b8bb996f0477a716131418e2ea00b87d82f30c0306917f1c57a0957846deb99"
+        },
+        {
+          "path": "screenshots/P2C-01/p12-custom-pack-modal.png",
+          "sha256": "2c8cd35abf6e260b3c1a83b9f0fad253204dfac45f321b3c2e4f68518f7f3b9e"
+        }
+      ],
+      "summary": "自定义 Pack Builder",
+      "observed": {
+        "activeModal": "自定义 Pack Builder",
+        "copy": "Pack 名称目标行业复用自 core/custom-pack-builder.tsx 的构建入口这里展示标题、目标、技能和输出摘要，供静态原型验收。"
+      }
+    },
+    {
+      "rule": 13,
+      "code": "P13",
+      "acceptance": "`FRIDAY_PACKS` registry 穷举 · 不得 hardcode pack 数据在此页",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-01/p13-registry-source.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-01/p13-registry-source.json",
+          "sha256": "83467c8643bc0ca4998965d15c2fcbce9074c89f96782a0fb82e23cdca53907a"
+        }
+      ],
+      "summary": "usesRegistry=true, literals=0",
+      "observed": {
+        "usesRegistry": true,
+        "literalIds": [],
+        "registryCount": 7
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2C-01/p01-layout.json",
+    "screenshots/P2C-01/p01-layout-1440.png",
+    "screenshots/P2C-01/p01-layout-1920.png",
+    "screenshots/P2C-01/p02-topbar.json",
+    "screenshots/P2C-01/p03-search-debounce.json",
+    "screenshots/P2C-01/p04-filter-chips.json",
+    "screenshots/P2C-01/p05-pack-card.json",
+    "screenshots/P2C-01/p05-pack-card.png",
+    "screenshots/P2C-01/p06-pinned-drag.json",
+    "screenshots/P2C-01/p07-hover-sheet.json",
+    "screenshots/P2C-01/p07-hover-sheet.png",
+    "screenshots/P2C-01/p08-launch-route.json",
+    "screenshots/P2C-01/p09-guided-badge.json",
+    "screenshots/P2C-01/p09-guided-badge.png",
+    "screenshots/P2C-01/p10-empty-search.json",
+    "screenshots/P2C-01/p10-empty-search.png",
+    "screenshots/P2C-01/p11-empty-pinned.json",
+    "screenshots/P2C-01/p11-empty-pinned.png",
+    "screenshots/P2C-01/p12-custom-pack-modal.json",
+    "screenshots/P2C-01/p12-custom-pack-modal.png",
+    "screenshots/P2C-01/p13-registry-source.json"
+  ]
+}

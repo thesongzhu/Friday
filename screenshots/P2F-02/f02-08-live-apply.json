@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:37:04.035Z",
+  "observed": {
+    "before": "14px",
+    "after": "4px",
+    "navEntriesBefore": 1,
+    "navEntriesAfter": 1,
+    "splashVisible": false
+  }
+}

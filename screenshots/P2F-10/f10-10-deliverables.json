@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:39:43.859Z",
+  "observed": {
+    "staticFile": {
+      "path": "friday-static.html",
+      "size": 1123308
+    },
+    "qaReport": {
+      "path": "qa-report.html",
+      "size": 151635
+    }
+  }
+}

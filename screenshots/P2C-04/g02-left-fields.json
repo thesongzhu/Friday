@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:33:44.908Z",
+  "observed": {
+    "intentMinHeight": "200px",
+    "scopeValue": "workspace",
+    "inputsHeaders": [
+      "Name",
+      "Type"
+    ],
+    "outputsHeaders": [
+      "Name",
+      "Type"
+    ]
+  }
+}

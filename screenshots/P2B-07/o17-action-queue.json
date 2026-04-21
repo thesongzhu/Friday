@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-04-21T10:32:37.735Z",
+  "observed": [
+    {
+      "focus": "alerts",
+      "helperQueue": [
+        "新建告警",
+        "批量暂停 1h",
+        "导出列表"
+      ],
+      "domQueue": [
+        "新建告警",
+        "批量暂停 1h",
+        "导出列表"
+      ]
+    },
+    {
+      "focus": "traces",
+      "helperQueue": [
+        "导出 JSON",
+        "打开最新 Trace",
+        "刷新序列"
+      ],
+      "domQueue": [
+        "导出 JSON",
+        "打开最新 Trace",
+        "刷新序列"
+      ]
+    },
+    {
+      "focus": "audit",
+      "helperQueue": [
+        "只看 Jarvis",
+        "打开最新 Diff",
+        "导出审计"
+      ],
+      "domQueue": [
+        "只看 Jarvis",
+        "打开最新 Diff",
+        "导出审计"
+      ]
+    },
+    {
+      "focus": "health",
+      "helperQueue": [
+        "定位主压力",
+        "刷新采样",
+        "导出健康快照"
+      ],
+      "domQueue": [
+        "定位主压力",
+        "刷新采样",
+        "导出健康快照"
+      ]
+    },
+    {
+      "focus": "acceptance",
+      "helperQueue": [
+        "打开 Assistant",
+        "复制汇总",
+        "查看 QA Report"
+      ],
+      "domQueue": [
+        "打开 Assistant",
+        "复制汇总",
+        "查看 QA Report"
+      ]
+    }
+  ]
+}

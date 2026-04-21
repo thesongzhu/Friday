@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:32:03.089Z",
+  "tokenColors": {
+    "--warning": "rgb(143, 84, 19)"
+  },
+  "observed": {
+    "p50Text": "p50 530ms",
+    "p95Text": "p95 1320ms",
+    "p50Font": "\"JetBrains Mono\", monospace",
+    "p95Font": "\"JetBrains Mono\", monospace",
+    "p95Color": "rgb(143, 84, 19)",
+    "tokenMatch": "--warning"
+  }
+}

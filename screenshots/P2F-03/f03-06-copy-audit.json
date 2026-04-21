@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:37:11.387Z",
+  "observed": {
+    "rows": 6,
+    "path": "screenshots/qa/p2f-03-copy-audit.html",
+    "sha256": "4b5da8e3b44c346ba3469db526328e86ff04b4d7ffc1af774360a7eb8480e043"
+  },
+  "auditHtml": "screenshots/qa/p2f-03-copy-audit.html"
+}

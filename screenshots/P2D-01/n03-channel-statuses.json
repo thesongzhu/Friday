@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-04-21T10:34:51.894Z",
+  "observed": [
+    {
+      "id": "channel-amazon",
+      "health": "healthy",
+      "metric": "p95 420ms · webhook 稳定"
+    },
+    {
+      "id": "channel-shopify",
+      "health": "degraded",
+      "metric": "latency 高 1.8s · 限流 3 次"
+    },
+    {
+      "id": "channel-tiktok",
+      "health": "error",
+      "metric": "token 失效 · 回放失败 2 次"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:34:16.453Z",
+  "failed": {
+    "toast": "ERROR校验失败，请先修复高亮节点",
+    "invalidCount": 1,
+    "issueStrip": "至少需要一个 trigger。存在孤立节点，请补上连线或删除它们。"
+  },
+  "saved": {
+    "toast": "SUCCESS工作流已保存",
+    "savedText": "saved 14:18"
+  }
+}

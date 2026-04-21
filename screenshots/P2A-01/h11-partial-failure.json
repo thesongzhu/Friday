@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:29:44.305Z",
+  "observed": {
+    "approvalsError": "审批快照暂时不可用",
+    "runCards": 3,
+    "scheduledRows": 5
+  },
+  "screenshot": "screenshots/P2A-01/h11-partial-failure.png"
+}

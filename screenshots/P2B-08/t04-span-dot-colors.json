@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-04-21T10:32:43.790Z",
+  "tokenColors": {
+    "--warning": "rgb(143, 84, 19)",
+    "--trace-llm": "rgb(110, 88, 176)",
+    "--trace-db": "rgb(47, 113, 137)"
+  },
+  "observed": [
+    {
+      "id": "span-tool-inventory",
+      "token": "--warning",
+      "color": "rgb(143, 84, 19)",
+      "tokenMatch": "--warning"
+    },
+    {
+      "id": "span-route-root",
+      "token": "--trace-llm",
+      "color": "rgb(110, 88, 176)",
+      "tokenMatch": "--trace-llm"
+    },
+    {
+      "id": "span-db-audit",
+      "token": "--trace-db",
+      "color": "rgb(47, 113, 137)",
+      "tokenMatch": "--trace-db"
+    }
+  ]
+}

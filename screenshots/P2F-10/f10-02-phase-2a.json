@@ -1,0 +1,546 @@
+{
+  "generatedAt": "2026-04-21T10:39:43.790Z",
+  "matched": [
+    {
+      "itemId": "P2A-01",
+      "rule": 1,
+      "code": "H01",
+      "acceptance": "snapshot 调用唯一 · 打开 /home 后 mock 场景只 1 次 __fridayMock.getState() · 无重复 fetch 风暴",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h01-home-snapshot-call.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h01-home-snapshot-call.json",
+          "sha256": "a47a0fa95fb381eaf63d840e2aa1c5f5aa13cadd2f18a2c5d0620fbfcc1ca447"
+        }
+      ],
+      "summary": "boot getState=1, navigationEntries=1",
+      "observed": {
+        "getStateCalls": 1,
+        "navigationEntries": 1,
+        "route": "/home?dev=1&__state=normal"
+      }
+    },
+    {
+      "itemId": "P2A-01",
+      "rule": 2,
+      "code": "H02",
+      "acceptance": "可见 polling 5s · active tab advanceClock(5000) 后触发一次 refetch · 误差 ≤ 200ms",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h02-visible-polling.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h02-visible-polling.json",
+          "sha256": "5b3842683547fdb681b82b3933954fae08910c1d9bf9e29bd81e71ac0d108f44"
+        }
+      ],
+      "summary": "calls 1 -> 2, latency=2.1ms",
+      "observed": {
+        "before": 1,
+        "after4800": 1,
+        "after5000": 2,
+        "latencyMs": 2.100000023841858
+      }
+    },
+    {
+      "itemId": "P2A-01",
+      "rule": 3,
+      "code": "H03",
+      "acceptance": "后台 polling 60s · visibilitychange hidden 后, 间隔变 60s",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h03-hidden-polling.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h03-hidden-polling.json",
+          "sha256": "2e2e2f20f34e506e133ba9b67ba197b94f4cbec8ee4109ec8ed304820508cc64"
+        }
+      ],
+      "summary": "hidden calls 1 -> 2, latency=2.3ms",
+      "observed": {
+        "before": 1,
+        "after59000": 1,
+        "after60000": 2,
+        "visibilityState": "hidden",
+        "latencyMs": 2.299999952316284
+      }
+    },
+    {
+      "itemId": "P2A-01",
+      "rule": 4,
+      "code": "H04",
+      "acceptance": "三段独立 loading · 未到的数据只显示对应段 skeleton · MUST NOT 整页 spinner",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h04-loading-sections.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h04-loading-sections.json",
+          "sha256": "30d14d2034af7914354b5387a8cc492718810f38f13ff84bf31cda061932a1b0"
+        },
+        {
+          "path": "screenshots/P2A-01/h04-loading-sections.png",
+          "sha256": "4a7c8fa0472d637471ac24b2845e568b5718773bf7f1db11ae1b460b780eef13"
+        }
+      ],
+      "summary": "live skeletons=3, scheduled skeletons=3, approvals=3",
+      "observed": {
+        "liveSkeletons": 3,
+        "scheduledSkeletons": 3,
+        "approvalRows": 3,
+        "fullPageSpinnerCount": 0
+      }
+    },
+    {
+      "itemId": "P2A-01",
+      "rule": 5,
+      "code": "H05",
+      "acceptance": "realtime 淡入 · run.state_changed 时对应 card 500ms opacity 0.5→1 淡入 + translateY(-2px) · 其他 card MUST NOT 重排",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h05-realtime-transition.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h05-realtime-transition.json",
+          "sha256": "6ad5562eb4314f5c34c7358dfebf545744d3f858135372c9a3166eb0aa6c04e8"
+        },
+        {
+          "path": "screenshots/P2A-01/h05-realtime-before.png",
+          "sha256": "00b4be98ef3d434c5c7408f9bd22726841079bc0cd5df8e55a233d8b4c1e1b48"
+        },
+        {
+          "path": "screenshots/P2A-01/h05-realtime-after.png",
+          "sha256": "e1b781d964aa9b03dd17397ec62dab4373ca8b8a76377dda211e1159d5413b12"
+        }
+      ],
+      "summary": "animation=run-fade 0.5s, stable=true",
+      "observed": {
+        "before": [
+          {
+            "id": "run-replenish-watch",
+            "x": 272,
+            "y": 206.59375,
+            "width": 196,
+            "height": 289.296875
+          },
+          {
+            "id": "run-provider-circuit",
+            "x": 484,
+            "y": 206.59375,
+            "width": 196,
+            "height": 289.296875
+          },
+          {
+            "id": "run-cache-retune",
+            "x": 696,
+            "y": 206.59375,
+            "width": 196,
+            "height": 289.296875
+          }
+        ],
+        "during": {
+          "target": {
+            "animationName": "run-fade",
+            "animationDuration": "0.5s",
+            "statusText": "已完成"
+          },
+          "cards": [
+            {
+              "id": "run-replenish-watch",
+              "x": 272,
+              "y": 206.03636169433594,
+              "width": 196,
+              "height": 289.296875,
+              "className": "run-card is-updated"
+            },
+            {
+              "id": "run-provider-circuit",
+              "x": 484,
+              "y": 206.59375,
+              "width": 196,
+              "height": 289.296875,
+              "className": "run-card"
+            },
+            {
+              "id": "run-cache-retune",
+              "x": 696,
+              "y": 206.59375,
+              "width": 196,
+              "height": 289.296875,
+              "className": "run-card"
+            }
+          ]
+        },
+        "otherCardsStable": true
+      }
+    },
+    {
+      "itemId": "P2A-01",
+      "rule": 6,
+      "code": "H06",
+      "acceptance": "approvals 跳转 · 点全部查看后 URL 变 /assistant?tab=approvals · packId 保留",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-01/h06-approvals-navigation.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-01/h06-approvals-navigation.json",
+          "sha256": "e470a999d2d9ec04bf5ba7926b7b77c12d3e4b74cefa1ed2639ad0497d40f174"
+        },
+        {
+          "path": "screenshots/P2A-01/h06-approvals-navigation.png",
+          "sha256": "5c0c181ea427441dce5ad76b441dc6f70677bbf6b62941f7d22cf8f2e40d64e0"
+        }
+      ],
+      "summary": "href=/assistant?tab=approvals&packId=industry-cross-border-ecommerce",
+      "observed": {
+        "href": "/assistant?tab=approvals&packId=industry-cross-border-ecommerce"
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 1,
+      "code": "C01",
+      "acceptance": "empty · 首次进入 composer 居中(vertical + horizontal)· 快捷 prompt 3 张 · 点击填入 composer",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c01-empty-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c01-empty-layout.json",
+          "sha256": "a643a0528d45349fcc81c5ca7e141e3b0c514b373926df8120f99c39ef9ebd85"
+        },
+        {
+          "path": "screenshots/P2A-05/c01-empty-layout.png",
+          "sha256": "af58f894158feaa287acd323089a5620bb7c1b4e09689786af07d4b7bfd39ebb"
+        }
+      ],
+      "summary": "quickCards=3, prompt=\"复核今天的高风险运行\"",
+      "observed": {
+        "quickCards": [
+          "复核今天的高风险运行",
+          "把重复操作变成自动化",
+          "盘点预算和 provider 路由"
+        ],
+        "heroCenterX": 550,
+        "heroCenterY": 526.296875,
+        "mainCenterX": 550,
+        "mainCenterY": 628,
+        "after": "复核今天的高风险运行"
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 2,
+      "code": "C02",
+      "acceptance": "user-sent · 发送后 user bubble 右侧 · 紧接 \"Friday 在思考…\" 左侧 typing indicator · 3 个点循环动画 400ms 一轮",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c02-user-thinking.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c02-user-thinking.json",
+          "sha256": "8e04967ebc803cec290ee376fd1ddbe91d5dcc0a572e80666bc333905c60b262"
+        },
+        {
+          "path": "screenshots/P2A-05/c02-user-thinking.png",
+          "sha256": "1586122d69cd66a5b2c8737cc049126fb43d9616efffc2dd81c1153e01011c26"
+        }
+      ],
+      "summary": "rows=2, dots=3, duration=0.4s",
+      "observed": {
+        "rowCount": 2,
+        "firstRowUser": true,
+        "secondRowUser": false,
+        "dotCount": 3,
+        "dots": [
+          {
+            "duration": "0.4s",
+            "delay": "0s"
+          },
+          {
+            "duration": "0.4s",
+            "delay": "0.08s"
+          },
+          {
+            "duration": "0.4s",
+            "delay": "0.16s"
+          }
+        ]
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 3,
+      "code": "C03",
+      "acceptance": "streaming · assistant bubble 字符逐字进入(每 30ms 一字)· 末尾光标闪烁 500ms 周期 · 流结束光标消失",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c03-streaming-timing.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c03-streaming-timing.json",
+          "sha256": "e0affce1ab5d9baae2c0078aaf70e371ead83afb205839f3c59c1d2838430580"
+        },
+        {
+          "path": "screenshots/P2A-05/c03-streaming-mid.png",
+          "sha256": "c13650780a9e516a3856495c61daadb762e4fdc2e77d9d83b49c37fcf4dc0f9a"
+        },
+        {
+          "path": "screenshots/P2A-05/c03-streaming-done.png",
+          "sha256": "b0dae4e8e2ea273ae5f50175c0c00f208f19cff336d4d3fafcc2ab2a7f50e5d0"
+        }
+      ],
+      "summary": "mean=30.07ms, stddev=0.76ms, caretStates=1",
+      "observed": {
+        "caretSamples": [
+          {
+            "sample": 1,
+            "at": 587.6000000238419,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 2,
+            "at": 720,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 3,
+            "at": 851.3000000715256,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          },
+          {
+            "sample": 4,
+            "at": 988.7000000476837,
+            "opacity": "1",
+            "animationName": "chat-caret-blink",
+            "animationDuration": "0.5s"
+          }
+        ],
+        "runtime": {
+          "turnId": "turn-assistant-stream",
+          "fullText": "我先把库存、供应商和广告节奏交叉看一遍。",
+          "visibleChars": 19,
+          "samples": [
+            {
+              "at": 570.1000000238419,
+              "visibleChars": 1
+            },
+            {
+              "at": 600.3000000715256,
+              "visibleChars": 2
+            },
+            {
+              "at": 629.1000000238419,
+              "visibleChars": 3
+            },
+            {
+              "at": 659.7000000476837,
+              "visibleChars": 4
+            },
+            {
+              "at": 688.5,
+              "visibleChars": 5
+            },
+            {
+              "at": 719.8999999761581,
+              "visibleChars": 6
+            },
+            {
+              "at": 749.5,
+              "visibleChars": 7
+            },
+            {
+              "at": 779.5,
+              "visibleChars": 8
+            },
+            {
+              "at": 809.7000000476837,
+              "visibleChars": 9
+            },
+            {
+              "at": 839.2000000476837,
+              "visibleChars": 10
+            },
+            {
+              "at": 869.6000000238419,
+              "visibleChars": 11
+            },
+            {
+              "at": 899.8999999761581,
+              "visibleChars": 12
+            },
+            {
+              "at": 930.2000000476837,
+              "visibleChars": 13
+            },
+            {
+              "at": 959.3999999761581,
+              "visibleChars": 14
+            },
+            {
+              "at": 988.6000000238419,
+              "visibleChars": 15
+            },
+            {
+              "at": 1019,
+              "visibleChars": 16
+            },
+            {
+              "at": 1048.8999999761581,
+              "visibleChars": 17
+            },
+            {
+              "at": 1079.3999999761581,
+              "visibleChars": 18
+            },
+            {
+              "at": 1109.7000000476837,
+              "visibleChars": 19
+            }
+          ],
+          "startedAt": 538.3000000715256,
+          "completedAt": null,
+          "charIntervals": [
+            31.799999952316284,
+            30.200000047683716,
+            28.799999952316284,
+            30.600000023841858,
+            28.799999952316284,
+            31.399999976158142,
+            29.600000023841858,
+            30,
+            30.200000047683716,
+            29.5,
+            30.399999976158142,
+            30.299999952316284,
+            30.300000071525574,
+            29.199999928474426,
+            29.200000047683716,
+            30.399999976158142,
+            29.899999976158142,
+            30.5,
+            30.300000071525574
+          ],
+          "timerId": 1
+        },
+        "caretPresentAfterCompletion": false,
+        "intervalStats": {
+          "count": 19,
+          "min": 28.799999952316284,
+          "max": 31.799999952316284,
+          "mean": 30.07368420927148,
+          "stddev": 0.7593917998847755
+        },
+        "caretAnimation": "chat-caret-blink",
+        "caretDuration": "0.5s"
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 4,
+      "code": "C04",
+      "acceptance": "tool-call 展开 · ChatToolActivity 入流 · 默认折叠 · 显示工具名 + 状态 dot · 点击展开 parameters + result JSON",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c04-tool-call-expand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c04-tool-call-expand.json",
+          "sha256": "7323e0af86247c2577fe45d7941b10fa4d1a6e661f24192168fb1538489cff66"
+        },
+        {
+          "path": "screenshots/P2A-05/c04-tool-call-collapsed.png",
+          "sha256": "a83a295aa92c6dc370837dfd8096bff5492537a77b88e781156d270e0f8fab71"
+        }
+      ],
+      "summary": "tool=inventory.fetch, open=true",
+      "observed": {
+        "before": {
+          "open": false,
+          "toolName": "inventory.fetch",
+          "statusText": "completed",
+          "statusDot": "health-dot is-healthy"
+        },
+        "after": {
+          "open": true,
+          "jsonText": "{\n  \"parameters\": {\n    \"market\": \"EU\",\n    \"skuCount\": 42\n  },\n  \"result\": \"已拉回当前库存快照。\"\n}"
+        },
+        "parsed": {
+          "parameters": {
+            "market": "EU",
+            "skuCount": 42
+          },
+          "result": "已拉回当前库存快照。"
+        }
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 5,
+      "code": "C05",
+      "acceptance": "approval · ChatActionCard 流转 3 态 pending → approved → used · 状态变化有图标切换 + 底色过渡 250ms",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c05-approval-flow.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c05-approval-flow.json",
+          "sha256": "faac0e5259da6c7720cf41ddc918bd5c34c775533686622f44c5af918e4700e5"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-pending.png",
+          "sha256": "6ae2be1fd6f5483161936143d9eced1c8b27ca928ba59476985903dc173ad671"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-approved.png",
+          "sha256": "59d93f9635ea6f274dbbbca14d87ccaa0e872b345726277802f228cd7400da96"
+        },
+        {
+          "path": "screenshots/P2A-05/c05-approval-used.png",
+          "sha256": "03d9587806b7e8670bbca4eedee3e2c81200d736ed9b67d793fefbae85407f09"
+        }
+      ],
+      "summary": "等待决定 -> 已批准 -> 已使用",
+      "observed": {
+        "before": {
+          "className": "chat-action-shell is-pending",
+          "statusText": "等待决定",
+          "icon": "•",
+          "transitionDuration": "0.24s, 0.24s, 0.24s"
+        },
+        "approved": {
+          "className": "chat-action-shell is-approved",
+          "statusText": "已批准",
+          "icon": "✓"
+        },
+        "used": {
+          "className": "chat-action-shell is-used",
+          "statusText": "已使用",
+          "icon": "↗"
+        }
+      }
+    },
+    {
+      "itemId": "P2A-05",
+      "rule": 6,
+      "code": "C06",
+      "acceptance": "autonomous-step · AutonomousStepIndicator 独立行 · \"步骤 3/7 · 正在查询渠道日志\" · 有小 spinner",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-05/c06-step-indicator.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-05/c06-step-indicator.json",
+          "sha256": "46ef9cfdbf7d1d2ab24bd65c3b22ee35103904fcfce0fd2cf25a1e979dfdb102"
+        },
+        {
+          "path": "screenshots/P2A-05/c06-step-indicator.png",
+          "sha256": "1a1d58a7266b50282fcab895d7a5f2c9b050a40049547c5e174eb3da2b18598f"
+        }
+      ],
+      "summary": "步骤 3/7 · 正在查询渠道日志",
+      "observed": {
+        "text": "步骤 3/7 · 正在查询渠道日志",
+        "spinnerDuration": "0.4s",
+        "spinnerName": "chat-spinner"
+      }
+    }
+  ]
+}

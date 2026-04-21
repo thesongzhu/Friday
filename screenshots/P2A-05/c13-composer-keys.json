@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-04-21T10:30:30.298Z",
+  "newlineState": {
+    "value": "第一行\n第二行",
+    "turns": 0
+  },
+  "slashOpened": {
+    "open": true,
+    "count": 6
+  },
+  "slashClosed": {
+    "open": false,
+    "value": ""
+  },
+  "beforeSendSessions": 0,
+  "afterSend": {
+    "route": "/chat?dev=1&__state=session-resume",
+    "composerValue": "",
+    "historyCount": 4
+  }
+}

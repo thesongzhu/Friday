@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-04-21T10:29:52.304Z",
+  "before": {
+    "tooltipVisible": false
+  },
+  "after": {
+    "tooltipVisible": true,
+    "copy": "任务档位 Planning · 上下文约 6400 字符 · 已根据历史经验调路由 · 回退 1 次",
+    "tooltipTop": 136.59375,
+    "cardTop": 206.59375,
+    "tooltipCenter": 370,
+    "cardCenter": 370,
+    "arrowCenter": 369
+  },
+  "screenshot": "screenshots/P2A-02/l04-run-tooltip.png"
+}

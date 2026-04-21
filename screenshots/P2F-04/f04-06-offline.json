@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:37:17.746Z",
+  "observed": {
+    "errorId": "96GM757",
+    "kind": "offline",
+    "title": "network",
+    "detail": "你似乎离线了 · 正在自动重试",
+    "reason": "示例错误原因",
+    "detailsOpen": false,
+    "retryLabel": "重试",
+    "text": "network你似乎离线了 · 正在自动重试为什么?示例错误原因Error ID: 96GM757复制重试"
+  }
+}

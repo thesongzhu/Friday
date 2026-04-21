@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:30:07.889Z",
+  "before": {
+    "rowCount": 5,
+    "moreText": "+1 更多",
+    "moreHref": "/automations"
+  },
+  "route": "/automations",
+  "screenshot": "screenshots/P2A-04/s03-scheduled-cap.png"
+}

@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-04-21T10:32:28.021Z",
+  "fifteen": {
+    "before": [
+      {
+        "at": 1776719880000,
+        "focus": "alerts",
+        "window": "15m",
+        "reason": "boot"
+      }
+    ],
+    "mid": [
+      {
+        "at": 1776719880000,
+        "focus": "alerts",
+        "window": "15m",
+        "reason": "boot"
+      }
+    ],
+    "after": [
+      {
+        "at": 1776719885000,
+        "focus": "alerts",
+        "window": "15m",
+        "reason": "poll"
+      }
+    ],
+    "alertsRowIdsBefore": [
+      "alert-1",
+      "alert-3",
+      "alert-2",
+      "alert-6",
+      "alert-5",
+      "alert-4"
+    ],
+    "alertsRowIdsAfter": [
+      "alert-1",
+      "alert-runtime-5000",
+      "alert-3",
+      "alert-2",
+      "alert-5",
+      "alert-4"
+    ],
+    "alertsFirstBefore": {
+      "id": "alert-1",
+      "recent": "14:10",
+      "metric": "latency.p95"
+    },
+    "alertsFirstAfter": {
+      "id": "alert-1",
+      "recent": "14:10",
+      "metric": "latency.p95"
+    },
+    "alertsRowsBefore": 6,
+    "alertsRowsAfter": 6
+  },
+  "oneHour": {
+    "before": [
+      {
+        "at": 1776719885000,
+        "focus": "alerts",
+        "window": "15m",
+        "reason": "poll"
+      }
+    ],
+    "mid": [
+      {
+        "at": 1776719885000,
+        "focus": "alerts",
+        "window": "15m",
+        "reason": "poll"
+      }
+    ],
+    "after": [
+      {
+        "at": 1776719900000,
+        "focus": "traces",
+        "window": "1h",
+        "reason": "poll"
+      }
+    ],
+    "tracesBefore": 3,
+    "tracesAfter": 4
+  },
+  "twentyFour": {
+    "before": [
+      {
+        "at": 1776719900000,
+        "focus": "traces",
+        "window": "1h",
+        "reason": "poll"
+      }
+    ],
+    "mid": [
+      {
+        "at": 1776719900000,
+        "focus": "traces",
+        "window": "1h",
+        "reason": "poll"
+      }
+    ],
+    "after": [
+      {
+        "at": 1776719960000,
+        "focus": "traces",
+        "window": "24h",
+        "reason": "poll"
+      }
+    ]
+  },
+  "refreshTrace": [
+    {
+      "at": 1776719885000,
+      "focus": "traces",
+      "window": "1h",
+      "reason": "window-loading:qa-window",
+      "alertCount": 6,
+      "traceCount": 3
+    },
+    {
+      "at": 1776719885000,
+      "focus": "traces",
+      "window": "1h",
+      "reason": "window-resolved:qa-window",
+      "alertCount": 6,
+      "traceCount": 3
+    },
+    {
+      "at": 1776719900000,
+      "focus": "traces",
+      "window": "1h",
+      "reason": "poll",
+      "alertCount": 6,
+      "traceCount": 4
+    },
+    {
+      "at": 1776719900000,
+      "focus": "traces",
+      "window": "24h",
+      "reason": "window-loading:qa-window",
+      "alertCount": 6,
+      "traceCount": 4
+    },
+    {
+      "at": 1776719900000,
+      "focus": "traces",
+      "window": "24h",
+      "reason": "window-resolved:qa-window",
+      "alertCount": 6,
+      "traceCount": 4
+    },
+    {
+      "at": 1776719960000,
+      "focus": "traces",
+      "window": "24h",
+      "reason": "poll",
+      "alertCount": 6,
+      "traceCount": 4
+    }
+  ]
+}

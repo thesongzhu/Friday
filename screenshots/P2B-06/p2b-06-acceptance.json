@@ -1,0 +1,415 @@
+{
+  "itemId": "P2B-06",
+  "route": "/settings?tab=providers",
+  "generatedAt": "2026-04-21T10:31:59.236Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 9,
+    "pass": 9,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "P01",
+      "acceptance": "每 provider 一行 · 左 logo 24 + 名 · 中 health dot + latency · 右 配额 + actions",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p01-provider-row-structure.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p01-provider-row-structure.json",
+          "sha256": "955cd1034767ef3b551c255551449801b819895ff42492da89cb6123a87b04d7"
+        },
+        {
+          "path": "screenshots/P2B-06/p01-provider-row-structure.png",
+          "sha256": "bba55aeb248f89ec95ac1f8889b260a098f60bc66d993cc76111ff6152ef24a4"
+        }
+      ],
+      "summary": "rows=5, actions=3/3/3/3/3",
+      "observed": [
+        {
+          "id": "provider-openai",
+          "rowColumns": "95.9062px 79.9219px 332.172px",
+          "logoWidth": 24,
+          "hasHealth": true,
+          "hasLatency": 2,
+          "quotaText": "quota 72%",
+          "actionCount": 3
+        },
+        {
+          "id": "provider-anthropic",
+          "rowColumns": "95.9062px 79.9219px 332.172px",
+          "logoWidth": 24,
+          "hasHealth": true,
+          "hasLatency": 2,
+          "quotaText": "quota 54%",
+          "actionCount": 3
+        },
+        {
+          "id": "provider-azure",
+          "rowColumns": "95.9062px 79.9219px 332.172px",
+          "logoWidth": 24,
+          "hasHealth": true,
+          "hasLatency": 2,
+          "quotaText": "quota 31%",
+          "actionCount": 3
+        },
+        {
+          "id": "provider-local",
+          "rowColumns": "95.9062px 79.9219px 332.172px",
+          "logoWidth": 24,
+          "hasHealth": true,
+          "hasLatency": 2,
+          "quotaText": "quota n/a",
+          "actionCount": 3
+        },
+        {
+          "id": "provider-mistral",
+          "rowColumns": "95.9062px 79.9219px 332.172px",
+          "logoWidth": 24,
+          "hasHealth": true,
+          "hasLatency": 2,
+          "quotaText": "quota 18%",
+          "actionCount": 3
+        }
+      ]
+    },
+    {
+      "rule": 2,
+      "code": "P02",
+      "acceptance": "health dot 3 色 · healthy 绿 / degraded 黄 / offline 红 · 动态脉冲(reduced-motion 下静态)",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p02-health-dots.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p02-health-dots.json",
+          "sha256": "d11b101b479c6e9637aaacacfe7004dad67979d7a7eae2d49b510ab065d1d40c"
+        }
+      ],
+      "summary": "states={\"healthy\":\"--success\",\"degraded\":\"--warning\",\"offline\":\"--error\",\"cooldown\":\"--ink-3\"}, interval=30000",
+      "observed": {
+        "observed": [
+          {
+            "id": "provider-openai",
+            "state": "healthy",
+            "color": "rgb(47, 122, 73)",
+            "tokenMatch": "--success",
+            "animationName": "provider-dot-pulse"
+          },
+          {
+            "id": "provider-anthropic",
+            "state": "degraded",
+            "color": "rgb(143, 84, 19)",
+            "tokenMatch": "--warning",
+            "animationName": "provider-dot-pulse"
+          },
+          {
+            "id": "provider-azure",
+            "state": "offline",
+            "color": "rgb(165, 48, 40)",
+            "tokenMatch": "--error",
+            "animationName": "provider-dot-pulse"
+          },
+          {
+            "id": "provider-local",
+            "state": "cooldown",
+            "color": "rgba(45, 33, 24, 0.56)",
+            "tokenMatch": "--ink-3",
+            "animationName": "provider-dot-pulse"
+          },
+          {
+            "id": "provider-mistral",
+            "state": "healthy",
+            "color": "rgb(47, 122, 73)",
+            "tokenMatch": "--success",
+            "animationName": "provider-dot-pulse"
+          }
+        ],
+        "hookBefore": {
+          "name": "useSystemHealthQuery",
+          "ui": {
+            "status": "healthy",
+            "raw": {
+              "source": "useSystemHealthQuery",
+              "checkedAt": "2026-04-20T21:18:00.000Z"
+            },
+            "refetchInterval": 30000
+          },
+          "config": {
+            "status": "healthy",
+            "raw": {
+              "source": "useSystemHealthQuery",
+              "checkedAt": "2026-04-20T21:18:00.000Z"
+            },
+            "refetchIntervalMs": 30000,
+            "lastPolledAt": 1776719880000,
+            "nextPollAt": 1776719910000,
+            "pollTrace": [
+              {
+                "at": 1776719880000,
+                "status": "healthy"
+              }
+            ]
+          }
+        },
+        "hookAfter": {
+          "name": "useSystemHealthQuery",
+          "ui": {
+            "status": "offline",
+            "raw": {
+              "source": "useSystemHealthQuery",
+              "checkedAt": "2026-04-20T21:18:30.000Z",
+              "providerCount": 5,
+              "unhealthyCount": 3
+            },
+            "refetchInterval": 30000
+          },
+          "config": {
+            "status": "offline",
+            "raw": {
+              "source": "useSystemHealthQuery",
+              "checkedAt": "2026-04-20T21:18:30.000Z",
+              "providerCount": 5,
+              "unhealthyCount": 3
+            },
+            "refetchIntervalMs": 30000,
+            "lastPolledAt": 1776719910000,
+            "nextPollAt": 1776719940000,
+            "pollTrace": [
+              {
+                "at": 1776719880000,
+                "status": "healthy"
+              },
+              {
+                "at": 1776719910000,
+                "status": "offline"
+              }
+            ]
+          }
+        },
+        "reducedObserved": {
+          "animationName": "none",
+          "animationDuration": "0s"
+        },
+        "intervalMs": 30000
+      }
+    },
+    {
+      "rule": 3,
+      "code": "P03",
+      "acceptance": "latency · 显示 p50 / p95 · 数值 mono 字体 · p95 > 1000ms 黄色",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p03-latency-metrics.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p03-latency-metrics.json",
+          "sha256": "524fb43648b6140473c2e4a34a5dab1c2288fdaa08fed14ff615a811c887ea2c"
+        }
+      ],
+      "summary": "p50 530ms | p95 1320ms",
+      "observed": {
+        "p50Text": "p50 530ms",
+        "p95Text": "p95 1320ms",
+        "p50Font": "\"JetBrains Mono\", monospace",
+        "p95Font": "\"JetBrains Mono\", monospace",
+        "p95Color": "rgb(143, 84, 19)",
+        "tokenMatch": "--warning"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "P04",
+      "acceptance": "circuit breaker · 3 态 closed(绿)/ open(红)/ half-open(黄)· tooltip 解释",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p04-circuit-tooltip.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p04-circuit-tooltip.json",
+          "sha256": "3be8e28accce8e413a6e006518c811b47fc49fb790e07d1b2d585efb08b180d5"
+        },
+        {
+          "path": "screenshots/P2B-06/p04-circuit-tooltip.png",
+          "sha256": "21e73eeca5b4f1dd727befdeaafb86db5e2effe8a1d48d90722d21e89572042a"
+        }
+      ],
+      "summary": "closed当前没有命中熔断条件，流量仍走主路径。 | half-open正在小流量试探恢复，下一轮健康检查决定是否回到 closed。 | open熔断已打开，等待冷却结束后才会重试主 provider。",
+      "observed": {
+        "baseObserved": [
+          {
+            "id": "provider-openai",
+            "text": "closed当前没有命中熔断条件，流量仍走主路径。",
+            "tokenMatch": "--success"
+          },
+          {
+            "id": "provider-anthropic",
+            "text": "half-open正在小流量试探恢复，下一轮健康检查决定是否回到 closed。",
+            "tokenMatch": "--warning"
+          },
+          {
+            "id": "provider-azure",
+            "text": "open熔断已打开，等待冷却结束后才会重试主 provider。",
+            "tokenMatch": "--error"
+          }
+        ],
+        "tooltipObserved": {
+          "text": "熔断已打开，等待冷却结束后才会重试主 provider。",
+          "opacity": "0.970839",
+          "chipCenter": 672.0078125,
+          "tooltipCenter": 672
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "P05",
+      "acceptance": "open 时 cooldown 倒计时 · 实时更新 · mm:ss",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p05-cooldown-countdown.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p05-cooldown-countdown.json",
+          "sha256": "5fb818f7412870e8eae4cd7650a7e58c91edca2bed90aac18f8bcc55640f7329"
+        }
+      ],
+      "summary": "cooldown 05:05 -> cooldown 05:04",
+      "observed": {
+        "before": "cooldown 05:05",
+        "after": "cooldown 05:04"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "P06",
+      "acceptance": "edit key · 弹出 modal · input 隐藏(••••)· show/hide toggle",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p06-edit-key-modal.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p06-edit-key-modal.json",
+          "sha256": "c2aa66047062227f6145eb4270de2e8de2012fb8fe96ba9b009f86df1a77955d"
+        },
+        {
+          "path": "screenshots/P2B-06/p06-edit-key-modal.png",
+          "sha256": "9a712d525f10b35dae14c40186dd1edb76411eae39b94009127793d14af98747"
+        }
+      ],
+      "summary": "secret=password -> text",
+      "observed": {
+        "hiddenObserved": {
+          "modalOpen": true,
+          "ariaModal": "true",
+          "activeId": "provider-modal-name",
+          "secretType": "password"
+        },
+        "shownObserved": {
+          "secretType": "text",
+          "toggleText": "隐藏"
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "P07",
+      "acceptance": "test connection 按钮 · 点后 loading 3 秒 · 返回结果 toast",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p07-test-connection.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p07-test-connection.json",
+          "sha256": "30c79b030aa869efbf6602acdc09efb34f58b8ccac3d99d8284387b60a3175cd"
+        }
+      ],
+      "summary": "elapsed=3056.6ms",
+      "observed": {
+        "loadingObserved": {
+          "html": "<span class=\"button-spinner\" aria-hidden=\"true\"></span>测试中",
+          "disabled": true
+        },
+        "completedObserved": {
+          "elapsedMs": 3056.600000023842,
+          "toastText": "SUCCESS连接测试通过 · 843ms"
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "P08",
+      "acceptance": "disable provider · 二次确认 · disabled 后整行置灰 + opacity 0.5",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p08-disable-provider.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p08-disable-provider.json",
+          "sha256": "a7c2f2b8c55e4c364dda98596948d3e707b5031fec77ee92eff74f4dd8158402"
+        },
+        {
+          "path": "screenshots/P2B-06/p08-disable-provider.png",
+          "sha256": "2a8e8c4e751b816bcf0bddd567bbe40be7e1658a2ee405af41b156d6aa070fbc"
+        }
+      ],
+      "summary": "opacity=0.5, class=provider-row is-disabled",
+      "observed": {
+        "confirmObserved": {
+          "title": "停用这个 provider?"
+        },
+        "rowObserved": {
+          "className": "provider-row is-disabled",
+          "opacity": "0.5",
+          "disabled": true
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "P09",
+      "acceptance": "添加 provider · 底部 + 按钮 · 弹出 modal · 预设 5 个官方 preset + \"自定义\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-06/p09-add-provider.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-06/p09-add-provider.json",
+          "sha256": "bddf1c2ccffc962713efb0d1cb5c28866124efc8f42fb2377a0c585221483ebb"
+        }
+      ],
+      "summary": "presets=6, rows=5->6",
+      "observed": {
+        "beforeRows": 5,
+        "modalObserved": {
+          "modalOpen": true,
+          "presets": [
+            "OpenAI",
+            "Anthropic",
+            "Google Gemini",
+            "Azure OpenAI",
+            "Mistral",
+            "自定义"
+          ]
+        },
+        "afterObserved": {
+          "rowCount": 6,
+          "lastRowTitle": "Friday Edge Runtime",
+          "toastText": "SUCCESSProvider 已添加"
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2B-06/p01-provider-row-structure.json",
+    "screenshots/P2B-06/p01-provider-row-structure.png",
+    "screenshots/P2B-06/p02-health-dots.json",
+    "screenshots/P2B-06/p03-latency-metrics.json",
+    "screenshots/P2B-06/p04-circuit-tooltip.json",
+    "screenshots/P2B-06/p04-circuit-tooltip.png",
+    "screenshots/P2B-06/p05-cooldown-countdown.json",
+    "screenshots/P2B-06/p06-edit-key-modal.json",
+    "screenshots/P2B-06/p06-edit-key-modal.png",
+    "screenshots/P2B-06/p07-test-connection.json",
+    "screenshots/P2B-06/p08-disable-provider.json",
+    "screenshots/P2B-06/p08-disable-provider.png",
+    "screenshots/P2B-06/p09-add-provider.json"
+  ]
+}

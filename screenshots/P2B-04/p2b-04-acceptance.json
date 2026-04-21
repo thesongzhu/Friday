@@ -1,0 +1,130 @@
+{
+  "itemId": "P2B-04",
+  "route": "/assistant+/home",
+  "generatedAt": "2026-04-21T10:31:38.471Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 4,
+    "pass": 4,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "L01",
+      "acceptance": "复用 LearningInsightCard · props 不改 · wrap 只负责 data binding",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-04/l01-signature-bindings.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-04/l01-signature-bindings.json",
+          "sha256": "b389eea9dd3f4e132eacad44f369ad539470a6332284042ffadd88ccf67b7552"
+        }
+      ],
+      "summary": "source=true, wrapper=true",
+      "observed": {
+        "sourceSignature": true,
+        "prototypeSignature": true,
+        "wrapperSignature": true,
+        "wrapperUsesBaseCard": true
+      }
+    },
+    {
+      "rule": 2,
+      "code": "L02",
+      "acceptance": "tone 3 档 · positive 绿边 / warning 黄边 / neutral 米边",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-04/l02-tone-borders.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-04/l02-tone-borders.json",
+          "sha256": "8a4f0ad542f77aa0be31d21023ae21668b53acf5e02ca77d669b00b9f7941332"
+        }
+      ],
+      "summary": "insight-route-learning:rgba(47, 122, 73, 0.26) | insight-provider-warning:rgba(184, 106, 23, 0.28) | insight-workflow-neutral:rgba(45, 33, 24, 0.1)",
+      "observed": [
+        {
+          "id": "insight-route-learning",
+          "className": "assistant-insight-card is-positive",
+          "borderColor": "rgba(47, 122, 73, 0.26)"
+        },
+        {
+          "id": "insight-provider-warning",
+          "className": "assistant-insight-card is-warning",
+          "borderColor": "rgba(184, 106, 23, 0.28)"
+        },
+        {
+          "id": "insight-workflow-neutral",
+          "className": "assistant-insight-card is-neutral",
+          "borderColor": "rgba(45, 33, 24, 0.1)"
+        }
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "L03",
+      "acceptance": "点 \"应用建议\" · 跳对应页(skill / workflow / settings)",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-04/l03-apply-routes.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-04/l03-apply-routes.json",
+          "sha256": "add767352d002ab8c62eddbd71d8dbf09152eecfc605b9471e4bb5c05b14461a"
+        }
+      ],
+      "summary": "/skills, /settings?tab=runtime, /workflows",
+      "observed": {
+        "observed": [
+          {
+            "text": "应用建议",
+            "href": "/skills"
+          },
+          {
+            "text": "应用建议",
+            "href": "/settings?tab=runtime"
+          },
+          {
+            "text": "应用建议",
+            "href": "/workflows"
+          }
+        ],
+        "applyRoutes": [
+          "/skills",
+          "/settings?tab=runtime",
+          "/workflows"
+        ]
+      }
+    },
+    {
+      "rule": 4,
+      "code": "L04",
+      "acceptance": "dismiss 写 localStorage friday-insights-dismissed set",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-04/l04-dismiss-storage.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-04/l04-dismiss-storage.json",
+          "sha256": "dc6ddb36c504c0cd68ddae87d18ef0a1b2f20a12c8b78505f914123eae7ddc43"
+        }
+      ],
+      "summary": "storage=[\"insight-route-learning\"]",
+      "observed": {
+        "storage": "[\"insight-route-learning\"]",
+        "cards": [
+          "insight-provider-warning",
+          "insight-workflow-neutral"
+        ]
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2B-04/l01-signature-bindings.json",
+    "screenshots/P2B-04/l02-tone-borders.json",
+    "screenshots/P2B-04/l03-apply-routes.json",
+    "screenshots/P2B-04/l04-dismiss-storage.json"
+  ]
+}

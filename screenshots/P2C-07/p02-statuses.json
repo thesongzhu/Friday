@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-04-21T10:34:31.105Z",
+  "observed": [
+    {
+      "id": "plugin-github",
+      "status": "update-available"
+    },
+    {
+      "id": "plugin-computer-use",
+      "status": "enabled"
+    },
+    {
+      "id": "plugin-workspace-ops",
+      "status": "installed"
+    },
+    {
+      "id": "plugin-release-radar",
+      "status": "disabled"
+    },
+    {
+      "id": "plugin-legacy-slack",
+      "status": "error"
+    }
+  ],
+  "statuses": [
+    "update-available",
+    "enabled",
+    "installed",
+    "disabled",
+    "error"
+  ]
+}

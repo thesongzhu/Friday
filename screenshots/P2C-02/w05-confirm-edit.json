@@ -1,0 +1,73 @@
+{
+  "generatedAt": "2026-04-21T10:33:23.351Z",
+  "before": [
+    "目标：增长 + 合规",
+    "商品：2 个 SKU",
+    "渠道：Amazon / Shopify"
+  ],
+  "after": {
+    "stateName": "step2-products",
+    "step": 2,
+    "selectedGoals": [
+      "增长",
+      "合规"
+    ],
+    "products": [
+      {
+        "id": "product-1",
+        "sku": "SKU-001",
+        "title": "Travel Adapter",
+        "category": "Electronics",
+        "market": "EU"
+      },
+      {
+        "id": "product-2",
+        "sku": "SKU-002",
+        "title": "Storage Rack",
+        "category": "Home",
+        "market": "US"
+      }
+    ],
+    "channels": [
+      "Amazon",
+      "Shopify"
+    ],
+    "draft": {
+      "step": 2,
+      "selectedGoals": [
+        "增长",
+        "合规"
+      ],
+      "products": [
+        {
+          "id": "product-1",
+          "sku": "SKU-001",
+          "title": "Travel Adapter",
+          "category": "Electronics",
+          "market": "EU"
+        },
+        {
+          "id": "product-2",
+          "sku": "SKU-002",
+          "title": "Storage Rack",
+          "category": "Home",
+          "market": "US"
+        }
+      ],
+      "channels": [
+        "Amazon",
+        "Shopify"
+      ],
+      "updatedAt": "2026-04-20T21:18:00.000Z"
+    },
+    "draftSavedAt": "2026-04-20T21:18:00.000Z",
+    "showResumePrompt": false,
+    "stepErrors": {
+      "1": [],
+      "2": [],
+      "3": [],
+      "4": []
+    },
+    "confirmDialog": null
+  }
+}

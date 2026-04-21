@@ -1,0 +1,117 @@
+{
+  "generatedAt": "2026-04-21T10:32:02.210Z",
+  "repoHook": {
+    "exported": true,
+    "repoIntervalMs": 30000
+  },
+  "tokenColors": {
+    "--success": "rgb(47, 122, 73)",
+    "--warning": "rgb(143, 84, 19)",
+    "--error": "rgb(165, 48, 40)",
+    "--ink-3": "rgba(45, 33, 24, 0.56)"
+  },
+  "observed": [
+    {
+      "id": "provider-openai",
+      "state": "healthy",
+      "color": "rgb(47, 122, 73)",
+      "tokenMatch": "--success",
+      "animationName": "provider-dot-pulse"
+    },
+    {
+      "id": "provider-anthropic",
+      "state": "degraded",
+      "color": "rgb(143, 84, 19)",
+      "tokenMatch": "--warning",
+      "animationName": "provider-dot-pulse"
+    },
+    {
+      "id": "provider-azure",
+      "state": "offline",
+      "color": "rgb(165, 48, 40)",
+      "tokenMatch": "--error",
+      "animationName": "provider-dot-pulse"
+    },
+    {
+      "id": "provider-local",
+      "state": "cooldown",
+      "color": "rgba(45, 33, 24, 0.56)",
+      "tokenMatch": "--ink-3",
+      "animationName": "provider-dot-pulse"
+    },
+    {
+      "id": "provider-mistral",
+      "state": "healthy",
+      "color": "rgb(47, 122, 73)",
+      "tokenMatch": "--success",
+      "animationName": "provider-dot-pulse"
+    }
+  ],
+  "hookBefore": {
+    "name": "useSystemHealthQuery",
+    "ui": {
+      "status": "healthy",
+      "raw": {
+        "source": "useSystemHealthQuery",
+        "checkedAt": "2026-04-20T21:18:00.000Z"
+      },
+      "refetchInterval": 30000
+    },
+    "config": {
+      "status": "healthy",
+      "raw": {
+        "source": "useSystemHealthQuery",
+        "checkedAt": "2026-04-20T21:18:00.000Z"
+      },
+      "refetchIntervalMs": 30000,
+      "lastPolledAt": 1776719880000,
+      "nextPollAt": 1776719910000,
+      "pollTrace": [
+        {
+          "at": 1776719880000,
+          "status": "healthy"
+        }
+      ]
+    }
+  },
+  "hookAfter": {
+    "name": "useSystemHealthQuery",
+    "ui": {
+      "status": "offline",
+      "raw": {
+        "source": "useSystemHealthQuery",
+        "checkedAt": "2026-04-20T21:18:30.000Z",
+        "providerCount": 5,
+        "unhealthyCount": 3
+      },
+      "refetchInterval": 30000
+    },
+    "config": {
+      "status": "offline",
+      "raw": {
+        "source": "useSystemHealthQuery",
+        "checkedAt": "2026-04-20T21:18:30.000Z",
+        "providerCount": 5,
+        "unhealthyCount": 3
+      },
+      "refetchIntervalMs": 30000,
+      "lastPolledAt": 1776719910000,
+      "nextPollAt": 1776719940000,
+      "pollTrace": [
+        {
+          "at": 1776719880000,
+          "status": "healthy"
+        },
+        {
+          "at": 1776719910000,
+          "status": "offline"
+        }
+      ]
+    }
+  },
+  "reducedObserved": {
+    "animationName": "none",
+    "animationDuration": "0s"
+  },
+  "intervalMs": 30000
+}

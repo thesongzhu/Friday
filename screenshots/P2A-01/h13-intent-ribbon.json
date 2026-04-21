@@ -1,0 +1,16 @@
+{
+  "generatedAt": "2026-04-21T10:29:46.550Z",
+  "observed": {
+    "pillCount": 4,
+    "lastScrollCall": {
+      "at": "2026-04-21T10:29:46.485Z",
+      "payload": {
+        "left": null,
+        "top": 782.484375,
+        "behavior": "smooth"
+      }
+    },
+    "expectedTop": 782.484375
+  },
+  "screenshot": "screenshots/P2A-01/h13-intent-ribbon.png"
+}

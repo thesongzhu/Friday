@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:31:05.621Z",
+  "before": {
+    "navigationCount": 1,
+    "activeSection": "assistant-approvals-section"
+  },
+  "after": {
+    "navigationCount": 1,
+    "activeSection": "assistant-issues-section",
+    "search": "?dev=1&__state=pending&tab=issues",
+    "animationName": "assistant-section-fade",
+    "animationDuration": "0.15s"
+  }
+}

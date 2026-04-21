@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-04-21T10:29:50.917Z",
+  "observed": [
+    {
+      "id": "healthy-1",
+      "tone": "healthy"
+    },
+    {
+      "id": "warning-1",
+      "tone": "warning"
+    },
+    {
+      "id": "warning-2",
+      "tone": "warning"
+    },
+    {
+      "id": "error-1",
+      "tone": "error"
+    },
+    {
+      "id": "error-2",
+      "tone": "error"
+    },
+    {
+      "id": "healthy-2",
+      "tone": "healthy"
+    },
+    {
+      "id": "warning-3",
+      "tone": "warning"
+    },
+    {
+      "id": "warning-4",
+      "tone": "warning"
+    },
+    {
+      "id": "healthy-3",
+      "tone": "healthy"
+    }
+  ]
+}

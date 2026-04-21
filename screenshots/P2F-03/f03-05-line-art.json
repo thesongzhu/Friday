@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-04-21T10:37:11.386Z",
+  "observed": [
+    {
+      "page": "Home",
+      "svgCount": 1
+    },
+    {
+      "page": "Chat",
+      "svgCount": 1
+    },
+    {
+      "page": "Channels",
+      "svgCount": 1
+    },
+    {
+      "page": "Usage",
+      "svgCount": 1
+    },
+    {
+      "page": "Memory",
+      "svgCount": 1
+    },
+    {
+      "page": "Fleet",
+      "svgCount": 1
+    }
+  ]
+}

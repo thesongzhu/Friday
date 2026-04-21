@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:34:47.572Z",
+  "observed": {
+    "title": "还没有连接的 MCP 服务器",
+    "addLabel": "添加服务器",
+    "docsHref": "https://modelcontextprotocol.io"
+  },
+  "screenshot": "screenshots/P2C-08/m07-empty-state.png"
+}

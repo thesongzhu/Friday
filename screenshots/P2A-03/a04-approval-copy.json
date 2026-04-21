@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:30:01.667Z",
+  "observed": {
+    "titleText": "这是一个为了验证两行截断而故意拉长的审批标题，用来确认在首页条带里不会撑破布局并且仍然保留可读性",
+    "titleClamp": "2",
+    "metaText": "来自 邮件 · 11 分钟前",
+    "metaWhiteSpace": "nowrap",
+    "metaOverflow": "ellipsis"
+  },
+  "screenshot": "screenshots/P2A-03/a04-approval-copy.png"
+}

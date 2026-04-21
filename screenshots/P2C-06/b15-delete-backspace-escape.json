@@ -1,0 +1,131 @@
+{
+  "generatedAt": "2026-04-21T10:34:24.864Z",
+  "afterEscape": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-action-664243-31",
+        "type": "action",
+        "name": "创建 Assistant 卡片",
+        "x": 100,
+        "y": 100,
+        "config": {
+          "lane": "assistant",
+          "priority": "high"
+        }
+      },
+      {
+        "id": "node-logic-664251-57",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 260,
+        "y": 100,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-action-664243-31",
+        "node-logic-664251-57"
+      ]
+    },
+    "historyDepth": 3,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  },
+  "deleteConfirm": "删除选中的节点?",
+  "afterDelete": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-logic-664251-57",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 260,
+        "y": 100,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "至少需要一个 action。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-logic-664251-57"
+      ]
+    },
+    "historyDepth": 5,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  },
+  "backspaceConfirm": "删除选中的节点?",
+  "afterBackspace": {
+    "stateName": "new",
+    "nodes": [],
+    "edges": [],
+    "selection": [],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "至少需要一个 action。"
+      ],
+      "errorNodeIds": []
+    },
+    "historyDepth": 7,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  }
+}

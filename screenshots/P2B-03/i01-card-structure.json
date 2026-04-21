@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:31:31.121Z",
+  "observed": {
+    "hasDot": true,
+    "title": "图像生成 provider 触发熔断",
+    "rootCauseLabel": "根因",
+    "recoveryRows": 2,
+    "dismissText": "Dismiss",
+    "timelineRows": 3
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:32:12.030Z",
+  "confirmObserved": {
+    "title": "停用这个 provider?"
+  },
+  "rowObserved": {
+    "className": "provider-row is-disabled",
+    "opacity": "0.5",
+    "disabled": true
+  },
+  "screenshot": "screenshots/P2B-06/p08-disable-provider.png"
+}

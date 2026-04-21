@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:33:39.487Z",
+  "observed": {
+    "modalTitle": "扫描技能",
+    "modalCopy": "SkillScannerPanel会扫描 workspace 并列出可安装的 skill 清单。",
+    "ariaModal": "true"
+  },
+  "screenshot": "screenshots/P2C-03/s08-scan-modal.png"
+}

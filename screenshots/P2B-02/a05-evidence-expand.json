@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-04-21T10:31:25.055Z",
+  "before": {
+    "open": false
+  },
+  "after": {
+    "open": true,
+    "parsed": {
+      "grantId": "grant-warehouse-shift-2042",
+      "toolCalls": [
+        "inventory.fetch",
+        "supplier.rank",
+        "budget.compare"
+      ],
+      "timestamps": [
+        "2026-04-20T21:09:00.000Z",
+        "2026-04-20T21:18:00.000Z"
+      ]
+    }
+  }
+}

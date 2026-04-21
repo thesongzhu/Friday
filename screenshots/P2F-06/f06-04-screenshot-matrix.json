@@ -1,0 +1,95 @@
+{
+  "generatedAt": "2026-04-21T10:39:16.959Z",
+  "screenshots": [
+    {
+      "width": 1280,
+      "page": "home",
+      "path": "screenshots/P2F-06/f06-04-home-1280.png",
+      "sha256": "1adcc0a2cdc9bf234eb881c8e5b832752763838cab144678d45deec43c65907d"
+    },
+    {
+      "width": 1280,
+      "page": "assistant",
+      "path": "screenshots/P2F-06/f06-04-assistant-1280.png",
+      "sha256": "97fa3ca9afa8a89ee0bdb58b38215a44dcc7f1b11789e9475decf74d4afb17e4"
+    },
+    {
+      "width": 1280,
+      "page": "observability",
+      "path": "screenshots/P2F-06/f06-04-observability-1280.png",
+      "sha256": "c52201142e4c95a57aeda06301bb4cc87dc9d67c26d42ea127971952fe4060d1"
+    },
+    {
+      "width": 1280,
+      "page": "packs",
+      "path": "screenshots/P2F-06/f06-04-packs-1280.png",
+      "sha256": "f31058f38a51c0c5bb4f492ce73739bd1b8a7cd9d6baa25c09c0ff75b2e99654"
+    },
+    {
+      "width": 1280,
+      "page": "settings",
+      "path": "screenshots/P2F-06/f06-04-settings-1280.png",
+      "sha256": "f9f13f2b56732a8288e28040d6b76e0db6f0ed10d5619704a12cb5b63cb4f11c"
+    },
+    {
+      "width": 1440,
+      "page": "home",
+      "path": "screenshots/P2F-06/f06-04-home-1440.png",
+      "sha256": "324df8f85b0e09ee67ea82d112ad049565f609e5b7718544e8dc411f41a21564"
+    },
+    {
+      "width": 1440,
+      "page": "assistant",
+      "path": "screenshots/P2F-06/f06-04-assistant-1440.png",
+      "sha256": "7bfa793beae2f2364d65935e05b710d7b880b73233e2f4154fd191ca99d69af0"
+    },
+    {
+      "width": 1440,
+      "page": "observability",
+      "path": "screenshots/P2F-06/f06-04-observability-1440.png",
+      "sha256": "63ac20499cf2184d070fadd0a68c7555c75ee68da1d18d544e4679327344323a"
+    },
+    {
+      "width": 1440,
+      "page": "packs",
+      "path": "screenshots/P2F-06/f06-04-packs-1440.png",
+      "sha256": "dc689e64c48e13f1cbfac3aa9397f116ecab6c9e394d080d810163635151e022"
+    },
+    {
+      "width": 1440,
+      "page": "settings",
+      "path": "screenshots/P2F-06/f06-04-settings-1440.png",
+      "sha256": "eb6cae21c3ece9825467675212b71b3f8976836edcbd9aa381b0f1daff907680"
+    },
+    {
+      "width": 1920,
+      "page": "home",
+      "path": "screenshots/P2F-06/f06-04-home-1920.png",
+      "sha256": "8436c53eebf0ed8047c8790a52c055c49a4dc9d34338a3a4270c60cc203cab85"
+    },
+    {
+      "width": 1920,
+      "page": "assistant",
+      "path": "screenshots/P2F-06/f06-04-assistant-1920.png",
+      "sha256": "da2af05e38bb4b58a1defe86c4c8704e00c5e3f39aa9154d0d7a0287ca8d1948"
+    },
+    {
+      "width": 1920,
+      "page": "observability",
+      "path": "screenshots/P2F-06/f06-04-observability-1920.png",
+      "sha256": "4275e6620abb6585aef10255b5e12b3d2355863060b2a4e4f2f6108e6bb96dc1"
+    },
+    {
+      "width": 1920,
+      "page": "packs",
+      "path": "screenshots/P2F-06/f06-04-packs-1920.png",
+      "sha256": "4252ace617a9030962e1b75478bc4b0b2e14d096faae4b0de26b00fcfd67f9cd"
+    },
+    {
+      "width": 1920,
+      "page": "settings",
+      "path": "screenshots/P2F-06/f06-04-settings-1920.png",
+      "sha256": "9145836fdd05b046e7dc62b584028e1a5d9716d03d69103135e3e75f397dc58b"
+    }
+  ]
+}

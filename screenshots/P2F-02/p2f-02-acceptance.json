@@ -1,0 +1,307 @@
+{
+  "itemId": "P2F-02",
+  "route": "all",
+  "generatedAt": "2026-04-21T10:36:54.404Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 9,
+    "pass": 9,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "F02-01",
+      "acceptance": "Tweaks 面板右下浮层 240×auto · 开关在 topbar",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-01-panel.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-01-panel.json",
+          "sha256": "253813da2ddc5981960cf67f8b8742e4fe00c4728dc805759f1b37be36166a74"
+        },
+        {
+          "path": "screenshots/P2F-02/f02-01-panel.png",
+          "sha256": "4fe62a32d988f8c457556a5c7b784f7d4602cd7b5ac68a15f8f5536aa36b9c83"
+        }
+      ],
+      "summary": "width=240px right=24px bottom=24px",
+      "observed": {
+        "triggerText": "Tweaks",
+        "width": 240,
+        "height": 620,
+        "rightGap": 24,
+        "bottomGap": 24,
+        "ariaModal": "true"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "F02-02",
+      "acceptance": "分组 5 个 · Density / Radius / Motion / Accent / Locale Preview",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-02-groups.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-02-groups.json",
+          "sha256": "7e5df37d0ff4103adcf1b4620c0ca2212ba8c83fcfa8857273296d105a52360a"
+        },
+        {
+          "path": "screenshots/P2F-02/f02-02-groups.png",
+          "sha256": "cbad464ba1a7470039069949840eedb1d51c4a04d00cac6fc03cd6fe409b4d08"
+        }
+      ],
+      "summary": "密度 / 圆角 / 动效 / 主色强度 / 语言预览",
+      "observed": [
+        "密度",
+        "圆角",
+        "动效",
+        "主色强度",
+        "语言预览"
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "F02-03",
+      "acceptance": "Density · compact / cozy / comfortable · 影响 padding + line-height",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-03-density.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-03-density.json",
+          "sha256": "ba7fd616e9419a798db5e6ccd962fde6b76354dfa6652d8868c2517caffbcb43"
+        }
+      ],
+      "summary": "padding=14px/17px/18px",
+      "observed": {
+        "compact": {
+          "paddingTop": "14px",
+          "paddingBottom": "14px",
+          "lineHeight": "24.96px",
+          "dataset": "compact"
+        },
+        "cozy": {
+          "paddingTop": "17px",
+          "paddingBottom": "17px",
+          "lineHeight": "25.92px",
+          "dataset": "cozy"
+        },
+        "comfortable": {
+          "paddingTop": "18px",
+          "paddingBottom": "18px",
+          "lineHeight": "26.88px",
+          "dataset": "comfortable"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "F02-04",
+      "acceptance": "Radius · sharp(4) / default(14) / soft(22) · 全局 radius 变量替换",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-04-radius.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-04-radius.json",
+          "sha256": "b41260713a71e26aaa646a6456fcdd16f02ad05272f4d6b8240f44cbe262976b"
+        }
+      ],
+      "summary": "4px / 14px / 22px",
+      "observed": {
+        "sharp": {
+          "dataset": "sharp",
+          "radiusMd": "4px",
+          "cardRadius": "4px"
+        },
+        "default": {
+          "dataset": "default",
+          "radiusMd": "14px",
+          "cardRadius": "14px"
+        },
+        "soft": {
+          "dataset": "soft",
+          "radiusMd": "22px",
+          "cardRadius": "22px"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "F02-05",
+      "acceptance": "Motion · full / reduced / none · 匹配 prefers-reduced-motion 默认",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-05-motion.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-05-motion.json",
+          "sha256": "3c94c69d30ec60623660b145a0b30036fcf3ecf5edfd8db44c95918d28570b8f"
+        }
+      ],
+      "summary": "default=reduced none=0.01ms linear",
+      "observed": {
+        "defaultObserved": {
+          "motion": "reduced",
+          "dataset": "reduced"
+        },
+        "observed": {
+          "full": {
+            "dataset": "full",
+            "swift": "160ms cubic-bezier(0.2, 0, 0, 1)",
+            "gentle": "240ms cubic-bezier(0.2, 0, 0, 1)"
+          },
+          "reduced": {
+            "dataset": "reduced",
+            "swift": "120ms cubic-bezier(0.2, 0, 0, 1)",
+            "gentle": "160ms cubic-bezier(0.2, 0, 0, 1)"
+          },
+          "none": {
+            "dataset": "none",
+            "swift": "0.01ms linear",
+            "gentle": "0.01ms linear"
+          }
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "F02-06",
+      "acceptance": "Accent · intensity 50-150% · 改 --accent 饱和度",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-06-accent.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-06-accent.json",
+          "sha256": "846cd4aff99b14264d744117539a334d235d9afdf5db4d840530e7e223c16bd8"
+        }
+      ],
+      "summary": "rgb(185, 144, 103) | rgb(196, 135, 83) | rgb(154, 93, 37) | rgb(205, 111, 38) | rgb(210, 95, 20)",
+      "observed": {
+        "50": {
+          "dataset": "50",
+          "color": "rgb(185, 144, 103)"
+        },
+        "75": {
+          "dataset": "75",
+          "color": "rgb(196, 135, 83)"
+        },
+        "100": {
+          "dataset": "100",
+          "color": "rgb(154, 93, 37)"
+        },
+        "125": {
+          "dataset": "125",
+          "color": "rgb(205, 111, 38)"
+        },
+        "150": {
+          "dataset": "150",
+          "color": "rgb(210, 95, 20)"
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "F02-07",
+      "acceptance": "Locale Preview · zh / en · 不改 friday-locale · 只临时 preview",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-07-locale-preview.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-07-locale-preview.json",
+          "sha256": "b033a4cea233fac888f1cb764cffdb7d3be48b6a2d1a48ff5dd9e3906ead5795"
+        },
+        {
+          "path": "screenshots/P2F-02/f02-07-locale-preview.png",
+          "sha256": "a3904cc439e85cc4934bba01fdef8c16080799934220bdf6077d00198787ae2f"
+        }
+      ],
+      "summary": "locale=zh render=en storage=zh",
+      "observed": {
+        "locale": "zh",
+        "renderLocale": "en",
+        "storageLocale": "zh",
+        "bodyLocale": "en",
+        "heading": "Home"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "F02-08",
+      "acceptance": "切换立刻生效 · CSS variables 改 · 无 flash",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-08-live-apply.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-08-live-apply.json",
+          "sha256": "e73ad3cd1325dd6dc2fb5509534510fd7f3556721b9050118e536c2c695a98f4"
+        }
+      ],
+      "summary": "14px -> 4px",
+      "observed": {
+        "before": "14px",
+        "after": "4px",
+        "navEntriesBefore": 1,
+        "navEntriesAfter": 1,
+        "splashVisible": false
+      }
+    },
+    {
+      "rule": 9,
+      "code": "F02-09",
+      "acceptance": "localStorage 持久化 · 键 friday-tweaks · reload 保留",
+      "status": "PASS",
+      "evidence": "screenshots/P2F-02/f02-09-persist.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2F-02/f02-09-persist.json",
+          "sha256": "a996e43c08a0cb02d978d530b89dd5606b163ccb0234db92c2c473513ec37d4e"
+        },
+        {
+          "path": "screenshots/P2F-02/f02-09-persist.png",
+          "sha256": "d1e2836afb1898024373c6ab43662df84ea363887e572178283ab2b9f84bfe82"
+        }
+      ],
+      "summary": "{\"density\":\"compact\",\"radius\":\"soft\",\"motion\":\"full\",\"accentIntensity\":\"150\",\"localePreview\":\"zh\"}",
+      "observed": {
+        "beforeReload": {
+          "storage": "{\"density\":\"compact\",\"radius\":\"soft\",\"motion\":\"full\",\"accentIntensity\":\"150\",\"localePreview\":\"zh\"}",
+          "tweaks": {
+            "density": "compact",
+            "radius": "soft",
+            "motion": "full",
+            "accentIntensity": "150",
+            "localePreview": "zh"
+          }
+        },
+        "afterReload": {
+          "tweaks": {
+            "density": "compact",
+            "radius": "soft",
+            "motion": "full",
+            "accentIntensity": "150",
+            "localePreview": "zh"
+          },
+          "storage": "{\"density\":\"compact\",\"radius\":\"soft\",\"motion\":\"full\",\"accentIntensity\":\"150\",\"localePreview\":\"zh\"}"
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2F-02/f02-01-panel.json",
+    "screenshots/P2F-02/f02-01-panel.png",
+    "screenshots/P2F-02/f02-02-groups.json",
+    "screenshots/P2F-02/f02-02-groups.png",
+    "screenshots/P2F-02/f02-03-density.json",
+    "screenshots/P2F-02/f02-04-radius.json",
+    "screenshots/P2F-02/f02-05-motion.json",
+    "screenshots/P2F-02/f02-06-accent.json",
+    "screenshots/P2F-02/f02-07-locale-preview.json",
+    "screenshots/P2F-02/f02-07-locale-preview.png",
+    "screenshots/P2F-02/f02-08-live-apply.json",
+    "screenshots/P2F-02/f02-09-persist.json",
+    "screenshots/P2F-02/f02-09-persist.png"
+  ]
+}

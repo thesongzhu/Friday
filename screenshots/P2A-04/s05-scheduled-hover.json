@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:30:10.209Z",
+  "before": {
+    "background": "rgba(255, 255, 255, 0.62)",
+    "token": null
+  },
+  "after": {
+    "background": "rgb(245, 236, 219)",
+    "token": "--bg-sunken",
+    "cursor": "pointer",
+    "href": "/automations?automationId=qa-hover-auto"
+  },
+  "route": "/automations?automationId=qa-hover-auto",
+  "screenshot": "screenshots/P2A-04/s05-scheduled-hover.png"
+}

@@ -1,0 +1,1324 @@
+{
+  "generatedAt": "2026-04-21T10:35:22.849Z",
+  "before": {
+    "chips": [
+      "7d ×",
+      "channel-shopify ×",
+      "chat ×"
+    ],
+    "clearAll": "clear all"
+  },
+  "mid": {
+    "stateName": "detail",
+    "rows": [
+      {
+        "id": "session-replenish-watch",
+        "title": {
+          "zh": "跨境补货监控",
+          "en": "Cross-border replenishment watch"
+        },
+        "channel": "Amazon",
+        "type": "chat",
+        "lastMessageAt": "14:18",
+        "count": 17,
+        "status": "active",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T21:18:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-replenish-watch-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T21:17:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T21:16:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T21:15:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T21:14:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T21:13:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T21:12:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T21:11:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T21:10:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T21:09:00.000Z"
+          }
+        ],
+        "searchText": "跨境补货监控 Cross-border replenishment watch Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-release-guard",
+        "title": {
+          "zh": "发布值守回路",
+          "en": "Release guard loop"
+        },
+        "channel": "GitHub",
+        "type": "chat",
+        "lastMessageAt": "13:31",
+        "count": 12,
+        "status": "active",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T20:30:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-release-guard-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T20:30:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T20:29:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T20:28:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:27:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:26:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:25:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:24:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:23:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:22:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:21:00.000Z"
+          }
+        ],
+        "searchText": "发布值守回路 Release guard loop Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-margin-patrol",
+        "title": {
+          "zh": "利润波动巡检",
+          "en": "Margin patrol"
+        },
+        "channel": "Finance",
+        "type": "chat",
+        "lastMessageAt": "13:12",
+        "count": 14,
+        "status": "idle",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T20:14:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-margin-patrol-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T20:14:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T20:13:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T20:12:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:11:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:10:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:09:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:08:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:07:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:06:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:05:00.000Z"
+          }
+        ],
+        "searchText": "利润波动巡检 Margin patrol Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-creative-qa",
+        "title": {
+          "zh": "素材 QA 回看",
+          "en": "Creative QA review"
+        },
+        "channel": "TikTok",
+        "type": "chat",
+        "lastMessageAt": "12:26",
+        "count": 8,
+        "status": "active",
+        "channelId": "channel-tiktok",
+        "lastMessageIso": "2026-04-20T19:26:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-creative-qa-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:26:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:25:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:24:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:23:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:22:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:21:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:20:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:19:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:18:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:17:00.000Z"
+          }
+        ],
+        "searchText": "素材 QA 回看 Creative QA review Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-refund-triage",
+        "title": {
+          "zh": "退款异常排查",
+          "en": "Refund anomaly triage"
+        },
+        "channel": "Shopify",
+        "type": "chat",
+        "lastMessageAt": "12:10",
+        "count": 16,
+        "status": "warning",
+        "channelId": "channel-shopify",
+        "lastMessageIso": "2026-04-20T19:10:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-refund-triage-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:10:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:09:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:08:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:07:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:06:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:05:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:04:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:03:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:02:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:01:00.000Z"
+          }
+        ],
+        "searchText": "退款异常排查 Refund anomaly triage Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      }
+    ],
+    "selectedSessionId": "session-refund-triage",
+    "search": "",
+    "timeFilter": "7d",
+    "channelFilters": [],
+    "typeFilters": [
+      "chat"
+    ],
+    "previewSnapshot": {
+      "sessionId": "session-refund-triage",
+      "messages": [
+        {
+          "id": "session-refund-triage-msg-1",
+          "role": "user",
+          "text": "[object Object] #1",
+          "at": "2026-04-20T19:10:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-2",
+          "role": "tool",
+          "text": "[object Object] #2",
+          "at": "2026-04-20T19:09:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-3",
+          "role": "assistant",
+          "text": "[object Object] #3",
+          "at": "2026-04-20T19:08:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-4",
+          "role": "user",
+          "text": "[object Object] #4",
+          "at": "2026-04-20T19:07:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-5",
+          "role": "assistant",
+          "text": "[object Object] #5",
+          "at": "2026-04-20T19:06:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-6",
+          "role": "tool",
+          "text": "[object Object] #6",
+          "at": "2026-04-20T19:05:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-7",
+          "role": "user",
+          "text": "[object Object] #7",
+          "at": "2026-04-20T19:04:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-8",
+          "role": "tool",
+          "text": "[object Object] #8",
+          "at": "2026-04-20T19:03:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-9",
+          "role": "assistant",
+          "text": "[object Object] #9",
+          "at": "2026-04-20T19:02:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-10",
+          "role": "user",
+          "text": "[object Object] #10",
+          "at": "2026-04-20T19:01:00.000Z"
+        }
+      ],
+      "refreshedAt": "2026-04-20T21:18:00.000Z"
+    },
+    "archivedIds": [],
+    "deletedIds": []
+  },
+  "after": {
+    "stateName": "detail",
+    "rows": [
+      {
+        "id": "session-replenish-watch",
+        "title": {
+          "zh": "跨境补货监控",
+          "en": "Cross-border replenishment watch"
+        },
+        "channel": "Amazon",
+        "type": "chat",
+        "lastMessageAt": "14:18",
+        "count": 17,
+        "status": "active",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T21:18:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-replenish-watch-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T21:17:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T21:16:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T21:15:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T21:14:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T21:13:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T21:12:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T21:11:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T21:10:00.000Z"
+          },
+          {
+            "id": "session-replenish-watch-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T21:09:00.000Z"
+          }
+        ],
+        "searchText": "跨境补货监控 Cross-border replenishment watch Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-provider-circuit",
+        "title": {
+          "zh": "provider 熔断回补",
+          "en": "Provider circuit recovery"
+        },
+        "channel": "System",
+        "type": "workflow",
+        "lastMessageAt": "14:05",
+        "count": 23,
+        "status": "warning",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T21:02:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-provider-circuit-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T21:02:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T21:01:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T21:00:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:59:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:58:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:57:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:56:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:55:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:54:00.000Z"
+          },
+          {
+            "id": "session-provider-circuit-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:53:00.000Z"
+          }
+        ],
+        "searchText": "provider 熔断回补 Provider circuit recovery Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-support-drain",
+        "title": {
+          "zh": "客服工单消峰",
+          "en": "Support drain"
+        },
+        "channel": "Slack",
+        "type": "automation",
+        "lastMessageAt": "13:44",
+        "count": 9,
+        "status": "idle",
+        "channelId": "channel-shopify",
+        "lastMessageIso": "2026-04-20T20:46:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-support-drain-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T20:46:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T20:45:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T20:44:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:43:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:42:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:41:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:40:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:39:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:38:00.000Z"
+          },
+          {
+            "id": "session-support-drain-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:37:00.000Z"
+          }
+        ],
+        "searchText": "客服工单消峰 Support drain Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-release-guard",
+        "title": {
+          "zh": "发布值守回路",
+          "en": "Release guard loop"
+        },
+        "channel": "GitHub",
+        "type": "chat",
+        "lastMessageAt": "13:31",
+        "count": 12,
+        "status": "active",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T20:30:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-release-guard-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T20:30:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T20:29:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T20:28:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:27:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:26:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:25:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:24:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:23:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:22:00.000Z"
+          },
+          {
+            "id": "session-release-guard-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:21:00.000Z"
+          }
+        ],
+        "searchText": "发布值守回路 Release guard loop Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-margin-patrol",
+        "title": {
+          "zh": "利润波动巡检",
+          "en": "Margin patrol"
+        },
+        "channel": "Finance",
+        "type": "chat",
+        "lastMessageAt": "13:12",
+        "count": 14,
+        "status": "idle",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T20:14:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-margin-patrol-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T20:14:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T20:13:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T20:12:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T20:11:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T20:10:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T20:09:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T20:08:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T20:07:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T20:06:00.000Z"
+          },
+          {
+            "id": "session-margin-patrol-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T20:05:00.000Z"
+          }
+        ],
+        "searchText": "利润波动巡检 Margin patrol Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-device-guard",
+        "title": {
+          "zh": "设备守护排查",
+          "en": "Device guard triage"
+        },
+        "channel": "Fleet",
+        "type": "workflow",
+        "lastMessageAt": "12:57",
+        "count": 11,
+        "status": "warning",
+        "channelId": "channel-shopify",
+        "lastMessageIso": "2026-04-20T19:58:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-device-guard-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:58:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:57:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:56:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:55:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:54:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:53:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:52:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:51:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:50:00.000Z"
+          },
+          {
+            "id": "session-device-guard-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:49:00.000Z"
+          }
+        ],
+        "searchText": "设备守护排查 Device guard triage Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-policy-sweep",
+        "title": {
+          "zh": "策略审计清扫",
+          "en": "Policy sweep"
+        },
+        "channel": "Policy",
+        "type": "automation",
+        "lastMessageAt": "12:41",
+        "count": 19,
+        "status": "idle",
+        "channelId": "channel-shopify",
+        "lastMessageIso": "2026-04-20T19:42:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-policy-sweep-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:42:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:41:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:40:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:39:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:38:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:37:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:36:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:35:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:34:00.000Z"
+          },
+          {
+            "id": "session-policy-sweep-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:33:00.000Z"
+          }
+        ],
+        "searchText": "策略审计清扫 Policy sweep Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-creative-qa",
+        "title": {
+          "zh": "素材 QA 回看",
+          "en": "Creative QA review"
+        },
+        "channel": "TikTok",
+        "type": "chat",
+        "lastMessageAt": "12:26",
+        "count": 8,
+        "status": "active",
+        "channelId": "channel-tiktok",
+        "lastMessageIso": "2026-04-20T19:26:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-creative-qa-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:26:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:25:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:24:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:23:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:22:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:21:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:20:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:19:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:18:00.000Z"
+          },
+          {
+            "id": "session-creative-qa-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:17:00.000Z"
+          }
+        ],
+        "searchText": "素材 QA 回看 Creative QA review Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-refund-triage",
+        "title": {
+          "zh": "退款异常排查",
+          "en": "Refund anomaly triage"
+        },
+        "channel": "Shopify",
+        "type": "chat",
+        "lastMessageAt": "12:10",
+        "count": 16,
+        "status": "warning",
+        "channelId": "channel-shopify",
+        "lastMessageIso": "2026-04-20T19:10:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-refund-triage-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T19:10:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T19:09:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T19:08:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T19:07:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T19:06:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T19:05:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T19:04:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T19:03:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T19:02:00.000Z"
+          },
+          {
+            "id": "session-refund-triage-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T19:01:00.000Z"
+          }
+        ],
+        "searchText": "退款异常排查 Refund anomaly triage Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      },
+      {
+        "id": "session-night-ops",
+        "title": {
+          "zh": "夜间自动化值守",
+          "en": "Night ops watch"
+        },
+        "channel": "System",
+        "type": "automation",
+        "lastMessageAt": "11:52",
+        "count": 27,
+        "status": "idle",
+        "channelId": "channel-amazon",
+        "lastMessageIso": "2026-04-20T18:54:00.000Z",
+        "previewMessages": [
+          {
+            "id": "session-night-ops-msg-1",
+            "role": "user",
+            "text": "[object Object] #1",
+            "at": "2026-04-20T18:54:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-2",
+            "role": "tool",
+            "text": "[object Object] #2",
+            "at": "2026-04-20T18:53:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-3",
+            "role": "assistant",
+            "text": "[object Object] #3",
+            "at": "2026-04-20T18:52:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-4",
+            "role": "user",
+            "text": "[object Object] #4",
+            "at": "2026-04-20T18:51:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-5",
+            "role": "assistant",
+            "text": "[object Object] #5",
+            "at": "2026-04-20T18:50:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-6",
+            "role": "tool",
+            "text": "[object Object] #6",
+            "at": "2026-04-20T18:49:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-7",
+            "role": "user",
+            "text": "[object Object] #7",
+            "at": "2026-04-20T18:48:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-8",
+            "role": "tool",
+            "text": "[object Object] #8",
+            "at": "2026-04-20T18:47:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-9",
+            "role": "assistant",
+            "text": "[object Object] #9",
+            "at": "2026-04-20T18:46:00.000Z"
+          },
+          {
+            "id": "session-night-ops-msg-10",
+            "role": "user",
+            "text": "[object Object] #10",
+            "at": "2026-04-20T18:45:00.000Z"
+          }
+        ],
+        "searchText": "夜间自动化值守 Night ops watch Friday 正在对照今天的阈值和回放记录。 Friday is checking today's thresholds and replay records. 我已经把最近的异常上下文串起来了。 I've stitched together the recent anomaly context. 下一步建议先核对渠道配置差异。 The next step is to compare the channel config diff. 如果你批准，我会把结果同步到自动化。 If you approve, I'll sync the result into automations."
+      }
+    ],
+    "selectedSessionId": "session-refund-triage",
+    "search": "",
+    "timeFilter": "24h",
+    "channelFilters": [],
+    "typeFilters": [],
+    "previewSnapshot": {
+      "sessionId": "session-refund-triage",
+      "messages": [
+        {
+          "id": "session-refund-triage-msg-1",
+          "role": "user",
+          "text": "[object Object] #1",
+          "at": "2026-04-20T19:10:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-2",
+          "role": "tool",
+          "text": "[object Object] #2",
+          "at": "2026-04-20T19:09:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-3",
+          "role": "assistant",
+          "text": "[object Object] #3",
+          "at": "2026-04-20T19:08:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-4",
+          "role": "user",
+          "text": "[object Object] #4",
+          "at": "2026-04-20T19:07:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-5",
+          "role": "assistant",
+          "text": "[object Object] #5",
+          "at": "2026-04-20T19:06:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-6",
+          "role": "tool",
+          "text": "[object Object] #6",
+          "at": "2026-04-20T19:05:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-7",
+          "role": "user",
+          "text": "[object Object] #7",
+          "at": "2026-04-20T19:04:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-8",
+          "role": "tool",
+          "text": "[object Object] #8",
+          "at": "2026-04-20T19:03:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-9",
+          "role": "assistant",
+          "text": "[object Object] #9",
+          "at": "2026-04-20T19:02:00.000Z"
+        },
+        {
+          "id": "session-refund-triage-msg-10",
+          "role": "user",
+          "text": "[object Object] #10",
+          "at": "2026-04-20T19:01:00.000Z"
+        }
+      ],
+      "refreshedAt": "2026-04-20T21:18:00.000Z"
+    },
+    "archivedIds": [],
+    "deletedIds": []
+  }
+}

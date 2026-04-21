@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:31:48.861Z",
+  "dirtyObserved": {
+    "defaultPrevented": true,
+    "prevented": true,
+    "returnValue": ""
+  },
+  "cleanObserved": {
+    "defaultPrevented": false,
+    "prevented": false,
+    "returnValue": null
+  }
+}

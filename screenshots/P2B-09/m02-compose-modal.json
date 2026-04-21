@@ -1,0 +1,29 @@
+{
+  "generatedAt": "2026-04-21T10:32:51.924Z",
+  "steps": [
+    "screenshots/P2B-09/m02-compose-step-1.json",
+    "screenshots/P2B-09/m02-compose-step-2.json",
+    "screenshots/P2B-09/m02-compose-step-3.json"
+  ],
+  "step1": {
+    "modalStep": "1",
+    "optionCount": 23,
+    "nameValue": "新的延迟告警"
+  },
+  "step2": {
+    "modalStep": "2",
+    "comparatorOptions": [
+      ">",
+      ">=",
+      "<",
+      "<=",
+      "="
+    ],
+    "thresholdValue": "2000"
+  },
+  "step3": {
+    "modalStep": "3",
+    "channelCount": 7,
+    "checkedCount": 1
+  }
+}

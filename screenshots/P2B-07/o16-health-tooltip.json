@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:32:36.034Z",
+  "beforeObserved": {
+    "cpuPoints": 60,
+    "memoryPoints": 60,
+    "queuePoints": 60
+  },
+  "hoverObserved": {
+    "text": "14:18 · 44%",
+    "opacity": "1"
+  },
+  "screenshot": "screenshots/P2B-07/o16-health-tooltip.png"
+}

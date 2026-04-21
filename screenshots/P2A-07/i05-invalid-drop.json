@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:30:50.360Z",
+  "tokenColors": {
+    "--accent": "rgb(154, 93, 37)"
+  },
+  "observed": {
+    "duringDrag": {
+      "active": true,
+      "borderStyle": "dashed",
+      "borderColor": "rgb(154, 93, 37)",
+      "tokenMatch": "--accent"
+    },
+    "toastText": "ERROR不支持的附件类型"
+  }
+}

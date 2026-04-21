@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-04-21T10:33:08.425Z",
+  "tokenColors": {
+    "--accent-soft": "rgba(200, 122, 60, 0.14)"
+  },
+  "activeObserved": {
+    "active": [
+      {
+        "label": "release",
+        "background": "rgba(200, 122, 60, 0.14)",
+        "tokenMatch": "--accent-soft"
+      },
+      {
+        "label": "security",
+        "background": "rgba(200, 122, 60, 0.14)",
+        "tokenMatch": "--accent-soft"
+      }
+    ],
+    "clearAllVisible": true
+  },
+  "cleared": {
+    "stateName": "full-catalog",
+    "search": "",
+    "committedSearch": "",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  }
+}

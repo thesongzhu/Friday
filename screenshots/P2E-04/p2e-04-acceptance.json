@@ -1,0 +1,860 @@
+{
+  "itemId": "P2E-04",
+  "route": "/flow/:wizardId",
+  "generatedAt": "2026-04-21T10:36:20.304Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 13,
+    "pass": 13,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "GF01",
+      "acceptance": "URL 参数 wizardId · 从 guided registry 加载 · 不存在跳 /assistant",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf01-guided-routing.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf01-guided-routing.json",
+          "sha256": "42c32bccce482fe7b1270eabfbf5b66c92e9f96ee0bdfad4d576bcdaa1aee3bc"
+        }
+      ],
+      "summary": "inventory-triage / invalid->/assistant",
+      "observed": {
+        "validObserved": {
+          "stateName": "goal-card",
+          "wizardId": "inventory-triage",
+          "stepIndex": 0,
+          "activeStepId": "intent",
+          "completedStepIds": [],
+          "skippedStepIds": [],
+          "selectedChoiceId": null,
+          "investigationExpanded": false,
+          "helpOpen": false,
+          "transitionTrace": [],
+          "fetchTrace": [
+            {
+              "wizardId": "inventory-triage",
+              "at": "2026-04-20T21:18:00.000Z",
+              "source": "guided-registry"
+            }
+          ],
+          "refetchCount": 1,
+          "storage": null
+        },
+        "invalidObserved": {
+          "route": "/assistant"
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "GF02",
+      "acceptance": "布局 · 顶 journey tracker 80px · 主区 2 列 · 左 step 自动 · 右 investigation panel 360",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf02-guided-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf02-guided-layout.json",
+          "sha256": "5a0e46301c23a576bfd6ab3841f244a51a589e4d60952b8cf83e29bd6e842cca"
+        },
+        {
+          "path": "screenshots/P2E-04/gf02-guided-layout.png",
+          "sha256": "0c8787d96e4df7138d5a42759be56cf164f26bd5c1cfb3b1f0f2dcd46b14367b"
+        }
+      ],
+      "summary": "tracker=88.15625 panel=360",
+      "observed": {
+        "trackerHeight": 88.15625,
+        "layoutColumns": "448px 360px",
+        "panelWidth": 360
+      }
+    },
+    {
+      "rule": 3,
+      "code": "GF03",
+      "acceptance": "journey tracker · 显示所有 step · 完成绿勾 · 当前琥珀 · 未来灰 · 分支 fork 图",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf03-guided-tracker.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf03-guided-tracker.json",
+          "sha256": "85f645b9a84c62d155238e93f2058dc0fddb45e8cbe9d95c8b8ecb7a533b3379"
+        }
+      ],
+      "summary": "icons=•,⑂,3,4 classes=guided-step-pill is-complete | guided-step-pill is-current | guided-step-pill | guided-step-pill",
+      "observed": {
+        "before": [
+          {
+            "id": "intent",
+            "icon": "•",
+            "className": "guided-step-pill is-current"
+          },
+          {
+            "id": "choice",
+            "icon": "⑂",
+            "className": "guided-step-pill"
+          },
+          {
+            "id": "action",
+            "icon": "3",
+            "className": "guided-step-pill"
+          },
+          {
+            "id": "review",
+            "icon": "4",
+            "className": "guided-step-pill"
+          }
+        ],
+        "after": [
+          {
+            "id": "intent",
+            "className": "guided-step-pill is-complete",
+            "color": "rgb(45, 33, 24)",
+            "tokenMatch": null
+          },
+          {
+            "id": "choice",
+            "className": "guided-step-pill is-current",
+            "color": "rgb(45, 33, 24)",
+            "tokenMatch": null
+          },
+          {
+            "id": "action",
+            "className": "guided-step-pill",
+            "color": "rgb(45, 33, 24)",
+            "tokenMatch": null
+          },
+          {
+            "id": "review",
+            "className": "guided-step-pill",
+            "color": "rgb(45, 33, 24)",
+            "tokenMatch": null
+          }
+        ],
+        "tokenColors": {
+          "--success": "rgb(47, 122, 73)",
+          "--accent": "rgb(154, 93, 37)",
+          "--ink-3": "rgba(45, 33, 24, 0.56)"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "GF04",
+      "acceptance": "step 内容 · 按 step.kind 渲染 goal-card / choice-card / one-click-action / plan-review-visual",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf04-guided-step-kinds.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf04-guided-step-kinds.json",
+          "sha256": "a501090412327dc970081c54dcc026da9efacb36fbb48467e03a0196ca546dd1"
+        }
+      ],
+      "summary": "intent -> choice -> action -> review",
+      "observed": [
+        {
+          "state": {
+            "stateName": "goal-card",
+            "wizardId": "inventory-triage",
+            "stepIndex": 0,
+            "activeStepId": "intent",
+            "completedStepIds": [],
+            "skippedStepIds": [],
+            "selectedChoiceId": null,
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 0,
+                "stateName": "goal-card",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 0,
+              "selectedChoiceId": null,
+              "completedStepIds": [],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          },
+          "hasGoalSummary": true,
+          "hasChoiceGrid": false,
+          "hasActionDetail": false,
+          "reviewCount": 0
+        },
+        {
+          "state": {
+            "stateName": "choice",
+            "wizardId": "inventory-triage",
+            "stepIndex": 1,
+            "activeStepId": "choice",
+            "completedStepIds": [],
+            "skippedStepIds": [],
+            "selectedChoiceId": null,
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 0,
+                "stateName": "goal-card",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 1,
+                "stateName": "choice",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 1,
+              "selectedChoiceId": null,
+              "completedStepIds": [],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          },
+          "hasGoalSummary": false,
+          "hasChoiceGrid": true,
+          "hasActionDetail": false,
+          "reviewCount": 0
+        },
+        {
+          "state": {
+            "stateName": "action",
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "activeStepId": "action",
+            "completedStepIds": [],
+            "skippedStepIds": [],
+            "selectedChoiceId": null,
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 0,
+                "stateName": "goal-card",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 1,
+                "stateName": "choice",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 2,
+                "stateName": "action",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 2,
+              "selectedChoiceId": null,
+              "completedStepIds": [],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          },
+          "hasGoalSummary": false,
+          "hasChoiceGrid": false,
+          "hasActionDetail": true,
+          "reviewCount": 0
+        },
+        {
+          "state": {
+            "stateName": "journey-tracker",
+            "wizardId": "inventory-triage",
+            "stepIndex": 3,
+            "activeStepId": "review",
+            "completedStepIds": [],
+            "skippedStepIds": [],
+            "selectedChoiceId": null,
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 0,
+                "stateName": "goal-card",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 1,
+                "stateName": "choice",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 2,
+                "stateName": "action",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 3,
+                "stateName": "journey-tracker",
+                "reason": "qa-set",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 3,
+              "selectedChoiceId": null,
+              "completedStepIds": [],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          },
+          "hasGoalSummary": false,
+          "hasChoiceGrid": false,
+          "hasActionDetail": false,
+          "reviewCount": 3
+        }
+      ]
+    },
+    {
+      "rule": 5,
+      "code": "GF05",
+      "acceptance": "investigation panel · 显示 Friday 正在做的调查 · 有 spinner · 可展开详情",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf05-guided-investigation.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf05-guided-investigation.json",
+          "sha256": "aa7d889795cf43ea59a258468e1215af8c011988ed3b067e011398feca0a8168"
+        }
+      ],
+      "summary": "Friday 正在调查 / detail=true",
+      "observed": {
+        "before": {
+          "title": "Friday 正在调查",
+          "spinnerPresent": true,
+          "detailVisible": false
+        },
+        "after": {
+          "detailVisible": true,
+          "detailText": "Friday 正在交叉比对 Amazon EU 的库存天数、供应商切换成本、退款波峰和广告节奏，先把真正影响补货窗口的变量圈出来。"
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "GF06",
+      "acceptance": "step-progress bar 顶部 · 当前 step / 总 step · 百分比",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf06-guided-progress.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf06-guided-progress.json",
+          "sha256": "f543d72200a1958fb05c36b5964a57d8cbe5ac7e527653c2d394dfceffddb487"
+        }
+      ],
+      "summary": "第 3 / 4 步 / 50%",
+      "observed": {
+        "label": "第 3 / 4 步",
+        "percentText": "50%",
+        "fillWidth": "50%"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "GF07",
+      "acceptance": "choice-card · 选择后自动进下一 step · 轻过渡",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf07-guided-choice-auto-next.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf07-guided-choice-auto-next.json",
+          "sha256": "fad61fc55a91fe54f75c65742ba12a8f9f99ee895f0591d1c39bcdafa3ec9735"
+        }
+      ],
+      "summary": "latency=199.4ms",
+      "observed": {
+        "observed": {
+          "latencyMs": 199.40000009536743,
+          "transitionDuration": "0.16s, 0.16s, 0.16s",
+          "endState": {
+            "stateName": "action",
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "activeStepId": "action",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "selectedChoiceId": "protect-conversion",
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 1,
+                "stateName": "choice",
+                "reason": "next",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 2,
+                "stateName": "action",
+                "reason": "choice",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 2,
+              "selectedChoiceId": "protect-conversion",
+              "completedStepIds": [
+                "intent",
+                "choice"
+              ],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          }
+        },
+        "firstDurationMs": 160
+      }
+    },
+    {
+      "rule": 8,
+      "code": "GF08",
+      "acceptance": "回退 · 左下角上一步 · 保留 state · 不 re-fetch",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf08-guided-prev.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf08-guided-prev.json",
+          "sha256": "0bf78e532959df2f817c87a0e82bc5bd2f61b7a55b66ca55444b1bf692633bc0"
+        }
+      ],
+      "summary": "step 2 -> 1, fetch=1",
+      "observed": {
+        "before": {
+          "stateName": "action",
+          "wizardId": "inventory-triage",
+          "stepIndex": 2,
+          "activeStepId": "action",
+          "completedStepIds": [
+            "intent",
+            "choice"
+          ],
+          "skippedStepIds": [],
+          "selectedChoiceId": "reduce-risk",
+          "investigationExpanded": false,
+          "helpOpen": false,
+          "transitionTrace": [
+            {
+              "stepIndex": 1,
+              "stateName": "choice",
+              "reason": "next",
+              "at": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "stepIndex": 2,
+              "stateName": "action",
+              "reason": "choice",
+              "at": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "fetchTrace": [
+            {
+              "wizardId": "inventory-triage",
+              "at": "2026-04-20T21:18:00.000Z",
+              "source": "guided-registry"
+            }
+          ],
+          "refetchCount": 1,
+          "storage": {
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "selectedChoiceId": "reduce-risk",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "investigationExpanded": false,
+            "helpOpen": false
+          }
+        },
+        "after": {
+          "stateName": "choice",
+          "wizardId": "inventory-triage",
+          "stepIndex": 1,
+          "activeStepId": "choice",
+          "completedStepIds": [
+            "intent",
+            "choice"
+          ],
+          "skippedStepIds": [],
+          "selectedChoiceId": "reduce-risk",
+          "investigationExpanded": false,
+          "helpOpen": false,
+          "transitionTrace": [
+            {
+              "stepIndex": 1,
+              "stateName": "choice",
+              "reason": "next",
+              "at": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "stepIndex": 2,
+              "stateName": "action",
+              "reason": "choice",
+              "at": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "stepIndex": 1,
+              "stateName": "choice",
+              "reason": "prev",
+              "at": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "fetchTrace": [
+            {
+              "wizardId": "inventory-triage",
+              "at": "2026-04-20T21:18:00.000Z",
+              "source": "guided-registry"
+            }
+          ],
+          "refetchCount": 1,
+          "storage": {
+            "wizardId": "inventory-triage",
+            "stepIndex": 1,
+            "selectedChoiceId": "reduce-risk",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "investigationExpanded": false,
+            "helpOpen": false
+          }
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "GF09",
+      "acceptance": "完成所有 step · 跳 final step · CTA 返回来源页",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf09-guided-final.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf09-guided-final.json",
+          "sha256": "59b5696a04df71a748344f3d9747e103f5a4654d657cc6ccb12d3560c7c04592"
+        }
+      ],
+      "summary": "引导已完成 / /assistant?packId=industry-cross-border-ecommerce",
+      "observed": {
+        "stepIndex": 4,
+        "finalTitle": "引导已完成",
+        "ctaHref": "/assistant?packId=industry-cross-border-ecommerce"
+      }
+    },
+    {
+      "rule": 10,
+      "code": "GF10",
+      "acceptance": "state 持久化 guided-flow-{wizardId} localStorage · 断线恢复",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf10-guided-storage.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf10-guided-storage.json",
+          "sha256": "5fdc4cca349b12b760705143ed24ae392406621479abbafc45951e057a991130"
+        }
+      ],
+      "summary": "storageStep=2 restored=2",
+      "observed": {
+        "before": {
+          "qa": {
+            "stateName": "action",
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "activeStepId": "action",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "selectedChoiceId": "protect-conversion",
+            "investigationExpanded": false,
+            "helpOpen": false,
+            "transitionTrace": [
+              {
+                "stepIndex": 1,
+                "stateName": "choice",
+                "reason": "next",
+                "at": "2026-04-20T21:18:00.000Z"
+              },
+              {
+                "stepIndex": 2,
+                "stateName": "action",
+                "reason": "choice",
+                "at": "2026-04-20T21:18:00.000Z"
+              }
+            ],
+            "fetchTrace": [
+              {
+                "wizardId": "inventory-triage",
+                "at": "2026-04-20T21:18:00.000Z",
+                "source": "guided-registry"
+              }
+            ],
+            "refetchCount": 1,
+            "storage": {
+              "wizardId": "inventory-triage",
+              "stepIndex": 2,
+              "selectedChoiceId": "protect-conversion",
+              "completedStepIds": [
+                "intent",
+                "choice"
+              ],
+              "skippedStepIds": [],
+              "investigationExpanded": false,
+              "helpOpen": false
+            }
+          },
+          "storage": {
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "selectedChoiceId": "protect-conversion",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "investigationExpanded": false,
+            "helpOpen": false
+          }
+        },
+        "after": {
+          "stateName": "action",
+          "wizardId": "inventory-triage",
+          "stepIndex": 2,
+          "activeStepId": "action",
+          "completedStepIds": [
+            "intent",
+            "choice"
+          ],
+          "skippedStepIds": [],
+          "selectedChoiceId": "protect-conversion",
+          "investigationExpanded": false,
+          "helpOpen": false,
+          "transitionTrace": [],
+          "fetchTrace": [
+            {
+              "wizardId": "inventory-triage",
+              "at": "2026-04-20T21:18:00.000Z",
+              "source": "guided-registry"
+            }
+          ],
+          "refetchCount": 1,
+          "storage": {
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "selectedChoiceId": "protect-conversion",
+            "completedStepIds": [
+              "intent",
+              "choice"
+            ],
+            "skippedStepIds": [],
+            "investigationExpanded": false,
+            "helpOpen": false
+          }
+        }
+      }
+    },
+    {
+      "rule": 11,
+      "code": "GF11",
+      "acceptance": "空 wizardId 路径 · show 找不到引导 + 跳 /assistant link",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf11-guided-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf11-guided-empty.json",
+          "sha256": "570e3bde79a0825027823e906c2fb10a0db63f861003ce9fb7f0d42d08a8e440"
+        },
+        {
+          "path": "screenshots/P2E-04/gf11-guided-empty.png",
+          "sha256": "99375fe8ca62c188390c0ec54da49321365d85ef329d788e2456e3b5fd90310c"
+        }
+      ],
+      "summary": "找不到引导 / /assistant",
+      "observed": {
+        "route": "/flow?dev=1",
+        "title": "找不到引导",
+        "ctaHref": "/assistant"
+      }
+    },
+    {
+      "rule": 12,
+      "code": "GF12",
+      "acceptance": "skip current step · 标记 step skipped(灰勾) · tracker 显示",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf12-guided-skip.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf12-guided-skip.json",
+          "sha256": "4068dbe13f7ef7813a33662e22d8f59dd805f40980cf7656fbb60914ded052ba"
+        }
+      ],
+      "summary": "✓ / --ink-3",
+      "observed": {
+        "qa": {
+          "stateName": "action",
+          "wizardId": "inventory-triage",
+          "stepIndex": 2,
+          "activeStepId": "action",
+          "completedStepIds": [
+            "intent"
+          ],
+          "skippedStepIds": [
+            "choice"
+          ],
+          "selectedChoiceId": null,
+          "investigationExpanded": false,
+          "helpOpen": false,
+          "transitionTrace": [
+            {
+              "stepIndex": 1,
+              "stateName": "choice",
+              "reason": "next",
+              "at": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "stepIndex": 2,
+              "stateName": "action",
+              "reason": "skip",
+              "at": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "fetchTrace": [
+            {
+              "wizardId": "inventory-triage",
+              "at": "2026-04-20T21:18:00.000Z",
+              "source": "guided-registry"
+            }
+          ],
+          "refetchCount": 1,
+          "storage": {
+            "wizardId": "inventory-triage",
+            "stepIndex": 2,
+            "selectedChoiceId": null,
+            "completedStepIds": [
+              "intent"
+            ],
+            "skippedStepIds": [
+              "choice"
+            ],
+            "investigationExpanded": false,
+            "helpOpen": false
+          }
+        },
+        "className": "guided-step-pill is-skipped",
+        "icon": "✓",
+        "color": "rgba(45, 33, 24, 0.56)",
+        "tokenMatch": "--ink-3"
+      }
+    },
+    {
+      "rule": 13,
+      "code": "GF13",
+      "acceptance": "每 step 右下 寻求帮助 · 打开 contextual-help",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-04/gf13-guided-help.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-04/gf13-guided-help.json",
+          "sha256": "6f4b0afd1d17988156786466bd32dd5919f68c23e3e839a6b1b86e0940d8e960"
+        }
+      ],
+      "summary": "上下文帮助已打开 · Friday 会把当前 step、调查摘要和回退边界一起带给你。",
+      "observed": {
+        "helpOpen": true,
+        "helpText": "上下文帮助已打开 · Friday 会把当前 step、调查摘要和回退边界一起带给你。"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2E-04/gf01-guided-routing.json",
+    "screenshots/P2E-04/gf02-guided-layout.json",
+    "screenshots/P2E-04/gf02-guided-layout.png",
+    "screenshots/P2E-04/gf03-guided-tracker.json",
+    "screenshots/P2E-04/gf04-guided-step-kinds.json",
+    "screenshots/P2E-04/gf05-guided-investigation.json",
+    "screenshots/P2E-04/gf06-guided-progress.json",
+    "screenshots/P2E-04/gf07-guided-choice-auto-next.json",
+    "screenshots/P2E-04/gf08-guided-prev.json",
+    "screenshots/P2E-04/gf09-guided-final.json",
+    "screenshots/P2E-04/gf10-guided-storage.json",
+    "screenshots/P2E-04/gf11-guided-empty.json",
+    "screenshots/P2E-04/gf11-guided-empty.png",
+    "screenshots/P2E-04/gf12-guided-skip.json",
+    "screenshots/P2E-04/gf13-guided-help.json"
+  ]
+}

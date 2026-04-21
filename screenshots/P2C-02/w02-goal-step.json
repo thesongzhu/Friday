@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-04-21T10:33:20.391Z",
+  "emptyObserved": {
+    "selectedGoals": [],
+    "nextDisabled": true
+  },
+  "selectedObserved": {
+    "selectedGoals": [
+      "成本"
+    ],
+    "nextDisabled": false,
+    "cards": [
+      {
+        "label": "增长",
+        "selected": false
+      },
+      {
+        "label": "合规",
+        "selected": false
+      },
+      {
+        "label": "成本",
+        "selected": true
+      },
+      {
+        "label": "扩张",
+        "selected": false
+      }
+    ]
+  }
+}

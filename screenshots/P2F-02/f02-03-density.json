@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-04-21T10:36:57.982Z",
+  "observed": {
+    "compact": {
+      "paddingTop": "14px",
+      "paddingBottom": "14px",
+      "lineHeight": "24.96px",
+      "dataset": "compact"
+    },
+    "cozy": {
+      "paddingTop": "17px",
+      "paddingBottom": "17px",
+      "lineHeight": "25.92px",
+      "dataset": "cozy"
+    },
+    "comfortable": {
+      "paddingTop": "18px",
+      "paddingBottom": "18px",
+      "lineHeight": "26.88px",
+      "dataset": "comfortable"
+    }
+  }
+}

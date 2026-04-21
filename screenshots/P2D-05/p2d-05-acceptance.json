@@ -1,0 +1,316 @@
+{
+  "itemId": "P2D-05",
+  "route": "/memory",
+  "generatedAt": "2026-04-21T10:35:34.153Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 9,
+    "pass": 9,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "R01",
+      "acceptance": "双列 · 左 tree 260 + 右 detail flex",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r01-memory-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r01-memory-layout.json",
+          "sha256": "23caac9bce0af08ff34b11b0c12052fe2163ee98f54fba6f6d91e94a9d27e0ce"
+        }
+      ],
+      "summary": "tree=260, detail=548",
+      "observed": {
+        "treeWidth": 260,
+        "detailWidth": 548
+      }
+    },
+    {
+      "rule": 2,
+      "code": "R02",
+      "acceptance": "tree · 按 scope 分组(user / team / project / session)· 可展开 · 每 scope 计数",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r02-memory-tree.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r02-memory-tree.json",
+          "sha256": "fcaf1f2f085b9f1ff19656477104e495abad05f12601bcb6f917a93a7659425d"
+        }
+      ],
+      "summary": "scopes=user,team,project,session expanded=user,project,session",
+      "observed": {
+        "before": {
+          "scopes": [
+            "user",
+            "team",
+            "project",
+            "session"
+          ],
+          "counts": [
+            "1",
+            "1",
+            "1",
+            "1"
+          ]
+        },
+        "after": {
+          "stateName": "selected",
+          "rows": [
+            {
+              "id": "memory-project-voice",
+              "title": {
+                "zh": "项目语气偏克制",
+                "en": "Project voice stays restrained"
+              },
+              "scope": "project",
+              "content": {
+                "zh": "默认避免过度营销语气，优先讲事实和风险。",
+                "en": "Default to restrained voice; prioritize facts and risks over hype."
+              },
+              "sessionId": "session-replenish-watch",
+              "updatedAt": "2026-04-20T19:18:00.000Z",
+              "source": "assistant",
+              "tags": [
+                "project",
+                "policy"
+              ]
+            },
+            {
+              "id": "memory-user-budget",
+              "title": {
+                "zh": "预算上限 12k",
+                "en": "Budget cap 12k"
+              },
+              "scope": "user",
+              "content": {
+                "zh": "当月成本预测超过 12k 需要提前预警。",
+                "en": "Warn early if monthly forecast exceeds 12k."
+              },
+              "sessionId": "session-provider-circuit",
+              "updatedAt": "2026-04-20T18:18:00.000Z",
+              "source": "chat",
+              "tags": [
+                "user",
+                "context"
+              ]
+            },
+            {
+              "id": "memory-team-review",
+              "title": {
+                "zh": "高风险变更先走评审",
+                "en": "High-risk changes need review first"
+              },
+              "scope": "team",
+              "content": {
+                "zh": "涉及权限和生产改动前先进入 assistant inbox。",
+                "en": "Permission and production changes should enter assistant inbox before execution."
+              },
+              "sessionId": "session-provider-circuit",
+              "updatedAt": "2026-04-20T17:18:00.000Z",
+              "source": "assistant",
+              "tags": [
+                "team",
+                "policy"
+              ]
+            },
+            {
+              "id": "memory-session-refunds",
+              "title": {
+                "zh": "退款阈值先看近 3 天",
+                "en": "Check the last 3 days before refund escalation"
+              },
+              "scope": "session",
+              "content": {
+                "zh": "只有连续 3 天退款率异常才升级到人工处理。",
+                "en": "Only escalate to a human after 3 consecutive days of refund anomalies."
+              },
+              "sessionId": "session-refund-triage",
+              "updatedAt": "2026-04-20T16:18:00.000Z",
+              "source": "chat",
+              "tags": [
+                "session",
+                "context"
+              ]
+            }
+          ],
+          "selectedMemoryId": "memory-user-budget",
+          "search": "",
+          "expandedScopes": [
+            "user",
+            "project",
+            "session"
+          ],
+          "editingMemoryId": null,
+          "draftContent": "",
+          "confirmDialog": null
+        }
+      }
+    },
+    {
+      "rule": 3,
+      "code": "R03",
+      "acceptance": "选 memory · 右显 content + metadata + source session link",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r03-memory-detail.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r03-memory-detail.json",
+          "sha256": "4e2b3b1c3c6528942a0d824276eb84db751d8320ba55eab6eb1ab4ba95f021c9"
+        }
+      ],
+      "summary": "记忆树 / /sessions?sessionId=session-provider-circuit",
+      "observed": {
+        "title": "记忆树",
+        "chips": [
+          "1",
+          "1",
+          "1",
+          "1",
+          "user",
+          "chat",
+          "04/20 11:18"
+        ],
+        "content": "当月成本预测超过 12k 需要提前预警。",
+        "sourceHref": "/sessions?sessionId=session-provider-circuit"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "R04",
+      "acceptance": "编辑 · 点 \"编辑\" 按钮进入编辑模式 · textarea · save/cancel",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r04-memory-edit-mode.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r04-memory-edit-mode.json",
+          "sha256": "7e54870a228f5643a7e4d8c24e03539eb5f9fcecae755381a487d308a0a947ff"
+        }
+      ],
+      "summary": "保存 / 取消",
+      "observed": {
+        "editing": true,
+        "saveLabel": "保存",
+        "cancelLabel": "取消"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "R05",
+      "acceptance": "编辑需二次确认 · \"memory 将影响未来所有会话\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r05-memory-save-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r05-memory-save-confirm.json",
+          "sha256": "7292999fbdabcd0e30e0269a84ebb791036af8377906a40d823193b5c3f16acf"
+        }
+      ],
+      "summary": "保存这条记忆? / memory 将影响未来所有会话",
+      "observed": {
+        "title": "保存这条记忆?",
+        "body": "memory 将影响未来所有会话"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "R06",
+      "acceptance": "delete · 二次确认 · 输入 memory title 验证",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r06-memory-delete-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r06-memory-delete-confirm.json",
+          "sha256": "f523dc8f61f0e1bf35b4bc0f05bb5939139f84c2b088f91eaff6bf82a4333ae3"
+        }
+      ],
+      "summary": "删除这条记忆? / disabled true -> false",
+      "observed": {
+        "title": "预算上限 12k",
+        "before": {
+          "title": "删除这条记忆?",
+          "confirmDisabled": true
+        },
+        "after": {
+          "confirmDisabled": false
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "R07",
+      "acceptance": "source session link · 点跳 /sessions?sessionId=xxx",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r07-memory-source-link.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r07-memory-source-link.json",
+          "sha256": "b4cb526706f3fbe4ebf3a0be0a6004111fe1903e732c8e0f9c77ae160a67ec6b"
+        }
+      ],
+      "summary": "/sessions?sessionId=session-provider-circuit -> /sessions?sessionId=session-provider-circuit",
+      "observed": {
+        "href": "/sessions?sessionId=session-provider-circuit",
+        "route": "/sessions?sessionId=session-provider-circuit"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "R08",
+      "acceptance": "顶部 search · 全文搜索 · 命中关键词黄色高亮",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r08-memory-search-highlight.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r08-memory-search-highlight.json",
+          "sha256": "1414078881e46713b1315da77d6cbb0587a6db1de16267c39cefd39854769015"
+        }
+      ],
+      "summary": "预警 / rows=1",
+      "observed": {
+        "rowCount": 1,
+        "markText": "预警",
+        "markBackground": "rgba(200, 122, 60, 0.14)"
+      }
+    },
+    {
+      "rule": 9,
+      "code": "R09",
+      "acceptance": "empty · \"Friday 还没有记住任何事\" + 说明 link",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-05/r09-memory-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-05/r09-memory-empty.json",
+          "sha256": "2d91400a587b523d394df83e47741aebc9086949413e1a66a0e21890cf33011f"
+        },
+        {
+          "path": "screenshots/P2D-05/r09-memory-empty.png",
+          "sha256": "8bee78fd1c28b62c7067aa7491686daefa280fcf6d72386800e9be3d49436c51"
+        }
+      ],
+      "summary": "Friday 还没有记住任何事 / /memory?help=1",
+      "observed": {
+        "title": "Friday 还没有记住任何事",
+        "helpHref": "/memory?help=1"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2D-05/r01-memory-layout.json",
+    "screenshots/P2D-05/r02-memory-tree.json",
+    "screenshots/P2D-05/r03-memory-detail.json",
+    "screenshots/P2D-05/r04-memory-edit-mode.json",
+    "screenshots/P2D-05/r05-memory-save-confirm.json",
+    "screenshots/P2D-05/r06-memory-delete-confirm.json",
+    "screenshots/P2D-05/r07-memory-source-link.json",
+    "screenshots/P2D-05/r08-memory-search-highlight.json",
+    "screenshots/P2D-05/r09-memory-empty.json",
+    "screenshots/P2D-05/r09-memory-empty.png"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:29:35.652Z",
+  "observed": {
+    "before": 1,
+    "after59000": 1,
+    "after60000": 2,
+    "visibilityState": "hidden",
+    "latencyMs": 2.299999952316284
+  }
+}

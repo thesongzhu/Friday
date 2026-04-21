@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-04-21T10:36:24.084Z",
+  "tokenColors": {
+    "--success": "rgb(47, 122, 73)",
+    "--accent": "rgb(154, 93, 37)",
+    "--ink-3": "rgba(45, 33, 24, 0.56)"
+  },
+  "before": [
+    {
+      "id": "intent",
+      "icon": "•",
+      "className": "guided-step-pill is-current"
+    },
+    {
+      "id": "choice",
+      "icon": "⑂",
+      "className": "guided-step-pill"
+    },
+    {
+      "id": "action",
+      "icon": "3",
+      "className": "guided-step-pill"
+    },
+    {
+      "id": "review",
+      "icon": "4",
+      "className": "guided-step-pill"
+    }
+  ],
+  "after": [
+    {
+      "id": "intent",
+      "className": "guided-step-pill is-complete",
+      "color": "rgb(45, 33, 24)",
+      "tokenMatch": null
+    },
+    {
+      "id": "choice",
+      "className": "guided-step-pill is-current",
+      "color": "rgb(45, 33, 24)",
+      "tokenMatch": null
+    },
+    {
+      "id": "action",
+      "className": "guided-step-pill",
+      "color": "rgb(45, 33, 24)",
+      "tokenMatch": null
+    },
+    {
+      "id": "review",
+      "className": "guided-step-pill",
+      "color": "rgb(45, 33, 24)",
+      "tokenMatch": null
+    }
+  ]
+}
