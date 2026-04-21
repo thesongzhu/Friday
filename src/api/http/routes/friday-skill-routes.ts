@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  canRunFridayBundledSystemNodeSkillWithoutGate,
   type FridaySkillExecutor,
   type FridaySkillLifecycleService,
   type FridaySkillRegistry,
@@ -359,8 +360,8 @@ export function createFridaySkillRoutes(
         ? principalRecord.tenantId.trim()
         : principalId;
       const lifecycleSkill = deps.lifecycle?.getSkill(skillId) as {
-        currentManifest?: { runtime?: { kind?: string } };
-        catalogEntry?: { manifest?: { runtime?: { kind?: string } } };
+        currentManifest?: { kind?: string; runtime?: { kind?: string } };
+        catalogEntry?: { manifest?: { kind?: string; runtime?: { kind?: string } } };
       } | null | undefined;
       const registeredSkill = typeof deps.skillRegistry?.get === "function"
         ? deps.skillRegistry.get(skillId)
@@ -384,7 +385,15 @@ export function createFridaySkillRoutes(
       const runtimeKind = registeredSkill?.manifest.runtime.kind
         ?? lifecycleSkill?.currentManifest?.runtime?.kind
         ?? lifecycleSkill?.catalogEntry?.manifest?.runtime?.kind;
-      if (runtimeKind === "node" && !isFridayUnisolatedNodeSkillsEnabled()) {
+      const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
+        runtimeKind,
+        manifestKind: registeredSkill?.manifest.kind
+          ?? lifecycleSkill?.currentManifest?.kind
+          ?? lifecycleSkill?.catalogEntry?.manifest?.kind,
+        source: registeredSkill?.source,
+        origin: registeredSkill?.origin,
+      });
+      if (runtimeKind === "node" && !allowBundledSystemNodeSkill && !isFridayUnisolatedNodeSkillsEnabled()) {
         throwFridayCapabilityDisabled({
           capability: "skill_node_runtime",
           surface: "POST /v1/skills/:skillId/run",

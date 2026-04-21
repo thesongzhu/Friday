@@ -35,14 +35,18 @@ function createMockRegistry(
 function makeRegisteredSkill(
   overrides: {
     id?: string;
+    kind?: "conversation" | "workflow" | "system";
     runtimeKind?: "shell" | "node" | "builtin" | "python" | "remote-http";
     entrypoint?: string;
     skillDir?: string;
     timeoutMs?: number;
+    source?: FridayRegisteredSkill["source"];
+    origin?: FridayRegisteredSkill["origin"];
   } = {},
 ): FridayRegisteredSkill {
   const manifest = makeManifest({
     id: overrides.id ?? "test-skill",
+    kind: overrides.kind ?? "conversation",
     runtime: {
       kind: overrides.runtimeKind ?? "shell",
       entrypoint: overrides.entrypoint ?? "run.sh",
@@ -55,8 +59,8 @@ function makeRegisteredSkill(
   return {
     manifest,
     skillDir: overrides.skillDir ?? "/tmp/test-skill",
-    source: "local",
-    origin: "workspace",
+    source: overrides.source ?? "local",
+    origin: overrides.origin ?? "workspace",
     status: "installed",
     loaded: {
       manifest,
@@ -629,6 +633,57 @@ export async function execute(_input, ctx) {
         code: "CAPABILITY_DISABLED",
         capability: "skill_node_runtime",
         runtimeKind: "node",
+      });
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows bundled system node skills when the runtime gate is off", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-node-bundled-system-");
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    try {
+      await fs.writeFile(
+        `${scriptDir}/index.mjs`,
+        `export async function execute() { return { summary: "starter-ok" }; }`,
+        "utf8",
+      );
+
+      const skill = makeRegisteredSkill({
+        id: "review-open-issues",
+        kind: "system",
+        runtimeKind: "node",
+        entrypoint: "index.mjs",
+        skillDir: scriptDir,
+        source: "bundled",
+        origin: "bundled",
+      });
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("review-open-issues", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "review-open-issues",
+      }).result;
+
+      expect(result.status).toBe("completed");
+      expect(result.output).toMatchObject({
+        summary: "starter-ok",
       });
     } finally {
       if (previousGate === undefined) {

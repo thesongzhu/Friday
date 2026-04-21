@@ -319,4 +319,46 @@ describe("createFridaySkillRoutes", () => {
       }
     }
   });
+
+  it("allows bundled system node skills when the runtime gate is off", async () => {
+    const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+    try {
+      const lifecycle = makeLifecycle();
+      const executor = makeExecutor();
+      const routes = createFridaySkillRoutes({
+        skillRegistry: {
+          list: () => [],
+          get: vi.fn(() => ({
+            source: "bundled",
+            origin: "bundled",
+            manifest: {
+              id: "review-open-issues",
+              kind: "system",
+              runtime: { kind: "node" },
+            },
+          })),
+        } as never,
+        lifecycle: lifecycle as never,
+        skillExecutor: executor as never,
+      });
+
+      const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "review-open-issues" },
+        body: { input: { limit: 10 } },
+      }));
+
+      expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+        skillId: "review-open-issues",
+        input: { limit: 10 },
+      }));
+      expect(result).toHaveProperty("status", "completed");
+    } finally {
+      if (previousGate === undefined) {
+        delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
+      } else {
+        process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
+      }
+    }
+  });
 });

@@ -15,6 +15,7 @@ import {
 } from "#providers";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
 import {
+  canRunFridayBundledSystemNodeSkillWithoutGate,
   createFridayNodeExecutor,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   getFridayUnisolatedNodeSkillsDisabledMessage,
@@ -405,7 +406,13 @@ export function createFridaySkillExecutor(
             }
 
             case "node": {
-              if (!isFridayUnisolatedNodeSkillsEnabled()) {
+              const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
+                runtimeKind: manifest.runtime.kind,
+                manifestKind: manifest.kind,
+                source: registered.source,
+                origin: registered.origin,
+              });
+              if (!allowBundledSystemNodeSkill && !isFridayUnisolatedNodeSkillsEnabled()) {
                 execResult = {
                   runId,
                   status: "failed",
@@ -447,6 +454,7 @@ export function createFridaySkillExecutor(
                 cwd: registered.skillDir,
                 timeoutMs,
                 signal: controller.signal,
+                allowWithoutGate: allowBundledSystemNodeSkill,
                 aiHelper,
                 runtimeContext,
               });
