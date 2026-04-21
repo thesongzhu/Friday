@@ -8282,8 +8282,7 @@
           };
         }
 
-        window.useHomeSurfacePreferences = useHomeSurfacePreferences;
-
+        
         function hydrateMcpRows(rows, clockMs) {
           var lastPingIso = new Date(clockMs || uiState.mcp.lastPolledAt || BASE_CLOCK).toISOString();
           return cloneJson(rows || []).map(function (server) {
@@ -8310,8 +8309,7 @@
           }
         };
 
-        window.crossBorderPackApi = crossBorderPackApi;
-
+        
         function ensureP2cState() {
           if (!uiState.packs.pinnedOrder || uiState.packs.pinnedOrder.length === 0) {
             uiState.packs.pinnedOrder = useHomeSurfacePreferences().pinnedPackIds.length > 0
@@ -8738,7 +8736,7 @@
         }
 
         var fridayMockStore = createFridayMockStore();
-        window.__fridayMock = fridayMockStore;
+        var __fridayMockStore = fridayMockStore;
         if (shouldBootHydrateHome()) {
           scheduleHomeHydrate(window.location.search);
         }
@@ -9418,7 +9416,7 @@
               resetChatStreamingRuntime();
             }
           }
-          window.__fridayMock.forceState(route, safeState);
+          __fridayMockStore.forceState(route, safeState);
         }
 
         function isDevVisible() {
@@ -9852,7 +9850,7 @@
           if (!force && uiState.home) {
             return;
           }
-          var mockState = window.__fridayMock.getState();
+          var mockState = __fridayMockStore.getState();
           var page = mockState.pages.home;
           var lastGoodSnapshot = page.lastGoodSnapshot || page.snapshot;
           uiState.home = {
@@ -9884,7 +9882,7 @@
         function scheduleRealtimeUpdate() {
           clearRealtimeTimer();
           uiState.realtimeTimerId = window.setTimeout(function () {
-            window.__fridayMock.dispatch({
+            __fridayMockStore.dispatch({
               type: "run.state_changed",
               runId: "run-replenish-watch",
               from: "executing",
@@ -9906,7 +9904,7 @@
           renderApp();
         }
 
-        window.__fridayMock.subscribe(function (mockState, evt) {
+        __fridayMockStore.subscribe(function (mockState, evt) {
           uiState.lastMockEvent = evt;
           if (uiState.home) {
             uiState.home.clockMs = mockState.clockMs;
@@ -11240,7 +11238,7 @@
           if (!force && uiState.assistant.page && uiState.assistant.page.stateName === currentPageState()) {
             return;
           }
-          var mockState = window.__fridayMock.getState();
+          var mockState = __fridayMockStore.getState();
           uiState.assistant.page = buildAssistantSurface(currentPageState(), mockState.clockMs);
           uiState.assistant.activeTab = assistantCurrentTab();
           uiState.assistant.nextPollAt = mockState.clockMs + assistantPollInterval();
@@ -11637,7 +11635,7 @@
           uiState.settings.savePendingTab = null;
           uiState.settings.beforeUnloadTraces = [];
           uiState.settings.providers = createSettingsProviderState();
-          var pollAt = clockMs || (window.__fridayMock ? window.__fridayMock.getState().clockMs : BASE_CLOCK);
+          var pollAt = clockMs || (__fridayMockStore ? __fridayMockStore.getState().clockMs : BASE_CLOCK);
           uiState.settings.systemHealthQuery = {
             status: "healthy",
             raw: { source: "useSystemHealthQuery", checkedAt: new Date(pollAt).toISOString() },
@@ -12304,7 +12302,7 @@
           var draft = uiState.observability.alertDraft || {};
           var alertId = mode === "edit"
             ? (uiState.observability.alertModalId || "alert-editing")
-            : "alert-custom-" + String(window.__fridayMock.getState().clockMs).slice(-4);
+            : "alert-custom-" + String(__fridayMockStore.getState().clockMs).slice(-4);
           var savedAlert = {
             id: alertId,
             severity: "medium",
@@ -12312,7 +12310,7 @@
             name: localizedText(String(draft.name || "").trim(), String(draft.name || "").trim()),
             metric: draft.metric,
             threshold: formattedAlertThresholdFromDraft(),
-            recent: formatAbsoluteDate(window.__fridayMock.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" }),
+            recent: formatAbsoluteDate(__fridayMockStore.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" }),
             owner: "observability",
             channels: cloneJson(draft.channels || []),
             detail: localizedText(
@@ -12321,9 +12319,9 @@
             )
           };
           if (mode === "edit") {
-            window.__fridayMock.dispatch({ type: "alert.updated", alert: savedAlert });
+            __fridayMockStore.dispatch({ type: "alert.updated", alert: savedAlert });
           } else {
-            window.__fridayMock.dispatch({ type: "alert.saved", alert: savedAlert });
+            __fridayMockStore.dispatch({ type: "alert.saved", alert: savedAlert });
             uiState.observability.pendingScrollAlertId = alertId;
             uiState.observability.highlightedAlertId = alertId;
           }
@@ -12421,7 +12419,7 @@
 
         function renderSettingsPage() {
           ensureSettingsState();
-          pollSettingsSystemHealth(window.__fridayMock.getState().clockMs, false);
+          pollSettingsSystemHealth(__fridayMockStore.getState().clockMs, false);
           var tab = currentSettingsTab();
           var dirtyCount = settingsDirtyCount(tab);
           var saveDisabled = dirtyCount === 0 || settingsHasInvalidFields(tab) || uiState.settings.savePendingTab === tab;
@@ -12833,7 +12831,7 @@
         }
 
         function buildObservabilitySurface(viewState, clockMs) {
-          var mockState = window.__fridayMock.getState();
+          var mockState = __fridayMockStore.getState();
           var source = mockState.observabilityData || OBSERVABILITY_DATA;
           return {
             clockMs: clockMs,
@@ -12867,7 +12865,7 @@
           ) {
             return;
           }
-          var mockState = window.__fridayMock.getState();
+          var mockState = __fridayMockStore.getState();
           uiState.observability.page = buildObservabilitySurface(viewState, mockState.clockMs);
           uiState.observability.focus = focus;
           uiState.observability.window = windowValue;
@@ -12906,7 +12904,7 @@
           uiState.observability.isWindowLoading = true;
           uiState.observability.loadingToken = "obs-load-" + String(Date.now());
           var loadingToken = uiState.observability.loadingToken;
-          recordObservabilityRefresh("window-loading:" + reason, window.__fridayMock.getState());
+          recordObservabilityRefresh("window-loading:" + reason, __fridayMockStore.getState());
           uiState.observability.loadingTimerId = window.setTimeout(function () {
             if (uiState.observability.loadingToken !== loadingToken) {
               return;
@@ -12915,7 +12913,7 @@
             uiState.observability.loadingToken = null;
             uiState.observability.loadingTimerId = null;
             ensureObservabilitySurface(true, "window-resolved");
-            recordObservabilityRefresh("window-resolved:" + reason, window.__fridayMock.getState());
+            recordObservabilityRefresh("window-resolved:" + reason, __fridayMockStore.getState());
             renderApp();
           }, 240);
         }
@@ -12983,7 +12981,7 @@
           }
           uiState.observability.focus = nextFocus;
           uiState.observability.window = nextWindow;
-          uiState.observability.nextPollAt = window.__fridayMock.getState().clockMs + observabilityPollInterval(nextWindow);
+          uiState.observability.nextPollAt = __fridayMockStore.getState().clockMs + observabilityPollInterval(nextWindow);
           ensureObservabilitySurface(true, reason || "route");
           applyObservabilityStatePreset(reason || "route");
         }
@@ -13000,7 +12998,7 @@
           }
           var focus = currentObservabilityFocus();
           if (focus === "alerts") {
-            window.__fridayMock.dispatch({
+            __fridayMockStore.dispatch({
               type: "alert.firing",
               alertId: "alert-runtime-" + String(mockState.clockMs).slice(-4),
               alert: {
@@ -13016,7 +13014,7 @@
               }
             });
           } else if (focus === "traces") {
-            window.__fridayMock.dispatch({
+            __fridayMockStore.dispatch({
               type: "trace.span_completed",
               traceId: "trace-live-" + String(mockState.clockMs).slice(-4),
               trace: {
@@ -13141,7 +13139,7 @@
 
         function renderObservabilityPage() {
           ensureObservabilitySurface(false, "render");
-          var page = uiState.observability.page || buildObservabilitySurface(currentObservabilityViewState(), window.__fridayMock.getState().clockMs);
+          var page = uiState.observability.page || buildObservabilitySurface(currentObservabilityViewState(), __fridayMockStore.getState().clockMs);
           var focus = page.focus;
           var meta = observabilityFocusMeta(focus);
           var detailHtml = renderObservabilityDetailEmptyState();
@@ -13480,7 +13478,7 @@
             selectedGoals: cloneJson(uiState.crossBorder.selectedGoals),
             products: cloneJson(uiState.crossBorder.products),
             channels: cloneJson(uiState.crossBorder.channels),
-            updatedAt: new Date(window.__fridayMock.getState().clockMs).toISOString()
+            updatedAt: new Date(__fridayMockStore.getState().clockMs).toISOString()
           };
         }
 
@@ -13752,7 +13750,7 @@
               (runningCount > 1 ? '<div class="firing-banner" data-workflows-running-banner="true" style="margin-bottom:16px;">' + escapeHtml(localize(uiState.locale, String(runningCount) + " 个工作流正在运行", String(runningCount) + " workflows are running")) + "</div>" : "") +
               '<div style="display:grid; grid-template-columns: 420px minmax(0,1fr); gap:24px; align-items:start;" data-workflows-grid="true">' +
                 '<div style="display:flex; flex-direction:column; gap:12px;" data-workflows-list="true">' + rows.map(function (workflow) {
-                  var progressWidth = workflow.status === "running" ? 32 + Math.round(((window.__fridayMock.getState().clockMs / 1000) % 55)) : 0;
+                  var progressWidth = workflow.status === "running" ? 32 + Math.round(((__fridayMockStore.getState().clockMs / 1000) % 55)) : 0;
                   return '<div class="obs-row' + (selected && selected.id === workflow.id ? " is-active" : "") + '" data-workflow-row="' + escapeHtml(workflow.id) + '"><div class="obs-row-grid"><button type="button" class="obs-row-main-button" data-action="select-workflow" data-payload="' + escapeHtml(workflow.id) + '" aria-label="' + escapeHtml(localize(uiState.locale, "查看工作流详情", "View workflow detail")) + '"><div class="obs-row-main"><strong>' + escapeHtml(resolveLocalizedText(workflow.name, uiState.locale)) + '</strong><div class="obs-row-meta"><span>' + escapeHtml(workflow.version) + '</span>' + StatusPill({ tone: workflow.status === "running" ? "accent" : workflow.status === "failed" ? "warning" : "neutral", children: escapeHtml(workflow.status) }) + '<span>' + escapeHtml(workflow.nextRun) + '</span></div></div></button><div class="obs-row-actions">' + ActionButton({ tone: "secondary", children: escapeHtml(localize(uiState.locale, "编辑", "Edit")), href: "/workflows/builder?workflowId=" + workflow.id, ariaLabel: localize(uiState.locale, "编辑工作流", "Edit workflow") }) + '<button type="button" class="inline-link-button" data-action="workflow-copy" data-payload="' + escapeHtml(workflow.id) + '">' + escapeHtml(localize(uiState.locale, "复制", "Copy")) + '</button><button type="button" class="inline-link-button" data-action="workflow-archive" data-payload="' + escapeHtml(workflow.id) + '">' + escapeHtml(localize(uiState.locale, "归档", "Archive")) + '</button></div></div>' + (workflow.status === "running" ? '<span class="qa-progress-track" data-workflow-progress="' + escapeHtml(workflow.id) + '"><span class="qa-progress-fill" style="width:' + String(progressWidth) + '%;"></span></span>' : '') + "</div>";
                 }).join("") + (uiState.workflows.archived.length > 0 ? '<section class="shell-card"><strong>' + escapeHtml(localize(uiState.locale, "已归档", "Archived")) + '</strong><div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">' + uiState.workflows.archived.map(function (workflow) { return '<div style="display:flex; justify-content:space-between; gap:12px;"><span>' + escapeHtml(resolveLocalizedText(workflow.name, uiState.locale)) + '</span><button type="button" class="inline-link-button" data-action="workflow-restore" data-payload="' + escapeHtml(workflow.id) + '">' + escapeHtml(localize(uiState.locale, "恢复", "Restore")) + '</button></div>'; }).join("") + "</div></section>" : "") + "</div>" +
                 '<aside data-workflows-detail="true">' + ShellCard({
@@ -13829,7 +13827,7 @@
         }
 
         function currentMockClockMs() {
-          return window.__fridayMock ? window.__fridayMock.getState().clockMs : BASE_CLOCK;
+          return __fridayMockStore ? __fridayMockStore.getState().clockMs : BASE_CLOCK;
         }
 
         function channelRowsForRender() {
@@ -15288,7 +15286,7 @@
           uiState.workflows.builderDirty = false;
           uiState.workflows.builderWorkflowName = resolveLocalizedText(graph.name, uiState.locale);
           uiState.workflows.builderVersionInput = graph.version;
-          uiState.workflows.builderSavedAt = formatAbsoluteDate(window.__fridayMock.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
+          uiState.workflows.builderSavedAt = formatAbsoluteDate(__fridayMockStore.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
           uiState.workflows.builderTemplateId = templateId || null;
           uiState.workflows.builderWorkflowId = workflowId || null;
           uiState.workflows.builderLoadedSourceKey = sourceKey;
@@ -15614,7 +15612,7 @@
             return false;
           }
           uiState.workflows.builderDirty = false;
-          uiState.workflows.builderSavedAt = formatAbsoluteDate(window.__fridayMock.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
+          uiState.workflows.builderSavedAt = formatAbsoluteDate(__fridayMockStore.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
           setPageState("/workflows/builder", "editing");
           pushToast("success", "工作流已保存", "Workflow saved");
           renderApp();
@@ -15632,7 +15630,7 @@
           });
           uiState.workflows.builderNodeStates = nodeStates;
           uiState.workflows.builderTestTrace = uiState.workflows.builderTestTrace.concat([{
-            at: new Date(window.__fridayMock.getState().clockMs).toISOString(),
+            at: new Date(__fridayMockStore.getState().clockMs).toISOString(),
             payload: document.getElementById("builder-test-json") ? document.getElementById("builder-test-json").value : "{\"trigger\":\"alert\"}",
             durationMs: 620,
             tokenCost: 248,
@@ -17458,7 +17456,7 @@
                 var config = options || {};
                 var snapshotApprovals = uiState.assistant.page.snapshot.approvals;
                 if (!snapshotApprovals.some(function (approval) { return approval.id === approvalId; })) {
-                  var baseApproval = createBaseApprovals(window.__fridayMock.getState().clockMs).find(function (approval) {
+                  var baseApproval = createBaseApprovals(__fridayMockStore.getState().clockMs).find(function (approval) {
                     return approval.id === approvalId;
                   });
                   if (baseApproval) {
@@ -17470,7 +17468,7 @@
                   uiState.assistant.approvalReasons[approvalId] = config.reason;
                 }
                 if (mode === "approved") {
-                  uiState.assistant.approvalResolvedAt[approvalId] = new Date(config.resolvedAt || window.__fridayMock.getState().clockMs).toISOString();
+                  uiState.assistant.approvalResolvedAt[approvalId] = new Date(config.resolvedAt || __fridayMockStore.getState().clockMs).toISOString();
                 }
                 renderApp();
                 return this.getState();
@@ -17526,7 +17524,7 @@
                 };
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               },
               openProviderModal: function (mode, providerId) {
@@ -17661,7 +17659,7 @@
                 return this.getState();
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               },
               currentActionQueue: function () {
@@ -17984,7 +17982,7 @@
                 return this.getState();
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               }
             },
@@ -18306,7 +18304,7 @@
                 return this.getState();
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               }
             },
@@ -18557,7 +18555,7 @@
                 return this.getState();
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               }
             },
@@ -18651,7 +18649,7 @@
               },
               addServer: function (draft) {
                 uiState.mcp.addDraft = Object.assign({}, uiState.mcp.addDraft, cloneJson(draft || {}));
-                var savedAtIso = new Date(window.__fridayMock.getState().clockMs).toISOString();
+                var savedAtIso = new Date(__fridayMockStore.getState().clockMs).toISOString();
                 uiState.mcp.rows.push({
                   id: "mcp-" + String(Date.now()).slice(-5),
                   name: uiState.mcp.addDraft.name || "Custom MCP",
@@ -18662,8 +18660,8 @@
                     { id: "query", label: "query", description: localizedText("查询远端资源。", "Queries a remote resource.") }
                   ]
                 });
-                uiState.mcp.lastPolledAt = window.__fridayMock.getState().clockMs;
-                uiState.mcp.nextPingAt = window.__fridayMock.getState().clockMs + 30000;
+                uiState.mcp.lastPolledAt = __fridayMockStore.getState().clockMs;
+                uiState.mcp.nextPingAt = __fridayMockStore.getState().clockMs + 30000;
                 renderApp();
                 return this.getState();
               },
@@ -18674,7 +18672,7 @@
                   }
                   return Object.assign({}, server, {
                     status: "connecting",
-                    lastPingAt: new Date(window.__fridayMock.getState().clockMs).toISOString()
+                    lastPingAt: new Date(__fridayMockStore.getState().clockMs).toISOString()
                   });
                 });
                 renderApp();
@@ -18686,14 +18684,14 @@
                 return this.getState();
               },
               advanceClock: function (ms) {
-                window.__fridayMock.advanceClock(ms);
+                __fridayMockStore.advanceClock(ms);
                 return this.getState();
               }
             }
           };
         }
 
-        window.__fridayQa = createFridayQaApi();
+        var __fridayQaApi = createFridayQaApi();
 
         function ensureFocusableNodeId(node) {
           if (!node) {
@@ -19113,13 +19111,13 @@
           }
           renderApp();
           window.setTimeout(function () {
-            var nowIso = new Date(window.__fridayMock.getState().clockMs).toISOString();
+            var nowIso = new Date(__fridayMockStore.getState().clockMs).toISOString();
             uiState.assistant.approvalModes[approvalId] = nextMode;
             uiState.assistant.approvalResolvedAt[approvalId] = nowIso;
             if (reason) {
               uiState.assistant.approvalReasons[approvalId] = reason;
             }
-            window.__fridayMock.dispatch({ type: "approval.resolved", approvalId: approvalId });
+            __fridayMockStore.dispatch({ type: "approval.resolved", approvalId: approvalId });
             pushToast(nextMode === "approved" ? "success" : "warning", nextMode === "approved" ? "审批已批准" : "审批已拒绝", nextMode === "approved" ? "Approval granted" : "Approval denied");
             uiState.activeDrawer = null;
             uiState.drawerPayload = null;
@@ -19167,7 +19165,7 @@
                 cooldownRemainingMs: provider.cooldownRemainingMs || 0
               });
             });
-            pollSettingsSystemHealth(window.__fridayMock.getState().clockMs, true);
+            pollSettingsSystemHealth(__fridayMockStore.getState().clockMs, true);
             pushToast("warning", "Provider 已停用", "Provider disabled");
             return;
           } else if (config.action === "channel-disable") {
@@ -19280,7 +19278,7 @@
             }
             pushToast("success", "设备已移除", "Device removed");
           } else if (config.action === "alert-delete") {
-            window.__fridayMock.dispatch({ type: "alert.deleted", alertId: config.payload });
+            __fridayMockStore.dispatch({ type: "alert.deleted", alertId: config.payload });
             ensureObservabilitySurface(true, "alert-deleted");
             uiState.observability.selectedItemId = null;
             pushToast("success", "告警已删除（静态原型）", "Alert deleted in the static prototype");
@@ -19338,7 +19336,7 @@
             return;
           }
           if (item.action === "refresh-home") {
-            window.__fridayMock.seed("/home");
+            __fridayMockStore.seed("/home");
             if (uiState.route === "/home") {
               ensureHomeSurface(true, "manual-refresh");
             }
@@ -19380,7 +19378,7 @@
           uiState.chat.sessionDrafts[sessionKey] = "";
           uiState.chat.lastDraftSessionId = sessionKey;
           writeChatDraft(sessionKey, "");
-          window.__fridayMock.dispatch({ type: "session.message", message: { status: "sent" } });
+          __fridayMockStore.dispatch({ type: "session.message", message: { status: "sent" } });
           setPageState("/chat", "session-resume");
           pushToast("success", "消息已追加到会话", "Message appended to the session");
         }
@@ -19999,7 +19997,7 @@
           if (action === "refresh-home") {
             event.preventDefault();
             uiState.topbarMenuOpen = false;
-            window.__fridayMock.seed("/home");
+            __fridayMockStore.seed("/home");
             ensureHomeSurface(true, "manual-refresh");
             renderApp();
             return;
@@ -20016,7 +20014,7 @@
             if (uiState.route === "/assistant") {
               resetAssistantUiState();
             }
-            window.__fridayMock.seed(uiState.route);
+            __fridayMockStore.seed(uiState.route);
             return;
           }
 
@@ -20139,7 +20137,7 @@
               if (uiState.assistant.recoveredIssueIds.indexOf(issueId) < 0) {
                 uiState.assistant.recoveredIssueIds.push(issueId);
               }
-              uiState.assistant.issueRecoveredAt[issueId] = window.__fridayMock.getState().clockMs;
+              uiState.assistant.issueRecoveredAt[issueId] = __fridayMockStore.getState().clockMs;
               ensureAssistantSurface(true, "issue-recovered");
               pushToast("success", "已执行恢复建议", "Recovery suggestion applied");
               renderApp();
@@ -20188,7 +20186,7 @@
               uiState.settings.providers.testingProviderId = null;
               uiState.settings.providers.lastTestResult = {
                 providerId: payload,
-                completedAt: window.__fridayMock.getState().clockMs,
+                completedAt: __fridayMockStore.getState().clockMs,
                 latencyMs: 843
               };
               pushToast("success", "连接测试通过 · 843ms", "Connection test passed · 843ms");
@@ -20348,7 +20346,7 @@
 
           if (action === "observability-refresh") {
             event.preventDefault();
-            recordObservabilityRefresh("manual:" + String(payload || "refresh"), window.__fridayMock.getState());
+            recordObservabilityRefresh("manual:" + String(payload || "refresh"), __fridayMockStore.getState());
             startObservabilityWindowLoading("manual-refresh");
             renderApp();
             return;
@@ -20447,14 +20445,14 @@
             var targetAlertId = snoozeParts[0];
             var targetOptionId = snoozeParts[1];
             var option = OBSERVABILITY_SNOOZE_OPTIONS.find(function (item) { return item.id === targetOptionId; }) || OBSERVABILITY_SNOOZE_OPTIONS[0];
-            var clockMs = window.__fridayMock.getState().clockMs;
+            var clockMs = __fridayMockStore.getState().clockMs;
             var untilLabel = option.minutes == null
               ? localizedText("手动恢复前", "Until manually resumed")
               : localizedText(
                   formatAbsoluteDateExact(clockMs + option.minutes * 60000, "zh", { hour: "2-digit", minute: "2-digit" }),
                   formatAbsoluteDateExact(clockMs + option.minutes * 60000, "en", { hour: "2-digit", minute: "2-digit" })
                 );
-            window.__fridayMock.dispatch({
+            __fridayMockStore.dispatch({
               type: "alert.snoozed",
               alertId: targetAlertId,
               snoozedUntil: untilLabel
@@ -20945,7 +20943,7 @@
 
           if (action === "mcp-add-confirm") {
             event.preventDefault();
-            var savedAtIso = new Date(window.__fridayMock.getState().clockMs).toISOString();
+            var savedAtIso = new Date(__fridayMockStore.getState().clockMs).toISOString();
             uiState.mcp.rows.push({
               id: "mcp-" + String(Date.now()).slice(-5),
               name: uiState.mcp.addDraft.name || "Custom MCP",
@@ -20956,8 +20954,8 @@
                 { id: "query", label: "query", description: localizedText("查询远端资源。", "Queries a remote resource.") }
               ]
             });
-            uiState.mcp.lastPolledAt = window.__fridayMock.getState().clockMs;
-            uiState.mcp.nextPingAt = window.__fridayMock.getState().clockMs + 30000;
+            uiState.mcp.lastPolledAt = __fridayMockStore.getState().clockMs;
+            uiState.mcp.nextPingAt = __fridayMockStore.getState().clockMs + 30000;
             closeOverlays();
             pushToast("success", "MCP 服务器已保存", "MCP server saved");
             renderApp();
@@ -20972,7 +20970,7 @@
               }
               return Object.assign({}, server, {
                 status: "connecting",
-                lastPingAt: new Date(window.__fridayMock.getState().clockMs).toISOString()
+                lastPingAt: new Date(__fridayMockStore.getState().clockMs).toISOString()
               });
             });
             renderApp();
@@ -20983,11 +20981,11 @@
                 }
                 return Object.assign({}, server, {
                   status: "connected",
-                  lastPingAt: new Date(window.__fridayMock.getState().clockMs).toISOString()
+                  lastPingAt: new Date(__fridayMockStore.getState().clockMs).toISOString()
                 });
               });
-              uiState.mcp.lastPolledAt = window.__fridayMock.getState().clockMs;
-              uiState.mcp.nextPingAt = window.__fridayMock.getState().clockMs + 30000;
+              uiState.mcp.lastPolledAt = __fridayMockStore.getState().clockMs;
+              uiState.mcp.nextPingAt = __fridayMockStore.getState().clockMs + 30000;
               pushToast("success", "服务器已重连", "Server reconnected");
               renderApp();
             }, 420);
@@ -21095,7 +21093,7 @@
                       })
                     : channel;
                 });
-                window.__fridayMock.dispatch({ type: "channel.health_changed", channelId: testChannelId, health: "error" });
+                __fridayMockStore.dispatch({ type: "channel.health_changed", channelId: testChannelId, health: "error" });
                 pushToast("error", "连接失败 · 授权已过期", "Connection failed · authorization expired");
               } else {
                 uiState.channels.rows = (uiState.channels.rows || []).map(function (channel) {
@@ -21106,7 +21104,7 @@
                       })
                     : channel;
                 });
-                window.__fridayMock.dispatch({ type: "channel.health_changed", channelId: testChannelId, health: "healthy" });
+                __fridayMockStore.dispatch({ type: "channel.health_changed", channelId: testChannelId, health: "healthy" });
                 pushToast("success", "连接测试通过", "Connection test passed");
               }
             }, 320);
@@ -21204,7 +21202,7 @@
                 logs: cloneJson(retryRecord.row.logs || [])
               }].concat(uiState.automations.runs.queued || []);
               uiState.automations.lastDispatch = { type: "automation.run_queued", automationId: retryRecord.row.id, at: currentMockClockMs() };
-              window.__fridayMock.dispatch({ type: "automation.run_queued", automationId: retryRecord.row.id });
+              __fridayMockStore.dispatch({ type: "automation.run_queued", automationId: retryRecord.row.id });
               uiState.automations.activeTab = "queued";
               uiState.automations.userTabTouched = true;
               pushToast("success", "失败任务已重新加入队列", "Failed automation re-queued");
@@ -21982,7 +21980,7 @@
           if (action === "builder-publish-confirm") {
             event.preventDefault();
             uiState.workflows.builderDirty = false;
-            uiState.workflows.builderSavedAt = formatAbsoluteDate(window.__fridayMock.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
+            uiState.workflows.builderSavedAt = formatAbsoluteDate(__fridayMockStore.getState().clockMs, uiState.locale, { hour: "2-digit", minute: "2-digit" });
             closeOverlays();
             pushToast("success", "工作流已部署", "Workflow deployed");
             renderApp();
@@ -22571,7 +22569,7 @@
               if (uiState.route === "/assistant") {
                 resetAssistantUiState();
               }
-              window.__fridayMock.seed(uiState.route);
+              __fridayMockStore.seed(uiState.route);
               return;
             }
           }
@@ -22682,7 +22680,7 @@
 
         function recordBeforeUnloadTrace(prevented) {
           uiState.settings.beforeUnloadTraces.push({
-            at: new Date(window.__fridayMock.getState().clockMs).toISOString(),
+            at: new Date(__fridayMockStore.getState().clockMs).toISOString(),
             prevented: Boolean(prevented)
           });
           uiState.settings.beforeUnloadTraces = uiState.settings.beforeUnloadTraces.slice(-10);
@@ -24118,5 +24116,5 @@
   ]
 }
     </script>
-  </body>
+  <script>window.__fridayVersion = "1.0.0";window.__fridayHealth = function fridayHealth() {  return {    ok: true,    build: 'prod-static',    version: window.__fridayVersion,    route: window.location.pathname + window.location.search,    title: document.title,    generatedAt: new Date().toISOString()  };};</script></body>
 </html>

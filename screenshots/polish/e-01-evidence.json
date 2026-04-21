@@ -1,0 +1,29 @@
+{
+  "code": "E-01",
+  "title": "Focus ring appears only for keyboard focus-visible, not for mouse clicks",
+  "status": "PASS",
+  "summary": "mouse outline \"rgba(45, 33, 24, 0.875) none 3px\", keyboard outline \"rgb(154, 93, 37) solid 2px\"",
+  "observed": {
+    "mouse": {
+      "outline": "rgba(45, 33, 24, 0.875) none 3px",
+      "boxShadow": "none"
+    },
+    "keyboard": {
+      "isSettingsButton": true,
+      "outline": "rgb(154, 93, 37) solid 2px",
+      "boxShadow": "none"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/e01-mouse-focus.png",
+      "sha256": "5ec6f23d6e806ca09ab977ed4202be9b6ef9e990e4e19ecf5c58391a5ce65615",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/e01-keyboard-focus.png",
+      "sha256": "d7130b40031d94c611fb50d07e9f5656213cce1efa6cb9e3de709d7095acabbe",
+      "kind": "png"
+    }
+  ]
+}

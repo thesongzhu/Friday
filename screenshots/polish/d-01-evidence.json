@@ -1,0 +1,31 @@
+{
+  "code": "D-01",
+  "title": "Document title updates per route and always ends with Friday",
+  "status": "PASS",
+  "summary": "/home:首页 · Friday | /chat:对话 · Friday | /assistant:助手收件箱 · Friday | /observability:可观测性 · Friday | /settings:设置 · Friday",
+  "observed": {
+    "titles": [
+      {
+        "route": "/home",
+        "title": "首页 · Friday"
+      },
+      {
+        "route": "/chat",
+        "title": "对话 · Friday"
+      },
+      {
+        "route": "/assistant",
+        "title": "助手收件箱 · Friday"
+      },
+      {
+        "route": "/observability",
+        "title": "可观测性 · Friday"
+      },
+      {
+        "route": "/settings",
+        "title": "设置 · Friday"
+      }
+    ]
+  },
+  "artifacts": []
+}

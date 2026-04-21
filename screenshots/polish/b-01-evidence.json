@@ -1,0 +1,18 @@
+{
+  "code": "B-01",
+  "title": "Command Center keeps a 3-column shell even when the center lane is sparse",
+  "status": "PASS",
+  "summary": "grid 280px 488px 320px",
+  "observed": {
+    "gridColumns": "280px 488px 320px",
+    "asideCount": 2,
+    "sectionCount": 5
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/b01-command-center.png",
+      "sha256": "a75e2d68b8328c146ca6ff24f912b5f09f1742715abb2eb5453507c05fcb4ca8",
+      "kind": "png"
+    }
+  ]
+}
