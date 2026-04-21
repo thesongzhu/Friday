@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:38:06.768Z",
+  "step1": {
+    "nameDescribedBy": "observability-alert-name-error",
+    "metricDescribedBy": "observability-alert-metric-error",
+    "nameErrorText": "名称不能为空。",
+    "metricErrorText": "请选择指标。"
+  },
+  "step2": {
+    "thresholdDescribedBy": "observability-alert-threshold-error",
+    "thresholdErrorText": "阈值必须是数字。"
+  }
+}

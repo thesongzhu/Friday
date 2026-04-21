@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:32:34.833Z",
+  "observed": {
+    "activeDrawer": "audit",
+    "selectedItemId": "audit-1",
+    "title": "Audit diff",
+    "body": "{\n  \"auditId\": \"audit-1\",\n  \"before\": {\n    \"provider\": \"anthropic\",\n    \"lane\": \"primary\",\n    \"fallback\": \"openai\",\n    \"budgetGuard\": false\n  },\n  \"after\": {\n    \"provider\": \"openai\",\n    \"lane\": \"primary\",\n    \"fallback\": \"anthropic\",\n    \"budgetGuard\": true\n  },\n  \"actor\": \"friday\",\n  \"target\": \"runtime.policy\"\n}"
+  },
+  "screenshot": "screenshots/P2B-07/o15-audit-drawer.png"
+}

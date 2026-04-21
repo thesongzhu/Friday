@@ -1,0 +1,24 @@
+# ChatMessageBubble
+ChatMessageBubbleProps: message, onRetry, streamingText
+chatMessageBubble(props): message, onRetry, streamingText
+missing: (none)
+extra: (none)
+
+# ChatToolActivity
+ChatToolActivityProps: activeTool, toolCalls
+chatToolActivity(props): activeTool, toolCalls
+missing: (none)
+extra: (none)
+
+# ChatActionCard
+ChatActionCardProps: actions, onAction
+chatActionCard(props): actions, onAction
+missing: (none)
+extra: (none)
+
+# AutonomousStepIndicator
+AutonomousStepIndicatorProps: goal, locale
+autonomousStepIndicator(props): goal, locale
+missing: (none)
+extra: (none)
+

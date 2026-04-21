@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-04-21T10:33:51.759Z",
+  "observed": [
+    {
+      "stateName": "draft",
+      "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=draft&state=draft",
+      "actualState": "draft"
+    },
+    {
+      "stateName": "generating",
+      "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=generating&state=generating",
+      "actualState": "generating"
+    },
+    {
+      "stateName": "preview",
+      "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=preview&state=preview",
+      "actualState": "preview"
+    },
+    {
+      "stateName": "published",
+      "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=published&state=published",
+      "actualState": "published"
+    },
+    {
+      "stateName": "error",
+      "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=error&state=error",
+      "actualState": "error"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "generatedAt": "2026-04-21T10:36:12.023Z",
+  "href": "/onboarding",
+  "dialog": {
+    "stateName": "step1-profile",
+    "step": 1,
+    "draft": {
+      "name": "Jarvis",
+      "role": "Operator",
+      "company": "Friday Labs",
+      "providers": {
+        "openai": {
+          "key": "sk-live-openai-demo",
+          "configured": true,
+          "testStatus": "idle",
+          "testedAt": null
+        },
+        "anthropic": {
+          "key": "",
+          "configured": false,
+          "testStatus": "idle",
+          "testedAt": null
+        },
+        "local": {
+          "key": "http://localhost:11434",
+          "configured": true,
+          "testStatus": "idle",
+          "testedAt": null
+        }
+      },
+      "selectedSkills": [],
+      "skippedSkills": false
+    },
+    "status": {
+      "lastCompletedStep": 0,
+      "updatedAt": null
+    },
+    "statusQuery": {
+      "lastCompletedStep": 0,
+      "nextStep": 1,
+      "updatedAt": null,
+      "source": "useSetupStatusQuery"
+    },
+    "statusQueryTrace": [
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 0,
+        "nextStep": 1,
+        "updatedAt": null,
+        "source": "useSetupStatusQuery"
+      },
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 0,
+        "nextStep": 1,
+        "updatedAt": null,
+        "source": "useSetupStatusQuery"
+      },
+      {
+        "at": "2026-04-20T21:18:00.000Z",
+        "lastCompletedStep": 0,
+        "nextStep": 1,
+        "updatedAt": null,
+        "source": "useSetupStatusQuery"
+      }
+    ],
+    "connectionTests": [],
+    "completeTrace": [],
+    "pendingComplete": false,
+    "currentUrl": "/setup?dev=1&__state=step1-profile&step=1",
+    "confirmDialog": {
+      "inputValue": "",
+      "reasonValue": "",
+      "title": "设置未完成",
+      "body": "这会离开当前 wizard，并把你带到 onboarding。",
+      "confirmLabel": "仍然离开",
+      "action": "setup-leave",
+      "payload": "/onboarding"
+    }
+  },
+  "route": "/onboarding"
+}

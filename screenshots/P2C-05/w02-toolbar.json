@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-04-21T10:33:56.420Z",
+  "observed": {
+    "newHref": "/workflows/builder",
+    "searchExists": true,
+    "filters": [
+      {
+        "payload": "running",
+        "active": false
+      },
+      {
+        "payload": "failed",
+        "active": false
+      },
+      {
+        "payload": "all",
+        "active": true
+      }
+    ]
+  }
+}

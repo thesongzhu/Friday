@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-04-21T10:39:43.745Z",
+  "observed": [
+    {
+      "page": "home",
+      "zh": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "en": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "zhScreenshot": "screenshots/P2F-09/f09-05-home-zh.png",
+      "enScreenshot": "screenshots/P2F-09/f09-05-home-en.png"
+    },
+    {
+      "page": "assistant",
+      "zh": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "en": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "zhScreenshot": "screenshots/P2F-09/f09-05-assistant-zh.png",
+      "enScreenshot": "screenshots/P2F-09/f09-05-assistant-en.png"
+    },
+    {
+      "page": "observability",
+      "zh": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "en": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "zhScreenshot": "screenshots/P2F-09/f09-05-observability-zh.png",
+      "enScreenshot": "screenshots/P2F-09/f09-05-observability-en.png"
+    },
+    {
+      "page": "settings",
+      "zh": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "en": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "zhScreenshot": "screenshots/P2F-09/f09-05-settings-zh.png",
+      "enScreenshot": "screenshots/P2F-09/f09-05-settings-en.png"
+    },
+    {
+      "page": "usage",
+      "zh": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "en": {
+        "scrollWidth": 1440,
+        "viewportWidth": 1440
+      },
+      "zhScreenshot": "screenshots/P2F-09/f09-05-usage-zh.png",
+      "enScreenshot": "screenshots/P2F-09/f09-05-usage-en.png"
+    }
+  ]
+}

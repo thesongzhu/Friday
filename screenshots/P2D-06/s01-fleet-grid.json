@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:35:44.321Z",
+  "observed": {
+    "cardCount": 3,
+    "size": {
+      "width": 240,
+      "height": 235.65625
+    },
+    "model": "Apple M2 Pro",
+    "statusDot": true,
+    "heartbeat": "最近心跳 3s 前",
+    "barCount": 3,
+    "manageLabel": "manage"
+  }
+}

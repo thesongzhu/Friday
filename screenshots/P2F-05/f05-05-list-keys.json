@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:38:03.404Z",
+  "before": {
+    "activeDescendant": "command-palette-item-0",
+    "activeLabel": "首页",
+    "count": 27
+  },
+  "afterDown": {
+    "activeDescendant": "command-palette-item-1",
+    "activeLabel": "对话"
+  },
+  "afterHome": {
+    "activeDescendant": "command-palette-item-0",
+    "activeLabel": "首页"
+  },
+  "afterEnd": {
+    "activeDescendant": "command-palette-item-26",
+    "activeLabel": "打开 Workflow 测试面板"
+  },
+  "afterUp": {
+    "activeDescendant": "command-palette-item-25",
+    "activeLabel": "刷新首页快照"
+  }
+}

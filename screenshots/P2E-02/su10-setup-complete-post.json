@@ -1,0 +1,40 @@
+{
+  "generatedAt": "2026-04-21T10:36:10.988Z",
+  "observed": {
+    "route": "/home",
+    "trace": [
+      {
+        "endpoint": "setup/complete",
+        "method": "POST",
+        "at": "2026-04-20T21:18:00.000Z",
+        "body": {
+          "name": "Jarvis",
+          "role": "Operator",
+          "company": "Friday Labs",
+          "providers": {
+            "openai": {
+              "key": "sk-live-openai-demo",
+              "configured": true,
+              "testStatus": "idle",
+              "testedAt": null
+            },
+            "anthropic": {
+              "key": "",
+              "configured": false,
+              "testStatus": "idle",
+              "testedAt": null
+            },
+            "local": {
+              "key": "http://localhost:11434",
+              "configured": true,
+              "testStatus": "idle",
+              "testedAt": null
+            }
+          },
+          "selectedSkills": [],
+          "skippedSkills": false
+        }
+      }
+    ]
+  }
+}

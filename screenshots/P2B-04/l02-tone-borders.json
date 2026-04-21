@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-04-21T10:31:39.331Z",
+  "observed": [
+    {
+      "id": "insight-route-learning",
+      "className": "assistant-insight-card is-positive",
+      "borderColor": "rgba(47, 122, 73, 0.26)"
+    },
+    {
+      "id": "insight-provider-warning",
+      "className": "assistant-insight-card is-warning",
+      "borderColor": "rgba(184, 106, 23, 0.28)"
+    },
+    {
+      "id": "insight-workflow-neutral",
+      "className": "assistant-insight-card is-neutral",
+      "borderColor": "rgba(45, 33, 24, 0.1)"
+    }
+  ]
+}

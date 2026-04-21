@@ -1,0 +1,212 @@
+{
+  "itemId": "P2D-06",
+  "route": "/fleet",
+  "generatedAt": "2026-04-21T10:35:43.370Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 8,
+    "pass": 8,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "S01",
+      "acceptance": "grid · 每 device 一 card 240×180 · 型号 + 状态 dot + 心跳 + 资源 bar + 管理",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s01-fleet-grid.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s01-fleet-grid.json",
+          "sha256": "0dd0539b616773fee50ba464f775eed67bb084e3ad43e57542e384241553f295"
+        }
+      ],
+      "summary": "cards=3 size=240x235.65625",
+      "observed": {
+        "cardCount": 3,
+        "size": {
+          "width": 240,
+          "height": 235.65625
+        },
+        "model": "Apple M2 Pro",
+        "statusDot": true,
+        "heartbeat": "最近心跳 3s 前",
+        "barCount": 3,
+        "manageLabel": "manage"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "S02",
+      "acceptance": "状态 · online(绿)/ offline(灰)/ warning(黄)",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s02-fleet-status-colors.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s02-fleet-status-colors.json",
+          "sha256": "18a8d7d02536f5ac95e4b063bb28c7d0b98b36f13d620671742a102bf5a9d7ff"
+        }
+      ],
+      "summary": "device-mac-mini:--success, device-apac-gateway:--ink-3, device-eu-runner:--warning",
+      "observed": [
+        {
+          "id": "device-mac-mini",
+          "color": "rgb(47, 122, 73)",
+          "tokenMatch": "--success"
+        },
+        {
+          "id": "device-apac-gateway",
+          "color": "rgba(45, 33, 24, 0.56)",
+          "tokenMatch": "--ink-3"
+        },
+        {
+          "id": "device-eu-runner",
+          "color": "rgb(143, 84, 19)",
+          "tokenMatch": "--warning"
+        }
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "S03",
+      "acceptance": "心跳 · 秒级 \"最近心跳 3s 前\" · 随 advanceClock 实时更新",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s03-fleet-heartbeat.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s03-fleet-heartbeat.json",
+          "sha256": "a40aaf1dcfee0f7df4a793ce3b3d7119e789746add3f95cd90cbaeece1236572"
+        }
+      ],
+      "summary": "最近心跳 3s 前 -> 最近心跳 5s 前",
+      "observed": {
+        "before": "最近心跳 3s 前",
+        "after": "最近心跳 5s 前"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "S04",
+      "acceptance": "资源 bar · CPU / RAM / disk 三条 · 超过 80% 变黄 · 超过 95% 红",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s04-fleet-resource-bars.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s04-fleet-resource-bars.json",
+          "sha256": "df382f2b96a7debe70eed56eec5d0f2e7cf8408651f97508c1fbd3722a0cff1d"
+        }
+      ],
+      "summary": "--warning / --error / --success",
+      "observed": [
+        {
+          "width": "52.5469px",
+          "color": "rgb(143, 84, 19)",
+          "tokenMatch": "--warning"
+        },
+        {
+          "width": "60.7812px",
+          "color": "rgb(165, 48, 40)",
+          "tokenMatch": "--error"
+        },
+        {
+          "width": "25.9531px",
+          "color": "rgb(47, 122, 73)",
+          "tokenMatch": "--success"
+        }
+      ]
+    },
+    {
+      "rule": 5,
+      "code": "S05",
+      "acceptance": "管理 · menu · restart / logs / remove",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s05-fleet-manage-menu.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s05-fleet-manage-menu.json",
+          "sha256": "60d5a907caf36e913818bbf89de3e223af9bff9ef0ac505babf7d7abd548a726"
+        }
+      ],
+      "summary": "restart, logs, remove",
+      "observed": [
+        "restart",
+        "logs",
+        "remove"
+      ]
+    },
+    {
+      "rule": 6,
+      "code": "S06",
+      "acceptance": "add device · + 按钮 · modal · 显示 install 命令 mono 字体",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s06-fleet-add-modal.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s06-fleet-add-modal.json",
+          "sha256": "bfa898282be806b0c97763312acc58c5e62357914c6c1169b2ed0391bbd9e43b"
+        }
+      ],
+      "summary": "添加设备 / curl -fsSL https://fleet.friday.dev/install.sh | sh -s -- --name Warehouse Edge",
+      "observed": {
+        "title": "添加设备",
+        "command": "curl -fsSL https://fleet.friday.dev/install.sh | sh -s -- --name Warehouse Edge",
+        "fontFamily": "\"JetBrains Mono\", monospace"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "S07",
+      "acceptance": "select device · card 琥珀 border + detail drawer 右出",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s07-fleet-selected-drawer.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s07-fleet-selected-drawer.json",
+          "sha256": "b1ccf4eb78cfc2888b8659e64692d1755a5642088eb803b0870ad0b165310fdc"
+        }
+      ],
+      "summary": "true / --accent",
+      "observed": {
+        "drawerPresent": true,
+        "borderColor": "rgb(154, 93, 37)",
+        "tokenMatch": "--accent"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "S08",
+      "acceptance": "empty · \"还没有连接设备\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-06/s08-fleet-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-06/s08-fleet-empty.json",
+          "sha256": "786726c243fb5ed5e1928c2a8e9fd80c208f2cb87507927d539730f43b220ad8"
+        },
+        {
+          "path": "screenshots/P2D-06/s08-fleet-empty.png",
+          "sha256": "4d4ceb33ad04f8671965e9074975bab5edad8ba4b4605da7099b2d542e9591c0"
+        }
+      ],
+      "summary": "还没有连接设备",
+      "observed": {
+        "title": "还没有连接设备"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2D-06/s01-fleet-grid.json",
+    "screenshots/P2D-06/s02-fleet-status-colors.json",
+    "screenshots/P2D-06/s03-fleet-heartbeat.json",
+    "screenshots/P2D-06/s04-fleet-resource-bars.json",
+    "screenshots/P2D-06/s05-fleet-manage-menu.json",
+    "screenshots/P2D-06/s06-fleet-add-modal.json",
+    "screenshots/P2D-06/s07-fleet-selected-drawer.json",
+    "screenshots/P2D-06/s08-fleet-empty.json",
+    "screenshots/P2D-06/s08-fleet-empty.png"
+  ]
+}

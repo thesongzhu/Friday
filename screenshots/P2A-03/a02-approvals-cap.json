@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:29:59.495Z",
+  "before": {
+    "rowCount": 3,
+    "linkText": "全部查看 (4)",
+    "linkHref": "/assistant?tab=approvals&packId=industry-cross-border-ecommerce"
+  },
+  "route": "/assistant?tab=approvals&packId=industry-cross-border-ecommerce",
+  "screenshot": "screenshots/P2A-03/a02-approvals-cap.png"
+}

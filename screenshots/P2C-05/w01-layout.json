@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:33:55.601Z",
+  "observed": {
+    "leftWidth": 420,
+    "rightExists": true,
+    "rightWidth": 388,
+    "containerDisplay": "grid",
+    "containerColumns": "420px 388px"
+  },
+  "screenshot": "screenshots/P2C-05/w01-layout.png"
+}

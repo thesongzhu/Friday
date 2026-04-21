@@ -1,0 +1,7 @@
+{
+  "generatedAt": "2026-04-21T10:31:30.127Z",
+  "observed": {
+    "borderStyle": "dashed",
+    "text": "medSlack · 22 分钟前Copy ID是否允许 Friday 在 provider 降级后自动改用次优模型◌路由切换允许 Friday 在当前运行里把模型切到降级 provider。△SLA 兜底允许 Friday 在质量下降前提下优先守住响应时延。查看证据{ \"grantId\": \"grant-provider-fallback-1881\", \"toolCalls\": [ \"provider.health\", \"routing.preview\" ], \"timestamps\": [ \"2026-04-20T20:56:00.000Z\", \"2026-04-20T21:18:00.000Z\" ] }已过期 · 请重新请求"
+  }
+}

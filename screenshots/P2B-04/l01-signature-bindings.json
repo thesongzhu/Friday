@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:31:38.474Z",
+  "observed": {
+    "sourceSignature": true,
+    "prototypeSignature": true,
+    "wrapperSignature": true,
+    "wrapperUsesBaseCard": true
+  }
+}

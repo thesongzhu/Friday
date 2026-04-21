@@ -1,0 +1,769 @@
+{
+  "itemId": "P2E-02",
+  "route": "/setup",
+  "generatedAt": "2026-04-21T10:35:58.747Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 11,
+    "pass": 11,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "SU01",
+      "acceptance": "4 步 · profile / providers / first-skill / done · stepper 顶部",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su01-setup-stepper.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su01-setup-stepper.json",
+          "sha256": "b993f0f0637d041ed21de366ada9cc88ec1bfad8a882bce6dda9e710cd636304"
+        }
+      ],
+      "summary": "Profile / Providers / First skill / Done",
+      "observed": {
+        "labels": [
+          "Profile",
+          "Providers",
+          "First skill",
+          "Done"
+        ],
+        "stepperTop": 320.828125,
+        "shellTop": 291.828125
+      }
+    },
+    {
+      "rule": 2,
+      "code": "SU02",
+      "acceptance": "step 1 profile · name + role select + company optional",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su02-setup-profile-fields.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su02-setup-profile-fields.json",
+          "sha256": "df3c83d77383ba7f6c2fcc9d4a17de4d046e781cfd01fb26c4e04681c2a5d8c7"
+        }
+      ],
+      "summary": "Jarvis / Operator / Friday Labs",
+      "observed": {
+        "nameValue": "Jarvis",
+        "roleValue": "Operator",
+        "companyValue": "Friday Labs"
+      }
+    },
+    {
+      "rule": 3,
+      "code": "SU03",
+      "acceptance": "step 2 providers · 至少配置 1 个 · OpenAI / Anthropic / 本地 · 每个有 key 输入 + 测试连接",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su03-setup-providers.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su03-setup-providers.json",
+          "sha256": "89cecba23ba34894dfe528cc568c85b5a64926df84040c085cc76add6ae794e8"
+        }
+      ],
+      "summary": "providers=3 configured=openai,local",
+      "observed": {
+        "observed": {
+          "providers": [
+            {
+              "id": "openai",
+              "inputId": "setup-provider-openai",
+              "testLabel": "测试连接"
+            },
+            {
+              "id": "anthropic",
+              "inputId": "setup-provider-anthropic",
+              "testLabel": "测试连接"
+            },
+            {
+              "id": "local",
+              "inputId": "setup-provider-local",
+              "testLabel": "测试连接"
+            }
+          ]
+        },
+        "configuredIds": [
+          "openai",
+          "local"
+        ],
+        "qaState": {
+          "stateName": "step2-providers",
+          "step": 2,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": false
+          },
+          "status": {
+            "lastCompletedStep": 0,
+            "updatedAt": null
+          },
+          "statusQuery": {
+            "lastCompletedStep": 0,
+            "nextStep": 1,
+            "updatedAt": null,
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step2-providers&step=2",
+          "confirmDialog": null
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "SU04",
+      "acceptance": "step 3 first-skill · 3 推荐 skill · install · 至少选 1 · 或跳过",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su04-setup-skills.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su04-setup-skills.json",
+          "sha256": "7a321c504a525ca954676dfe553308dc09d3fc1f2f32e8263feaf199452f9301"
+        }
+      ],
+      "summary": "cards=3 selected=1 skippedStep=4",
+      "observed": {
+        "before": {
+          "cards": [
+            "Cross-border Review",
+            "Release Guardian",
+            "Finance Watch"
+          ],
+          "nextDisabled": true,
+          "skipPresent": true
+        },
+        "after": {
+          "nextDisabled": false,
+          "selectedSkills": [
+            "skill-cross-border-review"
+          ]
+        },
+        "skipped": {
+          "stateName": "step4-done",
+          "step": 4,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": true
+          },
+          "status": {
+            "lastCompletedStep": 3,
+            "updatedAt": "2026-04-20T21:18:00.000Z"
+          },
+          "statusQuery": {
+            "lastCompletedStep": 3,
+            "nextStep": 4,
+            "updatedAt": "2026-04-20T21:18:00.000Z",
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 3,
+              "nextStep": 4,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 3,
+              "nextStep": 4,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step4-done&step=4",
+          "confirmDialog": null
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "SU05",
+      "acceptance": "step 4 done · 准备就绪 + 跳 /home",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su05-setup-done.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su05-setup-done.json",
+          "sha256": "2414d6ff3ed4d1f69f98def3cef3ddfd2948e2ae9c0291303c3348e5f070e28d"
+        }
+      ],
+      "summary": "准备就绪 / 进入首页",
+      "observed": {
+        "title": "准备就绪",
+        "buttonText": "进入首页"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "SU06",
+      "acceptance": "每步 prev / next · step 1 无 prev",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su06-setup-prev-next.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su06-setup-prev-next.json",
+          "sha256": "79ae4f15dcd93ec476edd02ef5152fff76c34703b976cff637455998afbe6fd3"
+        }
+      ],
+      "summary": "step1 prev=null step2 prev=上一步",
+      "observed": {
+        "firstObserved": {
+          "prevText": null,
+          "nextText": "下一步"
+        },
+        "secondObserved": {
+          "prevText": "上一步",
+          "nextText": "下一步"
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "SU07",
+      "acceptance": "断线 · 重进 · 从上次完成步继续(useSetupStatusQuery)",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su07-setup-resume.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su07-setup-resume.json",
+          "sha256": "6b6380936b737ff1a494ec4a983a9ce6aec1a9c66adb1ac092341aef678dec3f"
+        }
+      ],
+      "summary": "lastCompleted=2 resumedStep=3",
+      "observed": {
+        "beforeClose": {
+          "stateName": "step3-first-skill",
+          "step": 3,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": false
+          },
+          "status": {
+            "lastCompletedStep": 2,
+            "updatedAt": "2026-04-20T21:18:00.000Z"
+          },
+          "statusQuery": {
+            "lastCompletedStep": 2,
+            "nextStep": 3,
+            "updatedAt": "2026-04-20T21:18:00.000Z",
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 1,
+              "nextStep": 2,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 2,
+              "nextStep": 3,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 2,
+              "nextStep": 3,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step3-first-skill&step=3",
+          "confirmDialog": null
+        },
+        "resumed": {
+          "stateName": "step3-first-skill",
+          "step": 3,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": false
+          },
+          "status": {
+            "lastCompletedStep": 2,
+            "updatedAt": "2026-04-20T21:18:00.000Z"
+          },
+          "statusQuery": {
+            "lastCompletedStep": 2,
+            "nextStep": 3,
+            "updatedAt": "2026-04-20T21:18:00.000Z",
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 2,
+              "nextStep": 3,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 2,
+              "nextStep": 3,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 2,
+              "nextStep": 3,
+              "updatedAt": "2026-04-20T21:18:00.000Z",
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step3-first-skill&step=3",
+          "confirmDialog": null
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "SU08",
+      "acceptance": "每步 URL ?step=1..4 · 刷新不丢",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su08-setup-step-url.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su08-setup-step-url.json",
+          "sha256": "ea3a571080f27ac8d2b93fbaabc06815d3a40277135448c322bdf589b8c24bf9"
+        }
+      ],
+      "summary": "1:1 / 2:2 / 3:3 / 4:4",
+      "observed": [
+        {
+          "step": 1,
+          "beforeReload": "/setup?dev=1&__state=step1-profile&step=1",
+          "afterReload": {
+            "url": "/setup?dev=1&__state=step1-profile&step=1",
+            "step": 1
+          }
+        },
+        {
+          "step": 2,
+          "beforeReload": "/setup?dev=1&__state=step2-providers&step=2",
+          "afterReload": {
+            "url": "/setup?dev=1&__state=step2-providers&step=2",
+            "step": 2
+          }
+        },
+        {
+          "step": 3,
+          "beforeReload": "/setup?dev=1&__state=step3-first-skill&step=3",
+          "afterReload": {
+            "url": "/setup?dev=1&__state=step3-first-skill&step=3",
+            "step": 3
+          }
+        },
+        {
+          "step": 4,
+          "beforeReload": "/setup?dev=1&__state=step4-done&step=4",
+          "afterReload": {
+            "url": "/setup?dev=1&__state=step4-done&step=4",
+            "step": 4
+          }
+        }
+      ]
+    },
+    {
+      "rule": 9,
+      "code": "SU09",
+      "acceptance": "退出需确认 · 设置未完成",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su09-setup-exit-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su09-setup-exit-confirm.json",
+          "sha256": "1bb53654ba6fb2c9248fa2e5794f4ba59c983bb11e61357d2b53399b9c0228f1"
+        }
+      ],
+      "summary": "设置未完成 / setup-leave",
+      "observed": {
+        "preview": {
+          "title": "设置未完成",
+          "href": "/onboarding",
+          "confirmRequired": true
+        },
+        "observed": {
+          "stateName": "step2-providers",
+          "step": 2,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": false
+          },
+          "status": {
+            "lastCompletedStep": 0,
+            "updatedAt": null
+          },
+          "statusQuery": {
+            "lastCompletedStep": 0,
+            "nextStep": 1,
+            "updatedAt": null,
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step2-providers&step=2",
+          "confirmDialog": {
+            "inputValue": "",
+            "reasonValue": "",
+            "title": "设置未完成",
+            "body": "这会离开当前 wizard，并把你带到 onboarding。",
+            "confirmLabel": "仍然离开",
+            "action": "setup-leave",
+            "payload": "/onboarding"
+          }
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "SU10",
+      "acceptance": "完成后 POST setup/complete 再跳转",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su10-setup-complete-post.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su10-setup-complete-post.json",
+          "sha256": "d09f6cc1714386aaea21e7903bf476ce560114519c229c901cfd2eeacbf8e707"
+        }
+      ],
+      "summary": "/home / setup/complete",
+      "observed": {
+        "route": "/home",
+        "trace": [
+          {
+            "endpoint": "setup/complete",
+            "method": "POST",
+            "at": "2026-04-20T21:18:00.000Z",
+            "body": {
+              "name": "Jarvis",
+              "role": "Operator",
+              "company": "Friday Labs",
+              "providers": {
+                "openai": {
+                  "key": "sk-live-openai-demo",
+                  "configured": true,
+                  "testStatus": "idle",
+                  "testedAt": null
+                },
+                "anthropic": {
+                  "key": "",
+                  "configured": false,
+                  "testStatus": "idle",
+                  "testedAt": null
+                },
+                "local": {
+                  "key": "http://localhost:11434",
+                  "configured": true,
+                  "testStatus": "idle",
+                  "testedAt": null
+                }
+              },
+              "selectedSkills": [],
+              "skippedSkills": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": 11,
+      "code": "SU11",
+      "acceptance": "失败降级 · 稍后设置 link · 跳 /onboarding",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-02/su11-setup-later.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-02/su11-setup-later.json",
+          "sha256": "8d8070d3fc5571572f7dd15f9e0ce55c6e520422b0ac816efcf0e0a12941dd80"
+        }
+      ],
+      "summary": "/onboarding -> /onboarding",
+      "observed": {
+        "href": "/onboarding",
+        "dialog": {
+          "stateName": "step1-profile",
+          "step": 1,
+          "draft": {
+            "name": "Jarvis",
+            "role": "Operator",
+            "company": "Friday Labs",
+            "providers": {
+              "openai": {
+                "key": "sk-live-openai-demo",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "anthropic": {
+                "key": "",
+                "configured": false,
+                "testStatus": "idle",
+                "testedAt": null
+              },
+              "local": {
+                "key": "http://localhost:11434",
+                "configured": true,
+                "testStatus": "idle",
+                "testedAt": null
+              }
+            },
+            "selectedSkills": [],
+            "skippedSkills": false
+          },
+          "status": {
+            "lastCompletedStep": 0,
+            "updatedAt": null
+          },
+          "statusQuery": {
+            "lastCompletedStep": 0,
+            "nextStep": 1,
+            "updatedAt": null,
+            "source": "useSetupStatusQuery"
+          },
+          "statusQueryTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            },
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "lastCompletedStep": 0,
+              "nextStep": 1,
+              "updatedAt": null,
+              "source": "useSetupStatusQuery"
+            }
+          ],
+          "connectionTests": [],
+          "completeTrace": [],
+          "pendingComplete": false,
+          "currentUrl": "/setup?dev=1&__state=step1-profile&step=1",
+          "confirmDialog": {
+            "inputValue": "",
+            "reasonValue": "",
+            "title": "设置未完成",
+            "body": "这会离开当前 wizard，并把你带到 onboarding。",
+            "confirmLabel": "仍然离开",
+            "action": "setup-leave",
+            "payload": "/onboarding"
+          }
+        },
+        "route": "/onboarding"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2E-02/su01-setup-stepper.json",
+    "screenshots/P2E-02/su02-setup-profile-fields.json",
+    "screenshots/P2E-02/su03-setup-providers.json",
+    "screenshots/P2E-02/su04-setup-skills.json",
+    "screenshots/P2E-02/su05-setup-done.json",
+    "screenshots/P2E-02/su06-setup-prev-next.json",
+    "screenshots/P2E-02/su07-setup-resume.json",
+    "screenshots/P2E-02/su08-setup-step-url.json",
+    "screenshots/P2E-02/su09-setup-exit-confirm.json",
+    "screenshots/P2E-02/su10-setup-complete-post.json",
+    "screenshots/P2E-02/su11-setup-later.json"
+  ]
+}

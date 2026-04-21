@@ -1,0 +1,60 @@
+{
+  "generatedAt": "2026-04-21T10:34:08.334Z",
+  "observed": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-action-648054-95",
+        "type": "action",
+        "name": "创建 Assistant 卡片",
+        "x": 240,
+        "y": 180,
+        "config": {
+          "lane": "assistant",
+          "priority": "high"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [
+      "node-action-648054-95"
+    ],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-action-648054-95"
+      ]
+    },
+    "historyDepth": 1,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  },
+  "created": {
+    "id": "node-action-648054-95",
+    "type": "action",
+    "name": "创建 Assistant 卡片",
+    "x": 240,
+    "y": 180,
+    "config": {
+      "lane": "assistant",
+      "priority": "high"
+    }
+  },
+  "screenshot": "screenshots/P2C-06/b02-drop-node.png"
+}

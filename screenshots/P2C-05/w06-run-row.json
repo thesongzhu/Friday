@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-04-21T10:34:00.517Z",
+  "before": {
+    "cells": [
+      "failed",
+      "07:12",
+      "manual",
+      "logsretry"
+    ],
+    "hasRetry": true,
+    "hasLogs": true,
+    "pillText": "failed"
+  },
+  "after": {
+    "stateName": "failed",
+    "rows": [
+      {
+        "id": "workflow-cross-border-launch",
+        "name": {
+          "zh": "跨境上新守护",
+          "en": "Cross-border launch guard"
+        },
+        "version": "v12",
+        "status": "running",
+        "nextRun": "15:10",
+        "trigger": "cron"
+      },
+      {
+        "id": "workflow-incident-brief",
+        "name": {
+          "zh": "事故复盘简报",
+          "en": "Incident brief"
+        },
+        "version": "v7",
+        "status": "running",
+        "nextRun": "刚刚",
+        "trigger": "manual"
+      },
+      {
+        "id": "workflow-support-drain",
+        "name": {
+          "zh": "客服工单消峰",
+          "en": "Support drain"
+        },
+        "version": "v4",
+        "status": "scheduled",
+        "nextRun": "16:00",
+        "trigger": "webhook"
+      }
+    ],
+    "selectedWorkflowId": "workflow-incident-brief",
+    "search": "",
+    "statusFilter": "all",
+    "archived": [
+      {
+        "id": "workflow-budget-scout",
+        "name": {
+          "zh": "预算预警巡检",
+          "en": "Budget scout"
+        },
+        "version": "v3",
+        "status": "archived",
+        "nextRun": "—",
+        "trigger": "manual"
+      }
+    ]
+  }
+}

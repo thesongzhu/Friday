@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:35:27.529Z",
+  "tokenColors": {
+    "--error": "rgb(165, 48, 40)"
+  },
+  "observed": {
+    "dasharray": "6 6",
+    "stroke": "rgb(165, 48, 40)",
+    "tokenMatch": "--error",
+    "label": "budget cap"
+  }
+}

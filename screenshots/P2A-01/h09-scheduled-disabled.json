@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:29:42.371Z",
+  "observed": {
+    "opacity": "0.35",
+    "timeText": "已暂停",
+    "className": "scheduled-row is-disabled"
+  },
+  "screenshot": "screenshots/P2A-01/h09-scheduled-disabled.png"
+}

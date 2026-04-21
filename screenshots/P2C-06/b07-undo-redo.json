@@ -1,0 +1,820 @@
+{
+  "generatedAt": "2026-04-21T10:34:14.517Z",
+  "afterAdds": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-logic-654205-57",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 60,
+        "y": 80,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654210-23",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 70,
+        "y": 90,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654212-94",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 80,
+        "y": 100,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654215-21",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 90,
+        "y": 110,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654218-77",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 100,
+        "y": 120,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654220-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 110,
+        "y": 130,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654222-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 120,
+        "y": 140,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654224-45",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 130,
+        "y": 150,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654226-70",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 140,
+        "y": 160,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654228-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 150,
+        "y": 170,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654230-91",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 160,
+        "y": 180,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654232-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 170,
+        "y": 190,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654234-31",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 180,
+        "y": 200,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654237-35",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 190,
+        "y": 210,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654239-11",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 200,
+        "y": 220,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654241-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 210,
+        "y": 230,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654243-89",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 220,
+        "y": 240,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654245-73",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 230,
+        "y": 250,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654247-71",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 240,
+        "y": 260,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654249-43",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 250,
+        "y": 270,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654252-84",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 260,
+        "y": 280,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654254-94",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 270,
+        "y": 290,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [
+      "node-logic-654254-94"
+    ],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "至少需要一个 action。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-logic-654205-57",
+        "node-logic-654210-23",
+        "node-logic-654212-94",
+        "node-logic-654215-21",
+        "node-logic-654218-77",
+        "node-logic-654220-14",
+        "node-logic-654222-65",
+        "node-logic-654224-45",
+        "node-logic-654226-70",
+        "node-logic-654228-14",
+        "node-logic-654230-91",
+        "node-logic-654232-14",
+        "node-logic-654234-31",
+        "node-logic-654237-35",
+        "node-logic-654239-11",
+        "node-logic-654241-65",
+        "node-logic-654243-89",
+        "node-logic-654245-73",
+        "node-logic-654247-71",
+        "node-logic-654249-43",
+        "node-logic-654252-84",
+        "node-logic-654254-94"
+      ]
+    },
+    "historyDepth": 20,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  },
+  "afterUndo": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-logic-654205-57",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 60,
+        "y": 80,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654210-23",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 70,
+        "y": 90,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654212-94",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 80,
+        "y": 100,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654215-21",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 90,
+        "y": 110,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654218-77",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 100,
+        "y": 120,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654220-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 110,
+        "y": 130,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654222-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 120,
+        "y": 140,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654224-45",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 130,
+        "y": 150,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654226-70",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 140,
+        "y": 160,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654228-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 150,
+        "y": 170,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654230-91",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 160,
+        "y": 180,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654232-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 170,
+        "y": 190,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654234-31",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 180,
+        "y": 200,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654237-35",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 190,
+        "y": 210,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654239-11",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 200,
+        "y": 220,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654241-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 210,
+        "y": 230,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654243-89",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 220,
+        "y": 240,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654245-73",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 230,
+        "y": 250,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654247-71",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 240,
+        "y": 260,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654249-43",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 250,
+        "y": 270,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654252-84",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 260,
+        "y": 280,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [
+      "node-logic-654252-84"
+    ],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "至少需要一个 action。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-logic-654205-57",
+        "node-logic-654210-23",
+        "node-logic-654212-94",
+        "node-logic-654215-21",
+        "node-logic-654218-77",
+        "node-logic-654220-14",
+        "node-logic-654222-65",
+        "node-logic-654224-45",
+        "node-logic-654226-70",
+        "node-logic-654228-14",
+        "node-logic-654230-91",
+        "node-logic-654232-14",
+        "node-logic-654234-31",
+        "node-logic-654237-35",
+        "node-logic-654239-11",
+        "node-logic-654241-65",
+        "node-logic-654243-89",
+        "node-logic-654245-73",
+        "node-logic-654247-71",
+        "node-logic-654249-43",
+        "node-logic-654252-84"
+      ]
+    },
+    "historyDepth": 19,
+    "futureDepth": 1,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  },
+  "afterRedo": {
+    "stateName": "new",
+    "nodes": [
+      {
+        "id": "node-logic-654205-57",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 60,
+        "y": 80,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654210-23",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 70,
+        "y": 90,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654212-94",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 80,
+        "y": 100,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654215-21",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 90,
+        "y": 110,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654218-77",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 100,
+        "y": 120,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654220-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 110,
+        "y": 130,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654222-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 120,
+        "y": 140,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654224-45",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 130,
+        "y": 150,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654226-70",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 140,
+        "y": 160,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654228-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 150,
+        "y": 170,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654230-91",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 160,
+        "y": 180,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654232-14",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 170,
+        "y": 190,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654234-31",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 180,
+        "y": 200,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654237-35",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 190,
+        "y": 210,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654239-11",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 200,
+        "y": 220,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654241-65",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 210,
+        "y": 230,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654243-89",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 220,
+        "y": 240,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654245-73",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 230,
+        "y": 250,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654247-71",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 240,
+        "y": 260,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654249-43",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 250,
+        "y": 270,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654252-84",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 260,
+        "y": 280,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      },
+      {
+        "id": "node-logic-654254-94",
+        "type": "logic",
+        "name": "条件分支",
+        "x": 270,
+        "y": 290,
+        "config": {
+          "expression": "severity === 'high'"
+        }
+      }
+    ],
+    "edges": [],
+    "selection": [
+      "node-logic-654254-94"
+    ],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [
+        "至少需要一个 trigger。",
+        "至少需要一个 action。",
+        "存在孤立节点，请补上连线或删除它们。"
+      ],
+      "errorNodeIds": [
+        "node-logic-654205-57",
+        "node-logic-654210-23",
+        "node-logic-654212-94",
+        "node-logic-654215-21",
+        "node-logic-654218-77",
+        "node-logic-654220-14",
+        "node-logic-654222-65",
+        "node-logic-654224-45",
+        "node-logic-654226-70",
+        "node-logic-654228-14",
+        "node-logic-654230-91",
+        "node-logic-654232-14",
+        "node-logic-654234-31",
+        "node-logic-654237-35",
+        "node-logic-654239-11",
+        "node-logic-654241-65",
+        "node-logic-654243-89",
+        "node-logic-654245-73",
+        "node-logic-654247-71",
+        "node-logic-654249-43",
+        "node-logic-654252-84",
+        "node-logic-654254-94"
+      ]
+    },
+    "historyDepth": 20,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v1",
+    "sourceKey": "state:new"
+  }
+}

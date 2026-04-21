@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-04-21T10:33:25.371Z",
+  "observed": {
+    "position": "fixed",
+    "bottomGap": 24,
+    "buttons": [
+      {
+        "label": "上一步",
+        "left": 193,
+        "right": 269
+      },
+      {
+        "label": "下一步",
+        "left": 1171,
+        "right": 1247
+      }
+    ]
+  }
+}

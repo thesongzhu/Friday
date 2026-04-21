@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:30:14.013Z",
+  "observed": {
+    "rowCount": 2,
+    "firstRowUser": true,
+    "secondRowUser": false,
+    "dotCount": 3,
+    "dots": [
+      {
+        "duration": "0.4s",
+        "delay": "0s"
+      },
+      {
+        "duration": "0.4s",
+        "delay": "0.08s"
+      },
+      {
+        "duration": "0.4s",
+        "delay": "0.16s"
+      }
+    ]
+  },
+  "screenshot": "screenshots/P2A-05/c02-user-thinking.png"
+}

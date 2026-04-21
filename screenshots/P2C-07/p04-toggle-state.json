@@ -1,0 +1,180 @@
+{
+  "generatedAt": "2026-04-21T10:34:33.208Z",
+  "before": {
+    "stateName": "installed",
+    "search": "",
+    "rows": [
+      {
+        "id": "plugin-github",
+        "name": "GitHub",
+        "description": {
+          "zh": "PR triage、review threads 与 Actions 日志。",
+          "en": "PR triage, review threads, and Actions diagnostics."
+        },
+        "version": "2.0.0",
+        "latest": "2.1.0",
+        "status": "update-available",
+        "permissions": [
+          "repo",
+          "pull_request",
+          "workflow",
+          "filesystem:read",
+          "network:github.com"
+        ]
+      },
+      {
+        "id": "plugin-computer-use",
+        "name": "Computer Use",
+        "description": {
+          "zh": "桌面交互、点击与键盘事件桥接。",
+          "en": "Desktop interaction, click, and keyboard automation."
+        },
+        "version": "1.4.2",
+        "latest": "1.4.2",
+        "status": "enabled",
+        "permissions": [
+          "desktop",
+          "filesystem:readwrite"
+        ]
+      },
+      {
+        "id": "plugin-workspace-ops",
+        "name": "Workspace Ops",
+        "description": {
+          "zh": "面向本地代码库的搜索、补丁和格式化。",
+          "en": "Search, patching, and formatting for the local workspace."
+        },
+        "version": "1.2.0",
+        "latest": "1.2.0",
+        "status": "installed",
+        "permissions": [
+          "filesystem:readwrite",
+          "shell"
+        ]
+      },
+      {
+        "id": "plugin-release-radar",
+        "name": "Release Radar",
+        "description": {
+          "zh": "跟踪发布窗口与回滚演练。",
+          "en": "Tracks release windows and rollback drills."
+        },
+        "version": "0.9.4",
+        "latest": "0.9.4",
+        "status": "disabled",
+        "permissions": [
+          "notifications",
+          "network:status.friday.dev"
+        ]
+      },
+      {
+        "id": "plugin-legacy-slack",
+        "name": "Slack Legacy",
+        "description": {
+          "zh": "旧版 Slack connector，权限清单已漂移。",
+          "en": "Legacy Slack connector with a drifted permission manifest."
+        },
+        "version": "0.8.1",
+        "latest": "0.9.0",
+        "status": "error",
+        "permissions": [
+          "chat:write",
+          "channels:history"
+        ]
+      }
+    ],
+    "selectedPluginId": null,
+    "activeModal": null,
+    "activeDrawer": null
+  },
+  "after": {
+    "stateName": "installed",
+    "search": "",
+    "rows": [
+      {
+        "id": "plugin-github",
+        "name": "GitHub",
+        "description": {
+          "zh": "PR triage、review threads 与 Actions 日志。",
+          "en": "PR triage, review threads, and Actions diagnostics."
+        },
+        "version": "2.0.0",
+        "latest": "2.1.0",
+        "status": "update-available",
+        "permissions": [
+          "repo",
+          "pull_request",
+          "workflow",
+          "filesystem:read",
+          "network:github.com"
+        ]
+      },
+      {
+        "id": "plugin-computer-use",
+        "name": "Computer Use",
+        "description": {
+          "zh": "桌面交互、点击与键盘事件桥接。",
+          "en": "Desktop interaction, click, and keyboard automation."
+        },
+        "version": "1.4.2",
+        "latest": "1.4.2",
+        "status": "disabled",
+        "permissions": [
+          "desktop",
+          "filesystem:readwrite"
+        ]
+      },
+      {
+        "id": "plugin-workspace-ops",
+        "name": "Workspace Ops",
+        "description": {
+          "zh": "面向本地代码库的搜索、补丁和格式化。",
+          "en": "Search, patching, and formatting for the local workspace."
+        },
+        "version": "1.2.0",
+        "latest": "1.2.0",
+        "status": "installed",
+        "permissions": [
+          "filesystem:readwrite",
+          "shell"
+        ]
+      },
+      {
+        "id": "plugin-release-radar",
+        "name": "Release Radar",
+        "description": {
+          "zh": "跟踪发布窗口与回滚演练。",
+          "en": "Tracks release windows and rollback drills."
+        },
+        "version": "0.9.4",
+        "latest": "0.9.4",
+        "status": "disabled",
+        "permissions": [
+          "notifications",
+          "network:status.friday.dev"
+        ]
+      },
+      {
+        "id": "plugin-legacy-slack",
+        "name": "Slack Legacy",
+        "description": {
+          "zh": "旧版 Slack connector，权限清单已漂移。",
+          "en": "Legacy Slack connector with a drifted permission manifest."
+        },
+        "version": "0.8.1",
+        "latest": "0.9.0",
+        "status": "error",
+        "permissions": [
+          "chat:write",
+          "channels:history"
+        ]
+      }
+    ],
+    "selectedPluginId": null,
+    "activeModal": null,
+    "activeDrawer": null
+  },
+  "errorToggle": {
+    "disabled": true
+  }
+}

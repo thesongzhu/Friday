@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:33:36.947Z",
+  "observed": {
+    "bannerText": "此技能已弃用 · 建议替换为 Release Guardian",
+    "footerCopy": "已弃用，不可启用",
+    "actionLabel": "替换",
+    "enableTogglePresent": false
+  },
+  "screenshot": "screenshots/P2C-03/s06-deprecated-banner.png"
+}

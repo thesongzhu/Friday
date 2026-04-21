@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-04-21T10:31:59.149Z",
+  "before": {
+    "resetText": "Reset",
+    "saveText": "Save",
+    "resetX": 896.765625,
+    "saveX": 979.453125
+  },
+  "confirmObserved": {
+    "title": "重置这组未保存修改?"
+  },
+  "after": {
+    "saveBarVisible": false,
+    "value": "12000",
+    "beforeUnload": {
+      "defaultPrevented": false,
+      "prevented": false,
+      "returnValue": null
+    }
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "generatedAt": "2026-04-21T10:36:40.203Z",
+  "observed": {
+    "totalRuns": "3",
+    "failRate": "0%",
+    "avgDuration": "17 分 0 秒"
+  },
+  "qaState": {
+    "stateName": "multi-run",
+    "agents": [
+      {
+        "id": "agent-ops",
+        "name": "Ops Agent",
+        "status": {
+          "zh": "执行中",
+          "en": "Executing"
+        },
+        "currentRun": {
+          "zh": "北美仓补货值守",
+          "en": "NA replenishment watch"
+        },
+        "tone": "healthy"
+      },
+      {
+        "id": "agent-qa",
+        "name": "QA Agent",
+        "status": {
+          "zh": "等待批准",
+          "en": "Awaiting approval"
+        },
+        "currentRun": {
+          "zh": "交付回归批次",
+          "en": "Delivery regression batch"
+        },
+        "tone": "warning"
+      },
+      {
+        "id": "agent-builder",
+        "name": "Builder Agent",
+        "status": {
+          "zh": "测试中",
+          "en": "Testing"
+        },
+        "currentRun": {
+          "zh": "工作流修订",
+          "en": "Workflow revision"
+        },
+        "tone": "healthy"
+      }
+    ],
+    "selectedAgentId": "agent-ops",
+    "expandedEventId": null,
+    "runs": [
+      {
+        "id": "run-replenish-watch",
+        "task": "复核北美仓补货告警并决定是否提前切换供应商",
+        "status": "executing",
+        "sessionKey": "session-replenish-watch",
+        "startedAt": "2026-04-20T21:00:00.000Z",
+        "summary": "Friday 正在聚合仓位、销售速度和延迟到货风险。",
+        "responseText": "正在复核",
+        "contextSummary": {
+          "taskProfileId": "planning",
+          "taskProfileLabel": "Planning",
+          "totalEstimatedChars": 6400,
+          "dominantContextKinds": [
+            "workspace_context",
+            "mcp"
+          ],
+          "learningAdjusted": true,
+          "fallbackAttemptCount": 1,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "heuristic"
+        },
+        "health": {
+          "state": "healthy",
+          "rollbackAvailable": true,
+          "reasonCodes": [
+            "within_budget"
+          ]
+        },
+        "metadata": {
+          "packContext": {
+            "packId": "industry-cross-border-ecommerce",
+            "surface": "home",
+            "updatedAt": "2026-04-20T21:08:00.000Z"
+          }
+        },
+        "agentId": "agent-ops",
+        "lane": "agent-ops",
+        "laneLabel": "Ops Agent",
+        "contextLines": [
+          "关联 session: session-replenish-watch",
+          "健康状态: healthy",
+          "最近事件时间: 18 分 0 秒"
+        ]
+      },
+      {
+        "id": "run-provider-circuit",
+        "task": "验证图像生成 provider 熔断窗口并补一轮降级策略",
+        "status": "awaiting_plan_approval",
+        "startedAt": "2026-04-20T20:36:00.000Z",
+        "durationMs": 1560000,
+        "summary": "Friday 已经整理出一版变更计划，正在等你批准后继续。",
+        "responseText": "等待批准",
+        "contextSummary": {
+          "taskProfileId": "review",
+          "taskProfileLabel": "Review",
+          "totalEstimatedChars": 8200,
+          "dominantContextKinds": [
+            "workspace_context",
+            "subagents"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 2,
+          "modelSelectionSource": "manual"
+        },
+        "health": {
+          "state": "needs_approval",
+          "rollbackAvailable": false,
+          "reasonCodes": [
+            "approval_boundary"
+          ]
+        },
+        "planReview": {
+          "gate": {
+            "kind": "major_decision",
+            "state": "awaiting_plan_approval",
+            "approvalPrompt": "批准后会进入修复和回归验证。"
+          }
+        },
+        "agentId": "agent-qa",
+        "lane": "agent-qa",
+        "laneLabel": "QA Agent",
+        "contextLines": [
+          "关联 session: manual-lane",
+          "健康状态: warning",
+          "最近事件时间: 26 分 0 秒"
+        ]
+      },
+      {
+        "id": "run-cache-retune",
+        "task": "重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+        "status": "testing",
+        "startedAt": "2026-04-20T21:11:00.000Z",
+        "summary": "Friday 已经完成主改动，正在做回归验证。",
+        "responseText": "测试中",
+        "contextSummary": {
+          "taskProfileId": "deterministic",
+          "taskProfileLabel": "Deterministic",
+          "totalEstimatedChars": 2800,
+          "dominantContextKinds": [
+            "workspace_context"
+          ],
+          "learningAdjusted": false,
+          "fallbackAttemptCount": 0,
+          "blockedToolCount": 0,
+          "modelSelectionSource": "default"
+        },
+        "health": {
+          "state": "degraded",
+          "rollbackAvailable": true,
+          "reasonCodes": [
+            "provider_retry"
+          ]
+        },
+        "agentId": "agent-builder",
+        "lane": "agent-builder",
+        "laneLabel": "Builder Agent",
+        "contextLines": [
+          "关联 session: manual-lane",
+          "健康状态: warning",
+          "最近事件时间: 7 分 0 秒"
+        ]
+      }
+    ],
+    "summary": {
+      "totalRuns": 3,
+      "failRate": "0%",
+      "avgDuration": "17 分 0 秒"
+    },
+    "controlTrace": []
+  }
+}

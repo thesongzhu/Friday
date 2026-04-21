@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:35:19.598Z",
+  "rename": {
+    "title": "重命名会话?",
+    "inputLabel": "新的会话名称"
+  },
+  "renamed": "补货监控（已改名）",
+  "archive": "归档这个会话?",
+  "archivedGone": 0,
+  "remove": "删除这个会话?",
+  "deletedGone": 0
+}

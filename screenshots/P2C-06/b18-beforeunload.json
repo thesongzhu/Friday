@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:34:28.771Z",
+  "observed": {
+    "dirty": true,
+    "beforeUnload": {
+      "defaultPrevented": true,
+      "prevented": true,
+      "returnValue": ""
+    }
+  }
+}

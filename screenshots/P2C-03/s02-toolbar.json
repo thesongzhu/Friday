@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-04-21T10:33:32.762Z",
+  "observed": {
+    "searchExists": true,
+    "actions": [
+      "导入",
+      "扫描"
+    ],
+    "toggles": [
+      {
+        "payload": "grid",
+        "text": "grid",
+        "active": true
+      },
+      {
+        "payload": "list",
+        "text": "list",
+        "active": false
+      }
+    ]
+  }
+}

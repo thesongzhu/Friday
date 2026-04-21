@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:30:06.795Z",
+  "observed": [
+    "early",
+    "late",
+    "manual",
+    "disabled-timed",
+    "disabled-manual"
+  ],
+  "screenshot": "screenshots/P2A-04/s02-scheduled-order.png"
+}

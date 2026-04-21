@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:32:30.390Z",
+  "beforeObserved": {
+    "detailEmpty": false,
+    "detailTitle": "provider p95 超阈值",
+    "selectedItemId": "alert-1"
+  },
+  "afterObserved": {
+    "detailEmpty": true,
+    "detailText": "选择一条查看详情",
+    "selectedItemId": null,
+    "focus": "audit"
+  }
+}

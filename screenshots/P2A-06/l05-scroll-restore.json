@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:30:41.909Z",
+  "observed": {
+    "restoredTop": 860,
+    "localStorageValue": "860",
+    "offsets": {
+      "session-replenish-watch": 860,
+      "session-provider-circuit": 4100
+    }
+  }
+}

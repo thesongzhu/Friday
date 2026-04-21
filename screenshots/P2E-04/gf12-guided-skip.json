@@ -1,0 +1,62 @@
+{
+  "generatedAt": "2026-04-21T10:36:34.760Z",
+  "tokenColors": {
+    "--ink-3": "rgba(45, 33, 24, 0.56)"
+  },
+  "observed": {
+    "qa": {
+      "stateName": "action",
+      "wizardId": "inventory-triage",
+      "stepIndex": 2,
+      "activeStepId": "action",
+      "completedStepIds": [
+        "intent"
+      ],
+      "skippedStepIds": [
+        "choice"
+      ],
+      "selectedChoiceId": null,
+      "investigationExpanded": false,
+      "helpOpen": false,
+      "transitionTrace": [
+        {
+          "stepIndex": 1,
+          "stateName": "choice",
+          "reason": "next",
+          "at": "2026-04-20T21:18:00.000Z"
+        },
+        {
+          "stepIndex": 2,
+          "stateName": "action",
+          "reason": "skip",
+          "at": "2026-04-20T21:18:00.000Z"
+        }
+      ],
+      "fetchTrace": [
+        {
+          "wizardId": "inventory-triage",
+          "at": "2026-04-20T21:18:00.000Z",
+          "source": "guided-registry"
+        }
+      ],
+      "refetchCount": 1,
+      "storage": {
+        "wizardId": "inventory-triage",
+        "stepIndex": 2,
+        "selectedChoiceId": null,
+        "completedStepIds": [
+          "intent"
+        ],
+        "skippedStepIds": [
+          "choice"
+        ],
+        "investigationExpanded": false,
+        "helpOpen": false
+      }
+    },
+    "className": "guided-step-pill is-skipped",
+    "icon": "✓",
+    "color": "rgba(45, 33, 24, 0.56)",
+    "tokenMatch": "--ink-3"
+  }
+}

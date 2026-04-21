@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:37:06.066Z",
+  "beforeReload": {
+    "storage": "{\"density\":\"compact\",\"radius\":\"soft\",\"motion\":\"full\",\"accentIntensity\":\"150\",\"localePreview\":\"zh\"}",
+    "tweaks": {
+      "density": "compact",
+      "radius": "soft",
+      "motion": "full",
+      "accentIntensity": "150",
+      "localePreview": "zh"
+    }
+  },
+  "afterReload": {
+    "tweaks": {
+      "density": "compact",
+      "radius": "soft",
+      "motion": "full",
+      "accentIntensity": "150",
+      "localePreview": "zh"
+    },
+    "storage": "{\"density\":\"compact\",\"radius\":\"soft\",\"motion\":\"full\",\"accentIntensity\":\"150\",\"localePreview\":\"zh\"}"
+  },
+  "screenshot": "screenshots/P2F-02/f02-09-persist.png"
+}

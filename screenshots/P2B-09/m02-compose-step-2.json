@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:32:51.717Z",
+  "step2": {
+    "modalStep": "2",
+    "comparatorOptions": [
+      ">",
+      ">=",
+      "<",
+      "<=",
+      "="
+    ],
+    "thresholdValue": "2000"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:33:49.587Z",
+  "modal": {
+    "title": "确认发布技能",
+    "diff": "+ name: release_guardian\n+ outputs: qa_report, release_risk\n+ hooks: verify, summarize",
+    "inputValue": "release_guardian"
+  },
+  "route": {
+    "pathname": "/skills",
+    "search": "?__state=installed"
+  }
+}

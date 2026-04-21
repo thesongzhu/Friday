@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:31:14.236Z",
+  "sourceMatches": {
+    "sourcePack": true,
+    "sourceCrossBorder": true,
+    "prototypePack": true,
+    "prototypeCrossBorder": true
+  },
+  "observed": {
+    "packCard": true,
+    "crossBorderCard": true
+  }
+}

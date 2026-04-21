@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:36:41.115Z",
+  "eventId": "run-replenish-watch",
+  "observed": {
+    "expandedEventId": "run-replenish-watch",
+    "className": "command-event-row is-expanded",
+    "contextLines": 3
+  }
+}

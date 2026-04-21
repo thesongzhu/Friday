@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:30:33.714Z",
+  "observed": {
+    "rowCount": 10,
+    "beforeActive": "session-replenish-watch",
+    "switchedActive": "session-provider-circuit",
+    "restoredValue": "draft-alpha"
+  }
+}

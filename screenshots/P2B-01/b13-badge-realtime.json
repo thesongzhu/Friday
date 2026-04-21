@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:31:19.585Z",
+  "before": {
+    "badge": 4,
+    "cards": 4
+  },
+  "after": {
+    "badge": 3,
+    "cards": 3,
+    "toast": "SUCCESS审批已批准"
+  }
+}

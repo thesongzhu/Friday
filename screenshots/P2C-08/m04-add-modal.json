@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:34:43.294Z",
+  "before": {
+    "title": "添加 MCP 服务器",
+    "fields": [
+      true,
+      true,
+      true
+    ],
+    "testLabel": "测试连接"
+  },
+  "after": {
+    "toast": "SUCCESSMCP 测试连接通过"
+  }
+}

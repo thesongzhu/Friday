@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:34:32.235Z",
+  "tokenColors": {
+    "--accent": "rgb(154, 93, 37)"
+  },
+  "before": {
+    "text": "最新 v2.1.0 ↑",
+    "color": "rgb(154, 93, 37)",
+    "tokenMatch": "--accent"
+  },
+  "after": {
+    "modalTitle": "更新插件"
+  }
+}

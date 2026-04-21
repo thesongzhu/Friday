@@ -1,0 +1,26 @@
+[
+  {
+    "route": "/home?dev=1&__state=normal",
+    "violations": []
+  },
+  {
+    "route": "/chat?dev=1&__state=session-resume",
+    "violations": []
+  },
+  {
+    "route": "/assistant?dev=1&__state=overflow",
+    "violations": []
+  },
+  {
+    "route": "/observability?dev=1&__state=alerts&focus=alerts",
+    "violations": []
+  },
+  {
+    "route": "/settings?dev=1&tab=providers&__state=providers",
+    "violations": []
+  },
+  {
+    "route": "/workflows/builder?dev=1&__state=editing",
+    "violations": []
+  }
+]
