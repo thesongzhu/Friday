@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2026-04-21T10:33:42.982Z",
+  "observed": {
+    "title": "还没有技能",
+    "ctas": [
+      {
+        "text": "浏览技能库",
+        "href": "/skills?__state=available"
+      },
+      {
+        "text": "创建你的第一个技能",
+        "href": "/skills/generator"
+      }
+    ]
+  },
+  "screenshot": "screenshots/P2C-03/s11-empty-state.png"
+}

@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-04-21T10:35:48.785Z",
+  "observed": {
+    "title": "添加设备",
+    "command": "curl -fsSL https://fleet.friday.dev/install.sh | sh -s -- --name Warehouse Edge",
+    "fontFamily": "\"JetBrains Mono\", monospace"
+  }
+}

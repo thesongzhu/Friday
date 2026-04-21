@@ -1,0 +1,211 @@
+{
+  "itemId": "P2E-01",
+  "route": "/login",
+  "generatedAt": "2026-04-21T10:35:50.571Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 7,
+    "pass": 7,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "LG01",
+      "acceptance": "全屏居中 · 卡片 440×auto · radius 28 · shadow 大柔光",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg01-login-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg01-login-layout.json",
+          "sha256": "1a74f389a04d2f9f24b25397d160a034cc4d5ade5c80c3705db5d1ce391c41ed"
+        },
+        {
+          "path": "screenshots/P2E-01/lg01-login-layout.png",
+          "sha256": "b0134ade705a08e1ac8c737b0f9179a62b3d1f16a0ed3848c328ef8ffe7099df"
+        }
+      ],
+      "summary": "size=440x580.609375 center=(0,31.9921875)",
+      "observed": {
+        "viewport": {
+          "width": 1440,
+          "height": 1200
+        },
+        "size": {
+          "width": 440,
+          "height": 580.609375
+        },
+        "centerDeltaX": 0,
+        "centerDeltaY": 31.9921875,
+        "borderRadius": "28px",
+        "boxShadow": "rgba(45, 33, 24, 0.14) 0px 28px 72px 0px"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "LG02",
+      "acceptance": "logo 顶部 · Fraunces \"Friday\" · 下副标题 \"你的工作助手\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg02-login-brand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg02-login-brand.json",
+          "sha256": "86dc7803bcd2a604f5e2d0e4d77f551a458db00f7d8a88c5419824fd59dc2001"
+        }
+      ],
+      "summary": "Friday / 你的工作助手",
+      "observed": {
+        "mark": "Friday",
+        "fontFamily": "Fraunces, serif",
+        "subtitle": "你的工作助手",
+        "topOffset": 436.6875
+      }
+    },
+    {
+      "rule": 3,
+      "code": "LG03",
+      "acceptance": "email 输入 + 发送登录链接按钮 · 按钮琥珀 fill",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg03-login-email-cta.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg03-login-email-cta.json",
+          "sha256": "8c3c23678875ba0565ba0d1bb99667d6e73541d41e425115791f217ebbe8c949"
+        }
+      ],
+      "summary": "发送登录链接 / --accent",
+      "observed": {
+        "inputPresent": true,
+        "inputValue": "jarvis@example.com",
+        "buttonText": "发送登录链接",
+        "buttonColor": "rgb(154, 93, 37)",
+        "tokenMatch": "--accent"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "LG04",
+      "acceptance": "OAuth 区(分割线 + 按钮)· Google / GitHub · 左图标右文字",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg04-login-oauth.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg04-login-oauth.json",
+          "sha256": "eea21c2528ca191bdd0341c465441689af5a5768e2a56f246c0b39a6b02be050"
+        }
+      ],
+      "summary": "或者 / Google, GitHub",
+      "observed": {
+        "divider": "或者",
+        "buttons": [
+          {
+            "text": "Google",
+            "iconLeft": 546,
+            "textLeft": 582
+          },
+          {
+            "text": "GitHub",
+            "iconLeft": 546,
+            "textLeft": 582
+          }
+        ]
+      }
+    },
+    {
+      "rule": 5,
+      "code": "LG05",
+      "acceptance": "submit 失败不清空 email · 错误显红色 inline \"邮箱格式不正确\" 或 \"发送失败 · 请重试\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg05-login-errors.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg05-login-errors.json",
+          "sha256": "71c8089d4ccfaef9bca41be29044d4b57d1b176d12313218172aa4ec34095cc8"
+        }
+      ],
+      "summary": "邮箱格式不正确 / 发送失败 · 请重试",
+      "observed": {
+        "invalidObserved": {
+          "email": "bad-email",
+          "errorText": "邮箱格式不正确",
+          "errorColor": "rgb(165, 48, 40)",
+          "tokenMatch": "--error"
+        },
+        "failedObserved": {
+          "email": "fail@example.com",
+          "errorText": "发送失败 · 请重试",
+          "state": "error"
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "LG06",
+      "acceptance": "submit 成功 · 全卡 fade 到 已发送 态 · 显示 email · 没收到?重试 link",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg06-login-success.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg06-login-success.json",
+          "sha256": "506cc85e8381948db1c063b029507e0f281897d8e7c081c28dffa5d5ccd8d74f"
+        },
+        {
+          "path": "screenshots/P2E-01/lg06-login-success.png",
+          "sha256": "2fffbdf17492bfcf9a64e028ca470b1ee44f77aef2084be67b60fdc468297297"
+        }
+      ],
+      "summary": "已发送 / ops@friday.dev",
+      "observed": {
+        "state": "success",
+        "title": "已发送",
+        "email": "ops@friday.dev",
+        "retryText": "没收到?重试",
+        "animationName": "setup-step-fade",
+        "animationDuration": "0.22s"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "LG07",
+      "acceptance": "登录成功跳 state.redirectTo · 默认 /",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-01/lg07-login-redirect.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-01/lg07-login-redirect.json",
+          "sha256": "5bfd545cc949339766fd3460ea0c8dc68f08c9ec42a5c6a3755c0ca2537ac0ac"
+        }
+      ],
+      "summary": "default=/ custom=/command-center",
+      "observed": {
+        "defaultObserved": {
+          "pathname": "/",
+          "search": "",
+          "route": "/home"
+        },
+        "defaultPath": "/",
+        "customObserved": {
+          "pathname": "/command-center",
+          "search": "",
+          "route": "/command-center"
+        },
+        "customPath": "/command-center"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2E-01/lg01-login-layout.json",
+    "screenshots/P2E-01/lg01-login-layout.png",
+    "screenshots/P2E-01/lg02-login-brand.json",
+    "screenshots/P2E-01/lg03-login-email-cta.json",
+    "screenshots/P2E-01/lg04-login-oauth.json",
+    "screenshots/P2E-01/lg05-login-errors.json",
+    "screenshots/P2E-01/lg06-login-success.json",
+    "screenshots/P2E-01/lg06-login-success.png",
+    "screenshots/P2E-01/lg07-login-redirect.json"
+  ]
+}

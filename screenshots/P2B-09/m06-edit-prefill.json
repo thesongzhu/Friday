@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-04-21T10:32:57.099Z",
+  "step1Observed": {
+    "step": "1",
+    "name": "队列堆积",
+    "metric": "queue.depth"
+  },
+  "step2Observed": {
+    "step": "2",
+    "comparator": ">",
+    "thresholdValue": "50"
+  },
+  "step3Observed": {
+    "step": "3",
+    "checkedChannels": [
+      "#runtime-ops"
+    ]
+  }
+}

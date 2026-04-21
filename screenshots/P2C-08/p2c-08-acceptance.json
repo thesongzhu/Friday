@@ -1,0 +1,766 @@
+{
+  "itemId": "P2C-08",
+  "route": "/mcp",
+  "generatedAt": "2026-04-21T10:34:39.096Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 8,
+    "pass": 8,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "M01",
+      "acceptance": "list · 每 server 一行 · 名 + URL + 状态 + 工具数 + 动作",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m01-server-list.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m01-server-list.json",
+          "sha256": "1a5dcaece70cc7f22c42251d05eb4757bb868d61999e7acce41bf0e07aac461f"
+        },
+        {
+          "path": "screenshots/P2C-08/m01-server-list.png",
+          "sha256": "06d5c73433522863abd377d896bf93d534bbae3aad97c1d47bf04fafcf7c7fea"
+        }
+      ],
+      "summary": "Docs MCP / connected",
+      "observed": {
+        "rowCount": 4,
+        "name": "Docs MCP",
+        "url": "https://mcp.friday.dev/docs",
+        "status": "connected",
+        "toolCount": "3 tools"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "M02",
+      "acceptance": "状态 · connected(绿)/ disconnected(灰)/ connecting(琥珀脉冲)/ error(红)",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m02-status-dots.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m02-status-dots.json",
+          "sha256": "6d2fec937e969a2e3b302699bdf083ddece49d8ccff356392d9026ca0b6423f9"
+        }
+      ],
+      "summary": "mcp-docs:--success, mcp-warehouse:--ink-3, mcp-github:--warning, mcp-browse:--error",
+      "observed": [
+        {
+          "id": "mcp-docs",
+          "className": "health-dot is-healthy",
+          "color": "rgb(47, 122, 73)",
+          "tokenMatch": "--success",
+          "pulse": "none"
+        },
+        {
+          "id": "mcp-warehouse",
+          "className": "health-dot is-cooldown",
+          "color": "rgba(45, 33, 24, 0.56)",
+          "tokenMatch": "--ink-3",
+          "pulse": "none"
+        },
+        {
+          "id": "mcp-github",
+          "className": "health-dot is-degraded is-pulsing",
+          "color": "rgb(143, 84, 19)",
+          "tokenMatch": "--warning",
+          "pulse": "provider-dot-pulse"
+        },
+        {
+          "id": "mcp-browse",
+          "className": "health-dot is-error",
+          "color": "rgb(165, 48, 40)",
+          "tokenMatch": "--error",
+          "pulse": "none"
+        }
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "M03",
+      "acceptance": "点 row 展开工具列表 · 每 tool 名 + 描述 + schema 按钮(打开 JSON drawer)",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m03-tools-schema.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m03-tools-schema.json",
+          "sha256": "9c2996c3a3e172c73aa498a95f2cc225f7dcb8cd7f82d596d0557674c82c2d4f"
+        }
+      ],
+      "summary": "search_docs,fetch_page,list_sections / Tool schema",
+      "observed": {
+        "before": {
+          "tools": [
+            "search_docs",
+            "fetch_page",
+            "list_sections"
+          ],
+          "schemaButtons": 3
+        },
+        "after": {
+          "drawerTitle": "Tool schema",
+          "schemaText": "{\n  \"serverId\": \"mcp-docs\",\n  \"tool\": \"search_docs\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"query\": {\n        \"type\": \"string\"\n      },\n      \"limit\": {\n        \"type\": \"number\"\n      }\n    },\n    \"required\": [\n      \"query\"\n    ]\n  }\n}"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "M04",
+      "acceptance": "add · modal 3 字段 · name + url + auth token · 连接测试按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m04-add-modal.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m04-add-modal.json",
+          "sha256": "aea68160d903cbb76521f3d86d6e6ecd86cc022f1533f8481a03e3b9fc53cbbb"
+        }
+      ],
+      "summary": "添加 MCP 服务器 / SUCCESSMCP 测试连接通过",
+      "observed": {
+        "before": {
+          "title": "添加 MCP 服务器",
+          "fields": [
+            true,
+            true,
+            true
+          ],
+          "testLabel": "测试连接"
+        },
+        "after": {
+          "toast": "SUCCESSMCP 测试连接通过"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "M05",
+      "acceptance": "disconnected · \"重连\" 按钮 + \"查看错误\" link",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m05-reconnect-error.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m05-reconnect-error.json",
+          "sha256": "c7069f88b4b19b7aab62bdc17e9af611b46e3c2b55e4365a7097299991d5b075"
+        }
+      ],
+      "summary": "重连 / connected",
+      "observed": {
+        "before": {
+          "reconnectLabel": "重连",
+          "errorLabel": "查看错误"
+        },
+        "errorDrawer": {
+          "title": "连接错误"
+        },
+        "connecting": {
+          "stateName": "disconnected",
+          "rows": [
+            {
+              "id": "mcp-docs",
+              "name": "Docs MCP",
+              "url": "https://mcp.friday.dev/docs",
+              "status": "connected",
+              "tools": [
+                {
+                  "id": "search_docs",
+                  "label": "search_docs",
+                  "description": {
+                    "zh": "全文搜索文档段落。",
+                    "en": "Full-text search across documentation passages."
+                  }
+                },
+                {
+                  "id": "fetch_page",
+                  "label": "fetch_page",
+                  "description": {
+                    "zh": "读取具体文档页面。",
+                    "en": "Fetches a concrete documentation page."
+                  }
+                },
+                {
+                  "id": "list_sections",
+                  "label": "list_sections",
+                  "description": {
+                    "zh": "列出目录和 section。",
+                    "en": "Lists headings and sections."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-github",
+              "name": "GitHub MCP",
+              "url": "https://mcp.friday.dev/github",
+              "status": "connecting",
+              "tools": [
+                {
+                  "id": "list_prs",
+                  "label": "list_prs",
+                  "description": {
+                    "zh": "列出最近 PR。",
+                    "en": "Lists recent pull requests."
+                  }
+                },
+                {
+                  "id": "fetch_diff",
+                  "label": "fetch_diff",
+                  "description": {
+                    "zh": "抓取 PR diff。",
+                    "en": "Fetches a PR diff."
+                  }
+                },
+                {
+                  "id": "workflow_logs",
+                  "label": "workflow_logs",
+                  "description": {
+                    "zh": "读取 Actions 日志。",
+                    "en": "Reads GitHub Actions logs."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-warehouse",
+              "name": "Warehouse MCP",
+              "url": "https://mcp.friday.dev/warehouse",
+              "status": "connecting",
+              "tools": [
+                {
+                  "id": "stock_snapshot",
+                  "label": "stock_snapshot",
+                  "description": {
+                    "zh": "查询仓库库存快照。",
+                    "en": "Queries warehouse stock snapshots."
+                  }
+                },
+                {
+                  "id": "supplier_eta",
+                  "label": "supplier_eta",
+                  "description": {
+                    "zh": "读取供应商 ETA。",
+                    "en": "Reads supplier ETA data."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-browse",
+              "name": "Browse MCP",
+              "url": "https://mcp.friday.dev/browse",
+              "status": "error",
+              "tools": [
+                {
+                  "id": "open_url",
+                  "label": "open_url",
+                  "description": {
+                    "zh": "打开指定 URL。",
+                    "en": "Opens a target URL."
+                  }
+                },
+                {
+                  "id": "capture_dom",
+                  "label": "capture_dom",
+                  "description": {
+                    "zh": "导出当前 DOM 快照。",
+                    "en": "Exports the current DOM snapshot."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "lastPolledAt": 1776719880000,
+          "nextPingAt": 1776719910000,
+          "pingTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "reason": "boot"
+            }
+          ],
+          "removingServerIds": [],
+          "activeModal": null,
+          "activeDrawer": null,
+          "addDraft": {
+            "name": "Docs MCP",
+            "url": "https://mcp.friday.dev/docs",
+            "authToken": "mcp-demo-token"
+          }
+        },
+        "reconnected": {
+          "stateName": "disconnected",
+          "rows": [
+            {
+              "id": "mcp-docs",
+              "name": "Docs MCP",
+              "url": "https://mcp.friday.dev/docs",
+              "status": "connected",
+              "tools": [
+                {
+                  "id": "search_docs",
+                  "label": "search_docs",
+                  "description": {
+                    "zh": "全文搜索文档段落。",
+                    "en": "Full-text search across documentation passages."
+                  }
+                },
+                {
+                  "id": "fetch_page",
+                  "label": "fetch_page",
+                  "description": {
+                    "zh": "读取具体文档页面。",
+                    "en": "Fetches a concrete documentation page."
+                  }
+                },
+                {
+                  "id": "list_sections",
+                  "label": "list_sections",
+                  "description": {
+                    "zh": "列出目录和 section。",
+                    "en": "Lists headings and sections."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-github",
+              "name": "GitHub MCP",
+              "url": "https://mcp.friday.dev/github",
+              "status": "connecting",
+              "tools": [
+                {
+                  "id": "list_prs",
+                  "label": "list_prs",
+                  "description": {
+                    "zh": "列出最近 PR。",
+                    "en": "Lists recent pull requests."
+                  }
+                },
+                {
+                  "id": "fetch_diff",
+                  "label": "fetch_diff",
+                  "description": {
+                    "zh": "抓取 PR diff。",
+                    "en": "Fetches a PR diff."
+                  }
+                },
+                {
+                  "id": "workflow_logs",
+                  "label": "workflow_logs",
+                  "description": {
+                    "zh": "读取 Actions 日志。",
+                    "en": "Reads GitHub Actions logs."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-warehouse",
+              "name": "Warehouse MCP",
+              "url": "https://mcp.friday.dev/warehouse",
+              "status": "connected",
+              "tools": [
+                {
+                  "id": "stock_snapshot",
+                  "label": "stock_snapshot",
+                  "description": {
+                    "zh": "查询仓库库存快照。",
+                    "en": "Queries warehouse stock snapshots."
+                  }
+                },
+                {
+                  "id": "supplier_eta",
+                  "label": "supplier_eta",
+                  "description": {
+                    "zh": "读取供应商 ETA。",
+                    "en": "Reads supplier ETA data."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-browse",
+              "name": "Browse MCP",
+              "url": "https://mcp.friday.dev/browse",
+              "status": "error",
+              "tools": [
+                {
+                  "id": "open_url",
+                  "label": "open_url",
+                  "description": {
+                    "zh": "打开指定 URL。",
+                    "en": "Opens a target URL."
+                  }
+                },
+                {
+                  "id": "capture_dom",
+                  "label": "capture_dom",
+                  "description": {
+                    "zh": "导出当前 DOM 快照。",
+                    "en": "Exports the current DOM snapshot."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "lastPolledAt": 1776719880000,
+          "nextPingAt": 1776719910000,
+          "pingTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "reason": "boot"
+            }
+          ],
+          "removingServerIds": [],
+          "activeModal": null,
+          "activeDrawer": null,
+          "addDraft": {
+            "name": "Docs MCP",
+            "url": "https://mcp.friday.dev/docs",
+            "authToken": "mcp-demo-token"
+          }
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "M06",
+      "acceptance": "remove · 二次确认 · 确认后 row fade-out 移除",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m06-remove-fade.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m06-remove-fade.json",
+          "sha256": "6ba95273adc439b77cc85757fc3c5453caa7c4223d432b7cb400f3e498133a21"
+        }
+      ],
+      "summary": "移除这个 MCP 服务器? / rows=3",
+      "observed": {
+        "confirm": {
+          "title": "移除这个 MCP 服务器?"
+        },
+        "fading": {
+          "className": "pack-catalog-card mcp-row is-removing"
+        },
+        "after": {
+          "stateName": "connected",
+          "rows": [
+            {
+              "id": "mcp-github",
+              "name": "GitHub MCP",
+              "url": "https://mcp.friday.dev/github",
+              "status": "connecting",
+              "tools": [
+                {
+                  "id": "list_prs",
+                  "label": "list_prs",
+                  "description": {
+                    "zh": "列出最近 PR。",
+                    "en": "Lists recent pull requests."
+                  }
+                },
+                {
+                  "id": "fetch_diff",
+                  "label": "fetch_diff",
+                  "description": {
+                    "zh": "抓取 PR diff。",
+                    "en": "Fetches a PR diff."
+                  }
+                },
+                {
+                  "id": "workflow_logs",
+                  "label": "workflow_logs",
+                  "description": {
+                    "zh": "读取 Actions 日志。",
+                    "en": "Reads GitHub Actions logs."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-warehouse",
+              "name": "Warehouse MCP",
+              "url": "https://mcp.friday.dev/warehouse",
+              "status": "disconnected",
+              "tools": [
+                {
+                  "id": "stock_snapshot",
+                  "label": "stock_snapshot",
+                  "description": {
+                    "zh": "查询仓库库存快照。",
+                    "en": "Queries warehouse stock snapshots."
+                  }
+                },
+                {
+                  "id": "supplier_eta",
+                  "label": "supplier_eta",
+                  "description": {
+                    "zh": "读取供应商 ETA。",
+                    "en": "Reads supplier ETA data."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            },
+            {
+              "id": "mcp-browse",
+              "name": "Browse MCP",
+              "url": "https://mcp.friday.dev/browse",
+              "status": "error",
+              "tools": [
+                {
+                  "id": "open_url",
+                  "label": "open_url",
+                  "description": {
+                    "zh": "打开指定 URL。",
+                    "en": "Opens a target URL."
+                  }
+                },
+                {
+                  "id": "capture_dom",
+                  "label": "capture_dom",
+                  "description": {
+                    "zh": "导出当前 DOM 快照。",
+                    "en": "Exports the current DOM snapshot."
+                  }
+                }
+              ],
+              "lastPingAt": "2026-04-20T21:18:00.000Z"
+            }
+          ],
+          "lastPolledAt": 1776719880000,
+          "nextPingAt": 1776719910000,
+          "pingTrace": [
+            {
+              "at": "2026-04-20T21:18:00.000Z",
+              "reason": "boot"
+            }
+          ],
+          "removingServerIds": [],
+          "activeModal": null,
+          "activeDrawer": null,
+          "addDraft": {
+            "name": "Docs MCP",
+            "url": "https://mcp.friday.dev/docs",
+            "authToken": "mcp-demo-token"
+          }
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "M07",
+      "acceptance": "empty · \"还没有连接的 MCP 服务器\" + add CTA + 文档 link",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m07-empty-state.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m07-empty-state.json",
+          "sha256": "8e9e905a8d651641066bc0a7ca5ddd42685783184f948cf252a53b8d4a9f7205"
+        },
+        {
+          "path": "screenshots/P2C-08/m07-empty-state.png",
+          "sha256": "e81ae5843b3feac1acc6766f5c37717f37f04eb6b4a444c8fd18ae20730e4bef"
+        }
+      ],
+      "summary": "还没有连接的 MCP 服务器 / 添加服务器",
+      "observed": {
+        "title": "还没有连接的 MCP 服务器",
+        "addLabel": "添加服务器",
+        "docsHref": "https://modelcontextprotocol.io"
+      }
+    },
+    {
+      "rule": 8,
+      "code": "M08",
+      "acceptance": "server 实时 ping · 每 30s · 状态 dot 自动更新",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-08/m08-ping-trace.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-08/m08-ping-trace.json",
+          "sha256": "3efb0dd94e8bd6e63dba576d3e0c014d54e154bc70592920f63d7e55137a6dcf"
+        }
+      ],
+      "summary": "最近 ping 14:18:00 -> 最近 ping 14:18:30",
+      "observed": {
+        "before": {
+          "lastPing": "最近 ping 14:18:00",
+          "githubDot": "health-dot is-degraded is-pulsing"
+        },
+        "after": {
+          "lastPing": "最近 ping 14:18:30",
+          "githubDot": "health-dot is-healthy",
+          "state": {
+            "stateName": "connected",
+            "rows": [
+              {
+                "id": "mcp-docs",
+                "name": "Docs MCP",
+                "url": "https://mcp.friday.dev/docs",
+                "status": "connected",
+                "tools": [
+                  {
+                    "id": "search_docs",
+                    "label": "search_docs",
+                    "description": {
+                      "zh": "全文搜索文档段落。",
+                      "en": "Full-text search across documentation passages."
+                    }
+                  },
+                  {
+                    "id": "fetch_page",
+                    "label": "fetch_page",
+                    "description": {
+                      "zh": "读取具体文档页面。",
+                      "en": "Fetches a concrete documentation page."
+                    }
+                  },
+                  {
+                    "id": "list_sections",
+                    "label": "list_sections",
+                    "description": {
+                      "zh": "列出目录和 section。",
+                      "en": "Lists headings and sections."
+                    }
+                  }
+                ],
+                "lastPingAt": "2026-04-20T21:18:30.000Z"
+              },
+              {
+                "id": "mcp-github",
+                "name": "GitHub MCP",
+                "url": "https://mcp.friday.dev/github",
+                "status": "connected",
+                "tools": [
+                  {
+                    "id": "list_prs",
+                    "label": "list_prs",
+                    "description": {
+                      "zh": "列出最近 PR。",
+                      "en": "Lists recent pull requests."
+                    }
+                  },
+                  {
+                    "id": "fetch_diff",
+                    "label": "fetch_diff",
+                    "description": {
+                      "zh": "抓取 PR diff。",
+                      "en": "Fetches a PR diff."
+                    }
+                  },
+                  {
+                    "id": "workflow_logs",
+                    "label": "workflow_logs",
+                    "description": {
+                      "zh": "读取 Actions 日志。",
+                      "en": "Reads GitHub Actions logs."
+                    }
+                  }
+                ],
+                "lastPingAt": "2026-04-20T21:18:30.000Z"
+              },
+              {
+                "id": "mcp-warehouse",
+                "name": "Warehouse MCP",
+                "url": "https://mcp.friday.dev/warehouse",
+                "status": "disconnected",
+                "tools": [
+                  {
+                    "id": "stock_snapshot",
+                    "label": "stock_snapshot",
+                    "description": {
+                      "zh": "查询仓库库存快照。",
+                      "en": "Queries warehouse stock snapshots."
+                    }
+                  },
+                  {
+                    "id": "supplier_eta",
+                    "label": "supplier_eta",
+                    "description": {
+                      "zh": "读取供应商 ETA。",
+                      "en": "Reads supplier ETA data."
+                    }
+                  }
+                ],
+                "lastPingAt": "2026-04-20T21:18:30.000Z"
+              },
+              {
+                "id": "mcp-browse",
+                "name": "Browse MCP",
+                "url": "https://mcp.friday.dev/browse",
+                "status": "error",
+                "tools": [
+                  {
+                    "id": "open_url",
+                    "label": "open_url",
+                    "description": {
+                      "zh": "打开指定 URL。",
+                      "en": "Opens a target URL."
+                    }
+                  },
+                  {
+                    "id": "capture_dom",
+                    "label": "capture_dom",
+                    "description": {
+                      "zh": "导出当前 DOM 快照。",
+                      "en": "Exports the current DOM snapshot."
+                    }
+                  }
+                ],
+                "lastPingAt": "2026-04-20T21:18:30.000Z"
+              }
+            ],
+            "lastPolledAt": 1776719910000,
+            "nextPingAt": 1776719940000,
+            "pingTrace": [
+              {
+                "at": "2026-04-20T21:18:00.000Z",
+                "reason": "boot"
+              },
+              {
+                "at": "2026-04-20T21:18:30.000Z",
+                "clockMs": 1776719910000,
+                "reason": "poll"
+              }
+            ],
+            "removingServerIds": [],
+            "activeModal": null,
+            "activeDrawer": null,
+            "addDraft": {
+              "name": "Docs MCP",
+              "url": "https://mcp.friday.dev/docs",
+              "authToken": "mcp-demo-token"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2C-08/m01-server-list.json",
+    "screenshots/P2C-08/m01-server-list.png",
+    "screenshots/P2C-08/m02-status-dots.json",
+    "screenshots/P2C-08/m03-tools-schema.json",
+    "screenshots/P2C-08/m04-add-modal.json",
+    "screenshots/P2C-08/m05-reconnect-error.json",
+    "screenshots/P2C-08/m06-remove-fade.json",
+    "screenshots/P2C-08/m07-empty-state.json",
+    "screenshots/P2C-08/m07-empty-state.png",
+    "screenshots/P2C-08/m08-ping-trace.json"
+  ]
+}

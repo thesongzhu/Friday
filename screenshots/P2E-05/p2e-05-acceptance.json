@@ -1,0 +1,796 @@
+{
+  "itemId": "P2E-05",
+  "route": "/command-center",
+  "generatedAt": "2026-04-21T10:36:35.742Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 9,
+    "pass": 9,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "CC01",
+      "acceptance": "3 栏 · 左 agent list 280 · 中 activity timeline flex · 右 control 320",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc01-command-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc01-command-layout.json",
+          "sha256": "f6254e3b71096579a1b3c8abd834ecc5c678ebbdb2ea7f49bee5275b1aab804b"
+        },
+        {
+          "path": "screenshots/P2E-05/cc01-command-layout.png",
+          "sha256": "15854bdc5c7459284e86a3c4d2b8aeb23cfc1b726a027cbaf4a0f82587b3e600"
+        }
+      ],
+      "summary": "280 / 488 / 320",
+      "observed": {
+        "widths": [
+          280,
+          488,
+          320
+        ],
+        "columns": "280px 488px 320px"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "CC02",
+      "acceptance": "agent list · 每 agent 一 card · name + status + current run",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc02-command-agents.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc02-command-agents.json",
+          "sha256": "385094d27a71a2934ade5af60b0470dc38b2bd71dc976da17e1a77a37e63fd92"
+        }
+      ],
+      "summary": "agent-ops, agent-qa, agent-builder",
+      "observed": [
+        {
+          "id": "agent-ops",
+          "name": "Ops Agent",
+          "status": "执行中",
+          "currentRun": "当前 run · 北美仓补货值守"
+        },
+        {
+          "id": "agent-qa",
+          "name": "QA Agent",
+          "status": "等待批准",
+          "currentRun": "当前 run · 交付回归批次"
+        },
+        {
+          "id": "agent-builder",
+          "name": "Builder Agent",
+          "status": "测试中",
+          "currentRun": "当前 run · 工作流修订"
+        }
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "CC03",
+      "acceptance": "timeline · ActivityTimeline 复用 · 显示所有 agent 的事件合流",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc03-command-activitytimeline.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc03-command-activitytimeline.json",
+          "sha256": "586e665dd2e6b4f22a6d9e60d5d45ab4943671ce747ec9f1c92d6ccf8353485e"
+        }
+      ],
+      "summary": "callSite=true props=expandedEventId,lanes,locale,runs",
+      "observed": {
+        "callSite": true,
+        "props": {
+          "fields": [
+            "expandedEventId",
+            "lanes",
+            "locale",
+            "runs"
+          ],
+          "snippet": "function ActivityTimeline(props){\n          if (Array.isArray(props.lanes)) {\n            var laneContent = props.lanes.length === 0\n              ? '<div class=\"route-detail-empty\">' + escapeHtml(localize(props.locale, \"暂无 agent 活动\", \"No agent activity yet\")) + \"</div>\"\n              : '<div class=\"command-lane-board\" data-command-lane-board=\"true\">' + props.lanes.map(function (lane) {\n                return '<section class=\"command-lane\" data-command-lane=\"' + escapeHtml(lane.id) + '\">' +\n                  '<div class=\"command-lane-header\"><div><strong>' + escapeHtml(lane.title) + '</strong><p style=\"margin:4px 0 0; color:var(--ink-3);\">' + escapeHtml(lane.subtitle || \"\") + '</p></div>' + StatusPill({ tone: lane.tone || \"neutral\", children: escapeHtml(lane.badge || lane.title) }) + '</div>' +\n                  '<div class=\"command-lane-events\">' + lane.events.map(function (event) {\n                    return '<article class=\"command-event-row' + (props.expandedEventId === event.id ? \" is-expanded\" : \"\") + '\" data-command-event=\"' + escapeHtml(event.id) + '\">' +\n                      '<button type=\"button\" class=\"command-event-head\" data-action=\"command-toggle-event\" data-payload=\"' + escapeHtml(event.id) + '\" aria-label=\"' + escapeHtml(localize(props.locale, \"展开事件上下文\", \"Expand event context\")) + '\">' +\n                        '<span style=\"display:flex; align-items:center; gap:10px;\"><span class=\"timeline-dot is-' + escapeHtml(event.tone || \"neutral\") + '\" aria-hidden=\"true\"></span><strong>' + escapeHtml(event.title) + '</strong></span>' +\n                        '<span style=\"display:flex; align-items:center; gap:10px; color:var(--ink-3);\"><span>' + escapeHtml(event.timestampLabel) + '</span><span>' + escapeHtml(props.expandedEventId === event.id ? \"−\" : \"+\") + '</span></span>' +\n                      '</button>' +\n                      '<p style=\"margin:0; color:var(--ink-2);\">' + escapeHtml(event.detail) + '</p>' +\n                      (props.expandedEventId === event.id ? '<div class=\"command-event-context\">' + (event.context || []).map(function (line) {\n                        return '<div>' + escapeHtml(line) + \"</div>\";\n                      }).join(\"\") + \"</div>\" : \"\") +\n                    \"</article>\";\n                  }).join(\"\") + \"</div>\" +\n                \"</section>\";\n              }).join(\"\") + \"</div>\";\n\n            return ShellCard({\n              eyebrow: localize(props.locale, \"活动时间线\", \"Activity Timeline\"),\n              title: escapeHtml(localize(props.locale, \"多代理活动总线\", \"Multi-agent event bus\")),\n              children: laneContent\n            });\n          }\n\n          var events = props.runs\n            .map(function (run) {\n              var status = run.status;\n              return {\n                id: run.id,\n                tone: status === \"completed\" ? \"success\" : status === \"failed\" || status === \"failed_tests\" ? \"warning\" : \"neutral\",\n                title: run.task,\n                detail: describeRunHealth(run, props.locale),\n                timestamp: run.completedAt || run.startedAt\n              };\n            })\n            .sort(function (left, right) {\n              return new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime();\n            })\n            .slice(0, 4);\n\n          var content = events.length === 0\n            ? '<p>' + escapeHtml(localize(props.locale, \"Friday 正在待命。\", \"Friday is standing by.\")) + \"</p>\"\n            : '<div class=\"timeline-list\">' + events.map(function (event) {\n              return '<div class=\"timeline-item\">' +\n                '<span class=\"timeline-dot is-' + escapeHtml(event.tone) + '\" aria-hidden=\"true\"></span>' +\n                '<article class=\"timeline-card\">' +\n                  '<header><p class=\"timeline-card-title\">' + escapeHtml(event.title) + '</p><small>' + escapeHtml(formatRelativeTime(event.timestamp, props.locale, BASE_CLOCK)) + \"</small></header>\" +\n                  '<p>' + escapeHtml(event.detail || localize(props.locale, \"最近一次运行还在处理中。\", \"The latest run is still in progress.\")) + \"</p>\" +\n                \"</article>\" +\n              \"</div>\";\n            }).join(\"\") + \"</div>\";\n\n          return ShellCard({\n            eyebrow: localize(props.locale, \"活动时间线\", \"Activity Timeline\"),\n            title: escapeHtml(localize(props.locale, \"今天的执行脉冲\", \"Today's execution pulse\")),\n            children: content\n          });\n        }"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "CC04",
+      "acceptance": "多 run 并列 · 用 lane 区分 · 每 agent 一 lane",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc04-command-lanes.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc04-command-lanes.json",
+          "sha256": "97fb78ab6fbf7e9b5e142855046b370fb2854eba4cb1c62209505df32ab61dfa"
+        }
+      ],
+      "summary": "agent-ops:1 / agent-qa:1 / agent-builder:1",
+      "observed": {
+        "observed": [
+          {
+            "id": "agent-ops",
+            "eventCount": 1
+          },
+          {
+            "id": "agent-qa",
+            "eventCount": 1
+          },
+          {
+            "id": "agent-builder",
+            "eventCount": 1
+          }
+        ],
+        "qaState": {
+          "stateName": "multi-run",
+          "agents": [
+            {
+              "id": "agent-ops",
+              "name": "Ops Agent",
+              "status": {
+                "zh": "执行中",
+                "en": "Executing"
+              },
+              "currentRun": {
+                "zh": "北美仓补货值守",
+                "en": "NA replenishment watch"
+              },
+              "tone": "healthy"
+            },
+            {
+              "id": "agent-qa",
+              "name": "QA Agent",
+              "status": {
+                "zh": "等待批准",
+                "en": "Awaiting approval"
+              },
+              "currentRun": {
+                "zh": "交付回归批次",
+                "en": "Delivery regression batch"
+              },
+              "tone": "warning"
+            },
+            {
+              "id": "agent-builder",
+              "name": "Builder Agent",
+              "status": {
+                "zh": "测试中",
+                "en": "Testing"
+              },
+              "currentRun": {
+                "zh": "工作流修订",
+                "en": "Workflow revision"
+              },
+              "tone": "healthy"
+            }
+          ],
+          "selectedAgentId": "agent-ops",
+          "expandedEventId": null,
+          "runs": [
+            {
+              "id": "run-replenish-watch",
+              "task": "复核北美仓补货告警并决定是否提前切换供应商",
+              "status": "executing",
+              "sessionKey": "session-replenish-watch",
+              "startedAt": "2026-04-20T21:00:00.000Z",
+              "summary": "Friday 正在聚合仓位、销售速度和延迟到货风险。",
+              "responseText": "正在复核",
+              "contextSummary": {
+                "taskProfileId": "planning",
+                "taskProfileLabel": "Planning",
+                "totalEstimatedChars": 6400,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "mcp"
+                ],
+                "learningAdjusted": true,
+                "fallbackAttemptCount": 1,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "heuristic"
+              },
+              "health": {
+                "state": "healthy",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "within_budget"
+                ]
+              },
+              "metadata": {
+                "packContext": {
+                  "packId": "industry-cross-border-ecommerce",
+                  "surface": "home",
+                  "updatedAt": "2026-04-20T21:08:00.000Z"
+                }
+              },
+              "agentId": "agent-ops",
+              "lane": "agent-ops",
+              "laneLabel": "Ops Agent",
+              "contextLines": [
+                "关联 session: session-replenish-watch",
+                "健康状态: healthy",
+                "最近事件时间: 18 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-provider-circuit",
+              "task": "验证图像生成 provider 熔断窗口并补一轮降级策略",
+              "status": "awaiting_plan_approval",
+              "startedAt": "2026-04-20T20:36:00.000Z",
+              "durationMs": 1560000,
+              "summary": "Friday 已经整理出一版变更计划，正在等你批准后继续。",
+              "responseText": "等待批准",
+              "contextSummary": {
+                "taskProfileId": "review",
+                "taskProfileLabel": "Review",
+                "totalEstimatedChars": 8200,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "subagents"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 2,
+                "modelSelectionSource": "manual"
+              },
+              "health": {
+                "state": "needs_approval",
+                "rollbackAvailable": false,
+                "reasonCodes": [
+                  "approval_boundary"
+                ]
+              },
+              "planReview": {
+                "gate": {
+                  "kind": "major_decision",
+                  "state": "awaiting_plan_approval",
+                  "approvalPrompt": "批准后会进入修复和回归验证。"
+                }
+              },
+              "agentId": "agent-qa",
+              "lane": "agent-qa",
+              "laneLabel": "QA Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 26 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-cache-retune",
+              "task": "重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+              "status": "testing",
+              "startedAt": "2026-04-20T21:11:00.000Z",
+              "summary": "Friday 已经完成主改动，正在做回归验证。",
+              "responseText": "测试中",
+              "contextSummary": {
+                "taskProfileId": "deterministic",
+                "taskProfileLabel": "Deterministic",
+                "totalEstimatedChars": 2800,
+                "dominantContextKinds": [
+                  "workspace_context"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "default"
+              },
+              "health": {
+                "state": "degraded",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "provider_retry"
+                ]
+              },
+              "agentId": "agent-builder",
+              "lane": "agent-builder",
+              "laneLabel": "Builder Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 7 分 0 秒"
+              ]
+            }
+          ],
+          "summary": {
+            "totalRuns": 3,
+            "failRate": "0%",
+            "avgDuration": "17 分 0 秒"
+          },
+          "controlTrace": []
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "CC05",
+      "acceptance": "control · 选中 agent 后显示 · pause / resume / stop / inspect",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc05-command-control.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc05-command-control.json",
+          "sha256": "bec5fbcf5e58a5fd7c0bfd7fd34c9f278eaee73eb01a0bbc0649ab82447999a1"
+        }
+      ],
+      "summary": "QA Agent / inspect",
+      "observed": {
+        "before": {
+          "selectedAgent": "QA Agent",
+          "actions": [
+            "pause",
+            "resume",
+            "stop",
+            "inspect"
+          ]
+        },
+        "after": {
+          "stateName": "multi-run",
+          "agents": [
+            {
+              "id": "agent-ops",
+              "name": "Ops Agent",
+              "status": {
+                "zh": "执行中",
+                "en": "Executing"
+              },
+              "currentRun": {
+                "zh": "北美仓补货值守",
+                "en": "NA replenishment watch"
+              },
+              "tone": "healthy"
+            },
+            {
+              "id": "agent-qa",
+              "name": "QA Agent",
+              "status": {
+                "zh": "等待批准",
+                "en": "Awaiting approval"
+              },
+              "currentRun": {
+                "zh": "交付回归批次",
+                "en": "Delivery regression batch"
+              },
+              "tone": "warning"
+            },
+            {
+              "id": "agent-builder",
+              "name": "Builder Agent",
+              "status": {
+                "zh": "测试中",
+                "en": "Testing"
+              },
+              "currentRun": {
+                "zh": "工作流修订",
+                "en": "Workflow revision"
+              },
+              "tone": "healthy"
+            }
+          ],
+          "selectedAgentId": "agent-qa",
+          "expandedEventId": null,
+          "runs": [
+            {
+              "id": "run-replenish-watch",
+              "task": "复核北美仓补货告警并决定是否提前切换供应商",
+              "status": "executing",
+              "sessionKey": "session-replenish-watch",
+              "startedAt": "2026-04-20T21:00:00.000Z",
+              "summary": "Friday 正在聚合仓位、销售速度和延迟到货风险。",
+              "responseText": "正在复核",
+              "contextSummary": {
+                "taskProfileId": "planning",
+                "taskProfileLabel": "Planning",
+                "totalEstimatedChars": 6400,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "mcp"
+                ],
+                "learningAdjusted": true,
+                "fallbackAttemptCount": 1,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "heuristic"
+              },
+              "health": {
+                "state": "healthy",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "within_budget"
+                ]
+              },
+              "metadata": {
+                "packContext": {
+                  "packId": "industry-cross-border-ecommerce",
+                  "surface": "home",
+                  "updatedAt": "2026-04-20T21:08:00.000Z"
+                }
+              },
+              "agentId": "agent-ops",
+              "lane": "agent-ops",
+              "laneLabel": "Ops Agent",
+              "contextLines": [
+                "关联 session: session-replenish-watch",
+                "健康状态: healthy",
+                "最近事件时间: 18 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-provider-circuit",
+              "task": "验证图像生成 provider 熔断窗口并补一轮降级策略",
+              "status": "awaiting_plan_approval",
+              "startedAt": "2026-04-20T20:36:00.000Z",
+              "durationMs": 1560000,
+              "summary": "Friday 已经整理出一版变更计划，正在等你批准后继续。",
+              "responseText": "等待批准",
+              "contextSummary": {
+                "taskProfileId": "review",
+                "taskProfileLabel": "Review",
+                "totalEstimatedChars": 8200,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "subagents"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 2,
+                "modelSelectionSource": "manual"
+              },
+              "health": {
+                "state": "needs_approval",
+                "rollbackAvailable": false,
+                "reasonCodes": [
+                  "approval_boundary"
+                ]
+              },
+              "planReview": {
+                "gate": {
+                  "kind": "major_decision",
+                  "state": "awaiting_plan_approval",
+                  "approvalPrompt": "批准后会进入修复和回归验证。"
+                }
+              },
+              "agentId": "agent-qa",
+              "lane": "agent-qa",
+              "laneLabel": "QA Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 26 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-cache-retune",
+              "task": "重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+              "status": "testing",
+              "startedAt": "2026-04-20T21:11:00.000Z",
+              "summary": "Friday 已经完成主改动，正在做回归验证。",
+              "responseText": "测试中",
+              "contextSummary": {
+                "taskProfileId": "deterministic",
+                "taskProfileLabel": "Deterministic",
+                "totalEstimatedChars": 2800,
+                "dominantContextKinds": [
+                  "workspace_context"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "default"
+              },
+              "health": {
+                "state": "degraded",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "provider_retry"
+                ]
+              },
+              "agentId": "agent-builder",
+              "lane": "agent-builder",
+              "laneLabel": "Builder Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 7 分 0 秒"
+              ]
+            }
+          ],
+          "summary": {
+            "totalRuns": 3,
+            "failRate": "0%",
+            "avgDuration": "17 分 0 秒"
+          },
+          "controlTrace": [
+            {
+              "agentId": "agent-qa",
+              "action": "inspect",
+              "at": "2026-04-20T21:18:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "CC06",
+      "acceptance": "summary panel 顶部 · 总运行数 + 失败率 + 平均时长",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc06-command-summary.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc06-command-summary.json",
+          "sha256": "87c529f2a2a7c0e4894e45f7b8e6f6d50ea4123836a41c5b0a91bf8879c76646"
+        }
+      ],
+      "summary": "3 / 0% / 17 分 0 秒",
+      "observed": {
+        "observed": {
+          "totalRuns": "3",
+          "failRate": "0%",
+          "avgDuration": "17 分 0 秒"
+        },
+        "qaState": {
+          "stateName": "multi-run",
+          "agents": [
+            {
+              "id": "agent-ops",
+              "name": "Ops Agent",
+              "status": {
+                "zh": "执行中",
+                "en": "Executing"
+              },
+              "currentRun": {
+                "zh": "北美仓补货值守",
+                "en": "NA replenishment watch"
+              },
+              "tone": "healthy"
+            },
+            {
+              "id": "agent-qa",
+              "name": "QA Agent",
+              "status": {
+                "zh": "等待批准",
+                "en": "Awaiting approval"
+              },
+              "currentRun": {
+                "zh": "交付回归批次",
+                "en": "Delivery regression batch"
+              },
+              "tone": "warning"
+            },
+            {
+              "id": "agent-builder",
+              "name": "Builder Agent",
+              "status": {
+                "zh": "测试中",
+                "en": "Testing"
+              },
+              "currentRun": {
+                "zh": "工作流修订",
+                "en": "Workflow revision"
+              },
+              "tone": "healthy"
+            }
+          ],
+          "selectedAgentId": "agent-ops",
+          "expandedEventId": null,
+          "runs": [
+            {
+              "id": "run-replenish-watch",
+              "task": "复核北美仓补货告警并决定是否提前切换供应商",
+              "status": "executing",
+              "sessionKey": "session-replenish-watch",
+              "startedAt": "2026-04-20T21:00:00.000Z",
+              "summary": "Friday 正在聚合仓位、销售速度和延迟到货风险。",
+              "responseText": "正在复核",
+              "contextSummary": {
+                "taskProfileId": "planning",
+                "taskProfileLabel": "Planning",
+                "totalEstimatedChars": 6400,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "mcp"
+                ],
+                "learningAdjusted": true,
+                "fallbackAttemptCount": 1,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "heuristic"
+              },
+              "health": {
+                "state": "healthy",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "within_budget"
+                ]
+              },
+              "metadata": {
+                "packContext": {
+                  "packId": "industry-cross-border-ecommerce",
+                  "surface": "home",
+                  "updatedAt": "2026-04-20T21:08:00.000Z"
+                }
+              },
+              "agentId": "agent-ops",
+              "lane": "agent-ops",
+              "laneLabel": "Ops Agent",
+              "contextLines": [
+                "关联 session: session-replenish-watch",
+                "健康状态: healthy",
+                "最近事件时间: 18 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-provider-circuit",
+              "task": "验证图像生成 provider 熔断窗口并补一轮降级策略",
+              "status": "awaiting_plan_approval",
+              "startedAt": "2026-04-20T20:36:00.000Z",
+              "durationMs": 1560000,
+              "summary": "Friday 已经整理出一版变更计划，正在等你批准后继续。",
+              "responseText": "等待批准",
+              "contextSummary": {
+                "taskProfileId": "review",
+                "taskProfileLabel": "Review",
+                "totalEstimatedChars": 8200,
+                "dominantContextKinds": [
+                  "workspace_context",
+                  "subagents"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 2,
+                "modelSelectionSource": "manual"
+              },
+              "health": {
+                "state": "needs_approval",
+                "rollbackAvailable": false,
+                "reasonCodes": [
+                  "approval_boundary"
+                ]
+              },
+              "planReview": {
+                "gate": {
+                  "kind": "major_decision",
+                  "state": "awaiting_plan_approval",
+                  "approvalPrompt": "批准后会进入修复和回归验证。"
+                }
+              },
+              "agentId": "agent-qa",
+              "lane": "agent-qa",
+              "laneLabel": "QA Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 26 分 0 秒"
+              ]
+            },
+            {
+              "id": "run-cache-retune",
+              "task": "重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+              "status": "testing",
+              "startedAt": "2026-04-20T21:11:00.000Z",
+              "summary": "Friday 已经完成主改动，正在做回归验证。",
+              "responseText": "测试中",
+              "contextSummary": {
+                "taskProfileId": "deterministic",
+                "taskProfileLabel": "Deterministic",
+                "totalEstimatedChars": 2800,
+                "dominantContextKinds": [
+                  "workspace_context"
+                ],
+                "learningAdjusted": false,
+                "fallbackAttemptCount": 0,
+                "blockedToolCount": 0,
+                "modelSelectionSource": "default"
+              },
+              "health": {
+                "state": "degraded",
+                "rollbackAvailable": true,
+                "reasonCodes": [
+                  "provider_retry"
+                ]
+              },
+              "agentId": "agent-builder",
+              "lane": "agent-builder",
+              "laneLabel": "Builder Agent",
+              "contextLines": [
+                "关联 session: manual-lane",
+                "健康状态: warning",
+                "最近事件时间: 7 分 0 秒"
+              ]
+            }
+          ],
+          "summary": {
+            "totalRuns": 3,
+            "failRate": "0%",
+            "avgDuration": "17 分 0 秒"
+          },
+          "controlTrace": []
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "CC07",
+      "acceptance": "点 timeline event · 展开 context",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc07-command-event-expand.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc07-command-event-expand.json",
+          "sha256": "f7f6debe624d8cffe4ec3dae22408cf35ccba88f2cb5503abb4c465d44b5b09e"
+        }
+      ],
+      "summary": "run-replenish-watch / lines=3",
+      "observed": {
+        "expandedEventId": "run-replenish-watch",
+        "className": "command-event-row is-expanded",
+        "contextLines": 3
+      }
+    },
+    {
+      "rule": 8,
+      "code": "CC08",
+      "acceptance": "空 · 暂无 agent 活动",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc08-command-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc08-command-empty.json",
+          "sha256": "a0210bb643070de93998af3f03932bc4abcf9f28f549e2df31d049720b2d27f6"
+        },
+        {
+          "path": "screenshots/P2E-05/cc08-command-empty.png",
+          "sha256": "086bc25020f429192a361871174a0f25cbfe8a0e7ee3a9111592298501f12c26"
+        }
+      ],
+      "summary": "暂无 agent 活动",
+      "observed": {
+        "text": "暂无 agent 活动"
+      }
+    },
+    {
+      "rule": 9,
+      "code": "CC09",
+      "acceptance": "mobile/窄屏 · 单列 · 只显 timeline",
+      "status": "PASS",
+      "evidence": "screenshots/P2E-05/cc09-command-mobile.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2E-05/cc09-command-mobile.json",
+          "sha256": "709a2440d2888a92dea0df465e2ed8082efad76bf29f33f76f8b9322b84fbec6"
+        },
+        {
+          "path": "screenshots/P2E-05/cc09-command-mobile.png",
+          "sha256": "ef193b1bb59d73f22b955451c27c2a4d39dfdaf9f024b243382e706d29f71ea4"
+        }
+      ],
+      "summary": "988px / asides=none,none",
+      "observed": {
+        "columns": "988px",
+        "asides": [
+          "none",
+          "none"
+        ],
+        "timelineDisplay": "block"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2E-05/cc01-command-layout.json",
+    "screenshots/P2E-05/cc01-command-layout.png",
+    "screenshots/P2E-05/cc02-command-agents.json",
+    "screenshots/P2E-05/cc03-command-activitytimeline.json",
+    "screenshots/P2E-05/cc04-command-lanes.json",
+    "screenshots/P2E-05/cc05-command-control.json",
+    "screenshots/P2E-05/cc06-command-summary.json",
+    "screenshots/P2E-05/cc07-command-event-expand.json",
+    "screenshots/P2E-05/cc08-command-empty.json",
+    "screenshots/P2E-05/cc08-command-empty.png",
+    "screenshots/P2E-05/cc09-command-mobile.json",
+    "screenshots/P2E-05/cc09-command-mobile.png"
+  ]
+}

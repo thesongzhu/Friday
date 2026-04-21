@@ -1,0 +1,548 @@
+{
+  "itemId": "P2D-01",
+  "route": "/channels",
+  "generatedAt": "2026-04-21T10:34:48.837Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 11,
+    "pass": 11,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "N01",
+      "acceptance": "双列 · 左 list 420 · 右 config drawer 460(可关闭后右列消失 · 只 list)",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n01-channel-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n01-channel-layout.json",
+          "sha256": "d53541b82c049c2b577d7a7ee142bb2f37b52433c2ccdf6639a8941fdf6ffd34"
+        },
+        {
+          "path": "screenshots/P2D-01/n01-channel-layout.png",
+          "sha256": "4668c28263e865e99092255cc48cac096e01dd005e14eddc6614f21b9e451e95"
+        }
+      ],
+      "summary": "list=420, drawer=460, closed=true",
+      "observed": {
+        "before": {
+          "listWidth": 420,
+          "drawerWidth": 460,
+          "gridTemplateColumns": "420px 460px",
+          "drawerId": "channel-amazon"
+        },
+        "after": {
+          "listWidth": 420,
+          "drawerPresent": false,
+          "gridTemplateColumns": "420px 0px"
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "N02",
+      "acceptance": "channel row · type 图标 24 + 名 + 状态 dot + 最近 session time + menu",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n02-channel-row.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n02-channel-row.json",
+          "sha256": "c94c55e9c000e4d6093d8ccac494fe613ffe65dedc2c8416162f4bff020b7206"
+        }
+      ],
+      "summary": "Amazon 店铺 / recent=14:18",
+      "observed": {
+        "name": "Amazon 店铺",
+        "iconSize": {
+          "width": 24,
+          "height": 24
+        },
+        "dotPresent": true,
+        "recentSession": "14:18",
+        "menuLabel": "menu"
+      }
+    },
+    {
+      "rule": 3,
+      "code": "N03",
+      "acceptance": "状态 · healthy / degraded / error · degraded 时显示具体指标(latency 高 / 限流)",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n03-channel-statuses.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n03-channel-statuses.json",
+          "sha256": "a485ccc0ac8049b83aa0f941781caf94ea1c517b50f472bb60fcf2287d93d381"
+        }
+      ],
+      "summary": "channel-amazon:healthy, channel-shopify:degraded, channel-tiktok:error",
+      "observed": [
+        {
+          "id": "channel-amazon",
+          "health": "healthy",
+          "metric": "p95 420ms · webhook 稳定"
+        },
+        {
+          "id": "channel-shopify",
+          "health": "degraded",
+          "metric": "latency 高 1.8s · 限流 3 次"
+        },
+        {
+          "id": "channel-tiktok",
+          "health": "error",
+          "metric": "token 失效 · 回放失败 2 次"
+        }
+      ]
+    },
+    {
+      "rule": 4,
+      "code": "N04",
+      "acceptance": "click row · 右侧 config drawer 滑入 · 200ms",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n04-channel-drawer-transition.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n04-channel-drawer-transition.json",
+          "sha256": "1ab33aa02f6f4c3e15efe8b14691b5b18c1c990ee0a73abdd2de42653852b8c0"
+        }
+      ],
+      "summary": "trace-drawer-slide-in / 0.2s",
+      "observed": {
+        "drawerPresent": true,
+        "animationName": "trace-drawer-slide-in",
+        "animationDuration": "0.2s",
+        "transitionDuration": "0.2s, 0.2s"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "N05",
+      "acceptance": "ChannelConfigForm 复用 · 包含 webhook url / auth / rate-limit / timeout 字段",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n05-channel-config-form.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n05-channel-config-form.json",
+          "sha256": "eef11578cd3b71376d783c828880bf3e343b53c74a1dd6c4c9d2f4e405d60d46"
+        }
+      ],
+      "summary": "source=true, fields=4/4",
+      "observed": {
+        "sourceObserved": {
+          "componentExport": true,
+          "routeImport": true,
+          "routeRender": true
+        },
+        "observed": {
+          "formPresent": true,
+          "fields": [
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "N06",
+      "acceptance": "\"测试连接\" 按钮 · loading → result toast · 失败显示具体 error",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n06-channel-test.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n06-channel-test.json",
+          "sha256": "005f721690db5fcd9f49225026cd899b8454e828d49c6ca170e617194ed57d37"
+        }
+      ],
+      "summary": "测试中... -> 连接测试失败",
+      "observed": {
+        "loading": {
+          "label": "测试中...",
+          "disabled": true
+        },
+        "after": {
+          "toast": "ERROR连接失败 · 授权已过期",
+          "resultTitle": "连接测试失败",
+          "resultBody": "授权已过期 · 请更新 token"
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "N07",
+      "acceptance": "save · dirty 状态持续显 · diff 对比按钮(旧 vs 新)",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n07-channel-diff.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n07-channel-diff.json",
+          "sha256": "7afb9342a5bfb2f13ecf732f6cf1942101141e0508f6d2721bd3fb0e74d9f960"
+        }
+      ],
+      "summary": "有 1 项配置未保存 / dirtyKeys=auth",
+      "observed": {
+        "before": {
+          "saveBarPresent": true,
+          "dirtyCopy": "有 1 项配置未保存",
+          "dirtyFields": "auth"
+        },
+        "diff": {
+          "channelId": "channel-amazon",
+          "before": {
+            "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+            "auth": "amz-live-9a2f",
+            "rateLimit": "120 rpm",
+            "timeout": "12s"
+          },
+          "after": {
+            "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+            "auth": "Bearer qa-rotated-token",
+            "rateLimit": "120 rpm",
+            "timeout": "12s"
+          },
+          "dirtyKeys": [
+            "auth"
+          ]
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "N08",
+      "acceptance": "add channel · 顶部 + 按钮 · 弹 modal · 选 type → 填配置",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n08-channel-add-modal.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n08-channel-add-modal.json",
+          "sha256": "a71bf04f83f014aa6a06c41f121e1a195925aa158202c0113be1a8d580c07241"
+        }
+      ],
+      "summary": "添加渠道 / created=channel-github-8170",
+      "observed": {
+        "modalBefore": {
+          "title": "添加渠道",
+          "typeField": true,
+          "nameField": true,
+          "webhookField": true,
+          "authField": true
+        },
+        "after": {
+          "stateName": "healthy",
+          "rows": [
+            {
+              "id": "channel-amazon",
+              "type": "Amazon",
+              "name": {
+                "zh": "Amazon 店铺",
+                "en": "Amazon Store"
+              },
+              "health": "healthy",
+              "recent": "7m",
+              "indicator": {
+                "zh": "同步稳定",
+                "en": "Sync healthy"
+              },
+              "icon": "A",
+              "lastSessionAt": "14:18",
+              "metricDetail": {
+                "zh": "p95 420ms · webhook 稳定",
+                "en": "p95 420ms · webhook stable"
+              },
+              "config": {
+                "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+                "auth": "amz-live-9a2f",
+                "rateLimit": "120 rpm",
+                "timeout": "12s"
+              },
+              "sessionIds": [
+                "session-replenish-watch",
+                "session-release-guard",
+                "session-margin-patrol",
+                "session-night-ops",
+                "session-provider-circuit"
+              ],
+              "disabled": false
+            },
+            {
+              "id": "channel-shopify",
+              "type": "Shopify",
+              "name": {
+                "zh": "Shopify 主站",
+                "en": "Shopify Main"
+              },
+              "health": "healthy",
+              "recent": "3m",
+              "indicator": {
+                "zh": "同步稳定",
+                "en": "Sync healthy"
+              },
+              "icon": "S",
+              "lastSessionAt": "12:10",
+              "metricDetail": {
+                "zh": "p95 420ms · webhook 稳定",
+                "en": "p95 420ms · webhook stable"
+              },
+              "config": {
+                "webhookUrl": "https://hooks.friday.dev/channels/shopify",
+                "auth": "shop-live-6bk1",
+                "rateLimit": "90 rpm",
+                "timeout": "18s"
+              },
+              "sessionIds": [
+                "session-refund-triage",
+                "session-support-drain",
+                "session-policy-sweep",
+                "session-night-ops",
+                "session-margin-patrol"
+              ],
+              "disabled": false
+            },
+            {
+              "id": "channel-tiktok",
+              "type": "TikTok",
+              "name": {
+                "zh": "TikTok Shop",
+                "en": "TikTok Shop"
+              },
+              "health": "healthy",
+              "recent": "29m",
+              "indicator": {
+                "zh": "同步稳定",
+                "en": "Sync healthy"
+              },
+              "icon": "T",
+              "lastSessionAt": "12:26",
+              "metricDetail": {
+                "zh": "p95 420ms · webhook 稳定",
+                "en": "p95 420ms · webhook stable"
+              },
+              "config": {
+                "webhookUrl": "https://hooks.friday.dev/channels/tiktok",
+                "auth": "tiktok-expired",
+                "rateLimit": "60 rpm",
+                "timeout": "20s"
+              },
+              "sessionIds": [
+                "session-creative-qa",
+                "session-support-drain",
+                "session-policy-sweep"
+              ],
+              "disabled": false
+            },
+            {
+              "id": "channel-github-8170",
+              "type": "GitHub",
+              "name": {
+                "zh": "GitHub Ops",
+                "en": "GitHub Ops"
+              },
+              "health": "healthy",
+              "recent": "刚刚",
+              "indicator": {
+                "zh": "同步稳定",
+                "en": "Sync healthy"
+              },
+              "icon": "GI",
+              "lastSessionAt": "刚刚",
+              "metricDetail": {
+                "zh": "p95 420ms · webhook 稳定",
+                "en": "p95 420ms · webhook stable"
+              },
+              "config": {
+                "type": "GitHub",
+                "name": "GitHub Ops",
+                "webhookUrl": "https://hooks.friday.dev/channels/github-ops",
+                "auth": "ghp_ops_token",
+                "rateLimit": "30 rpm",
+                "timeout": "12s"
+              },
+              "sessionIds": [],
+              "disabled": false
+            }
+          ],
+          "selectedChannelId": "channel-github-8170",
+          "showDrawer": true,
+          "formDrafts": {
+            "channel-amazon": {
+              "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+              "auth": "amz-live-9a2f",
+              "rateLimit": "120 rpm",
+              "timeout": "12s"
+            },
+            "channel-github-8170": {
+              "type": "GitHub",
+              "name": "GitHub Ops",
+              "webhookUrl": "https://hooks.friday.dev/channels/github-ops",
+              "auth": "ghp_ops_token",
+              "rateLimit": "30 rpm",
+              "timeout": "12s"
+            }
+          },
+          "baselineConfigs": {
+            "channel-amazon": {
+              "webhookUrl": "https://hooks.friday.dev/channels/amazon",
+              "auth": "amz-live-9a2f",
+              "rateLimit": "120 rpm",
+              "timeout": "12s"
+            },
+            "channel-github-8170": {
+              "type": "GitHub",
+              "name": "GitHub Ops",
+              "webhookUrl": "https://hooks.friday.dev/channels/github-ops",
+              "auth": "ghp_ops_token",
+              "rateLimit": "30 rpm",
+              "timeout": "12s"
+            }
+          },
+          "dirtyKeys": [],
+          "testingChannelId": null,
+          "lastTestResult": null,
+          "activeModal": null,
+          "activeDrawer": null,
+          "addDraft": {
+            "type": "GitHub",
+            "name": "GitHub Ops",
+            "webhookUrl": "https://hooks.friday.dev/channels/github-ops",
+            "auth": "ghp_ops_token",
+            "rateLimit": "30 rpm",
+            "timeout": "12s"
+          }
+        },
+        "created": {
+          "id": "channel-github-8170",
+          "type": "GitHub",
+          "name": {
+            "zh": "GitHub Ops",
+            "en": "GitHub Ops"
+          },
+          "health": "healthy",
+          "recent": "刚刚",
+          "indicator": {
+            "zh": "同步稳定",
+            "en": "Sync healthy"
+          },
+          "icon": "GI",
+          "lastSessionAt": "刚刚",
+          "metricDetail": {
+            "zh": "p95 420ms · webhook 稳定",
+            "en": "p95 420ms · webhook stable"
+          },
+          "config": {
+            "type": "GitHub",
+            "name": "GitHub Ops",
+            "webhookUrl": "https://hooks.friday.dev/channels/github-ops",
+            "auth": "ghp_ops_token",
+            "rateLimit": "30 rpm",
+            "timeout": "12s"
+          },
+          "sessionIds": [],
+          "disabled": false
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "N09",
+      "acceptance": "最近 sessions 用 `useChannelSessions` hook · 每 channel 显示最近 5 个 session",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n09-channel-sessions-hook.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n09-channel-sessions-hook.json",
+          "sha256": "b2140f284dfe9582bc5b040a18de20187ad7038dc4ebaad09e04ae6cb2d69cc7"
+        }
+      ],
+      "summary": "hook=true, sessions=5",
+      "observed": {
+        "sourceObserved": {
+          "hookExport": true,
+          "routeHookUse": true,
+          "prototypeHelper": true
+        },
+        "observed": {
+          "sessionCount": 5,
+          "labels": [
+            "跨境补货监控",
+            "provider 熔断回补",
+            "发布值守回路",
+            "利润波动巡检",
+            "夜间自动化值守"
+          ]
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "N10",
+      "acceptance": "disable channel · 二次确认 · disabled 的 row 整行 opacity 0.5 · sessions 显示历史",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n10-channel-disable.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n10-channel-disable.json",
+          "sha256": "c6451f785fe06771ccacae96436fcba7e56b23f6c84c451cfe3e9ce634187f0f"
+        }
+      ],
+      "summary": "停用这个渠道? / opacity=0.5 / sessions=4",
+      "observed": {
+        "confirm": {
+          "title": "停用这个渠道?",
+          "body": "停用后新 session 不再进入，但历史 session 仍会保留。"
+        },
+        "sessionCountBefore": 4,
+        "after": {
+          "opacity": "0.5",
+          "className": "obs-row is-active is-disabled",
+          "sessionCount": 4
+        }
+      }
+    },
+    {
+      "rule": 11,
+      "code": "N11",
+      "acceptance": "空态 · \"连接你的第一个渠道\" + 支持渠道 grid(逐个 provider icon)",
+      "status": "PASS",
+      "evidence": "screenshots/P2D-01/n11-channel-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2D-01/n11-channel-empty.json",
+          "sha256": "867312f70026f00ffc099d94871911f300cd9e75080b6bb361b6594a02b630bd"
+        },
+        {
+          "path": "screenshots/P2D-01/n11-channel-empty.png",
+          "sha256": "918533a82d1a2127893002af3d824f4987c7adfa647c2a7a2c09b897c1c7678f"
+        }
+      ],
+      "summary": "连接你的第一个渠道 / providers=5",
+      "observed": {
+        "title": "连接你的第一个渠道",
+        "providerTiles": 5,
+        "iconCount": 5,
+        "ctaLabel": "添加渠道→"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2D-01/n01-channel-layout.json",
+    "screenshots/P2D-01/n01-channel-layout.png",
+    "screenshots/P2D-01/n02-channel-row.json",
+    "screenshots/P2D-01/n03-channel-statuses.json",
+    "screenshots/P2D-01/n04-channel-drawer-transition.json",
+    "screenshots/P2D-01/n05-channel-config-form.json",
+    "screenshots/P2D-01/n06-channel-test.json",
+    "screenshots/P2D-01/n07-channel-diff.json",
+    "screenshots/P2D-01/n08-channel-add-modal.json",
+    "screenshots/P2D-01/n09-channel-sessions-hook.json",
+    "screenshots/P2D-01/n10-channel-disable.json",
+    "screenshots/P2D-01/n11-channel-empty.json",
+    "screenshots/P2D-01/n11-channel-empty.png"
+  ]
+}

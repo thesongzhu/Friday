@@ -1,0 +1,204 @@
+{
+  "itemId": "P2A-04",
+  "route": "/home",
+  "generatedAt": "2026-04-21T10:30:04.734Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 7,
+    "pass": 7,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "S01",
+      "acceptance": "行高 56 · 左时间刻度 80px · 右内容 · 时间格式 formatAutomationNextRun(locale 敏感)",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s01-scheduled-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s01-scheduled-layout.json",
+          "sha256": "8803e6cc9152d3baf744611bc37b0932c775e8ac7749beecf26aac344d1228e3"
+        },
+        {
+          "path": "screenshots/P2A-04/s01-scheduled-layout.png",
+          "sha256": "9dca8a788a5b07d0c0c3b296095020706eb4a620e809c95652f2181d5f8f88bf"
+        }
+      ],
+      "summary": "4月20日 14:36 @ 69.671875px",
+      "observed": {
+        "helperText": "4月20日 14:36",
+        "observed": {
+          "rowHeight": 69.671875,
+          "timeWidth": 80,
+          "timeText": "4月20日 14:36"
+        }
+      }
+    },
+    {
+      "rule": 2,
+      "code": "S02",
+      "acceptance": "按 nextRunAt 升序 · null 排最后 · 过滤 enabled === true 优先",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s02-scheduled-order.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s02-scheduled-order.json",
+          "sha256": "cff2a9df2be6a61a5d668f726bf4cc2b003f75b7d3749c7cc9744bce2fdb6ba2"
+        },
+        {
+          "path": "screenshots/P2A-04/s02-scheduled-order.png",
+          "sha256": "44d4e8b06e46891412b8a75275b50c2845305cef228f469b38db608b9887ba69"
+        }
+      ],
+      "summary": "early -> late -> manual -> disabled-timed -> disabled-manual",
+      "observed": [
+        "early",
+        "late",
+        "manual",
+        "disabled-timed",
+        "disabled-manual"
+      ]
+    },
+    {
+      "rule": 3,
+      "code": "S03",
+      "acceptance": "最多 5 行 · 第 6 行替换成 \"+{N-5} 更多\" link · 跳 /automations",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s03-scheduled-cap.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s03-scheduled-cap.json",
+          "sha256": "8d46f21ba16a65759ae9aed04df94f995ef6678d87bfed6fbf8a2155c6131f54"
+        },
+        {
+          "path": "screenshots/P2A-04/s03-scheduled-cap.png",
+          "sha256": "596a9a4c4b8ba30c74751cc4853b6bae7213c2020d8f075cce2bdc4ee147cad7"
+        }
+      ],
+      "summary": "rows=5, route=/automations",
+      "observed": {
+        "before": {
+          "rowCount": 5,
+          "moreText": "+1 更多",
+          "moreHref": "/automations"
+        },
+        "route": "/automations"
+      }
+    },
+    {
+      "rule": 4,
+      "code": "S04",
+      "acceptance": "disabled 行 opacity 0.35 · time 显示 \"已暂停\" · cron 文字也置灰",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s04-scheduled-disabled.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s04-scheduled-disabled.json",
+          "sha256": "c75170324ee5ca59bee0b3814d3fe149ba54369048a4887537eb8c4cad6b5816"
+        },
+        {
+          "path": "screenshots/P2A-04/s04-scheduled-disabled.png",
+          "sha256": "f427b5e055799461f95d51aaec73f0ab1d63a0ddb1daea661734450cb258f87c"
+        }
+      ],
+      "summary": "已暂停, opacity=0.35",
+      "observed": {
+        "opacity": "0.35",
+        "timeText": "已暂停",
+        "cronColor": "rgba(45, 33, 24, 0.56)",
+        "cronToken": "--ink-3"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "S05",
+      "acceptance": "悬浮 row · 底色 --bg-sunken · cursor pointer · 点跳 /automations?automationId=xxx",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s05-scheduled-hover.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s05-scheduled-hover.json",
+          "sha256": "733f093178eb36f71431872d14beceee903135b667e5052a2eacd10298b7519b"
+        },
+        {
+          "path": "screenshots/P2A-04/s05-scheduled-hover.png",
+          "sha256": "52b87fe7c1dd3134d492ee81c2cb2fc45aa408ded4c68594d4dac970250f77ae"
+        }
+      ],
+      "summary": "hover=--bg-sunken, route=/automations?automationId=qa-hover-auto",
+      "observed": {
+        "before": {
+          "background": "rgba(255, 255, 255, 0.62)",
+          "token": null
+        },
+        "after": {
+          "background": "rgb(245, 236, 219)",
+          "token": "--bg-sunken",
+          "cursor": "pointer",
+          "href": "/automations?automationId=qa-hover-auto"
+        },
+        "route": "/automations?automationId=qa-hover-auto"
+      }
+    },
+    {
+      "rule": 6,
+      "code": "S06",
+      "acceptance": "时间变化(advanceClock)· time 列重算 · 文字更新",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s06-scheduled-clock.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s06-scheduled-clock.json",
+          "sha256": "ff65f1e4a85be0565e2f9ed9c0d62a57e8327f51d441a6854947f0497ffd4fab"
+        }
+      ],
+      "summary": "4月20日 14:28 -> 4月20日 14:36",
+      "observed": {
+        "before": "4月20日 14:28",
+        "after": "4月20日 14:36"
+      }
+    },
+    {
+      "rule": 7,
+      "code": "S07",
+      "acceptance": "0 条 · 段替换成 \"接下来没有计划中的自动任务\" 文案 · 不渲染段标题",
+      "status": "PASS",
+      "evidence": "screenshots/P2A-04/s07-scheduled-empty.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2A-04/s07-scheduled-empty.json",
+          "sha256": "f6b73407b2d1d14b149c9a4a960880121ecbd7da023a4f6ee24f6de079c2d984"
+        },
+        {
+          "path": "screenshots/P2A-04/s07-scheduled-empty.png",
+          "sha256": "a7d7ae16fadfa09265aaa0f302dd16ed018fbde595f9248926091a50802ca06d"
+        }
+      ],
+      "summary": "接下来没有计划中的自动任务",
+      "observed": {
+        "headerPresent": false,
+        "text": "接下来没有计划中的自动任务"
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2A-04/s01-scheduled-layout.json",
+    "screenshots/P2A-04/s01-scheduled-layout.png",
+    "screenshots/P2A-04/s02-scheduled-order.json",
+    "screenshots/P2A-04/s02-scheduled-order.png",
+    "screenshots/P2A-04/s03-scheduled-cap.json",
+    "screenshots/P2A-04/s03-scheduled-cap.png",
+    "screenshots/P2A-04/s04-scheduled-disabled.json",
+    "screenshots/P2A-04/s04-scheduled-disabled.png",
+    "screenshots/P2A-04/s05-scheduled-hover.json",
+    "screenshots/P2A-04/s05-scheduled-hover.png",
+    "screenshots/P2A-04/s06-scheduled-clock.json",
+    "screenshots/P2A-04/s07-scheduled-empty.json",
+    "screenshots/P2A-04/s07-scheduled-empty.png"
+  ]
+}

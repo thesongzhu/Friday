@@ -1,0 +1,7 @@
+{
+  "generatedAt": "2026-04-21T10:29:55.173Z",
+  "observed": {
+    "firstHref": "/chat?session=session-route-proof",
+    "secondHref": "/sessions?runId=qa-route-run"
+  }
+}

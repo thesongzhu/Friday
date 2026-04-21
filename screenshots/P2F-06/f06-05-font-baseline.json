@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-04-21T10:39:19.765Z",
+  "observed": [
+    {
+      "width": 1280,
+      "topbarTitle": "15px",
+      "actionButton": "14px"
+    },
+    {
+      "width": 1440,
+      "topbarTitle": "15px",
+      "actionButton": "14px"
+    },
+    {
+      "width": 1920,
+      "topbarTitle": "15px",
+      "actionButton": "14px"
+    }
+  ]
+}

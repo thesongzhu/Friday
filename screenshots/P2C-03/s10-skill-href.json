@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:33:42.149Z",
+  "before": {
+    "href": "/skills?skillId=skill-finance-watch",
+    "detailPanels": 0
+  },
+  "after": {
+    "pathname": "/skills",
+    "search": "?skillId=skill-finance-watch",
+    "detailPanels": 0,
+    "listStillVisible": true
+  }
+}

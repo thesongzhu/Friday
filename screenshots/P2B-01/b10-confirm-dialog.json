@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:31:15.581Z",
+  "highRisk": {
+    "modal": "true",
+    "title": "确认批准这个动作?",
+    "inputPlaceholder": "跨境经营动作板",
+    "confirmDisabled": true
+  },
+  "mediumRisk": {
+    "hasInput": false,
+    "confirmDisabled": false
+  }
+}

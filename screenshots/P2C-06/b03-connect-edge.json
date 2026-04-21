@@ -1,0 +1,236 @@
+{
+  "generatedAt": "2026-04-21T10:34:09.414Z",
+  "before": {
+    "stateName": "editing",
+    "nodes": [
+      {
+        "id": "node-cross-trigger",
+        "type": "trigger",
+        "name": {
+          "zh": "渠道告警触发",
+          "en": "Channel alert trigger"
+        },
+        "x": 50,
+        "y": 80,
+        "config": {
+          "event": "alert.firing"
+        }
+      },
+      {
+        "id": "node-cross-compare",
+        "type": "integration",
+        "name": {
+          "zh": "对比价格与税费",
+          "en": "Compare price and taxes"
+        },
+        "x": 270,
+        "y": 80,
+        "config": {
+          "connector": "mcp",
+          "server": "mcp-browse"
+        }
+      },
+      {
+        "id": "node-cross-logic",
+        "type": "logic",
+        "name": {
+          "zh": "利润阈值判断",
+          "en": "Margin threshold"
+        },
+        "x": 500,
+        "y": 80,
+        "config": {
+          "expression": "margin >= 18"
+        }
+      },
+      {
+        "id": "node-cross-assistant",
+        "type": "action",
+        "name": {
+          "zh": "创建跨境行动卡",
+          "en": "Create cross-border card"
+        },
+        "x": 730,
+        "y": 30,
+        "config": {
+          "lane": "assistant"
+        }
+      },
+      {
+        "id": "node-cross-redeploy",
+        "type": "action",
+        "name": {
+          "zh": "重试渠道回放",
+          "en": "Retry channel replay"
+        },
+        "x": 730,
+        "y": 130,
+        "config": {
+          "lane": "channels"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-cross-1",
+        "from": "node-cross-trigger",
+        "to": "node-cross-compare"
+      },
+      {
+        "id": "edge-cross-2",
+        "from": "node-cross-compare",
+        "to": "node-cross-logic"
+      },
+      {
+        "id": "edge-cross-3",
+        "from": "node-cross-logic",
+        "to": "node-cross-assistant"
+      },
+      {
+        "id": "edge-cross-4",
+        "from": "node-cross-logic",
+        "to": "node-cross-redeploy"
+      }
+    ],
+    "selection": [],
+    "dirty": false,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [],
+      "errorNodeIds": []
+    },
+    "historyDepth": 0,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v12",
+    "sourceKey": "state:editing"
+  },
+  "after": {
+    "stateName": "editing",
+    "nodes": [
+      {
+        "id": "node-cross-trigger",
+        "type": "trigger",
+        "name": {
+          "zh": "渠道告警触发",
+          "en": "Channel alert trigger"
+        },
+        "x": 50,
+        "y": 80,
+        "config": {
+          "event": "alert.firing"
+        }
+      },
+      {
+        "id": "node-cross-compare",
+        "type": "integration",
+        "name": {
+          "zh": "对比价格与税费",
+          "en": "Compare price and taxes"
+        },
+        "x": 270,
+        "y": 80,
+        "config": {
+          "connector": "mcp",
+          "server": "mcp-browse"
+        }
+      },
+      {
+        "id": "node-cross-logic",
+        "type": "logic",
+        "name": {
+          "zh": "利润阈值判断",
+          "en": "Margin threshold"
+        },
+        "x": 500,
+        "y": 80,
+        "config": {
+          "expression": "margin >= 18"
+        }
+      },
+      {
+        "id": "node-cross-assistant",
+        "type": "action",
+        "name": {
+          "zh": "创建跨境行动卡",
+          "en": "Create cross-border card"
+        },
+        "x": 730,
+        "y": 30,
+        "config": {
+          "lane": "assistant"
+        }
+      },
+      {
+        "id": "node-cross-redeploy",
+        "type": "action",
+        "name": {
+          "zh": "重试渠道回放",
+          "en": "Retry channel replay"
+        },
+        "x": 730,
+        "y": 130,
+        "config": {
+          "lane": "channels"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-cross-1",
+        "from": "node-cross-trigger",
+        "to": "node-cross-compare"
+      },
+      {
+        "id": "edge-cross-2",
+        "from": "node-cross-compare",
+        "to": "node-cross-logic"
+      },
+      {
+        "id": "edge-cross-3",
+        "from": "node-cross-logic",
+        "to": "node-cross-assistant"
+      },
+      {
+        "id": "edge-cross-4",
+        "from": "node-cross-logic",
+        "to": "node-cross-redeploy"
+      },
+      {
+        "id": "edge-1776767649280-71",
+        "from": "node-cross-trigger",
+        "to": "node-cross-redeploy"
+      }
+    ],
+    "selection": [],
+    "dirty": true,
+    "savedAt": "14:18",
+    "zoom": 1,
+    "pan": {
+      "x": 0,
+      "y": 0
+    },
+    "validation": {
+      "errors": [],
+      "errorNodeIds": []
+    },
+    "historyDepth": 1,
+    "futureDepth": 0,
+    "nodeStates": {},
+    "clipboard": null,
+    "activeDrawer": null,
+    "activeModal": null,
+    "mountId": "workflow-builder-shell-v1",
+    "versionInput": "v12",
+    "sourceKey": "state:editing"
+  }
+}

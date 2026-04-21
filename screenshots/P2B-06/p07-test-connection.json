@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:32:10.709Z",
+  "loadingObserved": {
+    "html": "<span class=\"button-spinner\" aria-hidden=\"true\"></span>测试中",
+    "disabled": true
+  },
+  "completedObserved": {
+    "elapsedMs": 3056.600000023842,
+    "toastText": "SUCCESS连接测试通过 · 843ms"
+  }
+}

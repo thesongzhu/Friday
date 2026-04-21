@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:34:19.885Z",
+  "before": {
+    "title": "发布工作流",
+    "diff": "+ workflow: 跨境上新守护\n+ version: v12\n+ nodes: 5\n+ edges: 4",
+    "versionValue": "v12"
+  },
+  "after": {
+    "modalOpen": false,
+    "toast": "SUCCESS工作流已部署"
+  }
+}

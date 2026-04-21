@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:33:31.821Z",
+  "observed": {
+    "containerDisplay": "grid",
+    "gridTemplateColumns": "240px 568px",
+    "asideWidth": 240,
+    "listDisplay": "grid"
+  },
+  "screenshot": "screenshots/P2C-03/s01-layout.png"
+}

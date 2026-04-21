@@ -1,0 +1,386 @@
+{
+  "itemId": "P2B-05",
+  "route": "/settings",
+  "generatedAt": "2026-04-21T10:31:41.345Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 11,
+    "pass": 11,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "S01",
+      "acceptance": "左 sub-nav 200 固定宽 · 4 tab · 竖排 · 当前 tab 左 2px 琥珀竖线 + 粗体",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s01-subnav-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s01-subnav-layout.json",
+          "sha256": "16c68c2efa91381c6ab1cfe9898970f056877420527d9ed731e510f0aa7976bc"
+        },
+        {
+          "path": "screenshots/P2B-05/s01-subnav-layout.png",
+          "sha256": "03e170b7936e422bfe0399d10ea0b7d71286d742140ff80a3d2f323de150a21c"
+        }
+      ],
+      "summary": "width=200, tabs=4, stripe=2px",
+      "observed": {
+        "tokenColors": {
+          "--accent": "rgb(154, 93, 37)"
+        },
+        "navWidth": 200,
+        "tabCount": 4,
+        "yPositions": [
+          80,
+          134,
+          188,
+          242
+        ],
+        "activeWeight": "700",
+        "activeStripeWidth": "2px",
+        "activeStripeColor": "rgb(154, 93, 37)",
+        "activeStripeTokenMatch": "--accent",
+        "vertical": true
+      }
+    },
+    {
+      "rule": 2,
+      "code": "S02",
+      "acceptance": "URL ?tab=providers|runtime|diagnostics|account · 默认 providers · 不识别 fallback",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s02-tab-url-sync.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s02-tab-url-sync.json",
+          "sha256": "ae899230dfa0c040a0169abc0ae4ab308a71487c15cf979c0fcf86ed64387580"
+        }
+      ],
+      "summary": "?dev=1 -> ?tab=runtime&__state=runtime -> ?dev=1",
+      "observed": {
+        "defaultObserved": {
+          "search": "?dev=1",
+          "heading": "提供方与连接",
+          "active": "提供方",
+          "navigationEntries": 1
+        },
+        "afterClick": {
+          "search": "?tab=runtime&__state=runtime",
+          "active": "运行时",
+          "navigationEntries": 1
+        },
+        "afterBack": {
+          "search": "?dev=1",
+          "active": "提供方"
+        },
+        "afterForward": {
+          "search": "?tab=runtime&__state=runtime",
+          "active": "运行时"
+        },
+        "fallbackObserved": {
+          "search": "?dev=1&tab=unknown&__state=unknown",
+          "heading": "提供方与连接",
+          "active": "提供方"
+        }
+      }
+    },
+    {
+      "rule": 3,
+      "code": "S03",
+      "acceptance": "右主区 · 顶 h2 tab 名 · 下表单 + 内容",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s03-main-region.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s03-main-region.json",
+          "sha256": "76f8dad8ca7588d17ff42145a997508b390f0218cb1674a29e5e81bbed787b8d"
+        },
+        {
+          "path": "screenshots/P2B-05/s03-main-region.png",
+          "sha256": "dc315c7a1fc76546ae9cbe40406973a7ef2cd7c93e1ec11b57091cae4513d481"
+        }
+      ],
+      "summary": "diagnostics=诊断与保留策略, account=身份与偏好",
+      "observed": {
+        "diagnosticsObserved": {
+          "title": "诊断与保留策略",
+          "formFields": 3,
+          "cards": 1
+        },
+        "accountObserved": {
+          "title": "身份与偏好",
+          "formFields": 6,
+          "cards": 2
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "S04",
+      "acceptance": "底部吸附 Save bar · 128 高 · 仅有 dirty 时显示 · 显示 \"有 N 项未保存\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s04-save-bar-sticky.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s04-save-bar-sticky.json",
+          "sha256": "3c4b811288fa6c9b186a8970ff92f4121893ddb209177912e0bf7b360a32a0fc"
+        },
+        {
+          "path": "screenshots/P2B-05/s04-save-bar-sticky.png",
+          "sha256": "da4ebaf54c3e4d41279c182e6829bd0124a7f2214415386c9473b25a91da9367"
+        }
+      ],
+      "summary": "visible=true, bottom=1200, height=128",
+      "observed": {
+        "before": {
+          "visible": false
+        },
+        "afterInput": {
+          "visible": true,
+          "text": "有 1 项未保存",
+          "height": 128,
+          "bottom": 1200,
+          "viewportHeight": 1200,
+          "transform": "none"
+        },
+        "afterScroll": {
+          "bottom": 1200,
+          "height": 128,
+          "transform": "none"
+        }
+      }
+    },
+    {
+      "rule": 5,
+      "code": "S05",
+      "acceptance": "dirty 时切换 tab · ConfirmDialog \"放弃修改?\" · 确认走 / 取消留",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s05-tab-switch-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s05-tab-switch-confirm.json",
+          "sha256": "796766d3d20463e0c167767bd4ab791c8407bb136279e097f7559a5971103318"
+        }
+      ],
+      "summary": "运行时 -> 账号",
+      "observed": {
+        "firstDialog": {
+          "title": "放弃修改?",
+          "body": "切换 tab 前先确认：当前草稿会保留，但你会先离开这个编辑面。",
+          "route": "?dev=1&tab=runtime&__state=runtime"
+        },
+        "afterCancel": {
+          "route": "?dev=1&tab=runtime&__state=runtime",
+          "active": "运行时"
+        },
+        "afterConfirm": {
+          "route": "?tab=account&__state=account",
+          "active": "账号"
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "S06",
+      "acceptance": "dirty 时离开 route · beforeunload 确认",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s06-beforeunload.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s06-beforeunload.json",
+          "sha256": "0d6d74f7fca47161d68705c17543e796d6daf413cc8ff9cffd63d2b758f69bad"
+        }
+      ],
+      "summary": "dirty=true, clean=false",
+      "observed": {
+        "dirtyObserved": {
+          "defaultPrevented": true,
+          "prevented": true,
+          "returnValue": ""
+        },
+        "cleanObserved": {
+          "defaultPrevented": false,
+          "prevented": false,
+          "returnValue": null
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "S07",
+      "acceptance": "Save 按钮 · 禁用当 invalid · loading 时 spinner",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s07-save-disabled-loading.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s07-save-disabled-loading.json",
+          "sha256": "901108097c2100d64767d0cbf3791af16885391bacdda715ff2071fa5428ae94"
+        }
+      ],
+      "summary": "invalid=true, loadingSpinner=true",
+      "observed": {
+        "invalidObserved": {
+          "disabled": true,
+          "errorText": "请输入有效邮箱地址。"
+        },
+        "validObserved": {
+          "disabled": false
+        },
+        "loadingObserved": {
+          "html": "<span class=\"button-spinner\" aria-hidden=\"true\"></span>保存中",
+          "disabled": true
+        },
+        "afterSave": {
+          "saveBarVisible": false
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "S08",
+      "acceptance": "Saved 后 toast 右下 · 3 秒淡出 · \"已保存\"",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s08-save-toast.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s08-save-toast.json",
+          "sha256": "ac3977dfc1e8882af8b771c6aa18a7de45a1a2423a704cf909c326e56f342437"
+        },
+        {
+          "path": "screenshots/P2B-05/s08-save-toast.png",
+          "sha256": "0dfa9ab6db32d9c1d2946d935e9b9df3a685c2d7149bc51b3c806ae44d18da3f"
+        }
+      ],
+      "summary": "toast=SUCCESS已保存, fading=toast-card is-success is-fading",
+      "observed": {
+        "shown": {
+          "text": "SUCCESS已保存",
+          "bottomGap": 24,
+          "rightGap": 24,
+          "fading": false
+        },
+        "fading": {
+          "className": "toast-card is-success is-fading"
+        },
+        "removed": {
+          "toastCount": 0
+        }
+      }
+    },
+    {
+      "rule": 9,
+      "code": "S09",
+      "acceptance": "字段级错误 · 红边 + 下方错误文字 · i18n",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s09-field-errors.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s09-field-errors.json",
+          "sha256": "c722a96c9f6f0e45c48a19ab6c7b50ffaea458864217b88c3ec5082ee36b38aa"
+        },
+        {
+          "path": "screenshots/P2B-05/s09-field-errors.png",
+          "sha256": "3da76e3b26c670bd1a8da4da0cd46ed38208bc3bcb6cf6162ebe5811ea65e430"
+        }
+      ],
+      "summary": "请输入有效邮箱地址。 | Enter a valid email address.",
+      "observed": {
+        "zhObserved": {
+          "text": "请输入有效邮箱地址。",
+          "borderColor": "rgb(165, 48, 40)",
+          "tokenMatch": "--error"
+        },
+        "enObserved": {
+          "text": "Enter a valid email address."
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "S10",
+      "acceptance": "tab 之间 URL 切换不丢未保存(本 tab)",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s10-tab-draft-preserved.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s10-tab-draft-preserved.json",
+          "sha256": "157a15946b4a0b10f302c8ba73e264efb10799de5a8d10437b6fca0145bfed45"
+        }
+      ],
+      "summary": "restored=15000, dirty=[\"runtime-budget\"]",
+      "observed": {
+        "diagnosticsObserved": {
+          "search": "?tab=diagnostics&__state=diagnostics",
+          "active": "诊断"
+        },
+        "restoredObserved": {
+          "search": "?tab=runtime&__state=runtime",
+          "active": "运行时",
+          "value": "15000",
+          "dirtyTabs": {
+            "runtime": [
+              "runtime-budget"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "rule": 11,
+      "code": "S11",
+      "acceptance": "Reset 按钮 · 位于 save bar 左 · 二次确认",
+      "status": "PASS",
+      "evidence": "screenshots/P2B-05/s11-reset-confirm.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2B-05/s11-reset-confirm.json",
+          "sha256": "4e3973b91433555fdcb669de3d108eee1687d9d35ba6d8930e934e5af6c8db50"
+        }
+      ],
+      "summary": "resetX=896.765625, saveX=979.453125, restored=12000",
+      "observed": {
+        "before": {
+          "resetText": "Reset",
+          "saveText": "Save",
+          "resetX": 896.765625,
+          "saveX": 979.453125
+        },
+        "confirmObserved": {
+          "title": "重置这组未保存修改?"
+        },
+        "after": {
+          "saveBarVisible": false,
+          "value": "12000",
+          "beforeUnload": {
+            "defaultPrevented": false,
+            "prevented": false,
+            "returnValue": null
+          }
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2B-05/s01-subnav-layout.json",
+    "screenshots/P2B-05/s01-subnav-layout.png",
+    "screenshots/P2B-05/s02-tab-url-sync.json",
+    "screenshots/P2B-05/s03-main-region.json",
+    "screenshots/P2B-05/s03-main-region.png",
+    "screenshots/P2B-05/s04-save-bar-sticky.json",
+    "screenshots/P2B-05/s04-save-bar-sticky.png",
+    "screenshots/P2B-05/s05-tab-switch-confirm.json",
+    "screenshots/P2B-05/s06-beforeunload.json",
+    "screenshots/P2B-05/s07-save-disabled-loading.json",
+    "screenshots/P2B-05/s08-save-toast.json",
+    "screenshots/P2B-05/s08-save-toast.png",
+    "screenshots/P2B-05/s09-field-errors.json",
+    "screenshots/P2B-05/s09-field-errors.png",
+    "screenshots/P2B-05/s10-tab-draft-preserved.json",
+    "screenshots/P2B-05/s11-reset-confirm.json"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:30:08.946Z",
+  "tokenColors": {
+    "--ink-3": "rgba(45, 33, 24, 0.56)"
+  },
+  "observed": {
+    "opacity": "0.35",
+    "timeText": "已暂停",
+    "cronColor": "rgba(45, 33, 24, 0.56)",
+    "cronToken": "--ink-3"
+  },
+  "screenshot": "screenshots/P2A-04/s04-scheduled-disabled.png"
+}

@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-04-21T10:31:17.860Z",
+  "observed": {
+    "errorTitle": "Assistant 快照暂时不可用",
+    "retryText": "重试",
+    "issueCards": 3,
+    "recoveryCards": 3
+  },
+  "screenshot": "screenshots/P2B-01/b12-error-state.png"
+}

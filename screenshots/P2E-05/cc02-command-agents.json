@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-04-21T10:36:37.489Z",
+  "observed": [
+    {
+      "id": "agent-ops",
+      "name": "Ops Agent",
+      "status": "执行中",
+      "currentRun": "当前 run · 北美仓补货值守"
+    },
+    {
+      "id": "agent-qa",
+      "name": "QA Agent",
+      "status": "等待批准",
+      "currentRun": "当前 run · 交付回归批次"
+    },
+    {
+      "id": "agent-builder",
+      "name": "Builder Agent",
+      "status": "测试中",
+      "currentRun": "当前 run · 工作流修订"
+    }
+  ]
+}

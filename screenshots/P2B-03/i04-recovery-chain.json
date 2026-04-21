@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-04-21T10:31:34.319Z",
+  "before": {
+    "rowCount": 2,
+    "buttonLabels": [
+      "执行",
+      "执行"
+    ]
+  },
+  "busy": {
+    "spinnerCount": 2,
+    "disabled": true
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-04-21T10:32:17.243Z",
+  "loadingObserved": {
+    "search": "?dev=1&focus=alerts&window=1h&__state=active",
+    "skeletonCount": 3,
+    "rowCount": 12,
+    "mountId": "observability-shell-v1"
+  },
+  "loadedObserved": {
+    "skeletonCount": 0,
+    "rowCount": 6,
+    "refreshTrace": [
+      {
+        "at": 1776719880000,
+        "focus": "alerts",
+        "window": "1h",
+        "reason": "window-loading:route",
+        "alertCount": 6,
+        "traceCount": 3
+      },
+      {
+        "at": 1776719880000,
+        "focus": "alerts",
+        "window": "1h",
+        "reason": "window-resolved:route",
+        "alertCount": 6,
+        "traceCount": 3
+      }
+    ]
+  },
+  "screenshot": "screenshots/P2B-07/o02-window-loading.png"
+}

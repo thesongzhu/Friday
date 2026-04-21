@@ -1,0 +1,209 @@
+{
+  "generatedAt": "2026-04-21T10:36:25.170Z",
+  "observed": [
+    {
+      "state": {
+        "stateName": "goal-card",
+        "wizardId": "inventory-triage",
+        "stepIndex": 0,
+        "activeStepId": "intent",
+        "completedStepIds": [],
+        "skippedStepIds": [],
+        "selectedChoiceId": null,
+        "investigationExpanded": false,
+        "helpOpen": false,
+        "transitionTrace": [
+          {
+            "stepIndex": 0,
+            "stateName": "goal-card",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          }
+        ],
+        "fetchTrace": [
+          {
+            "wizardId": "inventory-triage",
+            "at": "2026-04-20T21:18:00.000Z",
+            "source": "guided-registry"
+          }
+        ],
+        "refetchCount": 1,
+        "storage": {
+          "wizardId": "inventory-triage",
+          "stepIndex": 0,
+          "selectedChoiceId": null,
+          "completedStepIds": [],
+          "skippedStepIds": [],
+          "investigationExpanded": false,
+          "helpOpen": false
+        }
+      },
+      "hasGoalSummary": true,
+      "hasChoiceGrid": false,
+      "hasActionDetail": false,
+      "reviewCount": 0
+    },
+    {
+      "state": {
+        "stateName": "choice",
+        "wizardId": "inventory-triage",
+        "stepIndex": 1,
+        "activeStepId": "choice",
+        "completedStepIds": [],
+        "skippedStepIds": [],
+        "selectedChoiceId": null,
+        "investigationExpanded": false,
+        "helpOpen": false,
+        "transitionTrace": [
+          {
+            "stepIndex": 0,
+            "stateName": "goal-card",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 1,
+            "stateName": "choice",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          }
+        ],
+        "fetchTrace": [
+          {
+            "wizardId": "inventory-triage",
+            "at": "2026-04-20T21:18:00.000Z",
+            "source": "guided-registry"
+          }
+        ],
+        "refetchCount": 1,
+        "storage": {
+          "wizardId": "inventory-triage",
+          "stepIndex": 1,
+          "selectedChoiceId": null,
+          "completedStepIds": [],
+          "skippedStepIds": [],
+          "investigationExpanded": false,
+          "helpOpen": false
+        }
+      },
+      "hasGoalSummary": false,
+      "hasChoiceGrid": true,
+      "hasActionDetail": false,
+      "reviewCount": 0
+    },
+    {
+      "state": {
+        "stateName": "action",
+        "wizardId": "inventory-triage",
+        "stepIndex": 2,
+        "activeStepId": "action",
+        "completedStepIds": [],
+        "skippedStepIds": [],
+        "selectedChoiceId": null,
+        "investigationExpanded": false,
+        "helpOpen": false,
+        "transitionTrace": [
+          {
+            "stepIndex": 0,
+            "stateName": "goal-card",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 1,
+            "stateName": "choice",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 2,
+            "stateName": "action",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          }
+        ],
+        "fetchTrace": [
+          {
+            "wizardId": "inventory-triage",
+            "at": "2026-04-20T21:18:00.000Z",
+            "source": "guided-registry"
+          }
+        ],
+        "refetchCount": 1,
+        "storage": {
+          "wizardId": "inventory-triage",
+          "stepIndex": 2,
+          "selectedChoiceId": null,
+          "completedStepIds": [],
+          "skippedStepIds": [],
+          "investigationExpanded": false,
+          "helpOpen": false
+        }
+      },
+      "hasGoalSummary": false,
+      "hasChoiceGrid": false,
+      "hasActionDetail": true,
+      "reviewCount": 0
+    },
+    {
+      "state": {
+        "stateName": "journey-tracker",
+        "wizardId": "inventory-triage",
+        "stepIndex": 3,
+        "activeStepId": "review",
+        "completedStepIds": [],
+        "skippedStepIds": [],
+        "selectedChoiceId": null,
+        "investigationExpanded": false,
+        "helpOpen": false,
+        "transitionTrace": [
+          {
+            "stepIndex": 0,
+            "stateName": "goal-card",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 1,
+            "stateName": "choice",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 2,
+            "stateName": "action",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          },
+          {
+            "stepIndex": 3,
+            "stateName": "journey-tracker",
+            "reason": "qa-set",
+            "at": "2026-04-20T21:18:00.000Z"
+          }
+        ],
+        "fetchTrace": [
+          {
+            "wizardId": "inventory-triage",
+            "at": "2026-04-20T21:18:00.000Z",
+            "source": "guided-registry"
+          }
+        ],
+        "refetchCount": 1,
+        "storage": {
+          "wizardId": "inventory-triage",
+          "stepIndex": 3,
+          "selectedChoiceId": null,
+          "completedStepIds": [],
+          "skippedStepIds": [],
+          "investigationExpanded": false,
+          "helpOpen": false
+        }
+      },
+      "hasGoalSummary": false,
+      "hasChoiceGrid": false,
+      "hasActionDetail": false,
+      "reviewCount": 3
+    }
+  ]
+}

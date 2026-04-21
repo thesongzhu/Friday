@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-04-21T10:36:15.937Z",
+  "before": {
+    "stateName": "pack-pick",
+    "screen": 2,
+    "profile": "team",
+    "selectedPacks": [],
+    "recommendations": [
+      "industry-cross-border-ecommerce",
+      "task-support-ops",
+      "task-release-ops"
+    ],
+    "userProfile": {
+      "profile": "team",
+      "selectedPacks": [],
+      "source": "useUserProfile"
+    }
+  },
+  "after": {
+    "stateName": "pack-pick",
+    "screen": 2,
+    "profile": "team",
+    "selectedPacks": [
+      "industry-cross-border-ecommerce",
+      "task-support-ops"
+    ],
+    "recommendations": [
+      "industry-cross-border-ecommerce",
+      "task-support-ops",
+      "task-release-ops"
+    ],
+    "userProfile": {
+      "profile": "team",
+      "selectedPacks": [
+        "industry-cross-border-ecommerce",
+        "task-support-ops"
+      ],
+      "source": "useUserProfile"
+    }
+  },
+  "skipPresent": 1
+}

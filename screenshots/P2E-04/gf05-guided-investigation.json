@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:36:26.075Z",
+  "before": {
+    "title": "Friday 正在调查",
+    "spinnerPresent": true,
+    "detailVisible": false
+  },
+  "after": {
+    "detailVisible": true,
+    "detailText": "Friday 正在交叉比对 Amazon EU 的库存天数、供应商切换成本、退款波峰和广告节奏，先把真正影响补货窗口的变量圈出来。"
+  }
+}

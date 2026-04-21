@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-04-21T10:30:32.544Z",
+  "dragState": true,
+  "dragObserved": {
+    "active": true
+  },
+  "uploading": {
+    "name": "brief.pdf",
+    "progressWidth": "width:38%;",
+    "status": "上传中 38%"
+  },
+  "failed": {
+    "status": "上传失败，可重试",
+    "retryVisible": true
+  },
+  "recovered": {
+    "status": "上传完成",
+    "retryVisible": false
+  },
+  "screenshot": "screenshots/P2A-05/c14-upload-failed.png"
+}

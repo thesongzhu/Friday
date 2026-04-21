@@ -1,0 +1,24 @@
+{
+  "generatedAt": "2026-04-21T10:30:57.637Z",
+  "observed": {
+    "sessionKey": "chat:default:history-shape",
+    "turns": [
+      {
+        "id": "msg-1",
+        "role": "user",
+        "content": "hello",
+        "timestamp": "2026-04-20T10:00:00.000Z",
+        "status": "done"
+      },
+      {
+        "id": "msg-2",
+        "role": "assistant",
+        "content": "world",
+        "timestamp": "2026-04-20T10:01:00.000Z",
+        "status": "streaming"
+      }
+    ],
+    "updatedAt": 1776767457634
+  },
+  "allowedStatus": true
+}

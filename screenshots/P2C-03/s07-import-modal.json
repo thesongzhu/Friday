@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-21T10:33:38.191Z",
+  "before": {
+    "inlineWizard": false,
+    "modalOpen": false
+  },
+  "after": {
+    "modalTitle": "导入技能",
+    "modalCopy": "SkillImportWizard支持本地目录、压缩包和 Git 仓库 URL。",
+    "ariaModal": "true"
+  },
+  "screenshot": "screenshots/P2C-03/s07-import-modal.png"
+}

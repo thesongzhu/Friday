@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:35:49.577Z",
+  "tokenColors": {
+    "--accent": "rgb(154, 93, 37)"
+  },
+  "observed": {
+    "drawerPresent": true,
+    "borderColor": "rgb(154, 93, 37)",
+    "tokenMatch": "--accent"
+  }
+}

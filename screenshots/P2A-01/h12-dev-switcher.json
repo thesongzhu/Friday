@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-04-21T10:29:45.506Z",
+  "observed": {
+    "states": [
+      "loading",
+      "empty",
+      "normal",
+      "realtime-update",
+      "partial-failure",
+      "snapshot-error"
+    ],
+    "urls": [
+      "?dev=1&__state=loading",
+      "?dev=1&__state=empty",
+      "?dev=1&__state=normal",
+      "?dev=1&__state=realtime-update",
+      "?dev=1&__state=partial-failure",
+      "?dev=1&__state=snapshot-error"
+    ],
+    "navCountBefore": 1,
+    "navCountAfter": 1
+  }
+}

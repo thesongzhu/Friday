@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-21T10:35:02.592Z",
+  "before": [
+    "queued (2)",
+    "running (2)",
+    "history (50)"
+  ],
+  "after": [
+    "queued (1)",
+    "running (2)",
+    "history (50)"
+  ],
+  "queuedBefore": 2,
+  "queuedAfter": 1
+}

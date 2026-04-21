@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-04-21T10:32:15.706Z",
+  "navBefore": 1,
+  "sequence": [
+    {
+      "search": "?dev=1&focus=alerts&window=15m&__state=active",
+      "heading": "告警管理",
+      "activeFocus": "alerts",
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "search": "?dev=1&focus=traces&window=15m&__state=active",
+      "heading": "追踪与时延",
+      "activeFocus": "traces",
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "search": "?dev=1&focus=audit&window=15m&__state=active",
+      "heading": "审计时间线",
+      "activeFocus": "audit",
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "search": "?dev=1&focus=health&window=15m&__state=active",
+      "heading": "系统健康大盘",
+      "activeFocus": "health",
+      "mountId": "observability-shell-v1"
+    },
+    {
+      "search": "?dev=1&focus=acceptance&window=15m&__state=active",
+      "heading": "验收聚合",
+      "activeFocus": "acceptance",
+      "mountId": "observability-shell-v1"
+    }
+  ],
+  "backObserved": {
+    "search": "?dev=1&focus=traces&window=15m&__state=active",
+    "activeFocus": "traces"
+  },
+  "forwardObserved": {
+    "search": "?dev=1&focus=audit&window=15m&__state=active",
+    "activeFocus": "audit"
+  },
+  "deeplinkObserved": {
+    "search": "?dev=1&focus=audit&window=15m&__state=active",
+    "heading": "审计时间线",
+    "activeFocus": "audit"
+  },
+  "navAfter": 1
+}

@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-04-21T10:34:40.138Z",
+  "observed": {
+    "rowCount": 4,
+    "name": "Docs MCP",
+    "url": "https://mcp.friday.dev/docs",
+    "status": "connected",
+    "toolCount": "3 tools"
+  },
+  "screenshot": "screenshots/P2C-08/m01-server-list.png"
+}

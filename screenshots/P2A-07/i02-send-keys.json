@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:30:47.397Z",
+  "newline": "第一行\n第二行",
+  "cmdSend": {
+    "composer": "",
+    "count": 4
+  },
+  "confirm": {
+    "title": "清空当前输入?",
+    "action": "清空"
+  }
+}

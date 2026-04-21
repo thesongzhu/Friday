@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-04-21T10:36:55.723Z",
+  "observed": {
+    "triggerText": "Tweaks",
+    "width": 240,
+    "height": 620,
+    "rightGap": 24,
+    "bottomGap": 24,
+    "ariaModal": "true"
+  },
+  "screenshot": "screenshots/P2F-02/f02-01-panel.png"
+}

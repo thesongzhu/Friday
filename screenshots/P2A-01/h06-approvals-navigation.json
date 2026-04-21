@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-04-21T10:29:39.210Z",
+  "expectedHref": "/assistant?tab=approvals&packId=industry-cross-border-ecommerce",
+  "observed": {
+    "href": "/assistant?tab=approvals&packId=industry-cross-border-ecommerce"
+  },
+  "screenshot": "screenshots/P2A-01/h06-approvals-navigation.png"
+}

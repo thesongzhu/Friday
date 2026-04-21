@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-04-21T10:33:52.864Z",
+  "before": {
+    "prompt": "继续上次的草稿?",
+    "buttons": [
+      "不用，重置",
+      "继续"
+    ]
+  },
+  "after": {
+    "stateName": "draft",
+    "draft": {
+      "intent": "恢复之前的 QA 技能草稿",
+      "scope": "workspace",
+      "inputs": [
+        {
+          "id": "input-1",
+          "name": "release_plan",
+          "type": "markdown"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "output-1",
+          "name": "qa_report",
+          "type": "markdown"
+        }
+      ],
+      "publishName": "resume_skill"
+    },
+    "showResumePrompt": false,
+    "testResult": {
+      "output": {
+        "zh": "测试通过 · 生成了 3 条高优先级检查结论。",
+        "en": "Test passed · generated 3 high-priority checks."
+      },
+      "durationMs": 842,
+      "tokenCost": 1280
+    },
+    "testInput": "{\"release\":\"2026.04.20\",\"target\":\"https://preview.friday.dev\"}",
+    "activeModal": null
+  }
+}

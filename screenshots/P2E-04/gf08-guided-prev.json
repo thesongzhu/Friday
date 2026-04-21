@@ -1,0 +1,105 @@
+{
+  "generatedAt": "2026-04-21T10:36:29.721Z",
+  "before": {
+    "stateName": "action",
+    "wizardId": "inventory-triage",
+    "stepIndex": 2,
+    "activeStepId": "action",
+    "completedStepIds": [
+      "intent",
+      "choice"
+    ],
+    "skippedStepIds": [],
+    "selectedChoiceId": "reduce-risk",
+    "investigationExpanded": false,
+    "helpOpen": false,
+    "transitionTrace": [
+      {
+        "stepIndex": 1,
+        "stateName": "choice",
+        "reason": "next",
+        "at": "2026-04-20T21:18:00.000Z"
+      },
+      {
+        "stepIndex": 2,
+        "stateName": "action",
+        "reason": "choice",
+        "at": "2026-04-20T21:18:00.000Z"
+      }
+    ],
+    "fetchTrace": [
+      {
+        "wizardId": "inventory-triage",
+        "at": "2026-04-20T21:18:00.000Z",
+        "source": "guided-registry"
+      }
+    ],
+    "refetchCount": 1,
+    "storage": {
+      "wizardId": "inventory-triage",
+      "stepIndex": 2,
+      "selectedChoiceId": "reduce-risk",
+      "completedStepIds": [
+        "intent",
+        "choice"
+      ],
+      "skippedStepIds": [],
+      "investigationExpanded": false,
+      "helpOpen": false
+    }
+  },
+  "after": {
+    "stateName": "choice",
+    "wizardId": "inventory-triage",
+    "stepIndex": 1,
+    "activeStepId": "choice",
+    "completedStepIds": [
+      "intent",
+      "choice"
+    ],
+    "skippedStepIds": [],
+    "selectedChoiceId": "reduce-risk",
+    "investigationExpanded": false,
+    "helpOpen": false,
+    "transitionTrace": [
+      {
+        "stepIndex": 1,
+        "stateName": "choice",
+        "reason": "next",
+        "at": "2026-04-20T21:18:00.000Z"
+      },
+      {
+        "stepIndex": 2,
+        "stateName": "action",
+        "reason": "choice",
+        "at": "2026-04-20T21:18:00.000Z"
+      },
+      {
+        "stepIndex": 1,
+        "stateName": "choice",
+        "reason": "prev",
+        "at": "2026-04-20T21:18:00.000Z"
+      }
+    ],
+    "fetchTrace": [
+      {
+        "wizardId": "inventory-triage",
+        "at": "2026-04-20T21:18:00.000Z",
+        "source": "guided-registry"
+      }
+    ],
+    "refetchCount": 1,
+    "storage": {
+      "wizardId": "inventory-triage",
+      "stepIndex": 1,
+      "selectedChoiceId": "reduce-risk",
+      "completedStepIds": [
+        "intent",
+        "choice"
+      ],
+      "skippedStepIds": [],
+      "investigationExpanded": false,
+      "helpOpen": false
+    }
+  }
+}

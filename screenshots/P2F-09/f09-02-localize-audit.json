@@ -1,0 +1,40 @@
+{
+  "generatedAt": "2026-04-21T10:39:34.269Z",
+  "counts": {
+    "localize": 1127,
+    "localizedText": 315,
+    "resolveLocalizedText": 149
+  },
+  "observed": [
+    {
+      "href": "/home?dev=1&__state=normal",
+      "zhHash": "10bcc400843494e57ea590ea128c30ac27e100e9cf07c2f5d50fc36825835f6b",
+      "enHash": "660d929e9df1690bf2fb4aecb2e58074dd70c111b29e8a21173ca83eccdd0ee2",
+      "changed": true
+    },
+    {
+      "href": "/assistant?dev=1&__state=pending&tab=approvals",
+      "zhHash": "94c34254d8f8852881166690e5f467e9e3ce69495b4fe3d4d9f8acfc7d9f622e",
+      "enHash": "b76d105f85b651c7d82d7fc6e435682e2fbf18f8912923aeeeb35e42cfe787d7",
+      "changed": true
+    },
+    {
+      "href": "/settings?dev=1&tab=providers&__state=providers",
+      "zhHash": "b796aaf6f081b91641cd97127185a36edfb7a66703ed1df3ac63c8b086eee6a2",
+      "enHash": "f5d5416a281da811f5104c5d46e0740f894276d618a3d987b3e7aa27397a48c0",
+      "changed": true
+    },
+    {
+      "href": "/usage?dev=1&__state=this-month",
+      "zhHash": "97fcaf686de6f0470af08774bee3991520dc49a3cc54b45e5a5c036c6892f93e",
+      "enHash": "b132b7e478f0cbc8a57b4c212b208aaec10b904c21ec21c3f283a887203e31a7",
+      "changed": true
+    },
+    {
+      "href": "/command-center?dev=1&__state=active-run",
+      "zhHash": "b3670ae8ca8a8515c3e131dee0695c958250159b5d2ae922b6fca7e2602a0aac",
+      "enHash": "7a4d10c88d885d69169b9934c4e7fd487e1ffdaad2b5081f6b471c57883f289d",
+      "changed": true
+    }
+  ]
+}

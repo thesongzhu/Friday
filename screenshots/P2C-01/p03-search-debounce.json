@@ -1,0 +1,139 @@
+{
+  "generatedAt": "2026-04-21T10:33:07.134Z",
+  "total": {
+    "stateName": "full-catalog",
+    "search": "",
+    "committedSearch": "",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  },
+  "beforeCommit": {
+    "stateName": "full-catalog",
+    "search": "支持台",
+    "committedSearch": "",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  },
+  "titleMatch": {
+    "stateName": "full-catalog",
+    "search": "支持台",
+    "committedSearch": "支持台",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "task-support-ops"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  },
+  "descriptionMatch": {
+    "stateName": "full-catalog",
+    "search": "回滚",
+    "committedSearch": "回滚",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "task-release-ops"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  },
+  "tagMatch": {
+    "stateName": "full-catalog",
+    "search": "security",
+    "committedSearch": "security",
+    "activeFilters": [],
+    "pinnedOrder": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast"
+    ],
+    "filteredPackIds": [
+      "task-release-ops",
+      "task-security-review"
+    ],
+    "registry": [
+      "industry-cross-border-ecommerce",
+      "task-ship-fast",
+      "task-revenue-recovery",
+      "task-release-ops",
+      "task-security-review",
+      "task-support-ops"
+    ],
+    "selectedPackId": null,
+    "homePreferences": {
+      "pinnedPackIds": []
+    }
+  }
+}

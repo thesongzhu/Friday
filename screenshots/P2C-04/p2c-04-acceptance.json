@@ -1,0 +1,448 @@
+{
+  "itemId": "P2C-04",
+  "route": "/skills/generator",
+  "generatedAt": "2026-04-21T10:33:43.069Z",
+  "verificationMode": "scripted-playwright",
+  "verifier": {
+    "script": "scripts/qa/rebuild-friday-static-qa.mjs",
+    "playwright": "1.58.2"
+  },
+  "summary": {
+    "total": 10,
+    "pass": 10,
+    "fail": 0
+  },
+  "acceptance": [
+    {
+      "rule": 1,
+      "code": "G01",
+      "acceptance": "双列 · 左 prompt + 配置 480 · 右 preview + test 480",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g01-layout.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g01-layout.json",
+          "sha256": "1032aad2bed0b359035aa5c9aa89597fb33c55a823d614306cf67166c8afca3f"
+        },
+        {
+          "path": "screenshots/P2C-04/g01-layout.png",
+          "sha256": "4930a20d47bfc91de7cf4d935b9d385b97a1a19f4d878ba42a852f3399f43705"
+        }
+      ],
+      "summary": "480 / 480",
+      "observed": {
+        "widths": [
+          480,
+          480
+        ],
+        "gridTemplateColumns": "480px 480px"
+      }
+    },
+    {
+      "rule": 2,
+      "code": "G02",
+      "acceptance": "左列 · intent 多行文本(min-h 200)+ scope 选择 + inputs 定义表格 + outputs 定义表格",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g02-left-fields.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g02-left-fields.json",
+          "sha256": "b1ea1346e097b68f9e4527149fc0e882ca4257dee34d091a07e8a01f7427c399"
+        }
+      ],
+      "summary": "scope=workspace, headers=Name/Type",
+      "observed": {
+        "intentMinHeight": "200px",
+        "scopeValue": "workspace",
+        "inputsHeaders": [
+          "Name",
+          "Type"
+        ],
+        "outputsHeaders": [
+          "Name",
+          "Type"
+        ]
+      }
+    },
+    {
+      "rule": 3,
+      "code": "G03",
+      "acceptance": "右列 · 顶 \"生成\" 按钮 · 生成中 shimmer · 完成显示 skill YAML / TS 代码",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g03-generate-preview.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g03-generate-preview.json",
+          "sha256": "706c23c4e865e1d5f2ce5d6d9fe5e93c3dde09627c83907236fb955d21b1bfb3"
+        },
+        {
+          "path": "screenshots/P2C-04/g03-generate-preview.png",
+          "sha256": "29b1b25eb6ba2489351415e9793fccebf23873f72da85597c1f8727302117e9d"
+        }
+      ],
+      "summary": "generating=3, preview=preview",
+      "observed": {
+        "before": {
+          "buttons": [
+            "取消",
+            "生成",
+            "run test",
+            "publish"
+          ]
+        },
+        "generating": {
+          "state": "generating",
+          "skeletonCount": 3
+        },
+        "preview": {
+          "state": "preview",
+          "preText": "name: release_guardian\nversion: 0.1.0\ninputs:\n  - release_plan\n  - target_url\noutputs:\n  - qa_report\n  - release_risk\ncode:\n  export async function run() { /* preview */ }"
+        }
+      }
+    },
+    {
+      "rule": 4,
+      "code": "G04",
+      "acceptance": "test runner · 底部 fixed · 输入 inputs · 点 \"run test\" · 显示 output + duration + token cost",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g04-test-runner.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g04-test-runner.json",
+          "sha256": "07d3eb973914353704f6f17ff4418444cb7d38513b786f7f4ba508016002a512"
+        }
+      ],
+      "summary": "Test runner输入测试 payload测试通过 · 输出了 3 条候选检查与 1 条回退建议。 · 780ms · 1364 tokensrun test",
+      "observed": {
+        "position": "fixed",
+        "inputValue": "{\"release_plan\":\"qa\",\"target_url\":\"https://example.com\"}",
+        "copy": "Test runner输入测试 payload测试通过 · 输出了 3 条候选检查与 1 条回退建议。 · 780ms · 1364 tokensrun test"
+      }
+    },
+    {
+      "rule": 5,
+      "code": "G05",
+      "acceptance": "error 态 · 生成失败 · 显示 error message + suggestions · retry 按钮",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g05-error-retry.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g05-error-retry.json",
+          "sha256": "af1aab4c42a9cc16e4e7bd8aeacbcd810906a092944c6e9e1d3fdb4d41c632e0"
+        }
+      ],
+      "summary": "生成失败 / generating",
+      "observed": {
+        "before": {
+          "title": "生成失败",
+          "detail": "可以直接重试，草稿仍然保留。",
+          "reasonSummary": "为什么?",
+          "retryLabel": "重试"
+        },
+        "after": {
+          "state": "generating",
+          "skeletonCount": 3
+        }
+      }
+    },
+    {
+      "rule": 6,
+      "code": "G06",
+      "acceptance": "publish · 确认 modal · 显示 skill diff(新增)· 输入 skill name · 发布后跳 /skills",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g06-publish-flow.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g06-publish-flow.json",
+          "sha256": "dfc29415614fa1d450af0b660522b0df7795b261b8d6336aab262b91585266b0"
+        }
+      ],
+      "summary": "确认发布技能 -> /skills?__state=installed",
+      "observed": {
+        "modal": {
+          "title": "确认发布技能",
+          "diff": "+ name: release_guardian\n+ outputs: qa_report, release_risk\n+ hooks: verify, summarize",
+          "inputValue": "release_guardian"
+        },
+        "route": {
+          "pathname": "/skills",
+          "search": "?__state=installed"
+        }
+      }
+    },
+    {
+      "rule": 7,
+      "code": "G07",
+      "acceptance": "cancel · 二次确认 · 保留草稿到 localStorage `friday-skill-draft`",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g07-cancel-draft.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g07-cancel-draft.json",
+          "sha256": "7145dcb48d8e9ec5fa095b0e8cf8a2d961fb7b66b173a243c0601561f043d889"
+        }
+      ],
+      "summary": "取消当前草稿? -> /skills",
+      "observed": {
+        "confirm": {
+          "title": "取消当前草稿?",
+          "body": "草稿会保留到 localStorage，稍后还能继续。"
+        },
+        "stored": {
+          "pathname": "/skills",
+          "draft": {
+            "intent": "把变更窗口前的 smoke 和回滚检查整理成技能。",
+            "scope": "workspace",
+            "inputs": [
+              {
+                "id": "input-1",
+                "name": "release_plan",
+                "type": "markdown"
+              },
+              {
+                "id": "input-2",
+                "name": "target_url",
+                "type": "url"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output-1",
+                "name": "qa_report",
+                "type": "markdown"
+              },
+              {
+                "id": "output-2",
+                "name": "release_risk",
+                "type": "json"
+              }
+            ],
+            "publishName": "release_guardian"
+          }
+        }
+      }
+    },
+    {
+      "rule": 8,
+      "code": "G08",
+      "acceptance": "state · draft / generating / preview / published / error 五档 URL ?state= 同步",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g08-state-query-sync.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g08-state-query-sync.json",
+          "sha256": "24f4080470ad893e81db79c7059ad49bbd1102aa5629ba386b17aa5b27aedd08"
+        }
+      ],
+      "summary": "draft:dev=1&__state=draft&state=draft | generating:dev=1&__state=generating&state=generating | preview:dev=1&__state=preview&state=preview | published:dev=1&__state=published&state=published | error:dev=1&__state=error&state=error",
+      "observed": [
+        {
+          "stateName": "draft",
+          "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=draft&state=draft",
+          "actualState": "draft"
+        },
+        {
+          "stateName": "generating",
+          "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=generating&state=generating",
+          "actualState": "generating"
+        },
+        {
+          "stateName": "preview",
+          "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=preview&state=preview",
+          "actualState": "preview"
+        },
+        {
+          "stateName": "published",
+          "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=published&state=published",
+          "actualState": "published"
+        },
+        {
+          "stateName": "error",
+          "url": "http://127.0.0.1:60412/skills/generator?dev=1&__state=error&state=error",
+          "actualState": "error"
+        }
+      ]
+    },
+    {
+      "rule": 9,
+      "code": "G09",
+      "acceptance": "再次进入若有草稿 · 提示 \"继续上次的草稿?\" · yes / no",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g09-resume-prompt.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g09-resume-prompt.json",
+          "sha256": "93102cbbe0d953784c28d457dea6beaf9b3986270837e8801e30fd37c3a149cd"
+        }
+      ],
+      "summary": "继续上次的草稿? / 不用，重置/继续",
+      "observed": {
+        "before": {
+          "prompt": "继续上次的草稿?",
+          "buttons": [
+            "不用，重置",
+            "继续"
+          ]
+        },
+        "after": {
+          "stateName": "draft",
+          "draft": {
+            "intent": "恢复之前的 QA 技能草稿",
+            "scope": "workspace",
+            "inputs": [
+              {
+                "id": "input-1",
+                "name": "release_plan",
+                "type": "markdown"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output-1",
+                "name": "qa_report",
+                "type": "markdown"
+              }
+            ],
+            "publishName": "resume_skill"
+          },
+          "showResumePrompt": false,
+          "testResult": {
+            "output": {
+              "zh": "测试通过 · 生成了 3 条高优先级检查结论。",
+              "en": "Test passed · generated 3 high-priority checks."
+            },
+            "durationMs": 842,
+            "tokenCost": 1280
+          },
+          "testInput": "{\"release\":\"2026.04.20\",\"target\":\"https://preview.friday.dev\"}",
+          "activeModal": null
+        }
+      }
+    },
+    {
+      "rule": 10,
+      "code": "G10",
+      "acceptance": "keyboard Cmd+Enter = 生成 · Cmd+Shift+Enter = test · Cmd+S = publish confirm",
+      "status": "PASS",
+      "evidence": "screenshots/P2C-04/g10-keyboard-shortcuts.json",
+      "artifacts": [
+        {
+          "path": "screenshots/P2C-04/g10-keyboard-shortcuts.json",
+          "sha256": "fb2af35dc9e81e493fb5b3f2048de4158d9fcf12e93a47f70b42b912172e9a79"
+        }
+      ],
+      "summary": "generate=preview, publish=确认发布技能",
+      "observed": {
+        "afterGenerate": {
+          "stateName": "preview",
+          "draft": {
+            "intent": {
+              "zh": "帮我把发布前 QA 变成可重复执行的技能。",
+              "en": "Turn pre-release QA into a reusable skill."
+            },
+            "scope": "workspace",
+            "inputs": [
+              {
+                "id": "input-1",
+                "name": "release_plan",
+                "type": "markdown"
+              },
+              {
+                "id": "input-2",
+                "name": "target_url",
+                "type": "url"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output-1",
+                "name": "qa_report",
+                "type": "markdown"
+              },
+              {
+                "id": "output-2",
+                "name": "release_risk",
+                "type": "json"
+              }
+            ],
+            "publishName": "release_guardian"
+          },
+          "showResumePrompt": false,
+          "testResult": {
+            "output": {
+              "zh": "测试通过 · 生成了 3 条高优先级检查结论。",
+              "en": "Test passed · generated 3 high-priority checks."
+            },
+            "durationMs": 842,
+            "tokenCost": 1280
+          },
+          "testInput": "{\"release\":\"2026.04.20\",\"target\":\"https://preview.friday.dev\"}",
+          "activeModal": null
+        },
+        "afterTest": {
+          "stateName": "preview",
+          "draft": {
+            "intent": {
+              "zh": "帮我把发布前 QA 变成可重复执行的技能。",
+              "en": "Turn pre-release QA into a reusable skill."
+            },
+            "scope": "workspace",
+            "inputs": [
+              {
+                "id": "input-1",
+                "name": "release_plan",
+                "type": "markdown"
+              },
+              {
+                "id": "input-2",
+                "name": "target_url",
+                "type": "url"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "output-1",
+                "name": "qa_report",
+                "type": "markdown"
+              },
+              {
+                "id": "output-2",
+                "name": "release_risk",
+                "type": "json"
+              }
+            ],
+            "publishName": "release_guardian"
+          },
+          "showResumePrompt": false,
+          "testResult": {
+            "output": {
+              "zh": "测试通过 · 输出了 3 条候选检查与 1 条回退建议。",
+              "en": "Test passed · generated 3 candidate checks and 1 rollback suggestion."
+            },
+            "durationMs": 780,
+            "tokenCost": 1364
+          },
+          "testInput": "{\"release\":\"2026.04.20\",\"target\":\"https://preview.friday.dev\"}",
+          "activeModal": null
+        },
+        "afterPublish": {
+          "activeModal": "确认发布技能"
+        }
+      }
+    }
+  ],
+  "artifacts": [
+    "screenshots/P2C-04/g01-layout.json",
+    "screenshots/P2C-04/g01-layout.png",
+    "screenshots/P2C-04/g02-left-fields.json",
+    "screenshots/P2C-04/g03-generate-preview.json",
+    "screenshots/P2C-04/g03-generate-preview.png",
+    "screenshots/P2C-04/g04-test-runner.json",
+    "screenshots/P2C-04/g05-error-retry.json",
+    "screenshots/P2C-04/g06-publish-flow.json",
+    "screenshots/P2C-04/g07-cancel-draft.json",
+    "screenshots/P2C-04/g08-state-query-sync.json",
+    "screenshots/P2C-04/g09-resume-prompt.json",
+    "screenshots/P2C-04/g10-keyboard-shortcuts.json"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-04-21T10:30:56.767Z",
+  "observed": {
+    "hookSessionKey": true,
+    "hookHistoryKey": true,
+    "staticSessionKey": true,
+    "staticHistoryKey": true
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "generatedAt": "2026-04-21T10:29:50.104Z",
+  "tokenColors": {
+    "--success": "rgb(47, 122, 73)",
+    "--warning": "rgb(143, 84, 19)",
+    "--error": "rgb(165, 48, 40)",
+    "--accent": "rgb(154, 93, 37)",
+    "--ink-3": "rgba(45, 33, 24, 0.56)"
+  },
+  "observed": [
+    {
+      "id": "qa-status-pending",
+      "text": "排队",
+      "className": "status-pill is-neutral is-status-pending",
+      "inlineStyle": "",
+      "color": "rgba(45, 33, 24, 0.56)",
+      "allowedTokenMatch": "--ink-3"
+    },
+    {
+      "id": "qa-status-planning",
+      "text": "规划",
+      "className": "status-pill is-neutral is-status-planning",
+      "inlineStyle": "",
+      "color": "rgb(154, 93, 37)",
+      "allowedTokenMatch": "--accent"
+    },
+    {
+      "id": "qa-status-awaiting_clarification",
+      "text": "待澄清",
+      "className": "status-pill is-warning is-status-awaiting-clarification",
+      "inlineStyle": "",
+      "color": "rgb(143, 84, 19)",
+      "allowedTokenMatch": "--warning"
+    },
+    {
+      "id": "qa-status-awaiting_plan_approval",
+      "text": "待批准计划",
+      "className": "status-pill is-warning is-status-awaiting-plan-approval",
+      "inlineStyle": "",
+      "color": "rgb(143, 84, 19)",
+      "allowedTokenMatch": "--warning"
+    },
+    {
+      "id": "qa-status-awaiting_tool_approval",
+      "text": "待授予能力",
+      "className": "status-pill is-warning is-status-awaiting-tool-approval",
+      "inlineStyle": "",
+      "color": "rgb(165, 48, 40)",
+      "allowedTokenMatch": "--error"
+    },
+    {
+      "id": "qa-status-executing",
+      "text": "执行中",
+      "className": "status-pill is-neutral is-status-executing",
+      "inlineStyle": "",
+      "color": "rgb(154, 93, 37)",
+      "allowedTokenMatch": "--accent"
+    },
+    {
+      "id": "qa-status-testing",
+      "text": "验证中",
+      "className": "status-pill is-neutral is-status-testing",
+      "inlineStyle": "",
+      "color": "rgb(143, 84, 19)",
+      "allowedTokenMatch": "--warning"
+    },
+    {
+      "id": "qa-status-fixing",
+      "text": "修复中",
+      "className": "status-pill is-neutral is-status-fixing",
+      "inlineStyle": "",
+      "color": "rgb(165, 48, 40)",
+      "allowedTokenMatch": "--error"
+    },
+    {
+      "id": "qa-status-completed",
+      "text": "已完成",
+      "className": "status-pill is-success is-status-completed",
+      "inlineStyle": "",
+      "color": "rgb(47, 122, 73)",
+      "allowedTokenMatch": "--success"
+    }
+  ],
+  "screenshot": "screenshots/P2A-02/l02-status-pills.png"
+}
