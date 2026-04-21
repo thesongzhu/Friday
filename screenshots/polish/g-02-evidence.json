@@ -1,0 +1,27 @@
+{
+  "code": "G-02",
+  "title": "Usage, Audit, and Alerts each export a non-empty Blob with a stable sha256",
+  "status": "PASS",
+  "summary": "/usage:6d013e1fbb2a | /observability?focus=audit:d6387ebad4d2 | /observability?focus=alerts:efebb085eb9a",
+  "observed": [
+    {
+      "route": "/usage",
+      "size": 590,
+      "type": "text/csv;charset=utf-8",
+      "sha256": "6d013e1fbb2a970f88a8aa45dfbe15265ae42aa0b9e8df959f993ffe9be6a659"
+    },
+    {
+      "route": "/observability?focus=audit",
+      "size": 1479,
+      "type": "application/json",
+      "sha256": "d6387ebad4d2dee81cb94d58afb390aa1f317a0b4f46e37fcd9eb5526d780d16"
+    },
+    {
+      "route": "/observability?focus=alerts",
+      "size": 3690,
+      "type": "application/json",
+      "sha256": "efebb085eb9ab8546376190c8c99e0656a56e608769c0aa007a7fdc2c702cebc"
+    }
+  ],
+  "artifacts": []
+}

@@ -1,0 +1,1169 @@
+{
+  "generatedAt": "2026-04-21T19:36:05.448Z",
+  "playwrightVersion": "1.58.2",
+  "passCount": 24,
+  "failCount": 0,
+  "results": [
+    {
+      "code": "A-01",
+      "title": "Rail responsive breakpoints keep 64/240/240 widths while topbar stays visible",
+      "status": "PASS",
+      "summary": "rail widths 64/240/240; topbar visible true",
+      "observed": {
+        "widths": [
+          {
+            "viewport": {
+              "width": 1280,
+              "height": 960
+            },
+            "railWidth": 64,
+            "topbarVisible": true
+          },
+          {
+            "viewport": {
+              "width": 1440,
+              "height": 1100
+            },
+            "railWidth": 240,
+            "topbarVisible": true
+          },
+          {
+            "viewport": {
+              "width": 1920,
+              "height": 1200
+            },
+            "railWidth": 240,
+            "topbarVisible": true
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/a-01-evidence.json",
+          "sha256": "a129d09db2dde3c2c4994bf6d8d5520513f46f05992c83e8b85c04cb7bd82d92",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/a01-rail-1280.png",
+          "sha256": "9265554b59b7f51ed8e25612198765ff1549d7ddc1d41c1842532c475ee958e2",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/a01-rail-1440.png",
+          "sha256": "e416233ed10c51ea62bc8436bcd5945c0966661c986865d023b0bbc63cdf87a3",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/a01-rail-1920.png",
+          "sha256": "4c94357e26eadc35ce91702588ee404751388ff59135a77ac5bef3a6ff0f9909",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/a-01-evidence.json"
+    },
+    {
+      "code": "A-02",
+      "title": "Home hydrates from loading to normal in under 1 second without manual dev intervention",
+      "status": "PASS",
+      "summary": "loading at 405.4ms; normal at 756.6ms",
+      "observed": {
+        "loadingSample": {
+          "atMs": 405.4,
+          "stateName": "loading",
+          "skeletonCount": 6,
+          "runCardCount": 0
+        },
+        "normalSample": {
+          "atMs": 756.6,
+          "stateName": "normal",
+          "skeletonCount": 0,
+          "runCardCount": 3
+        },
+        "traceLength": 18
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/a-02-evidence.json",
+          "sha256": "e8c4caa20ecd5f501f3b025677ccb7fddb2761b2068b015c9ea2ef8d51531048",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/a02-home-loading.png",
+          "sha256": "1676f91fb2eb327ff7c96fee817dd2a2b6d54b3563569f5d8e0fdec80ce071b4",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/a02-home-normal.png",
+          "sha256": "478ebe40d6e83529de625bcc5415ed1d733c932ed0ebec991d077a04065e4a88",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/a-02-evidence.json"
+    },
+    {
+      "code": "A-03",
+      "title": "Topbar right cluster is status pill, Cmd+K trigger, and settings menu with locale plus tweaks",
+      "status": "PASS",
+      "summary": "status \"Friday 运行中\", command \"Cmd+K 全局搜索⌘K\", menu items 2",
+      "observed": {
+        "statusText": "Friday 运行中",
+        "commandText": "Cmd+K 全局搜索⌘K",
+        "menuItems": [
+          "语言中文 / English⌘L",
+          "视图偏好密度、动效、圆角⚙"
+        ]
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/a-03-evidence.json",
+          "sha256": "d5dcad12bd4f29bd259706da33001f616bea2973c784c1d6b2da323463b2f7e2",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/a03-topbar-menu.png",
+          "sha256": "2fbbcacb51573c4147c8482954d9c921046580a165dc46e6592d6a011fc6c8cd",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/a-03-evidence.json"
+    },
+    {
+      "code": "A-04",
+      "title": "Assistant deep link breadcrumb keeps root and tail labels readable",
+      "status": "PASS",
+      "summary": "Friday / 助手收件箱 / 待审批",
+      "observed": [
+        {
+          "role": "root",
+          "text": "Friday"
+        },
+        {
+          "role": "middle",
+          "text": "助手收件箱"
+        },
+        {
+          "role": "tail",
+          "text": "待审批"
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/a-04-evidence.json",
+          "sha256": "3b2873fd4f2ce904938c34cfedac0ff322cdcb437fa50476c51d1664f1f02432",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/a04-breadcrumb.png",
+          "sha256": "03ce146fa5e1db34f9d577ae0e69e3d7709210dbbe56abf9a9c850147e53b1c0",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/a-04-evidence.json"
+    },
+    {
+      "code": "B-01",
+      "title": "Command Center keeps a 3-column shell even when the center lane is sparse",
+      "status": "PASS",
+      "summary": "grid 280px 488px 320px",
+      "observed": {
+        "gridColumns": "280px 488px 320px",
+        "asideCount": 2,
+        "sectionCount": 5
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/b-01-evidence.json",
+          "sha256": "b63538c311323973968fd2a22ee80e677a70d3f852a422332387422f56709622",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/b01-command-center.png",
+          "sha256": "d929311db139a2806a9bf61521a2739cdbbdb566ae2a9c23b3cf10f9fc9c95ae",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/b-01-evidence.json"
+    },
+    {
+      "code": "B-02",
+      "title": "Home and Assistant loading skeletons share the same shimmer gradient and 1.6s loop",
+      "status": "PASS",
+      "summary": "gradient match true; duration 1.6s",
+      "observed": [
+        {
+          "route": "/home?dev=1&__state=loading",
+          "skeletonCount": 6,
+          "backgroundImage": "linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none",
+          "animationDuration": "1.6s"
+        },
+        {
+          "route": "/assistant?dev=1&__state=loading",
+          "skeletonCount": 12,
+          "backgroundImage": "linear-gradient(90deg, rgb(245, 236, 219) 0%, rgba(255, 255, 255, 0.5) 50%, rgb(245, 236, 219) 100%), none",
+          "animationDuration": "1.6s"
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/b-02-evidence.json",
+          "sha256": "3a7afac96a4034b67a085964b5f023d24add38eb441f953c1b62c0075860278f",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/b02-home-loading.png",
+          "sha256": "2a04aaa16e2f630ab3f3f2a41a7bafa070e7b11a5a3a86f957b56808be30f588",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b02-assistant-loading.png",
+          "sha256": "01cf47e60a8b10275b6cb91dc9fe9534e00d84901e984d5e9f8799dc04500e33",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/b-02-evidence.json"
+    },
+    {
+      "code": "B-03",
+      "title": "Each empty surface exposes a visible CTA and clicking it performs a route or overlay action",
+      "status": "PASS",
+      "summary": "5/5 empty states expose a working CTA",
+      "observed": [
+        {
+          "route": "/home?dev=1&__state=empty",
+          "hasCta": true,
+          "text": "去对话→",
+          "href": "/chat",
+          "action": null,
+          "beforePath": "/home?dev=1&__state=empty",
+          "afterPath": "/chat",
+          "quickSheetOpen": false,
+          "overlayOpen": false
+        },
+        {
+          "route": "/channels?dev=1&__state=empty",
+          "hasCta": true,
+          "text": "添加渠道→",
+          "href": null,
+          "action": "channel-add",
+          "beforePath": "/channels?dev=1&__state=empty",
+          "afterPath": "/channels?dev=1&__state=empty",
+          "quickSheetOpen": false,
+          "overlayOpen": true
+        },
+        {
+          "route": "/automations?dev=1&__state=empty",
+          "hasCta": true,
+          "text": "去设置自动化→",
+          "href": "/settings?tab=runtime",
+          "action": null,
+          "beforePath": "/automations?dev=1&__state=empty",
+          "afterPath": "/settings?tab=runtime",
+          "quickSheetOpen": false,
+          "overlayOpen": false
+        },
+        {
+          "route": "/sessions?dev=1&__state=empty",
+          "hasCta": true,
+          "text": "去对话",
+          "href": "/chat",
+          "action": null,
+          "beforePath": "/sessions?dev=1&__state=empty",
+          "afterPath": "/chat",
+          "quickSheetOpen": false,
+          "overlayOpen": false
+        },
+        {
+          "route": "/command-center?dev=1&__state=idle",
+          "hasCta": true,
+          "text": "去工作流→",
+          "href": "/workflows",
+          "action": null,
+          "beforePath": "/command-center?dev=1&__state=idle",
+          "afterPath": "/workflows",
+          "quickSheetOpen": false,
+          "overlayOpen": false
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/b-03-evidence.json",
+          "sha256": "cae38b58128acd066d0e0608aa0f85cb1b3d20ab005397ddc8ca25d9eab4354f",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/b03-home-empty.png",
+          "sha256": "7d28d3f5d0a9193978cd93b478fd010f8f2ad36831391e1669f43e3e10ea73c5",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b03-channels-empty.png",
+          "sha256": "296075e7e9db10472bed2de4b1c3648ba8dd74c9f10021ca67b8ef3d252c4c01",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b03-automations-empty.png",
+          "sha256": "c508c7f201e3ee1b4e0c8c4783bc631c509b68ecf5199081e4a53ffb4957dba8",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b03-sessions-empty.png",
+          "sha256": "207a55127d05e87b2e585ab9e3f493148194f145ac630595ef96680af935b935",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b03-command-center-empty.png",
+          "sha256": "6964aaacb49acdcc26addd0e6673f39017ee6186077df051aee955f8e9e031d4",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/b-03-evidence.json"
+    },
+    {
+      "code": "B-04",
+      "title": "Error surfaces expose copyable errorId plus three readable why lines",
+      "status": "PASS",
+      "summary": "3/3 error states expose 3 readable reason lines",
+      "observed": [
+        {
+          "route": "/home?dev=1&__state=snapshot-error",
+          "hasErrorShell": true,
+          "copyButton": true,
+          "lineCount": 3,
+          "lineLengths": [
+            46,
+            55,
+            62
+          ],
+          "lines": [
+            "发生了什么：首页快照在这次轮询里没有通过静态校验，所以 Friday 先保留上一份可用数据。",
+            "我们正在做什么：系统保留 shell、最近一次稳定快照和当前滚动位置，并把这次失败挂到同一个 errorId。",
+            "你可以做什么：先点刷新；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
+          ]
+        },
+        {
+          "route": "/observability?focus=traces&dev=1&__state=error",
+          "hasErrorShell": true,
+          "copyButton": true,
+          "lineCount": 3,
+          "lineLengths": [
+            31,
+            48,
+            61
+          ],
+          "lines": [
+            "发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。",
+            "我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 1UPPE6F。",
+            "你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。"
+          ]
+        },
+        {
+          "route": "/packs?dev=1&__state=error",
+          "hasErrorShell": true,
+          "copyButton": true,
+          "lineCount": 3,
+          "lineLengths": [
+            26,
+            45,
+            49
+          ],
+          "lines": [
+            "发生了什么：Pack 搜索请求这次没有返回可用结果。",
+            "我们正在做什么：Friday 继续保留当前目录、筛选条件和置顶顺序，不让工作台退回空白页。",
+            "你可以做什么：先重试；如果仍失败，就改用 Skills 或 Assistant 继续进入对应入口。"
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/b-04-evidence.json",
+          "sha256": "92d39b8a95ed588e5bec196e2eed4b19069c0e8f31e0766e82d5278a5276bdfc",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/b04-home-error.png",
+          "sha256": "d38826ade96cf6896e4bce48a586135f87146cc38620d490cfd4206eb680988d",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b04-observability-error.png",
+          "sha256": "828752d6136d45016d9ab84353d1ff49d832dff5a00df6eb541cbee0958277da",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b04-packs-error.png",
+          "sha256": "adb9d0957da7c5298e6b258a86237ba45af5eeb43bfa1569b84dab183d853d72",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/b-04-evidence.json"
+    },
+    {
+      "code": "B-05",
+      "title": "Approval strip appends a new fade-in slot without reordering the original three items",
+      "status": "PASS",
+      "summary": "new approval index 3; first three stable true",
+      "observed": {
+        "before": [
+          "approval-warehouse",
+          "approval-provider",
+          "approval-policy"
+        ],
+        "after": [
+          "approval-warehouse",
+          "approval-provider",
+          "approval-policy",
+          "approval-test-new"
+        ],
+        "newIndex": 3,
+        "firstThreeStable": true,
+        "animationName": "run-fade",
+        "animationDuration": "0.5s"
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/b-05-evidence.json",
+          "sha256": "4e28ba2b7ad8d0a1dc8b1b0874dbd1d4d12d4461877c8c34146e6f372adc204c",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/b05-approvals-before.png",
+          "sha256": "6d729ccc95e3a5200a1a32a3a47c4480df8389ba834de97b2ee316f73097d1a3",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/b05-approvals-after.png",
+          "sha256": "89bbf92ef60a25debf35af2006f363f5f1728765b51ac9cb78439b6315f6b273",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/b-05-evidence.json"
+    },
+    {
+      "code": "C-01",
+      "title": "Compact density tightens topbar height, radius, card padding, and eyebrow size",
+      "status": "PASS",
+      "summary": "topbar 56px -> 48px; radius 28px -> 20px; padding 26px -> 18px; eyebrow 11px -> 10px",
+      "observed": {
+        "cozy": {
+          "topbarHeight": "56px",
+          "radius": "28px",
+          "cardPadding": "26px",
+          "eyebrowFont": "11px"
+        },
+        "compact": {
+          "topbarHeight": "48px",
+          "radius": "20px",
+          "cardPadding": "18px",
+          "eyebrowFont": "10px"
+        }
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/c-01-evidence.json",
+          "sha256": "7f4979b7bf447be636fd932b77e9074e1716693aea352669baee61fde807a5e2",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/c01-cozy.png",
+          "sha256": "8809e574f6b35c7e69e8137c46fff91b6dd3584997e41fda5791beb8259b17ea",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/c01-compact.png",
+          "sha256": "d223cd60555cff8a3658ed4b377a61fdb163d9fe04ecd65b1d1445b54f6c787e",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/c-01-evidence.json"
+    },
+    {
+      "code": "C-02",
+      "title": "Run metrics use tabular numerals",
+      "status": "PASS",
+      "summary": "9 metric nodes report tabular-nums",
+      "observed": [
+        {
+          "text": "18 分 0 秒",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "当前阶段 · 执行中",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "任务档位 Planning · 上下文约 6400 字符 · 已根据历史经验调路由 · 回退 1 次",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "26 分 0 秒",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "当前阶段 · 待批准计划",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "任务档位 Review · 上下文约 8200 字符",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "7 分 0 秒",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "当前阶段 · 验证中",
+          "fontVariantNumeric": "tabular-nums"
+        },
+        {
+          "text": "任务档位 Deterministic · 上下文约 2800 字符",
+          "fontVariantNumeric": "tabular-nums"
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/c-02-evidence.json",
+          "sha256": "26f3adf71c02d70f54c6e0ebccae0a0902b81d8454b32556a6a70dd8b2a3e3e4",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/c02-tabular-numerals.png",
+          "sha256": "9993741c07ad1cdca6f3672501744464ff2bbec6464d3c47006f8f290d6fd78f",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/c-02-evidence.json"
+    },
+    {
+      "code": "C-03",
+      "title": "CJK copy uses pretty wrapping and avoids one-character last lines in repeated re-renders",
+      "status": "PASS",
+      "summary": "source rule true; last-line estimates 5.4, 4, 4",
+      "observed": {
+        "sourceHasRule": true,
+        "samples": [
+          {
+            "rectCount": 4,
+            "lastLineWidth": 59.41,
+            "charWidth": 11,
+            "estimatedLastLineChars": 5.4,
+            "textWrap": "pretty",
+            "hangingPunctuation": ""
+          },
+          {
+            "rectCount": 5,
+            "lastLineWidth": 64,
+            "charWidth": 16,
+            "estimatedLastLineChars": 4,
+            "textWrap": "pretty",
+            "hangingPunctuation": ""
+          },
+          {
+            "rectCount": 5,
+            "lastLineWidth": 64,
+            "charWidth": 16,
+            "estimatedLastLineChars": 4,
+            "textWrap": "pretty",
+            "hangingPunctuation": ""
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/c-03-evidence.json",
+          "sha256": "3dc17d0e46741cc3eee503f66d647b39180afb26d21f2eca2961ceb5bc2bccf7",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/c-03-evidence.json"
+    },
+    {
+      "code": "D-01",
+      "title": "Document title updates per route and always ends with Friday",
+      "status": "PASS",
+      "summary": "/home:首页 · Friday | /chat:对话 · Friday | /assistant:助手收件箱 · Friday | /observability:可观测性 · Friday | /settings:设置 · Friday",
+      "observed": {
+        "titles": [
+          {
+            "route": "/home",
+            "title": "首页 · Friday"
+          },
+          {
+            "route": "/chat",
+            "title": "对话 · Friday"
+          },
+          {
+            "route": "/assistant",
+            "title": "助手收件箱 · Friday"
+          },
+          {
+            "route": "/observability",
+            "title": "可观测性 · Friday"
+          },
+          {
+            "route": "/settings",
+            "title": "设置 · Friday"
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/d-01-evidence.json",
+          "sha256": "0945e575173b687e4e27c3713182a486bcb5849265052f62298775796c0752ad",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/d-01-evidence.json"
+    },
+    {
+      "code": "D-02",
+      "title": "Browser back restores scroll position after a client-side route change",
+      "status": "PASS",
+      "summary": "scroll 124 -> 124 (diff 0)",
+      "observed": {
+        "before": 124,
+        "after": 124,
+        "diff": 0,
+        "routeAfter": "/chat"
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/d-02-evidence.json",
+          "sha256": "b03d6066f3acdca198828b7de03de14a13cf265134849fb04005a1fef715bacd",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/d-02-evidence.json"
+    },
+    {
+      "code": "D-03",
+      "title": "Assistant deep link keeps packId across reload and lands on the cross-border handoff",
+      "status": "PASS",
+      "summary": "search ?packId=cross-border -> ?packId=cross-border; handoff true",
+      "observed": {
+        "before": {
+          "search": "?packId=cross-border",
+          "handoffVisible": true
+        },
+        "after": {
+          "search": "?packId=cross-border",
+          "handoffVisible": true
+        }
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/d-03-evidence.json",
+          "sha256": "4ba30c9e38295ab951682ba7ae55dbc51f9a2ed2f9ce99b9a87d92774d668a72",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/d03-assistant-packid.png",
+          "sha256": "dea4c2e89581eb6634889e3d426b236297ed753493b6d2cde005a0900c75f722",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/d-03-evidence.json"
+    },
+    {
+      "code": "E-01",
+      "title": "Focus ring appears only for keyboard focus-visible, not for mouse clicks",
+      "status": "PASS",
+      "summary": "mouse outline \"rgba(45, 33, 24, 0.875) none 3px\", keyboard outline \"rgb(154, 93, 37) solid 2px\"",
+      "observed": {
+        "mouse": {
+          "outline": "rgba(45, 33, 24, 0.875) none 3px",
+          "boxShadow": "none"
+        },
+        "keyboard": {
+          "isSettingsButton": true,
+          "outline": "rgb(154, 93, 37) solid 2px",
+          "boxShadow": "none"
+        }
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/e-01-evidence.json",
+          "sha256": "0c8c1c01f5cf32f6a162e7f7b38269cd2db58e02e73a30cc79f6d6e30d8e11d4",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/e01-mouse-focus.png",
+          "sha256": "803dbefd608db7cd45558a8c51614cb4254a925d2deb482b34b9d0f4864a1911",
+          "kind": "png"
+        },
+        {
+          "path": "screenshots/polish/e01-keyboard-focus.png",
+          "sha256": "d7130b40031d94c611fb50d07e9f5656213cce1efa6cb9e3de709d7095acabbe",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/e-01-evidence.json"
+    },
+    {
+      "code": "E-02",
+      "title": "Cmd+K opens a real command palette with page, action, and skill results, then Enter routes to /packs",
+      "status": "PASS",
+      "summary": "5 results; kinds page, page, action, skill, skill; Enter -> /packs",
+      "observed": {
+        "before": {
+          "activeTag": "INPUT",
+          "resultCount": 5,
+          "kinds": [
+            "page",
+            "page",
+            "action",
+            "skill",
+            "skill"
+          ],
+          "labels": [
+            "入口库",
+            "跨境向导",
+            "查看跨境 Pack 待办",
+            "Pack health review",
+            "Launch pack checklist"
+          ]
+        },
+        "after": {
+          "path": "/packs"
+        }
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/e-02-evidence.json",
+          "sha256": "d1cc64df1f1dc6aca2929129053ff67bce0a3a81a27657f3de122978baaa7d5a",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/e02-command-palette.png",
+          "sha256": "eea7c7a6dd08ba72a892bc57b640efa25b79424f23f4a46c92edaf3a42423235",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/e-02-evidence.json"
+    },
+    {
+      "code": "E-03",
+      "title": "First 20 tab stops on Home move downward naturally without bouncing between regions",
+      "status": "PASS",
+      "summary": "tab trail monotonic true",
+      "observed": {
+        "trail": [
+          {
+            "tag": "BUTTON",
+            "text": "打开命令面板",
+            "x": 878,
+            "y": 10
+          },
+          {
+            "tag": "BUTTON",
+            "text": "打开顶栏设置",
+            "x": 1043,
+            "y": 10
+          },
+          {
+            "tag": "BUTTON",
+            "text": "正在进行中",
+            "x": 285,
+            "y": 92
+          },
+          {
+            "tag": "BUTTON",
+            "text": "等你决定",
+            "x": 466,
+            "y": 92
+          },
+          {
+            "tag": "BUTTON",
+            "text": "总览脉冲",
+            "x": 634,
+            "y": 92
+          },
+          {
+            "tag": "BUTTON",
+            "text": "接下来",
+            "x": 791,
+            "y": 92
+          },
+          {
+            "tag": "A",
+            "text": "打开运行 复核北美仓补货告警并决定是否提前切换供应商",
+            "x": 272,
+            "y": 207
+          },
+          {
+            "tag": "A",
+            "text": "打开运行 验证图像生成 provider 熔断窗口并补一轮降级策略",
+            "x": 484,
+            "y": 207
+          },
+          {
+            "tag": "A",
+            "text": "打开运行 重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+            "x": 696,
+            "y": 207
+          },
+          {
+            "tag": "A",
+            "text": "全部查看 (4)",
+            "x": 1030,
+            "y": 564
+          },
+          {
+            "tag": "A",
+            "text": "处理审批 提前切换补货供应商需要你确认预算边界",
+            "x": 1011,
+            "y": 613
+          },
+          {
+            "tag": "A",
+            "text": "处理审批 是否允许 Friday 在 provider 降级后自动改用次优模型",
+            "x": 1011,
+            "y": 699
+          },
+          {
+            "tag": "A",
+            "text": "处理审批 跨租户规则审计将读取历史 30 天执行记录",
+            "x": 1011,
+            "y": 785
+          },
+          {
+            "tag": "A",
+            "text": "打开自动化 午后审批窗口",
+            "x": 272,
+            "y": 925
+          },
+          {
+            "tag": "A",
+            "text": "打开自动化 渠道健康巡检",
+            "x": 272,
+            "y": 1007
+          },
+          {
+            "tag": "A",
+            "text": "打开自动化 清晨库存同步",
+            "x": 272,
+            "y": 1084
+          },
+          {
+            "tag": "A",
+            "text": "打开自动化 风险汇总简报",
+            "x": 272,
+            "y": 1139
+          },
+          {
+            "tag": "A",
+            "text": "打开自动化 周利润复盘",
+            "x": 272,
+            "y": 1212
+          },
+          {
+            "tag": "A",
+            "text": "+1 更多",
+            "x": 272,
+            "y": 1282
+          },
+          {
+            "tag": "A",
+            "text": "继续去 Assistant",
+            "x": 272,
+            "y": 1325
+          }
+        ],
+        "monotonic": true
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/e-03-evidence.json",
+          "sha256": "3fc87a937fc91d95e3eb681fa2cd8beffc31723a8d9eff242d01dbd3338e3e70",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/e-03-evidence.json"
+    },
+    {
+      "code": "F-01",
+      "title": "English locale leaves no Chinese text nodes across all shipped routes",
+      "status": "PASS",
+      "summary": "21/21 routes contain no Chinese text in en locale",
+      "observed": [
+        {
+          "route": "/home",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/chat",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/assistant",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/observability",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/packs",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/skills",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/skills/generator",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/workflows",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/workflows/builder",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/plugins",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/mcp",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/channels",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/automations",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/sessions",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/usage",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/memory",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/fleet",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/settings",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/command-center",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/onboarding",
+          "count": 0,
+          "sample": []
+        },
+        {
+          "route": "/setup",
+          "count": 0,
+          "sample": []
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/f-01-evidence.json",
+          "sha256": "df6462973897d0369d285a3cd90fd65a2b153cb463a69854d5d35e26875b9ad9",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/f-01-evidence.json"
+    },
+    {
+      "code": "F-02",
+      "title": "Brand word Friday stays untranslated while surrounding copy localizes",
+      "status": "PASS",
+      "summary": "runtime \"Friday 运行中\" -> \"Friday running\"; standalone Friday keys 0",
+      "observed": {
+        "zhText": "Friday 运行中",
+        "enText": "Friday running",
+        "fridayAsStandaloneKeyCount": 0,
+        "runningTemplatePresent": true
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/f-02-evidence.json",
+          "sha256": "8862d78f1e7868503f1732ac697a5cce5145a8b0af3141adf611b0c3dbedd477",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/f-02-evidence.json"
+    },
+    {
+      "code": "F-03",
+      "title": "Compact density hides the third run meta line",
+      "status": "PASS",
+      "summary": "third meta display none",
+      "observed": {
+        "childCount": 3,
+        "thirdDisplay": "none"
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/f-03-evidence.json",
+          "sha256": "1f22712bcffa851591bb78391a3fc6c816112d539b2f2349ca7635111a1acdda",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/f03-compact-run-card.png",
+          "sha256": "27a467adc07e3f94598f9982b3b63605a5eb25defdbb7d6233fb0d8acaf873dc",
+          "kind": "png"
+        }
+      ],
+      "evidence": "screenshots/polish/f-03-evidence.json"
+    },
+    {
+      "code": "G-01",
+      "title": "Print mode exports Home, Assistant, and Observability to readable PDFs capped at two pages each",
+      "status": "PASS",
+      "summary": "/home?dev=1&__state=normal:2p | /assistant?dev=1&__state=pending:1p | /observability?focus=alerts:1p",
+      "observed": [
+        {
+          "route": "/home?dev=1&__state=normal",
+          "pageHeightPx": 1755,
+          "pageHeightMm": 464.3,
+          "pageCount": 2,
+          "bytes": 692209,
+          "printHeaderVisible": true
+        },
+        {
+          "route": "/assistant?dev=1&__state=pending",
+          "pageHeightPx": 3877,
+          "pageHeightMm": 1025.8,
+          "pageCount": 1,
+          "bytes": 135959,
+          "printHeaderVisible": true
+        },
+        {
+          "route": "/observability?focus=alerts",
+          "pageHeightPx": 1447,
+          "pageHeightMm": 382.9,
+          "pageCount": 1,
+          "bytes": 508380,
+          "printHeaderVisible": true
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/g-01-evidence.json",
+          "sha256": "3372f0c0fee6ae725e41ae94a3348cb75fd76e49929390fb5c777278c460e123",
+          "kind": "json"
+        },
+        {
+          "path": "screenshots/polish/g01-home.pdf",
+          "sha256": "97e5702b094e5f657b3b276488fcd12a48c5ca10503aa411072a55db4ecb6d4e",
+          "kind": "pdf",
+          "bytes": 692209,
+          "pageCount": 2
+        },
+        {
+          "path": "screenshots/polish/g01-assistant.pdf",
+          "sha256": "ffbf671896655e279bd556dc093c370f478710bf178484f9ccf8680261d21000",
+          "kind": "pdf",
+          "bytes": 135959,
+          "pageCount": 1
+        },
+        {
+          "path": "screenshots/polish/g01-observability.pdf",
+          "sha256": "14d8cd19c65d6fcc6116e1a9fbaf17783f1d922a9806a2a96bcc9b2c456d3349",
+          "kind": "pdf",
+          "bytes": 508380,
+          "pageCount": 1
+        }
+      ],
+      "evidence": "screenshots/polish/g-01-evidence.json"
+    },
+    {
+      "code": "G-02",
+      "title": "Usage, Audit, and Alerts each export a non-empty Blob with a stable sha256",
+      "status": "PASS",
+      "summary": "/usage:6d013e1fbb2a | /observability?focus=audit:d6387ebad4d2 | /observability?focus=alerts:efebb085eb9a",
+      "observed": [
+        {
+          "route": "/usage",
+          "size": 590,
+          "type": "text/csv;charset=utf-8",
+          "sha256": "6d013e1fbb2a970f88a8aa45dfbe15265ae42aa0b9e8df959f993ffe9be6a659"
+        },
+        {
+          "route": "/observability?focus=audit",
+          "size": 1479,
+          "type": "application/json",
+          "sha256": "d6387ebad4d2dee81cb94d58afb390aa1f317a0b4f46e37fcd9eb5526d780d16"
+        },
+        {
+          "route": "/observability?focus=alerts",
+          "size": 3690,
+          "type": "application/json",
+          "sha256": "efebb085eb9ab8546376190c8c99e0656a56e608769c0aa007a7fdc2c702cebc"
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "screenshots/polish/g-02-evidence.json",
+          "sha256": "1fa1771e77f148ae1d2c534aed228a3fabe58caf242d5a579559c7b0afda0183",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/g-02-evidence.json"
+    },
+    {
+      "code": "H-01",
+      "title": "Prod build strips QA globals and keeps only version plus health hooks",
+      "status": "PASS",
+      "summary": "prod mock undefined; qa undefined; version string; health function",
+      "observed": {
+        "runtime": {
+          "mockType": "undefined",
+          "qaType": "undefined",
+          "versionType": "string",
+          "healthType": "function",
+          "title": "首页 · Friday"
+        },
+        "sourceHasMock": false,
+        "sourceHasQa": false,
+        "sourceHasVersion": true,
+        "sourceHasHealth": true
+      },
+      "artifacts": [
+        {
+          "path": "screenshots/polish/h-01-evidence.json",
+          "sha256": "0190336cee87aa40ed18fa7d6fed6b87276d505f341f02dc0f0ccf07174fbd5b",
+          "kind": "json"
+        }
+      ],
+      "evidence": "screenshots/polish/h-01-evidence.json"
+    }
+  ]
+}

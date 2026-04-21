@@ -1,0 +1,32 @@
+{
+  "code": "C-01",
+  "title": "Compact density tightens topbar height, radius, card padding, and eyebrow size",
+  "status": "PASS",
+  "summary": "topbar 56px -> 48px; radius 28px -> 20px; padding 26px -> 18px; eyebrow 11px -> 10px",
+  "observed": {
+    "cozy": {
+      "topbarHeight": "56px",
+      "radius": "28px",
+      "cardPadding": "26px",
+      "eyebrowFont": "11px"
+    },
+    "compact": {
+      "topbarHeight": "48px",
+      "radius": "20px",
+      "cardPadding": "18px",
+      "eyebrowFont": "10px"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/c01-cozy.png",
+      "sha256": "8809e574f6b35c7e69e8137c46fff91b6dd3584997e41fda5791beb8259b17ea",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/c01-compact.png",
+      "sha256": "d223cd60555cff8a3658ed4b377a61fdb163d9fe04ecd65b1d1445b54f6c787e",
+      "kind": "png"
+    }
+  ]
+}

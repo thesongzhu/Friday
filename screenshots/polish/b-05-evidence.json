@@ -1,0 +1,35 @@
+{
+  "code": "B-05",
+  "title": "Approval strip appends a new fade-in slot without reordering the original three items",
+  "status": "PASS",
+  "summary": "new approval index 3; first three stable true",
+  "observed": {
+    "before": [
+      "approval-warehouse",
+      "approval-provider",
+      "approval-policy"
+    ],
+    "after": [
+      "approval-warehouse",
+      "approval-provider",
+      "approval-policy",
+      "approval-test-new"
+    ],
+    "newIndex": 3,
+    "firstThreeStable": true,
+    "animationName": "run-fade",
+    "animationDuration": "0.5s"
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/b05-approvals-before.png",
+      "sha256": "6d729ccc95e3a5200a1a32a3a47c4480df8389ba834de97b2ee316f73097d1a3",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/b05-approvals-after.png",
+      "sha256": "89bbf92ef60a25debf35af2006f363f5f1728765b51ac9cb78439b6315f6b273",
+      "kind": "png"
+    }
+  ]
+}

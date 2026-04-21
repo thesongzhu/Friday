@@ -1,0 +1,55 @@
+{
+  "code": "G-01",
+  "title": "Print mode exports Home, Assistant, and Observability to readable PDFs capped at two pages each",
+  "status": "PASS",
+  "summary": "/home?dev=1&__state=normal:2p | /assistant?dev=1&__state=pending:1p | /observability?focus=alerts:1p",
+  "observed": [
+    {
+      "route": "/home?dev=1&__state=normal",
+      "pageHeightPx": 1755,
+      "pageHeightMm": 464.3,
+      "pageCount": 2,
+      "bytes": 692209,
+      "printHeaderVisible": true
+    },
+    {
+      "route": "/assistant?dev=1&__state=pending",
+      "pageHeightPx": 3877,
+      "pageHeightMm": 1025.8,
+      "pageCount": 1,
+      "bytes": 135959,
+      "printHeaderVisible": true
+    },
+    {
+      "route": "/observability?focus=alerts",
+      "pageHeightPx": 1447,
+      "pageHeightMm": 382.9,
+      "pageCount": 1,
+      "bytes": 508380,
+      "printHeaderVisible": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "screenshots/polish/g01-home.pdf",
+      "sha256": "97e5702b094e5f657b3b276488fcd12a48c5ca10503aa411072a55db4ecb6d4e",
+      "kind": "pdf",
+      "bytes": 692209,
+      "pageCount": 2
+    },
+    {
+      "path": "screenshots/polish/g01-assistant.pdf",
+      "sha256": "ffbf671896655e279bd556dc093c370f478710bf178484f9ccf8680261d21000",
+      "kind": "pdf",
+      "bytes": 135959,
+      "pageCount": 1
+    },
+    {
+      "path": "screenshots/polish/g01-observability.pdf",
+      "sha256": "14d8cd19c65d6fcc6116e1a9fbaf17783f1d922a9806a2a96bcc9b2c456d3349",
+      "kind": "pdf",
+      "bytes": 508380,
+      "pageCount": 1
+    }
+  ]
+}

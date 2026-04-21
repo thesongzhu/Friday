@@ -1,0 +1,21 @@
+{
+  "code": "A-03",
+  "title": "Topbar right cluster is status pill, Cmd+K trigger, and settings menu with locale plus tweaks",
+  "status": "PASS",
+  "summary": "status \"Friday 运行中\", command \"Cmd+K 全局搜索⌘K\", menu items 2",
+  "observed": {
+    "statusText": "Friday 运行中",
+    "commandText": "Cmd+K 全局搜索⌘K",
+    "menuItems": [
+      "语言中文 / English⌘L",
+      "视图偏好密度、动效、圆角⚙"
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/a03-topbar-menu.png",
+      "sha256": "2fbbcacb51573c4147c8482954d9c921046580a165dc46e6592d6a011fc6c8cd",
+      "kind": "png"
+    }
+  ]
+}

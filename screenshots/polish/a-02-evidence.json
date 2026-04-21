@@ -1,0 +1,33 @@
+{
+  "code": "A-02",
+  "title": "Home hydrates from loading to normal in under 1 second without manual dev intervention",
+  "status": "PASS",
+  "summary": "loading at 405.4ms; normal at 756.6ms",
+  "observed": {
+    "loadingSample": {
+      "atMs": 405.4,
+      "stateName": "loading",
+      "skeletonCount": 6,
+      "runCardCount": 0
+    },
+    "normalSample": {
+      "atMs": 756.6,
+      "stateName": "normal",
+      "skeletonCount": 0,
+      "runCardCount": 3
+    },
+    "traceLength": 18
+  },
+  "artifacts": [
+    {
+      "path": "screenshots/polish/a02-home-loading.png",
+      "sha256": "1676f91fb2eb327ff7c96fee817dd2a2b6d54b3563569f5d8e0fdec80ce071b4",
+      "kind": "png"
+    },
+    {
+      "path": "screenshots/polish/a02-home-normal.png",
+      "sha256": "478ebe40d6e83529de625bcc5415ed1d733c932ed0ebec991d077a04065e4a88",
+      "kind": "png"
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "code": "E-03",
+  "title": "First 20 tab stops on Home move downward naturally without bouncing between regions",
+  "status": "PASS",
+  "summary": "tab trail monotonic true",
+  "observed": {
+    "trail": [
+      {
+        "tag": "BUTTON",
+        "text": "打开命令面板",
+        "x": 878,
+        "y": 10
+      },
+      {
+        "tag": "BUTTON",
+        "text": "打开顶栏设置",
+        "x": 1043,
+        "y": 10
+      },
+      {
+        "tag": "BUTTON",
+        "text": "正在进行中",
+        "x": 285,
+        "y": 92
+      },
+      {
+        "tag": "BUTTON",
+        "text": "等你决定",
+        "x": 466,
+        "y": 92
+      },
+      {
+        "tag": "BUTTON",
+        "text": "总览脉冲",
+        "x": 634,
+        "y": 92
+      },
+      {
+        "tag": "BUTTON",
+        "text": "接下来",
+        "x": 791,
+        "y": 92
+      },
+      {
+        "tag": "A",
+        "text": "打开运行 复核北美仓补货告警并决定是否提前切换供应商",
+        "x": 272,
+        "y": 207
+      },
+      {
+        "tag": "A",
+        "text": "打开运行 验证图像生成 provider 熔断窗口并补一轮降级策略",
+        "x": 484,
+        "y": 207
+      },
+      {
+        "tag": "A",
+        "text": "打开运行 重新跑 Home snapshot polling 节奏并确认后台 60 秒回落",
+        "x": 696,
+        "y": 207
+      },
+      {
+        "tag": "A",
+        "text": "全部查看 (4)",
+        "x": 1030,
+        "y": 564
+      },
+      {
+        "tag": "A",
+        "text": "处理审批 提前切换补货供应商需要你确认预算边界",
+        "x": 1011,
+        "y": 613
+      },
+      {
+        "tag": "A",
+        "text": "处理审批 是否允许 Friday 在 provider 降级后自动改用次优模型",
+        "x": 1011,
+        "y": 699
+      },
+      {
+        "tag": "A",
+        "text": "处理审批 跨租户规则审计将读取历史 30 天执行记录",
+        "x": 1011,
+        "y": 785
+      },
+      {
+        "tag": "A",
+        "text": "打开自动化 午后审批窗口",
+        "x": 272,
+        "y": 925
+      },
+      {
+        "tag": "A",
+        "text": "打开自动化 渠道健康巡检",
+        "x": 272,
+        "y": 1007
+      },
+      {
+        "tag": "A",
+        "text": "打开自动化 清晨库存同步",
+        "x": 272,
+        "y": 1084
+      },
+      {
+        "tag": "A",
+        "text": "打开自动化 风险汇总简报",
+        "x": 272,
+        "y": 1139
+      },
+      {
+        "tag": "A",
+        "text": "打开自动化 周利润复盘",
+        "x": 272,
+        "y": 1212
+      },
+      {
+        "tag": "A",
+        "text": "+1 更多",
+        "x": 272,
+        "y": 1282
+      },
+      {
+        "tag": "A",
+        "text": "继续去 Assistant",
+        "x": 272,
+        "y": 1325
+      }
+    ],
+    "monotonic": true
+  },
+  "artifacts": []
+}

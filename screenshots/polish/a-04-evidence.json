@@ -1,0 +1,27 @@
+{
+  "code": "A-04",
+  "title": "Assistant deep link breadcrumb keeps root and tail labels readable",
+  "status": "PASS",
+  "summary": "Friday / 助手收件箱 / 待审批",
+  "observed": [
+    {
+      "role": "root",
+      "text": "Friday"
+    },
+    {
+      "role": "middle",
+      "text": "助手收件箱"
+    },
+    {
+      "role": "tail",
+      "text": "待审批"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "screenshots/polish/a04-breadcrumb.png",
+      "sha256": "03ce146fa5e1db34f9d577ae0e69e3d7709210dbbe56abf9a9c850147e53b1c0",
+      "kind": "png"
+    }
+  ]
+}
