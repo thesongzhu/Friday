@@ -588,9 +588,23 @@ async function main() {
             }
           ]
         });
-        await pageHandle.page.waitForTimeout(560);
-        const loadingShot = await captureScreenshot(pageHandle.page, `${OUTPUT_REL}/a02-home-loading.png`);
-        await pageHandle.page.waitForTimeout(620);
+        await pageHandle.page.waitForFunction(
+          () => {
+            if (!window.__fridayMock) {
+              return false;
+            }
+            const publicState = window.__fridayMock.getState().pageStates["/home"];
+            const stateName = publicState && publicState.stateName ? publicState.stateName : publicState;
+            return stateName === "normal" && document.querySelectorAll(".run-card").length > 0;
+          },
+          undefined,
+          { timeout: 1600 }
+        );
+        const loadingPage = await openPage(browser, sourceServer.baseUrl, "/home?dev=1&__state=loading", {
+          waitMs: 180
+        });
+        const loadingShot = await captureScreenshot(loadingPage.page, `${OUTPUT_REL}/a02-home-loading.png`);
+        await loadingPage.close();
         const normalShot = await captureScreenshot(pageHandle.page, `${OUTPUT_REL}/a02-home-normal.png`);
         const trace = await pageHandle.page.evaluate(() => window.__qaA02.trace);
         const loadingSample = trace.find((item) => item.stateName === "loading");

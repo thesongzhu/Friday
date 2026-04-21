@@ -123,7 +123,7 @@
     <header>
       <h1>Friday Polish Report</h1>
       <div class="meta">
-        <span class="chip">Generated 2026-04-21T19:18:25.409Z</span>
+        <span class="chip">Generated 2026-04-21T19:36:05.448Z</span>
         <span class="chip">Playwright 1.58.2</span>
         <span class="chip">PASS 24</span>
         <span class="chip">FAIL 0</span>
@@ -145,7 +145,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Rail responsive breakpoints keep 64/240/240 widths while topbar stays visible</td>
         <td>rail widths 64/240/240; topbar visible true</td>
-        <td><a href="screenshots/polish/a-01-evidence.json">a-01-evidence.json</a> <code>69dd15cab573</code> · <a href="screenshots/polish/a01-rail-1280.png">a01-rail-1280.png</a> <code>9265554b59b7</code> · <a href="screenshots/polish/a01-rail-1440.png">a01-rail-1440.png</a> <code>1e5a564986fc</code> · <a href="screenshots/polish/a01-rail-1920.png">a01-rail-1920.png</a> <code>e2a91f865104</code></td>
+        <td><a href="screenshots/polish/a-01-evidence.json">a-01-evidence.json</a> <code>a129d09db2dd</code> · <a href="screenshots/polish/a01-rail-1280.png">a01-rail-1280.png</a> <code>9265554b59b7</code> · <a href="screenshots/polish/a01-rail-1440.png">a01-rail-1440.png</a> <code>e416233ed10c</code> · <a href="screenshots/polish/a01-rail-1920.png">a01-rail-1920.png</a> <code>4c94357e26ea</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -181,24 +181,24 @@
         <td><strong>A-02</strong></td>
         <td><span class="status-pass">PASS</span></td>
         <td>Home hydrates from loading to normal in under 1 second without manual dev intervention</td>
-        <td>loading at 335.9ms; normal at 942.6ms</td>
-        <td><a href="screenshots/polish/a-02-evidence.json">a-02-evidence.json</a> <code>25547eedd44e</code> · <a href="screenshots/polish/a02-home-loading.png">a02-home-loading.png</a> <code>6966a9db3f44</code> · <a href="screenshots/polish/a02-home-normal.png">a02-home-normal.png</a> <code>47266b0a8712</code></td>
+        <td>loading at 405.4ms; normal at 756.6ms</td>
+        <td><a href="screenshots/polish/a-02-evidence.json">a-02-evidence.json</a> <code>e8c4caa20ecd</code> · <a href="screenshots/polish/a02-home-loading.png">a02-home-loading.png</a> <code>1676f91fb2eb</code> · <a href="screenshots/polish/a02-home-normal.png">a02-home-normal.png</a> <code>478ebe40d6e8</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
   &quot;loadingSample&quot;: {
-    &quot;atMs&quot;: 335.9,
+    &quot;atMs&quot;: 405.4,
     &quot;stateName&quot;: &quot;loading&quot;,
     &quot;skeletonCount&quot;: 6,
     &quot;runCardCount&quot;: 0
   },
   &quot;normalSample&quot;: {
-    &quot;atMs&quot;: 942.6,
+    &quot;atMs&quot;: 756.6,
     &quot;stateName&quot;: &quot;normal&quot;,
     &quot;skeletonCount&quot;: 0,
     &quot;runCardCount&quot;: 3
   },
-  &quot;traceLength&quot;: 31
+  &quot;traceLength&quot;: 18
 }</pre></details></td>
       </tr>
       <tr>
@@ -246,7 +246,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Command Center keeps a 3-column shell even when the center lane is sparse</td>
         <td>grid 280px 488px 320px</td>
-        <td><a href="screenshots/polish/b-01-evidence.json">b-01-evidence.json</a> <code>9949cd80d109</code> · <a href="screenshots/polish/b01-command-center.png">b01-command-center.png</a> <code>a75e2d68b832</code></td>
+        <td><a href="screenshots/polish/b-01-evidence.json">b-01-evidence.json</a> <code>b63538c31132</code> · <a href="screenshots/polish/b01-command-center.png">b01-command-center.png</a> <code>d929311db139</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -260,7 +260,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Home and Assistant loading skeletons share the same shimmer gradient and 1.6s loop</td>
         <td>gradient match true; duration 1.6s</td>
-        <td><a href="screenshots/polish/b-02-evidence.json">b-02-evidence.json</a> <code>7991f3c13696</code> · <a href="screenshots/polish/b02-home-loading.png">b02-home-loading.png</a> <code>abe3f9c5edbf</code> · <a href="screenshots/polish/b02-assistant-loading.png">b02-assistant-loading.png</a> <code>d7a76d34728a</code></td>
+        <td><a href="screenshots/polish/b-02-evidence.json">b-02-evidence.json</a> <code>3a7afac96a40</code> · <a href="screenshots/polish/b02-home-loading.png">b02-home-loading.png</a> <code>2a04aaa16e2f</code> · <a href="screenshots/polish/b02-assistant-loading.png">b02-assistant-loading.png</a> <code>01cf47e60a8b</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>[
@@ -283,7 +283,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Each empty surface exposes a visible CTA and clicking it performs a route or overlay action</td>
         <td>5/5 empty states expose a working CTA</td>
-        <td><a href="screenshots/polish/b-03-evidence.json">b-03-evidence.json</a> <code>5b74b83953d0</code> · <a href="screenshots/polish/b03-home-empty.png">b03-home-empty.png</a> <code>f71ce8d9eb94</code> · <a href="screenshots/polish/b03-channels-empty.png">b03-channels-empty.png</a> <code>5762798fd1f8</code> · <a href="screenshots/polish/b03-automations-empty.png">b03-automations-empty.png</a> <code>36528fd53276</code> · <a href="screenshots/polish/b03-sessions-empty.png">b03-sessions-empty.png</a> <code>a942a0cc08bf</code> · <a href="screenshots/polish/b03-command-center-empty.png">b03-command-center-empty.png</a> <code>c69c7f56f651</code></td>
+        <td><a href="screenshots/polish/b-03-evidence.json">b-03-evidence.json</a> <code>cae38b58128a</code> · <a href="screenshots/polish/b03-home-empty.png">b03-home-empty.png</a> <code>7d28d3f5d0a9</code> · <a href="screenshots/polish/b03-channels-empty.png">b03-channels-empty.png</a> <code>296075e7e9db</code> · <a href="screenshots/polish/b03-automations-empty.png">b03-automations-empty.png</a> <code>c508c7f201e3</code> · <a href="screenshots/polish/b03-sessions-empty.png">b03-sessions-empty.png</a> <code>207a55127d05</code> · <a href="screenshots/polish/b03-command-center-empty.png">b03-command-center-empty.png</a> <code>6964aaacb49a</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>[
@@ -349,7 +349,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Error surfaces expose copyable errorId plus three readable why lines</td>
         <td>3/3 error states expose 3 readable reason lines</td>
-        <td><a href="screenshots/polish/b-04-evidence.json">b-04-evidence.json</a> <code>ef2ec80a0e2b</code> · <a href="screenshots/polish/b04-home-error.png">b04-home-error.png</a> <code>c67d3b1491f1</code> · <a href="screenshots/polish/b04-observability-error.png">b04-observability-error.png</a> <code>30370ed9118a</code> · <a href="screenshots/polish/b04-packs-error.png">b04-packs-error.png</a> <code>d078b634e24d</code></td>
+        <td><a href="screenshots/polish/b-04-evidence.json">b-04-evidence.json</a> <code>92d39b8a95ed</code> · <a href="screenshots/polish/b04-home-error.png">b04-home-error.png</a> <code>d38826ade96c</code> · <a href="screenshots/polish/b04-observability-error.png">b04-observability-error.png</a> <code>828752d6136d</code> · <a href="screenshots/polish/b04-packs-error.png">b04-packs-error.png</a> <code>adb9d0957da7</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>[
@@ -381,7 +381,7 @@
     ],
     &quot;lines&quot;: [
       &quot;发生了什么：列表和详情区都还在，你可以保留当前上下文等待重试。&quot;,
-      &quot;我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 ZYEUJVX。&quot;,
+      &quot;我们正在做什么：Friday 保留当前上下文与最近一次稳定快照，并把错误归档到 1UPPE6F。&quot;,
       &quot;你可以做什么：先重试；如果仍失败，带着 errorId 去 Assistant 或 Observability 继续排查。&quot;
     ]
   },
@@ -408,7 +408,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Approval strip appends a new fade-in slot without reordering the original three items</td>
         <td>new approval index 3; first three stable true</td>
-        <td><a href="screenshots/polish/b-05-evidence.json">b-05-evidence.json</a> <code>689f5526aa91</code> · <a href="screenshots/polish/b05-approvals-before.png">b05-approvals-before.png</a> <code>aff26efa4376</code> · <a href="screenshots/polish/b05-approvals-after.png">b05-approvals-after.png</a> <code>f831254c77f0</code></td>
+        <td><a href="screenshots/polish/b-05-evidence.json">b-05-evidence.json</a> <code>4e28ba2b7ad8</code> · <a href="screenshots/polish/b05-approvals-before.png">b05-approvals-before.png</a> <code>6d729ccc95e3</code> · <a href="screenshots/polish/b05-approvals-after.png">b05-approvals-after.png</a> <code>89bbf92ef60a</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -434,7 +434,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Compact density tightens topbar height, radius, card padding, and eyebrow size</td>
         <td>topbar 56px -&gt; 48px; radius 28px -&gt; 20px; padding 26px -&gt; 18px; eyebrow 11px -&gt; 10px</td>
-        <td><a href="screenshots/polish/c-01-evidence.json">c-01-evidence.json</a> <code>79b32086b261</code> · <a href="screenshots/polish/c01-cozy.png">c01-cozy.png</a> <code>f1966d76f967</code> · <a href="screenshots/polish/c01-compact.png">c01-compact.png</a> <code>a1aa761ea52c</code></td>
+        <td><a href="screenshots/polish/c-01-evidence.json">c-01-evidence.json</a> <code>7f4979b7bf44</code> · <a href="screenshots/polish/c01-cozy.png">c01-cozy.png</a> <code>8809e574f6b3</code> · <a href="screenshots/polish/c01-compact.png">c01-compact.png</a> <code>d223cd60555c</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -457,7 +457,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Run metrics use tabular numerals</td>
         <td>9 metric nodes report tabular-nums</td>
-        <td><a href="screenshots/polish/c-02-evidence.json">c-02-evidence.json</a> <code>44784d595250</code> · <a href="screenshots/polish/c02-tabular-numerals.png">c02-tabular-numerals.png</a> <code>c3de0d04e99c</code></td>
+        <td><a href="screenshots/polish/c-02-evidence.json">c-02-evidence.json</a> <code>26f3adf71c02</code> · <a href="screenshots/polish/c02-tabular-numerals.png">c02-tabular-numerals.png</a> <code>9993741c07ad</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>[
@@ -574,13 +574,13 @@
         <td><strong>D-02</strong></td>
         <td><span class="status-pass">PASS</span></td>
         <td>Browser back restores scroll position after a client-side route change</td>
-        <td>scroll 134 -&gt; 134 (diff 0)</td>
-        <td><a href="screenshots/polish/d-02-evidence.json">d-02-evidence.json</a> <code>dbf019150911</code></td>
+        <td>scroll 124 -&gt; 124 (diff 0)</td>
+        <td><a href="screenshots/polish/d-02-evidence.json">d-02-evidence.json</a> <code>b03d6066f3ac</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
-  &quot;before&quot;: 134,
-  &quot;after&quot;: 134,
+  &quot;before&quot;: 124,
+  &quot;after&quot;: 124,
   &quot;diff&quot;: 0,
   &quot;routeAfter&quot;: &quot;/chat&quot;
 }</pre></details></td>
@@ -590,7 +590,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Assistant deep link keeps packId across reload and lands on the cross-border handoff</td>
         <td>search ?packId=cross-border -&gt; ?packId=cross-border; handoff true</td>
-        <td><a href="screenshots/polish/d-03-evidence.json">d-03-evidence.json</a> <code>ec165ffd29ac</code> · <a href="screenshots/polish/d03-assistant-packid.png">d03-assistant-packid.png</a> <code>afe4104e47f0</code></td>
+        <td><a href="screenshots/polish/d-03-evidence.json">d-03-evidence.json</a> <code>4ba30c9e3829</code> · <a href="screenshots/polish/d03-assistant-packid.png">d03-assistant-packid.png</a> <code>dea4c2e89581</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -609,7 +609,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Focus ring appears only for keyboard focus-visible, not for mouse clicks</td>
         <td>mouse outline &quot;rgba(45, 33, 24, 0.875) none 3px&quot;, keyboard outline &quot;rgb(154, 93, 37) solid 2px&quot;</td>
-        <td><a href="screenshots/polish/e-01-evidence.json">e-01-evidence.json</a> <code>2e1434b0efea</code> · <a href="screenshots/polish/e01-mouse-focus.png">e01-mouse-focus.png</a> <code>5ec6f23d6e80</code> · <a href="screenshots/polish/e01-keyboard-focus.png">e01-keyboard-focus.png</a> <code>d7130b40031d</code></td>
+        <td><a href="screenshots/polish/e-01-evidence.json">e-01-evidence.json</a> <code>0c8c1c01f5cf</code> · <a href="screenshots/polish/e01-mouse-focus.png">e01-mouse-focus.png</a> <code>803dbefd608d</code> · <a href="screenshots/polish/e01-keyboard-focus.png">e01-keyboard-focus.png</a> <code>d7130b40031d</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -629,7 +629,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Cmd+K opens a real command palette with page, action, and skill results, then Enter routes to /packs</td>
         <td>5 results; kinds page, page, action, skill, skill; Enter -&gt; /packs</td>
-        <td><a href="screenshots/polish/e-02-evidence.json">e-02-evidence.json</a> <code>14730df7e97e</code> · <a href="screenshots/polish/e02-command-palette.png">e02-command-palette.png</a> <code>4f79410183a1</code></td>
+        <td><a href="screenshots/polish/e-02-evidence.json">e-02-evidence.json</a> <code>d1cc64df1f1d</code> · <a href="screenshots/polish/e02-command-palette.png">e02-command-palette.png</a> <code>eea7c7a6dd08</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -661,7 +661,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>First 20 tab stops on Home move downward naturally without bouncing between regions</td>
         <td>tab trail monotonic true</td>
-        <td><a href="screenshots/polish/e-03-evidence.json">e-03-evidence.json</a> <code>742eb798489f</code></td>
+        <td><a href="screenshots/polish/e-03-evidence.json">e-03-evidence.json</a> <code>3fc87a937fc9</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -760,31 +760,31 @@
       &quot;tag&quot;: &quot;A&quot;,
       &quot;text&quot;: &quot;打开自动化 清晨库存同步&quot;,
       &quot;x&quot;: 272,
-      &quot;y&quot;: 1085
+      &quot;y&quot;: 1084
     },
     {
       &quot;tag&quot;: &quot;A&quot;,
       &quot;text&quot;: &quot;打开自动化 风险汇总简报&quot;,
       &quot;x&quot;: 272,
-      &quot;y&quot;: 1143
+      &quot;y&quot;: 1139
     },
     {
       &quot;tag&quot;: &quot;A&quot;,
       &quot;text&quot;: &quot;打开自动化 周利润复盘&quot;,
       &quot;x&quot;: 272,
-      &quot;y&quot;: 1214
+      &quot;y&quot;: 1212
     },
     {
       &quot;tag&quot;: &quot;A&quot;,
       &quot;text&quot;: &quot;+1 更多&quot;,
       &quot;x&quot;: 272,
-      &quot;y&quot;: 1286
+      &quot;y&quot;: 1282
     },
     {
       &quot;tag&quot;: &quot;A&quot;,
       &quot;text&quot;: &quot;继续去 Assistant&quot;,
       &quot;x&quot;: 272,
-      &quot;y&quot;: 1332
+      &quot;y&quot;: 1325
     }
   ],
   &quot;monotonic&quot;: true
@@ -926,7 +926,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Compact density hides the third run meta line</td>
         <td>third meta display none</td>
-        <td><a href="screenshots/polish/f-03-evidence.json">f-03-evidence.json</a> <code>1a0a5bfe7362</code> · <a href="screenshots/polish/f03-compact-run-card.png">f03-compact-run-card.png</a> <code>4d78fd33c8e8</code></td>
+        <td><a href="screenshots/polish/f-03-evidence.json">f-03-evidence.json</a> <code>1f22712bcffa</code> · <a href="screenshots/polish/f03-compact-run-card.png">f03-compact-run-card.png</a> <code>27a467adc07e</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>{
@@ -939,7 +939,7 @@
         <td><span class="status-pass">PASS</span></td>
         <td>Print mode exports Home, Assistant, and Observability to readable PDFs capped at two pages each</td>
         <td>/home?dev=1&amp;__state=normal:2p | /assistant?dev=1&amp;__state=pending:1p | /observability?focus=alerts:1p</td>
-        <td><a href="screenshots/polish/g-01-evidence.json">g-01-evidence.json</a> <code>fdb63d306194</code> · <a href="screenshots/polish/g01-home.pdf">g01-home.pdf</a> <code>f86d42293dd0</code> · <a href="screenshots/polish/g01-assistant.pdf">g01-assistant.pdf</a> <code>41234d666556</code> · <a href="screenshots/polish/g01-observability.pdf">g01-observability.pdf</a> <code>96a33580cd77</code></td>
+        <td><a href="screenshots/polish/g-01-evidence.json">g-01-evidence.json</a> <code>3372f0c0fee6</code> · <a href="screenshots/polish/g01-home.pdf">g01-home.pdf</a> <code>97e5702b094e</code> · <a href="screenshots/polish/g01-assistant.pdf">g01-assistant.pdf</a> <code>ffbf67189665</code> · <a href="screenshots/polish/g01-observability.pdf">g01-observability.pdf</a> <code>14d8cd19c65d</code></td>
       </tr>
       <tr class="details-row">
         <td colspan="5"><details><summary>Observed</summary><pre>[
@@ -964,7 +964,7 @@
     &quot;pageHeightPx&quot;: 1447,
     &quot;pageHeightMm&quot;: 382.9,
     &quot;pageCount&quot;: 1,
-    &quot;bytes&quot;: 508382,
+    &quot;bytes&quot;: 508380,
     &quot;printHeaderVisible&quot;: true
   }
 ]</pre></details></td>
