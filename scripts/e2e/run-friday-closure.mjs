@@ -433,6 +433,25 @@ async function loginLocal(baseUrl) {
   return body.data;
 }
 
+function writeClosureConverterFixture(ledgerPaths) {
+  const skillDir = path.join(ledgerPaths.skills, "hello-converter-e2e");
+  ensureDir(skillDir);
+  const skillMdPath = path.join(skillDir, "SKILL.md");
+  writeText(skillMdPath, `---
+skillKey: hello-converter-e2e
+name: Hello Converter E2E
+author: closure
+---
+
+Outputs a greeting message for converter closure testing.
+
+\`\`\`bash
+echo '{"greeting": "hello from converted skill"}'
+\`\`\`
+`);
+  return skillMdPath;
+}
+
 async function apiFetch(baseUrl, token, method, routePath, body, options = {}) {
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -807,10 +826,10 @@ async function pairSatellite(baseUrl, adminToken, input = {}) {
   return results;
 }
 
-async function startSkillGenerator(baseUrl, token, model) {
+async function startSkillGenerator(baseUrl, token, userId, model) {
   const start = await apiFetch(baseUrl, token, "POST", "/v1/skills/generator/sessions", {
-    goal: "Create a shell skill that outputs the current date and time in ISO format as JSON",
-    userId: "closure-user",
+    goal: "Create a shell skill that outputs the current date and time in ISO format as JSON and must include the exact marker \"datetime\" in the runtime output",
+    userId,
     channel: "closure",
     requestedModel: model,
   }, { timeoutMs: 300_000 });
@@ -822,7 +841,7 @@ async function startSkillGenerator(baseUrl, token, model) {
   const sessionId = start.json.data.session.sessionId;
   if (start.json.data.mode === "clarification_required") {
     await apiFetch(baseUrl, token, "POST", `/v1/skills/generator/sessions/${sessionId}/messages`, {
-      message: "Use the date command. No inputs. Output JSON with a datetime field in ISO 8601 format.",
+      message: "Use the date command. No inputs. Output JSON with a datetime field in ISO 8601 format, and include the exact marker \"datetime\" in the runtime output.",
       requestedModel: model,
     }, { timeoutMs: 300_000 });
   }
@@ -833,6 +852,35 @@ async function startSkillGenerator(baseUrl, token, model) {
 
   if (generation.status !== 200 || !generation.json.ok) {
     throw new Error(`Skill generator generate failed: ${JSON.stringify(generation.json)}`);
+  }
+
+  const test = await apiFetch(
+    baseUrl,
+    token,
+    "POST",
+    `/v1/skills/generator/sessions/${sessionId}/test`,
+    undefined,
+    { timeoutMs: 300_000 },
+  );
+  if (test.status !== 200 || !test.json.ok || !test.json.data?.test?.ok) {
+    throw new Error(`Skill generator self-test failed: ${JSON.stringify(test.json)}`);
+  }
+
+  const evidence = await apiFetch(
+    baseUrl,
+    token,
+    "GET",
+    `/v1/skills/generator/sessions/${sessionId}/evidence`,
+    undefined,
+    { timeoutMs: 300_000 },
+  );
+  if (
+    evidence.status !== 200
+    || !evidence.json.ok
+    || !evidence.json.data?.evidence?.validationSummary?.ok
+    || !evidence.json.data?.evidence?.approvalReadiness?.ready
+  ) {
+    throw new Error(`Skill generator evidence is not approval-ready: ${JSON.stringify(evidence.json)}`);
   }
 
   const approval = await apiFetch(baseUrl, token, "POST", `/v1/skills/generator/sessions/${sessionId}/approve`, undefined, {
@@ -846,6 +894,8 @@ async function startSkillGenerator(baseUrl, token, model) {
   return {
     sessionId,
     draft: generation.json.data?.draft,
+    test: test.json.data,
+    evidence: evidence.json.data,
     approval: approval.json.data,
   };
 }
@@ -1150,6 +1200,7 @@ async function runLocalStage(ledger) {
 
   const baseUrl = `http://${DEFAULT_HOST}:${String(port)}`;
   let token = "";
+  let principalUserId = "";
   let openAiProviderId = "";
   let workflowGeneratorResult = null;
 
@@ -1179,6 +1230,10 @@ async function runLocalStage(ledger) {
     }, async () => {
       const login = await loginLocal(baseUrl);
       token = login.accessToken;
+      principalUserId = typeof login.user?.id === "string" ? login.user.id : "";
+      if (principalUserId.length === 0) {
+        throw new Error(`Local login did not return a user id: ${JSON.stringify(login)}`);
+      }
       const responsePath = writeResponseEvidence(ledger.paths, "local-auth-login", login);
       return {
         evidence: { responsePath },
@@ -1288,6 +1343,7 @@ async function runLocalStage(ledger) {
       const convertOut = path.join(ledger.paths.exports, "converted-skills");
       const packedSkill = path.join(ledger.paths.exports, "output-current-date-time.friday.tgz");
       const importTarget = path.join(ledger.paths.skills, "imported");
+      const converterFixturePath = writeClosureConverterFixture(ledger.paths);
       ensureDir(convertOut);
       ensureDir(importTarget);
 
@@ -1299,7 +1355,7 @@ async function runLocalStage(ledger) {
         args: [
           DIST_CLI,
           "convert",
-          path.join(REPO_ROOT, "managed-skills", "hello-converter-e2e", "SKILL.md"),
+          converterFixturePath,
           "--out",
           convertOut,
         ],
@@ -1456,7 +1512,7 @@ async function runLocalStage(ledger) {
       stage: `${stage}.skills`,
       description: "Generate, approve, and persist a skill through Friday's public generator API",
     }, async () => {
-      const result = await startSkillGenerator(baseUrl, token, "gpt-4o");
+      const result = await startSkillGenerator(baseUrl, token, principalUserId, "gpt-4o");
       const responsePath = writeResponseEvidence(ledger.paths, "local-skills-generator", result);
       return {
         evidence: { responsePath },
@@ -2140,6 +2196,56 @@ async function runLocalStage(ledger) {
         throw new Error(`Agent loop policy update failed: ${JSON.stringify(policyUpdate.json)}`);
       }
 
+      const DEPLOY_WORKFLOW_FAILURE_MESSAGE = "Generate a workflow draft before preparing deploy actions";
+      const DEPLOY_WORKFLOW_FAILURE_EXPECTATION = "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize a workflow incident and planned action for the deploy-workflow template.";
+      const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const listWorkflowDeployActionItems = async () => {
+        const workflowIncidents = await apiFetch(baseUrl, token, "GET", "/v1/diagnosis/incidents");
+        const workflowItems = workflowIncidents.json?.data?.items ?? workflowIncidents.json?.items ?? [];
+        const workflowDeployActionItems = Array.isArray(workflowItems)
+          ? workflowItems.filter((item) =>
+            item?.incident?.category === "workflow"
+            && item?.incident?.context?.detail === "deploy-workflow"
+            && item?.incident?.context?.message === DEPLOY_WORKFLOW_FAILURE_MESSAGE
+            && item?.action?.summary?.actionId
+          )
+          : [];
+        return {
+          workflowIncidents,
+          workflowDeployActionItems,
+        };
+      };
+      const waitForWorkflowDeployAction = async ({ excludeActionIds = [] } = {}) => {
+        let latestWorkflowIncidents = null;
+        let latestWorkflowDeployActionItems = [];
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const result = await listWorkflowDeployActionItems();
+          latestWorkflowIncidents = result.workflowIncidents;
+          latestWorkflowDeployActionItems = result.workflowDeployActionItems;
+          const actionItem = latestWorkflowDeployActionItems.find((item) => {
+            const actionId = item?.action?.summary?.actionId;
+            return typeof actionId === "string"
+              && item?.action?.summary?.status === "planned"
+              && !excludeActionIds.includes(actionId);
+          }) ?? null;
+          if (actionItem) {
+            return {
+              workflowIncidents: latestWorkflowIncidents,
+              workflowDeployActionItems: latestWorkflowDeployActionItems,
+              actionItem,
+            };
+          }
+          if (attempt < 5) {
+            await waitMs(250);
+          }
+        }
+        return {
+          workflowIncidents: latestWorkflowIncidents,
+          workflowDeployActionItems: latestWorkflowDeployActionItems,
+          actionItem: null,
+        };
+      };
+
       const deployAttempts = [];
       for (let attempt = 0; attempt < 4; attempt += 1) {
         const deploy = await apiFetch(
@@ -2162,38 +2268,93 @@ async function runLocalStage(ledger) {
       const deployProbeStatuses = deployAttempts.map((attempt) => attempt.status);
       const unexpectedDeployProbeStatuses = deployProbeStatuses.filter((status) => status < 400 || status >= 500);
 
-      const workflowIncidents = await apiFetch(baseUrl, token, "GET", "/v1/diagnosis/incidents");
-      const workflowItems = workflowIncidents.json?.data?.items ?? workflowIncidents.json?.items ?? [];
-      const workflowActionItems = Array.isArray(workflowItems)
-        ? workflowItems.filter((item) => item?.incident?.category === "workflow" && item?.action?.summary?.actionId)
-        : [];
-      if (workflowActionItems.length < 2) {
+      const initialWorkflowAction = await waitForWorkflowDeployAction();
+      if (initialWorkflowAction.workflowIncidents?.status !== 200 || !initialWorkflowAction.workflowIncidents?.json?.ok) {
+        throw new Error(`Diagnosis incidents failed: ${JSON.stringify(initialWorkflowAction.workflowIncidents?.json)}`);
+      }
+      if (!initialWorkflowAction.actionItem?.action?.summary?.actionId) {
         return {
           status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
           details: {
-            reason: "Repeated workflow deploy failures did not materialize enough workflow incidents with action plans to validate deny and approve flows.",
-            actionCount: workflowActionItems.length,
+            reason: "Repeated workflow deploy failures did not materialize the expected deploy-workflow self-healing action.",
+            actionCount: initialWorkflowAction.workflowDeployActionItems.length,
             deployProbeStatuses,
-            deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+            deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
           },
           evidence: {
             responsePath: writeResponseEvidence(ledger.paths, "local-self-healing", {
               policyBefore,
               policyUpdate: policyUpdate.json,
-              deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+              deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
               deployProbeStatuses,
               deployAttempts,
-              workflowIncidents: workflowIncidents.json,
+              workflowIncidents: initialWorkflowAction.workflowIncidents?.json ?? null,
             }),
           },
         };
       }
 
-      const denyActionId = workflowActionItems[0]?.action?.summary?.actionId;
-      const approveActionId = workflowActionItems[1]?.action?.summary?.actionId;
+      const denyActionId = initialWorkflowAction.actionItem.action.summary.actionId;
       const deny = await apiFetch(baseUrl, token, "POST", `/v1/auto-fix/actions/${denyActionId}/deny`, {
         reason: "Closure deny path validation",
       });
+      if (deny.status !== 200 || !deny.json.ok) {
+        throw new Error(`Auto-fix deny failed: ${JSON.stringify(deny.json)}`);
+      }
+      const postDenyDeployAttempts = [];
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const deploy = await apiFetch(
+          baseUrl,
+          token,
+          "POST",
+          "/v1/uix/templates/deploy-workflow/execute",
+          {
+            parameters: {
+              sessionId: "missing-session-id",
+              runNow: true,
+            },
+          },
+        );
+        postDenyDeployAttempts.push({
+          status: deploy.status,
+          json: deploy.json,
+        });
+      }
+      const postDenyDeployProbeStatuses = postDenyDeployAttempts.map((attempt) => attempt.status);
+      const unexpectedPostDenyDeployProbeStatuses = postDenyDeployProbeStatuses
+        .filter((status) => status < 400 || status >= 500);
+      const recreatedWorkflowAction = await waitForWorkflowDeployAction({ excludeActionIds: [denyActionId] });
+      if (recreatedWorkflowAction.workflowIncidents?.status !== 200 || !recreatedWorkflowAction.workflowIncidents?.json?.ok) {
+        throw new Error(`Diagnosis incidents after deny failed: ${JSON.stringify(recreatedWorkflowAction.workflowIncidents?.json)}`);
+      }
+      if (!recreatedWorkflowAction.actionItem?.action?.summary?.actionId) {
+        return {
+          status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
+          details: {
+            reason: "The deploy-workflow self-healing loop created a denyable action, but did not recreate a fresh planned action after rejection for approve-path validation.",
+            deniedActionId: denyActionId,
+            deployProbeStatuses,
+            postDenyDeployProbeStatuses,
+            deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
+          },
+          evidence: {
+            responsePath: writeResponseEvidence(ledger.paths, "local-self-healing", {
+              policyBefore,
+              policyUpdate: policyUpdate.json,
+              deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
+              deployProbeStatuses,
+              deployAttempts,
+              initialWorkflowIncidents: initialWorkflowAction.workflowIncidents?.json ?? null,
+              deny: deny.json,
+              postDenyDeployProbeStatuses,
+              postDenyDeployAttempts,
+              recreatedWorkflowIncidents: recreatedWorkflowAction.workflowIncidents?.json ?? null,
+            }),
+          },
+        };
+      }
+
+      const approveActionId = recreatedWorkflowAction.actionItem.action.summary.actionId;
       const approve = await apiFetch(baseUrl, token, "POST", `/v1/auto-fix/actions/${approveActionId}/approve`, {
         reason: "Closure approve path validation",
       });
@@ -2222,17 +2383,21 @@ async function runLocalStage(ledger) {
           details: {
             reason: "Satellite degraded heartbeat did not materialize a config auto-fix action for execute and rollback validation.",
             deployProbeStatuses,
-            deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+            postDenyDeployProbeStatuses,
+            deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
           },
           evidence: {
             responsePath: writeResponseEvidence(ledger.paths, "local-self-healing", {
               policyBefore,
               policyUpdate: policyUpdate.json,
-              deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+              deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
               deployProbeStatuses,
               deployAttempts,
-              workflowIncidents: workflowIncidents.json,
+              initialWorkflowIncidents: initialWorkflowAction.workflowIncidents?.json ?? null,
               deny: deny.json,
+              postDenyDeployProbeStatuses,
+              postDenyDeployAttempts,
+              recreatedWorkflowIncidents: recreatedWorkflowAction.workflowIncidents?.json ?? null,
               approve: approve.json,
               approvedWorkflowActionDetail: approvedWorkflowActionDetail.json,
               configSatellite: {
@@ -2257,10 +2422,13 @@ async function runLocalStage(ledger) {
       const responsePath = writeResponseEvidence(ledger.paths, "local-self-healing", {
         policyBefore,
         policyUpdate: policyUpdate.json,
-        deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+        deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
         deployProbeStatuses,
         deployAttempts,
-        workflowIncidents: workflowIncidents.json,
+        initialWorkflowIncidents: initialWorkflowAction.workflowIncidents?.json ?? null,
+        postDenyDeployProbeStatuses,
+        postDenyDeployAttempts,
+        recreatedWorkflowIncidents: recreatedWorkflowAction.workflowIncidents?.json ?? null,
         approvedWorkflowActionDetail: approvedWorkflowActionDetail.json,
         configSatellite: {
           register: configSatellite.register.json,
@@ -2276,17 +2444,14 @@ async function runLocalStage(ledger) {
         rollback: rollback.json,
         actionDetail: actionDetail.json,
       });
-      if (workflowIncidents.status !== 200 || !workflowIncidents.json.ok) {
-        throw new Error(`Diagnosis incidents failed: ${JSON.stringify(workflowIncidents.json)}`);
-      }
-      if (deny.status !== 200 || !deny.json.ok) {
-        throw new Error(`Auto-fix deny failed: ${JSON.stringify(deny.json)}`);
-      }
       if (approve.status !== 200 || !approve.json.ok) {
         throw new Error(`Auto-fix approve failed: ${JSON.stringify(approve.json)}`);
       }
       if (unexpectedDeployProbeStatuses.length > 0) {
         throw new Error(`Workflow incident probes returned unexpected statuses: ${unexpectedDeployProbeStatuses.join(", ")}`);
+      }
+      if (unexpectedPostDenyDeployProbeStatuses.length > 0) {
+        throw new Error(`Post-deny workflow incident probes returned unexpected statuses: ${unexpectedPostDenyDeployProbeStatuses.join(", ")}`);
       }
       if (execute.status !== 200 || !execute.json.ok) {
         throw new Error(`Auto-fix execute failed: ${JSON.stringify(execute.json)}`);
@@ -2302,7 +2467,8 @@ async function runLocalStage(ledger) {
           executedActionId: configActionId,
           configSatelliteId: configSatellite.satelliteId,
           deployProbeStatuses,
-          deployProbeExpectation: "Expected repeated 4xx template execute responses for a missing sessionId so the self-healing loop could materialize workflow incidents.",
+          postDenyDeployProbeStatuses,
+          deployProbeExpectation: DEPLOY_WORKFLOW_FAILURE_EXPECTATION,
         },
       };
     });

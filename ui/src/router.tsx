@@ -1,5 +1,4 @@
-import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { Suspense, lazy, type ReactNode } from "react";
 import { Navigate, Outlet, createBrowserRouter, useLocation, useRouteError } from "react-router-dom";
 import {
   AuthErrorSplash,
@@ -11,11 +10,9 @@ import {
 } from "@/components/console/shell";
 import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
-import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
-import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
 import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
@@ -28,7 +25,6 @@ const AutomationsPage = lazy(async () => import("@/routes/automations-page").the
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
 const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
-const LoginPage = lazy(async () => import("@/routes/login-page").then((module) => ({ default: module.LoginPage })));
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
@@ -51,7 +47,7 @@ const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((mod
 /**
  * Router-level loading splash. Resolves `LocalizedText` into the active locale
  * and defers layout to <LoadingSplash />. Used by RequireAuth, RouteSuspense,
- * DefaultEntryRedirect, and SetupGate during `isLoading` states.
+ * and SetupGate during `isLoading` states.
  */
 function LoadingMessage(props: { title: string | LocalizedText; detail: string | LocalizedText }) {
   const { locale } = useAppLocale();
@@ -128,31 +124,9 @@ function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: (
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading, login: doLogin } = useAuth();
-  const location = useLocation();
-  const [retrying, setRetrying] = useState(false);
+  const { isLoading } = useAuth();
 
-  // Try local auth first, then fall back to the real login route if this machine
-  // does not allow local bypass or the session bootstrap failed.
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated && !retrying) {
-      setRetrying(true);
-      doLogin({ local: true }).catch(() => {
-        // Retry once more after a short delay (server may still be booting).
-        setTimeout(() => {
-          doLogin({ local: true }).catch(() => {
-            // Silent failure — stay on loading screen.
-          });
-        }, 2000);
-      });
-    }
-  }, [isLoading, isAuthenticated, retrying, doLogin]);
-
-  if (isLoading || !isAuthenticated) {
-    if (!isLoading && !isAuthenticated) {
-      const redirectTo = `${location.pathname}${location.search}${location.hash}`;
-      return <Navigate to="/login" replace state={{ redirectTo }} />;
-    }
+  if (isLoading) {
     return (
       <LoadingMessage
         title={localizedText("启动 Friday", "Starting Friday")}
@@ -172,54 +146,10 @@ function RouteSuspense(props: { title: string | LocalizedText; detail: string | 
   );
 }
 
-function DefaultEntryRedirect() {
-  const { profileType, isFirstVisit, isLoading: profileLoading } = useUserProfile();
-  const { lastPrimarySurface } = useHomeSurfacePreferences(profileType);
-  const homeSnapshotQuery = useQuery({
-    queryKey: ["router", "default-entry", "home-snapshot"],
-    queryFn: () => uixSnapshotsApi.getHome(),
-    staleTime: 15_000,
-  });
-
-  if (profileLoading || homeSnapshotQuery.isLoading) {
-    return (
-      <LoadingMessage
-        title={localizedText("正在整理你的入口", "Choosing your entry point")}
-        detail={localizedText("Friday 正在根据你最近的任务和待处理事项决定先把你带到哪里。", "Friday is choosing the best surface based on your recent work and pending actions.")}
-      />
-    );
-  }
-
-  const snapshot = homeSnapshotQuery.data;
-  const runs = snapshot?.runs ?? [];
-  const hasLiveWork = runs.some((run) =>
-    run.status === "pending"
-    || run.status === "planning"
-    || run.status === "awaiting_clarification"
-    || run.status === "awaiting_plan_approval"
-    || run.status === "awaiting_tool_approval"
-    || run.status === "executing"
-    || run.status === "testing"
-    || run.status === "fixing",
-  );
-  const hasPendingApprovals = (snapshot?.pendingApprovals.length ?? 0) > 0;
-  const hasScheduledSoon = (snapshot?.scheduledAutomations ?? []).some((automation) =>
-    automation.enabled
-    && automation.nextRunAt != null
-    && (new Date(automation.nextRunAt).getTime() - Date.now()) <= 2 * 60 * 60 * 1000
-  );
-
-  if (isFirstVisit || hasLiveWork || hasPendingApprovals || hasScheduledSoon || lastPrimarySurface === "home") {
-    return <Navigate to="/home" replace />;
-  }
-
-  return <Navigate to="/chat" replace />;
-}
-
 function SetupGate() {
   const location = useLocation();
   const { data: setupStatus, isLoading, isError, error, refetch } = useSetupStatusQuery();
-  const { isFirstVisit, isLoading: profileLoading } = useUserProfile();
+  const { isLoading: profileLoading } = useUserProfile();
 
   if (isLoading || profileLoading) {
     return (
@@ -245,10 +175,6 @@ function SetupGate() {
 
   if (setupStatus?.needsSetup && location.pathname !== "/setup") {
     return <Navigate to="/setup" replace />;
-  }
-
-  if (!setupStatus?.needsSetup && isFirstVisit && location.pathname !== "/onboarding") {
-    return <Navigate to="/onboarding" replace />;
   }
 
   return <Outlet />;
@@ -282,14 +208,7 @@ function RouteErrorBoundary() {
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: (
-      <RouteSuspense
-        title={localizedText("加载登录", "Loading access")}
-        detail={localizedText("Friday 正在准备登录入口。", "Friday is preparing the access surface.")}
-      >
-        <LoginPage />
-      </RouteSuspense>
-    ),
+    element: <Navigate to="/home" replace />,
   },
   {
     path: "/",
@@ -393,7 +312,7 @@ export const router = createBrowserRouter([
           },
           {
             index: true,
-            element: <DefaultEntryRedirect />,
+            element: <Navigate to="/home" replace />,
           },
           {
             path: "channels",

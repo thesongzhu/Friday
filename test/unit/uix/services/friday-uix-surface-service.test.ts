@@ -674,6 +674,59 @@ describe("createFridayUixSurfaceService", () => {
     });
   });
 
+  it("falls back to the local issue queue when review-issues starter skill is safety-gated", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-disabled-1",
+      result: Promise.resolve({
+        runId: "skill-run-disabled-1",
+        status: "failed",
+        output: {
+          code: "CAPABILITY_DISABLED",
+          capability: "skill_node_runtime",
+          gate: "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS",
+        },
+        stdout: "",
+        stderr: "Node-based skills are disabled because they execute in-process without isolation. Set FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true only in controlled environments.",
+        durationMs: 0,
+      }),
+    }));
+    const issues = [{
+      id: "issue-1",
+      kind: "approval_required",
+      incidentId: "incident-1",
+      actionId: "action-1",
+      approvalRequestId: "approval-1",
+      title: "Workflow deploy needs approval",
+      summary: "A rollback-backed fix is waiting on approval.",
+      severity: "high",
+      status: "open",
+      createdAt: "2026-04-21T12:00:00.000Z",
+      routeTarget: "/assistant",
+    }] as const;
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => issues),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "review-issues",
+      userId: "user-1",
+      parameters: {},
+    });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(response.summary).toContain("Friday found 1 issue(s) to review.");
+    expect(response.result).toMatchObject({
+      count: 1,
+      issues,
+    });
+  });
+
   it("routes recover-failed-deploy through the bundled recovery skill when a skill executor is available", async () => {
     const execute = vi.fn(() => ({
       runId: "skill-run-2",
@@ -724,6 +777,58 @@ describe("createFridayUixSurfaceService", () => {
     expect(response.result).toMatchObject({
       skillId: "failed-deploy-recovery-brief",
       requiresApproval: true,
+    });
+  });
+
+  it("falls back to issue-card recovery guidance when recover-failed-deploy starter skill is safety-gated", async () => {
+    const execute = vi.fn(() => ({
+      runId: "skill-run-disabled-2",
+      result: Promise.resolve({
+        runId: "skill-run-disabled-2",
+        status: "failed",
+        output: {
+          code: "CAPABILITY_DISABLED",
+          capability: "skill_node_runtime",
+          gate: "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS",
+        },
+        stdout: "",
+        stderr: "Node-based skills are disabled because they execute in-process without isolation. Set FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true only in controlled environments.",
+        durationMs: 0,
+      }),
+    }));
+    const issues = [{
+      id: "issue-2",
+      kind: "incident",
+      incidentId: "incident-2",
+      title: "Workflow deploy failed in production",
+      summary: "Deploy step is blocked after a publish failure.",
+      severity: "critical",
+      status: "open",
+      createdAt: "2026-04-21T12:05:00.000Z",
+      routeTarget: "/assistant",
+    }] as const;
+    const service = createFridayUixSurfaceService({
+      selfHealing: {
+        listIssueCards: vi.fn(() => issues),
+      } as never,
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      },
+    });
+
+    const response = await service.executeTemplate({
+      templateId: "recover-failed-deploy",
+      userId: "user-1",
+      parameters: {},
+    });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(response.summary).toContain("deploy-related issue card");
+    expect(response.workflow?.kind).toBe("blocked");
+    expect(response.result).toMatchObject({
+      issue: issues[0],
+      count: 1,
     });
   });
 

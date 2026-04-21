@@ -57,6 +57,18 @@ export interface MockHubEnv {
   cleanup: () => Promise<void>;
 }
 
+const AUTO_DETECT_PROVIDER_ENV_VARS = [
+  "FRIDAY_ANTHROPIC_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GROQ_API_KEY",
+  "MISTRAL_API_KEY",
+  "XAI_API_KEY",
+  "OLLAMA_BASE_URL",
+] as const;
+
 // ─── Helpers ───
 
 function findFreePort(): Promise<number> {
@@ -244,7 +256,13 @@ export async function createMockHubEnv(opts?: {
   // Capture original fetch instance-locally to avoid races between multiple envs
   const originalFetch = globalThis.fetch;
   const originalWarningSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  const originalAutoDetectEnv = new Map<string, string | undefined>(
+    AUTO_DETECT_PROVIDER_ENV_VARS.map((key) => [key, process.env[key]]),
+  );
   process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+  for (const key of AUTO_DETECT_PROVIDER_ENV_VARS) {
+    delete process.env[key];
+  }
 
   // 1. Create temp state dir
   const stateDir = fs.mkdtempSync(
@@ -252,17 +270,28 @@ export async function createMockHubEnv(opts?: {
   );
 
   // 2. Create hub
-  const hub = await createFridayHub({
-    stateDir,
-    skillDirs: opts?.skillDirs ?? [],
-    port: 0,
-    logRequests: false,
-    channels: opts?.channels,
-    // Allow private-network targets so mock E2E tests don't require DNS resolution
-    ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
-  });
-  await opts?.beforeStart?.(hub);
-  await hub.start();
+  let hub;
+  try {
+    hub = await createFridayHub({
+      stateDir,
+      skillDirs: opts?.skillDirs ?? [],
+      port: 0,
+      logRequests: false,
+      channels: opts?.channels,
+      // Allow private-network targets so mock E2E tests don't require DNS resolution
+      ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
+    });
+    await opts?.beforeStart?.(hub);
+    await hub.start();
+  } finally {
+    for (const [key, value] of originalAutoDetectEnv) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 
   // 3. Spin up HTTP server
   const port = await findFreePort();

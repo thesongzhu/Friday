@@ -2,6 +2,7 @@
 
 // Model types
 export type * from "./model/friday-provider.types.js";
+export type * from "./model/friday-provider-upgrade.types.js";
 export type * from "./model/friday-provider-context.types.js";
 export type * from "./model/friday-provider-cost.types.js";
 export {
@@ -14,6 +15,10 @@ export {
   normalizeFridayModelRoutingConfig,
   resolveFridayProviderPreferredModel,
 } from "./model/friday-provider.types.js";
+export {
+  defaultFridayProviderUpgradeFields,
+  mergeFridayProviderUpgradeFields,
+} from "./model/friday-provider-upgrade.types.js";
 export {
   FRIDAY_PROVIDER_PRESETS,
   FRIDAY_PROVIDER_KIND_SET,

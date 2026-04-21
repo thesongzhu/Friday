@@ -143,6 +143,7 @@ import type {
   FridayGetRunEvidenceQuery,
   FridayRunTimelineEntry,
 } from "../model/friday-api-workflow.types.js";
+import { createFridayDeepLinkApplyService } from "./friday-deep-link-apply-service.js";
 
 const DEFAULT_ACCESS_TTL = 3600; // 1 hour
 const DEFAULT_REFRESH_TTL = 604_800; // 7 days
@@ -651,6 +652,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
+  });
+  const deepLinkApplyService = createFridayDeepLinkApplyService({
+    idGenerator: deps.idGenerator,
+    providerService: deps.providerService,
+    converterService: deps.converterService,
+    workflowImportExport: builderRuntime.importExport,
   });
   const skillRepo = createFridaySkillRepository();
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
@@ -1826,7 +1833,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register deep link routes (always available)
-  for (const route of createFridayDeepLinkRoutes({})) {
+  for (const route of createFridayDeepLinkRoutes({
+    applyDeepLink: (payload) => deepLinkApplyService.apply(payload),
+  })) {
     routes.register(route);
   }
 

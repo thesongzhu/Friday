@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Largest Files Finder",
+  "description": "List the top 3 largest files in a given directory",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Inputs",
+      "fieldIds": [
+        "directory_path-field"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "directory_path-field",
+      "inputKey": "directory_path",
+      "kind": "text",
+      "label": "Directory path to analyze",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "largest_files-output",
+      "outputKey": "largest_files",
+      "label": "largest_files",
+      "widget": "table"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

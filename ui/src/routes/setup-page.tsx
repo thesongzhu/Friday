@@ -415,7 +415,7 @@ export function SetupPage() {
       const starterTask = getAssistantStarterTask(starterTaskId);
       toast.success(localize(locale, "设置完成", "Setup complete"), { duration: 4000 });
       await queryClient.invalidateQueries({ queryKey: ["setup", "status"] });
-      navigate("/assistant", {
+      navigate("/home", {
         replace: true,
         state: starterTask
           ? {

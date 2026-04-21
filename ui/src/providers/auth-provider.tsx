@@ -15,6 +15,12 @@ interface AuthContextValue {
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
 
+const LOCAL_OPERATOR_FALLBACK_USER: FridayUser = {
+  id: "local-operator",
+  displayName: "Local Operator",
+  role: "operator",
+};
+
 // ─── Provider ───
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -35,7 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           authStorage.setUser(me.user);
         } catch {
           if (cancelled) return;
-          setUser(null);
+          setUser(LOCAL_OPERATOR_FALLBACK_USER);
           authStorage.clear();
         } finally {
           if (!cancelled) setIsLoading(false);
@@ -59,13 +65,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setIsLoading(false);
             return;
           } catch {
-            // Continue to login screen fallback.
+            // Continue to local shell fallback.
           }
         }
       } catch {
         // Best-effort probe only.
-      } finally {
-        if (!cancelled) setIsLoading(false);
+      }
+
+      if (!cancelled) {
+        setUser(LOCAL_OPERATOR_FALLBACK_USER);
+        setIsLoading(false);
       }
     };
 

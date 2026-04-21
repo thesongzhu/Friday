@@ -5,14 +5,16 @@
  * with validation — no transformation needed.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { FridayDomainError } from "#errors";
 
 import { safeParseFridaySkillManifestV2 } from "../../manifest/friday-skill-manifest.schema.js";
 import { applyFridaySkillManifestDefaults } from "../../manifest/friday-skill-manifest-defaults.js";
 import type { SkillManifestV2 } from "../../model/friday-skill-manifest-v2.types.js";
 import type { FridaySkillUiSchemaV1 } from "../../generator/model/friday-skill-ui-schema.types.js";
+import { createFridaySkillPackageArchiver } from "../services/friday-skill-package-archive.js";
 import type {
   FridayConvertedSkillDraft,
   FridayConvertedSkillFile,
@@ -28,6 +30,7 @@ import type {
 const CONVERTER_ID = "native-friday-package";
 const CONVERTER_DISPLAY_NAME = "Native Friday Package";
 const CONVERTER_PRIORITY = 100; // Highest priority — native is authoritative
+const packageArchiver = createFridaySkillPackageArchiver();
 
 // ─── Factory ───
 
@@ -90,77 +93,109 @@ export function createNativeSkillPackageConverter(): FridaySkillConverter {
         throw new FridayDomainError("VALIDATION_ERROR", "NativeSkillPackageConverter requires a source URI", { httpStatus: 400 });
       }
 
-      const manifestPath = resolveManifestPath(source.uri);
-      if (!manifestPath) {
-        throw new FridayDomainError("CONVERTER_MANIFEST_NOT_FOUND", `skill.manifest.json not found at: ${source.uri}`, { httpStatus: 404 });
-      }
-
-      const skillDir = resolveSkillDir(source.uri);
-
-      // Read and validate manifest
-      const rawText = readFileSync(manifestPath, "utf-8");
-      let rawObj: unknown;
+      const materialized = materializeNativeSource(source.uri);
+      const { manifestPath, skillDir } = materialized;
       try {
-        rawObj = JSON.parse(rawText);
-      } catch (err) {
-      console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
-        throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.manifest.json at: ${manifestPath}`, { httpStatus: 422 });
-      }
-
-      const defaulted = applyFridaySkillManifestDefaults(rawObj as Record<string, unknown>);
-      const parseResult = safeParseFridaySkillManifestV2(defaulted);
-      if (!parseResult.success) {
-        const issues = parseResult.error.issues.map((i: { message: string }) => i.message).join("; ");
-        throw new FridayDomainError("VALIDATION_ERROR", `Manifest validation failed: ${issues}`, { httpStatus: 422 });
-      }
-
-      const manifest: SkillManifestV2 = parseResult.data;
-      const warnings: string[] = [];
-
-      // Read UI schema
-      const uiSchemaPath = join(skillDir, "skill.ui.json");
-      let uiSchema: FridaySkillUiSchemaV1;
-
-      if (existsSync(uiSchemaPath)) {
-        try {
-          uiSchema = JSON.parse(readFileSync(uiSchemaPath, "utf-8")) as FridaySkillUiSchemaV1;
-        } catch (err) {
-      console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
-          throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.ui.json at: ${uiSchemaPath}`, { httpStatus: 422 });
+        if (!manifestPath) {
+          throw new FridayDomainError("CONVERTER_MANIFEST_NOT_FOUND", `skill.manifest.json not found at: ${source.uri}`, { httpStatus: 404 });
         }
-      } else {
-        warnings.push("skill.ui.json not found — generating minimal UI schema");
-        uiSchema = buildMinimalUiSchema(manifest);
+
+        // Read and validate manifest
+        const rawText = readFileSync(manifestPath, "utf-8");
+        let rawObj: unknown;
+        try {
+          rawObj = JSON.parse(rawText);
+        } catch (err) {
+          console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
+          throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.manifest.json at: ${manifestPath}`, { httpStatus: 422 });
+        }
+
+        const defaulted = applyFridaySkillManifestDefaults(rawObj as Record<string, unknown>);
+        const parseResult = safeParseFridaySkillManifestV2(defaulted);
+        if (!parseResult.success) {
+          const issues = parseResult.error.issues.map((i: { message: string }) => i.message).join("; ");
+          throw new FridayDomainError("VALIDATION_ERROR", `Manifest validation failed: ${issues}`, { httpStatus: 422 });
+        }
+
+        const manifest: SkillManifestV2 = parseResult.data;
+        const warnings: string[] = [];
+
+        // Read UI schema
+        const uiSchemaPath = join(skillDir, "skill.ui.json");
+        let uiSchema: FridaySkillUiSchemaV1;
+
+        if (existsSync(uiSchemaPath)) {
+          try {
+            uiSchema = JSON.parse(readFileSync(uiSchemaPath, "utf-8")) as FridaySkillUiSchemaV1;
+          } catch (err) {
+            console.warn("[friday][native-skill-package-converter] operation failed:", err instanceof Error ? err.message : String(err));
+            throw new FridayDomainError("PARSE_ERROR", `Invalid JSON in skill.ui.json at: ${uiSchemaPath}`, { httpStatus: 422 });
+          }
+        } else {
+          warnings.push("skill.ui.json not found — generating minimal UI schema");
+          uiSchema = buildMinimalUiSchema(manifest);
+        }
+
+        // Collect all files in the directory
+        const files = collectFiles(skillDir);
+
+        const conversionReport = {
+          sourceFormat: "friday-package" as const,
+          sourceRef: source.uri,
+          convertedAt: ctx.nowIso(),
+          converterId: CONVERTER_ID,
+        };
+
+        const draft: FridayConvertedSkillDraft = {
+          manifest,
+          uiSchema,
+          files,
+          warnings,
+          conversionReport,
+        };
+
+        return {
+          converterId: CONVERTER_ID,
+          detectedFormat: "friday-package",
+          drafts: [draft],
+        };
+      } finally {
+        materialized.cleanup();
       }
-
-      // Collect all files in the directory
-      const files = collectFiles(skillDir);
-
-      const conversionReport = {
-        sourceFormat: "friday-package" as const,
-        sourceRef: source.uri,
-        convertedAt: ctx.nowIso(),
-        converterId: CONVERTER_ID,
-      };
-
-      const draft: FridayConvertedSkillDraft = {
-        manifest,
-        uiSchema,
-        files,
-        warnings,
-        conversionReport,
-      };
-
-      return {
-        converterId: CONVERTER_ID,
-        detectedFormat: "friday-package",
-        drafts: [draft],
-      };
     },
   };
 }
 
 // ─── Helpers ───
+
+function materializeNativeSource(uri: string): {
+  skillDir: string;
+  manifestPath: string | null;
+  cleanup: () => void;
+} {
+  if (!uri.endsWith(".friday.tgz")) {
+    return {
+      skillDir: resolveSkillDir(uri),
+      manifestPath: resolveManifestPath(uri),
+      cleanup: () => {},
+    };
+  }
+
+  const extractDir = mkdtempSync(join(tmpdir(), "friday-native-skill-package-"));
+  try {
+    packageArchiver.unpackSkill(uri, extractDir);
+    return {
+      skillDir: extractDir,
+      manifestPath: resolveManifestPath(extractDir),
+      cleanup: () => {
+        rmSync(extractDir, { recursive: true, force: true });
+      },
+    };
+  } catch (err) {
+    rmSync(extractDir, { recursive: true, force: true });
+    throw err;
+  }
+}
 
 function resolveManifestPath(uri: string): string | null {
   // If URI points directly to the manifest file
@@ -179,7 +214,7 @@ function resolveManifestPath(uri: string): string | null {
 
 function resolveSkillDir(uri: string): string {
   if (uri.endsWith("skill.manifest.json")) {
-    return join(uri, "..");
+    return dirname(uri);
   }
   return uri;
 }

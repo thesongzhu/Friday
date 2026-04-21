@@ -42,6 +42,7 @@ async function withTemporaryEnv<T>(
 describe("Agent dependency-missing resilience", () => {
   it("fails fast with desktop enablement hint and avoids runaway provider retries", async () =>
     withTemporaryEnv("FRIDAY_DESKTOP_ENABLED", undefined, async () => {
+      const startedAt = Date.now();
       const env = await createMockHubEnv({ providerKinds: ["anthropic"] });
       try {
         const provider = env.providers.anthropic;
@@ -73,8 +74,9 @@ describe("Agent dependency-missing resilience", () => {
         expect(body.data.status).toBe("failed");
         expect(body.data.responseText ?? body.data.response ?? "").toContain("FRIDAY_DESKTOP_ENABLED=true");
         expect(mock.calls.length).toBe(2);
+        expect(Date.now() - startedAt).toBeLessThan(15_000);
       } finally {
         await env.cleanup();
       }
-    }));
+    }), 20_000);
 });
