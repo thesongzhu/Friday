@@ -1,4 +1,12 @@
-import type { FridayRegisteredSkill, FridaySkillRegistry } from "#skills";
+import {
+  canRunFridayBundledSystemNodeSkillWithoutGate,
+  evaluateFridaySkillExecutionReadiness,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  type FridayRegisteredSkill,
+  type FridaySkillRegistry,
+  getFridayUnisolatedNodeSkillsDisabledMessage,
+  isFridayUnisolatedNodeSkillsEnabled,
+} from "#skills";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import {
@@ -99,10 +107,32 @@ export function createFridayAgentSkillsListTool(
         return jsonResult({
           count: skills.length,
           skills: skills.map((skill) => {
-            const readiness = evaluateFridaySkillMcpReadiness({
+            const mcpReadiness = evaluateFridaySkillMcpReadiness({
               manifest: skill.manifest,
               servers: mcpServers,
             });
+            const runtimeReadiness = evaluateFridaySkillExecutionReadiness({
+              manifest: skill.manifest,
+            });
+            const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
+              runtimeKind: skill.manifest.runtime.kind,
+              manifestKind: skill.manifest.kind,
+              source: skill.source,
+              origin: skill.origin,
+            });
+            const nodeRuntimeBlocked =
+              skill.manifest.runtime.kind === "node"
+              && !allowBundledSystemNodeSkill
+              && !isFridayUnisolatedNodeSkillsEnabled();
+            const blockers = [
+              ...mcpReadiness.blockers,
+              ...runtimeReadiness.blockers,
+              ...(nodeRuntimeBlocked ? [getFridayUnisolatedNodeSkillsDisabledMessage()] : []),
+            ];
+            const requirements = {
+              ...(runtimeReadiness.requirements ?? {}),
+              ...(mcpReadiness.requirements ?? {}),
+            };
 
             return {
               skillId: skill.manifest.id,
@@ -116,9 +146,17 @@ export function createFridayAgentSkillsListTool(
               intents: skill.manifest.triggers.intents ?? [],
               phrases: skill.manifest.triggers.phrases ?? [],
               runtimeKind: skill.manifest.runtime.kind,
-              ready: readiness.ready,
-              blockers: readiness.blockers,
-              ...(readiness.requirements ? { requirements: readiness.requirements } : {}),
+              ready: blockers.length === 0,
+              blockers,
+              ...(nodeRuntimeBlocked
+                ? {
+                    details: {
+                      runtimeKind: "node",
+                      gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+                    },
+                  }
+                : {}),
+              ...(Object.keys(requirements).length > 0 ? { requirements } : {}),
             };
           }),
         });

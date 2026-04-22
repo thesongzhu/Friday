@@ -312,6 +312,18 @@ export {
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./executor/friday-node-executor.js";
+export {
+  FRIDAY_SKILL_PYTHON_BIN_ENV,
+  getFridayPythonRuntimeUnavailableMessage,
+  probeFridayExecutable,
+  resolveFridayPythonCommand,
+} from "./executor/friday-runtime-probe.js";
+export type {
+  EvaluateFridaySkillExecutionReadinessInput,
+  FridaySkillExecutionReadiness,
+  FridaySkillExecutionReadinessRequirements,
+} from "./executor/friday-skill-execution-readiness.js";
+export { evaluateFridaySkillExecutionReadiness } from "./executor/friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./executor/friday-skill-executor.js";
 
 // Converter (re-export key types for convenience; full module at #skills/converter)

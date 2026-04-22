@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ShellCard, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import type { AgentRunRecord } from "@/lib/api/types";
+import { displayRunTask } from "@/lib/runs/run-health";
 
 // ─── Types ───
 
@@ -62,8 +63,9 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
   const events: TimelineEvent[] = [];
 
   for (const run of runs) {
+    const fullTask = displayRunTask(run) || run.task;
     const taskLabel =
-      run.task.length > 48 ? `${run.task.slice(0, 48)}...` : run.task;
+      fullTask.length > 48 ? `${fullTask.slice(0, 48)}...` : fullTask;
 
     if (run.status === "completed") {
       events.push({
@@ -72,7 +74,7 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `完成任务: ${taskLabel}`
           : `Completed: ${taskLabel}`,
-        fullTitle: run.task,
+        fullTitle: fullTask,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "success",
         status: run.status,
@@ -85,7 +87,7 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `任务失败: ${taskLabel}`
           : `Failed: ${taskLabel}`,
-        fullTitle: run.task,
+        fullTitle: fullTask,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "warning",
         status: run.status,
@@ -98,7 +100,7 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `已取消: ${taskLabel}`
           : `Cancelled: ${taskLabel}`,
-        fullTitle: run.task,
+        fullTitle: fullTask,
         timestamp: run.completedAt ?? run.startedAt,
         tone: "neutral",
         status: run.status,
@@ -111,7 +113,7 @@ function deriveEvents(runs: AgentRunRecord[], locale: "zh" | "en"): TimelineEven
         title: locale === "zh"
           ? `正在执行: ${taskLabel}`
           : `Running: ${taskLabel}`,
-        fullTitle: run.task,
+        fullTitle: fullTask,
         timestamp: run.startedAt,
         tone: "info",
         status: run.status,

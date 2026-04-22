@@ -6,6 +6,10 @@ import {
   type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
 } from "./_helpers/browser-env-mock.js";
+import {
+  DEFAULT_BROWSER_CUSTOM_PACK_ID,
+  seedDefaultCustomPack,
+} from "./_helpers/custom-pack.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -105,7 +109,7 @@ async function waitForSurfaceReadyOnce(pageHandle: FridayBrowserPageHandle, surf
     case "packs":
       await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
       await pageHandle.page
-        .locator('[data-testid="pack-card-industry-creator-media"], [data-testid="pack-open-industry-creator-media"]')
+        .locator(`[data-testid="pack-card-${DEFAULT_BROWSER_CUSTOM_PACK_ID}"], [data-testid="pack-open-${DEFAULT_BROWSER_CUSTOM_PACK_ID}"]`)
         .first()
         .waitFor({ state: "visible", timeout: 60_000 });
       return;
@@ -300,22 +304,22 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
 
   it("packs open through a quick sheet and let the user adjust before starting", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
+    const packId = await seedDefaultCustomPack(env);
     pageHandle = await env.newPage();
     await pageHandle.page.goto("/packs");
-    await waitForTestId(pageHandle, "pack-card-industry-creator-media");
+    await waitForTestId(pageHandle, `pack-card-${packId}`);
 
-    await pageHandle.page.evaluate(() => {
-      const button = document.querySelector('[data-testid="pack-open-industry-creator-media"]') as HTMLButtonElement | null;
+    await pageHandle.page.evaluate((targetPackId) => {
+      const button = document.querySelector(`[data-testid="pack-open-${targetPackId}"]`) as HTMLButtonElement | null;
       if (!button) {
-        throw new Error("pack-open-industry-creator-media not found");
+        throw new Error(`pack-open-${targetPackId} not found`);
       }
       button.click();
-    });
+    }, packId);
     await waitForTestId(pageHandle, "pack-quick-sheet");
     await waitForTestId(pageHandle, "pack-quick-start");
     await waitForTestId(pageHandle, "pack-quick-adjust");
-    await waitForTestId(pageHandle, "pack-product-prompt-weekly-calendar");
-    await waitForTestId(pageHandle, "pack-product-open-assistant");
+    await waitForTestId(pageHandle, "pack-product-prompt-custom-prompt-0");
 
     await pageHandle.page.evaluate(() => {
       const button = document.querySelector('[data-testid="pack-quick-adjust"]') as HTMLButtonElement | null;
@@ -325,9 +329,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
       button.click();
     });
     await pageHandle.page.waitForURL((url) =>
-      url.pathname === "/flow/content-social"
-      && url.searchParams.get("mode") === "adjust"
-      && url.searchParams.get("packId") === "industry-creator-media",
+      url.pathname === "/chat"
+      && url.searchParams.get("packId") === packId
+      && url.searchParams.has("prompt"),
     );
   });
 
@@ -357,16 +361,17 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
 
   it("main surfaces survive repeated navigation and quick-sheet cycles without white-screening", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
+    const packId = await seedDefaultCustomPack(env);
     pageHandle = await env.newPage();
     await pageHandle.page.goto("/packs");
-    await waitForTestId(pageHandle, "pack-card-industry-creator-media");
+    await waitForTestId(pageHandle, `pack-card-${packId}`);
 
     const navigationCountBefore = await pageHandle.page.evaluate(
       () => performance.getEntriesByType("navigation").length,
     );
 
     for (let attempt = 0; attempt < QUICK_SHEET_CYCLE_ATTEMPTS; attempt += 1) {
-      await clickTestId(pageHandle, "pack-open-industry-creator-media");
+      await clickTestId(pageHandle, `pack-open-${packId}`);
       await waitForTestId(pageHandle, "pack-quick-sheet");
       await pageHandle.page.evaluate(() => {
         const button = document.querySelector('[data-testid="pack-quick-close"]') as HTMLButtonElement | null;
@@ -391,7 +396,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
     const finalState = await pageHandle.page.evaluate(() => ({
       navigationCount: performance.getEntriesByType("navigation").length,
       packsSurfaceReady: Boolean(document.querySelector('[data-testid="packs-surface-ready"]')),
-      packActionVisible: Boolean(document.querySelector('[data-testid^="pack-open-"]')),
+      packActionVisible: Boolean(document.querySelector('[data-testid^="pack-open-custom-"]')),
       textLength: document.body.textContent?.trim().length ?? 0,
     }));
 

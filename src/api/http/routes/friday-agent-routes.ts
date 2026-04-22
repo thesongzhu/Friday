@@ -51,6 +51,21 @@ const TERMINAL_EVENT_NAMES: ReadonlySet<string> = new Set(
 const AGENT_READ_SCOPES = ["agent.read", "workflow.run"] as const;
 const AGENT_RUN_SCOPES = ["agent.run", "workflow.run"] as const;
 const AGENT_WRITE_SCOPES = ["agent.write", "workflow.run"] as const;
+const CUSTOM_PACK_INTERNAL_DETAIL_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+  /[（(]?\s*ID\s*[:：]/i,
+  /\b(?:readOnly|skills_list|memory_search|agents_list|sub-?agent|sessionKey|session key|childRunId|tool[_ ]call|tool name|pack_id|pack id|memory system|memory item|memory namespace)\b/i,
+  /\b(?:run id|session id|subagent id)\b/i,
+  /(?:任务包\s*id|只读模式|内存(?:系统|持久化|记录)|记忆(?:系统|条目|检索)|工作流目录|workflow catalog|子代理|会话键|父会话|父子会话|运行深度|元数据)/i,
+];
+const CUSTOM_PACK_INTERNAL_LINE_DROP_PATTERNS: ReadonlyArray<RegExp> = [
+  /(?:只读模式|read[- ]?only mode)/i,
+  /(?:内存(?:系统|持久化|记录)|记忆(?:系统|条目|检索)|memory system|memory item|memory namespace|memory search)/i,
+  /(?:skills_list|memory_search|agents_list|sub-?agent|tool[_ ]call|tool name)/i,
+  /(?:子代理|会话键|父会话|父子会话|运行深度|元数据)/i,
+  /(?:当前运行.*正在执行中)/i,
+];
+const CUSTOM_PACK_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 function getRunSurface(run: FridayAgentRunRecord): string | undefined {
   const directSurface = run.metadata?.surface?.trim();
@@ -77,8 +92,70 @@ function isInternalAutonomousRun(run: FridayAgentRunRecord): boolean {
   return unwrapSubagentSessionKey(run.sessionKey).startsWith("autonomous:");
 }
 
+function isSubagentChildRun(run: FridayAgentRunRecord): boolean {
+  return run.sessionKey.trim().startsWith("subagent:");
+}
+
+function isUserVisibleAgentRun(run: FridayAgentRunRecord): boolean {
+  return !isInternalAutonomousRun(run) && !isSubagentChildRun(run);
+}
+
 function filterVisibleAgentRuns(runs: FridayAgentRunRecord[]): FridayAgentRunRecord[] {
-  return runs.filter((run) => !isInternalAutonomousRun(run));
+  return runs.filter(isUserVisibleAgentRun);
+}
+
+function expandVisibleRunFetchLimit(limit?: number): number | undefined {
+  if (typeof limit !== "number") {
+    return undefined;
+  }
+  return Math.min(Math.max(limit * 4, limit), AGENT_MAX_LIST_LIMIT);
+}
+
+function isCustomPackRun(run: FridayAgentRunRecord): boolean {
+  return Boolean(run.metadata?.packContext?.packId?.trim().startsWith("custom-"));
+}
+
+function sanitizeCustomPackText(text: string): string {
+  const filteredLines = text
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/(?:任务包\s*id|pack(?:\s|_)?id|run(?:\s|_)?id|session(?:\s|_)?id|session(?:\s|_)?key)\s*[:：=]\s*[^\s,，;；)）]+/giu, "")
+        .replace(/\b(?:readOnly|readonly)\b\s*(?:[:=]\s*(?:true|false))?/giu, "")
+        .replace(/\b(?:skills_list|memory_search|agents_list|sub-agent|subagent|sessionKey|childRunId|tool[_ ]call|tool name)\b/giu, "")
+        .replace(CUSTOM_PACK_UUID_RE, "")
+        .replace(/[（(]\s*ID\s*[:：]\s*[）)]/giu, "")
+        .replace(/\bID\s*[:：]\s*/giu, "")
+        .replace(/[（(]\s*[）)]/gu, "")
+        .replace(/\s{2,}/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^(?:[-*•]\s*|(?:\d+[.)]\s*))$/u.test(line))
+    .filter((line) => !CUSTOM_PACK_INTERNAL_LINE_DROP_PATTERNS.some((pattern) => pattern.test(line)))
+    .filter((line) => !CUSTOM_PACK_INTERNAL_DETAIL_PATTERNS.some((pattern) => pattern.test(line)));
+
+  const sanitized = filteredLines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return sanitized.length > 0
+    ? sanitized
+    : "这次自创任务已经完成，结果已按真实任务定义和真实运行记录整理。";
+}
+
+function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord {
+  if (!isCustomPackRun(run)) {
+    return run;
+  }
+
+  return {
+    ...run,
+    ...(run.responseText ? { responseText: sanitizeCustomPackText(run.responseText) } : {}),
+    ...(run.summary ? { summary: sanitizeCustomPackText(run.summary) } : {}),
+    ...(run.errorMessage ? { errorMessage: sanitizeCustomPackText(run.errorMessage) } : {}),
+  };
 }
 
 // ─── Deps ───
@@ -92,6 +169,7 @@ export interface FridayAgentRoutesDeps {
   ) => Promise<void>;
   startRun: (input: {
     task: string;
+    taskPrompt?: string;
     sessionKey?: string;
     providerId?: string;
     model?: string;
@@ -202,6 +280,18 @@ interface FridaySseResponse {
 export function createFridayAgentRoutes(
   deps: FridayAgentRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function getVisibleRunOrThrow(runId: string): FridayAgentRunRecord {
+    const run = deps.getRun(runId);
+    if (!run || !isUserVisibleAgentRun(run)) {
+      throw new FridayDomainError(
+        "AGENT_RUN_NOT_FOUND",
+        "Agent run not found",
+        { httpStatus: 404 },
+      );
+    }
+    return sanitizeUserVisibleRun(run);
+  }
+
   function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
     if (!principal || typeof principal !== "object") {
       return undefined;
@@ -285,6 +375,16 @@ export function createFridayAgentRoutes(
           throw new FridayDomainError(
             "VALIDATION_ERROR",
             "replyToMessageId must be a non-empty string when provided",
+            { httpStatus: 400 },
+          );
+        }
+        const taskPrompt = typeof body.taskPrompt === "string" && body.taskPrompt.trim().length > 0
+          ? body.taskPrompt.trim()
+          : undefined;
+        if (body.taskPrompt !== undefined && !taskPrompt) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "taskPrompt must be a non-empty string when provided",
             { httpStatus: 400 },
           );
         }
@@ -413,6 +513,7 @@ export function createFridayAgentRoutes(
         const apiIdempotencyPayloadHash = apiIdempotencyKey
           ? hashIdempotencyPayload({
             task: body.task,
+            taskPrompt,
             sessionKey,
             providerId,
             model,
@@ -428,6 +529,7 @@ export function createFridayAgentRoutes(
 
         const result = await deps.startRun({
           task: body.task,
+          taskPrompt,
           sessionKey,
           providerId,
           model,
@@ -486,7 +588,14 @@ export function createFridayAgentRoutes(
           ? rawStatus as FridayAgentRunStatus
           : undefined;
 
-        const items = filterVisibleAgentRuns(deps.listRuns({ status, limit, cursor: query.cursor }));
+        const fetchedRuns = deps.listRuns({
+          status,
+          limit: expandVisibleRunFetchLimit(limit),
+          cursor: query.cursor,
+        });
+        const items = filterVisibleAgentRuns(fetchedRuns)
+          .slice(0, limit ?? AGENT_MAX_LIST_LIMIT)
+          .map((run) => sanitizeUserVisibleRun(run));
         const response: FridayListAgentRunsResponse = { items };
         return response;
       },
@@ -500,7 +609,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const query = ctx.query as { since?: string };
-        const allRuns = filterVisibleAgentRuns(deps.listRuns({ limit: 100 }));
+        const allRuns = filterVisibleAgentRuns(deps.listRuns({ limit: AGENT_MAX_LIST_LIMIT }));
         const since = query.since ? new Date(query.since).getTime() : 0;
         const recentRuns = since > 0
           ? allRuns.filter((r) => new Date(r.createdAt).getTime() >= since)
@@ -544,14 +653,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        const run = getVisibleRunOrThrow(runId);
         const response: FridayGetAgentRunResponse = { run };
         return response;
       },
@@ -565,14 +667,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        const run = getVisibleRunOrThrow(runId);
         if (TERMINAL_STATUSES.has(run.status)) {
           throw new FridayDomainError(
             "AGENT_RUN_ALREADY_TERMINAL",
@@ -594,14 +689,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         const AUDIT_EVENT_NAMES = new Set([
           "agent.run.started",
           "agent.run.tool_start",
@@ -643,14 +731,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         if (!deps.rollbackRun) {
           throw new FridayDomainError(
             "AGENT_ROLLBACK_NOT_AVAILABLE",
@@ -678,14 +759,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         return await deps.approvePlan(runId);
       },
     },
@@ -698,14 +772,7 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         return await deps.rejectPlan(runId);
       },
     },
@@ -727,14 +794,7 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         return deps.resolveToolApproval(runId, toolCallId, true);
       },
     },
@@ -756,14 +816,7 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        getVisibleRunOrThrow(runId);
         return deps.resolveToolApproval(runId, toolCallId, false, body?.reason);
       },
     },
@@ -777,14 +830,7 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const query = ctx.query as Record<string, string | undefined>;
-        const run = deps.getRun(runId);
-        if (!run) {
-          throw new FridayDomainError(
-            "AGENT_RUN_NOT_FOUND",
-            "Agent run not found",
-            { httpStatus: 404 },
-          );
-        }
+        const run = getVisibleRunOrThrow(runId);
         let afterSeq: number | undefined;
         if (query.afterSeq !== undefined) {
           const parsed = Number(query.afterSeq);

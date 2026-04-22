@@ -2,8 +2,9 @@ import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { ActionButton } from "@/components/core/primitives";
+import { useCustomPacks } from "@/hooks/use-custom-packs";
 import { localize } from "@/lib/i18n/localized-text";
-import { saveCustomPack, type CustomPackInput } from "@/lib/packs/pack-registry";
+import type { CustomPackInput } from "@/lib/packs/pack-registry";
 import { skillsApi } from "@/lib/api/skills";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -15,6 +16,7 @@ export interface CustomPackBuilderProps {
 
 export function CustomPackBuilder({ open, onClose, onSaved }: CustomPackBuilderProps) {
   const { locale } = useAppLocale();
+  const { createCustomPack } = useCustomPacks();
 
   const [name, setName] = useState("");
   const [nameEn, setNameEn] = useState("");
@@ -63,7 +65,7 @@ export function CustomPackBuilder({ open, onClose, onSaved }: CustomPackBuilderP
       entryPrompts,
     };
 
-    saveCustomPack(input);
+    createCustomPack(input);
     resetForm();
     onSaved();
     onClose();

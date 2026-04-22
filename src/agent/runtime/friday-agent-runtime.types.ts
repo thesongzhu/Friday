@@ -124,6 +124,7 @@ export interface FridayAgentSystemPromptContext {
   timezone: string;
   localDate: string;
   task?: string;
+  executionContext?: FridayAgentExecutionContext;
   conversationContext?: FridayAgentConversationContext;
 }
 

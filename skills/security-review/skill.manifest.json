@@ -45,9 +45,7 @@
     ]
   },
   "requirements": {
-    "bins": [
-      "rg"
-    ],
+    "bins": [],
     "env": [],
     "config": [],
     "os": [

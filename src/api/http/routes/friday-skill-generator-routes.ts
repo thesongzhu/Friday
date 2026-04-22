@@ -12,10 +12,13 @@ import type { FridaySkillUiSchemaV1 } from "#skills/generator";
 import {
   createFridayNodeExecutor,
   createFridayShellExecutor,
+  evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayPythonRuntimeUnavailableMessage,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
   loadFridaySkillPackage,
+  resolveFridayPythonCommand,
   type SkillManifestV2,
   validateFridaySkillPackage,
 } from "#skills";
@@ -258,6 +261,42 @@ function buildDraftExecutionInput(
   return { ok: true, input };
 }
 
+function buildDraftRuntimeEnv(requiredEnvKeys: readonly string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const envKey of requiredEnvKeys) {
+    if (process.env[envKey] != null) {
+      env[envKey] = process.env[envKey]!;
+    }
+  }
+  return env;
+}
+
+function looksLikeJsonValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed === "true" || trimmed === "false" || trimmed === "null") return true;
+  const first = trimmed[0];
+  return (
+    first === "{" ||
+    first === "[" ||
+    first === '"' ||
+    first === "-" ||
+    (first >= "0" && first <= "9")
+  );
+}
+
+function parseDraftStructuredStdout(stdout: string): Record<string, unknown> {
+  if (!looksLikeJsonValue(stdout)) {
+    return { raw: stdout };
+  }
+
+  const parsed: unknown = JSON.parse(stdout);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return { result: parsed };
+}
+
 async function executeDraftFromTempDir(
   root: string,
   manifest: SkillManifestV2,
@@ -268,18 +307,27 @@ async function executeDraftFromTempDir(
   stdout: string;
   stderr: string;
 }> {
+  const readiness = evaluateFridaySkillExecutionReadiness({ manifest });
+  if (!readiness.ready) {
+    return {
+      status: "failed",
+      output: {
+        code: "SKILL_NOT_READY",
+        runtimeKind: manifest.runtime.kind,
+        blockers: readiness.blockers,
+        requirements: readiness.requirements,
+      },
+      stdout: "",
+      stderr: readiness.blockers.join(" "),
+    };
+  }
+
   if (manifest.runtime.kind === "shell") {
     const shellExecutor = createFridayShellExecutor();
-    const env: Record<string, string> = {};
-    for (const envKey of manifest.requirements.env) {
-      if (process.env[envKey] != null) {
-        env[envKey] = process.env[envKey]!;
-      }
-    }
     const shellResult = await shellExecutor.run({
       command: join(root, manifest.runtime.entrypoint),
       cwd: root,
-      env,
+      env: buildDraftRuntimeEnv(manifest.requirements.env),
       timeoutMs: manifest.runtime.timeoutMsDefault,
       stdin: JSON.stringify(input),
     });
@@ -290,13 +338,56 @@ async function executeDraftFromTempDir(
       return { status: "failed", output: {}, stdout: shellResult.stdout, stderr: shellResult.stderr };
     }
     try {
-      const parsed = JSON.parse(shellResult.stdout) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return { status: "completed", output: parsed as Record<string, unknown>, stdout: shellResult.stdout, stderr: shellResult.stderr };
-      }
-      return { status: "completed", output: { result: parsed }, stdout: shellResult.stdout, stderr: shellResult.stderr };
+      return {
+        status: "completed",
+        output: parseDraftStructuredStdout(shellResult.stdout),
+        stdout: shellResult.stdout,
+        stderr: shellResult.stderr,
+      };
     } catch {
       return { status: "completed", output: { raw: shellResult.stdout }, stdout: shellResult.stdout, stderr: shellResult.stderr };
+    }
+  }
+
+  if (manifest.runtime.kind === "python") {
+    const pythonCommand = resolveFridayPythonCommand();
+    if (!pythonCommand) {
+      return {
+        status: "failed",
+        output: {
+          code: "SKILL_NOT_READY",
+          runtimeKind: "python",
+          blockers: [getFridayPythonRuntimeUnavailableMessage()],
+        },
+        stdout: "",
+        stderr: getFridayPythonRuntimeUnavailableMessage(),
+      };
+    }
+
+    const shellExecutor = createFridayShellExecutor();
+    const pythonResult = await shellExecutor.run({
+      command: pythonCommand,
+      args: [join(root, manifest.runtime.entrypoint)],
+      cwd: root,
+      env: buildDraftRuntimeEnv(manifest.requirements.env),
+      timeoutMs: manifest.runtime.timeoutMsDefault,
+      stdin: JSON.stringify(input),
+    });
+    if (pythonResult.timedOut) {
+      return { status: "timeout", output: {}, stdout: pythonResult.stdout, stderr: pythonResult.stderr };
+    }
+    if (pythonResult.exitCode !== 0) {
+      return { status: "failed", output: {}, stdout: pythonResult.stdout, stderr: pythonResult.stderr };
+    }
+    try {
+      return {
+        status: "completed",
+        output: parseDraftStructuredStdout(pythonResult.stdout),
+        stdout: pythonResult.stdout,
+        stderr: pythonResult.stderr,
+      };
+    } catch {
+      return { status: "completed", output: { raw: pythonResult.stdout }, stdout: pythonResult.stdout, stderr: pythonResult.stderr };
     }
   }
 

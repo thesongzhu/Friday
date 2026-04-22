@@ -20,6 +20,8 @@ import type { FridayProviderTenantContext } from "#providers";
 export interface FridayEngineRunInput {
   /** The user task / message text. */
   task: string;
+  /** Optional internal execution prompt when stored task copy must stay user-facing. */
+  taskPrompt?: string;
   /** Caller-supplied or auto-generated run identifier. */
   runId: string;
   /** Session to operate within (determines history / focus). */

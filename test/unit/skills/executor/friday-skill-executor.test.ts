@@ -3,6 +3,7 @@ import { createFridayChannelRegistry } from "#channels";
 import {
   createFridaySkillExecutor,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  FRIDAY_SKILL_PYTHON_BIN_ENV,
 } from "#skills";
 import { createFridaySkillRunStore } from "#ledger";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -144,27 +145,100 @@ describe("FridaySkillExecutor", () => {
     expect(result.stderr).toContain("not found");
   });
 
-  it("returns failed for unsupported runtime kind", async () => {
-    const skill = makeRegisteredSkill({
-      id: "echo-skill",
-      runtimeKind: "python",
-    });
+  it("routes python skills through the configured interpreter", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-python-");
+    const previousPythonBin = process.env[FRIDAY_SKILL_PYTHON_BIN_ENV];
 
-    const skills = new Map<string, FridayRegisteredSkill>();
-    skills.set("echo-skill", skill);
+    try {
+      await fs.writeFile(
+        `${scriptDir}/python-shim`,
+        "#!/bin/sh\nprintf '{\"result\":\"python-ok\",\"entrypoint\":\"%s\"}' \"$(basename \"$1\")\"\n",
+        { mode: 0o755 },
+      );
+      await fs.writeFile(`${scriptDir}/index.py`, "print('ignored by shim')\n", "utf8");
+      process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = `${scriptDir}/python-shim`;
 
-    const executor = createFridaySkillExecutor({
-      db,
-      registry: createMockRegistry(skills),
-      runStore,
-      idGenerator: createTestIdGenerator(),
-      nowIso: () => "2025-01-15T10:00:00.000Z",
-    });
+      const skill = makeRegisteredSkill({
+        id: "echo-skill",
+        runtimeKind: "python",
+        entrypoint: "index.py",
+        skillDir: scriptDir,
+      });
 
-    const result = await executor.execute(baseRequest).result;
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("echo-skill", skill);
 
-    expect(result.status).toBe("failed");
-    expect(result.stderr).toContain("Unsupported runtime kind");
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute(baseRequest).result;
+
+      expect(result.status).toBe("completed");
+      expect(result.output).toMatchObject({
+        result: "python-ok",
+        entrypoint: "index.py",
+      });
+    } finally {
+      if (previousPythonBin === undefined) {
+        delete process.env[FRIDAY_SKILL_PYTHON_BIN_ENV];
+      } else {
+        process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = previousPythonBin;
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when runtime readiness requirements are missing", async () => {
+    const requiredEnvKey = "FRIDAY_TEST_REQUIRED_EXECUTOR_ENV";
+    const previous = process.env[requiredEnvKey];
+    delete process.env[requiredEnvKey];
+
+    try {
+      const skill = makeRegisteredSkill({
+        id: "env-skill",
+        runtimeKind: "shell",
+        entrypoint: "/bin/echo",
+        skillDir: "/tmp",
+      });
+      skill.manifest.requirements.env = [requiredEnvKey];
+
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("env-skill", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "env-skill",
+      }).result;
+
+      expect(result.status).toBe("failed");
+      expect(result.output).toMatchObject({
+        code: "SKILL_NOT_READY",
+        runtimeKind: "shell",
+      });
+      expect((result.output.blockers as string[])).toContain(
+        `Missing required environment variables: ${requiredEnvKey}`,
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env[requiredEnvKey];
+      } else {
+        process.env[requiredEnvKey] = previous;
+      }
+    }
   });
 
   it("persists run state in the run store", async () => {
@@ -196,6 +270,178 @@ describe("FridaySkillExecutor", () => {
     expect(stored!.userId).toBe("test-user");
     // Terminal status
     expect(["completed", "failed", "cancelled"]).toContain(stored!.status);
+  });
+
+  it("applies manifest default values before execution", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-defaults-");
+
+    try {
+      await fs.writeFile(
+        `${scriptDir}/echo-input.sh`,
+        "#!/bin/sh\ncat\n",
+        { mode: 0o755 },
+      );
+
+      const skill = makeRegisteredSkill({
+        id: "defaults-skill",
+        runtimeKind: "shell",
+        entrypoint: "echo-input.sh",
+        skillDir: scriptDir,
+      });
+      skill.manifest.inputs = [{
+        key: "topic",
+        type: "string",
+        required: true,
+        label: "Topic",
+        defaultValue: "fallback-topic",
+      }];
+
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("defaults-skill", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "defaults-skill",
+        input: {},
+      }).result;
+
+      expect(result.status).toBe("completed");
+      expect(result.output).toMatchObject({
+        topic: "fallback-topic",
+      });
+    } finally {
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when input schema validation rejects the prepared input", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-input-schema-");
+
+    try {
+      await fs.writeFile(
+        `${scriptDir}/echo-input.sh`,
+        "#!/bin/sh\ncat\n",
+        { mode: 0o755 },
+      );
+      await fs.writeFile(
+        `${scriptDir}/input.schema.json`,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            topic: { type: "string", minLength: 3 },
+          },
+          required: ["topic"],
+          additionalProperties: false,
+        }),
+        "utf8",
+      );
+
+      const skill = makeRegisteredSkill({
+        id: "schema-input-skill",
+        runtimeKind: "shell",
+        entrypoint: "echo-input.sh",
+        skillDir: scriptDir,
+      });
+      skill.manifest.schemas = {
+        input: "input.schema.json",
+        state: null,
+        output: null,
+      };
+
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("schema-input-skill", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "schema-input-skill",
+        input: { topic: "x" },
+      }).result;
+
+      expect(result.status).toBe("failed");
+      expect(result.output).toMatchObject({
+        code: "SKILL_INPUT_SCHEMA_INVALID",
+      });
+    } finally {
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when output schema validation rejects runtime output", async () => {
+    const fs = await import("node:fs/promises");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-output-schema-");
+
+    try {
+      await fs.writeFile(
+        `${scriptDir}/bad-output.sh`,
+        "#!/bin/sh\nprintf '{\"count\":\"oops\"}'\n",
+        { mode: 0o755 },
+      );
+      await fs.writeFile(
+        `${scriptDir}/output.schema.json`,
+        JSON.stringify({
+          type: "object",
+          properties: {
+            count: { type: "number" },
+          },
+          required: ["count"],
+          additionalProperties: false,
+        }),
+        "utf8",
+      );
+
+      const skill = makeRegisteredSkill({
+        id: "schema-output-skill",
+        runtimeKind: "shell",
+        entrypoint: "bad-output.sh",
+        skillDir: scriptDir,
+      });
+      skill.manifest.schemas = {
+        input: null,
+        state: null,
+        output: "output.schema.json",
+      };
+
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("schema-output-skill", skill);
+
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "schema-output-skill",
+      }).result;
+
+      expect(result.status).toBe("failed");
+      expect(result.output).toMatchObject({
+        code: "SKILL_OUTPUT_SCHEMA_INVALID",
+      });
+    } finally {
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
   });
 
   it("handles shell execution with timeout", { timeout: 30_000 }, async () => {
