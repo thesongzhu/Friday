@@ -174,6 +174,31 @@ export function WorkflowsPage() {
     },
   });
 
+  const startRunMutation = useMutation({
+    mutationFn: (input: { workflowId: string; workflowVersionId?: string }) =>
+      workflowRunsApi.start({
+        workflowId: input.workflowId,
+        workflowVersionId: input.workflowVersionId,
+        triggerType: "manual",
+        triggerPayload: {},
+      }),
+    onSuccess: () => {
+      toast.success(locale === "zh" ? "工作流已启动。" : "Workflow run started.");
+      if (selectedWorkflowId) {
+        void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+        void queryClient.invalidateQueries({
+          queryKey: systemKeys.workflowVisualization(
+            selectedWorkflowId,
+            overviewQuery.data?.latestDraft?.draftId ?? overviewQuery.data?.publishedVersion?.id ?? "default",
+          ),
+        });
+      }
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : (locale === "zh" ? "无法启动工作流。" : "Failed to start workflow."));
+    },
+  });
+
   const graphNodes = useMemo(() => {
     const spec = visualizationQuery.data?.spec;
     const visual = visualizationQuery.data?.visual;
@@ -205,6 +230,8 @@ export function WorkflowsPage() {
         : [],
     [overviewQuery.data, visualizationQuery.data],
   );
+
+  const runnableWorkflowVersionId = overviewQuery.data?.publishedVersion?.id ?? overviewQuery.data?.latestVersion?.id;
 
   const handleSelectWorkflow = (workflowId: string) => {
     setSelectedWorkflowId(workflowId);
@@ -297,6 +324,19 @@ export function WorkflowsPage() {
                     <ActionButton tone="secondary" onClick={handleSecondaryAction} disabled={deployMutation.isPending}>
                       <Package className="mr-2 h-4 w-4" />
                       {attentionSummary.secondaryLabel}
+                    </ActionButton>
+                  ) : null}
+                  {runnableWorkflowVersionId ? (
+                    <ActionButton
+                      tone="secondary"
+                      onClick={() => startRunMutation.mutate({
+                        workflowId: overviewQuery.data.workflow.id,
+                        workflowVersionId: runnableWorkflowVersionId,
+                      })}
+                      disabled={startRunMutation.isPending}
+                    >
+                      <PlayCircle className="mr-2 h-4 w-4" />
+                      {locale === "zh" ? "运行当前工作流" : "Run current workflow"}
                     </ActionButton>
                   ) : null}
                   <Link

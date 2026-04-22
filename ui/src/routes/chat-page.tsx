@@ -416,19 +416,16 @@ export function ChatPage() {
         pack={selectedPack}
         onClose={() => setSelectedPackId(null)}
         onStartNow={() => {
-          setSelectedPackId(null);
           if (selectedPack) {
             void startPackNow(selectedPack);
           }
         }}
         onAdjustBeforeStart={() => {
-          setSelectedPackId(null);
           if (selectedPack) {
             adjustPackBeforeStart(selectedPack);
           }
         }}
         onOpenSkill={(skillId) => {
-          setSelectedPackId(null);
           navigate(buildSkillHref(skillId));
         }}
         onAskFriday={(prompt) => {
@@ -443,7 +440,6 @@ export function ChatPage() {
           setDraftText(prompt);
         }}
         onOpenAssistant={selectedPack ? () => {
-          setSelectedPackId(null);
           setPendingPackPath(buildPackAssistantHref(selectedPack.id));
         } : undefined}
       />
