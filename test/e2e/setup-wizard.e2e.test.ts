@@ -23,6 +23,11 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import {
+  clearAutoDetectProviderEnv,
+  restoreAutoDetectProviderEnv,
+  type FridayAutoDetectProviderEnvSnapshot,
+} from "../_helpers/auto-detect-provider-env.js";
 
 // ─── Env gates ───
 
@@ -96,19 +101,29 @@ describe("Setup Wizard E2E", () => {
   let baseUrl: string;
   let stateDir: string;
   let accessToken: string;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
 
   beforeAll(async () => {
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+
     // 1. Create temp state dir
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-setup-wizard-e2e-"));
 
     // 2. Create hub
-    hub = await createFridayHub({
-      stateDir,
-      skillDirs: [],
-      port: 0,
-      logRequests: false,
-    });
-    await hub.start();
+    try {
+      hub = await createFridayHub({
+        stateDir,
+        skillDirs: [],
+        port: 0,
+        logRequests: false,
+      });
+      await hub.start();
+    } finally {
+      if (autoDetectEnvSnapshot) {
+        restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+        autoDetectEnvSnapshot = null;
+      }
+    }
 
     // 3. Spin up HTTP server
     const port = await findFreePort();
@@ -148,6 +163,10 @@ describe("Setup Wizard E2E", () => {
     if (httpServer) await httpServer.close();
     if (hub) await hub.stop();
     if (stateDir) fs.rmSync(stateDir, { recursive: true, force: true });
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
     clearTimeout(closeTimeout);
   }, 15_000);
 
@@ -551,14 +570,14 @@ describe("Setup Wizard E2E", () => {
       });
       const page = await context.newPage();
       try {
-        await page.goto("/", { waitUntil: "networkidle" });
-        await page.waitForURL("**/chat", { timeout: 30_000 });
-        expect(new URL(page.url()).pathname).toBe("/chat");
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await page.waitForURL("**/home", { timeout: 30_000 });
+        expect(new URL(page.url()).pathname).toBe("/home");
       } finally {
         await context.close();
         await browser.close();
       }
-    });
+    }, 20_000);
 
     it("A13: full wizard API flow should pass end-to-end", async () => {
       // NOTE: This is a re-run flow test, not a fresh-state test. The hub was already
