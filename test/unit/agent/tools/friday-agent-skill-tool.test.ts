@@ -221,7 +221,7 @@ describe("FridayAgentSkillTool", () => {
 
     expect(result.isError).toBeUndefined();
     expect(executor.execute).not.toHaveBeenCalled();
-    expect(JSON.parse(result.content)).toEqual({
+    expect(JSON.parse(result.content)).toMatchObject({
       skillId: "secure-skill",
       status: "blocked",
       ready: false,
@@ -355,6 +355,62 @@ describe("FridayAgentSkillTool", () => {
         process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
       }
     }
+  });
+
+  it("does not block required inputs that have default values in the manifest", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      skillRegistry: {
+        ...mockRegistry(),
+        get: vi.fn((skillId: string) => {
+          if (skillId !== "defaults-skill") {
+            return null;
+          }
+          const manifest = makeManifest({
+            id: "defaults-skill",
+            inputs: [{
+              key: "topic",
+              type: "string",
+              required: true,
+              label: "Topic",
+              defaultValue: "fallback-topic",
+            }],
+          });
+          return {
+            manifest,
+            skillDir: "/tmp/defaults-skill",
+            source: "bundled",
+            origin: "bundled",
+            status: "installed",
+            loaded: {
+              skillDir: "/tmp/defaults-skill",
+              manifest,
+              loadMode: "manifest-v2",
+              declaredFiles: [],
+            },
+            validation: { ok: true, issues: [] },
+            trust: {
+              trustTier: "bundled",
+              executionMode: "trusted",
+              sandboxPolicy: {
+                trustTier: "bundled",
+                defaultExecutionMode: "trusted",
+                allowedExecutionModes: ["trusted", "restricted"],
+              },
+            },
+          };
+        }),
+      } as unknown as FridaySkillRegistry,
+    });
+
+    const result = await tool.execute(
+      { skillId: "defaults-skill", input: {} },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).toHaveBeenCalledOnce();
   });
 
   // ─── Missing required param ───

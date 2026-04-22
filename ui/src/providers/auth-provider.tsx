@@ -1,6 +1,6 @@
 import * as React from "react";
 import { authStorage } from "@/lib/storage/auth-storage";
-import { fetchBootstrapStatus, fetchMe, login, logout, type LoginInput } from "@/lib/api/auth";
+import { fetchMe, login as loginRequest, logout, type LoginInput } from "@/lib/api/auth";
 import type { FridayUser } from "@/lib/api/types";
 
 // ─── Context shape ───
@@ -9,72 +9,88 @@ interface AuthContextValue {
   user: FridayUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  authError: Error | null;
   login: (input: LoginInput) => Promise<void>;
   logout: () => Promise<void>;
+  retryLocalSession: () => Promise<void>;
 }
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
 
-const LOCAL_OPERATOR_FALLBACK_USER: FridayUser = {
-  id: "local-operator",
-  displayName: "Local Operator",
-  role: "operator",
-};
+function normalizeAuthError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : new Error("Failed to establish the local Friday session.");
+}
 
 // ─── Provider ───
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<FridayUser | null>(authStorage.getUser());
   const [isLoading, setIsLoading] = React.useState(true);
+  const [authError, setAuthError] = React.useState<Error | null>(null);
 
-  // Bootstrap: verify stored token, then attempt passwordless local auto-login if allowed.
+  const establishLocalSession = React.useCallback(async () => {
+    const response = await loginRequest({ local: true });
+    setUser(response.user);
+    authStorage.setUser(response.user);
+    setAuthError(null);
+  }, []);
+
+  const retryLocalSession = React.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      await establishLocalSession();
+    } catch (error) {
+      authStorage.clear();
+      setUser(null);
+      setAuthError(normalizeAuthError(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [establishLocalSession]);
+
   React.useEffect(() => {
     let cancelled = false;
 
     const bootstrap = async () => {
-      const token = authStorage.getAccessToken();
-      if (token) {
-        try {
-          const me = await fetchMe();
-          if (cancelled) return;
-          setUser(me.user);
-          authStorage.setUser(me.user);
-        } catch {
-          if (cancelled) return;
-          setUser(LOCAL_OPERATOR_FALLBACK_USER);
-          authStorage.clear();
-        } finally {
-          if (!cancelled) setIsLoading(false);
-        }
-        return;
-      }
-
-      // No token: clear stale client auth state before probing auto-login.
-      authStorage.clear();
-      setUser(null);
+      setIsLoading(true);
+      setAuthError(null);
 
       try {
-        const status = await fetchBootstrapStatus();
-        if (cancelled) return;
-
-        if (status.allowLocalBypassLogin || status.allowPasswordlessLocalLogin) {
+        const token = authStorage.getAccessToken();
+        if (token) {
           try {
-            const response = await login({ local: true });
+            const me = await fetchMe();
             if (cancelled) return;
-            setUser(response.user);
-            setIsLoading(false);
+            setUser(me.user);
+            authStorage.setUser(me.user);
+            setAuthError(null);
             return;
           } catch {
-            // Continue to local shell fallback.
+            if (cancelled) return;
+            authStorage.clear();
+            setUser(null);
           }
+        } else {
+          authStorage.clear();
+          setUser(null);
         }
-      } catch {
-        // Best-effort probe only.
-      }
 
-      if (!cancelled) {
-        setUser(LOCAL_OPERATOR_FALLBACK_USER);
-        setIsLoading(false);
+        const response = await loginRequest({ local: true });
+        if (cancelled) return;
+        setUser(response.user);
+        authStorage.setUser(response.user);
+        setAuthError(null);
+      } catch (error) {
+        if (cancelled) return;
+        authStorage.clear();
+        setUser(null);
+        setAuthError(normalizeAuthError(error));
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -85,13 +101,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleLogin = React.useCallback(async (input: LoginInput) => {
-    const response = await login(input);
+    const response = await loginRequest(input);
     setUser(response.user);
+    setAuthError(null);
   }, []);
 
   const handleLogout = React.useCallback(async () => {
     await logout();
     setUser(null);
+    setAuthError(null);
   }, []);
 
   const value = React.useMemo<AuthContextValue>(
@@ -99,10 +117,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       isAuthenticated: user !== null,
       isLoading,
+      authError,
       login: handleLogin,
       logout: handleLogout,
+      retryLocalSession,
     }),
-    [user, isLoading, handleLogin, handleLogout],
+    [user, isLoading, authError, handleLogin, handleLogout, retryLocalSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -477,10 +477,44 @@ const FRIDAY_UIX_PREFERENCE_KEYS = new Set([
   "home.packOrder",
   "home.widgetOrder",
   "home.visibleWidgets",
+  "packs.customInputs",
 ]);
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isCustomPackInputRecord(value: unknown): value is {
+  name: string;
+  nameEn?: string;
+  description: string;
+  descriptionEn?: string;
+  skillIds?: string[];
+  entryPrompts?: string[];
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record["name"] !== "string" || record["name"].trim().length === 0) {
+    return false;
+  }
+  if (typeof record["description"] !== "string" || record["description"].trim().length === 0) {
+    return false;
+  }
+  if (record["nameEn"] !== undefined && typeof record["nameEn"] !== "string") {
+    return false;
+  }
+  if (record["descriptionEn"] !== undefined && typeof record["descriptionEn"] !== "string") {
+    return false;
+  }
+  if (record["skillIds"] !== undefined && !isStringArray(record["skillIds"])) {
+    return false;
+  }
+  if (record["entryPrompts"] !== undefined && !isStringArray(record["entryPrompts"])) {
+    return false;
+  }
+  return true;
 }
 
 const HIGH_RISK_KEYWORDS = [
@@ -595,6 +629,9 @@ function isValidUixPreference(
   }
   if (key === "home.widgetOrder" || key === "home.visibleWidgets") {
     return isStringArray(value) && value.every((item) => FRIDAY_UIX_HOME_WIDGET_IDS.has(item));
+  }
+  if (key === "packs.customInputs") {
+    return Array.isArray(value) && value.every((item) => isCustomPackInputRecord(item));
   }
   return false;
 }

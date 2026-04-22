@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LogOut } from "lucide-react";
 import { CommandPalette } from "@/components/core/command-palette";
-import { useAuth } from "@/hooks/use-auth";
+import { useCustomPacks } from "@/hooks/use-custom-packs";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { onCommandPaletteOpenRequest } from "@/lib/command-palette";
 import { completeClientRouteTransition } from "@/lib/diagnostics/client-stability";
 import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
 import { AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "@/lib/routes/agent-os-nav";
@@ -35,7 +35,7 @@ function writeCollapsed(collapsed: boolean): void {
 
 export function ConsoleShell() {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  useCustomPacks();
   const { profileType } = useUserProfile();
   const { rememberPrimarySurface } = useHomeSurfacePreferences(profileType);
   const { locale, setLocale } = useAppLocale();
@@ -85,6 +85,8 @@ export function ConsoleShell() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => onCommandPaletteOpenRequest(() => setPaletteOpen(true)), []);
+
   // Adaptive-layout bookkeeping + remember last primary surface.
   useEffect(() => {
     if (location.pathname === "/home") {
@@ -119,6 +121,7 @@ export function ConsoleShell() {
   );
 
   const isOnChatPage = location.pathname === "/chat";
+  const showDesktopTopBar = location.pathname !== "/home";
 
   return (
     <div
@@ -142,13 +145,18 @@ export function ConsoleShell() {
 
         <div
           ref={mainScrollRef}
-          className="scrollbar-autohide flex min-w-0 flex-1 flex-col overflow-y-auto"
+          className={cn(
+            "scrollbar-autohide flex min-w-0 flex-1 flex-col",
+            isOnChatPage ? "overflow-hidden" : "overflow-y-auto",
+          )}
         >
-          <TopBar
-            currentPageTitle={currentPageTitle}
-            locale={locale}
-            onOpenPalette={() => setPaletteOpen(true)}
-          />
+          {showDesktopTopBar ? (
+            <TopBar
+              currentPageTitle={currentPageTitle}
+              locale={locale}
+              onOpenPalette={() => setPaletteOpen(true)}
+            />
+          ) : null}
           <MobileTopBar
             currentPageTitle={currentPageTitle}
             locale={locale}
@@ -171,22 +179,12 @@ export function ConsoleShell() {
                     {localize(locale, "更多", "More")}
                   </p>
                   <p className="mt-0.5 text-sm" style={{ color: "var(--ink-700)" }}>
-                    {user?.displayName ?? localize(locale, "当前用户", "Account")}
+                    {localize(locale, "Friday Console", "Friday Console")}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void logout()}
-                  className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-sm"
-                  style={{
-                    borderColor: "rgba(122, 106, 88, 0.22)",
-                    background: "var(--surface-2)",
-                    color: "var(--ink-700)",
-                  }}
-                >
-                  <LogOut className="h-4 w-4" />
-                  {localize(locale, "退出登录", "Sign out")}
-                </button>
+                <p className="text-xs" style={{ color: "var(--ink-500)" }}>
+                  {localize(locale, "本地会话", "Local session")}
+                </p>
               </div>
 
               <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -213,9 +211,14 @@ export function ConsoleShell() {
             </div>
           ) : null}
 
-          <main className="flex w-full flex-1 justify-start px-4 pt-3 lg:px-5 lg:pt-3">
+          <main
+            className={cn(
+              "flex w-full flex-1 justify-start px-4 pt-3 lg:px-5 lg:pt-3",
+              isOnChatPage && "min-h-0 pb-3 lg:pb-4",
+            )}
+          >
             <div
-              className={cn("w-full", isOnChatPage ? "" : "")}
+              className={cn("w-full", isOnChatPage && "flex min-h-0 flex-1 flex-col")}
               style={{
                 maxWidth: isOnChatPage ? undefined : "var(--shell-content-max-w)",
               }}

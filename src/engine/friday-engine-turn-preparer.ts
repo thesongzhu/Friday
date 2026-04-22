@@ -166,6 +166,7 @@ export interface CreateFridayEngineTurnPreparerDeps {
 
 export interface FridayTurnPreparerInput {
   task: string;
+  taskPrompt?: string;
   runId: string;
   sessionKey?: string;
   replyToMessageId?: string;
@@ -309,6 +310,9 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
 
   async function prepare(input: FridayTurnPreparerInput): Promise<FridayPreparedEngineContext> {
     const task = input.task.trim();
+    const taskPromptOverride = typeof input.taskPrompt === "string" && input.taskPrompt.trim().length > 0
+      ? input.taskPrompt.trim()
+      : undefined;
     const shouldPersist = input.sessionKey && input.persistTaskMessage !== false;
     let inboundIdempotencyKey: string | undefined;
     let currentUserSequence: number | undefined;
@@ -336,7 +340,7 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
 
     // ── Session-based turn preparation ──
     let historyMessages: FridayAgentMessage[] | undefined;
-    let taskPrompt = task;
+    let taskPrompt = taskPromptOverride ?? task;
     let replyAnchorMessageId: string | undefined;
     let replyAnchorSequence: number | undefined;
     let conversationContext: FridayPreparedEngineContext["conversationContext"];
@@ -416,7 +420,12 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
       }
 
       historyMessages = preparedTurn.historyMessages;
-      taskPrompt = preparedTurn.taskPrompt;
+      const preparedPrompt = preparedTurn.taskPrompt.trim();
+      taskPrompt = taskPromptOverride
+        ? preparedPrompt.length > 0 && preparedPrompt !== task
+          ? `${taskPromptOverride}\n\nConversation context:\n${preparedPrompt}`
+          : taskPromptOverride
+        : preparedTurn.taskPrompt;
       conversationContext = {
         turnKind: preparedTurn.turnKind,
         previousTopicSummary: preparedTurn.previousTopicSummary,

@@ -50,6 +50,7 @@ export function createFridayOrchestrationEngine(
   async function executeRun(input: FridayEngineRunInput): Promise<FridayEngineRunResult> {
     const prepared = await turnPreparer.prepare({
       task: input.task,
+      taskPrompt: input.taskPrompt,
       runId: input.runId,
       sessionKey: input.sessionKey,
       replyToMessageId: input.replyToMessageId,

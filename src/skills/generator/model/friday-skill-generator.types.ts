@@ -85,7 +85,7 @@ export interface FridaySkillGenerationTurnResponse {
 
 export interface FridayGeneratedSkillFile {
   path: string;
-  language: "json" | "javascript" | "typescript" | "bash" | "markdown";
+  language: "json" | "javascript" | "typescript" | "bash" | "python" | "markdown";
   executable?: boolean;
   content: string;
 }
@@ -94,7 +94,7 @@ export interface FridayGeneratedSkillDraft {
   manifest: SkillManifestV2;
   files: FridayGeneratedSkillFile[];
   uiSchema: FridaySkillUiSchemaV1;
-  runtimeKind: "shell" | "node";
+  runtimeKind: "shell" | "node" | "python";
   validation: FridayGeneratedSkillValidationReport;
 }
 

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
   canRunFridayBundledSystemNodeSkillWithoutGate,
+  evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   type FridaySkillExecutor,
   type FridaySkillLifecycleService,
@@ -385,6 +386,25 @@ export function createFridaySkillRoutes(
       const runtimeKind = registeredSkill?.manifest.runtime.kind
         ?? lifecycleSkill?.currentManifest?.runtime?.kind
         ?? lifecycleSkill?.catalogEntry?.manifest?.runtime?.kind;
+      if (registeredSkill) {
+        const readiness = evaluateFridaySkillExecutionReadiness({
+          manifest: registeredSkill.manifest,
+        });
+        if (!readiness.ready) {
+          throw new FridayDomainError(
+            "SKILL_NOT_READY",
+            readiness.blockers.join(" "),
+            {
+              httpStatus: 409,
+              details: {
+                skillId,
+                blockers: readiness.blockers,
+                requirements: readiness.requirements,
+              },
+            },
+          );
+        }
+      }
       const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
         runtimeKind,
         manifestKind: registeredSkill?.manifest.kind

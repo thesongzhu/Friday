@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
+import { sanitizeLooseRunDisplayText } from "@/lib/runs/run-health";
 
 interface RunSummaryItem {
   id: string;
@@ -86,7 +87,9 @@ export function ActivitySummaryPanel() {
                     : "bg-[color:var(--color-text-faint)]"
               }`}
             />
-            <span className="truncate text-[color:var(--color-text-secondary)]">{run.task}</span>
+            <span className="truncate text-[color:var(--color-text-secondary)]">
+              {sanitizeLooseRunDisplayText(run.task) || run.task}
+            </span>
             {run.durationMs !== undefined && (
               <span className="shrink-0 text-[10px] text-[color:var(--color-text-faint)]">
                 {(run.durationMs / 1000).toFixed(1)}s

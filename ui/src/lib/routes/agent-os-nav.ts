@@ -149,9 +149,6 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   if (pathname.startsWith("/command-center")) {
     return localizedText("操作控制台", "Operator Console");
   }
-  if (pathname.startsWith("/login")) {
-    return localizedText("访问", "Access");
-  }
   if (pathname.startsWith("/setup")) {
     return localizedText("设置向导", "Setup");
   }

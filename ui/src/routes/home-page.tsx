@@ -1,39 +1,46 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, Clock3, ListFilter, Pin, Plus, Sparkles } from "lucide-react";
-import { ActivityTimeline } from "@/components/core/activity-timeline";
-import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
-import { LearningInsightCard } from "@/components/core/learning-insight-card";
-import { computeIntentWidgetOrder, recordPageVisit } from "@/lib/home/intent-engine";
-import { ContextualHelp } from "@/components/core/contextual-help";
-import { CrossBorderActionBoard } from "@/components/packs/cross-border-action-board";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowRight,
+  Bot,
+  Clock3,
+  Command,
+  Pin,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
+import { ProviderTruthCard, ProviderTruthCompact } from "@/components/console/shell/provider-truth";
 import { PackCard } from "@/components/packs/pack-card";
 import { PackQuickSheet } from "@/components/packs/pack-quick-sheet";
+import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
-import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow-presets";
+import { useCustomPacks } from "@/hooks/use-custom-packs";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
+import { usePackLaunchActions } from "@/hooks/use-pack-launch-actions";
+import { useProviderTruthQuery } from "@/hooks/use-provider-truth";
+import { useSystemHealthQuery, type SystemHealthStatus } from "@/hooks/use-system-health";
 import { useUserProfile } from "@/hooks/use-user-profile";
-import { crossBorderPackApi } from "@/lib/api/cross-border-pack";
-import { uixSnapshotsApi, type UixScheduledAutomationSummary } from "@/lib/api/uix-snapshots";
-import { localize, resolveLocalizedText } from "@/lib/i18n/localized-text";
+import { automationsApi } from "@/lib/api/automations";
+import { requestCommandPaletteOpen } from "@/lib/command-palette";
+import { learningApi } from "@/lib/api/learning";
+import { type AgentAutomationRecord, type AgentRunRecord, type FridayLearningOverview } from "@/lib/api/types";
+import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
+import { recordPageVisit } from "@/lib/home/intent-engine";
+import { localize } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
-import {
-  buildCrossBorderAssistantNavigationSnapshot,
-  buildCrossBorderAssistantNavigationState,
-  persistCrossBorderAssistantNavigationSnapshot,
-} from "@/lib/packs/cross-border-snapshot";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
-import { FRIDAY_PACKS, getAllPacks, getPackById, type FridayPackDefinition, type HomeWidgetId } from "@/lib/packs/pack-registry";
-import { buildSkillHref } from "@/lib/skills/view-models";
+import { getAllPacks, getPackById } from "@/lib/packs/pack-registry";
 import {
   describeRunHealth,
+  displayRunPreview,
+  displayRunTask,
   labelForRunHealth,
   summarizeRunContext,
   toneForRunHealth,
 } from "@/lib/runs/run-health";
+import { buildSkillHref } from "@/lib/skills/view-models";
 import { cn } from "@/lib/utils/cn";
-import { toast } from "sonner";
 import { useAppLocale } from "@/providers/locale-provider";
 
 const ACTIVE_RUN_STATUSES = new Set([
@@ -47,98 +54,198 @@ const ACTIVE_RUN_STATUSES = new Set([
   "fixing",
 ]);
 
-function formatTimestamp(value: string | undefined, locale: "zh" | "en"): string {
+type ConsoleScheduledAutomation = Pick<
+  AgentAutomationRecord,
+  "id" | "name" | "enabled" | "schedule"
+> & {
+  nextRunAt: string | null;
+  updatedAt?: string;
+};
+
+function formatShortTimestamp(value: string | undefined, locale: "zh" | "en"): string {
   if (!value) {
     return locale === "zh" ? "刚刚" : "Just now";
   }
-  const date = new Date(value);
   return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  }).format(new Date(value));
 }
 
-function formatAutomationNextRun(
-  automation: UixScheduledAutomationSummary,
-  locale: "zh" | "en",
-): string {
-  if (!automation.schedule) {
-    return locale === "zh" ? "手动触发" : "Manual";
+function formatRelativeTime(value: string | undefined, locale: "zh" | "en"): string {
+  if (!value) {
+    return locale === "zh" ? "刚刚" : "just now";
   }
-
-  if (!automation.nextRunAt) {
-    return `${automation.schedule.cron}${automation.schedule.timezone ? ` · ${automation.schedule.timezone}` : ""}`;
+  const rtf = new Intl.RelativeTimeFormat(locale === "zh" ? "zh-CN" : "en-US", { numeric: "auto" });
+  const diffMs = new Date(value).getTime() - Date.now();
+  const diffMinutes = Math.round(diffMs / 60_000);
+  if (Math.abs(diffMinutes) < 60) {
+    return rtf.format(diffMinutes, "minute");
   }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (Math.abs(diffHours) < 24) {
+    return rtf.format(diffHours, "hour");
+  }
+  return rtf.format(Math.round(diffHours / 24), "day");
+}
 
+function formatRunElapsed(run: AgentRunRecord, locale: "zh" | "en"): string {
+  const baseMs = run.durationMs ?? Math.max(Date.now() - new Date(run.startedAt).getTime(), 0);
+  const totalSeconds = Math.max(Math.round(baseMs / 1000), 0);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (locale === "zh") {
+    return `${minutes} 分 ${seconds} 秒`;
+  }
+  return `${minutes}m ${seconds}s`;
+}
+
+function labelForRunStage(status: AgentRunRecord["status"], locale: "zh" | "en"): string {
+  const labels: Record<AgentRunRecord["status"], { zh: string; en: string }> = {
+    pending: { zh: "待开始", en: "Pending" },
+    planning: { zh: "规划中", en: "Planning" },
+    awaiting_clarification: { zh: "待澄清", en: "Needs Clarification" },
+    awaiting_plan_approval: { zh: "待批准计划", en: "Awaiting Plan Approval" },
+    awaiting_tool_approval: { zh: "待工具批准", en: "Awaiting Tool Approval" },
+    executing: { zh: "执行中", en: "Executing" },
+    testing: { zh: "验证中", en: "Validating" },
+    fixing: { zh: "修复中", en: "Fixing" },
+    completed: { zh: "已完成", en: "Completed" },
+    failed: { zh: "失败", en: "Failed" },
+    failed_tests: { zh: "测试失败", en: "Failed Tests" },
+    cancelled: { zh: "已取消", en: "Cancelled" },
+  };
+  return locale === "zh" ? labels[status].zh : labels[status].en;
+}
+
+function describeAutomationTiming(input: {
+  automation: Pick<ConsoleScheduledAutomation, "schedule">;
+  nextRunAt: string | null;
+  locale: "zh" | "en";
+}): { dateLabel: string; timeLabel: string; detail: string } {
+  const { automation, nextRunAt, locale } = input;
+  if (!nextRunAt) {
+    return {
+      dateLabel: locale === "zh" ? "已暂停" : "Paused",
+      timeLabel: "—",
+      detail: `${automation.schedule?.cron ?? "Manual"}${automation.schedule?.timezone ? ` · ${automation.schedule.timezone}` : ""}`,
+    };
+  }
   const formatter = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone: automation.schedule.timezone,
+    timeZone: automation.schedule?.timezone,
   });
-  const label = locale === "zh" ? "下次" : "Next";
-  return `${label} ${formatter.format(new Date(automation.nextRunAt))}${automation.schedule.timezone ? ` · ${automation.schedule.timezone}` : ""}`;
+  const formatted = formatter.formatToParts(new Date(nextRunAt));
+  const month = formatted.find((part) => part.type === "month")?.value ?? "";
+  const day = formatted.find((part) => part.type === "day")?.value ?? "";
+  const hour = formatted.find((part) => part.type === "hour")?.value ?? "";
+  const minute = formatted.find((part) => part.type === "minute")?.value ?? "00";
+  return {
+    dateLabel: locale === "zh" ? `${month}${day}日` : `${month} ${day}`,
+    timeLabel: `${hour}:${minute}`,
+    detail: `${automation.schedule?.cron ?? ""}${automation.schedule?.timezone ? ` · ${automation.schedule.timezone}` : ""}`,
+  };
+}
+
+function buildPulseSummary(
+  overview: FridayLearningOverview | undefined,
+  locale: "zh" | "en",
+): string {
+  if (!overview) {
+    return locale === "zh" ? "Friday 正在整理最近的学习结果。" : "Friday is compiling recent learning signals.";
+  }
+  if (overview.coverage.patterns > 0) {
+    return localize(
+      locale,
+      `Friday 已吸收 ${overview.coverage.patterns} 个工作模式，最近 ${overview.coverage.lessons} 条教训正在影响后续路由。`,
+      `Friday has absorbed ${overview.coverage.patterns} work patterns, and ${overview.coverage.lessons} lessons are now shaping later routing.`,
+    );
+  }
+  if (overview.coverage.autoFixActions > 0) {
+    return localize(
+      locale,
+      `Friday 最近通过真实链路完成了 ${overview.coverage.autoFixActions} 次自动修复。`,
+      `Friday recently completed ${overview.coverage.autoFixActions} auto-fix actions through the live stack.`,
+    );
+  }
+  return locale === "zh"
+    ? "Friday 还在积累更多真实运行记录，学习层会随着你的使用逐渐长出来。"
+    : "Friday is still collecting live run evidence, and the learning layer will deepen as you use it.";
+}
+
+function scrollToSection(sectionId: string) {
+  const target = document.getElementById(sectionId);
+  target?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function SummaryStripButton(props: {
+  label: string;
+  subtitle: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="flex flex-col items-start gap-1 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-4 text-left transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold text-[color:var(--color-text-primary)]">{props.label}</span>
+        <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[color:var(--color-accent-soft)] px-2 text-[11px] font-semibold text-[color:var(--color-accent)]">
+          {props.count}
+        </span>
+      </div>
+      <span className="text-xs text-[color:var(--color-text-secondary)]">{props.subtitle}</span>
+    </button>
+  );
+}
+
+function navigatorMetaKeyLabel(): string {
+  if (typeof navigator === "undefined") return "⌘";
+  return /Mac|iPod|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+}
+
+function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
+  if (status === "offline") {
+    return {
+      color: "var(--rust-500)",
+      label: localize(locale, "离线", "Offline"),
+    };
+  }
+  if (status === "degraded") {
+    return {
+      color: "var(--amber-600)",
+      label: localize(locale, "部分降级", "Degraded"),
+    };
+  }
+  return {
+    color: "var(--jade-500)",
+    label: localize(locale, "运行正常", "Healthy"),
+  };
 }
 
 export function HomePage() {
   const navigate = useAppNavigate();
-  const queryClient = useQueryClient();
   const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
-  const {
-    pinnedPackIds,
-    widgetOrder,
-    visibleWidgets,
-    pinPack,
-    unpinPack,
-    movePack,
-    moveWidget,
-    toggleWidget,
-  } = useHomeSurfacePreferences(profileType);
+  const { pinnedPackIds, pinPack, unpinPack } = useHomeSurfacePreferences(profileType);
+  const { customPackInputs } = useCustomPacks();
+  const { startPackNow, adjustPackBeforeStart, continuePack, openCurrentPackRun } = usePackLaunchActions(customPackInputs, { surface: "home" });
+  const providerTruthQuery = useProviderTruthQuery();
+  const systemHealthQuery = useSystemHealthQuery();
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
-  const [editingWidgets, setEditingWidgets] = useState(false);
-  const [editingPacks, setEditingPacks] = useState(false);
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
-  const {
-    applyDefaultWorkflows,
-    setWorkflowEnabled,
-    isApplyingDefaultWorkflows,
-    togglingWorkflowId,
-  } = useCrossBorderWorkflowPresets();
 
-  const snapshotQuery = useQuery({
-    queryKey: ["home", "snapshot", "task-first"],
-    queryFn: () => uixSnapshotsApi.getHome(),
-    refetchInterval: pollInterval,
-  });
-  const crossBorderSnapshotQuery = useQuery({
-    queryKey: ["cross-border-pack", "snapshot", "home"],
-    queryFn: () => crossBorderPackApi.getSnapshot(),
-    refetchInterval: pollInterval,
-  });
-
-  const openCrossBorderAssistant = async () => {
-    try {
-      const latestSnapshot = await queryClient.fetchQuery({
-        queryKey: ["cross-border-pack", "snapshot"],
-        queryFn: () => crossBorderPackApi.getSnapshot(),
-      });
-      const navigationSnapshot = buildCrossBorderAssistantNavigationSnapshot(crossBorderSnapshotQuery.data, latestSnapshot);
-      if (navigationSnapshot) {
-        queryClient.setQueryData(["cross-border-pack", "snapshot"], navigationSnapshot);
-      }
-      persistCrossBorderAssistantNavigationSnapshot(navigationSnapshot);
-      navigate(buildPackAssistantHref("industry-cross-border-ecommerce"), {
-        state: buildCrossBorderAssistantNavigationState(navigationSnapshot),
-      });
-    } catch {
-      toast.error(localize(locale, "打开助手失败", "Failed to open assistant"));
-    }
-  };
+  useEffect(() => {
+    recordPageVisit("/home");
+  }, []);
 
   useEffect(() => {
     if (!pendingPackPath) {
@@ -151,375 +258,527 @@ export function HomePage() {
     return () => window.cancelAnimationFrame(frameId);
   }, [navigate, pendingPackPath]);
 
+  const snapshotQuery = useQuery({
+    queryKey: ["home", "snapshot", "console-home"],
+    queryFn: () => uixSnapshotsApi.getHome(),
+    refetchInterval: pollInterval,
+  });
+  const learningOverviewQuery = useQuery({
+    queryKey: ["learning", "overview", "console-home"],
+    queryFn: () => learningApi.getOverview(5),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const automationsQuery = useQuery({
+    queryKey: ["agent-os", "automations", "console-home"],
+    queryFn: () => automationsApi.list({ limit: 20 }),
+    refetchInterval: pollInterval,
+  });
+
   const recentRuns = snapshotQuery.data?.runs ?? [];
   const activeRuns = recentRuns.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
-  const recentResults = recentRuns.filter((run) => run.status === "completed" || run.status === "failed" || run.status === "failed_tests").slice(0, locale === "zh" ? 5 : 3);
+  const recentResults = recentRuns
+    .filter((run) => run.status === "completed" || run.status === "failed" || run.status === "failed_tests")
+    .slice(0, 4);
+  const failedResults = recentResults.filter((run) => run.status === "failed" || run.status === "failed_tests");
   const pendingApprovals = snapshotQuery.data?.pendingApprovals ?? [];
-  const scheduledAutomations = useMemo(
-    () =>
-      (snapshotQuery.data?.scheduledAutomations ?? [])
-        .filter((automation) => automation.enabled && automation.schedule)
-        .sort((left, right) => {
-          const leftTime = left.nextRunAt ? new Date(left.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-          const rightTime = right.nextRunAt ? new Date(right.nextRunAt).getTime() : Number.POSITIVE_INFINITY;
-          return leftTime - rightTime;
-        })
-        .slice(0, 4),
+
+  const nextRunByAutomationId = useMemo(
+    () => new Map((snapshotQuery.data?.scheduledAutomations ?? []).map((automation) => [automation.id, automation.nextRunAt])),
     [snapshotQuery.data?.scheduledAutomations],
   );
+
+  const scheduledAutomations = useMemo<ConsoleScheduledAutomation[]>(() => {
+    if ((automationsQuery.data?.length ?? 0) === 0) {
+      return (snapshotQuery.data?.scheduledAutomations ?? []).map((automation) => ({
+        id: automation.id,
+        name: automation.name,
+        enabled: automation.enabled,
+        schedule: automation.schedule,
+        nextRunAt: automation.nextRunAt,
+      }));
+    }
+
+    return (automationsQuery.data ?? [])
+      .filter((automation) => automation.schedule)
+      .map((automation) => ({
+        ...automation,
+        nextRunAt: nextRunByAutomationId.get(automation.id) ?? null,
+      }))
+      .sort((left, right) => {
+        if (left.enabled !== right.enabled) {
+          return Number(right.enabled) - Number(left.enabled);
+        }
+        if (left.nextRunAt && right.nextRunAt) {
+          return new Date(left.nextRunAt).getTime() - new Date(right.nextRunAt).getTime();
+        }
+        if (left.nextRunAt) return -1;
+        if (right.nextRunAt) return 1;
+        return new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime();
+      })
+      .slice(0, 6);
+  }, [automationsQuery.data, nextRunByAutomationId, snapshotQuery.data?.scheduledAutomations]);
+
+  const systemTone = failedResults.length > 0 ? "warning" : "success";
+  const systemLabel = failedResults.length > 0
+    ? localize(locale, "部分降级", "Partially degraded")
+    : activeRuns.length > 0
+      ? localize(locale, "Friday 运行中", "Friday is active")
+      : localize(locale, "已就绪", "Ready");
+
+  const pulseCount = learningOverviewQuery.data?.coverage.patterns
+    ?? learningOverviewQuery.data?.coverage.lessons
+    ?? recentResults.length;
+
+  const summaryItems = [
+    {
+      id: "home-active-section",
+      label: localize(locale, "正在进行中", "In Flight"),
+      subtitle: localize(locale, "盯当前运行", "Track live work"),
+      count: activeRuns.length,
+    },
+    {
+      id: "home-approvals-section",
+      label: localize(locale, "等你决定", "Waiting on you"),
+      subtitle: localize(locale, "先处理边界", "Handle boundaries first"),
+      count: pendingApprovals.length,
+    },
+    {
+      id: "home-pulse-section",
+      label: localize(locale, "总览脉冲", "Pulse"),
+      subtitle: localize(locale, "看学习与结果", "Read learning and results"),
+      count: pulseCount,
+    },
+    {
+      id: "home-schedule-section",
+      label: localize(locale, "接下来", "Next"),
+      subtitle: localize(locale, "看自动节奏", "Review the automation cadence"),
+      count: scheduledAutomations.length,
+    },
+  ];
+
   const pinnedPacks = pinnedPackIds
-    .map((packId) => getPackById(packId))
-    .filter((pack): pack is FridayPackDefinition => Boolean(pack));
-  const recommendedPacks = getAllPacks()
+    .map((packId) => getPackById(packId, customPackInputs))
+    .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack));
+  const recommendedPacks = getAllPacks(customPackInputs)
     .filter((pack) => !pinnedPackIds.includes(pack.id))
-    .sort((left, right) => Number(right.kind === "industry") - Number(left.kind === "industry"))
-    .slice(0, locale === "zh" ? 5 : 3);
-  const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
-  const selectedPackRunState = selectedPack ? findPackRuns(selectedPack, recentRuns) : { activeRun: null, recentRun: null };
-
-  const widgetLabels: Record<HomeWidgetId, string> = {
-    active_now: localize(locale, "正在进行", "Active Now"),
-    pending_approvals: localize(locale, "待确认", "Pending Approvals"),
-    scheduled_soon: localize(locale, "即将执行", "Scheduled"),
-    recent_results: localize(locale, "最近结果", "Recent Results"),
-    recommended_to_add: localize(locale, "推荐加入", "Recommended"),
-  };
-
-  // Record page visit for intent tracking
-  useEffect(() => { recordPageVisit("/home"); }, []);
-
-  // Apply intent-aware widget order if available
-  const smartOrder = useMemo(() => computeIntentWidgetOrder({
-    currentWidgetOrder: widgetOrder.filter((id) => visibleWidgets.includes(id)),
-    hasActiveAlerts: pendingApprovals.length > 0,
-    hasActiveRuns: activeRuns.length > 0,
-    hasPendingApprovals: pendingApprovals.length > 0,
-    hasScheduledSoon: scheduledAutomations.length > 0,
-    hour: new Date().getHours(),
-  }), [widgetOrder, visibleWidgets, pendingApprovals, activeRuns, scheduledAutomations]);
-
-  const renderedWidgets = smartOrder ?? widgetOrder.filter((widgetId) => visibleWidgets.includes(widgetId));
+    .slice(0, 3);
+  const selectedPack = selectedPackId ? getPackById(selectedPackId, customPackInputs) ?? null : null;
+  const selectedPackRunState = selectedPack
+    ? findPackRuns(selectedPack, recentRuns)
+    : { activeRun: null, recentRun: null };
+  const runtimeChip = runtimeChipParts(systemHealthQuery.data?.status ?? "healthy", locale);
+  const kbdLabel = navigatorMetaKeyLabel();
 
   return (
-    <div className="space-y-5 pb-4">
+    <div className="space-y-5 pb-6">
       <section
         data-testid="home-surface-ready"
         className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]"
       >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              {localize(locale, "任务首页", "Task Home")}
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,430px)] xl:items-start">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <StatusPill tone={systemTone}>
+                {systemLabel}
+              </StatusPill>
+              <span className="text-xs text-[color:var(--color-text-secondary)]">
+                {localize(
+                  locale,
+                  "Cmd+K 全局搜索和顶部命令面板继续保留；首页重新回到控制台总览模式。",
+                  "Cmd+K and the command palette stay intact; home is now back in console overview mode.",
+                )}
+              </span>
+            </div>
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+              {localize(locale, "Friday Console", "Friday Console")}
             </p>
-            <h2 className="mt-1 text-2xl font-semibold tracking-tight text-[color:var(--color-text-primary)]">
-              {localize(locale, "继续你现在最该做的事", "Pick up the next thing that matters")}
+            <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, "先看正在运行的事，再看你该决定什么", "See what is moving before deciding what to do next")}
             </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-secondary)]">
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-[color:var(--color-text-secondary)]">
               {localize(
                 locale,
-                "这里先显示正在进行中的任务、待确认事项，以及你自己固定在首页的行业与任务入口。",
-                "Home stays focused on live work, approvals, and the packs you chose to pin.",
+                "首页主位重新切回控制台视角：先看运行中的任务、待确认边界、接下来自动发生的事，再决定要不要深入到行业包或某个工具页。",
+                "Home is back to a console-first view: watch live runs, review boundaries, and inspect what happens next before diving into a specific pack or tool page.",
               )}
             </p>
-            {locale === "zh" && recentRuns.length > 0 && (() => {
-              const completed = recentRuns.filter((r) => r.status === "completed").length;
-              const total = recentRuns.filter((r) => r.status === "completed" || r.status === "failed" || r.status === "failed_tests").length;
-              const rate = total > 0 ? Math.round((completed / total) * 100) : 100;
-              return (
-                <p className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[color:var(--color-text-tertiary)]">
-                  <span>{`已完成 ${completed} 个任务`}</span>
-                  <span className="text-[color:var(--color-border-strong)]">&middot;</span>
-                  <span>{`成功率 ${rate}%`}</span>
-                  {activeRuns.length > 0 && (
-                    <>
-                      <span className="text-[color:var(--color-border-strong)]">&middot;</span>
-                      <span className="inline-flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-live)]" />
-                        {`${activeRuns.length} 个任务运行中`}
-                      </span>
-                    </>
-                  )}
-                </p>
-              );
-            })()}
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              {summaryItems.map((item) => (
+                <SummaryStripButton
+                  key={item.id}
+                  label={item.label}
+                  subtitle={item.subtitle}
+                  count={item.count}
+                  onClick={() => scrollToSection(item.id)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
-              <Sparkles className="mr-2 h-4 w-4" />
-              {localize(locale, "开始新任务", "Start A Task")}
-            </ActionButton>
-            <ActionButton data-testid="home-browse-library" tone="secondary" onClick={() => navigate("/packs")}>
-              <ListFilter className="mr-2 h-4 w-4" />
-              {localize(locale, "浏览行业与任务", "Browse Library")}
-            </ActionButton>
+
+          <div className="w-full xl:justify-self-end">
+            <div className="space-y-3 xl:ml-auto xl:max-w-[430px]">
+              <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                <span
+                  className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-xs"
+                  style={{
+                    borderColor: "rgba(122, 106, 88, 0.22)",
+                    background: "var(--surface-2)",
+                    color: "var(--ink-700)",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: runtimeChip.color }}
+                  />
+                  {runtimeChip.label}
+                </span>
+
+                <ProviderTruthCompact
+                  locale={locale}
+                  truth={providerTruthQuery.data}
+                  loading={providerTruthQuery.isPending}
+                  className="max-w-[360px]"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => requestCommandPaletteOpen()}
+                  className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--amber-100)]"
+                  style={{
+                    borderColor: "rgba(122, 106, 88, 0.22)",
+                    background: "var(--surface-2)",
+                    color: "var(--ink-500)",
+                  }}
+                >
+                  <Command className="h-3.5 w-3.5" />
+                  <span>{localize(locale, "命令面板", "Command")}</span>
+                  <kbd
+                    className="rounded border px-1 py-0.5 font-mono text-[10px]"
+                    style={{
+                      borderColor: "rgba(122, 106, 88, 0.2)",
+                      color: "var(--ink-300)",
+                      fontFamily: "var(--font-mono-jb)",
+                    }}
+                  >
+                    {kbdLabel}K
+                  </kbd>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 xl:justify-end">
+              <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                {localize(locale, "开始新任务", "Start a new task")}
+              </ActionButton>
+              <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+                <Bot className="mr-2 h-4 w-4" />
+                {localize(locale, "继续去 Assistant", "Continue to Assistant")}
+              </ActionButton>
+              <ActionButton tone="secondary" onClick={() => navigate("/observability")}>
+                <ArrowRight className="mr-2 h-4 w-4" />
+                {localize(locale, "打开 Observability", "Open Observability")}
+              </ActionButton>
+              </div>
+
+              <ProviderTruthCard
+                locale={locale}
+                truth={providerTruthQuery.data}
+                loading={providerTruthQuery.isPending}
+                variant="home"
+              />
+            </div>
           </div>
         </div>
       </section>
 
-      {crossBorderSnapshotQuery.data?.profile ? (
-        <CrossBorderActionBoard
-          snapshot={crossBorderSnapshotQuery.data}
-          onOpenSetup={() => navigate("/packs/cross-border/setup?packId=industry-cross-border-ecommerce&mode=adjust")}
-          onOpenAssistant={openCrossBorderAssistant}
-          onOpenWorkflowTemplate={(templateId) => navigate(`/workflows/builder?templateId=${encodeURIComponent(templateId)}`)}
-          onOpenManagedWorkflow={(workflowId) => navigate(`/workflows/builder?workflowId=${encodeURIComponent(workflowId)}`)}
-          onApplyDefaultWorkflows={() => applyDefaultWorkflows()}
-          onSetWorkflowEnabled={setWorkflowEnabled}
-          isApplyingDefaultWorkflows={isApplyingDefaultWorkflows}
-          togglingWorkflowId={togglingWorkflowId}
-        />
-      ) : null}
-
-      <LearningInsightCard />
-
-      <section className="space-y-3">
+      <section id="home-active-section" className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="flex items-center gap-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
-              {localize(locale, "首页模块", "Home Widgets")}
-              <ContextualHelp locale={locale} text="首页模块可以自由显示或隐藏，点击右侧「编辑模块」调整。" />
-            </p>
-            <p className="text-xs text-[color:var(--color-text-secondary)]">
-              {localize(locale, "只保留你想看到的状态模块。", "Keep only the modules you want to see.")}
+            <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, `正在进行中 (${activeRuns.length})`, `In Flight (${activeRuns.length})`)}
+            </h3>
+            <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "只显示真正还在跑的任务，不混进静态入口。", "Only live runs appear here; static entry points stay out of the way.")}
             </p>
           </div>
-          <ActionButton tone="secondary" onClick={() => setEditingWidgets((value) => !value)}>
-            {editingWidgets ? localize(locale, "完成调整", "Done") : localize(locale, "编辑模块", "Edit Widgets")}
+          <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+            {localize(locale, "全部查看", "View all")}
           </ActionButton>
         </div>
 
-        {editingWidgets ? (
-          <ShellCard>
-            <div className="space-y-3">
-              {widgetOrder.map((widgetId) => (
-                <div key={widgetId} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{widgetLabels[widgetId]}</p>
-                    <p className="text-xs text-[color:var(--color-text-secondary)]">{visibleWidgets.includes(widgetId) ? localize(locale, "当前显示在首页", "Visible on home") : localize(locale, "当前隐藏", "Hidden")}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <ActionButton tone="secondary" onClick={() => toggleWidget(widgetId)}>
-                      {visibleWidgets.includes(widgetId) ? localize(locale, "隐藏", "Hide") : localize(locale, "显示", "Show")}
-                    </ActionButton>
-                    <ActionButton tone="secondary" onClick={() => moveWidget(widgetId, "up")}>
-                      {localize(locale, "上移", "Up")}
-                    </ActionButton>
-                    <ActionButton tone="secondary" onClick={() => moveWidget(widgetId, "down")}>
-                      {localize(locale, "下移", "Down")}
-                    </ActionButton>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ShellCard>
-        ) : null}
-
-        <div className="grid gap-4 lg:grid-cols-3">
-          {renderedWidgets.map((widgetId) => {
-            if (widgetId === "active_now") {
-              return (
-                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
-                  {activeRuns.length === 0 ? (
-                    <div className="space-y-3">
-                      <p className="text-sm text-[color:var(--color-text-secondary)]">
-                        {localize(locale, "现在没有正在运行的任务。", "No task is actively running right now.")}
-                      </p>
-                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                        {localize(locale, "此处显示 Friday 当前正在执行的任务", "Shows tasks Friday is currently running")}
-                      </p>
-                      <ActionButton tone="secondary" onClick={() => navigate("/chat")}>
-                        <Sparkles className="mr-2 h-4 w-4" />
-                        {localize(locale, "开始新任务", "Start a task")}
-                      </ActionButton>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {activeRuns.slice(0, 3).map((run) => (
-                        <button
-                          key={run.id}
-                          type="button"
-                          onClick={() => navigate("/assistant")}
-                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-[color:var(--color-text-primary)]">{run.task}</p>
-                              <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
-                                {summarizeRunContext(run, locale) ?? formatTimestamp(run.startedAt, locale)}
-                              </p>
-                            </div>
-                            <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, locale)}</StatusPill>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </ShellCard>
-              );
-            }
-
-            if (widgetId === "pending_approvals") {
-              return (
-                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
-                  {pendingApprovals.length === 0 ? (
-                    <div className="space-y-3">
-                      <p className="text-sm text-[color:var(--color-text-secondary)]">
-                        {localize(locale, "当前没有需要你确认的自动修复。", "There are no approvals waiting on you right now.")}
-                      </p>
-                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                        {localize(locale, "当 Friday 需要你审批时会显示在这里", "Appears when Friday needs your approval")}
-                      </p>
-                      <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
-                        <CheckCircle2 className="mr-2 h-4 w-4" />
-                        {localize(locale, "查看助手", "Open assistant")}
-                      </ActionButton>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {pendingApprovals.slice(0, 2).map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => navigate("/assistant")}
-                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
-                        >
-                          <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{item.title}</p>
-                          <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{item.summary}</p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </ShellCard>
-              );
-            }
-
-            if (widgetId === "scheduled_soon") {
-              return (
-                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
-                  {scheduledAutomations.length === 0 ? (
-                    <div className="space-y-3">
-                      <p className="text-sm text-[color:var(--color-text-secondary)]">
-                        {localize(locale, "还没有固定在跑的自动化。", "No recurring automation is pinned into your flow yet.")}
-                      </p>
-                      <p className="text-xs text-[color:var(--color-text-tertiary)]">
-                        {localize(locale, "你设置的定时自动化会显示在这里", "Your scheduled automations appear here")}
-                      </p>
-                      <ActionButton tone="secondary" onClick={() => navigate("/automations")}>
-                        <Clock3 className="mr-2 h-4 w-4" />
-                        {localize(locale, "创建自动化", "Create automation")}
-                      </ActionButton>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {scheduledAutomations.map((automation) => (
-                        <button
-                          key={automation.id}
-                          type="button"
-                          onClick={() => navigate("/automations")}
-                          className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-left transition hover:border-[color:var(--color-border-strong)]"
-                        >
-                          <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
-                            <Clock3 className="h-4 w-4 text-[color:var(--color-accent)]" />
-                            <span>{formatAutomationNextRun(automation, locale)}</span>
-                          </div>
-                          <p className="mt-2 text-sm font-medium text-[color:var(--color-text-primary)]">{automation.name}</p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </ShellCard>
-              );
-            }
-
-            if (widgetId === "recent_results") {
-              return (
-                <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
-                  {recentResults.length === 0 ? (
-                    <p className="text-sm text-[color:var(--color-text-secondary)]">
-                      {localize(locale, "还没有最近结果。", "There are no recent results yet.")}
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {recentResults.map((run) => (
-                        <div
-                          key={run.id}
-                          className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="min-w-0 truncate text-sm font-medium text-[color:var(--color-text-primary)]">{run.task}</p>
-                            <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, locale)}</StatusPill>
-                          </div>
-                          <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
-                            {describeRunHealth(run, locale) || formatTimestamp(run.completedAt ?? run.startedAt, locale)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </ShellCard>
-              );
-            }
-
-            return (
-              <ShellCard key={widgetId} title={widgetLabels[widgetId]}>
-                <div className="space-y-3">
-                  {recommendedPacks.map((pack) => (
-                    <PackCard
-                      key={pack.id}
-                      pack={pack}
-                      compact
-                      note={pack.productCopy ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en) : undefined}
-                      onOpen={() => setSelectedPackId(pack.id)}
-                      onPin={() => pinPack(pack.id)}
-                    />
-                  ))}
-                </div>
-              </ShellCard>
-            );
-          })}
-        </div>
-
-        <ActivityTimeline locale={locale} runs={recentRuns} />
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
-              {localize(locale, "首页入口", "Pinned Packs")}
-            </p>
-            <p className="text-xs text-[color:var(--color-text-secondary)]">
-              {localize(locale, "你常用的行业与任务入口会固定在这里。", "Your chosen industry and task packs stay here for quick access.")}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <ActionButton tone="secondary" onClick={() => setEditingPacks((value) => !value)}>
-              {editingPacks ? localize(locale, "完成排序", "Done") : localize(locale, "编辑入口", "Edit Packs")}
-            </ActionButton>
-            <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
-              <Plus className="mr-2 h-4 w-4" />
-              {localize(locale, "加入更多", "Add More")}
-            </ActionButton>
-          </div>
-        </div>
-
-        {pinnedPacks.length === 0 ? (
+        {activeRuns.length === 0 ? (
           <ShellCard>
             <p className="text-sm text-[color:var(--color-text-secondary)]">
-              {localize(locale, "首页还没有固定入口，先去行业与任务库挑几个放上来。", "No pack is pinned yet. Open the library and pin a few to home.")}
+              {localize(locale, "当前没有正在运行的任务。你可以从聊天开始新任务，或者先去看 Assistant。", "There are no active runs right now. Start from chat or check Assistant for what needs attention.")}
             </p>
           </ShellCard>
         ) : (
-          <div className={cn("grid gap-4 md:grid-cols-2", locale === "zh" && "lg:grid-cols-3")}>
+          <div className="grid gap-4 xl:grid-cols-3">
+            {activeRuns.slice(0, 3).map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                onClick={() => navigate("/assistant")}
+                className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 text-left shadow-[var(--shadow-floating)] transition hover:border-[color:var(--color-border-strong)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <StatusPill tone={toneForRunHealth(run)}>{labelForRunStage(run.status, locale)}</StatusPill>
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--color-accent)] opacity-80" />
+                </div>
+                <h4 className="mt-4 line-clamp-3 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+                  {displayRunTask(run)}
+                </h4>
+                <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
+                  {formatRunElapsed(run, locale)} · {localize(locale, "当前阶段", "Current stage")} · {labelForRunStage(run.status, locale)}
+                </p>
+                <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                  {summarizeRunContext(run, locale) ?? describeRunHealth(run, locale)}
+                </p>
+                <div className="mt-6 flex items-center justify-between gap-3 border-t border-[color:var(--color-border-soft)] pt-4 text-xs text-[color:var(--color-text-faint)]">
+                  <span>{localize(locale, "开始于", "Started")} {formatShortTimestamp(run.startedAt, locale)}</span>
+                  <span>{labelForRunHealth(run, locale)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section id="home-approvals-section" className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, "等你决定", "Waiting on you")}
+            </h3>
+            <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "先处理会改变边界、预算、模型或风险口径的东西。", "Handle anything that changes boundaries, budget, models, or risk posture first.")}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate("/assistant")}
+            className="text-sm font-medium text-[color:var(--color-accent)] transition hover:opacity-80"
+          >
+            {localize(locale, `全部查看 (${pendingApprovals.length})`, `View all (${pendingApprovals.length})`)}
+          </button>
+        </div>
+
+        {pendingApprovals.length === 0 ? (
+          <ShellCard>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "现在没有待确认边界。Assistant 会在真正需要你决策时把东西推过来。", "There is nothing waiting for your decision right now. Assistant will surface boundaries here when real approval is needed.")}
+            </p>
+          </ShellCard>
+        ) : (
+          <div className="space-y-3">
+            {pendingApprovals.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col gap-3 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4 shadow-[var(--shadow-floating)] md:flex-row md:items-center md:justify-between"
+              >
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
+                    <TriangleAlert className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+                      {item.title}
+                    </p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{item.summary}</p>
+                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                      {localize(locale, "创建于", "Created")} {formatRelativeTime(item.createdAt, locale)}
+                    </p>
+                  </div>
+                </div>
+                <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+                  {localize(locale, "去处理", "Handle it")}
+                </ActionButton>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section id="home-pulse-section" className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <ShellCard className="min-w-0" eyebrow={localize(locale, "总览脉冲", "Pulse")} title={localize(locale, "控制台脉冲", "Console pulse")}>
+          <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
+            {buildPulseSummary(learningOverviewQuery.data, locale)}
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {[
+              {
+                label: localize(locale, "最近成功", "Recent successes"),
+                value: recentResults.filter((run) => run.status === "completed").length,
+              },
+              {
+                label: localize(locale, "最近失败", "Recent failures"),
+                value: failedResults.length,
+              },
+              {
+                label: localize(locale, "学习到的模式", "Learned patterns"),
+                value: learningOverviewQuery.data?.coverage.patterns ?? 0,
+              },
+              {
+                label: localize(locale, "自动修复", "Auto-fixes"),
+                value: learningOverviewQuery.data?.coverage.autoFixActions ?? 0,
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-4"
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
+                  {item.label}
+                </p>
+                <p className="mt-3 text-2xl font-semibold text-[color:var(--color-text-primary)]">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </ShellCard>
+
+        <ShellCard className="min-w-0" eyebrow={localize(locale, "最近结果", "Recent results")} title={localize(locale, "刚刚发生了什么", "What just happened")}>
+          {recentResults.length === 0 ? (
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "还没有足够的最近结果。随着真实运行积累，这里会开始显示成功和失败的趋势。", "There is not enough recent run history yet. This section will fill in as live execution history accumulates.")}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {recentResults.map((run) => (
+                <div
+                  key={run.id}
+                  className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="min-w-0 truncate text-sm font-semibold text-[color:var(--color-text-primary)]">{displayRunTask(run)}</p>
+                    <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, locale)}</StatusPill>
+                  </div>
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+                    {describeRunHealth(run, locale) || summarizeRunContext(run, locale) || displayRunPreview(run) || ""}
+                  </p>
+                  <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                    {formatShortTimestamp(run.completedAt ?? run.startedAt, locale)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </ShellCard>
+      </section>
+
+      <section id="home-schedule-section" className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, "接下来会自动发生", "What happens next automatically")}
+            </h3>
+            <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "这里看的是已经接到真实自动化队列里的节奏，不是占位提醒。", "This is the real automation cadence coming from the live queue, not placeholder reminders.")}
+            </p>
+          </div>
+          <ActionButton tone="secondary" onClick={() => navigate("/automations")}>
+            <Clock3 className="mr-2 h-4 w-4" />
+            {localize(locale, "查看任务队列", "Open task queue")}
+          </ActionButton>
+        </div>
+
+        {scheduledAutomations.length === 0 ? (
+          <ShellCard>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "当前没有排进来的自动化节奏。去任务队列创建一个之后，这里会显示它的下一次触发。", "There is no scheduled automation cadence right now. Create one in Task Queue and it will appear here with its next trigger.")}
+            </p>
+          </ShellCard>
+        ) : (
+          <div className="space-y-3">
+            {scheduledAutomations.map((automation) => {
+              const timing = describeAutomationTiming({ automation, nextRunAt: automation.nextRunAt, locale });
+              return (
+                <button
+                  key={automation.id}
+                  type="button"
+                  onClick={() => navigate("/automations")}
+                  className="grid w-full gap-4 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4 text-left shadow-[var(--shadow-floating)] transition hover:border-[color:var(--color-border-strong)] md:grid-cols-[132px_minmax(0,1fr)_auto]"
+                >
+                  <div className="flex items-start gap-3 md:block">
+                    <div className="min-w-[72px]">
+                      <p className="text-sm font-semibold text-[color:var(--color-text-secondary)]">{timing.dateLabel}</p>
+                      <p className="mt-1 text-2xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+                        {timing.timeLabel}
+                      </p>
+                    </div>
+                    {!automation.enabled ? (
+                      <StatusPill tone="warning">{localize(locale, "已暂停", "Paused")}</StatusPill>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+                      {automation.name}
+                    </p>
+                    <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{timing.detail}</p>
+                  </div>
+                  <div className="flex items-center justify-end text-[color:var(--color-text-faint)]">
+                    <ArrowRight className="h-5 w-5" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="flex flex-wrap gap-3">
+        <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+          {localize(locale, "继续去 Assistant", "Continue to Assistant")}
+        </ActionButton>
+        <ActionButton tone="secondary" onClick={() => navigate("/observability")}>
+          {localize(locale, "打开 Observability", "Open Observability")}
+        </ActionButton>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-2xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, "继续推进的行业与任务", "Packs to keep moving")}
+            </h3>
+            <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
+              {localize(locale, "行业包还在，只是从首页主位退到控制台底部。动态链路没有丢。", "The packs still exist; they just moved out of the top slot. The live wiring stays intact.")}
+            </p>
+          </div>
+          <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
+            <Pin className="mr-2 h-4 w-4" />
+            {localize(locale, "管理首页入口", "Manage home packs")}
+          </ActionButton>
+        </div>
+
+        {pinnedPacks.length === 0 ? (
+          <ShellCard title={localize(locale, "先固定几个入口", "Pin a few entries first")}>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {recommendedPacks.map((pack) => (
+                <PackCard
+                  key={pack.id}
+                  pack={pack}
+                  compact
+                  note={pack.productCopy ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en) : undefined}
+                  onOpen={() => setSelectedPackId(pack.id)}
+                  onPin={() => pinPack(pack.id)}
+                />
+              ))}
+            </div>
+          </ShellCard>
+        ) : (
+          <div className={cn("grid gap-4 md:grid-cols-2", locale === "zh" && "xl:grid-cols-3")}>
             {pinnedPacks.map((pack) => {
               const runState = findPackRuns(pack, recentRuns);
               const note = runState.activeRun
                 ? `${localize(locale, "当前任务", "Current run")}: ${runState.activeRun.task}`
                 : runState.recentRun
-                  ? `${localize(locale, "上次处理", "Last activity")}: ${formatTimestamp(runState.recentRun.completedAt ?? runState.recentRun.startedAt, locale)}`
+                  ? `${localize(locale, "上次处理", "Last touched")}: ${formatShortTimestamp(runState.recentRun.completedAt ?? runState.recentRun.startedAt, locale)}`
                   : pack.productCopy
                     ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en)
-                    : localize(locale, "还没有开始过这个入口。", "You have not started this pack yet.");
+                    : localize(locale, "这个入口已经可以继续接着做。", "This pack is ready to pick back up.");
 
               return (
                 <PackCard
@@ -529,9 +788,6 @@ export function HomePage() {
                   note={note}
                   statusLabel={runState.activeRun ? localize(locale, "正在进行", "Live") : runState.recentRun ? localize(locale, "最近记录", "Recent") : undefined}
                   onOpen={() => setSelectedPackId(pack.id)}
-                  onUnpin={editingPacks ? () => unpinPack(pack.id) : undefined}
-                  onMoveUp={editingPacks ? () => movePack(pack.id, "up") : undefined}
-                  onMoveDown={editingPacks ? () => movePack(pack.id, "down") : undefined}
                 />
               );
             })}
@@ -539,47 +795,34 @@ export function HomePage() {
         )}
       </section>
 
-      <div className="flex items-center justify-between gap-3 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4 shadow-[var(--shadow-floating)]">
-        <div>
-          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
-            {localize(locale, "行业与任务库", "Industry & Tasks Library")}
-          </p>
-          <p className="text-xs text-[color:var(--color-text-secondary)]">
-            {localize(locale, "内置入口不会消失，只会从首页拿下或重新加入。", "Built-in packs always stay in the library and can be pinned again anytime.")}
-          </p>
-        </div>
-        <ActionButton onClick={() => navigate("/packs")}>
-          <Pin className="mr-2 h-4 w-4" />
-          {localize(locale, "管理首页入口", "Manage Home Packs")}
-        </ActionButton>
-      </div>
-
       <PackQuickSheet
         open={Boolean(selectedPack)}
         pack={selectedPack}
-        currentRunLabel={selectedPackRunState.activeRun ? formatTimestamp(selectedPackRunState.activeRun.startedAt, locale) : null}
-        continueLabel={selectedPackRunState.recentRun ? formatTimestamp(selectedPackRunState.recentRun.completedAt ?? selectedPackRunState.recentRun.startedAt, locale) : null}
+        currentRunLabel={selectedPackRunState.activeRun ? formatShortTimestamp(selectedPackRunState.activeRun.startedAt, locale) : null}
+        continueLabel={selectedPackRunState.recentRun ? formatShortTimestamp(selectedPackRunState.recentRun.completedAt ?? selectedPackRunState.recentRun.startedAt, locale) : null}
         onClose={() => setSelectedPackId(null)}
         onOpenCurrent={selectedPackRunState.activeRun ? () => {
           setSelectedPackId(null);
-          setPendingPackPath(selectedPack ? buildPackAssistantHref(selectedPack.id) : "/assistant");
+          if (selectedPack && selectedPackRunState.activeRun) {
+            openCurrentPackRun(selectedPack, selectedPackRunState.activeRun);
+          }
         } : undefined}
         onContinue={selectedPackRunState.recentRun ? () => {
           setSelectedPackId(null);
           if (selectedPack) {
-            setPendingPackPath(buildPackFlowHref(selectedPack));
+            continuePack(selectedPack, selectedPackRunState.recentRun);
           }
         } : undefined}
         onStartNow={() => {
           setSelectedPackId(null);
           if (selectedPack) {
-            setPendingPackPath(buildPackFlowHref(selectedPack));
+            void startPackNow(selectedPack);
           }
         }}
         onAdjustBeforeStart={() => {
           setSelectedPackId(null);
           if (selectedPack) {
-            setPendingPackPath(buildPackFlowHref(selectedPack, { mode: "adjust" }));
+            adjustPackBeforeStart(selectedPack);
           }
         }}
         onOpenSkill={(skillId) => {

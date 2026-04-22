@@ -24,6 +24,18 @@ export {
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
+export {
+  FRIDAY_SKILL_PYTHON_BIN_ENV,
+  getFridayPythonRuntimeUnavailableMessage,
+  probeFridayExecutable,
+  resolveFridayPythonCommand,
+} from "./friday-runtime-probe.js";
+export type {
+  EvaluateFridaySkillExecutionReadinessInput,
+  FridaySkillExecutionReadiness,
+  FridaySkillExecutionReadinessRequirements,
+} from "./friday-skill-execution-readiness.js";
+export { evaluateFridaySkillExecutionReadiness } from "./friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./friday-skill-executor.js";
 
 // ─── Desktop Helper (C-002) ───

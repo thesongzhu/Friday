@@ -29,7 +29,7 @@ export function describeSetupStatusFailure(
       title: "Friday session expired before setup completed",
       detail: `The UI at ${currentOrigin} reached the setup route, but the local session expired before setup status could be loaded.`,
       actions: [
-        "Reload the page and sign in again.",
+        "Reload the page and let Friday restore the local session again.",
         "If you expect no-sign-in local mode, restart Friday with `NODE_ENV=development` and without `FRIDAY_TOKEN_SECRET`.",
       ],
     };
@@ -41,7 +41,7 @@ export function describeSetupStatusFailure(
         title: "Setup status requires a valid local session",
         detail: `The UI at ${currentOrigin} reached \`/v1/setup/status\`, but the Friday API rejected the request as unauthorized.`,
         actions: [
-          "Sign in again on this origin, or reopen the canonical local entrypoint on the API port.",
+          "Reload this origin so Friday can restore the local session, or reopen the canonical local entrypoint on the API port.",
           "If you expect no-sign-in local mode, restart Friday with `NODE_ENV=development` and no explicit `FRIDAY_TOKEN_SECRET`.",
         ],
       };
