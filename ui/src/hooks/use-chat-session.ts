@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentApi } from "@/lib/api/agent";
 import { sessionsApi } from "@/lib/api/sessions";
-import type { FridaySessionMessageRecord } from "@/lib/api/types";
+import { ApiError, type FridaySessionMessageRecord } from "@/lib/api/types";
 import { useAgentRunEvents, type UseAgentRunEventsResult } from "./use-agent-run-events";
 
 // ─── Types ───
@@ -165,6 +165,10 @@ function mapSessionMessagesToChatMessages(records: FridaySessionMessageRecord[])
     }));
 }
 
+function isSessionAlreadyCreatedError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "ALREADY_EXISTS";
+}
+
 // ─── Hook ───
 
 export function useChatSession(options: UseChatSessionOptions = {}): UseChatSessionResult {
@@ -176,31 +180,27 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
   const syncMessagesFromServer = useCallback(async (targetSessionKey: string): Promise<boolean> => {
     try {
-      await sessionsApi.get(targetSessionKey);
       const remoteMessages = await sessionsApi.listMessages(targetSessionKey, { limit: 200 });
       const mapped = mapSessionMessagesToChatMessages(remoteMessages);
       setMessages(mapped);
       saveHistory(targetSessionKey, mapped);
       return true;
     } catch {
-      if (targetSessionKey === sessionKeyRef.current) {
-        setMessages([]);
-        saveHistory(targetSessionKey, []);
-      }
       return false;
     }
   }, []);
 
   const ensureRemoteSession = useCallback(async (targetSessionKey: string) => {
     try {
-      await sessionsApi.get(targetSessionKey);
-      return;
-    } catch {
       await sessionsApi.create({
         channel: CHAT_SESSION_CHANNEL,
         chatId: extractChatIdFromSessionKey(targetSessionKey),
         chatKind: "dm",
       });
+    } catch (error) {
+      if (!isSessionAlreadyCreatedError(error)) {
+        throw error;
+      }
     }
   }, []);
 
