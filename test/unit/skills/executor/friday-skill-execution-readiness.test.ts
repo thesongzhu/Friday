@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -6,8 +8,12 @@ import { evaluateFridaySkillExecutionReadiness } from "#skills";
 
 describe("evaluateFridaySkillExecutionReadiness", () => {
   it("keeps security-review ready on linux when ripgrep is unavailable", () => {
+    const manifestPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../skills/security-review/skill.manifest.json",
+    );
     const manifest = JSON.parse(
-      readFileSync("/Users/jarvis/Projects/Friday/skills/security-review/skill.manifest.json", "utf8"),
+      readFileSync(manifestPath, "utf8"),
     ) as {
       runtime: { kind: "node" };
       requirements: {
