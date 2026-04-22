@@ -22,7 +22,7 @@ export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
   {
     label: localizedText("行业与任务", "Industry & Tasks"),
     path: "/packs",
-    description: localizedText("浏览 Friday 自带的行业包和任务入口，并决定哪些加入首页。", "Browse built-in industry packs and task entries, then decide what appears on home."),
+    description: localizedText("管理你自创的任务定义，并把真实运行入口固定到首页。", "Manage your custom task definitions and pin live execution entry points back to home."),
   },
   {
     label: localizedText("助手", "Assistant"),

@@ -268,13 +268,17 @@ export async function createMockHubEnv(opts?: {
   const stateDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "friday-mock-e2e-"),
   );
+  const defaultSkillDirs = [
+    path.resolve(process.cwd(), "skills"),
+    path.join(stateDir, "managed-skills"),
+  ];
 
   // 2. Create hub
   let hub;
   try {
     hub = await createFridayHub({
       stateDir,
-      skillDirs: opts?.skillDirs ?? [],
+      skillDirs: opts?.skillDirs ?? defaultSkillDirs,
       port: 0,
       logRequests: false,
       channels: opts?.channels,

@@ -2516,6 +2516,103 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toBe("Captain Friday");
   });
 
+  it("fills missing memory-recall fields with field-specific fallback searches before answering", async () => {
+    const memorySearchSpy = vi.fn();
+    const combinedMemorySearchTool: FridayAgentToolDefinition = {
+      name: "memory_search",
+      description: "Mock multi-field memory search tool",
+      parameters: {
+        properties: {
+          query: { type: "string" },
+          namespace: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["query"],
+      },
+      async execute(args) {
+        memorySearchSpy(args);
+        const query = typeof args.query === "string" ? args.query : "";
+        if (query === "codename and release-note style") {
+          return {
+            content: JSON.stringify([
+              {
+                content: "User prefers release notes with verdict first and exactly two short bullets.",
+                score: 1.2,
+                metadata: { id: "pref-1", namespace: "user" },
+              },
+            ]),
+          };
+        }
+        if (query === "codename") {
+          return {
+            content: JSON.stringify([
+              {
+                content: "User's codename is cedar-bridge-42.",
+                score: 1.1,
+                metadata: { id: "code-1", namespace: "user" },
+              },
+            ]),
+          };
+        }
+        if (query === "release-note style") {
+          return {
+            content: JSON.stringify([
+              {
+                content: "User prefers release notes with verdict first and exactly two short bullets.",
+                score: 1.2,
+                metadata: { id: "pref-1", namespace: "user" },
+              },
+            ]),
+          };
+        }
+        return { content: "[]" };
+      },
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "codename and release-note style", limit: 5 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "You prefer release notes with verdict first and exactly two short bullets." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "message_end", stopReason: "end_turn", inputTokens: 1, outputTokens: 0 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [combinedMemorySearchTool],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "What is my codename and what release-note style do I prefer? Answer in one concise sentence.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(memorySearchSpy).toHaveBeenCalledTimes(2);
+    expect(memorySearchSpy.mock.calls[0]?.[0]).toMatchObject({ query: "codename and release-note style" });
+    expect(memorySearchSpy.mock.calls[1]?.[0]).toMatchObject({ query: "codename", namespace: "user", limit: 1 });
+    expect(result.response).toBe(
+      "Your codename is cedar-bridge-42, and you prefer release notes with verdict first and exactly two short bullets.",
+    );
+  });
+
   it("blocks app-launch tool calls for desktop content inspection tasks and retries with read-only evidence", async () => {
     const systemSpy = vi.fn();
     const llmClient = createMockLlmClient([

@@ -2067,6 +2067,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       runningHost: deps.serverHost ?? "127.0.0.1",
       runningPort: deps.serverPort ?? 3141,
       allowPrivateNetwork: deps.allowPrivateNetwork,
+      getLiveChannelCount: () => deps.channels?.registry.listViews().length ?? 0,
     })) {
       routes.register(route);
     }

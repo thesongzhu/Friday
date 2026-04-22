@@ -1,12 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { ChevronRight, Globe2, Layers, Package } from "lucide-react";
+import { ChevronRight, Layers, Package, Sparkles } from "lucide-react";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
 /**
- * Right-rail preset for `/packs`. Phase 1 surfaces the cross-border quickstart
- * plus deep links into the wider pack library; Phase 2 swaps the static rows
- * for a `usePackInstallations()` query when available.
+ * Right-rail preset for `/packs`. Keep this aligned with the user-created-task
+ * flow instead of re-surfacing hidden built-in packs.
  */
 export function PacksRightRailSlot() {
   const { locale } = useAppLocale();
@@ -18,34 +17,34 @@ export function PacksRightRailSlot() {
           className="text-[10px] font-semibold uppercase tracking-[0.16em]"
           style={{ color: "var(--ink-300)" }}
         >
-          {localize(locale, "引导包", "Pack library")}
+          {localize(locale, "用户任务", "User tasks")}
         </p>
         <h3
           className="mt-1 text-sm font-semibold"
           style={{ color: "var(--ink-900)", fontFamily: "var(--font-serif-sc)" }}
         >
-          {localize(locale, "按行业启动 Friday", "Launch by industry")}
+          {localize(locale, "把自创任务接成真实动作", "Turn custom tasks into live actions")}
         </h3>
       </header>
 
       <ul className="flex flex-col gap-2">
         <PackRow
-          to="/packs/cross-border/setup"
-          Icon={Globe2}
-          title={localize(locale, "跨境经营引导包", "Cross-border operating pack")}
-          hint={localize(locale, "零售 / 品牌 / 小卖家分流", "Retail · brand · seller flows")}
-        />
-        <PackRow
           to="/packs"
           Icon={Package}
-          title={localize(locale, "全部引导包", "All packs")}
-          hint={localize(locale, "浏览行业与任务模板", "Browse industry & task templates")}
+          title={localize(locale, "创建或整理任务", "Create or organize tasks")}
+          hint={localize(locale, "只显示你自己的任务定义", "Only show your own task definitions")}
+        />
+        <PackRow
+          to="/chat"
+          Icon={Sparkles}
+          title={localize(locale, "去聊天启动", "Launch from chat")}
+          hint={localize(locale, "直接把当前任务接到真实会话和 run", "Connect the task straight into a live session and run")}
         />
         <PackRow
           to="/skills"
           Icon={Layers}
           title={localize(locale, "相关技能", "Related skills")}
-          hint={localize(locale, "查看 Pack 绑定的技能", "Skills bundled with packs")}
+          hint={localize(locale, "查看任务现在能调用哪些能力", "See which capabilities your tasks can call right now")}
         />
       </ul>
     </div>
@@ -54,7 +53,7 @@ export function PacksRightRailSlot() {
 
 function PackRow(props: {
   to: string;
-  Icon: typeof Globe2;
+  Icon: typeof Package;
   title: string;
   hint: string;
 }) {

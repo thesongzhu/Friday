@@ -17,9 +17,79 @@ export interface CreateFridayAgentFeedbackToolDeps {
 // ─── Factory ───
 
 const VALID_KINDS = ["correction", "preference", "positive_feedback"] as const;
+const FEEDBACK_VALUE_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "be",
+  "for",
+  "i",
+  "is",
+  "me",
+  "my",
+  "of",
+  "please",
+  "the",
+  "to",
+  "use",
+]);
+const EXPLICIT_FEEDBACK_STATEMENT_PATTERNS = [
+  /\b(?:i|we)\s+(?:prefer|like|want|need|usually use|would like)\b/i,
+  /\b(?:call me|refer to me as|my codename is|my name is)\b/i,
+  /\b(?:that(?:'s| is)\s+wrong|incorrect|actually|instead|use .* instead)\b/i,
+  /(我更喜欢|我希望|我想要|请叫我|称呼我为|我的代号是|这是错的|应该改成)/u,
+] as const;
+const FEEDBACK_QUESTION_PATTERNS = [
+  /^\s*(?:what|which|who|can|could|would|do|did|does|is|are)\b/i,
+  /^\s*(?:什么|哪个|谁|可以|能不能|是否|是不是)/u,
+] as const;
 
 function normalizeFeedbackField(field: string): string {
   return field.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function tokenizeFeedbackValue(raw: string): string[] {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !FEEDBACK_VALUE_STOPWORDS.has(token));
+}
+
+function taskPromptExplicitlyStatesFeedback(taskPrompt?: string): boolean {
+  if (!taskPrompt || taskPrompt.trim().length === 0) {
+    return false;
+  }
+  if (EXPLICIT_FEEDBACK_STATEMENT_PATTERNS.some((pattern) => pattern.test(taskPrompt))) {
+    return true;
+  }
+  return false;
+}
+
+function taskPromptLooksLikeQuestion(taskPrompt?: string): boolean {
+  if (!taskPrompt || taskPrompt.trim().length === 0) {
+    return false;
+  }
+  return FEEDBACK_QUESTION_PATTERNS.some((pattern) => pattern.test(taskPrompt))
+    || taskPrompt.includes("?");
+}
+
+function taskPromptSupportsFeedbackValue(taskPrompt: string | undefined, value: string): boolean {
+  if (!taskPrompt || taskPrompt.trim().length === 0) {
+    return false;
+  }
+  const promptLower = taskPrompt.toLowerCase();
+  const normalizedValue = value.trim().toLowerCase();
+  if (normalizedValue.length >= 3 && promptLower.includes(normalizedValue)) {
+    return true;
+  }
+  const valueTokens = tokenizeFeedbackValue(value);
+  if (valueTokens.length === 0) {
+    return false;
+  }
+  const matchedTokenCount = valueTokens.filter((token) => promptLower.includes(token)).length;
+  return matchedTokenCount >= Math.min(2, valueTokens.length);
 }
 
 function extractExplicitDisplayName(taskPrompt?: string): string | null {
@@ -86,6 +156,7 @@ export function createFridayAgentFeedbackTool(
         ? extractExplicitDisplayName(executionContext?.taskPrompt)
         : null;
       const value = exactDisplayName ?? rawValue;
+      const taskPrompt = executionContext?.taskPrompt;
 
       // Use per-run principal if injected by the runtime, otherwise fall back to default.
       const userId =
@@ -95,6 +166,16 @@ export function createFridayAgentFeedbackTool(
 
       if (!(VALID_KINDS as readonly string[]).includes(kind)) {
         return textResult(`Invalid feedback kind "${kind}". Must be one of: ${VALID_KINDS.join(", ")}`);
+      }
+
+      const explicitFeedbackStatement = taskPromptExplicitlyStatesFeedback(taskPrompt);
+      const questionLikePrompt = taskPromptLooksLikeQuestion(taskPrompt);
+      const valueSupportedByPrompt = taskPromptSupportsFeedbackValue(taskPrompt, value);
+
+      if (!explicitFeedbackStatement || questionLikePrompt || !valueSupportedByPrompt) {
+        return textResult(
+          "Feedback not recorded because the current user message does not explicitly state that correction or preference.",
+        );
       }
 
       learningEventWriter([
