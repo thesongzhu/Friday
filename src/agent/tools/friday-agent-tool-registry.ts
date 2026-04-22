@@ -180,6 +180,9 @@ export function createFridayAgentToolRegistry(
         learningEventWriter: options.learningEventWriter,
         idGenerator: options.idGenerator,
         nowIso: options.nowIso,
+        resolveSessionMemoryNamespace: options.sessionService
+          ? async (sessionKey) => options.sessionService?.getSessionMemoryNamespace(sessionKey)
+          : undefined,
       }),
     );
   }

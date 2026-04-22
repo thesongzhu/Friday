@@ -220,7 +220,7 @@ async function fetchOpenAiModels(baseUrl: string, apiKey: string, ssrf?: { allow
   );
 
   // Preferred order
-  const preferred = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o4-mini", "o3-mini", "o1-mini"];
+  const preferred = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "o4-mini", "o3-mini", "o1-mini"];
   const defaultModel = preferred.find((m) => chatModels.includes(m));
 
   chatModels.sort((a, b) => {
@@ -372,6 +372,7 @@ export interface FridaySetupRoutesDeps {
   runningPort: number;
   /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
   allowPrivateNetwork?: boolean;
+  getLiveChannelCount?: () => number;
 }
 
 // ─── Factory ───
@@ -414,7 +415,7 @@ export function createFridaySetupRoutes(
         const providers = await deps.providerService.listProviders();
         const skills = deps.skillRegistry.list();
 
-        const channelCount = (() => {
+        const persistedChannelCount = (() => {
           try {
             const parsed = JSON.parse(state.channels_json);
             if (!Array.isArray(parsed)) return 0;
@@ -424,10 +425,20 @@ export function createFridaySetupRoutes(
               (entry as { enabled?: unknown }).enabled === true,
             ).length;
           } catch (err) {
-    console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
+            console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
             return 0;
           }
         })();
+        const liveChannelCount = (() => {
+          try {
+            const count = deps.getLiveChannelCount?.();
+            return Number.isFinite(count) ? Math.max(0, Number(count)) : 0;
+          } catch (err) {
+            console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
+            return 0;
+          }
+        })();
+        const channelCount = Math.max(persistedChannelCount, liveChannelCount);
 
         const host = deps.runningHost ?? state.network_host;
         const port = deps.runningPort ?? state.network_port;

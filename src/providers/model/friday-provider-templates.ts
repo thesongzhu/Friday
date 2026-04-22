@@ -28,9 +28,9 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
     tier: "official",
     status: "ready",
     modelDefaults: {
-      recommended: "gpt-4o",
-      fallback: "gpt-4o-mini",
-      examples: ["gpt-4o", "gpt-4o-mini", "o4-mini"],
+      recommended: "gpt-4o-mini",
+      fallback: "gpt-4o",
+      examples: ["gpt-4o-mini", "gpt-4o", "o4-mini"],
     },
     reasoningHints: [
       "Use the recommended fallback model when latency or budget matters.",

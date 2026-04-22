@@ -2057,14 +2057,25 @@ export function createFridayAgentRuntime(
               toolCalls: allToolCalls,
               disabledToolNames,
             })) {
-              if (!hasSuccessfulMemorySearchEvidence(allToolCalls)) {
+              const requestedFields = getRequestedMemoryRecallFields(params.task);
+              const resolvedFields = new Set(
+                collectMemoryRecallExpectations({
+                  task: params.task,
+                  toolCalls: allToolCalls,
+                }).map((expectation) => expectation.field),
+              );
+              const fallbackSearchFields = !hasSuccessfulMemorySearchEvidence(allToolCalls)
+                ? requestedFields
+                : requestedFields.filter((field) => !resolvedFields.has(field));
+
+              for (const field of fallbackSearchFields) {
                 const fallbackMemorySearchRecord = await executeToolCall({
                   toolUse: {
                     type: "tool_use",
                     id: `auto-memory-recall-${idGenerator()}`,
                     name: "memory_search",
                     input: {
-                      query: "user name",
+                      query: memoryRecallFieldQuery(field),
                       namespace: "user",
                       limit: 1,
                     },
@@ -2088,6 +2099,15 @@ export function createFridayAgentRuntime(
                   emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
                 });
                 allToolCalls.push(fallbackMemorySearchRecord);
+              }
+
+              const fallbackResponse = buildDeterministicMemoryRecallFallbackResponse({
+                task: params.task,
+                toolCalls: allToolCalls,
+              });
+              if (fallbackResponse) {
+                responseText = fallbackResponse;
+                break;
               }
 
               const fallbackValues = latestMemorySearchResultContents(allToolCalls);
@@ -4640,9 +4660,10 @@ function taskRequiresMemorySearch(task: string): boolean {
   }
   return (
     /\buse memory[_ ]search\b/.test(normalized)
+    || /\bwhat(?:'s| is)\s+my\s+(?:codename|code phrase|passphrase|preferred name)\b/.test(normalized)
     || /\bwhat should you call me\b/.test(normalized)
     || /\bwhat should i call you\b/.test(normalized)
-    || /\bwhat (?:do )?i (?:like|prefer)\b/.test(normalized)
+    || /\bwhat(?:\s+\S+){0,6}\s+(?:do\s+)?i\s+(?:like|prefer)\b/.test(normalized)
     || /\b(?:my|user)\s+(?:preferred|stored)\s+(?:name|preference|preferences)\b/.test(normalized)
     || /\b(?:do you remember|what do you remember|recall|stored fact|stored facts|previous conversation|past decision|past decisions)\b/.test(normalized)
   );
@@ -4659,6 +4680,47 @@ function taskRequestsDirectNameRecall(task: string): boolean {
     || /\bwhat (?:name|nickname) (?:should|do) you (?:use|call me with)\b/.test(normalized)
     || /(怎么称呼我|该怎么叫我|应该怎么称呼我|应该叫我什么|你该怎么称呼我|你应该怎么叫我|怎么称呼您|该怎么叫您|应该怎么称呼您|应该叫您什么)/u.test(task)
   );
+}
+
+function taskRequestsCodenameRecall(task: string): boolean {
+  const normalized = task.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\b(?:what(?:'s| is)?|which|tell me|remind me|do you remember)\b(?:\s+\S+){0,8}\s+\b(?:codename|code phrase|passphrase)\b/.test(normalized)
+    || /\b(?:codename|code phrase|passphrase)\b(?:\s+\S+){0,8}\s+\b(?:what(?:'s| is)?|was|again|remember)\b/.test(normalized)
+    || /(?:什么|啥).*(?:代号|口令|暗号)/u.test(task)
+    || /(?:代号|口令|暗号).*(?:是什么|是啥|告诉我|还记得|再说一遍|叫什么)/u.test(task)
+  );
+}
+
+function taskRequestsReleaseNoteStyleRecall(task: string): boolean {
+  const normalized = task.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return (
+    /\b(?:what(?:'s| is)?|which|tell me|remind me|do you remember)\b(?:\s+\S+){0,10}\s+\brelease(?:[- ]note)? style\b/.test(normalized)
+    || /\b(?:what(?:'s| is)?|which|tell me|remind me|do you remember)\b(?:\s+\S+){0,10}\s+\brelease notes?\b/.test(normalized)
+    || /\brelease(?:[- ]note)? style\b(?:\s+\S+){0,8}\s+\b(?:what(?:'s| is)?|again|remember)\b/.test(normalized)
+    || /(?:什么|怎样).*(?:发布说明|release[- ]note|release note).*(?:风格|偏好)/iu.test(task)
+    || /(?:发布说明|release[- ]note|release note).*(?:风格|偏好).*(?:是什么|怎样|告诉我|还记得)/iu.test(task)
+  );
+}
+
+function getRequestedMemoryRecallFields(task: string): FridayMemoryRecallExpectation["field"][] {
+  const fields: FridayMemoryRecallExpectation["field"][] = [];
+  if (taskRequestsDirectNameRecall(task)) {
+    fields.push("preferred_name");
+  }
+  if (taskRequestsCodenameRecall(task)) {
+    fields.push("codename");
+  }
+  if (taskRequestsReleaseNoteStyleRecall(task)) {
+    fields.push("release_note_style");
+  }
+  return fields;
 }
 
 function responseClaimsStoredFactMissing(responseText: string): boolean {
@@ -4706,6 +4768,123 @@ function latestMemorySearchResultContents(toolCalls: FridayAgentToolCallRecord[]
     .filter((content) => content.length > 0);
 }
 
+interface FridayMemoryRecallExpectation {
+  field: "codename" | "release_note_style" | "preferred_name";
+  query: string;
+  value: string;
+  content: string;
+}
+
+function normalizeMemoryRecallValue(raw: string): string {
+  return raw.trim().replace(/^["'“”]+|["'“”.]+$/gu, "");
+}
+
+function extractMemoryRecallValue(field: FridayMemoryRecallExpectation["field"], content: string): string | undefined {
+  if (field === "codename") {
+    const match = content.match(/\b(?:codename|code phrase|passphrase)\s+is\s+["'“”]?([^"'“”.\n]+)["'“”]?/i);
+    return match?.[1] ? normalizeMemoryRecallValue(match[1]) : undefined;
+  }
+  if (field === "preferred_name") {
+    const match = content.match(/\b(?:preferred name|name)\s+is\s+["'“”]?([^"'“”.\n]+)["'“”]?/i);
+    return match?.[1] ? normalizeMemoryRecallValue(match[1]) : undefined;
+  }
+  const releaseStyleMatch = content.match(
+    /\b(?:prefers?|likes?|wants?)\s+(?:a\s+release-note style\s+that\s+)?(.+?)(?:[.]\s*|$)/i,
+  );
+  if (releaseStyleMatch?.[1]) {
+    return normalizeMemoryRecallValue(releaseStyleMatch[1]);
+  }
+  const genericMatch = content.match(/\brelease[- ]note style(?: is|:)?\s+(.+?)(?:[.]\s*|$)/i);
+  return genericMatch?.[1] ? normalizeMemoryRecallValue(genericMatch[1]) : undefined;
+}
+
+function collectMemoryRecallExpectations(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): FridayMemoryRecallExpectation[] {
+  const requestedFields = getRequestedMemoryRecallFields(params.task);
+  if (requestedFields.length === 0) {
+    return [];
+  }
+  const expectations = new Map<FridayMemoryRecallExpectation["field"], FridayMemoryRecallExpectation>();
+
+  const trySetExpectation = (
+    field: FridayMemoryRecallExpectation["field"],
+    query: string,
+    content: string,
+    allowWholeContentFallback = false,
+  ): void => {
+    if (expectations.has(field) || content.length === 0) {
+      return;
+    }
+    const value = extractMemoryRecallValue(field, content);
+    if (!value && !allowWholeContentFallback) {
+      return;
+    }
+    expectations.set(field, {
+      field,
+      query,
+      value: value ?? content,
+      content,
+    });
+  };
+
+  for (const toolCall of params.toolCalls) {
+    if (toolCall.toolName !== "memory_search" || toolCall.result.isError) {
+      continue;
+    }
+    const query = typeof toolCall.args.query === "string" ? toolCall.args.query.trim() : "";
+    if (query.length === 0) {
+      continue;
+    }
+
+    const results = parseMemorySearchResults(toolCall);
+    for (const result of results) {
+      const content = typeof result.content === "string" ? result.content.trim() : "";
+      for (const field of requestedFields) {
+        trySetExpectation(field, query, content);
+      }
+    }
+
+    const [topResult] = results;
+    const topContent = typeof topResult?.content === "string" ? topResult.content.trim() : "";
+    if (topContent.length === 0) {
+      continue;
+    }
+
+    const queryRequestsCodename = taskRequestsCodenameRecall(query) || /\b(?:codename|code phrase|passphrase)\b/i.test(query);
+    const queryRequestsReleaseStyle = /\b(?:release[- ]note style|release notes?)\b/i.test(query);
+    const queryRequestsPreferredName = taskRequestsDirectNameRecall(query) || /\b(?:name|preferred name|user name)\b/i.test(query);
+
+    if (
+      requestedFields.includes("codename")
+      && queryRequestsCodename
+      && !queryRequestsReleaseStyle
+      && !queryRequestsPreferredName
+    ) {
+      trySetExpectation("codename", query, topContent, true);
+    }
+    if (
+      requestedFields.includes("release_note_style")
+      && queryRequestsReleaseStyle
+      && !queryRequestsCodename
+      && !queryRequestsPreferredName
+    ) {
+      trySetExpectation("release_note_style", query, topContent, true);
+    }
+    if (
+      requestedFields.includes("preferred_name")
+      && queryRequestsPreferredName
+      && !queryRequestsCodename
+      && !queryRequestsReleaseStyle
+    ) {
+      trySetExpectation("preferred_name", query, topContent, true);
+    }
+  }
+
+  return [...expectations.values()];
+}
+
 function responseMatchesAnyMemoryRecallValue(
   responseText: string,
   expectedValues: string[],
@@ -4717,32 +4896,113 @@ function responseMatchesAnyMemoryRecallValue(
   return expectedValues.some((value) => normalizedResponse.includes(value.trim().toLowerCase()));
 }
 
+function memoryRecallFieldQuery(field: FridayMemoryRecallExpectation["field"]): string {
+  switch (field) {
+    case "preferred_name":
+      return "user name";
+    case "codename":
+      return "codename";
+    case "release_note_style":
+      return "release-note style";
+  }
+}
+
+function buildDeterministicMemoryRecallFallbackResponse(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): string | undefined {
+  const requestedFields = getRequestedMemoryRecallFields(params.task);
+  if (requestedFields.length === 0) {
+    return undefined;
+  }
+
+  const expectationMap = new Map(
+    collectMemoryRecallExpectations(params).map((expectation) => [expectation.field, expectation.value] as const),
+  );
+
+  if (requestedFields.length === 1 && requestedFields[0] === "preferred_name") {
+    return expectationMap.get("preferred_name");
+  }
+
+  const clauses: string[] = [];
+  if (requestedFields.includes("preferred_name")) {
+    const preferredName = expectationMap.get("preferred_name");
+    if (preferredName) {
+      clauses.push(`Your preferred name is ${preferredName}`);
+    }
+  }
+  if (requestedFields.includes("codename")) {
+    const codename = expectationMap.get("codename");
+    if (codename) {
+      clauses.push(`Your codename is ${codename}`);
+    }
+  }
+  if (requestedFields.includes("release_note_style")) {
+    const releaseStyle = expectationMap.get("release_note_style");
+    if (releaseStyle) {
+      clauses.push(`you prefer ${releaseStyle}`);
+    }
+  }
+
+  if (clauses.length === 0) {
+    return undefined;
+  }
+  if (clauses.length === 1) {
+    return `${clauses[0]}.`;
+  }
+  return `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}.`;
+}
+
+function responseClaimsNewMemoryPersistence(responseText: string): boolean {
+  const normalized = responseText.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return /\b(?:i have saved|i've saved|i saved|i recorded|saved your|recorded your)\b/.test(normalized)
+    || /(已保存|已经保存|我保存了|我记住了|我已经记住)/u.test(responseText);
+}
+
 function evaluateMemoryRecallAnswerAlignment(params: {
   task: string;
   responseText: string;
   toolCalls: FridayAgentToolCallRecord[];
 }): { retryPrompt?: string } {
-  if (!taskRequestsDirectNameRecall(params.task)) {
+  const requestedFields = getRequestedMemoryRecallFields(params.task);
+  if (requestedFields.length === 0) {
     return {};
   }
-  const expectedValues = latestMemorySearchResultContents(params.toolCalls);
-  if (expectedValues.length === 0) {
+  if (!hasSuccessfulMemorySearchEvidence(params.toolCalls)) {
+    return {};
+  }
+  const expectations = collectMemoryRecallExpectations(params);
+  const expectedFields = new Set(expectations.map((expectation) => expectation.field));
+  const missingRequestedFields = requestedFields.filter((field) => !expectedFields.has(field));
+  if (expectations.length === 0 && missingRequestedFields.length === 0) {
+    return {};
+  }
+  const missingExpectations = expectations.filter((expectation) =>
+    !responseMatchesAnyMemoryRecallValue(params.responseText, [expectation.value, expectation.content]),
+  );
+  const claimsNewPersistence = responseClaimsNewMemoryPersistence(params.responseText);
+  if (missingExpectations.length === 0 && missingRequestedFields.length === 0 && !claimsNewPersistence) {
     return {};
   }
 
-  if (responseMatchesAnyMemoryRecallValue(params.responseText, expectedValues)) {
-    return {};
-  }
-
-  const primaryExpectedValue = expectedValues[0];
   return {
     retryPrompt: [
-      "System verification: memory_search already returned a stored preferred name for this user, but your answer did not use it.",
+      "System verification: memory_search already returned stored user facts for this task, but your answer did not use the top result for every requested field.",
       `Current task: ${params.task.trim()}`,
-      `Stored preferred name from memory_search: ${primaryExpectedValue}`,
-      "Reply with that stored name directly.",
-      "Do not say the name is unknown or ask the user again unless the tool result was empty.",
-      "If the user asked for only the name, return only the name.",
+      ...missingRequestedFields.map((field) =>
+        `Requested ${field.replace(/_/g, " ")} is still missing. Rerun memory_search with a field-specific query for that field before answering.`,
+      ),
+      ...missingExpectations.map((expectation) =>
+        `Stored ${expectation.field.replace(/_/g, " ")} from memory_search: ${expectation.value}`,
+      ),
+      "Reply using those stored values directly.",
+      "Prefer the top memory_search result for the current session when multiple memories conflict.",
+      "This is a recall task, not a new save task.",
+      "Do not call feedback or memory_store, and do not say you saved or recorded anything new.",
+      "Do not say the value is unknown and do not ask the user again unless the tool result was empty.",
     ].join(" "),
   };
 }
@@ -4754,7 +5014,12 @@ function shouldAttemptDeterministicMemoryRecallFallback(params: {
   toolCalls: FridayAgentToolCallRecord[];
   disabledToolNames?: ReadonlySet<string>;
 }): boolean {
-  if (!taskRequestsDirectNameRecall(params.task)) {
+  const requestedFields = getRequestedMemoryRecallFields(params.task);
+  const expectations = collectMemoryRecallExpectations({
+    task: params.task,
+    toolCalls: params.toolCalls,
+  });
+  if (expectations.length === 0 && requestedFields.length === 0) {
     return false;
   }
   if (!params.toolMap.has("memory_search")) {
@@ -4764,9 +5029,15 @@ function shouldAttemptDeterministicMemoryRecallFallback(params: {
     return false;
   }
 
-  const expectedValues = latestMemorySearchResultContents(params.toolCalls);
-  if (expectedValues.length > 0) {
-    return !responseMatchesAnyMemoryRecallValue(params.responseText, expectedValues);
+  const expectedFields = new Set(expectations.map((expectation) => expectation.field));
+  if (requestedFields.some((field) => !expectedFields.has(field))) {
+    return true;
+  }
+
+  if (expectations.length > 0) {
+    return expectations.some((expectation) =>
+      !responseMatchesAnyMemoryRecallValue(params.responseText, [expectation.value, expectation.content]),
+    );
   }
 
   return true;

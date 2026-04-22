@@ -50,9 +50,10 @@ import {
   decryptSecret,
   getFridayProviderPreset,
   getMasterKey,
+  normalizeFridayProviderSupportedModels,
   resolveFridayRoutingStabilityWarning,
 } from "#providers";
-import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderService } from "#providers";
+import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderProfile, FridayProviderService } from "#providers";
 import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
@@ -418,10 +419,11 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   envVar: string;
   kind: FridayProviderKind;
   defaultModel: string;
+  supportedModels?: string[];
 }> = [
   { envVar: "FRIDAY_ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
-  { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o" },
+  { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o-mini", supportedModels: ["gpt-4o-mini", "gpt-4o"] },
   { envVar: "GOOGLE_API_KEY", kind: "google", defaultModel: "gemini-2.0-flash" },
   { envVar: "OPENROUTER_API_KEY", kind: "openrouter", defaultModel: "anthropic/claude-sonnet-4" },
   { envVar: "GROQ_API_KEY", kind: "groq", defaultModel: "llama-3.3-70b-versatile" },
@@ -431,6 +433,59 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
 
 /** Routing priority: anthropic first, then openai, then detection order. */
 const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
+const STABLE_OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
+const STABLE_OPENAI_SUPPORTED_MODELS = [STABLE_OPENAI_DEFAULT_MODEL, "gpt-4o"] as const;
+
+function isLegacyAutoDetectedOpenAiProvider(provider: FridayProviderProfile): boolean {
+  if (provider.kind !== "openai") {
+    return false;
+  }
+  if (provider.name !== "openai (auto-detected)") {
+    return false;
+  }
+  if (provider.config.keySource.kind !== "env-ref" || provider.config.keySource.envVar !== "OPENAI_API_KEY") {
+    return false;
+  }
+
+  const supportedModels = normalizeFridayProviderSupportedModels(provider.config.supportedModels);
+  return provider.defaultModel === "gpt-4o" && supportedModels.length === 1 && supportedModels[0] === "gpt-4o";
+}
+
+async function repairLegacyAutoDetectedOpenAiProviders(
+  providerService: FridayProviderService,
+): Promise<string[]> {
+  const [providers, routing] = await Promise.all([
+    providerService.listProviders(),
+    providerService.getRoutingConfig(),
+  ]);
+  const legacyProviders = providers.filter(isLegacyAutoDetectedOpenAiProvider);
+
+  if (legacyProviders.length === 0) {
+    return [];
+  }
+
+  const repairedProviderIds: string[] = [];
+  for (const provider of legacyProviders) {
+    await providerService.updateProvider(provider.id, {
+      supportedModels: [...STABLE_OPENAI_SUPPORTED_MODELS],
+      defaultModel: STABLE_OPENAI_DEFAULT_MODEL,
+      validateOnSave: false,
+    });
+    repairedProviderIds.push(provider.id);
+  }
+
+  if (
+    repairedProviderIds.includes(routing.defaultProviderId) &&
+    routing.defaultModel === "gpt-4o"
+  ) {
+    await providerService.setRoutingConfig({
+      ...routing,
+      defaultModel: STABLE_OPENAI_DEFAULT_MODEL,
+    });
+  }
+
+  return repairedProviderIds;
+}
 
 async function autoDetectProvidersFromEnv(
   providerService: FridayProviderService,
@@ -460,7 +515,7 @@ async function autoDetectProvidersFromEnv(
         api: preset.api,
         authMode: preset.authMode,
         apiKey: `$${entry.envVar}`,
-        supportedModels: [entry.defaultModel],
+        supportedModels: entry.supportedModels ?? [entry.defaultModel],
         defaultModel: entry.defaultModel,
         validateOnSave: false,
       });
@@ -6072,6 +6127,12 @@ export async function createFridayHub(
         if (autoDetected.length > 0) {
           console.log(
             `[friday] Auto-detected ${String(autoDetected.length)} provider(s) from environment: ${autoDetected.map((p) => p.kind).join(", ")}`,
+          );
+        }
+        const repairedLegacyProviders = await repairLegacyAutoDetectedOpenAiProviders(providerService);
+        if (repairedLegacyProviders.length > 0) {
+          console.log(
+            `[friday] Repaired ${String(repairedLegacyProviders.length)} legacy auto-detected OpenAI provider(s) to ${STABLE_OPENAI_DEFAULT_MODEL}.`,
           );
         }
       }

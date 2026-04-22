@@ -30,7 +30,7 @@ import { recordPageVisit } from "@/lib/home/intent-engine";
 import { localize } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
 import { buildPackAssistantHref, buildPackChatHref, buildPackFlowHref } from "@/lib/packs/pack-links";
-import { getAllPacks, getPackById } from "@/lib/packs/pack-registry";
+import { buildCustomPackId, getPackById } from "@/lib/packs/pack-registry";
 import {
   describeRunHealth,
   displayRunPreview,
@@ -357,10 +357,24 @@ export function HomePage() {
     },
   ];
 
+  const userCreatedPacks = useMemo(
+    () => customPackInputs
+      .map((input, index) => {
+        const packId = buildCustomPackId(input, index);
+        return getPackById(packId, customPackInputs);
+      })
+      .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack)),
+    [customPackInputs],
+  );
   const pinnedPacks = pinnedPackIds
     .map((packId) => getPackById(packId, customPackInputs))
-    .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack));
-  const recommendedPacks = getAllPacks(customPackInputs)
+    .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => {
+      if (!pack) {
+        return false;
+      }
+      return !pack.builtIn;
+    });
+  const recommendedPacks = userCreatedPacks
     .filter((pack) => !pinnedPackIds.includes(pack.id))
     .slice(0, 3);
   const selectedPack = selectedPackId ? getPackById(selectedPackId, customPackInputs) ?? null : null;
@@ -741,33 +755,48 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-2xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "继续推进的行业与任务", "Packs to keep moving")}
+              {localize(locale, "继续推进的自创任务", "User Tasks to Keep Moving")}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-              {localize(locale, "行业包还在，只是从首页主位退到控制台底部。动态链路没有丢。", "The packs still exist; they just moved out of the top slot. The live wiring stays intact.")}
+              {localize(locale, "首页这里只保留你自己创建的任务，不再把官方行业包重新露出来。真实运行链路保持不变。", "Home only keeps the tasks you created. Built-in packs stay hidden here while the live run wiring remains intact.")}
             </p>
           </div>
           <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
             <Pin className="mr-2 h-4 w-4" />
-            {localize(locale, "管理首页入口", "Manage home packs")}
+            {localize(locale, "管理任务库", "Manage task library")}
           </ActionButton>
         </div>
 
         {pinnedPacks.length === 0 ? (
-          <ShellCard title={localize(locale, "先固定几个入口", "Pin a few entries first")}>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {recommendedPacks.map((pack) => (
-                <PackCard
-                  key={pack.id}
-                  pack={pack}
-                  compact
-                  note={pack.productCopy ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en) : undefined}
-                  onOpen={() => setSelectedPackId(pack.id)}
-                  onPin={() => pinPack(pack.id)}
-                />
-              ))}
-            </div>
-          </ShellCard>
+          recommendedPacks.length === 0 ? (
+            <ShellCard title={localize(locale, "还没有自创任务", "No user-created tasks yet")}>
+              <div className="space-y-3">
+                <p className="text-sm text-[color:var(--color-text-secondary)]">
+                  {localize(locale, "先去“行业与任务”页创建你的第一个任务，再把它固定回首页。", "Create your first task from the Packs page, then pin it back to home.")}
+                </p>
+                <div>
+                  <ActionButton tone="secondary" onClick={() => navigate("/packs")}>
+                    {localize(locale, "去创建任务", "Create a task")}
+                  </ActionButton>
+                </div>
+              </div>
+            </ShellCard>
+          ) : (
+            <ShellCard title={localize(locale, "先固定几个入口", "Pin a few entries first")}>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {recommendedPacks.map((pack) => (
+                  <PackCard
+                    key={pack.id}
+                    pack={pack}
+                    compact
+                    note={pack.productCopy ? localize(locale, pack.productCopy.resultSummary.zh, pack.productCopy.resultSummary.en) : undefined}
+                    onOpen={() => setSelectedPackId(pack.id)}
+                    onPin={() => pinPack(pack.id)}
+                  />
+                ))}
+              </div>
+            </ShellCard>
+          )
         ) : (
           <div className={cn("grid gap-4 md:grid-cols-2", locale === "zh" && "xl:grid-cols-3")}>
             {pinnedPacks.map((pack) => {

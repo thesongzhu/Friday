@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
@@ -43,6 +43,19 @@ function titleCase(raw: string): string {
 
 function makeId(absolutePath: string): string {
   return createHash("sha256").update(absolutePath).digest("hex").slice(0, 16);
+}
+
+function canonicalPath(path: string): string {
+  const resolved = (() => {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      return resolve(path);
+    }
+  })();
+  return process.platform === "darwin" || process.platform === "win32"
+    ? resolved.toLowerCase()
+    : resolved;
 }
 
 function extractDescriptionMd(content: string): string {
@@ -112,6 +125,7 @@ function scanFlatDir(
     const fullPath = join(resolved, entry);
     const stat = safeStat(fullPath);
     if (!stat?.isFile) continue;
+    if (stat.size <= 0) continue;
 
     const content = safeReadText(fullPath);
     if (jsonRequiredKeys && !jsonHasKeys(content, jsonRequiredKeys)) continue;
@@ -140,6 +154,9 @@ function scanSkillSubdirs(
   parentDir: string,
   tool: LocalSkillSourceTool,
   converterHint: string,
+  options?: {
+    sourcePathMode?: "skill-file" | "directory";
+  },
 ): LocalSkillScanItem[] {
   const items: LocalSkillScanItem[] = [];
   const resolved = resolve(parentDir);
@@ -160,10 +177,10 @@ function scanSkillSubdirs(
       const description = extractDescriptionMd(content);
 
       items.push({
-        id: makeId(skillPath),
+        id: makeId(options?.sourcePathMode === "directory" ? subdirPath : skillPath),
         name: titleCase(subdir),
         sourceTool: tool,
-        sourcePath: skillPath,
+        sourcePath: options?.sourcePathMode === "directory" ? subdirPath : skillPath,
         description,
         convertible: true,
         converterHint,
@@ -183,11 +200,13 @@ function scanSkillSubdirs(
 function scanProjectSkills(projectsDir: string): LocalSkillScanItem[] {
   const items: LocalSkillScanItem[] = [];
   if (!existsSync(projectsDir)) return items;
+  const currentWorkspace = canonicalPath(process.cwd());
 
   for (const project of safeReadDir(projectsDir)) {
     const projectPath = join(projectsDir, project);
     const projectStat = safeStat(projectPath);
     if (!projectStat?.isDir) continue;
+    if (canonicalPath(projectPath) === currentWorkspace) continue;
 
     // Check <project>/skills/
     items.push(...scanSkillSubdirs(join(projectPath, "skills"), "openclaw", "clawdbot-skill-md"));
@@ -199,7 +218,7 @@ function scanProjectSkills(projectsDir: string): LocalSkillScanItem[] {
     items.push(...scanSkillSubdirs(join(projectPath, "extensions"), "openclaw", "clawdbot-skill-md"));
 
     // Check <project>/managed-skills/
-    items.push(...scanSkillSubdirs(join(projectPath, "managed-skills"), "friday", "friday-package"));
+    items.push(...scanSkillSubdirs(join(projectPath, "managed-skills"), "friday", "friday-package", { sourcePathMode: "directory" }));
   }
   return items;
 }
@@ -259,19 +278,16 @@ export function scanLocalSkills(): LocalSkillScanResult {
   }
 
   // ── 6. Current working directory skills ──
-  const cwdSkills = scanSkillSubdirs(join(cwd, "skills"), "friday", "friday-package");
+  const cwdSkills = scanSkillSubdirs(join(cwd, "skills"), "openclaw", "clawdbot-skill-md");
   if (cwdSkills.length > 0) directoriesScanned.push(join(cwd, "skills"));
   allItems.push(...cwdSkills);
-
-  const cwdManagedSkills = scanSkillSubdirs(join(cwd, "managed-skills"), "friday", "friday-package");
-  if (cwdManagedSkills.length > 0) directoriesScanned.push(join(cwd, "managed-skills"));
-  allItems.push(...cwdManagedSkills);
 
   // ── Dedup by sourcePath ──
   const seen = new Set<string>();
   const dedupedItems = allItems.filter((item) => {
-    if (seen.has(item.sourcePath)) return false;
-    seen.add(item.sourcePath);
+    const dedupeKey = canonicalPath(item.sourcePath);
+    if (seen.has(dedupeKey)) return false;
+    seen.add(dedupeKey);
     return true;
   });
 

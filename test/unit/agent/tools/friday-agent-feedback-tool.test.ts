@@ -38,7 +38,7 @@ describe("FridayAgentFeedbackTool", () => {
 
     const result = await tool.execute(
       { kind: "correction", field: "tone", value: "more formal", context: "was too casual" },
-      signal(),
+      signalWithTaskPrompt("That's wrong. Use a more formal tone instead; it was too casual."),
     );
 
     expect(learningEventWriter).toHaveBeenCalledOnce();
@@ -61,7 +61,7 @@ describe("FridayAgentFeedbackTool", () => {
 
     await tool.execute(
       { kind: "preference", field: "language", value: "Chinese" },
-      signal(),
+      signalWithTaskPrompt("I prefer Chinese for future replies."),
     );
 
     const event = written[0]![0]!;
