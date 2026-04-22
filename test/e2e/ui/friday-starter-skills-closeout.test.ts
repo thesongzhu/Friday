@@ -8,6 +8,7 @@ import {
   type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
 } from "./_helpers/browser-env-mock.js";
+import { seedDefaultCustomPack } from "./_helpers/custom-pack.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -69,6 +70,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout (mock hub b
 
   it("keeps starter templates discoverable while the new task-first entry surfaces render", { timeout: CLOSEOUT_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
+    const packId = await seedDefaultCustomPack(env);
 
     const templates = await env.apiFetch<{
       templates: Array<{ id: string }>;
@@ -150,8 +152,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout (mock hub b
     expect(await pageHandle.page.locator('[data-testid="assistant-goal-input"]').count()).toBe(0);
 
     await pageHandle.page.goto("/packs");
-    await waitForTestId(pageHandle, "pack-card-industry-creator-media");
-    await waitForTestId(pageHandle, "pack-card-task-build-new");
+    await waitForTestId(pageHandle, `pack-card-${packId}`);
+    expect(await pageHandle.page.locator('[data-testid="pack-card-industry-creator-media"]').count()).toBe(0);
+    expect(await pageHandle.page.locator('[data-testid="pack-card-task-build-new"]').count()).toBe(0);
 
     await pageHandle.page.goto("/skills?skillId=page-benchmark-report");
     await pageHandle.page.waitForFunction(
