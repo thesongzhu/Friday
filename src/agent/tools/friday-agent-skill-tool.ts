@@ -1,8 +1,8 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import {
-  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   canRunFridayBundledSystemNodeSkillWithoutGate,
   evaluateFridaySkillExecutionReadiness,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   type FridaySkillExecuteRequest,
   type FridaySkillExecutor,
   type FridaySkillRegistry,
