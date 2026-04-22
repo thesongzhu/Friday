@@ -576,7 +576,7 @@ export function resolveFridayHubConfig(
   const localBypassExplicit = (env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
   const allowLocalBypassLogin = localBypassExplicit
     ? ["1", "true", "yes", "on"].includes(localBypassExplicit)
-    : true;
+    : allowPasswordlessLocalLogin;
 
   const serverVersion = input.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION;
 
@@ -735,7 +735,7 @@ export async function createFridayHub(
   const localBypassExplicit2 = (process.env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
   const allowLocalBypassLogin = localBypassExplicit2
     ? ["1", "true", "yes", "on"].includes(localBypassExplicit2)
-    : true;
+    : allowPasswordlessLocalLogin;
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";

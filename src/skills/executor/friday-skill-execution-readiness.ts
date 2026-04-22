@@ -38,14 +38,24 @@ export function evaluateFridaySkillExecutionReadiness(
   const env = input.env ?? process.env;
   const platform = input.platform ?? process.platform;
   const blockers: string[] = [];
+  const manifestRequirements = input.manifest.requirements ?? {
+    bins: [],
+    env: [],
+    config: [],
+    os: [],
+  };
+  const executionTargets = input.manifest.executionTargets ?? {
+    allowedSatelliteTypes: [],
+    requiredCapabilities: [],
+  };
   const requirements: FridaySkillExecutionReadinessRequirements = {
-    bins: [...input.manifest.requirements.bins],
-    env: [...input.manifest.requirements.env],
-    config: [...input.manifest.requirements.config],
-    os: [...input.manifest.requirements.os],
+    bins: [...manifestRequirements.bins],
+    env: [...manifestRequirements.env],
+    config: [...manifestRequirements.config],
+    os: [...manifestRequirements.os],
     executionTargets: {
-      allowedSatelliteTypes: [...input.manifest.executionTargets.allowedSatelliteTypes],
-      requiredCapabilities: [...input.manifest.executionTargets.requiredCapabilities],
+      allowedSatelliteTypes: [...executionTargets.allowedSatelliteTypes],
+      requiredCapabilities: [...executionTargets.requiredCapabilities],
     },
   };
 

@@ -82,11 +82,12 @@ describe("friday-custom-pack-context", () => {
     });
 
     expect(fragment).toContain("<active-custom-pack>");
-    expect(fragment).toContain("pack_id: custom-0-真实任务连线测试");
-    expect(fragment).toContain("pack_name: 真实任务连线测试");
-    expect(fragment).toContain("definition_source: uix_user_preferences.key = packs.customInputs");
-    expect(fragment).toContain("recent_live_runs_for_this_pack:");
+    expect(fragment).toContain("Use this stored custom-pack brief as the authoritative source for the current run.");
+    expect(fragment).toContain("Stored pack name: 真实任务连线测试");
+    expect(fragment).toContain("Stored pack brief: 验证自创任务和真实 run 的后端链路。");
+    expect(fragment).toContain("Recent live runs for this pack:");
     expect(fragment).toContain("[completed] 2026-04-21T20:00:30.000Z");
     expect(fragment).toContain("runtime-check");
+    expect(fragment).not.toContain("pack_id:");
   });
 });
