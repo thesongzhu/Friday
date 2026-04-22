@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node ≥22">
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
+  <img src="https://img.shields.io/badge/License-GPL-3.0-blue?style=flat-square" alt="GPL-3.0">
   <img src="https://img.shields.io/badge/Release%20Truth-evidence--driven-blue?style=flat-square" alt="Release Truth">
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
@@ -240,7 +240,7 @@ friday import ./my.tgz   # Install a skill
 ## Important Notes
 
 - **API keys are required.** Friday uses your own API keys (Anthropic, OpenAI, Google, etc.) to call LLM providers. You are responsible for any costs incurred. Friday never proxies your keys through third-party servers.
-- **Small models have limited capabilities.** Models with fewer than 7 billion parameters (e.g., `llama3.2:3b`, `phi-3-mini`) cannot reliably use tools/function calling. Friday automatically disables tool declarations for these models to prevent hallucinated tool invocations. For full agent capabilities (web search, code execution, browser automation, etc.), use models with 7B+ parameters.
+- **Small models have liGPL-3.0ed capabilities.** Models with fewer than 7 billion parameters (e.g., `llama3.2:3b`, `phi-3-mini`) cannot reliably use tools/function calling. Friday automatically disables tool declarations for these models to prevent hallucinated tool invocations. For full agent capabilities (web search, code execution, browser automation, etc.), use models with 7B+ parameters.
 - **Self-hosted means self-managed.** Friday runs on your machine. You are responsible for securing access, managing API keys, and keeping dependencies up to date.
 - **Not a substitute for professional advice.** AI-generated outputs may contain errors. Always verify critical information independently.
 - **npm package name.** The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is an unrelated project.
@@ -253,7 +253,7 @@ friday import ./my.tgz   # Install a skill
   <a href=".github/CONTRIBUTING.md">Contributing</a> ·
   <a href=".github/SECURITY.md">Security</a> ·
   <a href="https://discord.gg/x2rd4WsY">Discord</a> ·
-  <a href="LICENSE">MIT License</a>
+  <a href="LICENSE">GPL-3.0 License</a>
 </p>
 
 <p align="center">
