@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentApi } from "@/lib/api/agent";
+import { sessionsApi } from "@/lib/api/sessions";
+import type { FridaySessionMessageRecord } from "@/lib/api/types";
 import { useAgentRunEvents, type UseAgentRunEventsResult } from "./use-agent-run-events";
 
 // ─── Types ───
@@ -31,7 +33,7 @@ export interface UseChatSessionOptions {
 // ─── Persistent session key ───
 
 const SESSION_KEY_STORAGE = "friday-chat-session-key";
-const HISTORY_STORAGE = "friday-chat-history";
+const HISTORY_STORAGE_PREFIX = "friday-chat-history:";
 const CHAT_SESSION_CHANNEL = "chat";
 const CHAT_SESSION_ACCOUNT = "default";
 const SESSION_KEY_SEGMENT_PATTERN = /^[a-z0-9._-]+$/;
@@ -101,9 +103,13 @@ function getOrCreateSessionKey(): string {
   return key;
 }
 
-function loadHistory(): ChatMessage[] {
+function getHistoryStorageKey(sessionKey: string): string {
+  return `${HISTORY_STORAGE_PREFIX}${sessionKey}`;
+}
+
+function loadHistory(sessionKey: string): ChatMessage[] {
   try {
-    const raw = localStorage.getItem(HISTORY_STORAGE);
+    const raw = localStorage.getItem(getHistoryStorageKey(sessionKey));
     if (!raw) return [];
     return JSON.parse(raw) as ChatMessage[];
   } catch {
@@ -111,24 +117,98 @@ function loadHistory(): ChatMessage[] {
   }
 }
 
-function saveHistory(messages: ChatMessage[]) {
+function saveHistory(sessionKey: string, messages: ChatMessage[]) {
   try {
     // Keep last 200 messages to avoid localStorage overflow
     const trimmed = messages.slice(-200);
-    localStorage.setItem(HISTORY_STORAGE, JSON.stringify(trimmed));
+    localStorage.setItem(getHistoryStorageKey(sessionKey), JSON.stringify(trimmed));
   } catch {
     // Ignore quota errors
   }
 }
 
+function extractChatIdFromSessionKey(sessionKey: string): string {
+  const parts = sessionKey.split(":");
+  return parts[parts.length - 1] ?? createChatConversationId();
+}
+
+function stringifySessionContent(record: FridaySessionMessageRecord): string {
+  if (record.contentText.trim().length > 0) {
+    return record.contentText;
+  }
+  if (typeof record.content === "string") {
+    return record.content;
+  }
+  try {
+    return JSON.stringify(record.content);
+  } catch {
+    return "";
+  }
+}
+
+function isChatRenderableSessionMessage(
+  record: FridaySessionMessageRecord,
+): record is FridaySessionMessageRecord & { role: ChatMessage["role"] } {
+  return record.role === "user" || record.role === "assistant";
+}
+
+function mapSessionMessagesToChatMessages(records: FridaySessionMessageRecord[]): ChatMessage[] {
+  return records
+    .filter(isChatRenderableSessionMessage)
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((record) => ({
+      id: record.id,
+      role: record.role,
+      content: stringifySessionContent(record),
+      timestamp: record.occurredAt || record.createdAt,
+      status: "done" as const,
+    }));
+}
+
 // ─── Hook ───
 
 export function useChatSession(options: UseChatSessionOptions = {}): UseChatSessionResult {
-  const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
   const [sessionKey, setSessionKey] = useState<string>(() => getOrCreateSessionKey());
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadHistory(sessionKey));
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const sessionKeyRef = useRef(sessionKey);
   const outputTextRef = useRef("");
+
+  const syncMessagesFromServer = useCallback(async (targetSessionKey: string): Promise<boolean> => {
+    try {
+      await sessionsApi.get(targetSessionKey);
+      const remoteMessages = await sessionsApi.listMessages(targetSessionKey, { limit: 200 });
+      const mapped = mapSessionMessagesToChatMessages(remoteMessages);
+      setMessages(mapped);
+      saveHistory(targetSessionKey, mapped);
+      return true;
+    } catch {
+      if (targetSessionKey === sessionKeyRef.current) {
+        setMessages([]);
+        saveHistory(targetSessionKey, []);
+      }
+      return false;
+    }
+  }, []);
+
+  const ensureRemoteSession = useCallback(async (targetSessionKey: string) => {
+    try {
+      await sessionsApi.get(targetSessionKey);
+      return;
+    } catch {
+      await sessionsApi.create({
+        channel: CHAT_SESSION_CHANNEL,
+        chatId: extractChatIdFromSessionKey(targetSessionKey),
+        chatKind: "dm",
+      });
+    }
+  }, []);
+
+  const scheduleSyncFromServer = useCallback((targetSessionKey: string, delayMs = 300) => {
+    window.setTimeout(() => {
+      void syncMessagesFromServer(targetSessionKey);
+    }, delayMs);
+  }, [syncMessagesFromServer]);
 
   const runEvents = useAgentRunEvents(currentRunId, {
     enabled: currentRunId !== null,
@@ -145,11 +225,12 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
               }
             : m,
         );
-        saveHistory(updated);
+        saveHistory(sessionKeyRef.current, updated);
         return updated;
       });
       outputTextRef.current = "";
       setCurrentRunId(null);
+      scheduleSyncFromServer(sessionKeyRef.current);
     },
   });
 
@@ -157,6 +238,12 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
   useEffect(() => {
     outputTextRef.current = runEvents.outputText;
   }, [runEvents.outputText]);
+
+  useEffect(() => {
+    sessionKeyRef.current = sessionKey;
+    setMessages(loadHistory(sessionKey));
+    void syncMessagesFromServer(sessionKey);
+  }, [sessionKey, syncMessagesFromServer]);
 
   const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
 
@@ -175,11 +262,13 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
     setMessages((prev) => {
       const updated = [...prev, userMsg];
-      saveHistory(updated);
+      saveHistory(sessionKeyRef.current, updated);
       return updated;
     });
 
     try {
+      await ensureRemoteSession(sessionKeyRef.current);
+
       // Start a new agent run
       const result = await agentApi.startRun({
         task: trimmed,
@@ -204,9 +293,10 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
         setMessages((prev) => {
           const updated = [...prev, assistantMsg];
-          saveHistory(updated);
+          saveHistory(sessionKeyRef.current, updated);
           return updated;
         });
+        scheduleSyncFromServer(sessionKeyRef.current);
         return;
       }
 
@@ -226,7 +316,7 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
       setMessages((prev) => {
         const updated = [...prev, assistantMsg];
-        saveHistory(updated);
+        saveHistory(sessionKeyRef.current, updated);
         return updated;
       });
 
@@ -242,15 +332,19 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
       };
       setMessages((prev) => {
         const updated = [...prev, errMsg];
-        saveHistory(updated);
+        saveHistory(sessionKeyRef.current, updated);
         return updated;
       });
     }
-  }, [options.packId]);
+  }, [ensureRemoteSession, options.packId, scheduleSyncFromServer]);
 
   const clearHistory = useCallback(() => {
+    const currentSessionKey = sessionKeyRef.current;
+    void sessionsApi.reset(currentSessionKey).catch(() => {});
+    outputTextRef.current = "";
+    setCurrentRunId(null);
     setMessages([]);
-    localStorage.removeItem(HISTORY_STORAGE);
+    localStorage.removeItem(getHistoryStorageKey(currentSessionKey));
     localStorage.removeItem(SESSION_KEY_STORAGE);
     const nextSessionKey = getOrCreateSessionKey();
     sessionKeyRef.current = nextSessionKey;
@@ -258,25 +352,14 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
   }, []);
 
   const startNewConversation = useCallback(() => {
-    // Generate a fresh session key so the agent starts a new context,
-    // but keep previous messages visible as a read-only log.
+    // Generate a fresh session key so the next send starts a clean server-backed session.
+    outputTextRef.current = "";
+    setCurrentRunId(null);
+    setMessages([]);
     localStorage.removeItem(SESSION_KEY_STORAGE);
     const nextSessionKey = getOrCreateSessionKey();
     sessionKeyRef.current = nextSessionKey;
     setSessionKey(nextSessionKey);
-    // Add a visual separator message
-    const separator: ChatMessage = {
-      id: `sep-${Date.now().toString(36)}`,
-      role: "assistant",
-      content: "--- New conversation started ---",
-      timestamp: new Date().toISOString(),
-      status: "done",
-    };
-    setMessages((prev) => {
-      const updated = [...prev, separator];
-      saveHistory(updated);
-      return updated;
-    });
   }, []);
 
   return {

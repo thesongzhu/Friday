@@ -1,136 +1,166 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { AssistantRightRailSlot } from "./right-rail-slots/assistant";
-import { AutomationsRightRailSlot } from "./right-rail-slots/automations";
-import { ChannelsRightRailSlot } from "./right-rail-slots/channels";
-import { ChatCollapsedRightRailSlot } from "./right-rail-slots/chat-collapsed";
-import { HomeRightRailSlot } from "./right-rail-slots/home";
-import { PacksRightRailSlot } from "./right-rail-slots/packs";
-import { SessionsRightRailSlot } from "./right-rail-slots/sessions";
-import { SettingsProvidersRightRailSlot } from "./right-rail-slots/settings-providers";
-import { UsageRightRailSlot } from "./right-rail-slots/usage";
-import { WorkflowsRightRailSlot } from "./right-rail-slots/workflows";
+import { FridayRail } from "./friday-rail";
 
-type RightRailWidth = "full" | "compact" | "collapsed" | "none";
+const RIGHT_RAIL_COLLAPSED_KEY = "friday.shell.right-rail-collapsed";
+const RIGHT_RAIL_WIDTH_KEY = "friday.shell.right-rail-width";
+const DEFAULT_RIGHT_RAIL_WIDTH = 428;
+const MIN_RIGHT_RAIL_WIDTH = 360;
+const MAX_RIGHT_RAIL_WIDTH = 620;
 
-interface RightRailContract {
-  width: RightRailWidth;
-  render: () => ReactNode;
-  ariaLabel: string;
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(RIGHT_RAIL_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
-/**
- * Route-to-slot map. Phase 1 hardcodes the nine surfaces promised by the brief
- * (home / chat-collapsed / assistant / packs / workflows / channels /
- * automations / sessions / usage / settings). Phase 2 migrates this table into
- * route `handle` fields so per-route modules own their inspector strategy.
- */
-function resolveContract(pathname: string): RightRailContract {
-  if (pathname === "/home") {
-    return {
-      width: "full",
-      render: () => <HomeRightRailSlot />,
-      ariaLabel: "Home shortcuts",
-    };
+function writeCollapsed(collapsed: boolean): void {
+  try {
+    localStorage.setItem(RIGHT_RAIL_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // ignore storage failures
   }
-  if (pathname === "/chat") {
-    return {
-      width: "collapsed",
-      render: () => <ChatCollapsedRightRailSlot />,
-      ariaLabel: "Chat tool calls (collapsed)",
-    };
-  }
-  if (pathname === "/assistant") {
-    return {
-      width: "full",
-      render: () => <AssistantRightRailSlot />,
-      ariaLabel: "Assistant approvals preview",
-    };
-  }
-  if (pathname === "/packs" || pathname.startsWith("/packs/")) {
-    return {
-      width: "full",
-      render: () => <PacksRightRailSlot />,
-      ariaLabel: "Pack library shortcuts",
-    };
-  }
-  if (pathname === "/workflows" || pathname.startsWith("/workflows/")) {
-    return {
-      width: "full",
-      render: () => <WorkflowsRightRailSlot />,
-      ariaLabel: "Workflow shortcuts",
-    };
-  }
-  if (pathname === "/channels") {
-    return {
-      width: "full",
-      render: () => <ChannelsRightRailSlot />,
-      ariaLabel: "Channels status",
-    };
-  }
-  if (pathname === "/automations" || pathname.startsWith("/automations/")) {
-    return {
-      width: "full",
-      render: () => <AutomationsRightRailSlot />,
-      ariaLabel: "Automation queue",
-    };
-  }
-  if (pathname === "/sessions") {
-    return {
-      width: "full",
-      render: () => <SessionsRightRailSlot />,
-      ariaLabel: "Recent sessions",
-    };
-  }
-  if (pathname === "/usage") {
-    return {
-      width: "full",
-      render: () => <UsageRightRailSlot />,
-      ariaLabel: "Usage summary",
-    };
-  }
-  if (pathname === "/settings" || pathname.startsWith("/settings/")) {
-    return {
-      width: "compact",
-      render: () => <SettingsProvidersRightRailSlot />,
-      ariaLabel: "Settings provider health",
-    };
-  }
-  return { width: "none", render: () => null, ariaLabel: "" };
 }
 
-function widthVar(width: RightRailWidth): string | undefined {
-  switch (width) {
-    case "full":
-      return "var(--shell-right-rail-w-full)";
-    case "compact":
-      return "var(--shell-right-rail-w-compact)";
-    case "collapsed":
-      return "var(--shell-right-rail-w-collapsed)";
-    default:
-      return undefined;
+function clampRailWidth(width: number): number {
+  return Math.max(MIN_RIGHT_RAIL_WIDTH, Math.min(MAX_RIGHT_RAIL_WIDTH, Math.round(width)));
+}
+
+function readRailWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(RIGHT_RAIL_WIDTH_KEY);
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? clampRailWidth(parsed) : DEFAULT_RIGHT_RAIL_WIDTH;
+  } catch {
+    return DEFAULT_RIGHT_RAIL_WIDTH;
   }
+}
+
+function writeRailWidth(width: number): void {
+  try {
+    window.localStorage.setItem(RIGHT_RAIL_WIDTH_KEY, String(clampRailWidth(width)));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function widthVar(collapsed: boolean, widthPx: number): string {
+  return collapsed
+    ? "var(--shell-right-rail-w-collapsed)"
+    : `${clampRailWidth(widthPx)}px`;
 }
 
 export function RightRail() {
   const location = useLocation();
-  const contract = useMemo(() => resolveContract(location.pathname), [location.pathname]);
-  const width = widthVar(contract.width);
-  if (contract.width === "none" || !width) return null;
+  const isChatPage = location.pathname === "/chat";
+  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
+  const [widthPx, setWidthPx] = useState<number>(() => readRailWidth());
+  const forceCollapsed = false;
+
+  const width = useMemo(
+    () => widthVar(collapsed || forceCollapsed, widthPx),
+    [collapsed, forceCollapsed, widthPx],
+  );
+  const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const widthRef = useRef(widthPx);
+
+  useEffect(() => {
+    widthRef.current = widthPx;
+  }, [widthPx]);
+
+  useEffect(() => {
+    if (isChatPage || collapsed || forceCollapsed) {
+      return;
+    }
+    writeRailWidth(widthPx);
+  }, [collapsed, forceCollapsed, isChatPage, widthPx]);
+
+  useEffect(() => {
+    if (isChatPage || forceCollapsed) {
+      return;
+    }
+
+    function handlePointerMove(event: MouseEvent) {
+      const drag = dragStateRef.current;
+      if (!drag) {
+        return;
+      }
+      const nextWidth = clampRailWidth(drag.startWidth + (drag.startX - event.clientX));
+      setWidthPx(nextWidth);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+
+    function finishDrag() {
+      if (!dragStateRef.current) {
+        return;
+      }
+      dragStateRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      writeRailWidth(widthRef.current);
+    }
+
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", finishDrag);
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", finishDrag);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [forceCollapsed, isChatPage]);
+
+  if (isChatPage) {
+    return null;
+  }
 
   return (
     <aside
       data-testid="app-shell-right-rail"
-      aria-label={contract.ariaLabel}
-      className="hidden shrink-0 overflow-y-auto border-l lg:block"
+      aria-label="Friday rail"
+      className="group/right-rail relative hidden shrink-0 overflow-y-auto border-l lg:block"
       style={{
         width,
-        background: "var(--surface-1)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
+        background: "var(--color-bg-chrome-strong)",
+        borderColor: "var(--color-border-soft)",
         transition: "width var(--motion-swift)",
       }}
     >
-      {contract.render()}
+      {!collapsed && !forceCollapsed ? (
+        <button
+          type="button"
+          aria-label="Resize Friday rail"
+          onMouseDown={(event) => {
+            dragStateRef.current = {
+              startX: event.clientX,
+              startWidth: widthRef.current,
+            };
+            event.preventDefault();
+          }}
+          onDoubleClick={() => setWidthPx(DEFAULT_RIGHT_RAIL_WIDTH)}
+          className="absolute inset-y-0 left-0 z-10 hidden w-4 -translate-x-1/2 cursor-col-resize items-center justify-center border-0 bg-transparent p-0 lg:flex"
+        >
+          <span
+            className="h-20 w-[3px] rounded-full opacity-55 transition-opacity group-hover/right-rail:opacity-100"
+            style={{ background: "rgba(122, 106, 88, 0.28)" }}
+          />
+        </button>
+      ) : null}
+
+      <FridayRail
+        collapsed={collapsed}
+        forceCollapsed={forceCollapsed}
+        onToggleCollapse={() => {
+          setCollapsed((current) => {
+            const next = !current;
+            writeCollapsed(next);
+            return next;
+          });
+        }}
+      />
     </aside>
   );
 }

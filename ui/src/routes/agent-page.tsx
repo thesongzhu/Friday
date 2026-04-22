@@ -55,6 +55,7 @@ import { buildSkillHref } from "@/lib/skills/view-models";
 import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
 import {
   describeRunHealth,
+  displayRunTask,
   labelForRunHealth,
   summarizeRunContext,
   toneForRunHealth,
@@ -984,7 +985,7 @@ export function AgentPage() {
                       className="w-full rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-left transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)]"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="line-clamp-1 font-medium text-[color:var(--color-text-primary)]">{run.task}</span>
+                        <span className="line-clamp-1 font-medium text-[color:var(--color-text-primary)]">{displayRunTask(run)}</span>
                         <StatusPill tone={toneForRunHealth(run)}>{labelForRunHealth(run, "en")}</StatusPill>
                       </div>
                       <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">

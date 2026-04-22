@@ -40,7 +40,7 @@ export function PackCard(props: PackCardProps) {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-[color:var(--color-text-primary)]">{title}</h3>
-                {locale === "zh" && (
+                {locale === "zh" && props.pack.builtIn && (
                   <span className="inline-flex items-center gap-0.5 rounded-full bg-[color:var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--color-accent)]">
                     <ShieldCheck className="h-3 w-3" />
                     官方

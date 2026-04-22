@@ -12,11 +12,13 @@ import type {
 
 interface StartRunInput {
   task: string;
+  taskPrompt?: string;
   model?: string;
   timeoutMs?: number;
   requireReview?: boolean;
   readOnly?: boolean;
   sessionKey?: string;
+  idempotencyKey?: string;
   executionContext?: {
     surface?: string;
     interactive?: boolean;
@@ -78,6 +80,7 @@ export const agentApi = {
   async startRun(input: StartRunInput): Promise<AgentRuntimeResult> {
     const payload = {
       task: input.task,
+      taskPrompt: input.taskPrompt,
       model: input.model,
       timeoutMs: input.timeoutMs,
       requireReview: input.requireReview,
@@ -86,7 +89,13 @@ export const agentApi = {
       executionContext: input.executionContext,
       taskProfile: input.taskProfile,
     };
-    return apiClient.post<typeof payload, AgentRuntimeResult>("/v1/agent/runs", payload);
+    return apiClient.post<typeof payload, AgentRuntimeResult>("/v1/agent/runs", payload, input.idempotencyKey
+      ? {
+        headers: {
+          "Idempotency-Key": input.idempotencyKey,
+        },
+      }
+      : undefined);
   },
 
   async listRuns(query?: { status?: AgentRunStatus; limit?: number }): Promise<AgentRunRecord[]> {

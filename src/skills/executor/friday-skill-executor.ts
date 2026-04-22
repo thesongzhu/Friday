@@ -6,6 +6,7 @@ import type {
   FridaySkillExecuteResult,
   FridaySkillExecutor,
 } from "./friday-skill-executor.types.js";
+import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
 import {
@@ -21,7 +22,13 @@ import {
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
+import { evaluateFridaySkillExecutionReadiness } from "./friday-skill-execution-readiness.js";
+import {
+  getFridayPythonRuntimeUnavailableMessage,
+  resolveFridayPythonCommand,
+} from "./friday-runtime-probe.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
+import { compileFridaySkillSchemas } from "../validation/friday-skill-schema-compiler.js";
 import { resolve } from "node:path";
 
 function defaultTenantContext(request: FridaySkillExecuteRequest) {
@@ -198,6 +205,156 @@ async function runProviderInference(params: {
   };
 }
 
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isMissingSkillInputValue(value: unknown): boolean {
+  if (value == null) {
+    return true;
+  }
+  return typeof value === "string" && value.trim().length === 0;
+}
+
+function hasExpectedInputType(
+  field: SkillManifestV2["inputs"][number],
+  value: unknown,
+): boolean {
+  switch (field.type) {
+    case "string":
+    case "secret":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return value != null && typeof value === "object" && !Array.isArray(value);
+    case "array":
+      return Array.isArray(value);
+    case "file":
+      return typeof value === "string" || (value != null && typeof value === "object");
+  }
+}
+
+function validateInputField(
+  field: SkillManifestV2["inputs"][number],
+  value: unknown,
+): string[] {
+  const issues: string[] = [];
+  if (!hasExpectedInputType(field, value)) {
+    issues.push(`Input "${field.key}" must be of type ${field.type}.`);
+    return issues;
+  }
+
+  if (typeof value === "string") {
+    const pattern = field.validation?.regex;
+    if (pattern) {
+      try {
+        const regex = new RegExp(pattern);
+        if (!regex.test(value)) {
+          issues.push(`Input "${field.key}" does not match the required pattern.`);
+        }
+      } catch {
+        issues.push(`Input "${field.key}" uses an invalid regex pattern.`);
+      }
+    }
+
+    if (field.validation?.enum && !field.validation.enum.includes(value)) {
+      issues.push(`Input "${field.key}" must be one of: ${field.validation.enum.join(", ")}.`);
+    }
+  }
+
+  if (typeof value === "number") {
+    if (typeof field.validation?.min === "number" && value < field.validation.min) {
+      issues.push(`Input "${field.key}" must be >= ${String(field.validation.min)}.`);
+    }
+    if (typeof field.validation?.max === "number" && value > field.validation.max) {
+      issues.push(`Input "${field.key}" must be <= ${String(field.validation.max)}.`);
+    }
+  }
+
+  return issues;
+}
+
+function prepareExecutionInput(
+  manifest: SkillManifestV2,
+  input: Record<string, unknown>,
+): { preparedInput: Record<string, unknown>; issues: string[] } {
+  const preparedInput: Record<string, unknown> = {
+    ...input,
+  };
+  const issues: string[] = [];
+
+  for (const field of manifest.inputs) {
+    const hasOwnValue = Object.prototype.hasOwnProperty.call(preparedInput, field.key);
+    if ((!hasOwnValue || preparedInput[field.key] === undefined) && field.defaultValue !== undefined) {
+      preparedInput[field.key] = cloneJsonValue(field.defaultValue);
+    }
+
+    const value = preparedInput[field.key];
+    if (isMissingSkillInputValue(value)) {
+      if (field.required) {
+        issues.push(`Missing required input "${field.key}".`);
+      }
+      continue;
+    }
+
+    issues.push(...validateInputField(field, value));
+  }
+
+  return { preparedInput, issues };
+}
+
+function formatSchemaErrors(errors: unknown): string[] {
+  if (!Array.isArray(errors)) {
+    return [];
+  }
+
+  return errors.map((error) => {
+    if (!error || typeof error !== "object") {
+      return String(error);
+    }
+    const record = error as { instancePath?: unknown; message?: unknown };
+    const path = typeof record.instancePath === "string" && record.instancePath.length > 0
+      ? record.instancePath
+      : "/";
+    const message = typeof record.message === "string" && record.message.length > 0
+      ? record.message
+      : "Schema validation failed";
+    return `${path} ${message}`.trim();
+  });
+}
+
+function parseStructuredStdout(stdout: string): Record<string, unknown> {
+  if (!looksLikeJsonValue(stdout)) {
+    return { raw: stdout };
+  }
+
+  const parsed: unknown = JSON.parse(stdout);
+  if (
+    parsed != null &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed)
+  ) {
+    return parsed as Record<string, unknown>;
+  }
+  return { result: parsed };
+}
+
+function buildRuntimeEnv(requiredEnvKeys: readonly string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const envKey of requiredEnvKeys) {
+    if (process.env[envKey] != null) {
+      env[envKey] = process.env[envKey]!;
+    }
+  }
+  return env;
+}
+
 /**
  * Creates the main skill executor that routes to the correct runtime executor
  * (shell / node) based on the manifest's `runtime.kind`, and tracks run state
@@ -314,213 +471,375 @@ export function createFridaySkillExecutor(
 
         deps.runStore.upsertRun(snapshot);
 
-        let execResult: FridaySkillExecuteResult;
+        let execResult: FridaySkillExecuteResult | null = null;
+        const schemaValidation = {
+          compiled: false,
+          inputValidated: false,
+          outputValidated: false,
+        };
 
         try {
-          switch (manifest.runtime.kind) {
-            case "shell": {
-              const entrypoint = resolve(
-                registered.skillDir,
-                manifest.runtime.entrypoint,
+          const readiness = evaluateFridaySkillExecutionReadiness({ manifest });
+          if (!readiness.ready) {
+            execResult = {
+              runId,
+              status: "failed",
+              output: {
+                code: "SKILL_NOT_READY",
+                runtimeKind: manifest.runtime.kind,
+                blockers: readiness.blockers,
+                requirements: readiness.requirements,
+              },
+              stdout: "",
+              stderr: readiness.blockers.join(" "),
+              durationMs: 0,
+            };
+          } else {
+            const { preparedInput, issues: inputIssues } = prepareExecutionInput(
+              manifest,
+              request.input,
+            );
+            if (inputIssues.length > 0) {
+              execResult = {
+                runId,
+                status: "failed",
+                output: {
+                  code: "SKILL_INPUT_INVALID",
+                  runtimeKind: manifest.runtime.kind,
+                  issues: inputIssues,
+                },
+                stdout: "",
+                stderr: inputIssues.join(" "),
+                durationMs: 0,
+              };
+            } else {
+              const schemaCompilation = compileFridaySkillSchemas({
+                manifest,
+                skillDir: registered.skillDir,
+              });
+              const schemaCompileErrors = schemaCompilation.issues.filter(
+                (issue) => issue.severity === "error",
+              );
+              const compiledSchemas = schemaCompilation.compiled;
+              schemaValidation.compiled = Boolean(
+                manifest.schemas?.input || manifest.schemas?.state || manifest.schemas?.output,
               );
 
-              // Build env from skill requirements
-              const env: Record<string, string> = {};
-              for (const envKey of manifest.requirements.env) {
-                if (process.env[envKey] != null) {
-                  env[envKey] = process.env[envKey]!;
-                }
-              }
-
-              // Pass input as JSON via stdin
-              const shellResult = await shellExecutor.run({
-                command: entrypoint,
-                cwd: registered.skillDir,
-                env,
-                timeoutMs,
-                stdin: JSON.stringify(request.input),
-                signal: controller.signal,
-              });
-
-              // Check if cancelled during execution
-              if (shellResult.cancelled) {
-                execResult = {
-                  runId,
-                  status: "cancelled",
-                  output: {},
-                  stdout: shellResult.stdout,
-                  stderr: shellResult.stderr,
-                  durationMs: shellResult.durationMs,
-                };
-              } else if (shellResult.timedOut) {
-                execResult = {
-                  runId,
-                  status: "timeout",
-                  output: {},
-                  stdout: shellResult.stdout,
-                  stderr: shellResult.stderr,
-                  durationMs: shellResult.durationMs,
-                };
-              } else if (shellResult.exitCode !== 0) {
-                execResult = {
-                  runId,
-                  status: "failed",
-                  output: {},
-                  stdout: shellResult.stdout,
-                  stderr: shellResult.stderr,
-                  durationMs: shellResult.durationMs,
-                };
-              } else {
-                // Try to parse stdout as JSON output
-                let output: Record<string, unknown> = {};
-                try {
-                  if (!looksLikeJsonValue(shellResult.stdout)) {
-                    output = { raw: shellResult.stdout };
-                  } else {
-                  const parsed: unknown = JSON.parse(shellResult.stdout);
-                  if (
-                    parsed != null &&
-                    typeof parsed === "object" &&
-                    !Array.isArray(parsed)
-                  ) {
-                    output = parsed as Record<string, unknown>;
-                  } else {
-                    output = { result: parsed };
-                  }
-                  }
-                } catch (err) {
-                  console.warn("[friday][skill-executor] operation failed:", err instanceof Error ? err.message : String(err));
-                  output = { raw: shellResult.stdout };
-                }
-
-                execResult = {
-                  runId,
-                  status: "completed",
-                  output,
-                  stdout: shellResult.stdout,
-                  stderr: shellResult.stderr,
-                  durationMs: shellResult.durationMs,
-                };
-              }
-              break;
-            }
-
-            case "node": {
-              const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
-                runtimeKind: manifest.runtime.kind,
-                manifestKind: manifest.kind,
-                source: registered.source,
-                origin: registered.origin,
-              });
-              if (!allowBundledSystemNodeSkill && !isFridayUnisolatedNodeSkillsEnabled()) {
+              if (schemaCompileErrors.length > 0) {
                 execResult = {
                   runId,
                   status: "failed",
                   output: {
-                    code: "CAPABILITY_DISABLED",
-                    capability: "skill_node_runtime",
-                    runtimeKind: "node",
-                    gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+                    code: "SKILL_SCHEMA_INVALID",
+                    runtimeKind: manifest.runtime.kind,
+                    issues: schemaCompileErrors.map((issue) => issue.message),
                   },
                   stdout: "",
-                  stderr: getFridayUnisolatedNodeSkillsDisabledMessage(),
+                  stderr: schemaCompileErrors.map((issue) => issue.message).join(" "),
                   durationMs: 0,
                 };
-                break;
+              } else if (compiledSchemas.input) {
+                schemaValidation.inputValidated = true;
+                const validInput = compiledSchemas.input(preparedInput);
+                if (!validInput) {
+                  const schemaErrors = formatSchemaErrors(compiledSchemas.input.errors);
+                  execResult = {
+                    runId,
+                    status: "failed",
+                    output: {
+                      code: "SKILL_INPUT_SCHEMA_INVALID",
+                      runtimeKind: manifest.runtime.kind,
+                      issues: schemaErrors,
+                    },
+                    stdout: "",
+                    stderr: schemaErrors.join(" "),
+                    durationMs: 0,
+                  };
+                }
               }
 
-              // Build optional AI helper context for BYOK-backed node skills
-              let aiHelper: FridaySkillAiHelperContext | undefined;
-              if (deps.providerService) {
-                const ps = deps.providerService;
-                const tenantContext = defaultTenantContext(request);
-                aiHelper = {
-                  async infer(prompt: string, requestedModel?: string): Promise<string> {
-                    const inference = await runProviderInference({
-                      providerService: ps,
-                      tenantContext,
-                      prompt,
-                      requestedModel,
+              if (!execResult) {
+                switch (manifest.runtime.kind) {
+                  case "shell": {
+                    const entrypoint = resolve(
+                      registered.skillDir,
+                      manifest.runtime.entrypoint,
+                    );
+                    const shellResult = await shellExecutor.run({
+                      command: entrypoint,
+                      cwd: registered.skillDir,
+                      env: buildRuntimeEnv(manifest.requirements.env),
+                      timeoutMs,
+                      stdin: JSON.stringify(preparedInput),
+                      signal: controller.signal,
                     });
-                    return inference.text;
-                  },
-                };
+
+                    if (shellResult.cancelled) {
+                      execResult = {
+                        runId,
+                        status: "cancelled",
+                        output: {},
+                        stdout: shellResult.stdout,
+                        stderr: shellResult.stderr,
+                        durationMs: shellResult.durationMs,
+                      };
+                    } else if (shellResult.timedOut) {
+                      execResult = {
+                        runId,
+                        status: "timeout",
+                        output: {},
+                        stdout: shellResult.stdout,
+                        stderr: shellResult.stderr,
+                        durationMs: shellResult.durationMs,
+                      };
+                    } else if (shellResult.exitCode !== 0) {
+                      execResult = {
+                        runId,
+                        status: "failed",
+                        output: {},
+                        stdout: shellResult.stdout,
+                        stderr: shellResult.stderr,
+                        durationMs: shellResult.durationMs,
+                      };
+                    } else {
+                      let output: Record<string, unknown>;
+                      try {
+                        output = parseStructuredStdout(shellResult.stdout);
+                      } catch (err) {
+                        console.warn("[friday][skill-executor] operation failed:", err instanceof Error ? err.message : String(err));
+                        output = { raw: shellResult.stdout };
+                      }
+
+                      execResult = {
+                        runId,
+                        status: "completed",
+                        output,
+                        stdout: shellResult.stdout,
+                        stderr: shellResult.stderr,
+                        durationMs: shellResult.durationMs,
+                      };
+                    }
+                    break;
+                  }
+
+                  case "python": {
+                    const pythonCommand = resolveFridayPythonCommand();
+                    if (!pythonCommand) {
+                      execResult = {
+                        runId,
+                        status: "failed",
+                        output: {
+                          code: "SKILL_NOT_READY",
+                          runtimeKind: "python",
+                          blockers: [getFridayPythonRuntimeUnavailableMessage()],
+                        },
+                        stdout: "",
+                        stderr: getFridayPythonRuntimeUnavailableMessage(),
+                        durationMs: 0,
+                      };
+                      break;
+                    }
+
+                    const entrypoint = resolve(
+                      registered.skillDir,
+                      manifest.runtime.entrypoint,
+                    );
+                    const pythonResult = await shellExecutor.run({
+                      command: pythonCommand,
+                      args: [entrypoint],
+                      cwd: registered.skillDir,
+                      env: buildRuntimeEnv(manifest.requirements.env),
+                      timeoutMs,
+                      stdin: JSON.stringify(preparedInput),
+                      signal: controller.signal,
+                    });
+
+                    if (pythonResult.cancelled) {
+                      execResult = {
+                        runId,
+                        status: "cancelled",
+                        output: {},
+                        stdout: pythonResult.stdout,
+                        stderr: pythonResult.stderr,
+                        durationMs: pythonResult.durationMs,
+                      };
+                    } else if (pythonResult.timedOut) {
+                      execResult = {
+                        runId,
+                        status: "timeout",
+                        output: {},
+                        stdout: pythonResult.stdout,
+                        stderr: pythonResult.stderr,
+                        durationMs: pythonResult.durationMs,
+                      };
+                    } else if (pythonResult.exitCode !== 0) {
+                      execResult = {
+                        runId,
+                        status: "failed",
+                        output: {},
+                        stdout: pythonResult.stdout,
+                        stderr: pythonResult.stderr,
+                        durationMs: pythonResult.durationMs,
+                      };
+                    } else {
+                      let output: Record<string, unknown>;
+                      try {
+                        output = parseStructuredStdout(pythonResult.stdout);
+                      } catch (err) {
+                        console.warn("[friday][skill-executor] operation failed:", err instanceof Error ? err.message : String(err));
+                        output = { raw: pythonResult.stdout };
+                      }
+
+                      execResult = {
+                        runId,
+                        status: "completed",
+                        output,
+                        stdout: pythonResult.stdout,
+                        stderr: pythonResult.stderr,
+                        durationMs: pythonResult.durationMs,
+                      };
+                    }
+                    break;
+                  }
+
+                  case "node": {
+                    const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
+                      runtimeKind: manifest.runtime.kind,
+                      manifestKind: manifest.kind,
+                      source: registered.source,
+                      origin: registered.origin,
+                    });
+                    if (!allowBundledSystemNodeSkill && !isFridayUnisolatedNodeSkillsEnabled()) {
+                      execResult = {
+                        runId,
+                        status: "failed",
+                        output: {
+                          code: "CAPABILITY_DISABLED",
+                          capability: "skill_node_runtime",
+                          runtimeKind: "node",
+                          gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+                        },
+                        stdout: "",
+                        stderr: getFridayUnisolatedNodeSkillsDisabledMessage(),
+                        durationMs: 0,
+                      };
+                      break;
+                    }
+
+                    let aiHelper: FridaySkillAiHelperContext | undefined;
+                    if (deps.providerService) {
+                      const ps = deps.providerService;
+                      const tenantContext = defaultTenantContext(request);
+                      aiHelper = {
+                        async infer(prompt: string, requestedModel?: string): Promise<string> {
+                          const inference = await runProviderInference({
+                            providerService: ps,
+                            tenantContext,
+                            prompt,
+                            requestedModel,
+                          });
+                          return inference.text;
+                        },
+                      };
+                    }
+
+                    const runtimeContext = createFridaySkillReadonlyRuntimeContext(deps, request);
+                    const nodeResult = await nodeExecutor.run({
+                      entrypoint: manifest.runtime.entrypoint,
+                      input: preparedInput,
+                      cwd: registered.skillDir,
+                      timeoutMs,
+                      signal: controller.signal,
+                      allowWithoutGate: allowBundledSystemNodeSkill,
+                      aiHelper,
+                      runtimeContext,
+                    });
+
+                    const runState = activeRuns.get(runId);
+                    if (runState?.cancelled) {
+                      execResult = {
+                        runId,
+                        status: "cancelled",
+                        output: {},
+                        stdout: "",
+                        stderr: "",
+                        durationMs: nodeResult.durationMs,
+                      };
+                    } else if (nodeResult.timedOut) {
+                      execResult = {
+                        runId,
+                        status: "timeout",
+                        output: {},
+                        stdout: "",
+                        stderr: nodeResult.error ?? "",
+                        durationMs: nodeResult.durationMs,
+                      };
+                    } else if (nodeResult.error) {
+                      execResult = {
+                        runId,
+                        status: "failed",
+                        output: {},
+                        stdout: "",
+                        stderr: nodeResult.error,
+                        durationMs: nodeResult.durationMs,
+                      };
+                    } else {
+                      execResult = {
+                        runId,
+                        status: "completed",
+                        output: nodeResult.output,
+                        stdout: "",
+                        stderr: "",
+                        durationMs: nodeResult.durationMs,
+                      };
+                    }
+                    break;
+                  }
+
+                  case "builtin": {
+                    execResult = {
+                      runId,
+                      status: "failed",
+                      output: {},
+                      stdout: "",
+                      stderr: `Skill "${manifest.id}" is a conversation skill and cannot be run from the CLI. Use the web UI chat or POST /v1/sessions/:key/run instead.`,
+                      durationMs: 0,
+                    };
+                    break;
+                  }
+
+                  default: {
+                    execResult = {
+                      runId,
+                      status: "failed",
+                      output: {},
+                      stdout: "",
+                      stderr: `Unsupported runtime kind: '${manifest.runtime.kind}'`,
+                      durationMs: 0,
+                    };
+                  }
+                }
               }
 
-              const runtimeContext = createFridaySkillReadonlyRuntimeContext(deps, request);
-              const nodeResult = await nodeExecutor.run({
-                entrypoint: manifest.runtime.entrypoint,
-                input: request.input,
-                cwd: registered.skillDir,
-                timeoutMs,
-                signal: controller.signal,
-                allowWithoutGate: allowBundledSystemNodeSkill,
-                aiHelper,
-                runtimeContext,
-              });
-
-              const runState = activeRuns.get(runId);
-              if (runState?.cancelled) {
-                execResult = {
-                  runId,
-                  status: "cancelled",
-                  output: {},
-                  stdout: "",
-                  stderr: "",
-                  durationMs: nodeResult.durationMs,
-                };
-              } else if (nodeResult.timedOut) {
-                execResult = {
-                  runId,
-                  status: "timeout",
-                  output: {},
-                  stdout: "",
-                  stderr: nodeResult.error ?? "",
-                  durationMs: nodeResult.durationMs,
-                };
-              } else if (nodeResult.error) {
-                execResult = {
-                  runId,
-                  status: "failed",
-                  output: {},
-                  stdout: "",
-                  stderr: nodeResult.error,
-                  durationMs: nodeResult.durationMs,
-                };
-              } else {
-                execResult = {
-                  runId,
-                  status: "completed",
-                  output: nodeResult.output,
-                  stdout: "",
-                  stderr: "",
-                  durationMs: nodeResult.durationMs,
-                };
+              if (execResult?.status === "completed" && compiledSchemas.output) {
+                schemaValidation.outputValidated = true;
+                const validOutput = compiledSchemas.output(execResult.output);
+                if (!validOutput) {
+                  const schemaErrors = formatSchemaErrors(compiledSchemas.output.errors);
+                  execResult = {
+                    runId,
+                    status: "failed",
+                    output: {
+                      code: "SKILL_OUTPUT_SCHEMA_INVALID",
+                      runtimeKind: manifest.runtime.kind,
+                      issues: schemaErrors,
+                    },
+                    stdout: execResult.stdout,
+                    stderr: schemaErrors.join(" "),
+                    durationMs: execResult.durationMs,
+                  };
+                }
               }
-              break;
-            }
-
-            case "builtin": {
-              execResult = {
-                runId,
-                status: "failed",
-                output: {},
-                stdout: "",
-                stderr: `Skill "${manifest.id}" is a conversation skill and cannot be run from the CLI. Use the web UI chat or POST /v1/sessions/:key/run instead.`,
-                durationMs: 0,
-              };
-              break;
-            }
-
-            default: {
-              execResult = {
-                runId,
-                status: "failed",
-                output: {},
-                stdout: "",
-                stderr: `Unsupported runtime kind: '${manifest.runtime.kind}'`,
-                durationMs: 0,
-              };
             }
           }
         } catch (err) {
@@ -539,10 +858,19 @@ export function createFridaySkillExecutor(
         }
 
         // Persist final run state
+        const finalResult = execResult ?? {
+          runId,
+          status: "failed" as const,
+          output: {},
+          stdout: "",
+          stderr: "Skill execution did not produce a terminal result",
+          durationMs: 0,
+        };
+
         const terminalStatus =
-          execResult.status === "completed"
+          finalResult.status === "completed"
             ? "completed"
-            : execResult.status === "cancelled"
+            : finalResult.status === "cancelled"
               ? "cancelled"
               : "failed";
 
@@ -553,12 +881,15 @@ export function createFridaySkillExecutor(
           updatedAt: finalNow,
           lastTransitionAt: finalNow,
           metadata: {
-            durationMs: execResult.durationMs,
-            timedOut: execResult.status === "timeout",
+            durationMs: finalResult.durationMs,
+            timedOut: finalResult.status === "timeout",
+            runtimeKind: manifest.runtime.kind,
+            declaredTelemetryEvents: manifest.telemetry?.events ?? [],
+            schemaValidation,
           },
         });
 
-        return execResult;
+        return finalResult;
       })();
 
       return { runId, result };

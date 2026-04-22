@@ -30,6 +30,10 @@ interface ArchiveSessionResponse {
   session: FridaySessionRecord;
 }
 
+interface ResetSessionResponse {
+  session: FridaySessionRecord;
+}
+
 interface PruneSessionsResponse {
   result: FridaySessionPruneResult;
 }
@@ -133,6 +137,14 @@ export const sessionsApi = {
   async archive(sessionKey: string): Promise<FridaySessionRecord> {
     const data = await apiClient.post<Record<string, never>, ArchiveSessionResponse>(
       `/v1/sessions/${encodeKey(sessionKey)}/archive`,
+      {},
+    );
+    return data.session;
+  },
+
+  async reset(sessionKey: string): Promise<FridaySessionRecord> {
+    const data = await apiClient.post<Record<string, never>, ResetSessionResponse>(
+      `/v1/sessions/${encodeKey(sessionKey)}/reset`,
       {},
     );
     return data.session;

@@ -2340,6 +2340,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const executeAgentRunWithSessionContext = orchestrationEngine
     ? async (input: {
       task: string;
+      taskPrompt?: string;
       runId: string;
       sessionKey?: string;
       providerId?: string;
@@ -2403,6 +2404,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
       const engineResult = await orchestrationEngine.executeRun({
         task: input.task,
+        taskPrompt: input.taskPrompt,
         runId: input.runId,
         sessionKey: input.sessionKey,
         providerId: input.providerId,
@@ -2443,6 +2445,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     ? async (input: {
       sessionKey: string;
       task: string;
+      taskPrompt?: string;
       providerId?: string;
       model?: string;
       replyToMessageId?: string;
@@ -2459,6 +2462,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const runId = deps.idGenerator();
       return executeAgentRunWithSessionContext!({
         task: input.task,
+        taskPrompt: input.taskPrompt,
         runId,
         sessionKey: input.sessionKey,
         providerId: input.providerId,
@@ -2518,6 +2522,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
     const startRun = async (input: {
       task: string;
+      taskPrompt?: string;
       sessionKey?: string;
       providerId?: string;
       model?: string;
@@ -2563,6 +2568,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       try {
         return await executeAgentRunWithSessionContext!({
           task: input.task,
+          taskPrompt: input.taskPrompt,
           runId,
           sessionKey: input.sessionKey,
           providerId: input.providerId,
@@ -2720,6 +2726,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   if (deps.subagentRegistry) {
     for (const route of createFridaySubagentRoutes({
       subagentRegistry: deps.subagentRegistry,
+      getRun: agentRepo
+        ? (runId) =>
+          deps.db.withReadConnection((db) =>
+            enrichAgentRun(agentRepo.getById(db, runId)),
+          )
+        : undefined,
     })) {
       routes.register(route);
     }

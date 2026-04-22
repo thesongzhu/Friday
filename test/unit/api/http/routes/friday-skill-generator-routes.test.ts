@@ -3,6 +3,7 @@ import { createFridaySkillGeneratorRoutes } from "#api";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  FRIDAY_SKILL_PYTHON_BIN_ENV,
   type FridaySkillRegistry,
   type FridayRegisteredSkill,
 } from "#skills";
@@ -592,6 +593,81 @@ describe("FridaySkillGeneratorRoutes", () => {
         } else {
           process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
         }
+      }
+    });
+
+    it("runs python draft self-tests through the configured interpreter", async () => {
+      const fs = await import("node:fs/promises");
+      const tempDir = await fs.mkdtemp("/tmp/friday-generator-python-");
+      const previousPythonBin = process.env[FRIDAY_SKILL_PYTHON_BIN_ENV];
+
+      try {
+        await fs.writeFile(
+          `${tempDir}/python-shim`,
+          "#!/bin/sh\nprintf '{\"result\":\"OK-MARKER\"}'\n",
+          { mode: 0o755 },
+        );
+        process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = `${tempDir}/python-shim`;
+
+        const generatorService = makeMockGeneratorService();
+        generatorService.getSession = vi.fn(async (sessionId: string) => {
+          if (sessionId === "not-found") return null;
+          const draft = makeMockDraft();
+          return {
+            session: {
+              ...makeMockSession().session,
+              sessionId,
+              draftSkillId: "test-skill",
+              status: "ready_for_review",
+              goal: 'Build a timer and must output the exact string "OK-MARKER"',
+            },
+            turns: [],
+            draft: {
+              ...draft,
+              runtimeKind: "python" as const,
+              manifest: {
+                ...draft.manifest,
+                runtime: {
+                  kind: "python",
+                  entrypoint: "index.py",
+                  minHubVersion: "1.0.0",
+                  apiVersion: "1",
+                  timeoutMsDefault: 30_000,
+                },
+              },
+              files: [
+                {
+                  path: "index.py",
+                  language: "python" as const,
+                  executable: false,
+                  content: "print('unused by shim')\n",
+                },
+              ],
+            },
+          };
+        });
+
+        const routes = createFridaySkillGeneratorRoutes({
+          skillGenerator: generatorService,
+          registry: makeMockRegistry(),
+        });
+        const route = routes.find(
+          (r) => r.operationId === "skills.generator.sessions.test",
+        )!;
+
+        const result = await route.handler(
+          makeCtx({ params: { sessionId: "sess-1" } }),
+        ) as { test: { ok: boolean; executable: boolean } };
+
+        expect(result.test.ok).toBe(true);
+        expect(result.test.executable).toBe(true);
+      } finally {
+        if (previousPythonBin === undefined) {
+          delete process.env[FRIDAY_SKILL_PYTHON_BIN_ENV];
+        } else {
+          process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = previousPythonBin;
+        }
+        await fs.rm(tempDir, { recursive: true, force: true });
       }
     });
   });

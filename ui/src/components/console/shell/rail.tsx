@@ -11,7 +11,6 @@ import {
   Home,
   Layers,
   ListFilter,
-  LogOut,
   MessageCircle,
   MessageSquare,
   Plug,
@@ -20,7 +19,6 @@ import {
   Workflow,
   type LucideIcon,
 } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
 import { localize, resolveLocalizedText, type AppLocale } from "@/lib/i18n/localized-text";
 import {
   AGENT_OS_NAV_ADVANCED,
@@ -62,7 +60,6 @@ interface RailProps {
 
 export function Rail({ collapsed, onToggleCollapse }: RailProps) {
   const { locale, setLocale } = useAppLocale();
-  const { user, logout } = useAuth();
 
   const advancedOrdered = useMemo<AgentOsNavItem[]>(() => {
     const paths = AGENT_OS_NAV_ADVANCED.map((item) => item.path);
@@ -176,19 +173,6 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
           >
             <Globe2 className="h-4 w-4 shrink-0" />
             {!collapsed ? <span>{locale === "zh" ? "中文" : "English"}</span> : null}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="mt-1 flex w-full items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm transition-colors hover:bg-[color:var(--amber-100)]"
-            style={{ color: "var(--ink-700)" }}
-            aria-label={localize(locale, "退出登录", "Sign out")}
-          >
-            <LogOut className="h-4 w-4 shrink-0" />
-            {!collapsed ? (
-              <span className="truncate">{user?.displayName ?? localize(locale, "当前用户", "Account")}</span>
-            ) : null}
           </button>
         </div>
       </div>

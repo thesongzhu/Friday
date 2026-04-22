@@ -2,7 +2,6 @@ import { apiClient } from "./client";
 import { authStorage } from "@/lib/storage/auth-storage";
 import type {
   AuthBootstrapResponse,
-  AuthBootstrapStatusResponse,
   LoginResponse,
   MeResponse,
 } from "./types";
@@ -28,10 +27,6 @@ export async function login(input: LoginInput): Promise<LoginResponse> {
 
 export async function fetchMe(): Promise<MeResponse> {
   return apiClient.get<MeResponse>("/v1/auth/me");
-}
-
-export async function fetchBootstrapStatus(): Promise<AuthBootstrapStatusResponse> {
-  return apiClient.get<AuthBootstrapStatusResponse>("/v1/auth/bootstrap/status");
 }
 
 export async function bootstrapLocalPassphrase(passphrase: string): Promise<AuthBootstrapResponse> {
