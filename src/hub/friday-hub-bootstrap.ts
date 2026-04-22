@@ -33,6 +33,10 @@ import {
   createFridayCrossBorderPackService,
   type FridayCrossBorderPackService,
 } from "../packs/cross-border/friday-cross-border-pack-service.js";
+import {
+  buildFridayCustomPackPromptFragment,
+  findFridayCustomPackById,
+} from "../packs/custom/friday-custom-pack-context.js";
 import { FridayDomainError } from "#errors";
 import { isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
@@ -2662,6 +2666,9 @@ export async function createFridayHub(
     timezone: string;
     localDate: string;
     task?: string;
+    executionContext?: {
+      packId?: string;
+    };
     conversationContext?: {
       selectedBlocks?: FridayConversationBlock[];
     };
@@ -2754,6 +2761,53 @@ export async function createFridayHub(
       } catch (err) {
         warnHubBootstrapOperationFailureOnce(err);
         // Non-fatal: pattern loading failure should not block agent runs.
+      }
+
+      try {
+        const packId = input.executionContext?.packId?.trim();
+        if (packId && packId.startsWith("custom-")) {
+          const customPackContext = stateRuntime.sqlite.withReadConnection((db) => {
+            const persistedPackPreference = uixUserPreferenceRepository
+              .listByPrincipal(db, {
+                principalId: input.userId!,
+                category: "uix",
+              })
+              .find((preference) => preference.key === "packs.customInputs");
+            if (!persistedPackPreference) {
+              return null;
+            }
+
+            const resolvedPack = findFridayCustomPackById(persistedPackPreference.value, packId);
+            if (!resolvedPack) {
+              return null;
+            }
+
+            const recentRuns = agentRunRepo
+              .list(db, { limit: 120 })
+              .filter((run) =>
+                run.metadata?.packContext?.packId === packId
+                && run.metadata?.apiRequest?.principalId === input.userId,
+              )
+              .slice(0, 3);
+
+            return {
+              resolvedPack,
+              recentRuns,
+            };
+          });
+
+          if (customPackContext) {
+            const customPackFragment = buildFridayCustomPackPromptFragment({
+              packId,
+              pack: customPackContext.resolvedPack,
+              recentRuns: customPackContext.recentRuns,
+            });
+            workspaceContext = (workspaceContext ?? "") + `\n\n${customPackFragment}`;
+          }
+        }
+      } catch (err) {
+        warnHubBootstrapOperationFailureOnce(err);
+        // Non-fatal: custom-pack context loading failure should not block agent runs.
       }
     }
     const starterSkills = listInstalledStarterSkills().slice(0, 8);
@@ -4039,6 +4093,50 @@ export async function createFridayHub(
     };
   };
 
+  const getUiRunSurface = (run: FridayAgentRunRecord): string | undefined => {
+    const directSurface = run.metadata?.surface?.trim();
+    if (directSurface) {
+      return directSurface;
+    }
+    const packSurface = run.metadata?.packContext?.surface?.trim();
+    return packSurface && packSurface.length > 0 ? packSurface : undefined;
+  };
+
+  const unwrapUiSubagentSessionKey = (sessionKey: string): string => {
+    let normalized = sessionKey;
+    while (normalized.startsWith("subagent:")) {
+      normalized = normalized.slice("subagent:".length);
+    }
+    return normalized;
+  };
+
+  const isUserVisibleAgentRun = (run: FridayAgentRunRecord): boolean => {
+    const surface = getUiRunSurface(run);
+    if (surface?.startsWith("autonomous_internal_")) {
+      return false;
+    }
+    if (unwrapUiSubagentSessionKey(run.sessionKey).startsWith("autonomous:")) {
+      return false;
+    }
+    return !run.sessionKey.trim().startsWith("subagent:");
+  };
+
+  const listVisibleAgentRunsForUi = (input: {
+    status?: FridayAgentRunStatus;
+    limit?: number;
+  }): FridayAgentRunRecord[] => {
+    const requestedLimit = input.limit ?? 12;
+    const fetchLimit = Math.min(Math.max(requestedLimit * 4, requestedLimit), 100);
+    return stateRuntime.sqlite.withReadConnection((db) =>
+      agentRunRepo.list(db, {
+        status: input.status,
+        limit: fetchLimit,
+      })
+        .filter(isUserVisibleAgentRun)
+        .slice(0, requestedLimit)
+        .map(enrichAgentRunForUi));
+  };
+
   const uixService = createFridayUixSurfaceService({
     db: stateRuntime.sqlite,
     idGenerator,
@@ -4066,22 +4164,21 @@ export async function createFridayHub(
         resolveFridayAgentTaskProfile("review"),
         resolveFridayAgentTaskProfile("creative"),
       ],
-      recentRuns: stateRuntime.sqlite.withReadConnection((db) =>
-        agentRunRepo.list(db, { limit: 8 }).map((run) => ({
+      recentRuns: listVisibleAgentRunsForUi({ limit: 8 }).map((run) => ({
+        rollbackAvailable: agentRuntime.hasRollbackCheckpoint(run.id),
+        runId: run.id,
+        task: run.task,
+        status: run.status,
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
+        contextCostSummary: run.contextCostSummary,
+        taskProfile: run.taskProfile,
+        health: buildFridayAgentRunHealthSnapshot({
+          run,
           rollbackAvailable: agentRuntime.hasRollbackCheckpoint(run.id),
-          runId: run.id,
-          task: run.task,
-          status: run.status,
-          startedAt: run.startedAt,
-          completedAt: run.completedAt,
-          contextCostSummary: run.contextCostSummary,
-          taskProfile: run.taskProfile,
-          health: buildFridayAgentRunHealthSnapshot({
-            run,
-            rollbackAvailable: agentRuntime.hasRollbackCheckpoint(run.id),
-          }),
-          contextSummary: buildFridayAgentRunContextSummarySnapshot(run),
-        }))),
+        }),
+        contextSummary: buildFridayAgentRunContextSummarySnapshot(run),
+      })),
       mcpServerStates: [...(mcpAdapter?.listServerStates() ?? [])],
       supportedPreprocessors: [
         "test_output",
@@ -4090,12 +4187,7 @@ export async function createFridayHub(
         "diff_excerpt",
       ],
     }),
-    listAgentRuns: (input) =>
-      stateRuntime.sqlite.withReadConnection((db) =>
-        agentRunRepo.list(db, {
-          status: input.status,
-          limit: input.limit,
-        }).map(enrichAgentRunForUi)),
+    listAgentRuns: (input) => listVisibleAgentRunsForUi(input),
     listAutomations: (input) =>
       stateRuntime.sqlite.withReadConnection((db) =>
         agentAutomationRepo.findMany(db, {

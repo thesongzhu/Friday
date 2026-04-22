@@ -124,13 +124,57 @@ function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: (
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { isLoading } = useAuth();
+  const { locale } = useAppLocale();
+  const { isAuthenticated, isLoading, authError, retryLocalSession } = useAuth();
 
   if (isLoading) {
     return (
       <LoadingMessage
         title={localizedText("启动 Friday", "Starting Friday")}
         detail={localizedText("Friday 正在准备你的本地会话。", "Friday is preparing your local session.")}
+      />
+    );
+  }
+
+  if (!isAuthenticated) {
+    const retry: SplashAction = {
+      label: localize(locale, "重试本地会话", "Retry local session"),
+      onClick: () => {
+        void retryLocalSession();
+      },
+      tone: "primary",
+    };
+    const reload: SplashAction = {
+      label: localize(locale, "刷新页面", "Reload page"),
+      onClick: () => {
+        if (typeof window !== "undefined") window.location.reload();
+      },
+      tone: "secondary",
+    };
+    const authDetail = authError?.message?.trim();
+    return (
+      <SetupGateSplash
+        eyebrow="Friday"
+        title={localize(locale, "本地会话未连接", "Local session not connected")}
+        body={localize(
+          locale,
+          "Friday 启动时没有拿到本地会话，因此没有进入首页。我保留了恢复入口，但不再显示旧登录页。",
+          "Friday could not attach a local session on launch, so it did not enter home. The recovery path stays here, but the old login surface is no longer shown.",
+        )}
+        steps={[
+          { label: localize(locale, "重试建立本地会话。", "Retry creating the local session."), status: "active" },
+          {
+            label: authDetail
+              ? localize(locale, `后端返回：${authDetail}`, `Backend said: ${authDetail}`)
+              : localize(
+                  locale,
+                  "如果仍失败，检查本地 Friday 进程是否刚重启，或 setup 是否已完成。",
+                  "If it still fails, check whether the local Friday process just restarted or setup is still incomplete.",
+                ),
+            status: "todo",
+          },
+        ]}
+        actions={[retry, reload]}
       />
     );
   }

@@ -2,6 +2,8 @@ import type { AgentRunRecord } from "@/lib/api/types";
 import { localize, resolveLocalizedText, type AppLocale } from "@/lib/i18n/localized-text";
 import {
   describeRunHealth,
+  displayRunPreview,
+  displayRunTask,
   labelForRunHealth,
   summarizeRunContext,
   toneForRunHealth,
@@ -184,11 +186,9 @@ function resolveEvidence(pack: FridayPackDefinition, run: AgentRunRecord | null,
   }
 
   return clampText(
-    run.summary
-      ?? run.responseText
-      ?? run.errorMessage
-      ?? describeRunHealth(run, locale)
-      ?? resolveLocalizedText(pack.productCopy?.resultSummary ?? pack.summary, locale),
+    displayRunPreview(run)
+      || describeRunHealth(run, locale)
+      || resolveLocalizedText(pack.productCopy?.resultSummary ?? pack.summary, locale),
   );
 }
 
@@ -201,7 +201,10 @@ function buildContextNotes(
 ): string[] {
   const notes: string[] = [];
   if (run?.task) {
-    notes.push(localize(locale, `最近处理：${run.task}`, `Latest task: ${run.task}`));
+    const taskLabel = displayRunTask(run);
+    if (taskLabel) {
+      notes.push(localize(locale, `最近处理：${taskLabel}`, `Latest task: ${taskLabel}`));
+    }
   }
 
   const contextSummary = run ? summarizeRunContext(run as RunHealthLike, locale) : null;

@@ -687,6 +687,43 @@ describe("FridayAgentRoutes", () => {
       expect(result.items).toEqual([visibleRun]);
     });
 
+    it("sanitizes historical custom-pack response text on read", async () => {
+      const run = createStubRun({
+        id: "run-custom-1",
+        status: "completed",
+        responseText: [
+          "这是用户可见的结论。",
+          "readOnly=true",
+          "childRunId: 123e4567-e89b-12d3-a456-426614174000",
+          "sessionKey: subagent:session-1",
+        ].join("\n"),
+        metadata: {
+          packContext: {
+            packId: "custom-pack-demo",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+      stubDeps.listRuns = vi.fn().mockReturnValue([run]);
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.list")!;
+      const ctx = {
+        body: null,
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx) as { items: FridayAgentRunRecord[] };
+      expect(result.items[0]?.responseText).toContain("这是用户可见的结论。");
+      expect(result.items[0]?.responseText).not.toContain("readOnly");
+      expect(result.items[0]?.responseText).not.toContain("childRunId");
+      expect(result.items[0]?.responseText).not.toContain("sessionKey");
+    });
+
     it("validates limit is a positive integer", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.list")!;
@@ -778,6 +815,62 @@ describe("FridayAgentRoutes", () => {
       expect(result.run).toEqual(run);
     });
 
+    it("sanitizes historical custom-pack detail reads", async () => {
+      const run = createStubRun({
+        id: "run-custom-1",
+        status: "completed",
+        responseText: [
+          "这是用户可见的结论。",
+          "readOnly=true",
+          "childRunId: 123e4567-e89b-12d3-a456-426614174000",
+        ].join("\n"),
+        metadata: {
+          packContext: {
+            packId: "custom-pack-demo",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+      stubDeps.getRun = vi.fn().mockReturnValue(run);
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.get")!;
+      const ctx = {
+        body: null,
+        params: { runId: "run-custom-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      const result = await route.handler(ctx) as { run: FridayAgentRunRecord };
+      expect(result.run.responseText).toContain("这是用户可见的结论。");
+      expect(result.run.responseText).not.toContain("readOnly");
+      expect(result.run.responseText).not.toContain("childRunId");
+      expect(result.run.responseText).not.toContain("123e4567-e89b-12d3-a456-426614174000");
+    });
+
+    it("returns 404 for hidden subagent child runs", async () => {
+      stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+        id: "child-run-1",
+        sessionKey: "subagent:agent:run:parent-run-1:child-run-1",
+      }));
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.get")!;
+      const ctx = {
+        body: null,
+        params: { runId: "child-run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-hidden-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("Agent run not found");
+    });
+
     it("throws 404 when run not found", async () => {
       stubDeps.getRun = vi.fn().mockReturnValue(null);
       const routes = createFridayAgentRoutes(stubDeps);
@@ -813,6 +906,28 @@ describe("FridayAgentRoutes", () => {
       expect(result.cancelled).toBe(true);
       expect(result.runId).toBe("run-1");
       expect(stubDeps.cancelRun).toHaveBeenCalledWith("run-1");
+    });
+
+    it("returns 404 when cancelling a hidden subagent child run", async () => {
+      stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+        id: "child-run-1",
+        status: "executing",
+        sessionKey: "subagent:agent:run:parent-run-1:child-run-1",
+      }));
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.cancel")!;
+      const ctx = {
+        body: null,
+        params: { runId: "child-run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-hidden-cancel-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await expect(route.handler(ctx)).rejects.toThrow("Agent run not found");
+      expect(stubDeps.cancelRun).not.toHaveBeenCalled();
     });
 
     it("throws 404 when run not found", async () => {

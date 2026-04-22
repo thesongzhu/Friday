@@ -1238,15 +1238,27 @@ export function createFridayAgentRuntime(
             });
             const durationMs = Date.now() - startedAt;
             const completedAt = nowIso();
-            const summaryText = deriveSummary(responseText);
+            const sanitizedTerminalResponseText = sanitizeCustomPackResponseText(
+              responseText,
+              executionContext,
+            );
             const terminalStatus = delegated.outcome.status;
+            const sanitizedDelegatedErrorText = sanitizeCustomPackResponseText(
+              childRunRecord?.errorMessage?.trim() ?? "",
+              executionContext,
+            ).trim();
             const terminalResponse = terminalStatus === "failed"
-              ? childRunRecord?.errorMessage?.trim() || `Delegated sub-agent ${delegated.subagentId} failed.`
-              : responseText.trim().length > 0
-                ? responseText
-                : terminalStatus === "completed"
-                  ? `Delegated sub-agent ${delegated.subagentId} completed without a response.`
-                  : `Delegated sub-agent ${delegated.subagentId} ${terminalStatus}.`;
+              ? sanitizedDelegatedErrorText || buildDelegatedExecutionFallbackMessage({
+                status: terminalStatus,
+                task: params.task,
+              })
+              : sanitizedTerminalResponseText.trim().length > 0
+                ? sanitizedTerminalResponseText
+                : buildDelegatedExecutionFallbackMessage({
+                  status: terminalStatus,
+                  task: params.task,
+                });
+            const summaryText = deriveSummary(terminalResponse);
             const persistedArtifacts = persistRunArtifacts({
               status: terminalStatus,
               response: terminalResponse,
@@ -1369,6 +1381,7 @@ export function createFridayAgentRuntime(
             timezone: runTimeContext.timezone,
             localDate: runTimeContext.localDate,
             task: params.task,
+            executionContext,
             conversationContext,
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
@@ -1505,6 +1518,7 @@ export function createFridayAgentRuntime(
         let memorySearchEnforcementRetries = 0;
         let memoryRecallAlignmentRetries = 0;
         let timelinessEnforcementRetries = 0;
+        let customPackResponseRetries = 0;
         let answerAlignmentRetries = 0;
         let desktopInspectionRetries = 0;
         let artifactTruthRetries = 0;
@@ -1997,14 +2011,35 @@ export function createFridayAgentRuntime(
               task: params.task,
               responseText: timelinessDecision.responseText,
             });
-            const memoryRecallAlignmentDecision = evaluateMemoryRecallAnswerAlignment({
+            const customPackRetryPrompt = buildCustomPackInternalDetailsRetryPrompt({
               task: params.task,
               responseText: alignedResponse,
+              executionContext,
+            });
+            if (
+              customPackRetryPrompt
+              && alignedResponse.trim().length > 0
+              && customPackResponseRetries < 2
+            ) {
+              customPackResponseRetries++;
+              messages.push({
+                role: "user",
+                content: customPackRetryPrompt,
+              });
+              continue;
+            }
+            const sanitizedAlignedResponse = sanitizeCustomPackResponseText(
+              alignedResponse,
+              executionContext,
+            );
+            const memoryRecallAlignmentDecision = evaluateMemoryRecallAnswerAlignment({
+              task: params.task,
+              responseText: sanitizedAlignedResponse,
               toolCalls: allToolCalls,
             });
             if (
               memoryRecallAlignmentDecision.retryPrompt
-              && alignedResponse.trim().length > 0
+              && sanitizedAlignedResponse.trim().length > 0
               && memoryRecallAlignmentRetries < 1
             ) {
               memoryRecallAlignmentRetries++;
@@ -2065,8 +2100,8 @@ export function createFridayAgentRuntime(
             if (
               taskRequiresReadOnlyDesktopInspection(params.task)
               && hasDesktopContentInspectionCoverageEvidence(allToolCalls)
-              && alignedResponse.trim().length > 0
-              && !responseAddressesDesktopContentInspection(alignedResponse)
+              && sanitizedAlignedResponse.trim().length > 0
+              && !responseAddressesDesktopContentInspection(sanitizedAlignedResponse)
               && desktopInspectionRetries < 1
             ) {
               desktopInspectionRetries++;
@@ -2082,14 +2117,14 @@ export function createFridayAgentRuntime(
 
             const alignmentDecision = evaluateFridayAnswerAlignment({
               task: params.task,
-              responseText: alignedResponse,
+              responseText: sanitizedAlignedResponse,
               historyMessages: normalizeHistoryMessages(params.historyMessages),
               conversationContext,
             });
             const maxAnswerAlignmentRetries = hasAnchoredAssistantFact ? 2 : 1;
             if (
               alignmentDecision.retryPrompt &&
-              alignedResponse.trim().length > 0 &&
+              sanitizedAlignedResponse.trim().length > 0 &&
               answerAlignmentRetries < maxAnswerAlignmentRetries
             ) {
               answerAlignmentRetries++;
@@ -2102,7 +2137,7 @@ export function createFridayAgentRuntime(
 
             if (
               alignmentDecision.retryPrompt
-              && alignedResponse.trim().length > 0
+              && sanitizedAlignedResponse.trim().length > 0
               && hasAnchoredAssistantFact
             ) {
               const anchoredFallback = buildReplyAnchorFallbackResponse({
@@ -2110,9 +2145,13 @@ export function createFridayAgentRuntime(
                 conversationContext,
               });
               if (anchoredFallback) {
+                const sanitizedAnchoredFallback = sanitizeCustomPackResponseText(
+                  anchoredFallback,
+                  executionContext,
+                );
                 const artifactTruthGap = detectArtifactTruthGap({
                   task: params.task,
-                  responseText: anchoredFallback,
+                  responseText: sanitizedAnchoredFallback,
                   toolCalls: allToolCalls,
                 });
                 if (artifactTruthGap && (artifactTruthGap.retryable ?? true) && artifactTruthRetries < 2) {
@@ -2124,20 +2163,20 @@ export function createFridayAgentRuntime(
                   continue;
                 }
 
-                responseText = anchoredFallback;
+                responseText = sanitizedAnchoredFallback;
                 break;
               }
             }
 
             const artifactTruthGap = detectArtifactTruthGap({
               task: params.task,
-              responseText: alignedResponse,
+              responseText: sanitizedAlignedResponse,
               toolCalls: allToolCalls,
             });
             if (
               artifactTruthGap
               && (artifactTruthGap.retryable ?? true)
-              && alignedResponse.trim().length > 0
+              && sanitizedAlignedResponse.trim().length > 0
               && artifactTruthRetries < 2
             ) {
               artifactTruthRetries++;
@@ -2148,8 +2187,8 @@ export function createFridayAgentRuntime(
               continue;
             }
 
-            responseText = alignedResponse.trim().length > 0
-              ? alignedResponse
+            responseText = sanitizedAlignedResponse.trim().length > 0
+              ? sanitizedAlignedResponse
               : latestNonEmptyAssistantText;
             break;
           }
@@ -2940,6 +2979,7 @@ export function createFridayAgentRuntime(
         }
 
         // ─── Derive summary from response (IMPL-6) ───
+        responseText = sanitizeCustomPackResponseText(responseText, executionContext);
         const summaryText = deriveSummary(responseText);
 
         // 8. Finalize — success or degraded-as-failed
@@ -3032,6 +3072,7 @@ export function createFridayAgentRuntime(
           const cancelMessage = runAbortController.signal.reason instanceof Error
             ? runAbortController.signal.reason.message
             : "Agent run cancelled";
+          responseText = sanitizeCustomPackResponseText(responseText, executionContext);
           latestActualExecution = latestActualExecution ?? buildActualExecution({
             finalFailureReason: "Agent run cancelled",
           });
@@ -3109,6 +3150,7 @@ export function createFridayAgentRuntime(
           fallbackAttempts: errorFallbackAttempts,
         });
 
+        responseText = sanitizeCustomPackResponseText(responseText, executionContext);
         const summaryText = deriveSummary(responseText);
         const completedAt = nowIso();
         const persistedArtifacts = persistRunArtifacts({
@@ -4774,6 +4816,115 @@ function buildArtifactTruthRetryPrompt(gap: OutputClosureGap): string {
     "If a risky action was stopped, the decision artifact must explicitly say approval is required and that no destructive changes were executed.",
     "Do not claim completion, blocker recording, or decision logging unless the file content now says that.",
   ].join(" ");
+}
+
+const CUSTOM_PACK_INTERNAL_DETAIL_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+  /[（(]?\s*ID\s*[:：]/i,
+  /\b(?:readOnly|skills_list|memory_search|agents_list|sub-?agent|sessionKey|session key|childRunId|tool[_ ]call|tool name|pack_id|pack id|memory system|memory item|memory namespace)\b/i,
+  /\b(?:run id|session id|subagent id)\b/i,
+  /(?:任务包\s*id|只读模式|内存(?:系统|持久化|记录)|记忆(?:系统|条目|检索)|工作流目录|workflow catalog|子代理|会话键|父会话|父子会话|运行深度|元数据)/i,
+];
+
+const CUSTOM_PACK_INTERNAL_LINE_DROP_PATTERNS: ReadonlyArray<RegExp> = [
+  /(?:只读模式|read[- ]?only mode)/i,
+  /(?:内存(?:系统|持久化|记录)|记忆(?:系统|条目|检索)|memory system|memory item|memory namespace|memory search)/i,
+  /(?:skills_list|memory_search|agents_list|sub-?agent|tool[_ ]call|tool name)/i,
+  /(?:子代理|会话键|父会话|父子会话|运行深度|元数据)/i,
+  /(?:当前运行.*正在执行中)/i,
+];
+
+const CUSTOM_PACK_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+function isCustomPackExecutionContext(
+  executionContext?: FridayAgentExecutionContext,
+): boolean {
+  return Boolean(executionContext?.packId?.trim().startsWith("custom-"));
+}
+
+function customPackResponseLeaksInternalDetails(responseText: string): boolean {
+  const normalized = responseText.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+  return CUSTOM_PACK_INTERNAL_DETAIL_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function buildCustomPackInternalDetailsRetryPrompt(params: {
+  task: string;
+  responseText: string;
+  executionContext?: FridayAgentExecutionContext;
+}): string | undefined {
+  if (!isCustomPackExecutionContext(params.executionContext)) {
+    return undefined;
+  }
+  if (!customPackResponseLeaksInternalDetails(params.responseText)) {
+    return undefined;
+  }
+  return [
+    "System verification: this is a persisted custom-pack run, but your draft answer still exposes internal runtime details.",
+    `Current task: ${params.task.trim()}`,
+    "Rewrite the answer for the user using only the real pack brief and real live-run evidence.",
+    "Do not mention run IDs, session keys, sub-agent IDs, tool names, pack_id fields, readOnly flags, or internal debugging notes.",
+    "Keep the answer concrete and action-oriented.",
+  ].join(" ");
+}
+
+function sanitizeCustomPackResponseText(
+  responseText: string,
+  executionContext?: FridayAgentExecutionContext,
+): string {
+  if (!isCustomPackExecutionContext(executionContext)) {
+    return responseText;
+  }
+
+  const filteredLines = responseText
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/(?:任务包\s*id|pack(?:\s|_)?id|run(?:\s|_)?id|session(?:\s|_)?id|session(?:\s|_)?key)\s*[:：=]\s*[^\s,，;；)）]+/giu, "")
+        .replace(/\b(?:readOnly|readonly)\b\s*(?:[:=]\s*(?:true|false))?/giu, "")
+        .replace(/\b(?:skills_list|memory_search|agents_list|sub-agent|subagent|sessionKey|childRunId|tool[_ ]call|tool name)\b/giu, "")
+        .replace(CUSTOM_PACK_UUID_RE, "")
+        .replace(/[（(]\s*ID\s*[:：]\s*[）)]/giu, "")
+        .replace(/\bID\s*[:：]\s*/giu, "")
+        .replace(/[（(]\s*[）)]/gu, "")
+        .replace(/\s{2,}/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^(?:[-*•]\s*|(?:\d+[.)]\s*))$/u.test(line))
+    .filter((line) => !CUSTOM_PACK_INTERNAL_LINE_DROP_PATTERNS.some((pattern) => pattern.test(line)))
+    .filter((line) => !CUSTOM_PACK_INTERNAL_DETAIL_PATTERNS.some((pattern) => pattern.test(line)));
+
+  const sanitized = filteredLines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return sanitized.length > 0
+    ? sanitized
+    : "这次自创任务已经完成，结果已按真实任务定义和真实运行记录整理。";
+}
+
+function buildDelegatedExecutionFallbackMessage(params: {
+  status: FridayAgentRunStatus;
+  task: string;
+}): string {
+  const useChinese = hasCjkText(params.task);
+  if (params.status === "failed") {
+    return useChinese
+      ? "这次任务在执行过程中遇到阻塞，暂时没有形成可用结果。"
+      : "This task hit a blocker before it produced a usable result.";
+  }
+  if (params.status === "completed") {
+    return useChinese
+      ? "这次任务已经执行完成，但没有留下可展示的最终回复。"
+      : "This task completed without a user-facing final response.";
+  }
+  return useChinese
+    ? `这次任务目前处于 ${params.status} 状态，还没有形成可展示的最终回复。`
+    : `This task is currently ${params.status} and has not produced a user-facing final response yet.`;
 }
 
 interface RunTimeContext {

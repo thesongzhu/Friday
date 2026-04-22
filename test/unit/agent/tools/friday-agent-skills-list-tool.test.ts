@@ -318,6 +318,13 @@ describe("createFridayAgentSkillsListTool", () => {
             name: "Secure Review",
             description: "Review GitHub and SSO setup",
             tags: ["starter", "starter.security"],
+            runtime: {
+              kind: "shell",
+              entrypoint: "run.sh",
+              minHubVersion: "1.0.0",
+              apiVersion: "1",
+              timeoutMsDefault: 30_000,
+            },
             requirements: {
               bins: [],
               env: [],
@@ -340,8 +347,57 @@ describe("createFridayAgentSkillsListTool", () => {
     expect(parsed.skills[0]?.blockers).toEqual([
       'Required MCP server "github" is not authenticated.',
     ]);
-    expect(parsed.skills[0]?.requirements).toEqual({
+    expect(parsed.skills[0]?.requirements).toMatchObject({
       mcpServers: [{ name: "github", auth: "authenticated" }],
     });
+  });
+
+  it("reports runtime readiness blockers for missing environment variables", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "env-review",
+            name: "Env Review",
+            description: "Needs a configured token",
+            runtime: {
+              kind: "shell",
+              entrypoint: "run.sh",
+              minHubVersion: "1.0.0",
+              apiVersion: "1",
+              timeoutMsDefault: 30_000,
+            },
+            requirements: {
+              bins: [],
+              env: ["FRIDAY_TEST_REQUIRED_ENV"],
+              config: [],
+              os: ["darwin", "linux"],
+              mcpServers: [],
+            },
+          }),
+        }),
+      ]),
+    });
+
+    const previous = process.env.FRIDAY_TEST_REQUIRED_ENV;
+    delete process.env.FRIDAY_TEST_REQUIRED_ENV;
+    try {
+      const result = await tool.execute({}, new AbortController().signal);
+      const parsed = JSON.parse(result.content) as { skills: Array<Record<string, unknown>> };
+
+      expect(parsed.skills[0]?.ready).toBe(false);
+      expect(parsed.skills[0]?.blockers).toContain(
+        "Missing required environment variables: FRIDAY_TEST_REQUIRED_ENV",
+      );
+      expect(parsed.skills[0]?.requirements).toMatchObject({
+        env: ["FRIDAY_TEST_REQUIRED_ENV"],
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FRIDAY_TEST_REQUIRED_ENV;
+      } else {
+        process.env.FRIDAY_TEST_REQUIRED_ENV = previous;
+      }
+    }
   });
 });

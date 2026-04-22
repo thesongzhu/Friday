@@ -164,7 +164,7 @@ Response format (JSON only):
     "inputs": [{ "key": "string", "type": "string", "required": true, "label": "string" }],
     "outputs": [{ "key": "string", "type": "string", "description": "string" }],
     "triggers": { "intents": [], "phrases": [] },
-    "runtimeKind": "shell" | "node",
+    "runtimeKind": "shell" | "node" | "python",
     "securityNotes": [],
     "externalDependencies": []
   }
@@ -201,8 +201,8 @@ Rules:
 3. Optional fields with defaults (omit if unsure): tags, triggers, invocation, requirements, permissions, schemas, flow, ui, telemetry, distribution.
 4. kind: "conversation" | "workflow" | "system"
 5. category: "automation" | "communication" | "filesystem" | "browser" | "media" | "ai" | "integration" | "utility"
-6. runtime.kind: "node" | "shell" (use "node" for most skills)
-7. runtime.entrypoint: "index.mjs" (node) or "run.sh" (shell)
+6. runtime.kind: "node" | "shell" | "python" (use "node" for most skills unless shell/python is clearly a better fit)
+7. runtime.entrypoint: "index.mjs" (node), "run.sh" (shell), or "index.py" (python)
 8. runtime.apiVersion must be "1" (string, not number)
 9. schemaVersion must be "2.0" (string)
 10. Do NOT add any keys not in the schema. All objects use strict validation — extra keys will cause rejection.
@@ -282,19 +282,21 @@ Rules:
    - Node: export an async function execute(input, ctx?) that returns an object matching manifest outputs.
    - Shell: read the full JSON payload from stdin with a robust pattern like INPUT_JSON="$(cat)" and write JSON to stdout.
    - Shell scripts must NOT use bare "read" or "read -r" as the primary stdin reader because Friday passes stdin without a trailing newline.
+   - Python: read the full JSON payload from sys.stdin.read(), parse it with json.loads(...), and print JSON to stdout.
 4. No privileged actions without matching manifest permissions.
 5. If AI is needed inside runtime, use the provided runtime context helper via ctx.ai.infer(prompt, optionalModel).
    - Do NOT import any runtime helper packages.
    - Do NOT reference packages like "friday-runtime-context".
    - Do NOT call invented helpers like ctx.ai.complete(...).
 6. Favor small, readable code and explicit error handling.
-7. Do not use TypeScript in generated files — output JavaScript (.mjs) or Bash (.sh) only.
+7. Do not use TypeScript in generated files — output JavaScript (.mjs), Bash (.sh), or Python (.py) only.
 8. For Node runtime, the entrypoint must be "index.mjs".
 9. For Shell runtime, the entrypoint must be "run.sh" with proper shebang (#!/usr/bin/env bash).
-10. Generate a SKILL.md file that follows the skill's design pattern structure.
-11. When a <contract> block is present, treat it as mandatory. Exact markers must appear exactly in the runtime output, not approximations or paraphrases.${patternSection}
+10. For Python runtime, the entrypoint must be "index.py".
+11. Generate a SKILL.md file that follows the skill's design pattern structure.
+12. When a <contract> block is present, treat it as mandatory. Exact markers must appear exactly in the runtime output, not approximations or paraphrases.${patternSection}
 
-Language values: "javascript", "bash", "json", "markdown".
+Language values: "javascript", "bash", "python", "json", "markdown".
 
 Response: JSON array of file objects only.`;
 

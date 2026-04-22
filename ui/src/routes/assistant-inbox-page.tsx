@@ -10,6 +10,7 @@ import { CrossBorderAssistantHandoffCard } from "@/components/packs/cross-border
 import { PackAssistantHandoffCard } from "@/components/packs/pack-assistant-handoff-card";
 import { useAdaptivePollingInterval } from "@/hooks/use-adaptive-polling";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
+import { useCustomPacks } from "@/hooks/use-custom-packs";
 import { useCrossBorderWorkflowPresets } from "@/hooks/use-cross-border-workflow-presets";
 import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences";
 import { useUserProfile } from "@/hooks/use-user-profile";
@@ -21,6 +22,8 @@ import { mergeCrossBorderSnapshots, readNavigationCrossBorderSnapshot } from "@/
 import { getPackById } from "@/lib/packs/pack-registry";
 import {
   describeRunHealth,
+  displayRunPreview,
+  displayRunTask,
   labelForRunHealth,
   summarizeRunContext,
   toneForRunHealth,
@@ -34,6 +37,7 @@ export function AssistantInboxPage() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { pinnedPackIds } = useHomeSurfacePreferences(profileType);
+  const { customPackInputs } = useCustomPacks();
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
   const { setWorkflowEnabled, togglingWorkflowId } = useCrossBorderWorkflowPresets();
 
@@ -63,11 +67,11 @@ export function AssistantInboxPage() {
   const alerts = snapshotQuery.data?.alerts ?? [];
   const recentRuns = snapshotQuery.data?.recentRuns ?? [];
   const curatedPacks = pinnedPackIds
-    .map((packId) => getPackById(packId))
+    .map((packId) => getPackById(packId, customPackInputs))
     .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack))
     .filter((pack) => pack.curatedSkills.length > 0)
     .slice(0, 3);
-  const selectedPack = selectedPackId ? getPackById(selectedPackId) ?? null : null;
+  const selectedPack = selectedPackId ? getPackById(selectedPackId, customPackInputs) ?? null : null;
   const scrollToSection = (sectionId: string) => {
     const target = document.getElementById(sectionId);
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -85,7 +89,7 @@ export function AssistantInboxPage() {
     },
     onSuccess: () => {
       setConfirmApproval(null);
-      void queryClient.invalidateQueries({ queryKey: ["uix", "assistant-inbox"] });
+      void queryClient.invalidateQueries({ queryKey: ["assistant-inbox", "snapshot"] });
     },
     onError: (error) => {
       toast.error(
@@ -235,13 +239,11 @@ export function AssistantInboxPage() {
               <div key={run.id} className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-[color:var(--color-text-primary)]">{run.task}</p>
+                    <p className="truncate text-sm font-medium text-[color:var(--color-text-primary)]">{displayRunTask(run)}</p>
                     <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
                       {describeRunHealth(run, locale)
                         || summarizeRunContext(run, locale)
-                        || run.summary
-                        || run.responseText
-                        || run.errorMessage
+                        || displayRunPreview(run)
                         || localize(locale, "等待更多输出", "Waiting for more output")}
                     </p>
                   </div>
@@ -309,7 +311,7 @@ export function AssistantInboxPage() {
         <ShellCard title={localize(locale, "固定行业包的结果交接", "Pinned Pack Handoffs")}>
           <div className="grid gap-3 lg:grid-cols-2">
             {pinnedPackIds
-              .map((packId) => getPackById(packId))
+              .map((packId) => getPackById(packId, customPackInputs))
               .filter((pack): pack is NonNullable<ReturnType<typeof getPackById>> => Boolean(pack?.productCopy))
               .slice(0, 4)
               .map((pack) => (

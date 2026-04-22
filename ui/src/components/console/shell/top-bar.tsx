@@ -1,4 +1,6 @@
 import { Command, Globe2, Menu, PanelRightClose } from "lucide-react";
+import { ProviderTruthCompact } from "@/components/console/shell/provider-truth";
+import { useProviderTruthQuery } from "@/hooks/use-provider-truth";
 import { useSystemHealthQuery, type SystemHealthStatus } from "@/hooks/use-system-health";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 
@@ -33,6 +35,7 @@ export function TopBar(props: {
 }) {
   const { currentPageTitle, locale, onOpenPalette } = props;
   const { data: health } = useSystemHealthQuery();
+  const providerTruthQuery = useProviderTruthQuery();
   const status = health?.status ?? "healthy";
   const { color, label } = liveIndicatorParts(status, locale);
   const kbdLabel = navigatorMetaKeyLabel();
@@ -57,6 +60,12 @@ export function TopBar(props: {
 
       <div className="flex items-center gap-3">
         <LiveIndicator color={color} label={label} />
+        <ProviderTruthCompact
+          locale={locale}
+          truth={providerTruthQuery.data}
+          loading={providerTruthQuery.isPending}
+          className="max-w-[360px]"
+        />
         <button
           type="button"
           onClick={onOpenPalette}
@@ -116,6 +125,7 @@ export function MobileTopBar(props: {
 }) {
   const { currentPageTitle, locale, showMobileMore, onToggleMobileMore, onToggleLocale } = props;
   const { data: health } = useSystemHealthQuery();
+  const providerTruthQuery = useProviderTruthQuery();
   const status = health?.status ?? "healthy";
   const { color, label } = liveIndicatorParts(status, locale);
 
@@ -145,6 +155,13 @@ export function MobileTopBar(props: {
 
       <div className="flex items-center gap-2">
         <LiveIndicator color={color} label={label} />
+        <ProviderTruthCompact
+          locale={locale}
+          truth={providerTruthQuery.data}
+          loading={providerTruthQuery.isPending}
+          showModel={false}
+          className="max-w-[148px] px-2.5"
+        />
         <button
           type="button"
           onClick={onToggleLocale}

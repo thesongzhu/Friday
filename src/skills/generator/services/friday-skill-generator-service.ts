@@ -237,6 +237,8 @@ function normalizeManifestCandidate(manifest: SkillManifestV2): SkillManifestV2 
       ? "run.sh"
       : runtimeKind === "node"
         ? "index.mjs"
+        : runtimeKind === "python"
+          ? "index.py"
         : manifest.runtime.entrypoint;
 
   return {
@@ -277,7 +279,14 @@ function normalizeGeneratedFileLanguage(
   value: unknown,
   filePath: string,
 ): FridayGeneratedSkillFile["language"] {
-  if (value === "json" || value === "javascript" || value === "typescript" || value === "bash" || value === "markdown") {
+  if (
+    value === "json"
+    || value === "javascript"
+    || value === "typescript"
+    || value === "bash"
+    || value === "python"
+    || value === "markdown"
+  ) {
     return value;
   }
 
@@ -288,6 +297,8 @@ function normalizeGeneratedFileLanguage(
       return "bash";
     case ".json":
       return "json";
+    case ".py":
+      return "python";
     case ".md":
     case ".mdx":
       return "markdown";
@@ -1299,7 +1310,7 @@ export function createFridaySkillGeneratorService(
   async function generateCode(
     session: FridaySkillGenerationSession,
     manifest: SkillManifestV2,
-    runtimeKind: "shell" | "node",
+    runtimeKind: "shell" | "node" | "python",
     contract: FridaySkillGenerationContract,
     requestedModel?: string,
   ): Promise<FridayGeneratedSkillFile[]> {
@@ -1475,8 +1486,14 @@ export function createFridaySkillGeneratorService(
         repairedManifest = await generateManifest(session, currentSpec, contract, requestedModel);
 
         // Determine runtime kind
-        const runtimeKind: "shell" | "node" =
-          repairedManifest.runtime.kind === "shell" ? "shell" : "node";
+        const runtimeKind = repairedManifest.runtime.kind;
+        if (runtimeKind !== "shell" && runtimeKind !== "node" && runtimeKind !== "python") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            `Generated runtime kind "${runtimeKind}" is not supported by the skill generator. Use node, shell, or python.`,
+            { httpStatus: 422 },
+          );
+        }
 
         // Step 2: Generate code files
         repairedFiles = await generateCode(session, repairedManifest, runtimeKind, contract, requestedModel);
@@ -1524,12 +1541,24 @@ export function createFridaySkillGeneratorService(
       );
     }
 
+    const finalizedRuntimeKind = repairedManifest.runtime.kind;
+    if (
+      finalizedRuntimeKind !== "shell"
+      && finalizedRuntimeKind !== "node"
+      && finalizedRuntimeKind !== "python"
+    ) {
+      throw new FridayDomainError(
+        "GENERATION_FAILED",
+        `Skill generation produced unsupported runtime kind "${finalizedRuntimeKind}" after validation.`,
+        { httpStatus: 422 },
+      );
+    }
+
     const draft: FridayGeneratedSkillDraft = {
       manifest: withDraftLifecycleTags(repairedManifest),
       files: repairedFiles,
       uiSchema: repairedUiSchema,
-      runtimeKind:
-        repairedManifest.runtime.kind === "shell" ? "shell" : "node",
+      runtimeKind: finalizedRuntimeKind,
       validation,
     };
 
