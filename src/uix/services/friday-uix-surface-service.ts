@@ -1400,6 +1400,19 @@ export function createFridayUixSurfaceService(
       && error.code === "UIX_STARTER_SKILL_CAPABILITY_DISABLED";
   }
 
+  function coerceTemplateIntegerParameter(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number.parseInt(value.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
   async function executeStarterSkillTemplate(input: {
     templateId: string;
     userId: string;
@@ -2294,12 +2307,17 @@ export function createFridayUixSurfaceService(
           return executed.response;
         }
         case "engineering-retro": {
+          const normalizedParameters = { ...input.parameters };
+          const sinceDays = coerceTemplateIntegerParameter(input.parameters.sinceDays);
+          if (sinceDays !== undefined) {
+            normalizedParameters.sinceDays = sinceDays;
+          }
           const executed = await executeStarterSkillTemplate({
             templateId: input.templateId,
             userId: input.userId,
             tenantContext: input.tenantContext,
             skillId: "engineering-retro",
-            parameters: input.parameters,
+            parameters: normalizedParameters,
             guidanceText: typeof input.parameters.goal === "string" ? input.parameters.goal : "Generate engineering retro",
             intent: "general_help",
             defaultSummary: "Friday generated an engineering retro for the latest delivery window.",

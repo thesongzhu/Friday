@@ -7,6 +7,10 @@ import {
   type FridayMockBrowserE2eEnv,
   type FridayBrowserPageHandle,
 } from "./_helpers/browser-env-mock.js";
+import {
+  DEFAULT_BROWSER_CUSTOM_PACK_ID,
+  seedDefaultCustomPack,
+} from "./_helpers/custom-pack.js";
 
 const CHROMIUM_AVAILABLE = (() => {
   try {
@@ -137,7 +141,7 @@ async function waitForSurfaceReadyOnce(pageHandle: FridayBrowserPageHandle, surf
     case "packs":
       await pageHandle.page.locator('[data-testid="packs-surface-ready"]').waitFor({ state: "visible", timeout: 60_000 });
       await pageHandle.page
-        .locator('[data-testid="pack-card-industry-creator-media"], [data-testid="pack-open-industry-creator-media"]')
+        .locator(`[data-testid="pack-card-${DEFAULT_BROWSER_CUSTOM_PACK_ID}"], [data-testid="pack-open-${DEFAULT_BROWSER_CUSTOM_PACK_ID}"]`)
         .first()
         .waitFor({ state: "visible", timeout: 60_000 });
       return;
@@ -459,6 +463,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday UI surface interaction benchmark (m
 
   it("records repeatable navigation timings for home, packs, assistant, and workflow builder", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
+    await seedDefaultCustomPack(env);
     const homeResult = await measureRailNavigation({
       env,
       startPath: "/packs",
