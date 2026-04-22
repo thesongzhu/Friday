@@ -55,26 +55,26 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday full onboarding flow (mock hub brow
     expect(setupState.appCrashed).toBe(false);
   });
 
-  it("navigates from setup to the default chat surface and verifies chat renders", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
+  it("navigates from setup to the default home surface and verifies it renders", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
     pageHandle = await env.newPage();
 
     await pageHandle.page.goto("/");
-    await pageHandle.page.waitForURL("**/chat");
+    await pageHandle.page.waitForURL("**/home");
     await pageHandle.page.waitForFunction(() => {
       const bodyText = document.body.textContent?.trim() ?? "";
       return bodyText.length > 50 && !bodyText.includes("Something went wrong");
     }, { timeout: 45_000 });
 
-    const chatState = await pageHandle.page.evaluate(() => ({
+    const homeState = await pageHandle.page.evaluate(() => ({
       url: window.location.pathname,
       bodyLength: document.body.textContent?.trim().length ?? 0,
       hasContent: (document.body.textContent?.trim().length ?? 0) > 50,
       appCrashed: document.body.textContent?.includes("Something went wrong") ?? false,
     }));
 
-    expect(chatState.url).toBe("/chat");
-    expect(chatState.hasContent).toBe(true);
-    expect(chatState.appCrashed).toBe(false);
+    expect(homeState.url).toBe("/home");
+    expect(homeState.hasContent).toBe(true);
+    expect(homeState.appCrashed).toBe(false);
   });
 });

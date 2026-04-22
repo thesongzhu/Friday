@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { beforeEach, describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -12,11 +12,17 @@ import {
 } from "#agent";
 import { buildFridaySubagentSessionKey } from "#sessions";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
+import {
+  clearAutoDetectProviderEnv,
+  restoreAutoDetectProviderEnv,
+  type FridayAutoDetectProviderEnvSnapshot,
+} from "../../_helpers/auto-detect-provider-env.js";
 
 describe("FridayHub Bootstrap Integration", () => {
   const tmpDirs: string[] = [];
   const hubs: FridayHub[] = [];
   let lastStateDir: string | null = null;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
 
   function makeTmpDir(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-hub-test-"));
@@ -128,6 +134,10 @@ describe("FridayHub Bootstrap Integration", () => {
     return run?.status ?? "unknown";
   }
 
+  beforeEach(() => {
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+  });
+
   afterEach(async () => {
     for (const hub of hubs) {
       try {
@@ -147,6 +157,10 @@ describe("FridayHub Bootstrap Integration", () => {
     }
     tmpDirs.length = 0;
     lastStateDir = null;
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
   });
 
   // ─── Wires all services ───

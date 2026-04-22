@@ -7,6 +7,11 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { FridayAuthError } from "#api";
 import { resolveStateDir } from "#state";
+import {
+  clearAutoDetectProviderEnv,
+  restoreAutoDetectProviderEnv,
+  type FridayAutoDetectProviderEnvSnapshot,
+} from "../../_helpers/auto-detect-provider-env.js";
 import * as hubAuditWriterModule from "../../../src/hub/services/friday-hub-audit-log-writer.js";
 
 describe("createFridayHub", () => {
@@ -15,6 +20,7 @@ describe("createFridayHub", () => {
   let homeDir: string | null = null;
   let bundledSkillsDir: string | null = null;
   let managedSkillsDir: string | null = null;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
   const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
 
   async function createIsolatedHub(): Promise<FridayHub> {
@@ -32,6 +38,7 @@ describe("createFridayHub", () => {
 
   beforeEach(() => {
     process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
   });
 
   afterEach(async () => {
@@ -54,6 +61,10 @@ describe("createFridayHub", () => {
     }
     bundledSkillsDir = null;
     managedSkillsDir = null;
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
   });
 
   it("creates a hub with default config", async () => {

@@ -9,8 +9,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
-  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   canRunFridayBundledSystemNodeSkillWithoutGate,
+  FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   type FridaySkillExecutor,
   type FridaySkillLifecycleService,
   type FridaySkillRegistry,
