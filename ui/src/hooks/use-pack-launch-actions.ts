@@ -21,6 +21,10 @@ export interface UsePackLaunchActionsOptions {
   surface: "packs" | "home" | "chat";
 }
 
+const PACK_RUN_DISCOVERY_LIMIT = 100;
+const PACK_RUN_DISCOVERY_TIMEOUT_MS = 15_000;
+const PACK_RUN_DISCOVERY_POLL_MS = 400;
+
 function createPackStartIdempotencyKey(packId: string): string {
   const normalizedPackId = encodeURIComponent(packId)
     .replace(/%/g, "_")
@@ -30,6 +34,18 @@ function createPackStartIdempotencyKey(packId: string): string {
     return `pack-start:${normalizedPackId}:${crypto.randomUUID()}`;
   }
   return `pack-start:${normalizedPackId}:${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readPackRunId(run: AgentRunRecord, packId: string, knownRunIds: Set<string>): string | null {
+  const runPackId = run.metadata?.packContext?.packId;
+  if (runPackId !== packId || knownRunIds.has(run.id)) {
+    return null;
+  }
+  return run.id;
 }
 
 export function usePackLaunchActions(
@@ -75,6 +91,28 @@ export function usePackLaunchActions(
     },
   });
 
+  const invalidatePackQueries = useCallback(async () => {
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ["packs", "recent-runs"] }),
+      queryClient.invalidateQueries({ queryKey: ["assistant-inbox", "snapshot"] }),
+    ]);
+  }, [queryClient]);
+
+  const waitForNewPackRunId = useCallback(async (packId: string, knownRunIds: Set<string>) => {
+    const deadline = Date.now() + PACK_RUN_DISCOVERY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const runs = await agentApi.listRuns({ limit: PACK_RUN_DISCOVERY_LIMIT });
+      const discoveredRunId = runs
+        .map((run) => readPackRunId(run, packId, knownRunIds))
+        .find((runId): runId is string => typeof runId === "string");
+      if (discoveredRunId) {
+        return discoveredRunId;
+      }
+      await delay(PACK_RUN_DISCOVERY_POLL_MS);
+    }
+    return null;
+  }, []);
+
   const startPackNow = useCallback(async (pack: FridayPackDefinition) => {
     if (!isCustomPackDefinition(pack)) {
       navigate(buildPackFlowHref(pack));
@@ -87,15 +125,32 @@ export function usePackLaunchActions(
 
     pendingCustomPackIdsRef.current.add(pack.id);
     try {
-      const result = await startCustomPackRun.mutateAsync({
+      const knownRunIds = new Set(
+        (await agentApi.listRuns({ limit: PACK_RUN_DISCOVERY_LIMIT }))
+          .filter((run) => run.metadata?.packContext?.packId === pack.id)
+          .map((run) => run.id),
+      );
+
+      const startRequest = startCustomPackRun.mutateAsync({
         pack,
         idempotencyKey: createPackStartIdempotencyKey(pack.id),
       });
+
+      const discoveredRunId = await waitForNewPackRunId(pack.id, knownRunIds);
+      if (discoveredRunId) {
+        await invalidatePackQueries();
+        navigate(buildAgentRunHref(discoveredRunId));
+        void startRequest.catch(() => undefined);
+        return;
+      }
+
+      const result = await startRequest;
+      await invalidatePackQueries();
       navigate(buildAgentRunHref(result.runId));
     } finally {
       pendingCustomPackIdsRef.current.delete(pack.id);
     }
-  }, [navigate, startCustomPackRun]);
+  }, [invalidatePackQueries, navigate, startCustomPackRun, waitForNewPackRunId]);
 
   const adjustPackBeforeStart = useCallback((pack: FridayPackDefinition) => {
     if (!isCustomPackDefinition(pack)) {

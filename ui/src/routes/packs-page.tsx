@@ -283,18 +283,15 @@ export function PacksPage() {
           if (!selectedPack) {
             return;
           }
-          setSelectedPackId(null);
           void startPackNow(selectedPack);
         }}
         onAdjustBeforeStart={() => {
           if (!selectedPack) {
             return;
           }
-          setSelectedPackId(null);
           adjustPackBeforeStart(selectedPack);
         }}
         onOpenSkill={(skillId) => {
-          setSelectedPackId(null);
           navigate(buildSkillHref(skillId));
         }}
         onAskFriday={(prompt) => {
@@ -304,7 +301,6 @@ export function PacksPage() {
           }
         }}
         onOpenAssistant={selectedPack ? () => {
-          setSelectedPackId(null);
           navigate(buildPackAssistantHref(selectedPack.id));
         } : undefined}
         onRemoveFromHome={selectedPack && pinnedPackIds.includes(selectedPack.id) ? () => {

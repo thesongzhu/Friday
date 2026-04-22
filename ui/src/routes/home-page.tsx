@@ -802,25 +802,21 @@ export function HomePage() {
         continueLabel={selectedPackRunState.recentRun ? formatShortTimestamp(selectedPackRunState.recentRun.completedAt ?? selectedPackRunState.recentRun.startedAt, locale) : null}
         onClose={() => setSelectedPackId(null)}
         onOpenCurrent={selectedPackRunState.activeRun ? () => {
-          setSelectedPackId(null);
           if (selectedPack && selectedPackRunState.activeRun) {
             openCurrentPackRun(selectedPack, selectedPackRunState.activeRun);
           }
         } : undefined}
         onContinue={selectedPackRunState.recentRun ? () => {
-          setSelectedPackId(null);
           if (selectedPack) {
             continuePack(selectedPack, selectedPackRunState.recentRun);
           }
         } : undefined}
         onStartNow={() => {
-          setSelectedPackId(null);
           if (selectedPack) {
             void startPackNow(selectedPack);
           }
         }}
         onAdjustBeforeStart={() => {
-          setSelectedPackId(null);
           if (selectedPack) {
             adjustPackBeforeStart(selectedPack);
           }
