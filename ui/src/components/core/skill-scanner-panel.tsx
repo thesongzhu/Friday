@@ -26,7 +26,7 @@ const TOP_N = 20;
 const SOURCE_FILTERS = [
   { key: "all", zh: "全部", en: "All" },
   { key: "claude-code", zh: "Claude Code", en: "Claude Code" },
-  { key: "clawdbot", zh: "OpenClaw", en: "OpenClaw" },
+  { key: "openclaw", zh: "OpenClaw", en: "OpenClaw" },
   { key: "codex", zh: "Codex", en: "Codex" },
   { key: "friday", zh: "Friday", en: "Friday" },
 ] as const;
@@ -39,7 +39,7 @@ function sourceToolTone(tool: LocalSkillSourceTool): "neutral" | "success" | "wa
     case "cursor": return "neutral";
     case "n8n": return "warning";
     case "codex": return "success";
-    case "clawdbot": return "neutral";
+    case "openclaw": return "neutral";
     case "friday": return "success";
     default: return "neutral";
   }
@@ -51,7 +51,7 @@ function sourceToolLabel(tool: LocalSkillSourceTool): string {
     case "cursor": return "Cursor";
     case "n8n": return "n8n";
     case "codex": return "Codex";
-    case "clawdbot": return "ClawdBot";
+    case "openclaw": return "OpenClaw";
     case "friday": return "Friday";
     default: return "Unknown";
   }
@@ -186,16 +186,17 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
   }, []);
 
   const toggleAllLocal = useCallback(() => {
+    const selectableIds = scanItems.filter((item) => item.convertible).map((item) => item.id);
     setSelectedLocalIds((prev) => {
-      if (prev.size === scanItems.length) return new Set();
-      return new Set(scanItems.map((i) => i.id));
+      if (prev.size === selectableIds.length && selectableIds.length > 0) return new Set();
+      return new Set(selectableIds);
     });
   }, [scanItems]);
 
   function handleImport() {
     if (activeTab !== "local") return;
     const items = scanItems
-      .filter((i) => selectedLocalIds.has(i.id))
+      .filter((i) => selectedLocalIds.has(i.id) && i.convertible)
       .map((i) => ({ sourcePath: i.sourcePath, formatHint: i.converterHint }));
     if (items.length === 0) return;
     importMutation.mutate(items);
@@ -274,7 +275,7 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
             <label className="flex items-center gap-2 text-sm text-[color:var(--color-text-secondary)]">
               <input
                 type="checkbox"
-                checked={selectedLocalIds.size === scanItems.length && scanItems.length > 0}
+                checked={selectedLocalIds.size === scanItems.filter((item) => item.convertible).length && scanItems.some((item) => item.convertible)}
                 onChange={toggleAllLocal}
                 className="h-4 w-4 rounded border-[color:var(--color-border-soft)] accent-[color:var(--color-accent)]"
               />
@@ -286,11 +287,16 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
               {visibleLocalItems.map((item) => (
                 <label
                   key={item.id}
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3 transition hover:border-[color:var(--color-border-strong)]"
+                  className={`flex items-start gap-3 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3 transition ${
+                    item.convertible
+                      ? "cursor-pointer hover:border-[color:var(--color-border-strong)]"
+                      : "cursor-not-allowed opacity-65"
+                  }`}
                 >
                   <input
                     type="checkbox"
                     checked={selectedLocalIds.has(item.id)}
+                    disabled={!item.convertible}
                     onChange={() => toggleLocalItem(item.id)}
                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-[color:var(--color-border-soft)] accent-[color:var(--color-accent)]"
                   />
@@ -304,7 +310,9 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
                       </StatusPill>
                     </div>
                     <p className="mt-0.5 line-clamp-1 text-xs text-[color:var(--color-text-tertiary)]">
-                      {item.description}
+                      {item.description || (item.convertible
+                        ? localize(locale, "可导入到 Friday。", "Can be imported into Friday.")
+                        : localize(locale, "这个条目已经在当前 Friday 工作区里，不需要再次导入。", "This entry already belongs to the current Friday workspace and does not need to be imported again."))}
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-[color:var(--color-text-tertiary)]">

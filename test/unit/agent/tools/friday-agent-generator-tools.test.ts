@@ -9,7 +9,7 @@ import type { FridayWorkflowGeneratorService } from "../../../../src/workflows/g
 
 describe("normalizeAgentRequestedModel", () => {
   it("maps provider-kind aliases to concrete default models", () => {
-    expect(normalizeAgentRequestedModel("openai")).toBe("gpt-4o");
+    expect(normalizeAgentRequestedModel("openai")).toBe("gpt-4o-mini");
     expect(normalizeAgentRequestedModel("anthropic")).toBe("claude-sonnet-4-20250514");
     expect(normalizeAgentRequestedModel("anthropic-messages")).toBe("claude-sonnet-4-20250514");
     expect(normalizeAgentRequestedModel("default")).toBeUndefined();
@@ -131,7 +131,7 @@ describe("generator tools", () => {
 
     expect(generatorService.startSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestedModel: "gpt-4o",
+        requestedModel: "gpt-4o-mini",
       }),
     );
   });

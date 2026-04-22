@@ -11,7 +11,7 @@ import { systemApi } from "@/lib/api/system";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
 import { scanMigrateApi } from "@/lib/api/scan-migrate";
-import type { LocalSkillScanItem } from "@/lib/api/scan-migrate";
+import type { BatchImportResult, LocalSkillScanItem } from "@/lib/api/scan-migrate";
 import { getIntegrationDescription } from "@/lib/discovery/integration-descriptions";
 import {
   FRIDAY_ASSISTANT_STARTER_TASKS,
@@ -178,6 +178,7 @@ export function SetupPage() {
   const [skillScanError, setSkillScanError] = useState<string | null>(null);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(new Set());
   const [skillImporting, setSkillImporting] = useState(false);
+  const [skillImportResult, setSkillImportResult] = useState<BatchImportResult | null>(null);
   // ── Existing queries ──
 
   const { data: setupStatus } = useQuery({
@@ -477,12 +478,11 @@ export function SetupPage() {
 
       try {
         const result = await scanMigrateApi.scanLocal();
-        const sorted = [...result.items].sort(
-          (a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
-        );
+        const sorted = [...result.items]
+          .filter((item) => item.convertible && item.sourceTool !== "friday")
+          .sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
         setSkillScanItems(sorted.slice(0, 10));
-        // Pre-select all convertible items
-        setSelectedSkillPaths(new Set(sorted.slice(0, 10).filter((i) => i.convertible).map((i) => i.sourcePath)));
+        setSelectedSkillPaths(new Set(sorted.slice(0, 10).map((i) => i.sourcePath)));
         setSkillScanDone(true);
       } catch (error) {
         setSkillScanItems([]);
@@ -504,9 +504,11 @@ export function SetupPage() {
   async function handleSkillImport() {
     if (selectedSkillPaths.size === 0) return;
     setSkillImporting(true);
+    setSkillImportResult(null);
     try {
       const items = Array.from(selectedSkillPaths).map((sourcePath) => ({ sourcePath }));
       const result = await scanMigrateApi.importBatch(items);
+      setSkillImportResult(result);
       toast.success(
         localize(
           locale,
@@ -1072,6 +1074,23 @@ export function SetupPage() {
                           ? localize(locale, "导入中...", "Importing...")
                           : localize(locale, `导入选中 (${selectedSkillPaths.size})`, `Import Selected (${selectedSkillPaths.size})`)}
                       </ActionButton>
+                    </div>
+                  )}
+                  {(skillImportResult?.failedCount ?? 0) > 0 && (
+                    <div className="mt-4 space-y-2">
+                      {skillImportResult!.results.filter((entry) => !entry.success).map((entry) => (
+                        <div
+                          key={entry.sourcePath}
+                          className="rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] px-4 py-3 text-left"
+                        >
+                          <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                            {entry.sourcePath.split("/").at(-2) ?? entry.sourcePath}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                            {entry.error ?? localize(locale, "导入失败，但后端没有返回更具体的原因。", "Import failed, but the backend did not return a more specific reason.")}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>
