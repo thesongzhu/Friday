@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, MessageSquarePlus, Trash2 } from "lucide-react";
+import { ArrowRight, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useChatSession } from "@/hooks/use-chat-session";
@@ -16,6 +16,12 @@ import { useHomeSurfacePreferences } from "@/hooks/use-home-surface-preferences"
 import { usePackLaunchActions } from "@/hooks/use-pack-launch-actions";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { localize } from "@/lib/i18n/localized-text";
+import {
+  buildChannelChatHandoffTaskPrompt,
+  clearPendingChannelChatHandoff,
+  readPendingChannelChatHandoff,
+  type FridayChannelChatHandoffPayload,
+} from "@/lib/chat/channel-handoff";
 import { buildPackAssistantHref } from "@/lib/packs/pack-links";
 import { getPackById } from "@/lib/packs/pack-registry";
 import { sessionsApi, type SessionUsageResponse } from "@/lib/api/sessions";
@@ -43,6 +49,7 @@ export function ChatPage() {
   const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
   const [draftText, setDraftText] = useState("");
   const [showTopFade, setShowTopFade] = useState(false);
+  const [pendingHandoff, setPendingHandoff] = useState<FridayChannelChatHandoffPayload | null>(null);
   const {
     messages,
     sessionKey,
@@ -57,6 +64,7 @@ export function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const lastCompletedMessageIdRef = useRef<string | null>(null);
+  const appliedFreshHandoffRef = useRef<string | null>(null);
   const [sessionUsage, setSessionUsage] = useState<SessionUsageResponse | null>(null);
   const activePack = packIdParam ? getPackById(packIdParam, customPackInputs) ?? null : null;
 
@@ -75,6 +83,25 @@ export function ChatPage() {
       return next;
     }, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const handoffId = searchParams.get("handoff")?.trim();
+    if (!handoffId) {
+      setPendingHandoff(null);
+      return;
+    }
+    setPendingHandoff(readPendingChannelChatHandoff(handoffId));
+  }, [searchParams]);
+
+  useEffect(() => {
+    const handoffId = searchParams.get("handoff")?.trim();
+    const shouldFreshOpen = searchParams.get("fresh") === "1";
+    if (!handoffId || !shouldFreshOpen || appliedFreshHandoffRef.current === handoffId) {
+      return;
+    }
+    appliedFreshHandoffRef.current = handoffId;
+    startNewConversation();
+  }, [searchParams, startNewConversation]);
 
   useEffect(() => {
     if (!sessionKey) {
@@ -146,28 +173,52 @@ export function ChatPage() {
     });
   }, [messages, runEvents.progress.phase]);
 
+  const clearActiveHandoff = useCallback(() => {
+    const handoffId = pendingHandoff?.id ?? searchParams.get("handoff");
+    clearPendingChannelChatHandoff(handoffId);
+    setPendingHandoff(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("handoff");
+      next.delete("fresh");
+      return next;
+    }, { replace: true });
+  }, [pendingHandoff?.id, searchParams, setSearchParams]);
+
+  const sendFromChat = useCallback((text: string) => {
+    const taskPrompt = pendingHandoff
+      ? buildChannelChatHandoffTaskPrompt(pendingHandoff, text, locale)
+      : undefined;
+    void sendMessage(text, {
+      taskPrompt,
+      onAccepted: pendingHandoff ? clearActiveHandoff : undefined,
+    });
+  }, [clearActiveHandoff, locale, pendingHandoff, sendMessage]);
+
   const handleSend = useCallback((text: string) => {
     setDraftText("");
-    void sendMessage(text);
-  }, [sendMessage]);
+    sendFromChat(text);
+  }, [sendFromChat]);
 
   const handleRetry = useCallback((assistantMsgId: string) => {
     const idx = messages.findIndex((m) => m.id === assistantMsgId);
     if (idx < 1) return;
     for (let i = idx - 1; i >= 0; i--) {
       if (messages[i]!.role === "user") {
-        void sendMessage(messages[i]!.content);
+        sendFromChat(messages[i]!.content);
         return;
       }
     }
-  }, [messages, sendMessage]);
+  }, [messages, sendFromChat]);
 
   const handleCommand = useCallback((commandId: string) => {
     switch (commandId) {
       case "new":
+        clearActiveHandoff();
         startNewConversation();
         break;
       case "clear":
+        clearActiveHandoff();
         clearHistory();
         break;
       case "skills":
@@ -180,14 +231,14 @@ export function ChatPage() {
         navigate("/settings");
         break;
       case "help":
-        void sendMessage(
+        sendFromChat(
           locale === "zh"
             ? "请列出所有可用的斜杠命令及其用途。"
             : "Please list all available slash commands and what they do.",
         );
         break;
     }
-  }, [startNewConversation, clearHistory, navigate, sendMessage, locale]);
+  }, [clearActiveHandoff, startNewConversation, clearHistory, navigate, sendFromChat, locale]);
 
   const latestAssistantMsg = messages.length > 0
     ? messages[messages.length - 1]
@@ -249,6 +300,58 @@ export function ChatPage() {
                 "The composer stays pinned to the bottom; history only appears when you scroll up.",
               )}
           </p>
+          {pendingHandoff ? (
+            <div className="mt-3 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
+                    {localize(locale, "继续来源", "Continuation source")}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
+                    {pendingHandoff.sourceChannel} · {pendingHandoff.sourceDisplayName}
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+                    {localize(
+                      locale,
+                      "这会打开一条新的主聊天线，只带入摘要与最近锚点，不自动合并完整渠道历史。",
+                      "This opens a fresh main-chat thread and carries over only a summary plus recent anchors, not the full channel history.",
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton tone="secondary" onClick={() => navigate(`/channels?sessionKey=${encodeURIComponent(pendingHandoff.sourceSessionKey)}`)}>
+                    {localize(locale, "查看原会话", "Open source thread")}
+                  </ActionButton>
+                  <ActionButton tone="secondary" onClick={clearActiveHandoff}>
+                    <X className="mr-2 h-4 w-4" />
+                    {localize(locale, "关闭来源", "Dismiss source")}
+                  </ActionButton>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--color-text-secondary)]">
+                {pendingHandoff.topicSummary ? (
+                  <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                    {localize(locale, "主题", "Topic")}: {pendingHandoff.topicSummary}
+                  </span>
+                ) : null}
+                <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                  {localize(locale, "消息", "Messages")}: {pendingHandoff.sourceMessageCount}
+                </span>
+                <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                  {localize(locale, "默认隔离", "Isolation")}: {localize(locale, "不自动合并", "No auto merge")}
+                </span>
+              </div>
+              {pendingHandoff.latestUserMessage ? (
+                <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+                  <span className="font-medium text-[color:var(--color-text-primary)]">
+                    {localize(locale, "最近用户消息", "Latest user message")}:
+                  </span>
+                  {" "}
+                  {pendingHandoff.latestUserMessage}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -396,6 +499,20 @@ export function ChatPage() {
               >
                 {localize(locale, "去 Assistant", "Open Assistant")}
               </button>
+            </div>
+          ) : null}
+          {pendingHandoff ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
+              <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                {pendingHandoff.sourceChannel} · {pendingHandoff.sourceDisplayName}
+              </span>
+              <span>
+                {localize(
+                  locale,
+                  "首次发送会带入这条渠道会话的摘要，不会自动并入完整历史。",
+                  "The first send carries a summary of this channel thread and does not merge the full history.",
+                )}
+              </span>
             </div>
           ) : null}
 
