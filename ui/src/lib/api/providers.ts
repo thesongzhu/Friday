@@ -57,6 +57,7 @@ export interface SetRoutingInput {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  enforceRequestedModel?: boolean;
 }
 
 // ─── Response wrappers ───

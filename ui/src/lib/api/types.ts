@@ -1906,6 +1906,7 @@ export interface FridayModelRoutingConfig {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  enforceRequestedModel?: boolean;
 }
 
 export interface FridayOAuthLoginInitiation {

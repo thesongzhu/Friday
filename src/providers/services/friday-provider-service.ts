@@ -137,6 +137,9 @@ interface FridayHistoricalRunRouteRow {
   status: string;
   actual_execution_json: string | null;
   task_profile_json: string | null;
+  metadata_json: string | null;
+  session_user_id: string | null;
+  session_account_id: string | null;
 }
 
 interface FridayHistoricalRouteStats {
@@ -453,8 +456,9 @@ export function createFridayProviderService(
   function loadHistoricalRouteStats(input: {
     candidates: FridayResolvedProviderRoute[];
     taskProfileId?: string;
+    tenantContext?: FridayProviderTenantContext;
   }): Map<string, FridayHistoricalRouteStats> {
-    if (!input.taskProfileId) {
+    if (!input.taskProfileId || !hasHistoricalRoutingScope(input.tenantContext)) {
       return new Map();
     }
 
@@ -470,11 +474,17 @@ export function createFridayProviderService(
 
     const rows = deps.db.withReadConnection((db) =>
       db.prepare(
-        `SELECT status, actual_execution_json, task_profile_json
-         FROM friday_agent_runs
-         WHERE status IN ('completed', 'failed')
-           AND actual_execution_json IS NOT NULL
-         ORDER BY created_at DESC
+        `SELECT r.status,
+                r.actual_execution_json,
+                r.task_profile_json,
+                r.metadata_json,
+                s.user_id AS session_user_id,
+                s.account_id AS session_account_id
+         FROM friday_agent_runs r
+         LEFT JOIN sessions s ON s.session_key = r.session_key
+         WHERE r.status IN ('completed', 'failed')
+           AND r.actual_execution_json IS NOT NULL
+         ORDER BY r.created_at DESC
          LIMIT ?`,
       ).all(ROUTE_HISTORY_SAMPLE_LIMIT) as FridayHistoricalRunRouteRow[],
     );
@@ -482,6 +492,10 @@ export function createFridayProviderService(
     const stats = new Map<string, FridayHistoricalRouteStats>();
 
     for (const row of rows) {
+      if (!historicalRouteRowMatchesScope(row, input.tenantContext)) {
+        continue;
+      }
+
       const taskProfile = safeJsonParse<Record<string, unknown>>(row.task_profile_json);
       if (taskProfile?.id !== input.taskProfileId) {
         continue;
@@ -524,6 +538,48 @@ export function createFridayProviderService(
     }
 
     return stats;
+  }
+
+  function normalizeScopeSegment(value?: string | null): string | undefined {
+    const trimmed = value?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  function hasHistoricalRoutingScope(tenantContext?: FridayProviderTenantContext): boolean {
+    return Boolean(
+      normalizeScopeSegment(tenantContext?.userId)
+      || normalizeScopeSegment(tenantContext?.hubId),
+    );
+  }
+
+  function getHistoricalRowPrincipalId(row: FridayHistoricalRunRouteRow): string | undefined {
+    const metadata = safeJsonParse<Record<string, unknown>>(row.metadata_json);
+    const apiRequest = metadata?.apiRequest;
+    if (!apiRequest || typeof apiRequest !== "object") {
+      return undefined;
+    }
+    const principalId = (apiRequest as { principalId?: unknown }).principalId;
+    return typeof principalId === "string" ? normalizeScopeSegment(principalId) : undefined;
+  }
+
+  function historicalRouteRowMatchesScope(
+    row: FridayHistoricalRunRouteRow,
+    tenantContext?: FridayProviderTenantContext,
+  ): boolean {
+    const userId = normalizeScopeSegment(tenantContext?.userId);
+    const hubId = normalizeScopeSegment(tenantContext?.hubId);
+    const rowUserId = normalizeScopeSegment(row.session_user_id);
+    const rowPrincipalId = getHistoricalRowPrincipalId(row);
+
+    if (userId) {
+      return rowUserId === userId || rowPrincipalId === userId;
+    }
+
+    if (hubId) {
+      return normalizeScopeSegment(row.session_account_id) === hubId;
+    }
+
+    return false;
   }
 
   function loadRoutePreferenceState(input: {
@@ -632,6 +688,7 @@ export function createFridayProviderService(
     requestedProviderId?: string;
     requestedModel?: string;
     userId?: string;
+    tenantContext?: FridayProviderTenantContext;
     taskProfileId?: string;
     routingContext?: {
       requiresNativeTools?: boolean;
@@ -652,6 +709,7 @@ export function createFridayProviderService(
     const historyStats = loadHistoricalRouteStats({
       candidates: input.candidates,
       taskProfileId: input.taskProfileId,
+      tenantContext: input.tenantContext,
     });
     const preferenceState = loadRoutePreferenceState({
       candidates: input.candidates,
@@ -1412,6 +1470,7 @@ export function createFridayProviderService(
         requestedProviderId: input.requestedProviderId,
         requestedModel: input.requestedModel,
         userId: input.tenantContext?.userId,
+        tenantContext: input.tenantContext,
         taskProfileId: input.routingContext?.taskProfileId,
         routingContext: input.routingContext,
         budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,
@@ -2051,6 +2110,7 @@ export function createFridayProviderService(
         requestedProviderId: params.requestedProviderId,
         requestedModel: params.requestedModel,
         userId: params.tenantContext?.userId,
+        tenantContext: params.tenantContext,
         taskProfileId: params.routingContext?.taskProfileId,
         routingContext: params.routingContext,
         budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,

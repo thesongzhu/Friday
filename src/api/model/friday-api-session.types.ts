@@ -96,6 +96,12 @@ export interface FridaySessionMemoryNamespaceResponse {
 
 export interface FridaySessionRunRequest {
   task?: string;
+  /**
+   * Explicitly opt in to running the latest persisted user message when task is
+   * omitted. Without this flag the API rejects empty tasks to avoid accidental
+   * reuse of stale session input.
+   */
+  useLastUserMessage?: boolean;
   providerId?: string;
   model?: string;
   replyToMessageId?: string;
