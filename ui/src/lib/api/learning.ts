@@ -17,7 +17,7 @@ export const learningApi = {
     reason?: string;
   }): Promise<void> {
     await apiClient.post<{ enabled: boolean; reason?: string }, { lesson: unknown }>(
-      `/v1/diagnosis/learning/lessons/${encodeURIComponent(input.lessonId)}/enabled`,
+      `/v1/diagnosis/lessons/${encodeURIComponent(input.lessonId)}/enabled`,
       {
         enabled: input.enabled,
         ...(input.reason ? { reason: input.reason } : {}),
@@ -31,7 +31,7 @@ export const learningApi = {
     reason?: string;
   }): Promise<void> {
     await apiClient.post<{ factor: number; reason?: string }, { pattern: unknown }>(
-      `/v1/diagnosis/learning/patterns/${encodeURIComponent(input.patternId)}/demote`,
+      `/v1/diagnosis/patterns/${encodeURIComponent(input.patternId)}/demote`,
       {
         factor: input.factor,
         ...(input.reason ? { reason: input.reason } : {}),

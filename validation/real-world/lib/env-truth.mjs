@@ -109,6 +109,13 @@ export function resolveFallbackLaneRequirement(providers, routing, defaultLane, 
       isProviderHealthEligible(providerHealthSnapshot(providerHealthById, provider.id))
       || isProviderValidationEligible(provider)
     ));
+  if (defaultLane && !hasValidatedAlternative) {
+    return {
+      fallbackRequired: true,
+      source: "default_lane_requires_fallback",
+    };
+  }
+
   return {
     fallbackRequired: hasValidatedAlternative,
     source: hasValidatedAlternative ? "validated_alternative_available" : "no_validated_alternative",

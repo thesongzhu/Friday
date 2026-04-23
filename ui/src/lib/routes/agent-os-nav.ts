@@ -73,6 +73,21 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   },
   // ── Monitor ──
   {
+    label: localizedText("执行节点", "Fleet"),
+    path: "/fleet",
+    description: localizedText("查看执行节点、队列影响和恢复动作。", "Inspect execution nodes, queue impact, and recovery actions."),
+  },
+  {
+    label: localizedText("可观测性", "Observability"),
+    path: "/observability",
+    description: localizedText("查看运行事件、告警、审计和恢复证据。", "Review runtime events, alerts, audit trails, and recovery evidence."),
+  },
+  {
+    label: localizedText("操作控制台", "Operator Console"),
+    path: "/command-center",
+    description: localizedText("查看活跃运行、实时事件和操作级恢复入口。", "Inspect active runs, live events, and operator recovery entry points."),
+  },
+  {
     label: localizedText("用量与成本", "Usage"),
     path: "/usage",
     description: localizedText("查看请求量、估算成本和提供方健康度。", "Request volume, estimated costs, and provider health."),
