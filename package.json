@@ -29,6 +29,7 @@
     "!dist/**/*.js.map",
     "!dist/**/*.d.ts.map",
     "README.md",
+    "NOTICE",
     "LICENSE"
   ],
   "bin": {

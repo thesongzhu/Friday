@@ -229,7 +229,7 @@ import {
   parseFridayChannelsConfig,
   resolveFridayChannelSecretPolicy,
 } from "#channels";
-import type { FridayChannelMessage, FridayChannelRegistry } from "#channels";
+import type { FridayChannelMessage, FridayChannelRegistry, FridaySupportedChannelKind } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
 import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
 import { resolveFridayPublicRunUrl } from "../agent/runtime/friday-public-run-url.js";
@@ -4740,7 +4740,7 @@ export async function createFridayHub(
 
     const personas: Record<string, FridayChannelPersonaConfig> = {};
     for (const [kind, value] of Object.entries(parsed)) {
-      if (!channelRegistry.describe(kind)) {
+      if (!channelRegistry.describe(kind) && !FRIDAY_SUPPORTED_CHANNEL_KINDS.includes(kind as FridaySupportedChannelKind)) {
         continue;
       }
       if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -4834,6 +4834,7 @@ export async function createFridayHub(
     observabilityService,
     channels: {
       registry: channelRegistry,
+      supportedKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
       nowIso,
       persistPersona(kind, config) {
         const personas = loadPersistedChannelPersonas();
