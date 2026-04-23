@@ -4,13 +4,13 @@ import { redactSecretLikeText, redactSecretLikeValue } from "../../../ui/src/lib
 
 describe("redactSecretLikeText", () => {
   it("redacts provider and channel tokens without dropping surrounding text", () => {
-    const openAiKey = ["sk", "proj", "abcdefghijklmnopqrstuvwxyz1234567890"].join("-");
+    const openAiKey = ["sk", "proj", "aaaaaaaaaaaaaaaaaaaaaaaa"].join("-");
     const discordToken = [
-      "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA",
-      "ABCDEF",
-      "abcdefghijklmnopqrstuvwxyz123456",
+      "aaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbb",
+      "cccccccccccccccccccccccc",
     ].join(".");
-    const githubToken = ["ghp", "abcdefghijklmnopqrstuvwxyz123456"].join("_");
+    const githubToken = ["ghp", "aaaaaaaaaaaaaaaaaaaaaaaa"].join("_");
     const redacted = redactSecretLikeText(
       [
         `openai=${openAiKey}`,
@@ -28,7 +28,7 @@ describe("redactSecretLikeText", () => {
   });
 
   it("redacts secret-like values inside JSON-shaped objects", () => {
-    const slackToken = ["xoxb", "1234567890", "abcdefghijklmnopqrstuvwxyz"].join("-");
+    const slackToken = ["xoxb", "1111111111", "aaaaaaaaaaaaaaaaaaaaaaaa"].join("-");
     const redacted = redactSecretLikeValue({
       token: slackToken,
       label: "keep me",
