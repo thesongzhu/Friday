@@ -168,11 +168,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: OpenClaw-overlap alignment guard
+      - name: Agent parity alignment guard
         run: node scripts/quality/check-openclaw-alignment-guard.mjs
 
-  # ── MECHANISM-5c: OpenClaw-Overlap Acceptance ──
-  openclaw-overlap:
+  # ── MECHANISM-5c: Agent Parity Acceptance ──
+  agent-parity:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build
@@ -190,8 +190,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run OpenClaw-overlap acceptance suite
-        run: npm run test:integration:openclaw-overlap
+      - name: Run agent parity acceptance suite
+        run: npm run test:integration:agent-parity
 
   # ── MECHANISM-6: Secret Detection ──
   secrets:
@@ -239,7 +239,7 @@ jobs:
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, openclaw-overlap, secrets]
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets]
     if: ${{ always() }}
 
     steps:
@@ -252,7 +252,7 @@ jobs:
           echo "Contracts:          ${{ needs.contracts.result }}"
           echo "SSD Lint:           ${{ needs.ssd-lint.result }}"
           echo "Alignment Guard:    ${{ needs.alignment-guard.result }}"
-          echo "OpenClaw Overlap:   ${{ needs.openclaw-overlap.result }}"
+          echo "Agent Parity:       ${{ needs.agent-parity.result }}"
           echo "Secrets:            ${{ needs.secrets.result }}"
           echo ""
 
@@ -265,7 +265,7 @@ jobs:
             "${{ needs.contracts.result }}" \
             "${{ needs.ssd-lint.result }}" \
             "${{ needs.alignment-guard.result }}" \
-            "${{ needs.openclaw-overlap.result }}" \
+            "${{ needs.agent-parity.result }}" \
             "${{ needs.secrets.result }}" \
           ; do
             if [ "$result" != "success" ]; then

@@ -23,6 +23,7 @@ pnpm-debug.log*
 !.env.example
 
 .DS_Store
+.claude/
 .vscode/
 .idea/
 .openclaw/
@@ -32,5 +33,12 @@ managed-skills/e2e-date-skill-*/
 reports/enablement/artifacts/*
 !reports/enablement/artifacts/.gitkeep
 artifacts/
+audit-fix/
+docs/reports/ops/real-world-validation/
+docs/reports/ops/real-green-gate/
+docs/reports/repo/FRIDAY_*.json
+docs/reports/repo/FRIDAY_*.md
+friday-static*.html
+qa-report.html
 docs/CX*-FIX-PLAN*.md
 roi-calculator.js
