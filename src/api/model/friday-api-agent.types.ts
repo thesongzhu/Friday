@@ -1,6 +1,7 @@
 import type {
   FridayAgentContextCostSummary,
   FridayAgentExecutionContext,
+  FridayAgentRunConstraints,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentTaskProfileInput,
@@ -21,7 +22,7 @@ export interface FridayStartAgentRunRequest {
   timezone?: string;
   timeoutMs?: number;
   requireReview?: boolean;
-  constraints?: { readOnly?: boolean };
+  constraints?: FridayAgentRunConstraints;
   taskProfile?: FridayAgentTaskProfileInput;
   executionContext?: FridayAgentExecutionContext;
 }
