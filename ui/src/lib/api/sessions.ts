@@ -50,6 +50,15 @@ interface CreateMessageResponse {
   message: FridaySessionMessageRecord;
 }
 
+interface SendOutboundResponse {
+  delivery: {
+    channel: string;
+    chatId: string;
+    messageId: string;
+  };
+  message: FridaySessionMessageRecord;
+}
+
 interface MemoryNamespaceResponse {
   namespace: string;
 }
@@ -195,6 +204,21 @@ export const sessionsApi = {
       input,
     );
     return data.message;
+  },
+
+  async sendOutbound(
+    sessionKey: string,
+    input: {
+      text: string;
+      images?: string[];
+      replyToMessageId?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<SendOutboundResponse> {
+    return apiClient.post<typeof input, SendOutboundResponse>(
+      `/v1/sessions/${encodeKey(sessionKey)}/outbound`,
+      input,
+    );
   },
 
   async getMemoryNamespace(sessionKey: string): Promise<string> {

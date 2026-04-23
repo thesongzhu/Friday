@@ -76,7 +76,7 @@ function createMockService(): FridaySessionService {
     mergeForkSummary: vi.fn(),
     resetSession: vi.fn(),
     setSendPolicy: vi.fn(),
-    evaluateSendPolicy: vi.fn(),
+    evaluateSendPolicy: vi.fn().mockResolvedValue("allow"),
     getConversationFocus: vi.fn(),
     setConversationFocus: vi.fn(),
     mergeMetadata: vi.fn(),
@@ -94,10 +94,10 @@ async function expectRouteError(fn: Promise<unknown>, code: string): Promise<voi
 }
 
 describe("FridaySessionRoutes", () => {
-  it("creates 20 routes (10 core + 1 delete + 1 export + 1 reset + 3 fork + 4 extraction)", () => {
+  it("creates 21 routes (10 core + 1 delete + 1 export + 1 reset + 1 outbound + 3 fork + 4 extraction)", () => {
     const svc = createMockService();
     const routes = createFridaySessionRoutes({ sessionService: svc });
-    expect(routes).toHaveLength(20);
+    expect(routes).toHaveLength(21);
   });
 
   it("all routes have unique operationIds", () => {
@@ -440,6 +440,117 @@ describe("FridaySessionRoutes", () => {
         accountId: "admin-001",
         userId: "admin-001",
       });
+    });
+  });
+
+  // ─── sessions.outbound.send ───
+
+  describe("sessions.outbound.send", () => {
+    it("sends through the channel registry and stores a session message", async () => {
+      const svc = createMockService();
+      const session = makeMockSession({ channel: "discord", chatId: "discord-channel-1" });
+      const storedMessage = makeMockMessage({
+        role: "assistant",
+        content: "live marker",
+        contentText: "live marker",
+        metadata: {
+          source: "channel_outbound",
+          channelMessageId: "discord-msg-1",
+        },
+      });
+      vi.mocked(svc.getSession).mockResolvedValue(session);
+      vi.mocked(svc.addMessage).mockResolvedValue(storedMessage);
+      const channelRegistry = {
+        send: vi.fn().mockResolvedValue({ messageId: "discord-msg-1" }),
+      };
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        channelRegistry: channelRegistry as never,
+        nowIso: () => "2026-01-01T00:00:00.000Z",
+      });
+      const route = routes.find((r) => r.operationId === "sessions.outbound.send")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: {
+            text: " live marker ",
+            metadata: { uiSurface: "channels" },
+          },
+        }) as never,
+      );
+
+      expect(channelRegistry.send).toHaveBeenCalledWith("discord", {
+        chatId: "discord-channel-1",
+        text: "live marker",
+        images: undefined,
+        replyTo: undefined,
+        chatType: "direct",
+      });
+      expect(svc.addMessage).toHaveBeenCalledWith("discord:default:user1", expect.objectContaining({
+        role: "assistant",
+        content: "live marker",
+        contentText: "live marker",
+        idempotencyKey: "channel-outbound:discord:discord-msg-1",
+        metadata: expect.objectContaining({
+          uiSurface: "channels",
+          source: "channel_outbound",
+          deliveryStatus: "sent",
+          channelKind: "discord",
+          channelChatId: "discord-channel-1",
+          channelMessageId: "discord-msg-1",
+        }),
+      }));
+      expect(result).toEqual({
+        delivery: {
+          channel: "discord",
+          chatId: "discord-channel-1",
+          messageId: "discord-msg-1",
+        },
+        message: storedMessage,
+      });
+    });
+
+    it("rejects outbound when the session send policy blocks it", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession());
+      vi.mocked(svc.evaluateSendPolicy).mockResolvedValue("block");
+      const channelRegistry = { send: vi.fn() };
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        channelRegistry: channelRegistry as never,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.outbound.send")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:user1" },
+            body: { text: "blocked marker" },
+          }) as never,
+        ),
+        "CHANNEL_OUTBOUND_BLOCKED",
+      );
+      expect(channelRegistry.send).not.toHaveBeenCalled();
+      expect(svc.addMessage).not.toHaveBeenCalled();
+    });
+
+    it("requires a configured channel registry", async () => {
+      const svc = createMockService();
+      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.outbound.send")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:user1" },
+            body: { text: "marker" },
+          }) as never,
+        ),
+        "CHANNEL_OUTBOUND_UNAVAILABLE",
+      );
     });
   });
 
@@ -1039,6 +1150,7 @@ describe("FridaySessionRoutes", () => {
       expect(routeMap).toContainEqual({ id: "sessions.messages.list", method: "GET", path: "/v1/sessions/:sessionKey/messages" });
       expect(routeMap).toContainEqual({ id: "sessions.export", method: "GET", path: "/v1/sessions/:sessionKey/export" });
       expect(routeMap).toContainEqual({ id: "sessions.messages.create", method: "POST", path: "/v1/sessions/:sessionKey/messages" });
+      expect(routeMap).toContainEqual({ id: "sessions.outbound.send", method: "POST", path: "/v1/sessions/:sessionKey/outbound" });
       expect(routeMap).toContainEqual({ id: "sessions.run", method: "POST", path: "/v1/sessions/:sessionKey/run" });
       expect(routeMap).toContainEqual({ id: "sessions.memory.namespace.get", method: "GET", path: "/v1/sessions/:sessionKey/memory-namespace" });
       expect(routeMap).toContainEqual({ id: "sessions.forks.create", method: "POST", path: "/v1/sessions/:sessionKey/fork" });

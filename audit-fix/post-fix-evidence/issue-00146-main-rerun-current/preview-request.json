@@ -1,3 +1,3 @@
 {
-  "uri": "friday://provider-template?kind=openai&apiKey=sk-live-secret-value-00146&model=gpt-4o"
+  "uri": "friday://provider-template?kind=openai&apiKey=sk-redacted&model=gpt-4o"
 }

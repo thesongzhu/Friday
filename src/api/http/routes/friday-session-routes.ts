@@ -30,6 +30,8 @@ import type {
   FridaySessionMessageCreateRequest,
   FridaySessionMessageCreateResponse,
   FridaySessionMessageListResponse,
+  FridaySessionOutboundRequest,
+  FridaySessionOutboundResponse,
   FridaySessionPruneRequest,
   FridaySessionPruneResponse,
   FridaySessionRunRequest,
@@ -37,15 +39,19 @@ import type {
   FridaySessionSweepResponse,
 } from "../../model/friday-api-session.types.js";
 import type { FridaySessionService } from "#sessions";
-import type { FridaySessionStatus } from "#sessions";
+import type { FridaySessionChatKind, FridaySessionStatus } from "#sessions";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
+import { isFridaySessionSendAllowed } from "#sessions";
 import type { FridayProviderTenantContext } from "#providers";
+import type { FridayChannelRegistry } from "#channels";
 
 // ─── Dependencies ───
 
 export interface FridaySessionRoutesDeps {
   sessionService: FridaySessionService;
   extractionService?: FridaySessionMemoryExtractionService;
+  channelRegistry?: FridayChannelRegistry;
+  nowIso?: () => string;
   runSession?: (input: {
     sessionKey: string;
     task: string;
@@ -228,6 +234,53 @@ function validateCreateMessageBody(body: unknown): asserts body is FridaySession
       { httpStatus: 400 },
     );
   }
+}
+
+function validateOutboundBody(body: unknown): asserts body is FridaySessionOutboundRequest {
+  if (body == null || typeof body !== "object") {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.MESSAGE_VALIDATION_ERROR,
+      "Request body is required",
+      { httpStatus: 400 },
+    );
+  }
+
+  const b = body as Record<string, unknown>;
+  const errors: string[] = [];
+
+  if (typeof b.text !== "string" || b.text.trim().length === 0) {
+    errors.push("text is required and must be a non-empty string");
+  }
+
+  if (b.images !== undefined) {
+    if (!Array.isArray(b.images)) {
+      errors.push("images must be an array of strings when provided");
+    } else if (b.images.some((image) => typeof image !== "string" || image.trim().length === 0)) {
+      errors.push("images must contain only non-empty strings");
+    }
+  }
+
+  if (b.replyToMessageId !== undefined && (typeof b.replyToMessageId !== "string" || b.replyToMessageId.trim() === "")) {
+    errors.push("replyToMessageId must be a non-empty string when provided");
+  }
+
+  if (b.metadata !== undefined) {
+    sanitizeMetadata(b.metadata);
+  }
+
+  if (errors.length > 0) {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.MESSAGE_VALIDATION_ERROR,
+      `Invalid outbound body: ${errors.join("; ")}`,
+      { httpStatus: 400 },
+    );
+  }
+}
+
+function toChannelSendChatType(chatKind: FridaySessionChatKind): "direct" | "group" | undefined {
+  if (chatKind === "dm") return "direct";
+  if (chatKind === "group" || chatKind === "channel" || chatKind === "thread") return "group";
+  return undefined;
 }
 
 function validateRunBody(body: unknown): asserts body is FridaySessionRunRequest {
@@ -749,7 +802,83 @@ export function createFridaySessionRoutes(
       },
     },
 
-    // 8b. POST /v1/sessions/:sessionKey/run — run agent against session context (legacy compatibility)
+    // 8b. POST /v1/sessions/:sessionKey/outbound — deterministic channel outbound send
+    {
+      operationId: "sessions.outbound.send",
+      method: "POST",
+      path: "/v1/sessions/:sessionKey/outbound",
+      auth: { public: false, anyOfScopes: ["session.write", "agent.run"] },
+      rateLimitPolicyId: "session.write",
+      async handler(ctx): Promise<FridaySessionOutboundResponse> {
+        if (!deps.channelRegistry) {
+          throw new FridayDomainError(
+            "CHANNEL_OUTBOUND_UNAVAILABLE",
+            "Channel outbound delivery is not configured",
+            { httpStatus: 501 },
+          );
+        }
+
+        const { sessionKey } = ctx.params as { sessionKey: string };
+        const key = decodeSessionKeyParam(sessionKey);
+        validateOutboundBody(ctx.body);
+        const body = ctx.body;
+
+        const session = await deps.sessionService.getSession(key);
+        if (!session) {
+          throw new FridayDomainError(
+            FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+            `Session '${key}' not found`,
+            { httpStatus: 404 },
+          );
+        }
+
+        const sendPolicy = await deps.sessionService.evaluateSendPolicy(key);
+        if (!isFridaySessionSendAllowed(sendPolicy)) {
+          throw new FridayDomainError(
+            "CHANNEL_OUTBOUND_BLOCKED",
+            `Outbound sends are blocked for session '${key}' by policy '${sendPolicy}'`,
+            { httpStatus: 403 },
+          );
+        }
+
+        const text = body.text.trim();
+        const delivery = await deps.channelRegistry.send(session.channel, {
+          chatId: session.chatId,
+          text,
+          images: body.images?.map((image) => image.trim()),
+          replyTo: body.replyToMessageId?.trim(),
+          chatType: toChannelSendChatType(session.chatKind),
+        });
+        const metadata = sanitizeMetadata(body.metadata) ?? {};
+        const sentAt = deps.nowIso ? deps.nowIso() : new Date().toISOString();
+        const message = await deps.sessionService.addMessage(key, {
+          role: "assistant",
+          content: text,
+          contentText: text,
+          metadata: {
+            ...metadata,
+            source: "channel_outbound",
+            deliveryStatus: "sent",
+            sentAt,
+            channelKind: session.channel,
+            channelChatId: session.chatId,
+            channelMessageId: delivery.messageId,
+          },
+          idempotencyKey: `channel-outbound:${session.channel}:${delivery.messageId}`,
+        });
+
+        return {
+          delivery: {
+            channel: session.channel,
+            chatId: session.chatId,
+            messageId: delivery.messageId,
+          },
+          message,
+        };
+      },
+    },
+
+    // 8c. POST /v1/sessions/:sessionKey/run — run agent against session context (legacy compatibility)
     {
       operationId: "sessions.run",
       method: "POST",

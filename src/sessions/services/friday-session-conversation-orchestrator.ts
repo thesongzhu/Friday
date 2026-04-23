@@ -33,6 +33,9 @@ const CHINESE_CONTINUE_HINTS = /(继续|开始吧|继续做|接着做|往下做|
 const CROSS_TOPIC_RECAP_HINTS =
   /\b(summari[sz]e|summary|recap|wrap up|pull together|combine|roll up|recommendations|all recommendations|overall recommendation)\b/i;
 const CHINESE_CROSS_TOPIC_RECAP_HINTS = /(总结|概括|汇总|整体建议|全部建议|总的建议)/;
+const EXPLICIT_LITERAL_RESPONSE_INSTRUCTION =
+  /\b(?:answer|reply|respond|say)\s+(?:with\s+)?exactly\b|\b(?:only|just)\s+(?:answer|reply|respond|say)\b|\b(?:answer|reply|respond|say)\s+only\b/i;
+const CHINESE_EXPLICIT_LITERAL_RESPONSE_INSTRUCTION = /(?:只|仅)(?:回复|回答|输出|返回|说)/;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "can", "for", "from", "how", "i", "in",
   "is", "it", "me", "my", "of", "on", "one", "or", "please", "should", "short", "single",
@@ -87,6 +90,12 @@ function isShortAssistantAnchorFollowUpTask(task: string): boolean {
     /\b(why|what|that|this|here|it|same|again|connect|didn't|did not|failed)\b/i.test(normalized)
     || /(为什么|什么|这里|这个|那个|同一个|还是|连接|打不开|失败|没连上)/.test(normalized)
   );
+}
+
+function isExplicitLiteralResponseInstruction(task: string): boolean {
+  const normalized = normalizeText(task);
+  return EXPLICIT_LITERAL_RESPONSE_INSTRUCTION.test(normalized)
+    || CHINESE_EXPLICIT_LITERAL_RESPONSE_INSTRUCTION.test(normalized);
 }
 
 export interface FridayPreparedConversationTurn {
@@ -295,6 +304,7 @@ export function classifyFridayConversationTurn(input: {
     FOLLOW_UP_HINTS.test(taskLower)
     || CHINESE_FOLLOW_UP_HINTS.test(task)
     || DEICTIC_FOLLOW_UP_HINTS.test(taskLower);
+  const literalResponseInstruction = isExplicitLiteralResponseInstruction(task);
   const assistantOverlapSignal = latestAssistantOverlap >= 2
     || (
       latestAssistantOverlap >= 1
@@ -309,6 +319,9 @@ export function classifyFridayConversationTurn(input: {
   }
   if (CONTINUE_HINTS.test(taskLower) || CHINESE_CONTINUE_HINTS.test(task)) {
     return "continue_active_task";
+  }
+  if (literalResponseInstruction && !hasReplyAnchor) {
+    return "new_topic";
   }
   if (
     Boolean(focusState?.lastAssistantAskedQuestion)
@@ -1048,6 +1061,15 @@ function buildTaskPrompt(input: {
     : undefined;
   const hasHistoryOnlySelection = input.selectedBlocks.length > 0
     && input.selectedBlocks.every((block) => block.source.endsWith("_block"));
+
+  if (input.turnKind === "new_topic" && isExplicitLiteralResponseInstruction(task)) {
+    return [
+      "This user started a literal response request.",
+      `Current question: ${task}`,
+      "Do not reuse previous user text, previous assistant text, or prior response anchors.",
+      "Answer only the current literal request.",
+    ].join("\n");
+  }
 
   if (input.turnKind === "new_topic" && previousTopicSummary) {
     return [
