@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Radio, Send, Settings2, Wifi, WifiOff, MessageSquare, ChevronRight, X, Zap } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ActionButton, StatusPill } from "@/components/core/primitives";
+import { useAppNavigate } from "@/hooks/use-app-navigate";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { CHANNEL_META, CHANNEL_KINDS_ORDERED, getChannelDisplayName } from "@/lib/channels/channel-meta";
@@ -9,6 +11,8 @@ import type { ChannelKind } from "@/lib/setup/types";
 import type { FridaySessionRecord, FridaySessionMessageRecord, ChannelRegistryView } from "@/lib/api/types";
 import { agentApi } from "@/lib/api/agent";
 import { channelsApi } from "@/lib/api/channels";
+import { sessionsApi } from "@/lib/api/sessions";
+import { buildChannelChatHandoffPayload, writePendingChannelChatHandoff } from "@/lib/chat/channel-handoff";
 import { useAgentRunEvents } from "@/hooks/use-agent-run-events";
 import {
   useChannelRegistryQuery,
@@ -66,9 +70,11 @@ function formatTime(iso: string): string {
 
 export function ChannelsPage() {
   const { locale } = useAppLocale();
+  const navigate = useAppNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: registry = [] } = useChannelRegistryQuery();
   const [filterChannel, setFilterChannel] = useState<string>("all");
-  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(() => searchParams.get("sessionKey"));
 
   // Reply state
   const [replyText, setReplyText] = useState("");
@@ -83,10 +89,16 @@ export function ChannelsPage() {
   const [personaSaving, setPersonaSaving] = useState(false);
   const [personaChannelKind, setPersonaChannelKind] = useState<string | null>(null);
 
-  const { data: sessions = [] } = useChannelSessionsQuery(
-    filterChannel === "all" ? undefined : filterChannel,
-  );
+  const requestedSessionChannels = filterChannel === "all"
+    ? registry.map((channel) => channel.kind)
+    : filterChannel;
+  const { data: sessions = [] } = useChannelSessionsQuery(requestedSessionChannels);
   const { data: messages = [], refetch: refetchMessages } = useSessionMessagesQuery(selectedSessionKey);
+
+  useEffect(() => {
+    const sessionKey = searchParams.get("sessionKey");
+    setSelectedSessionKey(sessionKey);
+  }, [searchParams]);
 
   // Streaming response for current reply
   const runEvents = useAgentRunEvents(currentRunId, {
@@ -184,6 +196,27 @@ export function ChannelsPage() {
   const connectedChannels = registry.filter((ch) => ch.running);
   const selectedSession = sessions.find((s) => s.key === selectedSessionKey) ?? null;
 
+  async function handleContinueToMainChat() {
+    if (!selectedSession) {
+      return;
+    }
+
+    try {
+      const sourceMessages = messages.length > 0
+        ? messages
+        : await sessionsApi.listMessages(selectedSession.key, { limit: 12 });
+      const handoff = buildChannelChatHandoffPayload({
+        session: selectedSession,
+        displayName: getSessionDisplayName(selectedSession),
+        messages: sourceMessages,
+      });
+      const handoffId = writePendingChannelChatHandoff(handoff);
+      navigate(`/chat?handoff=${encodeURIComponent(handoffId)}&fresh=1`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : localize(locale, "交接失败", "Failed to hand off"));
+    }
+  }
+
   // Only treat sessions as channel sessions when they belong to a registered channel kind.
   const channelSessions = sessions.filter((session) => registeredChannelKinds.has(getSessionChannelKind(session)));
 
@@ -232,7 +265,15 @@ export function ChannelsPage() {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => { setFilterChannel("all"); setSelectedSessionKey(null); }}
+          onClick={() => {
+            setFilterChannel("all");
+            setSelectedSessionKey(null);
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.delete("sessionKey");
+              return next;
+            }, { replace: true });
+          }}
           className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-medium transition ${
             filterChannel === "all"
               ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]"
@@ -338,7 +379,14 @@ export function ChannelsPage() {
                   <button
                     key={session.key}
                     type="button"
-                    onClick={() => setSelectedSessionKey(session.key)}
+                    onClick={() => {
+                      setSelectedSessionKey(session.key);
+                      setSearchParams((prev) => {
+                        const next = new URLSearchParams(prev);
+                        next.set("sessionKey", session.key);
+                        return next;
+                      }, { replace: true });
+                    }}
                     className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
                       isActive
                         ? "bg-[color:var(--color-accent-soft)]"
@@ -415,6 +463,36 @@ export function ChannelsPage() {
                 </StatusPill>
               </div>
 
+              <div className="border-b border-[color:var(--color-border-soft)] px-5 py-3">
+                <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
+                        {localize(locale, "渠道上下文", "Channel context")}
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+                        {localize(
+                          locale,
+                          `这里的回复会继续留在 ${safeChannelName(getSessionChannelKind(selectedSession), locale)}，默认不会自动并到主聊天。`,
+                          `Replies here stay in ${safeChannelName(getSessionChannelKind(selectedSession), locale)} and do not automatically merge into main chat.`,
+                        )}
+                      </p>
+                    </div>
+                    <ActionButton tone="secondary" onClick={() => void handleContinueToMainChat()}>
+                      {localize(locale, "继续到主聊天", "Continue in main chat")}
+                    </ActionButton>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--color-text-secondary)]">
+                    <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                      {localize(locale, "默认行为", "Default")}: {localize(locale, "隔离上下文", "Isolated context")}
+                    </span>
+                    <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
+                      {localize(locale, "手动继续", "Manual continue")}: {localize(locale, "只带摘要", "Summary only")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Messages */}
               <div className="flex-1 overflow-y-auto px-5 py-4">
                 {messages.length === 0 && !isStreaming ? (
@@ -488,8 +566,8 @@ export function ChannelsPage() {
                   <p className="text-[10px] text-[color:var(--color-text-faint)]">
                     {localize(
                       locale,
-                      `Friday 将通过 ${safeChannelName(getSessionChannelKind(selectedSession), locale)} 回复`,
-                      `Friday will reply via ${safeChannelName(getSessionChannelKind(selectedSession), locale)}`,
+                      `Friday 将通过 ${safeChannelName(getSessionChannelKind(selectedSession), locale)} 回复；主聊天默认不会自动合并这条线。`,
+                      `Friday replies through ${safeChannelName(getSessionChannelKind(selectedSession), locale)}; main chat does not auto-merge this thread.`,
                     )}
                   </p>
                 </div>
