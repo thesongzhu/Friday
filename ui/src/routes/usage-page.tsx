@@ -1,10 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
+import { providersApi } from "@/lib/api/providers";
 import { providerUsageApi } from "@/lib/api/provider-usage";
 import { SkeletonCard, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-import type { FridayLlmBudgetStatus, FridayProviderUsageSummary } from "@/lib/api/types";
+import type {
+  FridayLlmBudgetStatus,
+  FridayModelRoutingConfig,
+  FridayProviderRoutingExplainReport,
+  FridayProviderUsageSummary,
+} from "@/lib/api/types";
 
 // ─── Types ───
 
@@ -91,6 +97,23 @@ function useProviders() {
   });
 }
 
+function useRoutingConfig() {
+  return useQuery({
+    queryKey: ["provider-routing"],
+    queryFn: async (): Promise<FridayModelRoutingConfig> => providersApi.getRouting(),
+    refetchInterval: 30_000,
+  });
+}
+
+function useRoutingExplain() {
+  return useQuery({
+    queryKey: ["provider-routing-explain", "usage-page"],
+    queryFn: async (): Promise<FridayProviderRoutingExplainReport> =>
+      providersApi.explainRouting({ estimatedInputTokens: 0, complexity: "medium" }),
+    refetchInterval: 30_000,
+  });
+}
+
 // ─── Helpers ───
 
 function formatNumber(n: number): string {
@@ -167,6 +190,8 @@ export function UsagePage() {
   const { data: usageSummary, isLoading: usageLoading, isError: usageError } = useProviderUsage();
   const { data: budgetStatus, isLoading: budgetLoading, isError: budgetError } = useBudgetStatus();
   const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
+  const { data: routingConfig, isLoading: routingLoading, isError: routingConfigError } = useRoutingConfig();
+  const { data: routingExplain, isLoading: routingExplainLoading, isError: routingExplainError } = useRoutingExplain();
 
   const isLoading = healthLoading || usageLoading || budgetLoading || providersLoading;
   const isError = healthError || usageError || budgetError || providersError;
@@ -187,6 +212,14 @@ export function UsagePage() {
   // Build per-provider cost table by joining health with provider metadata.
   const providerMap = new Map(providers.map((p) => [p.id, p]));
   const healthMap = new Map(healthItems.map((item) => [item.providerId, item]));
+  const selectedRoute = routingExplain?.selected ?? routingExplain?.candidates.find((candidate) => candidate.selected);
+  const defaultProvider = routingConfig ? providerMap.get(routingConfig.defaultProviderId) : undefined;
+  const selectedProvider = selectedRoute ? providerMap.get(selectedRoute.providerId) : undefined;
+  const routeDiffersFromDefault = Boolean(
+    routingConfig
+    && selectedRoute
+    && selectedRoute.providerId !== routingConfig.defaultProviderId,
+  );
   const costRows = (usageSummary?.rows ?? []).map((row) => {
     const providerId = row.providerId ?? "";
     const meta = providerMap.get(providerId);
@@ -237,6 +270,69 @@ export function UsagePage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* ─── Active Routing Snapshot ─── */}
+          <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">
+                  {localize(locale, "当前默认路由", "Current Default Route")}
+                </h2>
+                <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+                  {localize(
+                    locale,
+                    "这里是下一次未显式指定 provider/model 时的实际路由说明；下面的用量表只是历史账本，不代表下一次会用哪把 key。",
+                    "This shows the route Friday will use for the next run without an explicit provider/model. The usage table below is historical ledger data, not the next-key selector.",
+                  )}
+                </p>
+              </div>
+              {routingLoading || routingExplainLoading ? (
+                <StatusPill>{localize(locale, "检查中", "Checking")}</StatusPill>
+              ) : routeDiffersFromDefault ? (
+                <StatusPill tone="warning">{localize(locale, "路由已调整", "Route adjusted")}</StatusPill>
+              ) : selectedRoute ? (
+                <StatusPill tone="success">{localize(locale, "按默认路由", "Default route")}</StatusPill>
+              ) : (
+                <StatusPill tone="warning">{localize(locale, "不可用", "Unavailable")}</StatusPill>
+              )}
+            </div>
+
+            {routingConfigError || routingExplainError ? (
+              <p className="mt-4 rounded-lg bg-[color:var(--color-bg-warning-subtle)] p-3 text-xs text-[color:var(--color-text-secondary)]">
+                {localize(locale, "无法读取当前路由解释。请到 Providers 页面检查 provider 健康状态。", "Unable to read the current routing explanation. Check provider health on the Providers page.")}
+              </p>
+            ) : (
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "配置默认", "Configured default")}</p>
+                  <p className="mt-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
+                    {defaultProvider?.name ?? routingConfig?.defaultProviderId ?? "n/a"}
+                  </p>
+                  <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                    {routingConfig?.defaultModel ?? localize(locale, "使用 provider 默认模型", "Provider default model")}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "实际首选", "Actual first choice")}</p>
+                  <p className="mt-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
+                    {selectedProvider?.name ?? selectedRoute?.providerId ?? "n/a"}
+                  </p>
+                  <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                    {selectedRoute?.model ?? "n/a"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-[color:var(--color-bg-subtle)] p-3">
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "原因", "Reason")}</p>
+                  <p className="mt-1 text-sm font-semibold text-[color:var(--color-text-primary)]">
+                    {routingExplain?.reasonCode ?? "n/a"}
+                  </p>
+                  <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">
+                    {routingExplain?.reasonText ?? localize(locale, "暂无路由说明", "No routing explanation available")}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* ─── Token Usage Summary ─── */}
           <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5">
             <h2 className="text-sm font-medium text-[color:var(--color-text-primary)]">

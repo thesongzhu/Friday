@@ -1543,6 +1543,61 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("preserves the configured default provider while budget is healthy", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "Primary OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "Cheaper OpenAI fallback",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+        });
+
+        const { route, routingDecision } = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 4096,
+            complexity: "simple",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(route.provider.id).toBe("test-id-0001");
+        expect(route.model).toBe("gpt-4o");
+        expect(routingDecision.strategy).toBe("configured");
+        expect(routingDecision.routeDecisionTrace?.selectedBeforeLearning).toMatchObject({
+          providerId: "test-id-0001",
+          model: "gpt-4o",
+        });
+        expect(routingDecision.routeDecisionTrace?.selectedAfterLearning).toMatchObject({
+          providerId: "test-id-0001",
+          model: "gpt-4o",
+        });
+      } finally {
+        delete process.env.OPENAI_KEY;
+      }
+    });
+
     it("does not let learning history override a requestedProviderId pin", async () => {
       process.env.OPENAI_KEY = "test-openai-key";
       process.env.ANTHROPIC_KEY = "test-anthropic-key";
@@ -1745,6 +1800,24 @@ describe("FridayProviderService", () => {
         });
 
         db.withWriteTransaction((conn) => {
+          const insertSession = conn.prepare(
+            `INSERT INTO sessions (
+              id, session_key, agent_id, channel, chat_kind, status,
+              metadata_json, created_at, updated_at, account_id, chat_id, user_id
+            ) VALUES (?, ?, 'agent', 'chat', 'dm', 'active', '{}', ?, ?, ?, ?, ?)`,
+          );
+          for (const sessionKey of ["sess-001", "sess-002", "sess-003"]) {
+            insertSession.run(
+              `session-${sessionKey}`,
+              sessionKey,
+              NOW,
+              NOW,
+              "tenant-review",
+              sessionKey,
+              "user-review",
+            );
+          }
+
           const insertRun = conn.prepare(
             `INSERT INTO friday_agent_runs (
               id, task, status, session_key, provider_id, model, attempt, max_attempts, created_at,
@@ -1808,6 +1881,10 @@ describe("FridayProviderService", () => {
             complexity: "medium",
             taskProfileId: "review",
           },
+          tenantContext: {
+            hubId: "tenant-review",
+            userId: "user-review",
+          },
           run: async (candidate) => candidate.provider.id,
         });
 
@@ -1816,6 +1893,10 @@ describe("FridayProviderService", () => {
         expect(routingDecision.reason).toContain("Historical route outcomes influenced candidate scoring.");
 
         const explain = await service.explainRouting({
+          tenantContext: {
+            hubId: "tenant-review",
+            userId: "user-review",
+          },
           routingContext: {
             estimatedInputTokens: 1800,
             complexity: "medium",
@@ -1831,6 +1912,22 @@ describe("FridayProviderService", () => {
           successRate: 1,
           failureRate: 0,
         });
+
+        const otherTenantRun = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 1800,
+            complexity: "medium",
+            taskProfileId: "review",
+          },
+          tenantContext: {
+            hubId: "tenant-other",
+            userId: "user-other",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(otherTenantRun.route.provider.id).toBe("test-id-0001");
+        expect(otherTenantRun.routingDecision.learningSignalsPresent).toBe(false);
       } finally {
         delete process.env.OPENAI_KEY;
         delete process.env.ANTHROPIC_KEY;
