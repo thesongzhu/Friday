@@ -2490,7 +2490,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
-  for (const route of createFridaySessionRoutes({ sessionService, extractionService, runSession })) {
+  for (const route of createFridaySessionRoutes({
+    sessionService,
+    extractionService,
+    channelRegistry: deps.channels?.registry,
+    nowIso: deps.nowIso,
+    runSession,
+  })) {
     routes.register(route);
   }
 

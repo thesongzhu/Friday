@@ -7,6 +7,7 @@ import { useAppNavigate } from "@/hooks/use-app-navigate";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { CHANNEL_META, CHANNEL_KINDS_ORDERED, getChannelDisplayName } from "@/lib/channels/channel-meta";
+import { redactSecretLikeText } from "@/lib/security/redact-secrets";
 import type { ChannelKind } from "@/lib/setup/types";
 import type { FridaySessionRecord, FridaySessionMessageRecord, ChannelRegistryView } from "@/lib/api/types";
 import { agentApi } from "@/lib/api/agent";
@@ -80,6 +81,7 @@ export function ChannelsPage() {
   const [replyText, setReplyText] = useState("");
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isOutboundSending, setIsOutboundSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Persona panel state
@@ -122,6 +124,7 @@ export function ChannelsPage() {
     setReplyText("");
     setCurrentRunId(null);
     setIsSending(false);
+    setIsOutboundSending(false);
   }, [selectedSessionKey]);
 
   // Persona panel handlers
@@ -156,9 +159,37 @@ export function ChannelsPage() {
   }
 
   // Send reply handler
+  async function handleSendOutbound() {
+    const trimmed = replyText.trim();
+    if (!trimmed || !selectedSessionKey || isOutboundSending || isSending) return;
+
+    setIsOutboundSending(true);
+    setReplyText("");
+
+    try {
+      const result = await sessionsApi.sendOutbound(selectedSessionKey, {
+        text: trimmed,
+        metadata: {
+          uiSurface: "channels",
+          operatorAction: "direct_channel_outbound",
+        },
+      });
+      toast.success(localize(
+        locale,
+        `已发送到 ${safeChannelName(result.delivery.channel, locale)}`,
+        `Sent to ${safeChannelName(result.delivery.channel, locale)}`,
+      ));
+      await refetchMessages();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : localize(locale, "渠道发送失败", "Channel send failed"));
+    } finally {
+      setIsOutboundSending(false);
+    }
+  }
+
   async function handleSendReply() {
     const trimmed = replyText.trim();
-    if (!trimmed || !selectedSessionKey || isSending) return;
+    if (!trimmed || !selectedSessionKey || isSending || isOutboundSending) return;
 
     setIsSending(true);
     setReplyText("");
@@ -512,7 +543,7 @@ export function ChannelsPage() {
                             Friday
                             <span className="ml-2 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" />
                           </p>
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{runEvents.outputText}</p>
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{redactSecretLikeText(runEvents.outputText)}</p>
                         </div>
                       </div>
                     )}
@@ -540,22 +571,32 @@ export function ChannelsPage() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
-                        void handleSendReply();
+                        void handleSendOutbound();
                       }
                     }}
                     placeholder={localize(
                       locale,
-                      "输入指令或回复...",
-                      "Type an instruction or reply...",
+                      "输入要发到渠道的消息...",
+                      "Type a message to send to the channel...",
                     )}
-                    disabled={isSending}
+                    disabled={isSending || isOutboundSending}
                     rows={1}
                     className="min-h-[40px] max-h-[120px] flex-1 resize-none rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-2.5 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none disabled:opacity-50"
                   />
+                  <ActionButton
+                    tone="secondary"
+                    onClick={() => void handleSendReply()}
+                    disabled={!replyText.trim() || isSending || isOutboundSending}
+                  >
+                    {isSending
+                      ? localize(locale, "处理中", "Running")
+                      : localize(locale, "让 Friday 处理", "Ask Friday")}
+                  </ActionButton>
                   <button
                     type="button"
-                    onClick={() => void handleSendReply()}
-                    disabled={!replyText.trim() || isSending}
+                    onClick={() => void handleSendOutbound()}
+                    disabled={!replyText.trim() || isSending || isOutboundSending}
+                    title={localize(locale, "直接发送到渠道", "Send directly to channel")}
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color:var(--color-accent)] text-white transition hover:opacity-90 disabled:opacity-40"
                   >
                     <Send className="h-4 w-4" />
@@ -566,8 +607,8 @@ export function ChannelsPage() {
                   <p className="text-[10px] text-[color:var(--color-text-faint)]">
                     {localize(
                       locale,
-                      `Friday 将通过 ${safeChannelName(getSessionChannelKind(selectedSession), locale)} 回复；主聊天默认不会自动合并这条线。`,
-                      `Friday replies through ${safeChannelName(getSessionChannelKind(selectedSession), locale)}; main chat does not auto-merge this thread.`,
+                      `发送按钮会直接发到 ${safeChannelName(getSessionChannelKind(selectedSession), locale)}；“让 Friday 处理”会在同一渠道会话里启动一次真实 run。主聊天默认不会自动合并这条线。`,
+                      `Send delivers directly to ${safeChannelName(getSessionChannelKind(selectedSession), locale)}; "Ask Friday" starts a real run in this channel session. Main chat does not auto-merge this thread.`,
                     )}
                   </p>
                 </div>
@@ -705,7 +746,8 @@ export function ChannelsPage() {
 
 function MessageBubble({ message, locale }: { message: FridaySessionMessageRecord; locale: "zh" | "en" }) {
   const isAssistant = message.role === "assistant";
-  const text = message.contentText || (typeof message.content === "string" ? message.content : JSON.stringify(message.content));
+  const rawText = message.contentText || (typeof message.content === "string" ? message.content : JSON.stringify(message.content));
+  const text = redactSecretLikeText(rawText);
   const time = message.occurredAt ? formatTime(message.occurredAt) : "";
 
   return (

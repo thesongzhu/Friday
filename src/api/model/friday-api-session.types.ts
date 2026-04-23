@@ -68,6 +68,22 @@ export interface FridaySessionMessageListResponse {
   items: FridaySessionMessageRecord[];
 }
 
+export interface FridaySessionOutboundRequest {
+  text: string;
+  images?: string[];
+  replyToMessageId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FridaySessionOutboundResponse {
+  delivery: {
+    channel: string;
+    chatId: string;
+    messageId: string;
+  };
+  message: FridaySessionMessageRecord;
+}
+
 import type { FridayAgentRunStatus } from "#agent";
 
 // ─── Memory namespace ───

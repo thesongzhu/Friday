@@ -226,6 +226,19 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("treat approve/reject replies as control commands for that stored plan");
   });
 
+  it("keeps conversation-only memory separate from durable memory writes", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["memory_search", "memory_store", "feedback"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("for this conversation only / this chat / the current thread");
+    expect(prompt).toContain("transient session context, not durable memory persistence");
+    expect(prompt).toContain("Do not call feedback or memory_store for that instruction");
+    expect(prompt).toContain("A read-only run still may use the current conversation history");
+  });
+
   it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["cron", "spawn_subagent", "feedback"],
