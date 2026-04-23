@@ -34,6 +34,18 @@ function validateBudgetBody(body: unknown): asserts body is FridaySetBudgetConfi
   }
 }
 
+function getDefaultUtcUsageRange(receivedAt: string | undefined): { from: string; to: string } {
+  const received = receivedAt ? new Date(receivedAt) : new Date();
+  const safeDate = Number.isNaN(received.getTime()) ? new Date() : received;
+  // llm_usage_records.usage_day is written from ISO UTC dates, so default
+  // queries must use the same UTC boundary or late-evening local usage disappears.
+  const to = safeDate.toISOString().slice(0, 10);
+  return {
+    from: `${to.slice(0, 7)}-01`,
+    to,
+  };
+}
+
 // ─── Factory ───
 
 export function createFridayProviderUsageRoutes(
@@ -49,9 +61,9 @@ export function createFridayProviderUsageRoutes(
       async handler(ctx): Promise<FridayGetUsageSummaryResponse> {
         const query = ctx.query as Record<string, string | undefined>;
         // DX-004: Default 'from' to start of current month, 'to' to today
-        const now = new Date();
-        const from = query.from ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-        const to = query.to ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        const defaults = getDefaultUtcUsageRange(ctx.receivedAt);
+        const from = query.from ?? defaults.from;
+        const to = query.to ?? defaults.to;
 
         if (!from || !to) {
           throw new FridayDomainError(

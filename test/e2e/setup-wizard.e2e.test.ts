@@ -817,7 +817,7 @@ describe("Setup Wizard E2E", () => {
         {
           method: "POST",
           headers: authHeaders(accessToken),
-          body: JSON.stringify({}),
+          body: JSON.stringify({ useLastUserMessage: true }),
         },
       );
 

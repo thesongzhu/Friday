@@ -628,7 +628,7 @@ describe("FridaySessionRoutes", () => {
       const result = await route.handler(
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
-          body: {},
+          body: { useLastUserMessage: true },
         }) as never,
       );
 
@@ -828,7 +828,7 @@ describe("FridaySessionRoutes", () => {
       );
     });
 
-    it("uses latest user message as task when task is omitted", async () => {
+    it("uses latest user message as task when explicitly requested", async () => {
       const svc = createMockService();
       const runSession = vi.fn().mockResolvedValue({
         runId: "run-1",
@@ -863,7 +863,7 @@ describe("FridaySessionRoutes", () => {
       const result = await route.handler(
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
-          body: {},
+          body: { useLastUserMessage: true },
         }) as never,
       );
 
@@ -891,6 +891,27 @@ describe("FridaySessionRoutes", () => {
           { role: "assistant", content: "FRIDAY_E2E_OK" },
         ],
       });
+    });
+
+    it("rejects omitted task unless latest-message reuse is explicit", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn();
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      await expect(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:user1" },
+            body: {},
+          }) as never,
+        ),
+      ).rejects.toThrow("task is required unless useLastUserMessage is explicitly true");
+      expect(svc.getMessages).not.toHaveBeenCalled();
+      expect(runSession).not.toHaveBeenCalled();
     });
 
     it("marks persistTaskMessage=true when task is provided in request body", async () => {
@@ -995,7 +1016,7 @@ describe("FridaySessionRoutes", () => {
       await route.handler(
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
-          body: {},
+          body: { useLastUserMessage: true },
           principal: {
             principalType: "user",
             principalId: "principal-1",
@@ -1043,7 +1064,7 @@ describe("FridaySessionRoutes", () => {
       await route.handler(
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
-          body: {},
+          body: { useLastUserMessage: true },
           principal: {
             principalType: "user",
             principalId: "principal-1",

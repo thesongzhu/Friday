@@ -576,10 +576,32 @@ describe("FridayProviderRoutes", () => {
         defaultProviderId: "prov-001",
         defaultModel: "gpt-4o",
         fallbackProviderIds: ["prov-002"],
+        enforceRequestedModel: true,
       };
 
       const result = await setRoutingRoute.handler(makeCtx({ body }));
       expect(result).toEqual({ routing: body });
+    });
+
+    it("providers.routing.set rejects non-boolean enforceRequestedModel", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const setRoutingRoute = routes.find(
+        (r) => r.operationId === "providers.routing.set",
+      )!;
+
+      await expect(
+        setRoutingRoute.handler(makeCtx({
+          body: {
+            defaultProviderId: "prov-001",
+            fallbackProviderIds: [],
+            enforceRequestedModel: "yes",
+          },
+        })),
+      ).rejects.toThrow("enforceRequestedModel must be a boolean when provided");
+      expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
     });
 
     it("auth.oauth.anthropic.initiate delegates to service", async () => {

@@ -301,6 +301,9 @@ function validateRunBody(body: unknown): asserts body is FridaySessionRunRequest
   if (b.task !== undefined && (typeof b.task !== "string" || b.task.trim() === "")) {
     errors.push("task must be a non-empty string when provided");
   }
+  if (b.useLastUserMessage !== undefined && typeof b.useLastUserMessage !== "boolean") {
+    errors.push("useLastUserMessage must be a boolean when provided");
+  }
   if (b.providerId !== undefined && (typeof b.providerId !== "string" || b.providerId.trim() === "")) {
     errors.push("providerId must be a non-empty string when provided");
   }
@@ -899,8 +902,9 @@ export function createFridaySessionRoutes(
         const body = (ctx.body ?? {}) as FridaySessionRunRequest;
 
         const taskFromBody = body.task?.trim();
+        const useLastUserMessage = body.useLastUserMessage === true;
         let task = taskFromBody;
-        if (!task) {
+        if (!task && useLastUserMessage) {
           const history = await deps.sessionService.getMessages(key, 200);
           const lastUserMessage = [...history]
             .reverse()
@@ -911,7 +915,9 @@ export function createFridaySessionRoutes(
         if (!task) {
           throw new FridayDomainError(
             FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
-            "No task provided and no user message found in session history",
+            useLastUserMessage
+              ? "useLastUserMessage was true, but no user message was found in session history"
+              : "task is required unless useLastUserMessage is explicitly true",
             { httpStatus: 400 },
           );
         }
