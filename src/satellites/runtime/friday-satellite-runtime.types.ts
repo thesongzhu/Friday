@@ -5,6 +5,7 @@ import type { FridaySatelliteHeartbeatService } from "../services/friday-satelli
 import type { FridaySatelliteOfflineSweeper } from "../services/friday-satellite-offline-sweeper.js";
 import type { FridayOutboxQueueService } from "../services/friday-outbox-queue-service.js";
 import type { FridaySatelliteSyncService } from "../services/friday-satellite-sync-service.js";
+import type { FridaySatelliteLocalRunnerService } from "../services/friday-satellite-local-runner-service.js";
 import type { FridayLearningEventLedger, FridaySkillRunCheckpointWriter, FridaySkillRunStore } from "#ledger";
 import type { FridayRetentionJob } from "#jobs";
 
@@ -20,6 +21,7 @@ export interface FridaySatelliteRuntime {
   offlineSweeper: FridaySatelliteOfflineSweeper;
   outbox: FridayOutboxQueueService;
   sync: FridaySatelliteSyncService;
+  localRunner: FridaySatelliteLocalRunnerService;
   learningLedger: FridayLearningEventLedger;
   skillRunStore: FridaySkillRunStore;
   checkpointWriter: FridaySkillRunCheckpointWriter;

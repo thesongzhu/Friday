@@ -248,6 +248,103 @@ describe("API runtime run evidence access control", () => {
     deps.db.close();
   });
 
+  it("allows same-tenant principals by tenantId and blocks other tenants", async () => {
+    const deps = makeDeps();
+    const runtime = createFridayApiRuntime(deps);
+
+    const workflow = runtime.workflowCrud.createWorkflow({
+      slug: "evidence-auth-tenant-context",
+      name: "Evidence Auth Tenant Context",
+    });
+    const version = runtime.workflowCrud.createVersion(
+      workflow.id,
+      makeMinimalGraph(workflow.id, "placeholder"),
+    );
+
+    const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "runs.start");
+    const evidenceRoute = runtime.routes.getRoutes().find((route) => route.operationId === "runs.evidence");
+    expect(startRoute).toBeDefined();
+    expect(evidenceRoute).toBeDefined();
+
+    const ownerPrincipal: FridayAuthPrincipal = {
+      principalType: "user",
+      principalId: "user-owner",
+      tenantId: "tenant-shared",
+      userId: "test-user",
+      role: "viewer",
+      scopes: ["workflow.run", "workflow.read"],
+      tokenId: "token-owner-tenant",
+      tokenKind: "access",
+      issuedAt: NOW,
+    };
+
+    const sameTenantPrincipal: FridayAuthPrincipal = {
+      principalType: "user",
+      principalId: "user-peer",
+      tenantId: "tenant-shared",
+      userId: "peer-user-id",
+      role: "viewer",
+      scopes: ["workflow.read"],
+      tokenId: "token-peer",
+      tokenKind: "access",
+      issuedAt: NOW,
+    };
+
+    const otherTenantPrincipal: FridayAuthPrincipal = {
+      principalType: "user",
+      principalId: "user-other",
+      tenantId: "tenant-other",
+      userId: "other-user-id",
+      role: "viewer",
+      scopes: ["workflow.read"],
+      tokenId: "token-other",
+      tokenKind: "access",
+      issuedAt: NOW,
+    };
+
+    const started = await startRoute!.handler({
+      params: {},
+      query: {},
+      body: {
+        workflowId: workflow.id,
+        workflowVersionId: version.id,
+        triggerType: "manual",
+        dryRun: true,
+      },
+      headers: {},
+      principal: ownerPrincipal,
+      requestId: "req-start-tenant-context",
+      receivedAt: NOW,
+    } as never) as { run: { id: string } };
+
+    await expect(evidenceRoute!.handler({
+      params: { runId: started.run.id },
+      query: {},
+      body: null,
+      headers: {},
+      principal: sameTenantPrincipal,
+      requestId: "req-tenant-allow",
+      receivedAt: NOW,
+    } as never)).resolves.toMatchObject({
+      run: { id: started.run.id },
+    });
+
+    await expect(evidenceRoute!.handler({
+      params: { runId: started.run.id },
+      query: {},
+      body: null,
+      headers: {},
+      principal: otherTenantPrincipal,
+      requestId: "req-tenant-deny",
+      receivedAt: NOW,
+    } as never)).rejects.toMatchObject({
+      code: "WORKFLOW_RUN_EVIDENCE_FORBIDDEN",
+      httpStatus: 403,
+    });
+
+    deps.db.close();
+  });
+
   it("allows privileged hub.admin principals to read cross-tenant run evidence", async () => {
     const deps = makeDeps();
     const runtime = createFridayApiRuntime(deps);

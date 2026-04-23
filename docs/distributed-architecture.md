@@ -174,7 +174,7 @@ flowchart LR
 
 ### 2.4 Database Architecture (SQLite local-first)
 
-[Partial]
+`[Implemented]`
 
 - Engine: SQLite 3.45+.
 - Journal mode: WAL.
@@ -245,7 +245,7 @@ Normalization rules:
 - `[Deferred]` Per-principal throttle: max 5 failed auth attempts per 5-minute window; exceeded → temporary lockout (15 min). (Code currently implements per-IP rate limiting only; no per-principal lockout state machine.)
 - `[Deferred]` Lockout escalation: 3 consecutive lockout windows → 1-hour lockout + `security.auth.lockout_escalated` audit event. (Not implemented; no lockout state machine or escalation policy.)
 - `[Implemented]` Pairing code attempts: max 5 per pairing request; exceeded → request auto-expired.
-- `[Planned]` Failed auth and lockout audit logging: events written to `audit_logs` with `action = 'security.auth.failed'` / `'security.auth.lockout'`. (Not yet implemented; no audit writes in auth flow.)
+- `[Implemented]` Failed auth and lockout audit logging: auth flow emits `auth.login.failed` and `auth.login.locked_out` through the hub audit writer.
 - Rate-limit counters are held in-memory with periodic flush; Hub restart resets counters (acceptable for local-first single-user model).
 
 **Scopes:** `[Implemented]`
@@ -255,26 +255,27 @@ Normalization rules:
 - `satellite.read`, `satellite.write`
 - `fleet.read`
 - `security.read`, `security.write`
+- `secrets.read`, `secrets.write`
 - `session.read`, `session.write`
 - `diagnosis.read`, `diagnosis.write`
 - `skill.read`, `skill.write`
 - `plugin.read`, `plugin.write`, `plugin.install`
 
-`[Planned]` dedicated `secrets.*` scopes.
+Dedicated `secrets.*` scopes are enforced on the public secrets API while `security.*` remains accepted for admin compatibility.
 
 ### 2.7 Agent Runtime
 
 `[Implemented]` `src/agent/*` provides a persisted agent execution runtime with phases:
 `pending -> planning -> executing -> testing -> completed|failed|cancelled`.
 
-> `fixing` and `failed_tests` are declared in the `FridayAgentRunStatus` type union but are never set by the runtime. `[Planned]`
+`fixing` is set by the runtime when a failed validation/self-test enters the self-fix retry path. `failed_tests` remains available for explicit self-test diagnostics.
 
 `[Implemented]` Core capabilities:
 - LLM streaming client integration
 - tool orchestration (exec/filesystem/web-fetch/browser/skills/workflows/memory/xhs/subagent)
 - review gate support
 - self-test service
-- `[Partial]` self-fix service — `FridayAgentSelfFixService` exists (`src/agent/testing/`) but is not wired into the agent runtime retry loop.
+- `[Implemented]` self-fix service — `FridayAgentSelfFixService` is wired into the agent runtime retry loop and hub bootstrap, including validation/self-test retry coverage.
 - artifact writing to disk
 - durable run/event persistence (`friday_agent_runs`, `friday_agent_run_events`)
 - automation persistence/execution (`friday_agent_automations`)
@@ -348,14 +349,13 @@ Normalization rules:
 - heartbeat recording/status computation
 - outbox leasing/ack checkpointing
 - sync pull/push services
+- local runner drain loop for leased `workflow.node.execute` tasks, with node result pushback and outbox ack
 
-`[Planned]`:
-- full satellite-side workflow task runner
-- dedicated security agent/telemetry agent modules as described in earlier target architecture
+`[Deferred]` dedicated security agent/telemetry agent modules as described in earlier target architecture.
 
 ### 3.4 Capability Reporting
 
-[Partial]
+`[Implemented]`
 
 Capabilities are structured and versioned so scheduling can be deterministic.
 
@@ -385,14 +385,12 @@ export interface SatelliteCapabilityReport {
 
 ### 3.5 Offline Autonomy
 
-`[Planned]` Autonomous satellite workflow execution while disconnected (`offline_allowed` run continuation) is documented target behavior, but not currently wired as an end-to-end execution pipeline.
+`[Implemented]` Offline-safe dispatch is wired through placement policy and the satellite outbox/sync loop:
 
-**Target behavior when disconnected:**
-
-- satellite keeps executing workflows flagged as `offline_allowed`.
-- local queue stores pending inbound commands and outbound results.
-- secrets remain local and encrypted.
-- local triggers (cron, sensor, file watcher) continue and generate deferred events.
+- workflow nodes can opt into `allowOfflineSatelliteQueue` / `offlineAutonomy`
+- placement can choose online, degraded, or offline satellites when the policy allows it
+- queued commands survive disconnect as outbox rows and are leased after reconnect/poll
+- `FridaySatelliteLocalRunnerService` drains leased workflow commands, executes them locally, pushes node results, and acks the outbox stream
 
 When a command is not offline-safe:
 
@@ -413,11 +411,13 @@ When a command is not offline-safe:
 `[Implemented]` Sync push currently accepts:
 - `acks[]`
 - optional `localEvents[]`
+- optional `nodeResults[]`
 and returns:
 - `acceptedAcks[]`
+- `acceptedNodeResults[]`
 - `conflicts[]`
 
-`[Planned]` pull `configDiff` and push `nodeResults` conflict semantics from earlier SSD draft.
+`[Deferred]` pull `configDiff` from earlier SSD draft.
 
 Conflict policy:
 
@@ -442,7 +442,7 @@ Capabilities:
 
 ### 4.1 WebSocket Real-time Protocol
 
-[Partial]
+`[Implemented]`
 
 ```ts
 export type WsFrame = WsReqFrame | WsResFrame | WsEventFrame | WsAckFrame | WsResumeFrame;
@@ -510,9 +510,11 @@ export interface WsResumeFrame {
 - `cursor` is an HMAC-SHA256 signed token encoding `(seq, streamId, epoch)` with a Hub-held secret. The Hub verifies the MAC before honoring a resume; tampered or forged cursors are rejected with `AUTH_UNAUTHORIZED`.
 - **Restart invalidation:** when the Hub restarts it increments the global epoch; any resume frame bearing a prior epoch receives a `STREAM_EPOCH_STALE` error, forcing the client to re-subscribe from the latest checkpoint or perform a full pull.
 
+The active gateway supports typed client/server frames, resume/ack validation, optional encrypted wire frames, and encrypted server-frame encoding when frame crypto is configured.
+
 ### 4.2 Core Event Classes
 
-[Partial]
+`[Implemented]`
 
 - System events: `system.hello`, `system.health`, `system.shutdown`.
 - Satellite events: `satellite.pairing.requested`, `satellite.online`, `satellite.offline`, `satellite.capability.updated`.
@@ -524,13 +526,13 @@ export interface WsResumeFrame {
 
 ### 4.3 HTTP Fallback API
 
-`[Planned]` Used when WS is unavailable or blocked. These endpoints are not yet registered in the route set (see §11.1.3):
+`[Implemented]` Used when WS is unavailable or blocked. The route set includes:
 
-- `POST /v1/satellites/:satelliteId/sync/pull` for event and config diff batches.
-- `POST /v1/satellites/:satelliteId/sync/push` for local result and heartbeat upload.
-- `POST /v1/satellites/:satelliteId/commands/submit` for command dispatch with polling token.
-- `GET /v1/satellites/:satelliteId/commands/:commandId` for async command status.
-- `GET /v1/satellites/:satelliteId/events/poll?cursor=...` for long-poll event feed.
+- `POST /v1/satellites/:satelliteId/sync/pull` for queue leases and cursor-based resume.
+- `POST /v1/satellites/:satelliteId/sync/push` for acks, local events, and workflow node results.
+- `POST /v1/satellites/:satelliteId/commands/poll` for command polling.
+- `POST /v1/satellites/:satelliteId/commands/:commandId/ack` for command acknowledgement.
+- `GET /v1/satellites/:satelliteId/events/poll?cursor=...` for event polling.
 
 ### 4.4 End-to-End Encryption Design
 
@@ -538,7 +540,7 @@ export interface WsResumeFrame {
 
 `[Implemented]` Outbox payload storage currently carries `payloadCiphertext`, `nonce`, and `keyId`.
 
-`[Planned]` Full per-frame SSD envelope contract with explicit `algorithm/nonce/aad` fields on every sync DTO plus documented key-rotation policy at transport-frame level.
+`[Implemented]` Per-frame WS envelope contract with explicit `algorithm`, `keyId`, `nonce`, `ciphertext`, and AAD-bound type/direction metadata. `[Deferred]` XChaCha20 transport-frame implementation; active frame crypto uses AES-256-GCM.
 
 Transport TLS is mandatory; Hub-Satellite payload channel is additionally E2E encrypted.
 
@@ -568,19 +570,15 @@ sequenceDiagram
   S->>H: Ack(lastAckedSeq, encrypted)
 ```
 
-**Encrypted payload envelope (target contract):**
+**Encrypted payload envelope (implemented WS contract):**
 
 ```ts
 export interface EncryptedPayloadEnvelope {
   keyId: string;
-  algorithm: "xchacha20-poly1305" | "aes-256-gcm";
+  algorithm: "aes-256-gcm";
   nonce: string;
   ciphertext: string;
-  aad: {
-    seq: number;
-    eventOrMethod: string;
-    traceId?: string;
-  };
+  aad: string;
 }
 ```
 
@@ -968,14 +966,15 @@ Run-level failure strategies (see §5.2 for the canonical 5-strategy `WorkflowFa
 
 ### 5.4 Distributed Execution (Where Node Runs)
 
-`[Implemented]` Node attempts are currently leased/executed by hub runtime (`lease_owner = "hub"`).
+`[Implemented]` Node attempts are leased by hub runtime (`lease_owner = "hub"`) or dispatched to a satellite lease owner through the distributed dispatcher.
 
-`[Planned]` Satellite placement scheduling by capability/affinity/cost policy across hub+satellite executors.
+`[Implemented]` Satellite placement scheduling uses capability, trust, status, load, explicit pin/preference/exclusion, and offline queue policy across hub+satellite executors.
 
-**Target scheduler scoring (when satellite placement is implemented):**
+**Scheduler scoring:**
 
-- hard filters: required capability, permission, trust level, current online state
-- soft scoring: affinity, latency, load, battery policy, cost policy, data locality
+- hard filters: required capability, trust level, status eligibility, explicit exclusion
+- soft scoring: explicit preference, online/degraded/offline status, trust rank, queue depth, active runs
+- deferred scoring dimensions: battery policy, cost policy, and richer data locality
 
 ```ts
 export interface NodeExecutionTargetPolicy {
@@ -1064,7 +1063,7 @@ API routes: `/v1/workflows/generator/sessions*`.
 
 ### 6.1 Skill Manifest v2
 
-[Partial]
+`[Implemented]`
 
 ```ts
 export type SkillKind = "conversation" | "workflow" | "system";
@@ -1206,7 +1205,7 @@ export interface SkillStepDefinition {
 
 ### 6.1.1 Permission Model (Canonical IR)
 
-[Partial]
+`[Implemented]`
 
 The permission model uses a fine-grained grant-based IR. All permission checks at runtime use this canonical form.
 
@@ -1284,7 +1283,7 @@ export interface LegacySkillPermissionV1 {
 
 ### 6.2 Skill Lifecycle
 
-[Partial]
+`[Implemented]`
 
 **Unified skill status model** (authoritative for `SkillEntity.status` and all lifecycle references):
 
@@ -1322,7 +1321,7 @@ Trust policy:
 
 ### 6.4 Skill Sandboxing and Permissions
 
-[Partial]
+`[Implemented]`
 
 **Trust tiers and execution modes (two-axis model):**
 
@@ -1355,7 +1354,7 @@ Permission model:
 
 ### 6.5 Skill to Workflow Node Mapping
 
-[Partial]
+`[Implemented]`
 
 - every skill can generate a workflow `action` node template
 - manifest `inputs` map to node config form fields
@@ -1364,7 +1363,7 @@ Permission model:
 
 ### 6.6 Skill Source Taxonomy
 
-[Partial]
+`[Implemented]`
 
 Skills have two orthogonal classification axes:
 
@@ -1494,12 +1493,12 @@ Routing factors:
 - `[Implemented]` task complexity score
 - `[Implemented]` cost budget (budget state: ok / near_limit / over_limit)
 - `[Implemented]` price-quality scoring (weighted by complexity tier)
-- `[Planned]` required context size
-- `[Planned]` data sensitivity classification
-- `[Planned]` latency budget
-- `[Planned]` satellite availability
+- `[Implemented]` required context size / provider context window filtering
+- `[Implemented]` data sensitivity classification and no-egress/local-only constraints
+- `[Implemented]` latency budget
+- `[Implemented]` satellite availability
 
-> Current `FridayCostRoutingDecision` router uses complexity, budget state, and price-quality weights only. Data sensitivity, latency budget, and satellite availability are target routing factors not yet implemented.
+Current `FridayCostRoutingDecision` router uses complexity, budget state, price-quality weights, context window fit, data sensitivity/locality, latency budget, and satellite availability.
 
 Policy default:
 
@@ -1532,7 +1531,7 @@ Mechanisms:
 
 ### 7.4 AI-powered Error Diagnosis
 
-`[Partial]` Domain models/services exist; runtime/API wiring is incomplete.
+`[Implemented]` Domain models/services are wired into runtime failure paths, self-healing incidents, diagnosis storage, and API/UI-visible remediation surfaces.
 
 Target behavior after node failure:
 
@@ -1544,7 +1543,7 @@ Target behavior after node failure:
 
 ### 7.5 Self-learning System
 
-`[Planned]` Self-learning runtime exists in codebase but is not currently wired into hub bootstrap/runtime execution path.
+`[Implemented]` Self-learning runtime is wired into hub bootstrap and runtime execution paths. Agent failures and satellite local events route into the learning pipeline and diagnosis storage.
 
 Target behavior:
 - store normalized error fingerprints
@@ -1566,7 +1565,7 @@ Target behavior:
 
 ### 8.2 E2E Satellite Communication
 
-[Partial]
+`[Implemented]`
 
 - mutual authentication via paired keys + scoped token
 - encrypted application payload channel
@@ -1576,8 +1575,8 @@ Target behavior:
 ### 8.3 API Key Management
 
 - `[Implemented]` keys never stored plaintext in workflow definitions
-- `[Implemented]` secrets stored encrypted with file-based master key (`~/.friday/master.key`); OS keystore integration `[Planned]`
-- `[Planned]` runtime receives ephemeral decryption handles only (current implementation decrypts inline with `getMasterKey()`)
+- `[Implemented]` secrets stored encrypted with a master key; env master key wins, file master key remains the local fallback, and macOS keychain can be selected with `FRIDAY_MASTER_KEY_SOURCE=keychain`
+- `[Implemented]` provider runtime receives one-shot ephemeral secret handles; plaintext is consumed inside the provider call and the buffer is zeroized after use
 
 ### 8.4 Satellite Trust Model
 
@@ -1618,7 +1617,7 @@ Used by skill generator/converter and CLI packaging/import paths.
 
 ### 8.6 Data Isolation Between Workflows
 
-[Planned]
+`[Implemented]`
 
 Isolation strategy:
 
@@ -1627,13 +1626,15 @@ Isolation strategy:
 - per-run artifact ACL
 - no cross-workflow context injection unless explicit edge or policy grant exists
 
+Runtime enforcement includes tenant-scoped memory guard, workflow run/evidence tenant checks, secrets scope checks, and per-run evidence access validation.
+
 ---
 
 ## 9. UI Architecture
 
 ### 9.1 Electron Shell Design
 
-[Partial]
+`[Implemented]`
 
 Processes:
 
@@ -1643,7 +1644,7 @@ Processes:
 
 ### 9.2 React + React Flow Integration
 
-[Partial]
+`[Implemented]`
 
 Main surfaces:
 
@@ -1657,20 +1658,21 @@ State management:
 
 - normalized store keyed by entity IDs
 - optimistic updates for user interactions
-- server-authoritative reconciliation from WS events
+- server-authoritative reconciliation from SSE/WS-style system events
 
 ### 9.3 Real-time State Sync for Execution Visualization
 
-[Planned]
+`[Implemented]`
 
 - subscribe to run event streams
-- animate node state transitions (`queued`, `running`, `retrying`, `completed`, `failed`)
-- show per-node satellite assignment badges in real time
-- recover stream after reconnect with `lastAckedSeq`
+- render React Flow operator graph from workflow visualization data
+- reconcile node state transitions (`queued`, `running`, `completed`, `failed`, `cancelled`, `paused`) after system events
+- show live/syncing connection state while SSE events are active
+- keep WS resume/ack support available at transport level for stream recovery
 
 ### 9.4 Responsive Design
 
-[Planned]
+`[Implemented]`
 
 - desktop: full canvas + side panels
 - tablet: canvas plus bottom sheet inspectors
@@ -1679,12 +1681,12 @@ State management:
 
 ### 9.5 Extension UI Components
 
-[Planned]
+`[Implemented]` for bounded skill UI schemas and generated skill forms. `[Deferred]` for arbitrary signed iframe/webview extension modules.
 
-- extension UI modules loaded through signed manifests
-- sandboxed rendering surface (iframe/webview isolation)
-- constrained bridge API for extension forms and diagnostics
-- component capability policy validated before load
+- skill UI schemas (`skill.ui.json`) loaded through skill/package manifests
+- generated forms constrained to declared manifest inputs/outputs
+- skill UI route available at `/v1/skills/:skillId/ui`
+- arbitrary extension UI modules, iframe/webview isolation, and bridge APIs remain outside the current closed surface
 
 ---
 
@@ -3000,9 +3002,9 @@ All rows below include status markers.
 
 #### 11.1.2 System, Health, Setup
 - `[Implemented]` `GET /v1/health` → `{status, version, uptime}` (public)
-- `[Planned]` `GET /v1/version`
-- `[Planned]` `/v1/config*`
-- `[Planned]` `GET /v1/audit/logs`
+- `[Implemented]` `GET /v1/version`
+- `[Implemented]` `/v1/config*`
+- `[Implemented]` `GET /v1/audit/logs`
 - `[Implemented]` setup wizard:
   - `[Implemented]` `GET /v1/setup/status`
   - `[Implemented]` `POST /v1/providers/detect`
@@ -3014,7 +3016,7 @@ All rows below include status markers.
 - `[Implemented]` `GET /v1/fleet/overview`
 - `[Implemented]` `GET /v1/fleet/satellites`
 - `[Implemented]` `GET /v1/fleet/satellites/:satelliteId`
-- `[Planned]` `/v1/satellites/register`, `/pair/*`, `/sync/*`, `/commands/*`, `/events/poll`
+- `[Implemented]` `/v1/satellites/register`, `/pair/*`, `/sync/*`, `/commands/*`, `/events/poll`
 
 #### 11.1.4 Sessions
 - `[Implemented]` `GET|POST /v1/sessions`
@@ -3031,7 +3033,8 @@ All rows below include status markers.
 - `[Implemented]` `POST /v1/sessions/:sessionKey/memory/remember`
 - `[Implemented]` `GET /v1/sessions/:sessionKey/memory/extraction`
 - `[Implemented]` `POST /v1/sessions/memory/extraction/retry`
-- `[Planned]` `PATCH /v1/sessions/:sessionId`, `POST /compact`
+- `[Implemented]` `POST /v1/sessions/:sessionKey/compact`
+- `[Planned]` `PATCH /v1/sessions/:sessionId`
 
 #### 11.1.5 Workflows
 - `[Implemented]` workflow CRUD + publish + list versions
@@ -3040,19 +3043,19 @@ All rows below include status markers.
 - `[Implemented]` workflow generator session routes
 - `[Implemented]` workflow conflicts routes
 - `[Implemented]` workflow trigger routes + webhook invoke route
-- `[Planned]` `GET /v1/workflow-versions/:versionId`
+- `[Implemented]` `GET /v1/workflow-versions/:versionId`
 - `[Implemented]` `POST /v1/workflow-runs` without published version → `404 WORKFLOW_NO_PUBLISHED_VERSION`
 
-**API request/response validation contract:** `[Partial]`
+**API request/response validation contract:** `[Implemented]`
 
-> Per-handler validation; no global JSON schema enforcement. Idempotency support limited to session operations (`idempotencyKey` on session messages and fork/merge).
+Global HTTP validation rejects unsupported non-JSON mutating requests and masks non-serializable handler responses. Mutating routes accept a transport-level `Idempotency-Key` header with request fingerprint conflict detection and replayed cached responses.
 
 Request bodies are validated per-handler before processing. Common rules:
 
 - **Required fields** are enforced; omitting a required field returns `400` with `VALIDATION_ERROR`.
 - **Pagination**: `limit` default 50, max 200; `cursor` is opaque string.
 - **Revision/etag**: `PATCH` endpoints on versioned resources require `expectedRevision` (integer) and `etag` (string); mismatch returns `409 WORKFLOW_VERSION_CONFLICT`.
-- **Idempotency**: `[Partial]` session message and fork/merge endpoints accept optional `idempotencyKey`; not available globally on all mutating endpoints.
+- **Idempotency**: `[Implemented]` global `Idempotency-Key` support for mutating HTTP routes, plus per-handler operation keys where domain semantics need them.
 - **`workflowVersionId` resolution:** `[Implemented]` In `POST /v1/workflow-runs`, `workflowVersionId` is optional. If omitted, the engine resolves it to the **latest published version** of the specified `workflowId`. If no published version exists, the request fails with `404 WORKFLOW_NO_PUBLISHED_VERSION`. The resolved `workflowVersionId` is always stored on the created `WorkflowRun` record — runs are never stored without an explicit version reference (see §5.6).
 
 #### 11.1.6 Skills and Plugins
@@ -3081,7 +3084,7 @@ Request bodies are validated per-handler before processing. Common rules:
 - `[Implemented]` realtime REST pull/ack routes under `/v1/realtime/*`
 - `[Implemented]` agent run/automation routes under `/v1/agent/*`
 - `[Implemented]` subagent inspection routes
-- `[Planned]` secrets CRUD routes `/v1/secrets*`
+- `[Implemented]` secrets CRUD routes `/v1/secrets*`
 
 ### 11.2 Realtime Transport Catalog
 
@@ -3317,7 +3320,7 @@ flowchart LR
 - approval expiry job
 - learning metrics aggregation job
 
-`[Partial]` Job orchestration/scheduling is module-based; full centralized scheduler wiring is not yet documented as a single runtime subsystem.
+`[Implemented]` Job orchestration is centralized through the hub scheduler runtime; hub-registered jobs are visible through `/v1/jobs`, and persisted automations replay into the scheduler after restart.
 
 Scheduling:
 

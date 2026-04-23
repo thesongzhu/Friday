@@ -7,6 +7,8 @@ import type {
   FridaySkillExecutor,
 } from "./friday-skill-executor.types.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
+import type { SkillExecutionMode } from "../model/friday-skill-trust.types.js";
+import type { FridayRegisteredSkill } from "../registry/friday-skill-registry.types.js";
 import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
 import {
@@ -29,7 +31,7 @@ import {
 } from "./friday-runtime-probe.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
 import { compileFridaySkillSchemas } from "../validation/friday-skill-schema-compiler.js";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 function defaultTenantContext(request: FridaySkillExecuteRequest) {
   return request.tenantContext ?? {
@@ -355,6 +357,27 @@ function buildRuntimeEnv(requiredEnvKeys: readonly string[]): Record<string, str
   return env;
 }
 
+function readExecutionMode(skill: FridayRegisteredSkill): SkillExecutionMode {
+  const mode = (skill.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.executionMode;
+  return mode === "trusted" || mode === "restricted" || mode === "isolated" ? mode : "trusted";
+}
+
+function resolveSkillRuntimeEntrypoint(skill: FridayRegisteredSkill): string {
+  const entrypoint = resolve(skill.skillDir, skill.manifest.runtime.entrypoint);
+  const relativeEntrypoint = relative(skill.skillDir, entrypoint);
+  if (
+    readExecutionMode(skill) !== "trusted"
+    && (relativeEntrypoint.startsWith("..") || isAbsolute(relativeEntrypoint))
+  ) {
+    throw new FridayDomainError(
+      "SKILL_SANDBOX_ENTRYPOINT_ESCAPE",
+      `Skill entrypoint '${skill.manifest.runtime.entrypoint}' escapes the skill directory sandbox`,
+      { httpStatus: 400 },
+    );
+  }
+  return entrypoint;
+}
+
 /**
  * Creates the main skill executor that routes to the correct runtime executor
  * (shell / node) based on the manifest's `runtime.kind`, and tracks run state
@@ -561,10 +584,7 @@ export function createFridaySkillExecutor(
               if (!execResult) {
                 switch (manifest.runtime.kind) {
                   case "shell": {
-                    const entrypoint = resolve(
-                      registered.skillDir,
-                      manifest.runtime.entrypoint,
-                    );
+                    const entrypoint = resolveSkillRuntimeEntrypoint(registered);
                     const shellResult = await shellExecutor.run({
                       command: entrypoint,
                       cwd: registered.skillDir,
@@ -640,10 +660,7 @@ export function createFridaySkillExecutor(
                       break;
                     }
 
-                    const entrypoint = resolve(
-                      registered.skillDir,
-                      manifest.runtime.entrypoint,
-                    );
+                    const entrypoint = resolveSkillRuntimeEntrypoint(registered);
                     const pythonResult = await shellExecutor.run({
                       command: pythonCommand,
                       args: [entrypoint],
@@ -886,6 +903,11 @@ export function createFridaySkillExecutor(
             runtimeKind: manifest.runtime.kind,
             declaredTelemetryEvents: manifest.telemetry?.events ?? [],
             schemaValidation,
+            sandbox: {
+              executionMode: readExecutionMode(registered),
+              trustTier: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.trustTier,
+              allowedExecutionModes: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.sandboxPolicy?.allowedExecutionModes ?? [],
+            },
           },
         });
 

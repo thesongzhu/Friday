@@ -50,6 +50,7 @@ import {
   encryptSecret,
   getMasterKey,
 } from "../security/friday-secret-crypto.js";
+import { createFridayEphemeralSecretHandleRegistry } from "../security/friday-secret-handle-registry.js";
 import { createFridayProviderValidator } from "../validation/friday-provider-validator.js";
 import { createFridayProviderFallback } from "../routing/friday-provider-fallback.js";
 import { createFridayProviderPricingCatalog } from "../cost/friday-provider-pricing-catalog.js";
@@ -208,6 +209,9 @@ export function createFridayProviderService(
     db: deps.db,
     usageRepo,
     nowIso: deps.nowIso,
+  });
+  const credentialHandles = createFridayEphemeralSecretHandleRegistry({
+    nowMs: deps.nowMs,
   });
 
   // ─── OAuth subsystem ───
@@ -656,6 +660,16 @@ export function createFridayProviderService(
     return deploymentKind === "local" || deploymentKind === "self-hosted" || candidate.provider.kind === "ollama";
   }
 
+  function estimateModelContextWindowTokens(model: string, candidate: FridayResolvedProviderRoute): number {
+    const normalized = model.toLowerCase();
+    if (/\b(1m|1000k|million)\b/.test(normalized) || normalized.includes("gemini")) return 1_000_000;
+    if (normalized.includes("claude")) return 200_000;
+    if (normalized.includes("gpt-5") || normalized.includes("gpt-4.1") || normalized.includes("o3") || normalized.includes("o4")) return 128_000;
+    const explicitMatch = normalized.match(/(?:^|[-_])(\d+)(k)(?:[-_]|$)/);
+    if (explicitMatch) return Number(explicitMatch[1]) * 1_000;
+    return isLocalCandidate(candidate) ? 32_000 : 128_000;
+  }
+
   function isSelectionMatch(
     candidate: FridayResolvedProviderRoute,
     selection?: FridayProviderRoutingSelection,
@@ -691,6 +705,7 @@ export function createFridayProviderService(
     tenantContext?: FridayProviderTenantContext;
     taskProfileId?: string;
     routingContext?: {
+      estimatedInputTokens?: number;
       requiresNativeTools?: boolean;
       preferredRegion?: FridayProviderRegionTag;
       allowedRegions?: FridayProviderRegionTag[];
@@ -698,6 +713,10 @@ export function createFridayProviderService(
       noEgress?: boolean;
       consumerPlanAllowed?: boolean;
       requiresOfficialSDK?: boolean;
+      contextWindowTokens?: number;
+      dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+      latencyBudgetMs?: number;
+      satelliteAvailable?: boolean;
     };
     budgetLocalOnly?: boolean;
   }): {
@@ -753,6 +772,32 @@ export function createFridayProviderService(
       }
       if (input.routingContext?.consumerPlanAllowed === false && backendKind === "cli") {
         ineligibilityReasons.push("consumer_plan_not_allowed");
+      }
+      const contextWindowTokens = Math.max(
+        input.routingContext?.estimatedInputTokens ?? 0,
+        input.routingContext?.contextWindowTokens ?? 0,
+      );
+      if (
+        Number.isFinite(contextWindowTokens)
+        && contextWindowTokens > 0
+        && contextWindowTokens > Math.floor(estimateModelContextWindowTokens(candidate.model, candidate) * 0.9)
+      ) {
+        ineligibilityReasons.push("context_window_exceeded");
+      }
+      const sensitivity = input.routingContext?.dataSensitivity;
+      if ((sensitivity === "secret" || sensitivity === "confidential") && !isLocalCandidate(candidate)) {
+        ineligibilityReasons.push("data_sensitivity_requires_local");
+      }
+      if (
+        typeof input.routingContext?.latencyBudgetMs === "number"
+        && input.routingContext.latencyBudgetMs > 0
+        && input.routingContext.latencyBudgetMs < 3_000
+        && backendKind === "cli"
+      ) {
+        ineligibilityReasons.push("latency_budget_excludes_cli");
+      }
+      if (input.routingContext?.satelliteAvailable === false && isLocalCandidate(candidate)) {
+        ineligibilityReasons.push("satellite_unavailable_for_local_route");
       }
 
       const baseRankScore = input.candidates.length - index;
@@ -2009,6 +2054,16 @@ export function createFridayProviderService(
         complexity: "simple" | "medium" | "complex";
         requiresNativeTools?: boolean;
         taskProfileId?: string;
+        preferredRegion?: FridayProviderRegionTag;
+        allowedRegions?: FridayProviderRegionTag[];
+        localOnly?: boolean;
+        noEgress?: boolean;
+        consumerPlanAllowed?: boolean;
+        requiresOfficialSDK?: boolean;
+        contextWindowTokens?: number;
+        dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+        latencyBudgetMs?: number;
+        satelliteAvailable?: boolean;
       };
       run: (
         route: FridayResolvedProviderRoute,
@@ -2034,7 +2089,7 @@ export function createFridayProviderService(
       const pinnedProvider = params.requestedProviderId
         ? assertRequestedProviderAvailable(providers, params.requestedProviderId)
         : undefined;
-      const prefetchedCredentials = new Map<string, string>();
+      const prefetchedCredentialHandles = new Map<string, string>();
       let candidates = fallback.resolveCandidates({
         routing: pinnedProvider
           ? {
@@ -2057,7 +2112,11 @@ export function createFridayProviderService(
               return null;
             }
             if (prepared.credential) {
-              prefetchedCredentials.set(candidate.provider.id, prepared.credential);
+              const issued = credentialHandles.issue(prepared.credential, {
+                providerId: candidate.provider.id,
+                purpose: "provider-prefetch",
+              });
+              prefetchedCredentialHandles.set(candidate.provider.id, issued.handleId);
             }
             return candidate;
           }),
@@ -2132,9 +2191,14 @@ export function createFridayProviderService(
       const fallbackResult = await fallback.runWithFallback({
         candidates,
         run: async (route) => {
-          const credential = prefetchedCredentials.has(route.provider.id)
-            ? prefetchedCredentials.get(route.provider.id) ?? null
-            : await resolveCredential(route.provider, params.tenantContext);
+          const prefetchedHandleId = prefetchedCredentialHandles.get(route.provider.id);
+          if (prefetchedHandleId) {
+            prefetchedCredentialHandles.delete(route.provider.id);
+            return credentialHandles.use(prefetchedHandleId, (credential) =>
+              params.run(route, credential),
+            );
+          }
+          const credential = await resolveCredential(route.provider, params.tenantContext);
           return params.run(route, credential);
         },
       });

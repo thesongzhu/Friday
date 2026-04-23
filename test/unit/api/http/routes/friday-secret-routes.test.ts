@@ -59,6 +59,18 @@ describe("FridaySecretRoutes", () => {
     ]);
   });
 
+  it("uses secrets.* scopes while preserving security.* compatibility", () => {
+    const routes = createFridaySecretRoutes(makeDeps());
+    expect(routes.find((route) => route.operationId === "secrets.list")?.auth).toEqual({
+      public: false,
+      anyOfScopes: ["secrets.read", "security.read"],
+    });
+    expect(routes.find((route) => route.operationId === "secrets.create")?.auth).toEqual({
+      public: false,
+      anyOfScopes: ["secrets.write", "security.write"],
+    });
+  });
+
   it("delegates list filters", async () => {
     const deps = makeDeps();
     const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.list")!;

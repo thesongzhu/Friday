@@ -94,10 +94,10 @@ async function expectRouteError(fn: Promise<unknown>, code: string): Promise<voi
 }
 
 describe("FridaySessionRoutes", () => {
-  it("creates 21 routes (10 core + 1 delete + 1 export + 1 reset + 1 outbound + 3 fork + 4 extraction)", () => {
+  it("creates 22 routes (10 core + compact + delete + export + reset + outbound + 3 fork + 4 extraction)", () => {
     const svc = createMockService();
     const routes = createFridaySessionRoutes({ sessionService: svc });
-    expect(routes).toHaveLength(21);
+    expect(routes).toHaveLength(22);
   });
 
   it("all routes have unique operationIds", () => {
@@ -370,6 +370,58 @@ describe("FridaySessionRoutes", () => {
       const result = await sweepRoute.handler(makeMockCtx() as never);
       expect(result).toHaveProperty("result");
       expect(svc.sweepLifecycle).toHaveBeenCalled();
+    });
+  });
+
+  describe("sessions.compact", () => {
+    it("persists a compacted focus summary and metadata", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getMessages).mockResolvedValue([
+        makeMockMessage({ id: "msg-1", sequence: 1, role: "user", contentText: "first task" }),
+        makeMockMessage({ id: "msg-2", sequence: 2, role: "assistant", contentText: "first answer" }),
+        makeMockMessage({ id: "msg-3", sequence: 3, role: "user", contentText: "recent follow-up" }),
+      ]);
+      vi.mocked(svc.getConversationFocus).mockResolvedValue(null);
+      vi.mocked(svc.setConversationFocus).mockResolvedValue(makeMockSession());
+      vi.mocked(svc.mergeMetadata).mockResolvedValue(makeMockSession());
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        nowIso: () => "2026-01-01T00:00:05.000Z",
+      });
+      const route = routes.find((r) => r.operationId === "sessions.compact")!;
+
+      const result = await route.handler(makeMockCtx({
+        params: { sessionKey: encodeURIComponent("discord:default:user1") },
+        body: { keepRecent: 1 },
+      }) as never);
+
+      expect(result).toMatchObject({
+        compaction: {
+          sessionKey: "discord:default:user1",
+          compactedMessageCount: 2,
+          keptRecentMessageCount: 1,
+          summary: expect.stringContaining("first task"),
+          sequenceStart: 1,
+          sequenceEnd: 2,
+        },
+      });
+      expect(svc.setConversationFocus).toHaveBeenCalledWith(
+        "discord:default:user1",
+        expect.objectContaining({
+          currentTopicSummary: expect.stringContaining("first answer"),
+          currentTopicStartSequence: 3,
+          updatedAt: "2026-01-01T00:00:05.000Z",
+        }),
+      );
+      expect(svc.mergeMetadata).toHaveBeenCalledWith(
+        "discord:default:user1",
+        expect.objectContaining({
+          lastCompaction: expect.objectContaining({
+            compactedMessageCount: 2,
+            keptRecentMessageCount: 1,
+          }),
+        }),
+      );
     });
   });
 

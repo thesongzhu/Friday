@@ -6,6 +6,21 @@ import type { FridayAckResumeValidator } from "../protocol/friday-ack-resume-val
 import type { FridayStreamCheckpointRepository } from "../persistence/friday-stream-checkpoint-repository.js";
 import type { FridayOutboxMessageRepository } from "../persistence/friday-outbox-message-repository.js";
 
+export interface FridaySyncNodeResultInput {
+  runId: string;
+  nodeId: string;
+  attemptId: string;
+  attempt: number;
+  status: "completed" | "failed";
+  output?: unknown;
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  };
+}
+
 export interface FridaySyncPullInput {
   satelliteId: string;
   streamId: string;
@@ -27,16 +42,18 @@ export interface FridaySyncPushInput {
   satelliteId: string;
   acks: Array<{ streamId: string; seq: number; epoch: number; cursor?: string }>;
   localEvents?: FridayLearningEventAppendInput[];
+  nodeResults?: FridaySyncNodeResultInput[];
 }
 
 export interface FridaySyncPushResult {
   acceptedAcks: Array<{ streamId: string; seq: number }>;
+  acceptedNodeResults: Array<{ runId: string; nodeId: string; attemptId: string }>;
   conflicts: Array<{ streamId: string; seq: number; code: string; message: string }>;
 }
 
 export interface FridaySatelliteSyncService {
   pull(input: FridaySyncPullInput): FridaySyncPullResult;
-  push(input: FridaySyncPushInput): FridaySyncPushResult;
+  push(input: FridaySyncPushInput): Promise<FridaySyncPushResult>;
 }
 
 export interface CreateSyncServiceDeps {
@@ -47,6 +64,7 @@ export interface CreateSyncServiceDeps {
   ackValidator: FridayAckResumeValidator;
   nowIso: () => string;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  remoteNodeResultWriter?: (input: FridaySyncNodeResultInput & { satelliteId: string }) => Promise<void>;
 }
 
 export function createFridaySatelliteSyncService(
@@ -117,8 +135,8 @@ export function createFridaySatelliteSyncService(
       });
     },
 
-    push(input) {
-      return deps.db.withWriteTransaction((db) => {
+    async push(input) {
+      const baseResult = deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
         const currentEpoch = deps.checkpointRepo.getEpoch(db);
 
@@ -191,6 +209,9 @@ export function createFridaySatelliteSyncService(
             seq: ack.seq,
             nowIso,
           });
+          if (ack.streamId === "outbox" || ack.streamId === `outbox:${input.satelliteId}`) {
+            deps.outboxRepo.ackUpToSeq(db, input.satelliteId, ack.seq, nowIso);
+          }
           acceptedAcks.push({ streamId: ack.streamId, seq: ack.seq });
         }
 
@@ -199,8 +220,56 @@ export function createFridaySatelliteSyncService(
           deps.learningEventWriter(input.localEvents);
         }
 
-        return { acceptedAcks, conflicts };
+        return { acceptedAcks, acceptedNodeResults: [], conflicts };
       });
+
+      if (!input.nodeResults?.length) {
+        return baseResult;
+      }
+      if (!deps.remoteNodeResultWriter) {
+        return {
+          ...baseResult,
+          conflicts: [
+            ...baseResult.conflicts,
+            ...input.nodeResults.map((result) => ({
+              streamId: `workflow:${result.runId}`,
+              seq: 0,
+              code: "SATELLITE_NODE_RESULT_UNSUPPORTED",
+              message: "This hub does not accept node results via satellite sync push",
+            })),
+          ],
+        };
+      }
+
+      const acceptedNodeResults: FridaySyncPushResult["acceptedNodeResults"] = [];
+      const conflicts = [...baseResult.conflicts];
+      for (const result of input.nodeResults) {
+        try {
+          await deps.remoteNodeResultWriter({
+            ...result,
+            satelliteId: input.satelliteId,
+          });
+          acceptedNodeResults.push({
+            runId: result.runId,
+            nodeId: result.nodeId,
+            attemptId: result.attemptId,
+          });
+        } catch (err) {
+          const record = err as { code?: unknown; message?: unknown };
+          conflicts.push({
+            streamId: `workflow:${result.runId}`,
+            seq: 0,
+            code: typeof record.code === "string" ? record.code : "SATELLITE_NODE_RESULT_CONFLICT",
+            message: typeof record.message === "string" ? record.message : "Satellite node result was rejected",
+          });
+        }
+      }
+
+      return {
+        ...baseResult,
+        acceptedNodeResults,
+        conflicts,
+      };
     },
   };
 }

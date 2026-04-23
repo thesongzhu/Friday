@@ -241,6 +241,14 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
     // Check IP lockout first
     const ipStatus = rateLimiter.checkIpLockout(ip);
     if (ipStatus.locked) {
+      deps.auditAuthEvent?.({
+        type: "auth.login.locked_out",
+        at: deps.nowIso(),
+        principalKey,
+        ip,
+        code: "AUTH_LOCKED_OUT",
+        message: "IP lockout is active",
+      });
       throw new FridayAuthError(
         "AUTH_LOCKED_OUT",
         `Too many failed login attempts from this IP. Try again after ${ipStatus.retryAfter ?? "a while"}.`,
@@ -251,6 +259,14 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
     // Check principal lockout (scoped to shared-secret)
     const status = rateLimiter.checkAuthLockout(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
     if (status.locked) {
+      deps.auditAuthEvent?.({
+        type: "auth.login.locked_out",
+        at: deps.nowIso(),
+        principalKey,
+        ip,
+        code: "AUTH_LOCKED_OUT",
+        message: "Principal lockout is active",
+      });
       throw new FridayAuthError(
         "AUTH_LOCKED_OUT",
         `Too many failed login attempts. Try again after ${status.retryAfter ?? "a while"}.`,
@@ -263,9 +279,29 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
    * Record a failed auth attempt for both principal and IP.
    */
   function recordFailure(principalKey: string, ip?: string): void {
+    deps.auditAuthEvent?.({
+      type: "auth.login.failed",
+      at: deps.nowIso(),
+      principalKey,
+      ip,
+      code: "AUTH_FAILED",
+      message: "Login attempt failed credential validation",
+    });
     if (!rateLimiter) return;
-    rateLimiter.recordAuthFailure(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
-    rateLimiter.recordIpFailure(ip);
+    const principalStatus = rateLimiter.recordAuthFailure(principalKey, AUTH_LOCKOUT_SCOPE_SHARED_SECRET);
+    const ipStatus = rateLimiter.recordIpFailure(ip);
+    if (principalStatus.locked || ipStatus.locked) {
+      deps.auditAuthEvent?.({
+        type: "auth.login.locked_out",
+        at: deps.nowIso(),
+        principalKey,
+        ip,
+        code: "AUTH_LOCKED_OUT",
+        message: principalStatus.locked
+          ? "Principal lockout was triggered by failed login"
+          : "IP lockout was triggered by failed login",
+      });
+    }
   }
 
   /**

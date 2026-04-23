@@ -24,8 +24,14 @@ export type {
 } from "./model/friday-skill-manifest-v2.types.js";
 
 // Model — source types
-export type { SkillSource, SkillOrigin } from "./model/friday-skill-source.types.js";
-export { FRIDAY_SKILL_ORIGIN_PRECEDENCE, getSkillOriginPrecedence, compareSkillOrigins } from "./model/friday-skill-source.types.js";
+export type { FridaySkillSourceTaxonomyEntry, SkillSource, SkillOrigin } from "./model/friday-skill-source.types.js";
+export {
+  FRIDAY_SKILL_ORIGIN_PRECEDENCE,
+  FRIDAY_SKILL_SOURCE_TAXONOMY,
+  classifyFridaySkillSource,
+  getSkillOriginPrecedence,
+  compareSkillOrigins,
+} from "./model/friday-skill-source.types.js";
 
 // Model — trust types
 export type { SkillTrustTier, SkillExecutionMode, SkillSandboxPolicy } from "./model/friday-skill-trust.types.js";

@@ -15,6 +15,13 @@ interface PlacementCandidate {
   activeRuns: number;
 }
 
+interface SatellitePlacementPolicy {
+  allowOfflineQueue: boolean;
+  preferredSatelliteIds: Set<string>;
+  excludedSatelliteIds: Set<string>;
+  minTrustLevel?: string;
+}
+
 export interface CreateFridayWorkflowSatelliteDispatchServiceDeps {
   db: FridaySqliteLayer;
   outbox: FridayOutboxQueueService;
@@ -45,6 +52,69 @@ function readCapabilityRequirements(config: Record<string, JsonValue>): string[]
   return typeof singleton === "string" && singleton.trim().length > 0 ? [singleton] : [];
 }
 
+function readStringSet(value: JsonValue | undefined): Set<string> {
+  if (!Array.isArray(value)) {
+    return new Set();
+  }
+  return new Set(
+    value
+      .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      .map((entry) => entry.trim()),
+  );
+}
+
+function readPlacementPolicy(config: Record<string, JsonValue>): SatellitePlacementPolicy {
+  const rawPlacement = asRecord(config.satellitePlacement);
+  const allowOfflineQueue =
+    config.allowOfflineSatelliteQueue === true
+    || config.offlineAutonomy === true
+    || rawPlacement.allowOfflineQueue === true
+    || rawPlacement.allowOffline === true;
+  const minTrustLevel = typeof rawPlacement.minTrustLevel === "string" && rawPlacement.minTrustLevel.trim().length > 0
+    ? rawPlacement.minTrustLevel.trim()
+    : undefined;
+
+  return {
+    allowOfflineQueue,
+    preferredSatelliteIds: readStringSet(rawPlacement.preferredSatelliteIds ?? config.preferredSatelliteIds),
+    excludedSatelliteIds: readStringSet(rawPlacement.excludedSatelliteIds ?? config.excludedSatelliteIds),
+    minTrustLevel,
+  };
+}
+
+function isPlacementStatusEligible(status: string, policy: SatellitePlacementPolicy): boolean {
+  if (status === "online") {
+    return true;
+  }
+  return policy.allowOfflineQueue && (status === "degraded" || status === "offline");
+}
+
+function trustRank(trustLevel: string): number {
+  switch (trustLevel) {
+    case "trusted":
+      return 3;
+    case "standard":
+      return 2;
+    case "restricted":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function statusRank(status: string): number {
+  switch (status) {
+    case "online":
+      return 3;
+    case "degraded":
+      return 2;
+    case "offline":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 function encodePayload(payload: unknown): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
 }
@@ -68,7 +138,10 @@ function failureForSatelliteState(satelliteId: string | undefined, status: strin
 export function createFridayWorkflowSatelliteDispatchService(
   deps: CreateFridayWorkflowSatelliteDispatchServiceDeps,
 ): FridayWorkflowDistributedDispatcher {
-  function listPlacementCandidates(requiredCapabilities: string[]): PlacementCandidate[] {
+  function listPlacementCandidates(
+    requiredCapabilities: string[],
+    policy: SatellitePlacementPolicy,
+  ): PlacementCandidate[] {
     return deps.db.withReadConnection((db) => {
       const rows = db.prepare(
         `WITH latest_heartbeat AS (
@@ -94,7 +167,9 @@ export function createFridayWorkflowSatelliteDispatchService(
       }>;
 
       return rows
-        .filter((row) => row.pairing_status === "online")
+        .filter((row) => isPlacementStatusEligible(row.pairing_status, policy))
+        .filter((row) => !policy.excludedSatelliteIds.has(row.id))
+        .filter((row) => policy.minTrustLevel === undefined || trustRank(row.trust_level) >= trustRank(policy.minTrustLevel))
         .filter((row) => {
           if (requiredCapabilities.length === 0) return true;
           const availableCount = db.prepare(
@@ -114,6 +189,12 @@ export function createFridayWorkflowSatelliteDispatchService(
           activeRuns: row.active_runs ?? 0,
         }))
         .sort((left, right) => {
+          const preferredDelta =
+            Number(policy.preferredSatelliteIds.has(right.satelliteId))
+            - Number(policy.preferredSatelliteIds.has(left.satelliteId));
+          if (preferredDelta !== 0) return preferredDelta;
+          const statusDelta = statusRank(right.pairingStatus) - statusRank(left.pairingStatus);
+          if (statusDelta !== 0) return statusDelta;
           const trustDelta = Number(right.trustLevel === "trusted") - Number(left.trustLevel === "trusted");
           if (trustDelta !== 0) return trustDelta;
           if (left.queueDepth !== right.queueDepth) return left.queueDepth - right.queueDepth;
@@ -132,6 +213,7 @@ export function createFridayWorkflowSatelliteDispatchService(
       }
 
       const requiredCapabilities = readCapabilityRequirements(config);
+      const placementPolicy = readPlacementPolicy(config);
       let satelliteId: string | undefined;
 
       if (executionTarget.startsWith("satellite:")) {
@@ -159,11 +241,20 @@ export function createFridayWorkflowSatelliteDispatchService(
             retryable: false,
           };
         }
-        if (satellite.pairing_status !== "online") {
+        if (!isPlacementStatusEligible(satellite.pairing_status, placementPolicy)) {
           return failureForSatelliteState(satelliteId, satellite.pairing_status);
         }
+        if (placementPolicy.excludedSatelliteIds.has(satelliteId)) {
+          return {
+            kind: "blocked",
+            satelliteId,
+            code: "SATELLITE_PLACEMENT_EXCLUDED",
+            message: "Specified satellite is excluded by placement policy",
+            retryable: false,
+          };
+        }
         if (requiredCapabilities.length > 0) {
-          const candidates = listPlacementCandidates(requiredCapabilities);
+          const candidates = listPlacementCandidates(requiredCapabilities, placementPolicy);
           if (!candidates.some((candidate) => candidate.satelliteId === satelliteId)) {
             return {
               kind: "blocked",
@@ -176,7 +267,7 @@ export function createFridayWorkflowSatelliteDispatchService(
           }
         }
       } else if (executionTarget === "capability-match") {
-        const candidates = listPlacementCandidates(requiredCapabilities);
+        const candidates = listPlacementCandidates(requiredCapabilities, placementPolicy);
         const candidate = candidates[0];
         if (!candidate) {
           return {

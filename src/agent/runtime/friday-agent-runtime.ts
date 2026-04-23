@@ -289,6 +289,7 @@ export function createFridayAgentRuntime(
     reviewGate,
     runEventRepository,
     selfTestService,
+    selfFixService,
     workdir,
     sessionMirror,
     usageRecorder,
@@ -645,6 +646,10 @@ export function createFridayAgentRuntime(
           case "agent.run.executing":
             currentPhase = "executing";
             break;
+          case "agent.run.fixing":
+            currentPhase = "fixing";
+            activeToolName = undefined;
+            break;
           case "agent.run.tool_start":
             if (typeof payload.toolName === "string" && payload.toolName.trim().length > 0) {
               activeToolName = payload.toolName;
@@ -791,6 +796,12 @@ export function createFridayAgentRuntime(
             readOnly: isReadOnly,
           }),
           taskProfileId: resolvedTaskProfile.id,
+          contextWindowTokens: constraints?.contextWindowTokens,
+          dataSensitivity: constraints?.dataSensitivity,
+          latencyBudgetMs: constraints?.latencyBudgetMs,
+          localOnly: constraints?.localOnly,
+          noEgress: constraints?.noEgress,
+          satelliteAvailable: constraints?.satelliteAvailable,
         };
       };
 
@@ -1526,6 +1537,7 @@ export function createFridayAgentRuntime(
         let llmConsecutiveFailures = 0;
         let llmDegraded = false;
         let latestLlmFailureMessage: string | undefined;
+        let selfFixAttempt = 0;
         const fileVersionTracker = createFridayFileVersionTracker();
         const runCheckpoint = deps.workdir
           ? createFridayRunCheckpoint({ runId, stateDir: deps.workdir, db, nowIso })
@@ -1533,7 +1545,10 @@ export function createFridayAgentRuntime(
         if (runCheckpoint) {
           runCheckpoints.set(runId, runCheckpoint);
         }
+        selfFixService?.reset();
 
+        selfFixRetryLoop:
+        while (true) {
         while (iterations < FRIDAY_AGENT_MAX_LOOP_ITERATIONS) {
           if (runAbortController.signal.aborted) {
             break;
@@ -2845,6 +2860,64 @@ export function createFridayAgentRuntime(
           }
 
           if (!testsPassed) {
+            const selfFixDecision = selfFixService?.evaluate({
+              testResults,
+              task: params.task,
+              attempt: selfFixAttempt,
+              maxAttempts,
+            });
+            if (selfFixDecision?.shouldRetry && selfFixDecision.fixPrompt) {
+              selfFixAttempt++;
+              iterations = 0;
+              responseText = "";
+              latestNonEmptyAssistantText = "";
+              latestTestResults = testResults;
+              const fixingMessage = selfFixDecision.reason
+                ?? `Validation failed; retrying with self-fix attempt ${String(selfFixAttempt)} of ${String(maxAttempts - 1)}`;
+              db.withWriteTransaction((writer) =>
+                repo.update(writer, {
+                  id: runId,
+                  status: "fixing",
+                  attempt: selfFixAttempt,
+                  usageInput: totalInputTokens,
+                  usageOutput: totalOutputTokens,
+                  costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
+                  actualExecution: buildActualExecution({
+                    finalFailureReason: "Validation criteria not met; self-fix retry scheduled",
+                  }),
+                  testResults: testResults as unknown as FridayAgentTestResult[],
+                  artifacts: collectedArtifacts,
+                  responseText: undefined,
+                  contextCostSummary: latestContextCostSummary,
+                  taskProfile: resolvedTaskProfile,
+                }),
+              );
+              handleTrackedEvent("agent.run.fixing", {
+                runId,
+                attempt: selfFixAttempt,
+                maxAttempts,
+                message: fixingMessage,
+                failures: testResults
+                  .filter((result) => !result.passed)
+                  .map((result) => ({
+                    strategy: result.strategy,
+                    errors: result.errors.map((error) => ({
+                      message: error.message,
+                      severity: error.severity,
+                      file: error.file,
+                      line: error.line,
+                    })),
+                  })),
+                routeId: "agent.execute.run.self_fix",
+                correlationId: runCorrelationId,
+              });
+              messages.push({
+                role: "user",
+                content: selfFixDecision.fixPrompt,
+              });
+              continue selfFixRetryLoop;
+            }
+
             const durationMs = Date.now() - startedAt;
             const summaryText = deriveSummary(responseText);
             const completedAt = nowIso();
@@ -3084,6 +3157,7 @@ export function createFridayAgentRuntime(
           summary: summaryText || undefined,
           artifactDir: persistedArtifacts.artifactDir,
         });
+        }
       } catch (error) {
         const durationMs = Date.now() - startedAt;
         const errorMessage = error instanceof Error ? error.message : String(error);

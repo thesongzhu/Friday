@@ -53,6 +53,10 @@ export interface FridayProviderService {
       noEgress?: boolean;
       consumerPlanAllowed?: boolean;
       requiresOfficialSDK?: boolean;
+      contextWindowTokens?: number;
+      dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+      latencyBudgetMs?: number;
+      satelliteAvailable?: boolean;
     };
   }): Promise<FridayProviderRoutingExplainReport>;
   pinRoute(input: {
@@ -138,6 +142,10 @@ export interface FridayProviderService {
       noEgress?: boolean;
       consumerPlanAllowed?: boolean;
       requiresOfficialSDK?: boolean;
+      contextWindowTokens?: number;
+      dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+      latencyBudgetMs?: number;
+      satelliteAvailable?: boolean;
     };
     run: (
       route: FridayResolvedProviderRoute,

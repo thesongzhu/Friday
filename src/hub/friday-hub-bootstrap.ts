@@ -149,6 +149,7 @@ import {
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
   createFridayAgentRuntime,
+  createFridayAgentSelfFixService,
   createFridayAgentSelfTestService,
   createFridayAgentSkillGeneratorTool,
   createFridayAgentSkillImportTool,
@@ -2566,6 +2567,7 @@ export async function createFridayHub(
       });
     },
   });
+  const agentSelfFixService = createFridayAgentSelfFixService();
 
   // Resolve the default model/provider for agent runtime
   // This is a best-effort resolution at boot time; individual runs can override.
@@ -3226,6 +3228,7 @@ export async function createFridayHub(
     reviewGate: agentReviewGate,
     runEventRepository: agentRunEventRepository,
     selfTestService: agentSelfTestService,
+    selfFixService: agentSelfFixService,
     compactionBridge: agentCompactionBridge,
     compactionMemorySink: agentCompactionMemorySink,
     sessionMirror: async (sessionKey, message) => {
@@ -3504,6 +3507,7 @@ export async function createFridayHub(
         reviewGate: agentReviewGate,
         runEventRepository: agentRunEventRepository,
         selfTestService: agentSelfTestService,
+        selfFixService: createFridayAgentSelfFixService(),
         compactionBridge: agentCompactionBridge,
         compactionMemorySink: agentCompactionMemorySink,
         sessionMirror: async (sessionKey, message) => {
@@ -4352,6 +4356,25 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
     learningEventWriter,
+    remoteNodeResultWriter: async (input) => {
+      await workflowRuntime.execution.reportRemoteNodeResult({
+        satelliteId: input.satelliteId,
+        runId: input.runId,
+        nodeId: input.nodeId,
+        attemptId: input.attemptId,
+        attempt: input.attempt,
+        status: input.status,
+        output: input.output as JsonValue | undefined,
+        error: input.error
+          ? {
+            code: input.error.code,
+            message: input.error.message,
+            retryable: input.error.retryable,
+            details: input.error.details as JsonValue | undefined,
+          }
+          : undefined,
+      });
+    },
     onStatusTransition: ({ satelliteId, fromStatus, toStatus, at, failureRate1m, explicitDisconnect }) => {
       if (toStatus !== "degraded" && toStatus !== "offline") {
         return;

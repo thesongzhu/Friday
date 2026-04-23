@@ -1,7 +1,12 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridayProviderService } from "#providers";
 import type { FridayWorkflowRuntime } from "#workflows";
+import { initializeFridayState } from "#state";
 import {
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
@@ -315,28 +320,30 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
 
 describe("createStubConfigManager", () => {
   it("hydrates currentConfig with the actual runtime state dir and launch cwd", async () => {
-    const manager = createStubConfigManager(
-      {
-        skillDirs: ["skills", "managed-skills"],
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-state-"));
+    const stateRuntime = initializeFridayState({
+      env: {
+        ...process.env,
+        FRIDAY_STATE_DIR: stateDir,
       },
-      {
-        stateDir: "/tmp/friday-audit-state",
-        config: {
-          config: {
-            database: { readPoolSize: 1, busyTimeoutMs: 5000, synchronous: "NORMAL" },
-            telemetry: { enabled: false, fileName: "telemetry.jsonl", summaryFileName: "summary.json" },
-            backups: { configBackupCount: 3 },
-          },
-          configPath: "/tmp/friday-audit-state/friday.config.json5",
-          exists: false,
+    });
+
+    try {
+      const manager = createStubConfigManager(
+        {
+          skillDirs: ["skills", "managed-skills"],
         },
-      } as never,
-    );
+        stateRuntime,
+      );
 
-    const current = await manager.getCurrentConfig();
+      const current = await manager.getCurrentConfig();
 
-    expect(current.runtimeStateDir).toBe("/tmp/friday-audit-state");
-    expect(current.launchCwd).toBe(process.cwd());
-    expect(current.configPath).toBe("/tmp/friday-audit-state/friday.config.json5");
+      expect(current.runtimeStateDir).toBe(stateDir);
+      expect(current.launchCwd).toBe(process.cwd());
+      expect(current.configPath).toBe(path.join(stateDir, "friday.config.json5"));
+    } finally {
+      stateRuntime.close();
+      fs.rmSync(stateDir, { force: true, recursive: true });
+    }
   });
 });

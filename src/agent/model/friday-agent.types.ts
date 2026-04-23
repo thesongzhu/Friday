@@ -285,6 +285,18 @@ export interface FridayAgentRunConstraints {
   readOnly?: boolean;
   /** Operational mode override for this run. */
   operationalMode?: "plan" | "execute" | "restricted";
+  /** Data handling requirement used by provider routing. */
+  dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+  /** Maximum acceptable provider routing latency budget in milliseconds. */
+  latencyBudgetMs?: number;
+  /** Hard upper context window requirement for provider routing. */
+  contextWindowTokens?: number;
+  /** Force local/self-hosted provider routing. */
+  localOnly?: boolean;
+  /** Disallow hosted provider egress. */
+  noEgress?: boolean;
+  /** Whether satellite/local execution capacity is currently available. */
+  satelliteAvailable?: boolean;
 }
 
 // ─── Artifact ───

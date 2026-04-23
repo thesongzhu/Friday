@@ -53,6 +53,12 @@ export {
 
 // Security
 export { encryptSecret, decryptSecret, getMasterKey, resetMasterKeyCache } from "./security/friday-secret-crypto.js";
+export type {
+  CreateFridayEphemeralSecretHandleRegistryDeps,
+  FridayEphemeralSecretHandle,
+  FridayEphemeralSecretHandleRegistry,
+} from "./security/friday-secret-handle-registry.js";
+export { createFridayEphemeralSecretHandleRegistry } from "./security/friday-secret-handle-registry.js";
 
 // Persistence
 export type { FridayProviderProfileRepository } from "./persistence/friday-provider-profile-repository.js";

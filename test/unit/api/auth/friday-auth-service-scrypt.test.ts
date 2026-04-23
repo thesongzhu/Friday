@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as crypto from "node:crypto";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
-import { createFridayAuthService, FridayAuthError, hashPasswordScrypt } from "#api";
+import { createFridayAuthService, createFridayRateLimitService, FridayAuthError, hashPasswordScrypt } from "#api";
 import type { FridayAuthService } from "#api";
 
 describe("FridayAuthService — scrypt password hashing (SEC-004)", () => {
@@ -63,6 +63,48 @@ describe("FridayAuthService — scrypt password hashing (SEC-004)", () => {
 
     const service = createService();
     expect(() => service.login({ email: "scrypt2@example.com", password: "wrong-password" })).toThrow(FridayAuthError);
+  });
+
+  it("audits failed login and lockout events", () => {
+    const scryptHash = hashPasswordScrypt("correct-password");
+    db.writer.prepare(
+      `INSERT OR IGNORE INTO users (id, email, display_name, role, is_local_only, password_hash, created_at, updated_at)
+       VALUES ('audit-user', 'audit@example.com', 'Audit User', 'admin', 0, ?, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
+    ).run(scryptHash);
+    const auditEvents: Array<{ type: string; code: string; principalKey: string }> = [];
+    const rateLimiter = createFridayRateLimitService({
+      db,
+      nowIso: () => NOW,
+      authLockoutConfig: {
+        maxAttempts: 1,
+        windowMs: 60_000,
+        lockoutMs: 60_000,
+      },
+    });
+    const service = createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      rateLimiter,
+      auditAuthEvent: (event) => {
+        auditEvents.push({
+          type: event.type,
+          code: event.code,
+          principalKey: event.principalKey,
+        });
+      },
+    });
+
+    expect(() => service.login({ email: "audit@example.com", password: "wrong" }, "203.0.113.10")).toThrow(FridayAuthError);
+    expect(() => service.login({ email: "audit@example.com", password: "correct-password" }, "203.0.113.10")).toThrow(FridayAuthError);
+    expect(auditEvents).toEqual([
+      { type: "auth.login.failed", code: "AUTH_FAILED", principalKey: "email:audit@example.com" },
+      { type: "auth.login.locked_out", code: "AUTH_LOCKED_OUT", principalKey: "email:audit@example.com" },
+      { type: "auth.login.locked_out", code: "AUTH_LOCKED_OUT", principalKey: "email:audit@example.com" },
+    ]);
   });
 
   it("authenticates with legacy SHA-256 hash (backward compat)", () => {

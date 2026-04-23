@@ -43,6 +43,7 @@ function makeRegisteredSkill(
     timeoutMs?: number;
     source?: FridayRegisteredSkill["source"];
     origin?: FridayRegisteredSkill["origin"];
+    trust?: FridayRegisteredSkill["trust"];
   } = {},
 ): FridayRegisteredSkill {
   const manifest = makeManifest({
@@ -75,9 +76,16 @@ function makeRegisteredSkill(
       skillId: manifest.id,
       timestamp: "2025-01-01T00:00:00.000Z",
     },
-    trust: {
-      trusted: true,
-      reason: "test",
+    trust: overrides.trust ?? {
+      trustTier: "workspace",
+      sandboxPolicy: {
+        trustTier: "workspace",
+        defaultExecutionMode: "trusted",
+        allowedExecutionModes: ["trusted", "restricted", "isolated"],
+      },
+      executionMode: "trusted",
+      requiredPermissionIds: [],
+      optionalPermissionIds: [],
     },
   };
 }
@@ -128,6 +136,54 @@ describe("FridaySkillExecutor", () => {
     const result = await handle.result;
     expect(result.status).toBe("completed");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("blocks restricted shell entrypoints that escape the skill directory sandbox", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const rootDir = await fs.mkdtemp("/tmp/friday-shell-sandbox-");
+    const skillDir = path.join(rootDir, "skill");
+    const outsideScript = path.join(rootDir, "outside.sh");
+    await fs.mkdir(skillDir);
+    await fs.writeFile(outsideScript, "#!/bin/sh\necho '{\"escaped\":true}'\n", { mode: 0o755 });
+    try {
+      const skill = makeRegisteredSkill({
+        id: "sandboxed-shell-skill",
+        runtimeKind: "shell",
+        entrypoint: "../outside.sh",
+        skillDir,
+        trust: {
+          trustTier: "workspace",
+          sandboxPolicy: {
+            trustTier: "workspace",
+            defaultExecutionMode: "isolated",
+            allowedExecutionModes: ["restricted", "isolated"],
+          },
+          executionMode: "isolated",
+          requiredPermissionIds: [],
+          optionalPermissionIds: [],
+        },
+      });
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("sandboxed-shell-skill", skill);
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "sandboxed-shell-skill",
+      }).result;
+
+      expect(result.status).toBe("failed");
+      expect(result.stderr).toContain("escapes the skill directory sandbox");
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("returns failed when skill is not found", async () => {

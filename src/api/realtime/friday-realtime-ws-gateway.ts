@@ -1,7 +1,9 @@
 import type {
   FridayRealtimeClientFrame,
+  FridayRealtimeClientWireFrame,
   FridayRealtimeEventEnvelope,
   FridayRealtimeServerFrame,
+  FridayRealtimeServerWireFrame,
   FridayRealtimeSubscription,
 } from "../model/friday-api-realtime.types.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-auth.types.js";
@@ -9,6 +11,10 @@ import { FridayTokenValidationError } from "../auth/friday-token-validator.js";
 import type { FridayTokenValidator } from "../auth/friday-token-validator.js";
 import type { FridayRealtimeSubscriptionService } from "./friday-realtime-subscription-service.js";
 import type { FridayRealtimeEventBus } from "./friday-realtime-event-bus.types.js";
+import {
+  type FridayRealtimeFrameCrypto,
+  isFridayRealtimeEncryptedFrameEnvelope,
+} from "./friday-realtime-frame-crypto.js";
 import { FRIDAY_ERROR_CODES } from "#errors";
 
 // ─── Connection state ───
@@ -25,8 +31,9 @@ export interface FridayWsConnection {
 export interface FridayRealtimeWsGateway {
   handleClientFrame(
     conn: FridayWsConnection,
-    frame: FridayRealtimeClientFrame,
+    frame: FridayRealtimeClientWireFrame,
   ): FridayRealtimeServerFrame[];
+  encodeServerFrame?(frame: FridayRealtimeServerFrame): FridayRealtimeServerWireFrame;
   createConnection(connId: string): FridayWsConnection;
   shouldDeliverEvent(
     conn: FridayWsConnection,
@@ -41,6 +48,7 @@ export interface CreateFridayRealtimeWsGatewayDeps {
   nowIso: () => string;
   serverVersion: string;
   currentEpoch: number;
+  frameCrypto?: FridayRealtimeFrameCrypto;
 }
 
 // ─── Factory ───
@@ -48,7 +56,21 @@ export interface CreateFridayRealtimeWsGatewayDeps {
 export function createFridayRealtimeWsGateway(
   deps: CreateFridayRealtimeWsGatewayDeps,
 ): FridayRealtimeWsGateway {
+  function decodeClientFrame(frame: FridayRealtimeClientWireFrame): FridayRealtimeClientFrame {
+    if (isFridayRealtimeEncryptedFrameEnvelope(frame)) {
+      if (!deps.frameCrypto) {
+        throw new Error("Encrypted realtime frames are not enabled");
+      }
+      return deps.frameCrypto.decryptClientFrame(frame);
+    }
+    return frame;
+  }
+
   return {
+    encodeServerFrame(frame) {
+      return deps.frameCrypto ? deps.frameCrypto.encryptServerFrame(frame) : frame;
+    },
+
     createConnection(connId) {
       return {
         connId,
@@ -58,7 +80,18 @@ export function createFridayRealtimeWsGateway(
       };
     },
 
-    handleClientFrame(conn, frame): FridayRealtimeServerFrame[] {
+    handleClientFrame(conn, wireFrame): FridayRealtimeServerFrame[] {
+      let frame: FridayRealtimeClientFrame;
+      try {
+        frame = decodeClientFrame(wireFrame);
+      } catch (err) {
+        return [{
+          type: "error",
+          code: "FRAME_DECRYPT_FAILED",
+          message: err instanceof Error ? err.message : "Failed to decrypt realtime frame",
+          retryable: false,
+        }];
+      }
       switch (frame.type) {
         case "hello": {
           try {

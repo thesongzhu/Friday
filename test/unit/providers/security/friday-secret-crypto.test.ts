@@ -83,6 +83,7 @@ describe("FridaySecretCrypto", () => {
 
   describe("getMasterKey", () => {
     const originalEnv = process.env.FRIDAY_MASTER_KEY;
+    const originalSource = process.env.FRIDAY_MASTER_KEY_SOURCE;
 
     beforeEach(() => {
       resetMasterKeyCache();
@@ -94,11 +95,24 @@ describe("FridaySecretCrypto", () => {
       } else {
         delete process.env.FRIDAY_MASTER_KEY;
       }
+      if (originalSource !== undefined) {
+        process.env.FRIDAY_MASTER_KEY_SOURCE = originalSource;
+      } else {
+        delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      }
       resetMasterKeyCache();
     });
 
     it("reads from FRIDAY_MASTER_KEY env var (hex-encoded)", () => {
       const key = crypto.randomBytes(32);
+      process.env.FRIDAY_MASTER_KEY = key.toString("hex");
+      const result = getMasterKey();
+      expect(result).toEqual(key);
+    });
+
+    it("prefers FRIDAY_MASTER_KEY env var over optional keychain mode", () => {
+      const key = crypto.randomBytes(32);
+      process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
       process.env.FRIDAY_MASTER_KEY = key.toString("hex");
       const result = getMasterKey();
       expect(result).toEqual(key);

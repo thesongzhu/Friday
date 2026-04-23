@@ -172,6 +172,52 @@ describe("FridayWorkflowSatelliteDispatchService", () => {
     });
   });
 
+  it("queues explicit offline satellites when placement policy enables offline autonomy", async () => {
+    insertSatellite("sat-1", "offline", "trusted");
+    insertCapability("sat-1", "shell");
+
+    const outbox = createFridayOutboxQueueService({
+      db,
+      outboxRepo: createFridayOutboxMessageRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-03-07T12:00:00.000Z",
+    });
+    const service = createFridayWorkflowSatelliteDispatchService({
+      db,
+      outbox,
+      nowIso: () => "2026-03-07T12:00:00.000Z",
+    });
+
+    const result = await service.dispatchNode({
+      runId: "run-1",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-1",
+      attemptId: "attempt-1",
+      attempt: 1,
+      node: buildNode({
+        executionTarget: "satellite:sat-1",
+        executionCapabilities: ["shell"],
+        satellitePlacement: { allowOfflineQueue: true },
+      }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-offline-1",
+    });
+
+    expect(result).toMatchObject({
+      kind: "satellite_dispatched",
+      satelliteId: "sat-1",
+      leaseOwner: "satellite:sat-1",
+    });
+    expect(outbox.leaseBatch({
+      satelliteId: "sat-1",
+      limit: 10,
+      leaseMs: 60_000,
+      nowIso: "2026-03-07T12:00:01.000Z",
+    })).toHaveLength(1);
+  });
+
   it("uses capability-match placement and prefers trusted lower-pressure satellites", async () => {
     insertSatellite("sat-trusted", "online", "trusted");
     insertSatellite("sat-restricted", "online", "restricted");
@@ -212,5 +258,57 @@ describe("FridayWorkflowSatelliteDispatchService", () => {
       kind: "satellite_dispatched",
       satelliteId: "sat-trusted",
     });
+  });
+
+  it("applies satellite placement policy when scheduling capability-match commands", async () => {
+    insertSatellite("sat-online", "online", "trusted");
+    insertSatellite("sat-offline", "offline", "trusted");
+    insertHeartbeat("sat-online", 0, 0);
+    insertHeartbeat("sat-offline", 0, 0);
+    insertCapability("sat-online", "browser");
+    insertCapability("sat-offline", "browser");
+
+    const outbox = createFridayOutboxQueueService({
+      db,
+      outboxRepo: createFridayOutboxMessageRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-03-07T12:00:00.000Z",
+    });
+    const service = createFridayWorkflowSatelliteDispatchService({
+      db,
+      outbox,
+      nowIso: () => "2026-03-07T12:00:00.000Z",
+    });
+
+    const result = await service.dispatchNode({
+      runId: "run-1",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-1",
+      attemptId: "attempt-1",
+      attempt: 1,
+      node: buildNode({
+        executionTarget: "capability-match",
+        executionCapabilities: ["browser"],
+        satellitePlacement: {
+          allowOfflineQueue: true,
+          preferredSatelliteIds: ["sat-offline"],
+        },
+      }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-placement-1",
+    });
+
+    expect(result).toMatchObject({
+      kind: "satellite_dispatched",
+      satelliteId: "sat-offline",
+    });
+    expect(outbox.leaseBatch({
+      satelliteId: "sat-offline",
+      limit: 10,
+      leaseMs: 60_000,
+      nowIso: "2026-03-07T12:00:01.000Z",
+    })).toHaveLength(1);
   });
 });

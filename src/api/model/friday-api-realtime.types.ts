@@ -257,6 +257,19 @@ export type FridayRealtimeServerFrame =
   | { type: "resync_required"; streamId: string; reason: "STREAM_EPOCH_STALE" | "STREAM_CURSOR_OUT_OF_RANGE" | "CURSOR_INVALID"; snapshotEndpoint: string }
   | { type: "error"; code: string; message: string; retryable?: boolean; retryAfterMs?: number };
 
+export interface FridayRealtimeEncryptedFrameEnvelope {
+  type: "encrypted";
+  envelopeVersion: 1;
+  alg: "A256GCM";
+  keyId: string;
+  nonce: string;
+  ciphertext: string;
+  tag: string;
+}
+
+export type FridayRealtimeClientWireFrame = FridayRealtimeClientFrame | FridayRealtimeEncryptedFrameEnvelope;
+export type FridayRealtimeServerWireFrame = FridayRealtimeServerFrame | FridayRealtimeEncryptedFrameEnvelope;
+
 // ─── HTTP Fallback DTOs ───
 
 export interface FridayRealtimeSubscribeRequest {

@@ -358,7 +358,7 @@ describe("FridayHub Bootstrap Integration", () => {
     const now = new Date().toISOString();
     const eventId = `evt-local-${Date.now()}`;
 
-    hub.satelliteRuntime.sync.push({
+    await hub.satelliteRuntime.sync.push({
       satelliteId: "sat-1",
       acks: [],
       localEvents: [
@@ -388,6 +388,109 @@ describe("FridayHub Bootstrap Integration", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("routes agent runtime failures through self-learning pipeline and diagnosis storage", async () => {
+    const hub = await createIsolatedHub();
+    const runId = `agent-run-${Date.now()}`;
+
+    hub.apiRuntime.agentRuntime!.emitRunEvent("agent.run.failed", {
+      runId,
+      error: {
+        code: "AGENT_LLM_ERROR",
+        message: "Synthetic agent learning bridge failure",
+      },
+      durationMs: 123,
+    }, runId);
+
+    const dbPath = path.join(lastStateDir ?? "", "friday.db");
+    const db = new Database(dbPath);
+    try {
+      const eventRow = db
+        .prepare("SELECT kind, payload_json FROM learning_events WHERE payload_json LIKE ? ORDER BY ts DESC LIMIT 1")
+        .get(`%${runId}%`) as { kind: string; payload_json: string } | undefined;
+      expect(eventRow?.kind).toBe("error_incident");
+      expect(JSON.parse(eventRow!.payload_json).agentRunId).toBe(runId);
+
+      const incident = db.prepare(
+        "SELECT category, severity, context_json FROM error_incidents WHERE context_json LIKE ? ORDER BY created_at DESC LIMIT 1",
+      ).get(`%${runId}%`) as
+        | { category: string; severity: string; context_json: string }
+        | undefined;
+      expect(incident).toBeDefined();
+      expect(incident!.category).toBe("tool");
+      expect(incident!.severity).toBe("medium");
+      expect(JSON.parse(incident!.context_json).agentRunId).toBe(runId);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("backs runtime config APIs with persisted revisions and rollback", async () => {
+    const hub = await createIsolatedHub();
+    const routes = hub.apiRuntime.routes.getRoutes();
+    const getConfig = routes.find((route) => route.operationId === "config.get")!;
+    const updateConfig = routes.find((route) => route.operationId === "config.update")!;
+    const listRevisions = routes.find((route) => route.operationId === "config.revisions.list")!;
+    const revertConfig = routes.find((route) => route.operationId === "config.revisions.revert")!;
+
+    const baseCtx = {
+      requestId: "req-config-1",
+      receivedAt: new Date().toISOString(),
+      params: {},
+      query: {},
+      body: null,
+      headers: {},
+      principal: null,
+    };
+
+    const initial = await getConfig.handler({
+      ...baseCtx,
+      query: { keys: "database.busyTimeoutMs" },
+    } as never) as { revision: number; settings: Record<string, unknown> };
+
+    expect(initial.revision).toBe(1);
+    expect(initial.settings["database.busyTimeoutMs"]).toBe(5000);
+
+    const updated = await updateConfig.handler({
+      ...baseCtx,
+      body: {
+        expectedRevision: initial.revision,
+        patch: { database: { busyTimeoutMs: 6000 } },
+        reason: "integration config update",
+      },
+    } as never) as { revision: number; changedKeys: string[] };
+
+    expect(updated.revision).toBe(2);
+    expect(updated.changedKeys).toContain("database.busyTimeoutMs");
+
+    const afterUpdate = await getConfig.handler({
+      ...baseCtx,
+      query: { keys: "database.busyTimeoutMs" },
+    } as never) as { revision: number; settings: Record<string, unknown> };
+    expect(afterUpdate.revision).toBe(2);
+    expect(afterUpdate.settings["database.busyTimeoutMs"]).toBe(6000);
+
+    const revisions = await listRevisions.handler(baseCtx as never) as {
+      items: Array<{ revision: number; changedKeys: string[] }>;
+    };
+    expect(revisions.items.map((revision) => revision.revision)).toEqual([2, 1]);
+
+    const reverted = await revertConfig.handler({
+      ...baseCtx,
+      body: { toRevision: 1 },
+    } as never) as { revision: number; revertedFrom: number; changedKeys: string[] };
+    expect(reverted).toMatchObject({ revision: 3, revertedFrom: 2 });
+    expect(reverted.changedKeys).toContain("database.busyTimeoutMs");
+
+    const afterRevert = await getConfig.handler({
+      ...baseCtx,
+      query: { keys: "database.busyTimeoutMs" },
+    } as never) as { revision: number; settings: Record<string, unknown> };
+    expect(afterRevert.revision).toBe(3);
+    expect(afterRevert.settings["database.busyTimeoutMs"]).toBe(5000);
+
+    expect(fs.existsSync(path.join(lastStateDir ?? "", "friday.config.json5"))).toBe(true);
   });
 
   it("registers autofix-dispatch scheduler job on startup", async () => {
@@ -426,6 +529,50 @@ describe("FridayHub Bootstrap Integration", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("exposes hub-registered scheduler jobs through /v1/jobs", async () => {
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === "tui.jobs.list");
+    expect(route).toBeDefined();
+
+    const jobs = await route!.handler({
+      params: {},
+      query: {},
+      body: null,
+      headers: {},
+      principal: {
+        principalType: "user",
+        principalId: "scheduler-admin",
+        role: "admin",
+        scopes: ["hub.admin"],
+        tokenId: "token-scheduler-admin",
+        tokenKind: "access",
+        issuedAt: "2026-04-23T00:00:00.000Z",
+      },
+      requestId: "req-scheduler-jobs",
+      receivedAt: "2026-04-23T00:00:00.000Z",
+    } as never) as Array<{
+      jobId: string;
+      status: string;
+      nextRunAt: string | null;
+    }>;
+
+    const jobById = new Map(jobs.map((job) => [job.jobId, job]));
+    expect(jobById.get("workflow-timeout-sweep")).toMatchObject({
+      jobId: "workflow-timeout-sweep",
+      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+    });
+    expect(jobById.get("autofix-dispatch")).toMatchObject({
+      jobId: "autofix-dispatch",
+      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+    });
+    expect(jobById.get("agent-loop-cooldown-sweep")).toMatchObject({
+      jobId: "agent-loop-cooldown-sweep",
+      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+    });
   });
 
   it("replays persisted scheduled automations onto the scheduler after restart", async () => {

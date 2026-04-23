@@ -113,4 +113,51 @@ describe("FridayRealtimeRoutes", () => {
       }),
     ).rejects.toThrow(/Not authorized/);
   });
+
+  it("pull serves persisted events as the HTTP fallback queue after a client was offline", async () => {
+    const eventRepo = createFridayRealtimeEventRepository();
+    const checkpointRepo = createFridayRealtimeCheckpointRepository();
+    db.withWriteTransaction((w) => {
+      eventRepo.append(w, {
+        eventId: "evt-offline-1",
+        streamId: "workflow:wf-1",
+        seq: 1,
+        event: "workflow.updated",
+        payload: { workflowId: "wf-1", revision: 1, etag: "etag-1" },
+        emittedAt: NOW,
+      });
+      eventRepo.append(w, {
+        eventId: "evt-offline-2",
+        streamId: "workflow:wf-1",
+        seq: 2,
+        event: "workflow.updated",
+        payload: { workflowId: "wf-1", revision: 2, etag: "etag-2" },
+        emittedAt: NOW,
+      });
+    });
+    const subscriptionService = createFridayRealtimeSubscriptionService({
+      db,
+      eventRepo,
+      checkpointRepo,
+      nowIso: () => NOW,
+      currentEpoch: EPOCH,
+      cursorSecret: "test-secret",
+    });
+    const route = createFridayRealtimeRoutes({ subscriptionService, currentEpoch: EPOCH })
+      .find((r) => r.operationId === "realtime.pull")!;
+
+    const result = await route.handler({
+      requestId: "req-1",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: { streamId: "workflow:wf-1", afterSeq: 0, limit: 10 },
+      headers: {},
+      principal: adminPrincipal,
+    }) as { items: Array<{ seq: number; eventId: string }>; streamId: string; epoch: number };
+
+    expect(result.streamId).toBe("workflow:wf-1");
+    expect(result.epoch).toBe(EPOCH);
+    expect(result.items.map((item) => item.eventId)).toEqual(["evt-offline-1", "evt-offline-2"]);
+  });
 });

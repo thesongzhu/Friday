@@ -3,6 +3,7 @@ import { createFridayRetentionJob } from "#jobs";
 import type { FridayRetentionPolicy } from "#jobs";
 import type { FridaySatelliteRuntime } from "./friday-satellite-runtime.types.js";
 import type { FridayLearningEventAppendInput } from "#ledger";
+import type { FridaySyncNodeResultInput } from "../services/friday-satellite-sync-service.js";
 
 import { createFridaySatelliteRepository } from "../persistence/friday-satellite-repository.js";
 import { createFridaySatellitePairingRequestRepository } from "../persistence/friday-satellite-pairing-request-repository.js";
@@ -20,6 +21,7 @@ import { createFridaySatelliteHeartbeatService } from "../services/friday-satell
 import { createFridaySatelliteOfflineSweeper } from "../services/friday-satellite-offline-sweeper.js";
 import { createFridayOutboxQueueService } from "../services/friday-outbox-queue-service.js";
 import { createFridaySatelliteSyncService } from "../services/friday-satellite-sync-service.js";
+import { createFridaySatelliteLocalRunnerService } from "../services/friday-satellite-local-runner-service.js";
 import { createFridayLearningEventLedger, createFridaySkillRunCheckpointWriter, createFridaySkillRunStore } from "#ledger";
 
 export interface CreateFridaySatelliteRuntimeOptions {
@@ -32,6 +34,7 @@ export interface CreateFridaySatelliteRuntimeOptions {
   pairingTtlMs?: number;
   expectedHeartbeatIntervalMs?: number;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
+  remoteNodeResultWriter?: (input: FridaySyncNodeResultInput & { satelliteId: string }) => Promise<void>;
   onStatusTransition?: (input: {
     satelliteId: string;
     fromStatus: "pending" | "paired" | "online" | "degraded" | "offline" | "revoked";
@@ -59,6 +62,7 @@ export function createFridaySatelliteRuntime(
     pairingTtlMs,
     expectedHeartbeatIntervalMs,
     learningEventWriter,
+    remoteNodeResultWriter,
     onStatusTransition,
   } = options;
 
@@ -152,7 +156,9 @@ export function createFridaySatelliteRuntime(
     learningEventWriter: learningEventWriter ?? ((events) => {
       learningLedger.appendBatch(events);
     }),
+    remoteNodeResultWriter,
   });
+  const localRunner = createFridaySatelliteLocalRunnerService({ sync });
 
   // Retention
   const retention = createFridayRetentionJob({
@@ -174,6 +180,7 @@ export function createFridaySatelliteRuntime(
     offlineSweeper,
     outbox,
     sync,
+    localRunner,
     learningLedger,
     skillRunStore,
     checkpointWriter,

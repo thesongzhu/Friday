@@ -63,6 +63,14 @@ export type {
   FridaySyncPushResult,
   FridaySatelliteSyncService,
 } from "./services/friday-satellite-sync-service.js";
+export { createFridaySatelliteLocalRunnerService } from "./services/friday-satellite-local-runner-service.js";
+export type {
+  FridaySatelliteLocalNodeExecutor,
+  FridaySatelliteLocalRunnerDrainInput,
+  FridaySatelliteLocalRunnerDrainResult,
+  FridaySatelliteLocalRunnerService,
+  FridaySatelliteWorkflowNodeTask,
+} from "./services/friday-satellite-local-runner-service.js";
 
 // Runtime
 export type {

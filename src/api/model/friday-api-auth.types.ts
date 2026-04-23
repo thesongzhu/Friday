@@ -22,6 +22,8 @@ export type FridayScope =
   | "fleet.read"
   | "security.read"
   | "security.write"
+  | "secrets.read"
+  | "secrets.write"
   | "session.read"
   | "session.write"
   | "diagnosis.read"

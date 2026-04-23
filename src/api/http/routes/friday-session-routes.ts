@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { FridayDomainError } from "#errors";
 import {
   FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
@@ -11,6 +13,8 @@ import {
 } from "#sessions";
 import type {
   FridaySessionArchiveResponse,
+  FridaySessionCompactRequest,
+  FridaySessionCompactResponse,
   FridaySessionCreateRequest,
   FridaySessionCreateResponse,
   FridaySessionForkListResponse,
@@ -39,7 +43,7 @@ import type {
   FridaySessionSweepResponse,
 } from "../../model/friday-api-session.types.js";
 import type { FridaySessionService } from "#sessions";
-import type { FridaySessionChatKind, FridaySessionStatus } from "#sessions";
+import type { FridaySessionChatKind, FridaySessionMessageRecord, FridaySessionStatus } from "#sessions";
 import type { FridaySessionMemoryExtractionService } from "#sessions";
 import { isFridaySessionSendAllowed } from "#sessions";
 import type { FridayProviderTenantContext } from "#providers";
@@ -363,6 +367,32 @@ function validatePruneBody(body: unknown): asserts body is FridaySessionPruneReq
   validateIsoDate(b.olderThan, "olderThan");
 }
 
+function validateCompactBody(body: unknown): asserts body is FridaySessionCompactRequest {
+  if (body == null || typeof body !== "object") {
+    return;
+  }
+  const b = body as Record<string, unknown>;
+  const errors: string[] = [];
+  for (const field of ["keepRecent", "maxMessages"] as const) {
+    if (
+      b[field] !== undefined &&
+      (typeof b[field] !== "number" || !Number.isInteger(b[field]) || b[field] < 1)
+    ) {
+      errors.push(`${field} must be a positive integer when provided`);
+    }
+  }
+  if (b.summary !== undefined && (typeof b.summary !== "string" || b.summary.trim() === "")) {
+    errors.push("summary must be a non-empty string when provided");
+  }
+  if (errors.length > 0) {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
+      `Invalid compact body: ${errors.join("; ")}`,
+      { httpStatus: 400 },
+    );
+  }
+}
+
 function validateIsoDate(value: string, label: string): void {
   const d = new Date(value);
   if (isNaN(d.getTime())) {
@@ -372,6 +402,20 @@ function validateIsoDate(value: string, label: string): void {
       { httpStatus: 400 },
     );
   }
+}
+
+function buildDeterministicSessionSummary(messages: FridaySessionMessageRecord[]): string {
+  const lines = messages
+    .map((message) => `${message.role}: ${message.contentText.trim()}`)
+    .filter((line) => line.trim().length > 0);
+  const joined = lines.join("\n");
+  return joined.length <= 2_000
+    ? joined
+    : `${joined.slice(0, 1_997)}...`;
+}
+
+function fingerprintSessionSummary(summary: string): string {
+  return createHash("sha256").update(summary).digest("hex").slice(0, 16);
 }
 
 const VALID_REMEMBER_MODES = new Set<string>(["queue", "inline"]);
@@ -724,6 +768,58 @@ export function createFridaySessionRoutes(
       async handler(): Promise<FridaySessionSweepResponse> {
         const result = await deps.sessionService.sweepLifecycle();
         return { result };
+      },
+    },
+
+    // 6b. POST /v1/sessions/:sessionKey/compact — persist a compacted focus summary
+    {
+      operationId: "sessions.compact",
+      method: "POST",
+      path: "/v1/sessions/:sessionKey/compact",
+      auth: { public: false, anyOfScopes: ["session.write"] },
+      async handler(ctx): Promise<FridaySessionCompactResponse> {
+        const { sessionKey } = ctx.params as { sessionKey: string };
+        const key = decodeSessionKeyParam(sessionKey);
+        validateCompactBody(ctx.body);
+        const body = (ctx.body ?? {}) as FridaySessionCompactRequest;
+        const keepRecent = Math.min(body.keepRecent ?? 8, FRIDAY_MAX_LIST_LIMIT);
+        const maxMessages = Math.min(body.maxMessages ?? FRIDAY_MAX_LIST_LIMIT, FRIDAY_MAX_LIST_LIMIT);
+        const messages = await deps.sessionService.getMessages(key, maxMessages);
+        const compactableCount = Math.max(0, messages.length - keepRecent);
+        const compactableMessages = messages.slice(0, compactableCount);
+        const summary = body.summary?.trim() || buildDeterministicSessionSummary(compactableMessages);
+        const now = deps.nowIso ? deps.nowIso() : new Date().toISOString();
+        const focus = await deps.sessionService.getConversationFocus(key).catch(() => null);
+        const first = compactableMessages[0];
+        const last = compactableMessages[compactableMessages.length - 1];
+        await deps.sessionService.setConversationFocus(key, {
+          ...(focus ?? { updatedAt: now }),
+          currentTopicSummary: summary,
+          currentTopicFingerprint: fingerprintSessionSummary(summary),
+          currentTopicStartSequence: messages[Math.max(0, compactableCount)]?.sequence ?? (last ? last.sequence + 1 : undefined),
+          updatedAt: now,
+        });
+        await deps.sessionService.mergeMetadata(key, {
+          lastCompaction: {
+            compactedAt: now,
+            compactedMessageCount: compactableMessages.length,
+            keptRecentMessageCount: Math.min(keepRecent, messages.length),
+            sequenceStart: first?.sequence,
+            sequenceEnd: last?.sequence,
+          },
+        });
+
+        return {
+          compaction: {
+            sessionKey: key,
+            compactedMessageCount: compactableMessages.length,
+            keptRecentMessageCount: Math.min(keepRecent, messages.length),
+            summary,
+            sequenceStart: first?.sequence,
+            sequenceEnd: last?.sequence,
+            focusUpdatedAt: now,
+          },
+        };
       },
     },
 

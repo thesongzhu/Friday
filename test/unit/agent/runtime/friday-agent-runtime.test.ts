@@ -11,6 +11,7 @@ import {
   createFridayAgentRunRepository,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
+  createFridayAgentSelfFixService,
 } from "#agent";
 import type {
   FridayAgentLlmClient,
@@ -5006,6 +5007,74 @@ describe("FridayAgentRuntime", () => {
     const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
     expect(run?.status).toBe("failed");
     expect(run?.errorCode).toBe("AGENT_VALIDATION_ERROR");
+  });
+
+  it("self-fix retries validation failures and completes after corrected output passes", async () => {
+    const batches: FridayAgentLlmStreamEvent[][] = [
+      [
+        { type: "text_delta", text: "Here is the broken output" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "Here is the corrected output" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 4 },
+      ],
+    ];
+    const streamedMessages: string[] = [];
+    let llmCallCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        streamedMessages.push(JSON.stringify(params.messages));
+        const batch = batches[llmCallCount] ?? [];
+        llmCallCount++;
+        for (const event of batch) {
+          yield event;
+        }
+      },
+    };
+    let selfTestCalls = 0;
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      selfTestService: {
+        async runTests() {
+          selfTestCalls++;
+          if (selfTestCalls === 1) {
+            return [{
+              strategy: "syntax",
+              passed: false,
+              errors: [{ message: "Syntax error", severity: "error" }],
+              durationMs: 50,
+            }];
+          }
+          return [{ strategy: "syntax", passed: true, errors: [], durationMs: 30 }];
+        },
+      },
+      selfFixService: createFridayAgentSelfFixService(),
+    });
+
+    const result = await runtime.executeRun({ task: "Self-test fail then fix" });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe("Here is the corrected output");
+    expect(llmCallCount).toBe(2);
+    expect(selfTestCalls).toBe(2);
+    expect(streamedMessages[1]).toContain("The previous attempt failed validation");
+    expect(streamedMessages[1]).toContain("Syntax error");
+
+    const repo = createFridayAgentRunRepository();
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(run?.status).toBe("completed");
+    expect(run?.attempt).toBe(1);
+    expect(run?.testResults?.[0]?.passed).toBe(true);
   });
 
   // ─── IMPL-5: Empty response fails criteria ───

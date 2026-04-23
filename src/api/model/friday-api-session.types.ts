@@ -55,6 +55,26 @@ export interface FridaySessionSweepResponse {
   result: FridaySessionSweepResult;
 }
 
+// ─── Session compaction ───
+
+export interface FridaySessionCompactRequest {
+  keepRecent?: number;
+  maxMessages?: number;
+  summary?: string;
+}
+
+export interface FridaySessionCompactResponse {
+  compaction: {
+    sessionKey: string;
+    compactedMessageCount: number;
+    keptRecentMessageCount: number;
+    summary: string;
+    sequenceStart?: number;
+    sequenceEnd?: number;
+    focusUpdatedAt: string;
+  };
+}
+
 // ─── Messages ───
 
 export interface FridaySessionMessageCreateRequest extends FridaySessionMessageInput {}

@@ -588,7 +588,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       return run;
     }
 
-    if (tenantId && tenantId === principal.principalId) {
+    if (tenantId && resolvePrincipalTenantId(principal) === tenantId) {
       return run;
     }
 
