@@ -62,6 +62,7 @@ export interface FridaySetRoutingConfigRequest {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  enforceRequestedModel?: boolean;
 }
 
 export interface FridaySetBudgetConfigRequest {

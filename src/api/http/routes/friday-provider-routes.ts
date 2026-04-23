@@ -185,6 +185,9 @@ function validateRoutingBody(body: unknown): asserts body is FridaySetRoutingCon
   if (b.defaultModel !== undefined && typeof b.defaultModel !== "string") {
     errors.push("defaultModel must be a string when provided");
   }
+  if (b.enforceRequestedModel !== undefined && typeof b.enforceRequestedModel !== "boolean") {
+    errors.push("enforceRequestedModel must be a boolean when provided");
+  }
 
   if (errors.length > 0) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid request body: ${errors.join("; ")}`, { httpStatus: 400 });
