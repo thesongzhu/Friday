@@ -41,7 +41,7 @@ const checks = {
       ],
     },
     {
-      path: "docs/CX15-SSD-UPDATE-PLAN.md",
+      path: "docs/archive/CX15-SSD-UPDATE-PLAN.md",
       required: [
         "Archived and superseded",
         "no longer an active contract source",

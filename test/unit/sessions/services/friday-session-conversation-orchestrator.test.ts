@@ -99,6 +99,31 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
   });
 
+  it("treats explicit literal response requests as new turns instead of stale follow-ups", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "请只回复：green-771",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "请只回复：chat ok",
+        currentTopicStartSequence: 3,
+        assistantAnchorSummary: "chat ok",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "hi" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "你好！有什么我可以帮助你的吗？" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "请只回复：chat ok" }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "chat ok" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("Current question: 请只回复：green-771");
+    expect(prepared.taskPrompt).not.toContain("Continue the current topic");
+    expect(prepared.taskPrompt).not.toContain("chat ok");
+  });
+
   it("classifies short follow-ups against the latest assistant answer", () => {
     const prepared = prepareFridayConversationTurn({
       task: "为什么没有connect",

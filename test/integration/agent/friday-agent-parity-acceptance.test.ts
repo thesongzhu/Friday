@@ -259,7 +259,15 @@ describe("Agent parity acceptance (integration)", () => {
 
     expect(capturedMessages).toHaveLength(1);
     expect(capturedMessages[0]).toEqual([
-      { role: "user", content: "只回复 FRIDAY_E2E_OK" },
+      {
+        role: "user",
+        content: [
+          "This user started a literal response request.",
+          "Current question: 只回复 FRIDAY_E2E_OK",
+          "Do not reuse previous user text, previous assistant text, or prior response anchors.",
+          "Answer only the current literal request.",
+        ].join("\n"),
+      },
     ]);
   });
 });

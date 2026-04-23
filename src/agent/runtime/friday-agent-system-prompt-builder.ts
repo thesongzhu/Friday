@@ -221,6 +221,7 @@ export function buildFridayAgentSystemPrompt(
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
     "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
     "- Use the feedback tool only when the current user message explicitly corrects you or explicitly states a preference. Never infer or synthesize a new preference from a question.\n" +
+    "- If the user asks you to remember, recall, or keep a fact for this conversation only / this chat / the current thread, treat that as transient session context, not durable memory persistence. Do not call feedback or memory_store for that instruction. A read-only run still may use the current conversation history: acknowledge as requested, then later answer from the visible session history.\n" +
     "- Before answering questions that reference previous conversations, user preferences, or stored facts, proactively search memory with memory_search. If relevant memories exist, incorporate them into your response.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +
     (enforceStarterSkillRouting

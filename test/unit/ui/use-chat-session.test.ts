@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildChatSessionKey,
   coercePersistedChatSessionKey,
+  isSessionAlreadyCreatedError,
   isTerminalChatRunStatus,
   resolveImmediateChatResponse,
 } from "../../../ui/src/hooks/use-chat-session";
+import { ApiError } from "../../../ui/src/lib/api/types";
 
 describe("useChatSession session key handling", () => {
   it("builds canonical three-segment chat session keys", () => {
@@ -37,6 +39,21 @@ describe("useChatSession session key handling", () => {
     expect(isTerminalChatRunStatus("completed")).toBe(true);
     expect(isTerminalChatRunStatus("failed")).toBe(true);
     expect(isTerminalChatRunStatus("executing")).toBe(false);
+  });
+
+  it("treats existing remote chat sessions as successful ensure calls", () => {
+    expect(isSessionAlreadyCreatedError(
+      new ApiError("SESSION_ALREADY_EXISTS", "Session already exists for key 'chat:default:abc'", 409),
+    )).toBe(true);
+    expect(isSessionAlreadyCreatedError(
+      new ApiError("ALREADY_EXISTS", "Already exists", 409),
+    )).toBe(true);
+    expect(isSessionAlreadyCreatedError(
+      new ApiError("CONFLICT", "Session already exists for key 'chat:default:abc'", 409),
+    )).toBe(true);
+    expect(isSessionAlreadyCreatedError(
+      new ApiError("CONFLICT", "Different conflict", 409),
+    )).toBe(false);
   });
 
   it("extracts immediate completed responses for chat", () => {
