@@ -170,7 +170,7 @@ describe("FridayApiRuntime — Session Registration", () => {
     expect(runtime.extractionService).toBeUndefined();
   });
 
-  it("avoids duplicating latest user message in history when sessions.run derives task from history", async () => {
+  it("avoids duplicating latest user message in history when sessions.run explicitly reuses history", async () => {
     const providerService = createMockProviderService();
     const executeRun = vi.fn(async () => ({
       runId: "run-1",
@@ -209,7 +209,7 @@ describe("FridayApiRuntime — Session Registration", () => {
 
     await route!.handler({
       params: { sessionKey: "discord:default:user1" },
-      body: {},
+      body: { useLastUserMessage: true },
     } as never);
 
     expect(executeRun).toHaveBeenCalledTimes(1);
