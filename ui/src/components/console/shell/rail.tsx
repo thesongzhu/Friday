@@ -44,6 +44,8 @@ const ADVANCED_ICONS: Record<string, LucideIcon> = {
   "/automations": Clock3,
   "/memory": Brain,
   "/mcp": Plug,
+  "/fleet": Globe2,
+  "/command-center": Settings,
   "/usage": BarChart3,
   "/sessions": MessageSquare,
   "/observability": Activity,

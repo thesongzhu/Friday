@@ -20,6 +20,9 @@ describe("agent os navigation", () => {
       "/automations",
       "/memory",
       "/mcp",
+      "/fleet",
+      "/observability",
+      "/command-center",
       "/usage",
       "/sessions",
     ]);

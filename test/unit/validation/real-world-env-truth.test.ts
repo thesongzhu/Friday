@@ -27,7 +27,7 @@ function makeProvider(overrides = {}) {
 }
 
 describe("real-world env truth fallback requirements", () => {
-  it("does not require a fallback lane when no validated alternative exists", () => {
+  it("requires a fallback lane whenever a default lane exists", () => {
     const providers = [
       makeProvider({ id: "default-provider", name: "Default Provider" }),
       makeProvider({
@@ -54,8 +54,8 @@ describe("real-world env truth fallback requirements", () => {
     );
 
     expect(result).toEqual({
-      fallbackRequired: false,
-      source: "no_validated_alternative",
+      fallbackRequired: true,
+      source: "default_lane_requires_fallback",
     });
   });
 

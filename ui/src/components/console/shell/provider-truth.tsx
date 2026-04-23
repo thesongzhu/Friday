@@ -63,6 +63,9 @@ function alertHeadline(
   if (alert.code === "fallback_unhealthy") {
     return localize(locale, "备用 provider 降级", "Fallback provider is degraded");
   }
+  if (alert.code === "fallback_missing") {
+    return localize(locale, "缺少备用 provider", "Fallback provider is missing");
+  }
   if (alert.code === "route_adjusted") {
     return localize(locale, "真实路由已偏离默认配置", "Live route has moved off the configured default");
   }
@@ -79,6 +82,13 @@ function alertDetail(
       locale,
       `默认配置仍指向 ${truth.configured.providerName} / ${truth.configured.model}，当前真实路由是 ${truth.current.providerName} / ${truth.current.model}。`,
       `The configured default still points to ${truth.configured.providerName} / ${truth.configured.model}, while the live route is ${truth.current.providerName} / ${truth.current.model}.`,
+    );
+  }
+  if (alert.code === "fallback_missing") {
+    return localize(
+      locale,
+      "当前只有主链路可用。添加并配置至少一个备用 provider 后，Friday 才能在主 provider 短暂失败时自动切换。",
+      "Only the primary lane is available. Add and configure at least one fallback provider so Friday can switch when the primary provider fails.",
     );
   }
   if (alert.providerName && alert.detail) {
@@ -103,7 +113,7 @@ export function ProviderTruthCompact(props: {
   className?: string;
 }) {
   const { locale, truth, loading, showModel = true, className } = props;
-  const routeStatus = truth?.currentStatus ?? truth?.status ?? "offline";
+  const routeStatus = truth?.status ?? truth?.currentStatus ?? "offline";
   const providerName = truth?.current?.providerName
     ?? (loading
       ? localize(locale, "读取 provider…", "Reading provider…")
@@ -165,7 +175,8 @@ export function ProviderTruthCard(props: {
   className?: string;
 }) {
   const { locale, truth, loading, variant = "home", className } = props;
-  const routeStatus = truth?.currentStatus ?? truth?.status ?? "offline";
+  const routeStatus = truth?.status ?? truth?.currentStatus ?? "offline";
+  const currentProviderStatus = truth?.currentStatus ?? routeStatus;
   const primaryAlert = truth?.alerts[0];
   const current = truth?.current;
   const cardCopy = {
@@ -224,16 +235,16 @@ export function ProviderTruthCard(props: {
             {localize(locale, "Provider 状态", "Provider status")}
           </p>
           <div className="mt-2 flex items-center gap-2">
-            {routeStatus === "healthy" ? (
+            {currentProviderStatus === "healthy" ? (
               <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--jade-500)" }} />
             ) : (
               <ShieldAlert
                 className="h-4 w-4 shrink-0"
-                style={{ color: routeStatus === "offline" ? "var(--rust-500)" : "var(--amber-600)" }}
+                style={{ color: currentProviderStatus === "offline" ? "var(--rust-500)" : "var(--amber-600)" }}
               />
             )}
             <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
-              {statusLabel(routeStatus, locale)}
+              {statusLabel(currentProviderStatus, locale)}
             </p>
           </div>
         </div>

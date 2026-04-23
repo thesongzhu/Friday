@@ -16,6 +16,7 @@ type ProviderTruthErrorSource = "providers" | "health" | "routing" | "explain";
 type ProviderTruthAlertCode =
   | "selected_unhealthy"
   | "selected_health_missing"
+  | "fallback_missing"
   | "fallback_unhealthy"
   | "route_adjusted"
   | "truth_unavailable";
@@ -61,6 +62,7 @@ export interface ProviderTruthSnapshot {
   explain?: FridayProviderRoutingExplainReport;
   degradedProviders: ProviderTruthHealthIssue[];
   degradedFallbackCount: number;
+  hasFallbackLane: boolean;
   alertCount: number;
   alerts: ProviderTruthAlert[];
   errors: Array<{ source: ProviderTruthErrorSource; message: string }>;
@@ -207,7 +209,7 @@ function buildHealthDetail(item: FridayProviderHealthSnapshotItem | undefined): 
   return undefined;
 }
 
-async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
+export async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
   const [providersResult, healthResult, routingResult, explainResult] = await Promise.allSettled([
     providersApi.list(),
     providersApi.listHealth(),
@@ -350,6 +352,18 @@ async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
     });
   }
 
+  const hasFallbackLane = Boolean(routing?.fallbackProviderIds?.length);
+  if (current && routingResult.status === "fulfilled" && !hasFallbackLane) {
+    alerts.push({
+      id: "fallback-missing",
+      code: "fallback_missing",
+      tone: "warning",
+      providerId: current.providerId,
+      providerName: current.providerName,
+      detail: "No fallback provider is configured for model routing.",
+    });
+  }
+
   const currentStatus: ProviderTruthStatus = !current
     ? "offline"
     : selectedSeverity === "healthy"
@@ -375,6 +389,7 @@ async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
     explain,
     degradedProviders,
     degradedFallbackCount,
+    hasFallbackLane,
     alertCount: alerts.length,
     alerts,
     errors,
