@@ -128,6 +128,8 @@ export interface FridayAgentRunRepository {
     input: {
       id: string;
       status?: FridayAgentRunStatus;
+      providerId?: string;
+      model?: string;
       attempt?: number;
       artifacts?: FridayAgentArtifact[];
       testResults?: FridayAgentTestResult[];
@@ -224,10 +226,26 @@ export function createFridayAgentRunRepository(): FridayAgentRunRepository {
     update(db, input) {
       const sets: string[] = [];
       const params: unknown[] = [];
+      const resolvedProviderId = input.providerId
+        ?? (typeof input.actualExecution?.actualProviderId === "string"
+          ? input.actualExecution.actualProviderId
+          : undefined);
+      const resolvedModel = input.model
+        ?? (typeof input.actualExecution?.actualModel === "string"
+          ? input.actualExecution.actualModel
+          : undefined);
 
       if (input.status !== undefined) {
         sets.push("status = ?");
         params.push(input.status);
+      }
+      if (resolvedProviderId !== undefined) {
+        sets.push("provider_id = ?");
+        params.push(resolvedProviderId);
+      }
+      if (resolvedModel !== undefined) {
+        sets.push("model = ?");
+        params.push(resolvedModel);
       }
       if (input.attempt !== undefined) {
         sets.push("attempt = ?");
