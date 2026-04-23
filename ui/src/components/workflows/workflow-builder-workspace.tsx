@@ -1973,10 +1973,14 @@ function WorkflowBuilderEditor() {
       ghost.style.letterSpacing = "0.08em";
       ghost.style.textTransform = "uppercase";
       ghost.style.boxShadow = "0 16px 40px rgba(0,0,0,0.3)";
-      ghost.innerHTML = `
-        <div style="opacity:0.58;font-size:10px;margin-bottom:4px;">${paletteEntry?.groupLabel ?? "Workflow node"}</div>
-        <div>${paletteEntry?.label ?? type}</div>
-      `;
+      const ghostGroup = document.createElement("div");
+      ghostGroup.style.opacity = "0.58";
+      ghostGroup.style.fontSize = "10px";
+      ghostGroup.style.marginBottom = "4px";
+      ghostGroup.textContent = paletteEntry?.groupLabel ?? "Workflow node";
+      const ghostLabel = document.createElement("div");
+      ghostLabel.textContent = paletteEntry?.label ?? type;
+      ghost.append(ghostGroup, ghostLabel);
       document.body.appendChild(ghost);
       event.dataTransfer.setDragImage(ghost, 24, 18);
       window.setTimeout(() => {

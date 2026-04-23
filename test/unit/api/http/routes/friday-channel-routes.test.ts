@@ -165,6 +165,47 @@ describe("createFridayChannelRoutes", () => {
     });
   });
 
+  it("stores persona for a supported channel kind before an instance is enabled", async () => {
+    const deps = {
+      ...createDeps(),
+      supportedKinds: ["discord"],
+    };
+    const routes = createFridayChannelRoutes(deps);
+    const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");
+    const getRoute = routes.find((item) => item.operationId === "channels.persona.get");
+
+    const updateResult = await updateRoute!.handler(makeCtx({
+      params: { kind: "discord" },
+      body: {
+        persona: "Discord operator persona",
+        systemPrompt: "",
+      },
+    }) as never);
+    const getResult = await getRoute!.handler(makeCtx({ params: { kind: "discord" } }) as never);
+
+    expect(updateResult).toMatchObject({
+      kind: "discord",
+      persona: {
+        persona: "Discord operator persona",
+        systemPrompt: "",
+        updatedAt: NOW,
+      },
+    });
+    expect(getResult).toMatchObject({
+      kind: "discord",
+      persona: {
+        persona: "Discord operator persona",
+        systemPrompt: "",
+        updatedAt: NOW,
+      },
+    });
+    expect(deps.persistPersona).toHaveBeenCalledWith("discord", {
+      persona: "Discord operator persona",
+      systemPrompt: "",
+      updatedAt: NOW,
+    });
+  });
+
   it("clears a stored channel persona when both fields are empty", async () => {
     const routes = createFridayChannelRoutes(createDeps());
     const updateRoute = routes.find((item) => item.operationId === "channels.persona.update");

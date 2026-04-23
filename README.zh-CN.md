@@ -166,3 +166,7 @@ Friday 是开源软件，许可证以 [LICENSE](LICENSE) 为准。公开发布�
 <p align="center">
   <sub>持续成长，但不丢边界。</sub>
 </p>
+
+## 第三方声明
+
+Friday 包含面向第三方 Agent 生态格式和行为的兼容与适配工作。上游版权和许可声明见 [NOTICE](NOTICE)。

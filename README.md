@@ -166,3 +166,7 @@ Friday is open-source software under the license in [LICENSE](LICENSE). Before p
 <p align="center">
   <sub>Built to grow with you, without losing the boundary.</sub>
 </p>
+
+## Third-Party Notices
+
+Friday includes compatibility and adaptation work for third-party agent ecosystem formats and behavior. See [NOTICE](NOTICE) for preserved upstream copyright and license notices.
