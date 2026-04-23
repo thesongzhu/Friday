@@ -56,7 +56,7 @@ function createMockProviderService(): FridayProviderService {
   } as unknown as FridayProviderService;
 }
 
-describe("OpenClaw overlap acceptance (integration)", () => {
+describe("Agent parity acceptance (integration)", () => {
   let db: FridaySqliteLayer;
 
   beforeEach(() => {

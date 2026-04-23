@@ -6,147 +6,88 @@
 
 <p align="center">
   <strong>陪你一起成长的 AI。</strong><br>
-  自部署。技能驱动。持续学习。
+  自部署。技能驱动。有记忆。先审批再行动。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node ≥22">
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
-  <img src="https://img.shields.io/badge/Release%20Truth-evidence--driven-blue?style=flat-square" alt="Release Truth">
-  <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node >=22">
+  <img src="https://img.shields.io/badge/License-GPL--3.0--only-blue?style=flat-square" alt="GPL-3.0-only">
+  <img src="https://img.shields.io/badge/npm-%40thesongzhu%2Ffriday-red?style=flat-square" alt="@thesongzhu/friday">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
-  <a href="https://discord.gg/x2rd4WsY"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=Discord&color=5865F2" alt="Discord"></a>
 </p>
 
 ---
 
 ## Friday 是什么？
 
-Friday 不只是一个 AI 工具 — 它是一个**会学习你的习惯、记住你的偏好、用得越多越懂你**的自部署 AI 伙伴。
+Friday 是一个自部署 Agent OS，目标是让你的 AI 真正能在本机做事，同时不假装自己是万能系统。
 
-用你自己的 API Key，像装 App 一样安装技能，连接你常用的聊天平台。Friday 跑在你自己的机器上，数据完全属于你。
+它可以对话、调用已安装技能、在缺少技能时走可审核的技能生成流程、运行工作流、保留长期上下文、诊断失败、提出修复方案，并在高风险动作前请求你批准。你使用自己的模型/API Key。Friday 默认跑在本机，敏感凭证应该放在环境变量或托管 secret 引用里。
 
-> 把 Friday 想象成你的私人 AI：一开始是个靠谱的助手，慢慢变成你做任何事都离不开的搭档。
+长期愿景是一个 **AI 自动化员工**：不是被动聊天机器人，而是一个有边界的 operator，会理解你的上下文，把重复工作沉淀成技能或工作流，并在可检查、可回滚、可审计的前提下越用越顺手。
 
-## 当前运行态快照
+## 为什么是现在？
 
-这份 README 反映的是 **当前运行态快照**，不是无条件的发布证明。
+最近中文和英文社区围绕 [Hermes Agent](https://hermes-agent.ai/)、[Agent 记忆](https://hermes.xaapi.ai/features/memory)、[技能系统](https://docs.openclaw.ai/skills) 和 [Agent 安全边界](https://docs.openclaw.ai/security) 的讨论，反复集中在几个问题上：
 
-- 下方有些能力是 operator-only、依赖环境变量、依赖机器权限，或者在未配置时会显示为空状态。
-- `npm test` 和依赖 mock hub 的浏览器套件仍然有价值，但它们**不是**发布证明。
-- 当前有效契约以 [`docs/current-source-of-truth.md`](docs/current-source-of-truth.md) 为准。
-- 发布证据规则以 [`docs/release-evidence-policy.md`](docs/release-evidence-policy.md) 为准。
+- 记忆不能只是更长上下文，必须有结构、检索和人类可见性。
+- 技能让 Agent 变强，但不可信技能也是供应链和本地执行风险。
+- 自我进化只有在能沉淀成可复用产物、测试、证据和回滚路径时才有意义。
+- 自我修复必须对破坏性、凭证相关、生产敏感动作保持有监督。
+- 上下文压缩和模糊指令可能丢掉关键边界，所以审批和审计轨迹非常重要。
 
----
+Friday 的方向很实际：把记忆、技能、工作流、可观测性和审批门禁做成产品能力，而不是把一切赌在一条无限对话里。
 
-## 当前运行态表面
+## Friday 现在能做什么？
 
-<table>
-<tr>
-<td width="50%">
+### 技能与工具
 
-### 对话 & 执行
-内置工具与托管技能。让 Friday 通过当前运行态里已安装、已启用的工具和技能去调研、写作、编程、分析与自动化。
+- 发现已安装和内置技能，包括你从没主动用过的技能。
+- 在技能路由启用时，优先为 review、QA、发布、工作流、安全、写作、画图、自动化等任务选择合适的已安装技能。
+- 扫描本机 AI 技能位置，例如 `~/.claude`、`~/.cursor`、`~/.codex`、本地项目技能目录、工作流目录和 Friday 托管技能目录。
+- 把支持的来源导入或转换成 Friday 技能，然后验证、安装、刷新注册表，并通过 ID 或意图直接调用。
+- 在转换器能识别清楚能力时，支持转换 `SKILL.md` 风格技能、ADK 风格技能、n8n 节点、OpenAPI/GPT Actions、代码仓库、压缩包、Git URL 和桌面录制。
+- 当没有现成技能适配时，走技能生成流程：澄清问题、生成草稿文件、安全检查、自测证据、审批、保存，并立即刷新技能注册表。
+- 如果新技能没有定义清楚，Friday 应该先问你，而不是乱写。它不是万能自动补全系统。
 
-</td>
-<td width="50%">
+### 记忆与上下文
 
-### 可视化工作流
-拖拽式 DAG 工作流编辑器。可视化串联技能、规则和条件，一键部署到中心节点或边缘卫星，实时执行追踪。
+- 从 `context/AGENTS.md`、`context/SOUL.md`、`context/USER.md`、`context/MEMORY.md` 和 `memory/` 下的每日笔记加载工作区上下文。
+- 用带置信度和衰减的学习偏好，让语气、直接程度和引导风格逐渐适配你。
+- 在运行态配置完成后，通过 API 搜索记忆和会话历史。
+- 保持记忆人类可读、可编辑，而不是只藏在不透明向量里。
 
-</td>
-</tr>
-<tr>
-<td>
+### 工作流与自动化
 
-### 聊天集成（依赖环境）
-Discord · Slack · Telegram · WhatsApp · Signal · LINE · IRC · QQ · 飞书 · 网页聊天。只有当对应凭证、路由和运行态接线完成时，这些通道才真正可用。支持按频道白名单和健康监控。
+- 用可视化方式把技能、条件、规则和证据串成工作流。
+- 通过产品 API 部署工作流草稿，而不是手动串联 compile、publish、run、export 和 trace。
+- 运行自动化、重试失败、暴露证据，并在重复失败时暂停。
+- 在 fleet 已配置时，把任务放到 hub 或已注册 satellite 上执行。
 
-</td>
-<td>
+### 自我修复与可观测性
 
-### 记忆 & 自适应人格
-16 种 MBTI 性格模板，9 个可调维度。学习到的偏好采用贝叶斯置信度衰减。Friday 的语气、直接程度和引导风格会逐渐适配你。
+- 检测事件、诊断可能原因、提出修复、执行低风险修复、验证结果，并在需要时回滚或暂停。
+- 对高风险或破坏性改动要求明确批准。
+- 向 operator 展示 trace、审计日志、健康状态、成本、SLO、告警、重试证据和规则决策。
+- Expert autonomy 是可选且有边界的，仍受策略、审批和运行态权限约束。
 
-</td>
-</tr>
-<tr>
-<td>
+### 渠道与桌面
 
-### 有监督的自我修复
-闭环事件管线：检测 → 诊断 → 风险评级 → 提出方案 → 等待批准 → 执行 → 验证 → 必要时回滚 → 学习经验。连续失败 3 次自动暂停。
+- 在凭证和通道接线完成后连接 Discord、Slack、Telegram、WhatsApp、Signal、LINE、IRC、QQ、飞书和 Webchat。
+- 在 native companion 和系统权限准备好后执行点击、输入、截图、滚动、拖拽、App/window 操作。
+- 对不可用集成返回明确 blocked 状态，而不是静默降级。
 
-</td>
-<td>
+## Friday 不是什么？
 
-### 规则引擎 & 策略
-YAML 规则 DSL，支持 allow/deny/warn/audit 四种决策。执行前后钩子守护每个动作。100% 决策可追溯，零不安全操作逃逸。
-
-</td>
-</tr>
-<tr>
-<td>
-
-### 技能生成 & 安全
-AI 驱动的技能生成，保存前自动自测。Shell 安全扫描器拦截 20+ 种危险模式。每个技能都有沙箱隔离、安全验证和版本追踪。
-
-</td>
-<td>
-
-### 桌面自动化（依赖权限）
-跨平台桌面控制：macOS / Windows / Linux 上的点击、输入、截图、滚动、拖拽。可用性取决于本机权限、companion readiness 和规则引擎策略。
-
-</td>
-</tr>
-<tr>
-<td>
-
-### 分布式集群
-Hub + Satellite 架构。基于能力的工作流调度，心跳监控和离线检测，卫星不可用时明确阻塞而非静默降级。
-
-</td>
-<td>
-
-### 安全 & 审计
-JWT + RBAC 认证。SHA-256 哈希链防篡改审计日志。SSRF 防护。能力授权支持过期与撤销。多租户相关能力在代码中存在，但当前运行态默认不会启用，仍受环境变量开关控制。SIEM 导出（JSONL + Webhook）。
-
-</td>
-</tr>
-<tr>
-<td>
-
-### 可观测性（偏运维）
-分布式追踪贯穿所有模块。SLO 监控 + 多窗口燃烧率告警。按提供商的成本看板。告警管线：Webhook、邮件、Slack、PagerDuty。
-
-</td>
-<td>
-
-### 导入与启用（有边界）
-技能和工作流可以通过导入、深度链接或生成流程接入 Friday，但部分资产仍依赖 source 配置、预检结果和运行态权限。
-
-</td>
-</tr>
-<tr>
-<td>
-
-### BYOK — 你的密钥，你的数据
-直连 OpenAI、Anthropic、Google 或任何兼容提供商。提供商健康监控、熔断器、预算紧张时自动降级到更便宜的模型。
-
-</td>
-<td>
-
-### 质量门禁 & 验收（高级）
-逐产物 pass/fail/warn 判定，附完整证据链。支持 Schema、阈值、质量和自定义检查。默认更偏高级/运维场景。
-
-</td>
-</tr>
-</table>
-
----
+- 它不是不受限制的自主黑客或系统管理员。
+- 它不会安全地无审查运行任意第三方技能。
+- 它不保证每个 GitHub 仓库、文档或模糊想法都能自动变成可运行技能。
+- 它不会绕过模型能力限制。小模型或弱工具调用模型的 Agent 行为会受限。
+- 它不会替你承担主机安全、API Key 管理、网络暴露和扩展安装风险。
 
 ## 快速开始
 
-**方式一 — npm 包**
+**方式一 - npm 包**
 
 ```bash
 npm install -g @thesongzhu/friday
@@ -154,96 +95,63 @@ friday start
 # 打开 http://localhost:3141
 ```
 
-**方式二 — 源码安装**
+**方式二 - 源码安装**
 
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
-cd Friday && npm install && npm run build
+cd Friday
+npm install
+npm run build
 npm start
 # 打开 http://localhost:3141
 ```
 
-**方式三 — Docker**
+**方式三 - Docker 源码构建**
 
 ```bash
-cd docker
-docker-compose up -d
+docker compose -f docker/docker-compose.yml up --build
 # 打开 http://localhost:3141
 ```
 
-> **第一次用？** Friday 会引导你完成初始设置，但具体流程取决于这台机器上可用的 provider、权限和可选能力。
+第一次运行的具体路径取决于你的 provider key、本机权限，以及启用了哪些可选能力。
 
----
+## 下载与分发
 
-## 下载
+| 平台 | 方式 | 当前状态 |
+| --- | --- | --- |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | npm 已发布 `1.0.0` |
+| 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
+| Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
+| macOS 原生 App | DMG/Homebrew 打包脚本 | 流水线存在，公开签名产物尚未发布 |
+| Linux 包 | `.deb` / `.AppImage` 打包脚本 | 流水线存在，公开产物尚未发布 |
+| Windows 原生安装器 | MSI/native shell | 规划中 |
+| iOS / Android | 移动端/远程控制台 | 规划中 |
 
-| 平台 | 方式 | 状态 |
-|------|------|------|
-| **macOS / Linux / Windows** | `npm install -g @thesongzhu/friday` | 可用 |
-| **macOS** | 原生 DMG + Homebrew | 即将推出 |
-| **Linux** | `.deb` / `.AppImage` | 即将推出 |
-| **Docker** | `docker-compose up -d` | 可用 |
-| **iOS / Android** | 移动端控制台 | 规划中 |
+官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
 
----
-
-## 你可能想知道的
-
-<details>
-<summary><b>BYOK — 自带 API Key</b></summary>
-
-Friday 不会通过任何第三方服务器存储或代理你的 API Key。你直接连接 OpenAI、Anthropic、Google 或任何兼容 OpenAI 的提供商。你的密钥，你的数据，你做主。
-
-</details>
-
-<details>
-<summary><b>工作区上下文</b></summary>
-
-Friday 会从项目中加载性格和记忆文件：
-
-- `context/AGENTS.md` — 仓库规则和任务路由
-- `context/SOUL.md` — 回复风格和性格设定
-- `context/USER.md` — 你的偏好设置
-- `context/MEMORY.md` — 持久化的项目知识
-- `memory/YYYY-MM-DD.md` — 每日笔记
-
-直接编辑这些文件，Friday 立即适应 — 无需重启。
-
-</details>
-
-<details>
-<summary><b>技能系统</b></summary>
-
-技能就像 Friday 的 App。从压缩包导入、或用 AI 自动生成。每个技能都有沙箱隔离、安全验证和版本追踪。
+## 技能生命周期
 
 ```bash
-friday list              # 查看已安装技能
-friday import ./my.tgz   # 安装一个技能
+friday list
+friday import ./my-skill.friday.tgz
+friday import ./path/to/SKILL.md
+friday import https://github.com/example/skill-repo.git
 ```
 
-</details>
+支持的导入路径是有边界的。Friday 可以识别、转换、验证和安装支持的技能类来源，但不清楚的来源应该先澄清或人工审核，再执行。
 
-<details>
-<summary><b>安全第一</b></summary>
+## 安全姿态
 
-- JWT 认证 + 基于角色的访问控制
-- 哈希链式审计日志（防篡改）
-- Shell 安全扫描器拦截危险命令
-- 所有外部请求的 SSRF 防护
-- 能力授权支持过期和撤销
-- 所有破坏性操作需要明确批准
+- 凭证使用环境变量或 `secret://...` 引用。
+- 安装第三方技能前先审查。
+- 除非已经配置认证、CORS、TLS/代理和最小权限访问，否则不要把 Friday 暴露到公网。
+- 桌面、Shell、浏览器、文件、渠道和网络工具都是强能力，需要明确策略约束。
+- 发布或部署前运行检查：`npm run release:verify:repo` 用于仓库健康，`npm run release:verify` 用于真实运行态证明。
+- 漏洞报告见 [安全策略](.github/SECURITY.md)。
 
-</details>
+## 开源发布状态
 
----
-
-## 重要说明
-
-- **需要 API Key。** Friday 使用你自己的 API Key（Anthropic、OpenAI、Google 等）调用 LLM 服务。由此产生的费用由你自行承担。Friday 不会通过第三方服务器代理你的密钥。
-- **小模型功能有限。** 参数量低于 70 亿（7B）的模型（如 `llama3.2:3b`、`phi-3-mini`）无法可靠地使用工具/函数调用。Friday 会自动为这些模型禁用工具声明，以防止幻觉式的工具调用。如需完整的 Agent 能力（网页搜索、代码执行、浏览器自动化等），请使用 7B 以上参数量的模型。
-- **自托管意味着自管理。** Friday 运行在你自己的机器上。你需要自行负责访问安全、API Key 管理和依赖更新。
-- **不能替代专业建议。** AI 生成的内容可能包含错误，请始终独立验证关键信息。
-- **npm 包名。** 官方 npm 包为 `@thesongzhu/friday`。npm 上的 `friday`（无 scope）是一个无关项目。
+Friday 是开源软件，许可证以 [LICENSE](LICENSE) 为准。公开发布源码快照前请先看 [开源发布审查](docs/open-source-release-review.md)。当前仓库包含生成的审计/证明产物，干净公开发布前应该先裁剪或脱敏。
 
 ---
 
@@ -252,10 +160,9 @@ friday import ./my.tgz   # 安装一个技能
   <a href="CHANGELOG.md">更新日志</a> ·
   <a href=".github/CONTRIBUTING.md">参与贡献</a> ·
   <a href=".github/SECURITY.md">安全策略</a> ·
-  <a href="https://discord.gg/x2rd4WsY">Discord</a> ·
-  <a href="LICENSE">MIT 许可</a>
+  <a href="LICENSE">GPL-3.0-only 许可</a>
 </p>
 
 <p align="center">
-  <sub>用心构建。与你同行。</sub>
+  <sub>持续成长，但不丢边界。</sub>
 </p>

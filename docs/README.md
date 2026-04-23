@@ -8,6 +8,7 @@ Use this page to find the current product truth first, then drill into reference
 
 - [Getting Started Guide](getting-started.md)
 - [Releasing](RELEASING.md)
+- [Open Source Release Review](open-source-release-review.md)
 - [Style Guide](friday-style-guide.md)
 
 ## Start Here
@@ -31,6 +32,7 @@ Supporting product-truth documents:
 - [SSD Gap Report](SSD-GAP-REPORT.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Extending Friday](EXTENDING.md)
+- [Open Source Release Review](open-source-release-review.md)
 - [Agent Orchestration Rollout](ops/friday-agent-orchestration-rollout.md)
 - [Workspace Context Files](workspace-context.md)
 - [Route Contract Migration](route-contract-migration.md)

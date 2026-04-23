@@ -1,6 +1,6 @@
 > Archived: historical audit/plan/report material. Use `docs/current-source-of-truth.md` for the active architecture baseline and `docs/archive/README.md` for archive guidance.
 
-# Friday OpenClaw Overlap Acceptance Plan (Scope-Locked)
+# Friday Agent Parity Acceptance Plan (Scope-Locked)
 
 **Date:** 2026-03-01  
 **Owner:** Platform  
@@ -12,7 +12,7 @@
 
 ### Goal (must match)
 
-1. Friday must match OpenClaw on overlapping runtime behavior:
+1. Friday must match the reference agent surface on overlapping runtime behavior:
    - multi-turn context truly reaches the model;
    - tool execution claims require execution evidence;
    - failed tool calls do not count as successful execution;
@@ -76,7 +76,7 @@
 
 1. `npm run -s check:alignment`
 2. `npm run -s check:all`
-3. `npm run -s test:integration:openclaw-overlap`
+3. `npm run -s test:integration:agent-parity`
 4. `npm run -s test -- test/unit/agent/runtime/friday-agent-runtime.test.ts test/unit/agent/tools/friday-agent-sessions-tool.test.ts test/unit/api/http/routes/friday-session-routes.test.ts test/unit/api/runtime/friday-api-runtime-session-registration.test.ts test/unit/heartbeat/friday-heartbeat-runner.test.ts`
 5. `npm run -s build:api`
 

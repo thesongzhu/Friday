@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OpenClaw-Overlap Alignment Guard
+ * Agent Parity Alignment Guard
  *
  * Purpose:
  * - Protect Friday MVP scope from silent drift.
@@ -209,11 +209,11 @@ async function run() {
   );
 
   if (errors > 0) {
-    console.error(`\n💥 OpenClaw-overlap alignment guard failed with ${errors} error(s)`);
+    console.error(`\n💥 Agent parity alignment guard failed with ${errors} error(s)`);
     process.exit(1);
   }
 
-  console.log("\n🎉 OpenClaw-overlap alignment guard passed");
+  console.log("\n🎉 Agent parity alignment guard passed");
 }
 
 await run();
