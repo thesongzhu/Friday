@@ -293,6 +293,45 @@ describe("FridayAgentRunRepository", () => {
       );
 
       expect(updated?.actualExecution).toEqual(actualExecution);
+      expect(updated?.providerId).toBe("anthropic-1");
+      expect(updated?.model).toBe("claude-3-haiku");
+    });
+
+    it("prefers the actual route over the originally requested route for aggregation fields", () => {
+      const repo = createRepo();
+      const id = idGenerator();
+      db.withWriteTransaction((writer) =>
+        repo.create(writer, {
+          id,
+          task: "Actual route overwrite test",
+          sessionKey: "agent:run:actual-overwrite",
+          providerId: "requested-provider",
+          model: "requested-model",
+          maxAttempts: 3,
+          nowIso: NOW,
+        }),
+      );
+
+      const updated = db.withWriteTransaction((writer) =>
+        repo.update(writer, {
+          id,
+          actualExecution: {
+            actualProviderId: "actual-provider",
+            actualModel: "actual-model",
+            turns: [
+              {
+                providerId: "actual-provider",
+                model: "actual-model",
+                inputTokens: 1,
+                outputTokens: 1,
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(updated?.providerId).toBe("actual-provider");
+      expect(updated?.model).toBe("actual-model");
     });
 
     it("round-trips constraints_json", () => {
