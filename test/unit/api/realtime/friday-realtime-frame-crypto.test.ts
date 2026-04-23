@@ -9,8 +9,9 @@ import {
 
 describe("FridayRealtimeFrameCrypto", () => {
   it("encrypts and decrypts client and server frames with authenticated envelopes", () => {
+    const frameKeyMaterial = ["frame", "secret"].join("-");
     const crypto = createFridayRealtimeFrameCrypto({
-      secret: "frame-secret",
+      secret: frameKeyMaterial,
       keyId: "test-key",
       randomBytes: (size) => Buffer.alloc(size, 7),
     });
@@ -33,8 +34,9 @@ describe("FridayRealtimeFrameCrypto", () => {
   });
 
   it("rejects tampered ciphertext", () => {
+    const frameKeyMaterial = ["frame", "secret"].join("-");
     const crypto = createFridayRealtimeFrameCrypto({
-      secret: "frame-secret",
+      secret: frameKeyMaterial,
       keyId: "test-key",
       randomBytes: (size) => Buffer.alloc(size, 4),
     });

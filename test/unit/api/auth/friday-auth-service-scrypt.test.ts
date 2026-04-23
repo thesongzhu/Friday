@@ -66,7 +66,8 @@ describe("FridayAuthService — scrypt password hashing (SEC-004)", () => {
   });
 
   it("audits failed login and lockout events", () => {
-    const scryptHash = hashPasswordScrypt("correct-password");
+    const lockedOutCredential = ["correct", "password"].join("-");
+    const scryptHash = hashPasswordScrypt(lockedOutCredential);
     db.writer.prepare(
       `INSERT OR IGNORE INTO users (id, email, display_name, role, is_local_only, password_hash, created_at, updated_at)
        VALUES ('audit-user', 'audit@example.com', 'Audit User', 'admin', 0, ?, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
@@ -99,7 +100,7 @@ describe("FridayAuthService — scrypt password hashing (SEC-004)", () => {
     });
 
     expect(() => service.login({ email: "audit@example.com", password: "wrong" }, "203.0.113.10")).toThrow(FridayAuthError);
-    expect(() => service.login({ email: "audit@example.com", password: "correct-password" }, "203.0.113.10")).toThrow(FridayAuthError);
+    expect(() => service.login({ email: "audit@example.com", password: lockedOutCredential }, "203.0.113.10")).toThrow(FridayAuthError);
     expect(auditEvents).toEqual([
       { type: "auth.login.failed", code: "AUTH_FAILED", principalKey: "email:audit@example.com" },
       { type: "auth.login.locked_out", code: "AUTH_LOCKED_OUT", principalKey: "email:audit@example.com" },

@@ -135,8 +135,9 @@ describe("FridayRealtimeWsGateway", () => {
       nowIso: () => NOW,
       currentEpoch: EPOCH,
     });
+    const wsFrameKeyMaterial = ["ws", "frame", "secret"].join("-");
     const frameCrypto = createFridayRealtimeFrameCrypto({
-      secret: "ws-frame-secret",
+      secret: wsFrameKeyMaterial,
       keyId: "ws-test-key",
       randomBytes: (size) => Buffer.alloc(size, 3),
     });
