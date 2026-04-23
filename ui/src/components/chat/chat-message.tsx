@@ -2,6 +2,7 @@ import type React from "react";
 import { useCallback, useState } from "react";
 import { Copy, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { redactSecretLikeText } from "@/lib/security/redact-secrets";
 import type { ChatMessage } from "@/hooks/use-chat-session";
 
 interface ChatMessageBubbleProps {
@@ -12,9 +13,10 @@ interface ChatMessageBubbleProps {
 
 export function ChatMessageBubble({ message, streamingText, onRetry }: ChatMessageBubbleProps) {
   const isUser = message.role === "user";
-  const displayText = message.role === "assistant" && message.status === "streaming"
+  const rawDisplayText = message.role === "assistant" && message.status === "streaming"
     ? (streamingText || "")
     : message.content;
+  const displayText = redactSecretLikeText(rawDisplayText);
 
   const [copied, setCopied] = useState(false);
 

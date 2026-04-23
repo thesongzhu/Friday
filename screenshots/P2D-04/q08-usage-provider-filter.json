@@ -29,7 +29,7 @@
         "cooldownMs": 0,
         "cooldownRemainingMs": 0,
         "enabled": true,
-        "apiKey": "sk-live-openai-ops-5412",
+        "apiKey": "sk-redacted",
         "baseUrl": "https://api.openai.com/v1",
         "spend": 4280,
         "usage": 1820000,

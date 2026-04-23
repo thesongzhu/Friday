@@ -165,8 +165,16 @@ function mapSessionMessagesToChatMessages(records: FridaySessionMessageRecord[])
     }));
 }
 
-function isSessionAlreadyCreatedError(error: unknown): boolean {
-  return error instanceof ApiError && error.code === "ALREADY_EXISTS";
+export function isSessionAlreadyCreatedError(error: unknown): boolean {
+  return error instanceof ApiError
+    && (
+      error.code === "ALREADY_EXISTS"
+      || error.code === "SESSION_ALREADY_EXISTS"
+      || (
+        error.statusCode === 409
+        && /session already exists/i.test(error.message)
+      )
+    );
 }
 
 // ─── Hook ───

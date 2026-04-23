@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { ToolCallViewModel } from "@/hooks/use-agent-run-events";
 import { localize } from "@/lib/i18n/localized-text";
+import { redactSecretLikeText, redactSecretLikeValue } from "@/lib/security/redact-secrets";
 import { useAppLocale } from "@/providers/locale-provider";
 import { cn } from "@/lib/utils/cn";
 
@@ -16,15 +17,8 @@ function formatDuration(ms: number): string {
 }
 
 function truncateValue(value: unknown, maxLen = 200): string {
-  if (value === null || value === undefined) return String(value);
-  if (typeof value === "string") {
-    return value.length > maxLen ? `${value.slice(0, maxLen)}...` : value;
-  }
-  if (typeof value === "object") {
-    const json = JSON.stringify(value, null, 2);
-    return json.length > maxLen ? `${json.slice(0, maxLen)}...` : json;
-  }
-  return String(value);
+  const redacted = redactSecretLikeValue(value);
+  return redacted.length > maxLen ? `${redacted.slice(0, maxLen)}...` : redacted;
 }
 
 // ─── Status badge ───
@@ -87,7 +81,7 @@ function ToolCallDetail({ call, locale }: ToolCallDetailProps) {
             {l("结果", "Summary")}
           </div>
           <p className="whitespace-pre-wrap text-xs text-[color:var(--color-text-secondary)]">
-            {call.summary}
+            {redactSecretLikeText(call.summary)}
           </p>
         </div>
       )}
@@ -188,7 +182,7 @@ export function ChatToolActivity({ toolCalls, activeTool }: ChatToolActivityProp
                 )}
                 {!isExpanded && call.summary && (
                   <span className="min-w-0 max-w-[300px] truncate text-[color:var(--color-text-faint)]">
-                    {call.summary}
+                    {redactSecretLikeText(call.summary)}
                   </span>
                 )}
                 <span className="ml-auto shrink-0 text-[color:var(--color-text-faint)]">
