@@ -20,7 +20,7 @@ export interface UseChatSessionResult {
   sessionKey: string;
   currentRunId: string | null;
   runEvents: UseAgentRunEventsResult;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, options?: { taskPrompt?: string; onAccepted?: () => void }) => Promise<void>;
   isStreaming: boolean;
   clearHistory: () => void;
   startNewConversation: () => void;
@@ -247,7 +247,10 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
   const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
 
-  const sendMessage = useCallback(async (text: string) => {
+  const sendMessage = useCallback(async (
+    text: string,
+    sendOptions?: { taskPrompt?: string; onAccepted?: () => void },
+  ) => {
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -272,6 +275,9 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
       // Start a new agent run
       const result = await agentApi.startRun({
         task: trimmed,
+        taskPrompt: typeof sendOptions?.taskPrompt === "string" && sendOptions.taskPrompt.trim().length > 0
+          ? sendOptions.taskPrompt.trim()
+          : undefined,
         sessionKey: sessionKeyRef.current,
         executionContext: {
           surface: "chat",
@@ -297,6 +303,7 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
           return updated;
         });
         scheduleSyncFromServer(sessionKeyRef.current);
+        sendOptions?.onAccepted?.();
         return;
       }
 
@@ -321,6 +328,7 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
       });
 
       setCurrentRunId(result.runId);
+      sendOptions?.onAccepted?.();
     } catch (err) {
       // Add error message
       const errMsg: ChatMessage = {
