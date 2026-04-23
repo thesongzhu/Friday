@@ -10,7 +10,10 @@
  *   4. Start the server with isolated state
  *   5. Poll GET /v1/health until success
  *   6. POST /v1/auth/login with { "local": true }
- *   7. Send SIGINT, verify clean shutdown
+ *   7. GET / — verifies the UI bundle is served from the install location
+ *      (regression guard: the CLI must resolve dist/ui relative to the
+ *      installed module, not relative to process.cwd())
+ *   8. Send SIGINT, verify clean shutdown
  */
 
 import { execSync, spawn } from "node:child_process";
@@ -238,8 +241,28 @@ async function run() {
     fail(`Login request failed: ${err.message}`);
   }
 
-  // ── Step 7: Clean shutdown via SIGINT ──
-  console.log("7. Sending SIGINT for clean shutdown…");
+  // ── Step 7: GET / — UI bundle served from install location ──
+  console.log("7. Verifying GET / serves the bundled UI…");
+  try {
+    const rootRes = await fetch(`http://127.0.0.1:${port}/`);
+    if (rootRes.status !== 200) {
+      fail(`GET / returned status ${rootRes.status} (expected 200)`);
+    }
+    const rootBody = await rootRes.text();
+    const looksLikeHtml =
+      /<!doctype html/i.test(rootBody) || /<html[\s>]/i.test(rootBody);
+    if (!looksLikeHtml) {
+      fail(
+        `GET / did not return HTML. First 200 chars: ${rootBody.slice(0, 200)}`,
+      );
+    }
+    console.log("   → UI bundle served ✓");
+  } catch (err) {
+    fail(`GET / failed: ${err.message}`);
+  }
+
+  // ── Step 8: Clean shutdown via SIGINT ──
+  console.log("8. Sending SIGINT for clean shutdown…");
   serverProc.kill("SIGINT");
 
   const shutdownDeadline = Date.now() + 10_000;
