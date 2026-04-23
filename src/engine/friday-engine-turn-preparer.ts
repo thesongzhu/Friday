@@ -170,7 +170,7 @@ export interface FridayTurnPreparerInput {
   runId: string;
   sessionKey?: string;
   replyToMessageId?: string;
-  constraints?: { readOnly?: boolean };
+  constraints?: FridayEngineRunInput["constraints"];
   persistTaskMessage?: boolean;
   taskAlreadyInHistory?: boolean;
   idempotencyPrefix?: string;

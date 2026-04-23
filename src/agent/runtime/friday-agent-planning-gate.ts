@@ -6,6 +6,7 @@ import type {
   FridayAgentActualExecution,
   FridayAgentEventMap,
   FridayAgentPlanReviewPayload,
+  FridayAgentRunConstraints,
   FridayAgentRunStatus,
 } from "../model/friday-agent.types.js";
 import type { FridayAgentRunEventRepository } from "../persistence/friday-agent-run-event-repository.js";
@@ -40,7 +41,7 @@ export interface FridayAgentPlanningGateService {
     providerId?: string;
     model?: string;
     taskProfile?: FridayResolvedAgentTaskProfile;
-    constraints?: { readOnly?: boolean; operationalMode?: string };
+    constraints?: FridayAgentRunConstraints;
     reviewRequired?: boolean;
     conversationContext?: FridayAgentConversationContext;
     focusState?: {
@@ -78,6 +79,7 @@ const EXPORT_WORKFLOW_HINTS = /\b(export workflow|workflow bundle|package workfl
 const MAJOR_DECISION_HINTS = /\b(architecture|architect|strategy|migration|roadmap|implementation plan|rollout plan|major refactor|large refactor|overhaul|choose between|decision|tradeoff|design the approach)\b/i;
 const CONSTRAINT_HINTS = /\b(must|should|avoid|without|constraint|permission|runtime|read.?only|safe|safely|don't|do not|cannot)\b/i;
 const DETAIL_HINTS = /\b(trigger|input|output|destination|runtime|workspace|browser|provider|channel|timeline|success|goal|constraint|notify|deploy|export)\b/i;
+const SIMPLE_ARITHMETIC_HINTS = /^\s*(?:what\s+is\s+)?-?\d+(?:\.\d+)?\s*(?:[+\-*/xX÷]|plus|minus|times|multiplied by|divided by)\s*-?\d+(?:\.\d+)?\s*\??\s*$/i;
 
 function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -104,6 +106,22 @@ function detectPlanningKind(task: string, reviewRequired?: boolean): FridayPlann
   if (GENERATE_WORKFLOW_HINTS.test(normalized)) return "generate_workflow";
   if (MAJOR_DECISION_HINTS.test(normalized)) return "major_decision";
   return null;
+}
+
+function hasPlanningActionHint(task: string): boolean {
+  return GENERATE_SKILL_HINTS.test(task)
+    || GENERATE_WORKFLOW_HINTS.test(task)
+    || DEPLOY_WORKFLOW_HINTS.test(task)
+    || EXPORT_WORKFLOW_HINTS.test(task)
+    || MAJOR_DECISION_HINTS.test(task);
+}
+
+function shouldBypassForcedPlanMode(task: string, reviewRequired?: boolean): boolean {
+  if (reviewRequired) return false;
+  const normalized = normalizeText(task);
+  if (QA_BYPASS_HINTS.test(normalized)) return true;
+  if (SIMPLE_ARITHMETIC_HINTS.test(normalized)) return true;
+  return normalized.endsWith("?") && normalized.length <= 240 && !hasPlanningActionHint(normalized);
 }
 
 function isTaskDetailedEnough(task: string, kind: FridayPlanningKind): boolean {
@@ -308,7 +326,7 @@ export function createFridayAgentPlanningGateService(
     providerId?: string;
     model?: string;
     taskProfile?: FridayResolvedAgentTaskProfile;
-    constraints?: { readOnly?: boolean };
+    constraints?: FridayAgentRunConstraints;
     kind: FridayPlanningKind;
     status: "awaiting_clarification" | "awaiting_plan_approval";
     message: string;
@@ -612,9 +630,10 @@ export function createFridayAgentPlanningGateService(
         return { action: "pass_through", pendingPlanRunId: null };
       }
 
-      // ─── Plan mode bypass: force all tasks through the planning gate ───
+      // Plan mode gates execution/design work, but safe Q&A still belongs in the
+      // normal chat path so accidental UI/API plan constraints do not block it.
       const operationalMode = input.focusState?.operationalMode ?? input.constraints?.operationalMode;
-      const kind = operationalMode === "plan"
+      const kind = operationalMode === "plan" && !shouldBypassForcedPlanMode(input.task, input.reviewRequired)
         ? "major_decision" as FridayPlanningKind
         : detectPlanningKind(input.task, input.reviewRequired);
       if (!kind) {

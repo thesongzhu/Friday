@@ -180,6 +180,20 @@ describe("friday-agent-planning-gate", () => {
     expect(runs.get("run-new-workflow")?.actualExecution?.turns).toEqual([]);
   });
 
+  it("does not force safe Q&A through clarification when plan mode is present", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-simple-question",
+      task: "What is 2+2?",
+      sessionKey: "ui:assistant:1",
+      constraints: { readOnly: true, operationalMode: "plan" },
+    });
+
+    expect(decision).toEqual({ action: "pass_through" });
+    expect(runs.has("run-simple-question")).toBe(false);
+  });
+
   it("moves from clarification to plan approval when the user answers follow-up questions", () => {
     const service = createService();
 

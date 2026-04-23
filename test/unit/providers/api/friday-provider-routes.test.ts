@@ -354,6 +354,53 @@ describe("FridayProviderRoutes", () => {
       expect(result).toHaveProperty("provider");
     });
 
+    it("providers.create returns schema details and alias hints for invalid field names", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const createRoute = routes.find(
+        (r) => r.operationId === "providers.create",
+      )!;
+
+      await expect(
+        createRoute.handler(makeCtx({
+          body: {
+            providerKind: "openai",
+            displayName: "Test",
+            baseUrl: "https://api.openai.com",
+            authMode: "api-key",
+            api: "openai-completions",
+            supportedModels: ["gpt-4o"],
+          },
+        })),
+      ).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        httpStatus: 422,
+        message: expect.stringContaining("providerKind is not accepted; use kind"),
+        details: {
+          errors: expect.arrayContaining([
+            "providerKind is not accepted; use kind",
+            "displayName is not accepted; use name",
+          ]),
+          schema: expect.objectContaining({
+            acceptedFields: expect.arrayContaining(["kind", "name", "baseUrl", "api", "supportedModels"]),
+            requiredFields: expect.arrayContaining(["kind", "name", "baseUrl", "authMode", "api", "supportedModels"]),
+            enums: expect.objectContaining({
+              kind: expect.arrayContaining(["openai"]),
+              authMode: expect.arrayContaining(["api-key"]),
+              api: expect.arrayContaining(["openai-completions"]),
+            }),
+            aliases: expect.objectContaining({
+              providerKind: "kind",
+              displayName: "name",
+            }),
+          }),
+        },
+      });
+      expect(mockService.createProvider).not.toHaveBeenCalled();
+    });
+
     it("providers.delete returns deleted true", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({

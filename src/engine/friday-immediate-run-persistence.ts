@@ -1,4 +1,5 @@
 import type {
+  FridayAgentRunConstraints,
   FridayAgentRunEventRepository,
   FridayAgentRunRepository,
 } from "#agent";
@@ -18,7 +19,7 @@ export interface FridayImmediateRunPersistenceInput {
   sessionKey?: string;
   providerId?: string;
   model?: string;
-  constraints?: { readOnly?: boolean };
+  constraints?: FridayAgentRunConstraints;
   responseText: string;
 }
 
