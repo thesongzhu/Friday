@@ -10,6 +10,8 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { type FridayConfig, type LoadedFridayConfig, parseFridayConfig, writeFridayConfig } from "#config";
+import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
 import type { FridayAgentMessage, FridaySsrfPolicy } from "#agent";
 import type {
@@ -652,7 +654,120 @@ export function resolveTokenSecret(
   return { secret: generated, source: "generated" };
 }
 
-// ─── Stub services for standalone hub ───
+// ─── Config manager ───
+
+const FRIDAY_HUB_CONFIG_SETTINGS_KEY = "runtime.config.current";
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cloneJsonRecord<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function setPathValue(target: Record<string, unknown>, pathKey: string, value: unknown): void {
+  const parts = pathKey.split(".").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return;
+  let cursor = target;
+  for (let index = 0; index < parts.length - 1; index++) {
+    const part = parts[index]!;
+    const current = cursor[part];
+    if (!isJsonRecord(current)) {
+      cursor[part] = {};
+    }
+    cursor = cursor[part] as Record<string, unknown>;
+  }
+  cursor[parts[parts.length - 1]!] = value;
+}
+
+function getPathValue(source: Record<string, unknown>, pathKey: string): unknown {
+  const parts = pathKey.split(".").map((part) => part.trim()).filter(Boolean);
+  let cursor: unknown = source;
+  for (const part of parts) {
+    if (!isJsonRecord(cursor) || !(part in cursor)) {
+      return undefined;
+    }
+    cursor = cursor[part];
+  }
+  return cursor;
+}
+
+function mergeConfigPatch(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const next = cloneJsonRecord(base);
+  for (const [key, value] of Object.entries(patch)) {
+    if (key.includes(".")) {
+      setPathValue(next, key, value);
+      continue;
+    }
+    if (isJsonRecord(value) && isJsonRecord(next[key])) {
+      next[key] = mergeConfigPatch(next[key] as Record<string, unknown>, value);
+    } else {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
+function collectPatchKeys(patch: Record<string, unknown>, prefix = ""): string[] {
+  const keys: string[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    const pathKey = prefix ? `${prefix}.${key}` : key;
+    if (key.includes(".")) {
+      keys.push(pathKey);
+      continue;
+    }
+    if (isJsonRecord(value) && Object.keys(value).length > 0) {
+      keys.push(...collectPatchKeys(value, pathKey));
+    } else {
+      keys.push(pathKey);
+    }
+  }
+  return [...new Set(keys)].sort();
+}
+
+function diffConfigKeys(
+  before: unknown,
+  after: unknown,
+  prefix = "",
+): string[] {
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    return [];
+  }
+  if (!isJsonRecord(before) || !isJsonRecord(after)) {
+    return prefix ? [prefix] : [];
+  }
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const changed: string[] = [];
+  for (const key of keys) {
+    const childPrefix = prefix ? `${prefix}.${key}` : key;
+    changed.push(...diffConfigKeys(before[key], after[key], childPrefix));
+  }
+  return [...new Set(changed)].sort();
+}
+
+function mapConfigValidationError(error: unknown): {
+  field: string;
+  rule: string;
+  message: string;
+}[] {
+  if (isJsonRecord(error) && Array.isArray(error.issues)) {
+    return error.issues.map((issue) => {
+      const record = isJsonRecord(issue) ? issue : {};
+      const pathValue = Array.isArray(record.path) ? record.path.join(".") : "";
+      return {
+        field: pathValue || "config",
+        rule: typeof record.code === "string" ? record.code : "invalid",
+        message: typeof record.message === "string" ? record.message : "Invalid config value",
+      };
+    });
+  }
+  return [{
+    field: "config",
+    rule: "invalid",
+    message: error instanceof Error ? error.message : String(error),
+  }];
+}
 
 export function createStubConfigManager(
   config: { stateDir?: string; skillDirs: string[] },
@@ -668,22 +783,248 @@ export function createStubConfigManager(
   };
 
   const securityProfile: FridaySkillSecurityProfile = {};
+  const managedConfigPath = stateRuntime.config.exists
+    ? stateRuntime.config.configPath
+    : path.join(stateRuntime.stateDir, "friday.config.json5");
+
+  function nowIso(): string {
+    return new Date().toISOString();
+  }
+
+  function readSnapshot(): { revision: number; config: FridayConfig } {
+    return stateRuntime.sqlite.withWriteTransaction((db) => {
+      const row = db
+        .prepare("SELECT value_json, revision FROM hub_settings WHERE key = ?")
+        .get(FRIDAY_HUB_CONFIG_SETTINGS_KEY) as { value_json: string; revision: number } | undefined;
+      if (row) {
+        const parsed = safeJsonParse<unknown>(row.value_json);
+        try {
+          return {
+            revision: row.revision,
+            config: parseFridayConfig(parsed),
+          };
+        } catch {
+          // Fall through to re-seeding from the last known loaded config.
+        }
+      }
+
+      const current = parseFridayConfig(stateRuntime.config.config);
+      const timestamp = nowIso();
+      db.prepare(
+        `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+         VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
+      ).run(FRIDAY_HUB_CONFIG_SETTINGS_KEY, JSON.stringify(current), timestamp, timestamp);
+      db.prepare(
+        `INSERT OR IGNORE INTO config_revisions
+         (id, revision, patch_json, full_snapshot_json, changed_keys_json, reason, created_at)
+         VALUES (?, 1, ?, ?, ?, ?, ?)`,
+      ).run(
+        crypto.randomUUID(),
+        JSON.stringify({ initial: true }),
+        JSON.stringify(current),
+        JSON.stringify([]),
+        "Initial runtime config snapshot",
+        timestamp,
+      );
+      return { revision: 1, config: current };
+    });
+  }
+
+  function persistSnapshot(input: {
+    nextConfig: FridayConfig;
+    nextRevision: number;
+    patch: Record<string, unknown>;
+    changedKeys: string[];
+    reason?: string;
+    revertedFrom?: number;
+  }): void {
+    const timestamp = nowIso();
+    stateRuntime.sqlite.withWriteTransaction((db) => {
+      db.prepare(
+        `INSERT INTO hub_settings (key, value_json, revision, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value_json = excluded.value_json,
+           revision = excluded.revision,
+           updated_at = excluded.updated_at`,
+      ).run(
+        FRIDAY_HUB_CONFIG_SETTINGS_KEY,
+        JSON.stringify(input.nextConfig),
+        input.nextRevision,
+        timestamp,
+        timestamp,
+      );
+      db.prepare(
+        `INSERT INTO config_revisions
+         (id, revision, patch_json, full_snapshot_json, changed_keys_json, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        crypto.randomUUID(),
+        input.nextRevision,
+        JSON.stringify(input.revertedFrom === undefined
+          ? input.patch
+          : { revertToRevision: input.patch.toRevision, revertedFrom: input.revertedFrom }),
+        JSON.stringify(input.nextConfig),
+        JSON.stringify(input.changedKeys),
+        input.reason ?? null,
+        timestamp,
+      );
+    });
+    stateRuntime.config = {
+      ...stateRuntime.config,
+      config: input.nextConfig,
+      configPath: managedConfigPath,
+      exists: true,
+      rawText: JSON.stringify(input.nextConfig, null, 2),
+    };
+  }
 
   return {
-    getCurrentConfig: async () => ({
-      ...stateRuntime.config,
-      runtimeStateDir: stateRuntime.stateDir,
-      launchCwd: process.cwd(),
-    }),
-    getConfig: async () => ({ revision: 1, settings: {} }),
-    validatePatch: async () => ({ valid: true, errors: [] }),
-    applyPatch: async () => ({ revision: 1, changedKeys: [] }),
-    listRevisions: async () => ({ items: [] }),
-    revertToRevision: async () => ({
-      revision: 1,
-      changedKeys: [],
-      revertedFrom: 1,
-    }),
+    getCurrentConfig: async (): Promise<LoadedFridayConfig> => {
+      const snapshot = readSnapshot();
+      return {
+        ...stateRuntime.config,
+        config: snapshot.config,
+        configPath: managedConfigPath,
+        exists: true,
+        rawText: JSON.stringify(snapshot.config, null, 2),
+        runtimeStateDir: stateRuntime.stateDir,
+        launchCwd: process.cwd(),
+      };
+    },
+    getConfig: async (keys) => {
+      const snapshot = readSnapshot();
+      if (!keys || keys.length === 0) {
+        return {
+          revision: snapshot.revision,
+          settings: cloneJsonRecord(snapshot.config) as unknown as Record<string, unknown>,
+        };
+      }
+      const full = snapshot.config as unknown as Record<string, unknown>;
+      const settings: Record<string, unknown> = {};
+      for (const key of keys) {
+        const value = getPathValue(full, key);
+        if (value !== undefined) {
+          settings[key] = value;
+        }
+      }
+      return { revision: snapshot.revision, settings };
+    },
+    validatePatch: async (patch) => {
+      try {
+        const snapshot = readSnapshot();
+        parseFridayConfig(mergeConfigPatch(
+          snapshot.config as unknown as Record<string, unknown>,
+          patch,
+        ));
+        return { valid: true, errors: [] };
+      } catch (error) {
+        return { valid: false, errors: mapConfigValidationError(error) };
+      }
+    },
+    applyPatch: async (params) => {
+      const snapshot = readSnapshot();
+      if (params.expectedRevision !== snapshot.revision) {
+        throw new FridayDomainError(
+          "CONFIG_REVISION_CONFLICT",
+          `Config revision conflict: expected ${String(params.expectedRevision)}, current ${String(snapshot.revision)}`,
+          { httpStatus: 409 },
+        );
+      }
+      const candidateRaw = mergeConfigPatch(
+        snapshot.config as unknown as Record<string, unknown>,
+        params.patch,
+      );
+      const nextConfig = parseFridayConfig(candidateRaw);
+      const changedKeys = diffConfigKeys(snapshot.config, nextConfig);
+      const nextRevision = snapshot.revision + 1;
+      await writeFridayConfig(nextConfig, {
+        configPath: managedConfigPath,
+        backupCount: nextConfig.backups.configBackupCount,
+      });
+      persistSnapshot({
+        nextConfig,
+        nextRevision,
+        patch: params.patch,
+        changedKeys: changedKeys.length > 0 ? changedKeys : collectPatchKeys(params.patch),
+        reason: params.reason,
+      });
+      return { revision: nextRevision, changedKeys };
+    },
+    listRevisions: async (cursor, limit) => {
+      const safeLimit = Math.min(Math.max(limit ?? 50, 1), 100);
+      const beforeRevision = cursor && Number.isInteger(Number(cursor))
+        ? Number(cursor)
+        : undefined;
+      const rows = stateRuntime.sqlite.withReadConnection((db) => (
+        beforeRevision
+          ? db.prepare(
+            `SELECT * FROM config_revisions
+             WHERE revision < ?
+             ORDER BY revision DESC
+             LIMIT ?`,
+          ).all(beforeRevision, safeLimit + 1)
+          : db.prepare(
+            `SELECT * FROM config_revisions
+             ORDER BY revision DESC
+             LIMIT ?`,
+          ).all(safeLimit + 1)
+      )) as Array<{
+        id: string;
+        revision: number;
+        patch_json: string;
+        full_snapshot_json: string;
+        changed_keys_json: string;
+        changed_by_user_id: string | null;
+        reason: string | null;
+        created_at: string;
+      }>;
+      const page = rows.slice(0, safeLimit);
+      return {
+        items: page.map((row) => ({
+          id: row.id,
+          revision: row.revision,
+          patch: safeJsonParse<Record<string, unknown>>(row.patch_json) ?? {},
+          fullSnapshot: safeJsonParse<Record<string, unknown>>(row.full_snapshot_json) ?? {},
+          changedKeys: safeJsonParse<string[]>(row.changed_keys_json) ?? [],
+          changedByUserId: row.changed_by_user_id ?? undefined,
+          reason: row.reason ?? undefined,
+          createdAt: row.created_at,
+        })),
+        ...(rows.length > safeLimit ? { nextCursor: String(page.at(-1)!.revision) } : {}),
+      };
+    },
+    revertToRevision: async (toRevision) => {
+      const snapshot = readSnapshot();
+      const row = stateRuntime.sqlite.withReadConnection((db) =>
+        db.prepare("SELECT full_snapshot_json FROM config_revisions WHERE revision = ?")
+          .get(toRevision),
+      ) as { full_snapshot_json: string } | undefined;
+      if (!row) {
+        throw new FridayDomainError("CONFIG_REVISION_NOT_FOUND", "Config revision not found", { httpStatus: 404 });
+      }
+      const nextConfig = parseFridayConfig(safeJsonParse<unknown>(row.full_snapshot_json));
+      const changedKeys = diffConfigKeys(snapshot.config, nextConfig);
+      const nextRevision = snapshot.revision + 1;
+      await writeFridayConfig(nextConfig, {
+        configPath: managedConfigPath,
+        backupCount: nextConfig.backups.configBackupCount,
+      });
+      persistSnapshot({
+        nextConfig,
+        nextRevision,
+        patch: { toRevision },
+        changedKeys,
+        reason: `Reverted to revision ${String(toRevision)}`,
+        revertedFrom: snapshot.revision,
+      });
+      return {
+        revision: nextRevision,
+        changedKeys,
+        revertedFrom: snapshot.revision,
+      };
+    },
     getSkillRegistrySettings: async () => skillSettings,
     getSkillSecurityProfile: async () => securityProfile,
   };

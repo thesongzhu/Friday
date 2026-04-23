@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type {
   FridayNodeExecutor,
   FridayNodeRunOptions,
@@ -58,6 +58,17 @@ export function createFridayNodeExecutor(config?: {
       const entrypoint = options.cwd
         ? resolve(options.cwd, options.entrypoint)
         : resolve(options.entrypoint);
+      if (options.cwd) {
+        const relativeEntrypoint = relative(options.cwd, entrypoint);
+        if (relativeEntrypoint.startsWith("..") || isAbsolute(relativeEntrypoint)) {
+          return {
+            output: {},
+            timedOut: false,
+            durationMs: Date.now() - startMs,
+            error: `Skill entrypoint '${options.entrypoint}' escapes the skill directory sandbox`,
+          };
+        }
+      }
 
       try {
         // Dynamic import of the skill module

@@ -51,7 +51,7 @@ describe("FridaySatelliteSyncService", () => {
     });
   }
 
-  it("push forwards local events to learningEventWriter when configured", () => {
+  it("push forwards local events to learningEventWriter when configured", async () => {
     const writer = vi.fn();
     const service = createFridaySatelliteSyncService({
       db,
@@ -73,7 +73,7 @@ describe("FridaySatelliteSyncService", () => {
       },
     ];
 
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [],
       localEvents,
@@ -84,10 +84,10 @@ describe("FridaySatelliteSyncService", () => {
     expect(writer).toHaveBeenCalledWith(localEvents);
   });
 
-  it("push accepts local events when learningEventWriter is not configured", () => {
+  it("push accepts local events when learningEventWriter is not configured", async () => {
     const service = createService();
 
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [],
       localEvents: [
@@ -117,6 +117,97 @@ describe("FridaySatelliteSyncService", () => {
     expect(result.streamId).toBe("stream-1");
     expect(result.nextCursor).toBeTruthy();
     expect(result.fullPullRequired).toBeUndefined();
+  });
+
+  it("pull leases queued offline messages and push acks them through the outbox stream", async () => {
+    db.withWriteTransaction((d) => {
+      outboxRepo.insertMessage(d, "cmd-1", {
+        satelliteId: "sat-1",
+        queueKey: "workflow:run-1",
+        messageType: "workflow.node.execute",
+        payloadCiphertext: Buffer.from(JSON.stringify({ runId: "run-1" }), "utf8").toString("base64"),
+        nonce: "inline",
+        keyId: "inline:v1",
+        idempotencyKey: "idem-cmd-1",
+      }, NOW);
+    });
+
+    const service = createService();
+    const pulled = service.pull({
+      satelliteId: "sat-1",
+      streamId: "outbox",
+      lastAckedSeq: 0,
+      subscriptions: ["outbox"],
+    });
+
+    expect(pulled.queueItems).toHaveLength(1);
+    expect(pulled.queueItems[0]).toMatchObject({
+      id: "cmd-1",
+      messageType: "workflow.node.execute",
+    });
+
+    const pushed = await service.push({
+      satelliteId: "sat-1",
+      acks: [{ streamId: "outbox", seq: pulled.queueItems[0]!.seq, epoch: pulled.epoch }],
+    });
+
+    expect(pushed.conflicts).toHaveLength(0);
+    expect(pushed.acceptedAcks).toEqual([{ streamId: "outbox", seq: pulled.queueItems[0]!.seq }]);
+
+    const message = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-1"));
+    expect(message?.status).toBe("acked");
+  });
+
+  it("push reports node results and surfaces stale-attempt conflicts", async () => {
+    const writer = vi.fn(async (input) => {
+      if (input.attemptId === "attempt-stale") {
+        throw Object.assign(new Error("Workflow node attempt number mismatch"), {
+          code: "WORKFLOW_RUN_NODE_ATTEMPT_MISMATCH",
+        });
+      }
+    });
+    const service = createFridaySatelliteSyncService({
+      db,
+      checkpointRepo,
+      outboxRepo,
+      cursorSigner,
+      ackValidator,
+      nowIso: () => NOW,
+      remoteNodeResultWriter: writer,
+    });
+
+    const result = await service.push({
+      satelliteId: "sat-1",
+      acks: [],
+      nodeResults: [
+        {
+          runId: "run-1",
+          nodeId: "node-a",
+          attemptId: "attempt-ok",
+          attempt: 1,
+          status: "completed",
+          output: { ok: true },
+        },
+        {
+          runId: "run-1",
+          nodeId: "node-a",
+          attemptId: "attempt-stale",
+          attempt: 0,
+          status: "completed",
+        },
+      ],
+    });
+
+    expect(writer).toHaveBeenCalledTimes(2);
+    expect(result.acceptedNodeResults).toEqual([
+      { runId: "run-1", nodeId: "node-a", attemptId: "attempt-ok" },
+    ]);
+    expect(result.conflicts).toContainEqual({
+      streamId: "workflow:run-1",
+      seq: 0,
+      code: "WORKFLOW_RUN_NODE_ATTEMPT_MISMATCH",
+      message: "Workflow node attempt number mismatch",
+    });
   });
 
   it("pull with valid resume cursor succeeds", () => {
@@ -159,9 +250,9 @@ describe("FridaySatelliteSyncService", () => {
     expect(result.fullPullRequired).toBe(true);
   });
 
-  it("push accepts acks with correct epoch and advances checkpoint", () => {
+  it("push accepts acks with correct epoch and advances checkpoint", async () => {
     const service = createService();
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [{ streamId: "stream-1", seq: 10, epoch: 1 }],
     });
@@ -177,9 +268,9 @@ describe("FridaySatelliteSyncService", () => {
     expect(lastSeq).toBe(10);
   });
 
-  it("push rejects acks with stale epoch", () => {
+  it("push rejects acks with stale epoch", async () => {
     const service = createService();
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [{ streamId: "stream-1", seq: 10, epoch: 999 }],
     });
@@ -189,17 +280,17 @@ describe("FridaySatelliteSyncService", () => {
     expect(result.conflicts[0]!.code).toBe("STREAM_EPOCH_STALE");
   });
 
-  it("push enforces monotonic checkpoint (idempotent on duplicate)", () => {
+  it("push enforces monotonic checkpoint (idempotent on duplicate)", async () => {
     const service = createService();
 
     // First push
-    service.push({
+    await service.push({
       satelliteId: "sat-1",
       acks: [{ streamId: "stream-1", seq: 10, epoch: 1 }],
     });
 
     // Second push with lower seq — still accepted (idempotent)
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [{ streamId: "stream-1", seq: 5, epoch: 1 }],
     });
@@ -213,9 +304,9 @@ describe("FridaySatelliteSyncService", () => {
     expect(lastSeq).toBe(10);
   });
 
-  it("push rejects ack with tampered cursor", () => {
+  it("push rejects ack with tampered cursor", async () => {
     const service = createService();
-    const result = service.push({
+    const result = await service.push({
       satelliteId: "sat-1",
       acks: [{ streamId: "stream-1", seq: 10, epoch: 1, cursor: "tampered.cursor" }],
     });

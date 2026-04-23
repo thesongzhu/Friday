@@ -21,10 +21,9 @@ describe("FridaySatelliteRuntimeRoutes", () => {
       nextCursor: undefined,
     })),
     pushSync: vi.fn(async () => ({
-      acceptedAcks: 1,
-      rejectedAcks: 0,
-      acceptedEvents: 1,
-      rejectedEvents: 0,
+      acceptedAcks: [],
+      acceptedNodeResults: [],
+      conflicts: [],
     })),
     pollCommands: vi.fn(async () => []),
     ackCommand: vi.fn(async () => ({ acked: true })),
@@ -153,6 +152,43 @@ describe("FridaySatelliteRuntimeRoutes", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "SATELLITE_PRINCIPAL_MISMATCH", httpStatus: 403 });
+  });
+
+  it("forwards sync node results for offline completion replay", async () => {
+    const route = findRoute("satellites.sync.push");
+    await route.handler(
+      makeCtx("sat-1", {
+        body: {
+          acks: [{ streamId: "outbox", seq: 10, epoch: 1 }],
+          nodeResults: [
+            {
+              runId: "run-1",
+              nodeId: "node-1",
+              attemptId: "attempt-1",
+              attempt: 1,
+              status: "completed",
+              output: { ok: true },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(deps.pushSync).toHaveBeenCalledWith({
+      satelliteId: "sat-1",
+      acks: [{ streamId: "outbox", seq: 10, epoch: 1 }],
+      localEvents: undefined,
+      nodeResults: [
+        {
+          runId: "run-1",
+          nodeId: "node-1",
+          attemptId: "attempt-1",
+          attempt: 1,
+          status: "completed",
+          output: { ok: true },
+        },
+      ],
+    });
   });
 
   it("decodes leased workflow commands for poll", async () => {

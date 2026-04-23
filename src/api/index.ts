@@ -51,6 +51,11 @@ export { createFridayRealtimeSubscriptionService } from "./realtime/friday-realt
 export type { FridayRealtimeSubscriptionService } from "./realtime/friday-realtime-subscription-service.js";
 export { createFridayRealtimeWsGateway } from "./realtime/friday-realtime-ws-gateway.js";
 export type { FridayRealtimeWsGateway, FridayWsConnection } from "./realtime/friday-realtime-ws-gateway.js";
+export {
+  createFridayRealtimeFrameCrypto,
+  isFridayRealtimeEncryptedFrameEnvelope,
+} from "./realtime/friday-realtime-frame-crypto.js";
+export type { FridayRealtimeFrameCrypto } from "./realtime/friday-realtime-frame-crypto.js";
 
 // Execution-control event emitter
 export { createExecutionControlEventEmitter } from "./realtime/friday-execution-control-event-emitter.js";

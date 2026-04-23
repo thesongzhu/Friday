@@ -24,6 +24,7 @@ import { buildErrorResponse } from "./friday-http-error-mapper.js";
 import { isFridayHttpRawTextResponse } from "./friday-http-raw-response.js";
 import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api-error-codes.js";
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
+import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
 
 // ─── Types ───
 
@@ -60,6 +61,15 @@ export interface FridayHttpServer {
 
 const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
+const FRIDAY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface FridayHttpIdempotencyEntry {
+  operationId: string;
+  principalId: string;
+  payloadHash: string;
+  data: unknown;
+  expiresAtMs: number;
+}
 
 /** Base security headers applied to every response. */
 const FRIDAY_BASE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
@@ -145,6 +155,29 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
+}
+
+function hasJsonContentType(headers: IncomingMessage["headers"]): boolean {
+  const raw = headers["content-type"];
+  const contentType = Array.isArray(raw) ? raw.join(",") : raw;
+  if (!contentType) return false;
+  return contentType
+    .split(";")[0]!
+    .trim()
+    .toLowerCase()
+    .includes("json");
+}
+
+function assertSerializableJsonResponse(value: unknown, operationId: string): void {
+  if (value === undefined) {
+    throw new Error(`Route '${operationId}' returned undefined without taking over the response`);
+  }
+  try {
+    JSON.stringify(value);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Route '${operationId}' returned a non-JSON-serializable response: ${message}`);
+  }
 }
 
 class PayloadTooLargeError extends Error {
@@ -420,7 +453,7 @@ function buildCorsHeaders(
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-Id",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Request-Id, Idempotency-Key",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
   };
@@ -436,6 +469,15 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
   const hasObservabilityRoutes = routes
     .getRoutes()
     .some((route) => route.path.startsWith("/v1/observability"));
+  const idempotencyStore = new Map<string, FridayHttpIdempotencyEntry>();
+
+  function pruneExpiredIdempotencyEntries(nowMs: number): void {
+    for (const [key, entry] of idempotencyStore.entries()) {
+      if (entry.expiresAtMs <= nowMs) {
+        idempotencyStore.delete(key);
+      }
+    }
+  }
 
   // Track active connections so close() can destroy keep-alive sockets
   const connections = new Set<Socket>();
@@ -532,6 +574,18 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         }
         rawBody = raw;
         if (raw.length > 0) {
+          if (!hasJsonContentType(req.headers)) {
+            sendJsonWithHeaders(res, 415, {
+              ok: false,
+              error: {
+                code: "UNSUPPORTED_MEDIA_TYPE",
+                message: "Request body must use an application/json content type",
+                retryable: false,
+              },
+              requestId,
+            }, corsHeaders, isHead);
+            return;
+          }
           try {
             body = JSON.parse(raw);
           } catch (err) {
@@ -643,6 +697,57 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         if (rateLimitResult.headers) Object.assign(middlewareHeaders, rateLimitResult.headers);
       }
 
+      let idempotencyStoreKey: string | undefined;
+      const idempotencyKey = method === "GET" ? undefined : readIdempotencyKeyHeader(ctx.headers);
+      if (idempotencyKey) {
+        pruneExpiredIdempotencyEntries(Date.now());
+        const principalId = ctx.principal?.principalId ?? "anonymous";
+        const payloadHash = hashIdempotencyPayload({
+          method,
+          path: route.path,
+          params,
+          query,
+          body,
+        });
+        idempotencyStoreKey = `${principalId}:${route.operationId}:${idempotencyKey}`;
+        const existing = idempotencyStore.get(idempotencyStoreKey);
+        if (existing) {
+          if (existing.payloadHash !== payloadHash || existing.operationId !== route.operationId) {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_KEY_CONFLICT",
+                message: `Idempotency-Key '${idempotencyKey}' was already used with a different payload for operation '${route.operationId}'.`,
+                retryable: false,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
+
+          const replayBody = JSON.stringify({
+            ok: true,
+            data: existing.data,
+            requestId,
+          });
+          const replayHeaders: Record<string, string | number> = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": Buffer.byteLength(replayBody),
+            "Idempotency-Replayed": "true",
+            ...FRIDAY_SECURITY_HEADERS,
+            ...middlewareHeaders,
+            ...corsHeaders,
+          };
+          res.writeHead(200, replayHeaders);
+          if (isHead) {
+            res.end();
+          } else {
+            res.end(replayBody);
+          }
+          return;
+        }
+      }
+
       // Inject raw response reference for SSE streaming routes
       (ctx as FridayHttpContext<unknown, unknown, unknown> & { _raw?: ServerResponse })._raw = res;
 
@@ -669,6 +774,24 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           res.end(responseBody);
         }
         return;
+      }
+
+      assertSerializableJsonResponse(result, route.operationId);
+
+      if (idempotencyStoreKey) {
+        idempotencyStore.set(idempotencyStoreKey, {
+          operationId: route.operationId,
+          principalId: ctx.principal?.principalId ?? "anonymous",
+          payloadHash: hashIdempotencyPayload({
+            method,
+            path: route.path,
+            params,
+            query,
+            body,
+          }),
+          data: result,
+          expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
+        });
       }
 
       // Send success response with middleware + CORS headers merged in
@@ -811,7 +934,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     function sendFrames(frames: FridayRealtimeServerFrame[]): void {
       for (const f of frames) {
         if (!socket.writable) break;
-        socket.write(encodeWsTextFrame(JSON.stringify(f)));
+        const wireFrame = deps.wsGateway.encodeServerFrame?.(f) ?? f;
+        socket.write(encodeWsTextFrame(JSON.stringify(wireFrame)));
       }
     }
 
@@ -822,7 +946,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         if (deps.wsGateway.shouldDeliverEvent(conn, envelope)) {
           const serverFrame: FridayRealtimeServerFrame = { type: "event", envelope };
           if (socket.writable) {
-            socket.write(encodeWsTextFrame(JSON.stringify(serverFrame)));
+            const wireFrame = deps.wsGateway.encodeServerFrame?.(serverFrame) ?? serverFrame;
+            socket.write(encodeWsTextFrame(JSON.stringify(wireFrame)));
           }
         }
       });

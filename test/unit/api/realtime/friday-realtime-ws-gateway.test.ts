@@ -8,6 +8,7 @@ import {
   createFridayRealtimeSubscriptionService,
   createFridayRealtimeEventRepository,
   createFridayRealtimeCheckpointRepository,
+  createFridayRealtimeFrameCrypto,
 } from "#api";
 import { createFridayRealtimeEventBus } from "#api";
 import {
@@ -122,6 +123,54 @@ describe("FridayRealtimeWsGateway", () => {
     expect(ack.protocolVersion).toBe("1.0");
     expect(ack.serverVersion).toBe("1.0.0-test");
     expect(ack.epoch).toBe(EPOCH);
+  });
+
+  it("accepts encrypted client frames and emits encrypted server envelopes when frame crypto is configured", () => {
+    const eventRepo = createFridayRealtimeEventRepository();
+    const checkpointRepo = createFridayRealtimeCheckpointRepository();
+    const subscriptionService = createFridayRealtimeSubscriptionService({
+      db,
+      eventRepo,
+      checkpointRepo,
+      nowIso: () => NOW,
+      currentEpoch: EPOCH,
+    });
+    const frameCrypto = createFridayRealtimeFrameCrypto({
+      secret: "ws-frame-secret",
+      keyId: "ws-test-key",
+      randomBytes: (size) => Buffer.alloc(size, 3),
+    });
+    const encryptedGateway = createFridayRealtimeWsGateway({
+      tokenValidator: createFridayTokenValidator({
+        tokenSecret: TOKEN_SECRET,
+        nowMs: () => NOW_MS,
+        lookupTokenRevocation: () => false,
+      }),
+      subscriptionService,
+      eventBus: createFridayRealtimeEventBus({
+        idGenerator: () => "bus-evt-enc",
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+      serverVersion: "1.0.0-test",
+      currentEpoch: EPOCH,
+      frameCrypto,
+    });
+    const conn = encryptedGateway.createConnection("conn-encrypted");
+
+    const responses = encryptedGateway.handleClientFrame(
+      conn,
+      frameCrypto.encryptClientFrame({ type: "hello", token: makeToken() }),
+    );
+    const wireFrame = encryptedGateway.encodeServerFrame!(responses[0]!);
+
+    expect(conn.authenticated).toBe(true);
+    expect(wireFrame.type).toBe("encrypted");
+    expect(JSON.stringify(wireFrame)).not.toContain("hello_ack");
+    expect(frameCrypto.decryptServerFrame(wireFrame)).toMatchObject({
+      type: "hello_ack",
+      connId: "conn-encrypted",
+    });
   });
 
   it("hello with invalid token returns error", () => {

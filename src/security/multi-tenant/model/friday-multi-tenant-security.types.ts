@@ -247,11 +247,11 @@ export interface FridaySecurityToScopeMapping {
  */
 export const FRIDAY_SECURITY_SCOPE_MAPPINGS: readonly FridaySecurityToScopeMapping[] = [
   // Secrets
-  { resource: "secret", action: "read", fridayScope: "security.read" },
-  { resource: "secret", action: "list", fridayScope: "security.read" },
-  { resource: "secret", action: "write", fridayScope: "security.write" },
-  { resource: "secret", action: "delete", fridayScope: "security.write" },
-  { resource: "secret", action: "rotate", fridayScope: "security.write" },
+  { resource: "secret", action: "read", fridayScope: "secrets.read" },
+  { resource: "secret", action: "list", fridayScope: "secrets.read" },
+  { resource: "secret", action: "write", fridayScope: "secrets.write" },
+  { resource: "secret", action: "delete", fridayScope: "secrets.write" },
+  { resource: "secret", action: "rotate", fridayScope: "secrets.write" },
   // Roles
   { resource: "role", action: "read", fridayScope: "security.read" },
   { resource: "role", action: "list", fridayScope: "security.read" },

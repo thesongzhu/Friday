@@ -211,7 +211,7 @@ describe("FridayProviderService", () => {
     });
 
     it("syncs a default auth profile row on create", async () => {
-      await service.createProvider({
+      const hosted = await service.createProvider({
         kind: "anthropic",
         name: "Claude Setup Token",
         baseUrl: "https://api.anthropic.com",
@@ -267,7 +267,7 @@ describe("FridayProviderService", () => {
     });
 
     it("returns created providers", async () => {
-      await service.createProvider({
+      const local = await service.createProvider({
         kind: "openai",
         name: "P1",
         baseUrl: "https://p1.com",
@@ -276,7 +276,7 @@ describe("FridayProviderService", () => {
         supportedModels: ["m1"],
         validateOnSave: false,
       });
-      await service.createProvider({
+      const cli = await service.createProvider({
         kind: "anthropic",
         name: "P2",
         baseUrl: "https://p2.com",
@@ -325,7 +325,7 @@ describe("FridayProviderService", () => {
     });
 
     it("returns existing provider", async () => {
-      await service.createProvider({
+      const hosted = await service.createProvider({
         kind: "openai",
         name: "Test",
         baseUrl: "https://test.com",
@@ -343,7 +343,7 @@ describe("FridayProviderService", () => {
 
   describe("updateProvider", () => {
     it("updates provider name", async () => {
-      await service.createProvider({
+      const local = await service.createProvider({
         kind: "openai",
         name: "Original",
         baseUrl: "https://test.com",
@@ -368,7 +368,7 @@ describe("FridayProviderService", () => {
     });
 
     it("updates apiKey from env-ref to raw", async () => {
-      await service.createProvider({
+      const cli = await service.createProvider({
         kind: "openai",
         name: "Test",
         baseUrl: "https://test.com",
@@ -1167,6 +1167,94 @@ describe("FridayProviderService", () => {
       ).toMatchObject({
         eligible: false,
         ineligibilityReasons: expect.arrayContaining(["requires_native_tools"]),
+      });
+    });
+
+    it("routes with context size, sensitivity, latency, and satellite availability constraints", async () => {
+      const hosted = await service.createProvider({
+        kind: "openai",
+        name: "Hosted Tiny",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-responses",
+        apiKey: "test-hosted-key", // pragma: allowlist secret
+        supportedModels: ["tiny-8k"],
+        defaultModel: "tiny-8k",
+        deploymentKind: "hosted",
+        validateOnSave: false,
+      });
+      const local = await service.createProvider({
+        kind: "ollama",
+        name: "Local Long",
+        baseUrl: "http://127.0.0.1:11434",
+        authMode: "none",
+        api: "ollama",
+        supportedModels: ["llama3-128k"],
+        defaultModel: "llama3-128k",
+        deploymentKind: "local",
+        validateOnSave: false,
+      });
+      const cli = await service.createProvider({
+        kind: "openai",
+        name: "Codex CLI",
+        baseUrl: "",
+        authMode: "external-session",
+        backendKind: "cli",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+        api: "openai-responses",
+        supportedModels: ["gpt-5.4"],
+        defaultModel: "gpt-5.4",
+        deploymentKind: "consumer-cli",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: hosted.id,
+        fallbackProviderIds: [local.id, cli.id],
+      });
+
+      const confidentialLongContext = await service.explainRouting({
+        routingContext: {
+          estimatedInputTokens: 20_000,
+          complexity: "complex",
+          dataSensitivity: "secret",
+          latencyBudgetMs: 1_000,
+          satelliteAvailable: true,
+        },
+      });
+
+      expect(confidentialLongContext.selected.providerId).toBe(local.id);
+      expect(
+        confidentialLongContext.candidates.find((candidate) => candidate.providerId === hosted.id),
+      ).toMatchObject({
+        eligible: false,
+        ineligibilityReasons: expect.arrayContaining([
+          "context_window_exceeded",
+          "data_sensitivity_requires_local",
+        ]),
+      });
+      expect(
+        confidentialLongContext.candidates.find((candidate) => candidate.providerId === cli.id),
+      ).toMatchObject({
+        eligible: false,
+        ineligibilityReasons: expect.arrayContaining(["latency_budget_excludes_cli"]),
+      });
+
+      const satelliteUnavailable = await service.explainRouting({
+        routingContext: {
+          estimatedInputTokens: 2_000,
+          complexity: "medium",
+          satelliteAvailable: false,
+        },
+      });
+
+      expect(
+        satelliteUnavailable.candidates.find((candidate) => candidate.providerId === local.id),
+      ).toMatchObject({
+        eligible: false,
+        ineligibilityReasons: expect.arrayContaining(["satellite_unavailable_for_local_route"]),
       });
     });
 

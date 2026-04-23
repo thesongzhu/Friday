@@ -272,6 +272,9 @@ export function createFridaySatelliteRuntimeRoutes(
           localEvents: Array.isArray(body.localEvents)
             ? body.localEvents as FridaySyncPushInput["localEvents"]
             : undefined,
+          nodeResults: Array.isArray(body.nodeResults)
+            ? body.nodeResults as FridaySyncPushInput["nodeResults"]
+            : undefined,
         });
       },
     },

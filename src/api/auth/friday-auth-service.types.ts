@@ -61,6 +61,15 @@ export interface CreateFridayAuthServiceDeps {
   ) => void;
   /** Optional rate limit service for auth lockout. */
   rateLimiter?: FridayRateLimitService;
+  /** Optional audit hook for failed auth and lockout decisions. */
+  auditAuthEvent?: (event: {
+    type: "auth.login.failed" | "auth.login.locked_out";
+    at: string;
+    principalKey: string;
+    ip?: string;
+    code: string;
+    message: string;
+  }) => void;
   /** Optional tenant resolver used when issuing auth claims. Defaults to the principal ID. */
   resolveTenantId?: (input: {
     principalType: "user";

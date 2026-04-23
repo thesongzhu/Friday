@@ -15,6 +15,7 @@ import type {
   FridayAgentToolDefinition,
 } from "../model/friday-agent.types.js";
 import type { FridayAgentSelfTestService } from "../testing/friday-agent-self-test-service.types.js";
+import type { FridayAgentSelfFixService } from "../testing/friday-agent-self-fix-service.js";
 import type { FridayAgentRunEventRepository } from "../persistence/friday-agent-run-event-repository.js";
 import type { FridayAgentArtifactWriter } from "../services/friday-agent-artifact-writer.js";
 import type { FridayAgentEventEmitter } from "./friday-agent-event-emitter.js";
@@ -313,6 +314,8 @@ export interface CreateFridayAgentRuntimeDeps {
   runEventRepository?: FridayAgentRunEventRepository;
   /** Optional self-test service for validation gate (IMPL-5). */
   selfTestService?: FridayAgentSelfTestService;
+  /** Optional self-fix service that turns failed validation into a bounded retry loop. */
+  selfFixService?: FridayAgentSelfFixService;
   /** Runtime working directory for self-tests. */
   workdir?: string;
   /** Optional callback to mirror final response into session store. */

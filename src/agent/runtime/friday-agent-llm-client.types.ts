@@ -77,6 +77,12 @@ export interface FridayAgentLlmStreamParams {
     complexity: "simple" | "medium" | "complex";
     requiresNativeTools?: boolean;
     taskProfileId?: string;
+    contextWindowTokens?: number;
+    dataSensitivity?: "public" | "internal" | "confidential" | "secret";
+    latencyBudgetMs?: number;
+    localOnly?: boolean;
+    noEgress?: boolean;
+    satelliteAvailable?: boolean;
   };
   signal: AbortSignal;
 }

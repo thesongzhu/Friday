@@ -98,6 +98,28 @@ describe("FridayNodeExecutor", () => {
     expect(result.output).toEqual({});
   });
 
+  it("rejects entrypoints that escape the skill directory sandbox", async () => {
+    const outsideDir = await fs.mkdtemp("/tmp/friday-node-outside-");
+    try {
+      await fs.writeFile(
+        path.join(outsideDir, "outside.mjs"),
+        `export async function execute() { return { escaped: true }; }`,
+      );
+      const executor = createExecutor();
+      const result = await executor.run({
+        entrypoint: path.relative(tmpDir, path.join(outsideDir, "outside.mjs")),
+        input: {},
+        cwd: tmpDir,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.output).toEqual({});
+      expect(result.error).toContain("escapes the skill directory sandbox");
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   it("times out when execution takes too long", async () => {
     await writeModule(
       "slow.mjs",

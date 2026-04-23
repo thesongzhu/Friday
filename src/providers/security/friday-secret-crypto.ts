@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { execFileSync } from "node:child_process";
 
 import { FridayDomainError } from "#errors";
 
@@ -80,6 +81,71 @@ const MASTER_KEY_CACHE_TTL_MS = 3_600_000; // 1 hour
 
 const MASTER_KEY_DIR = path.join(os.homedir(), ".friday");
 const MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
+const MASTER_KEY_KEYCHAIN_SERVICE = "Friday Master Key";
+const MASTER_KEY_KEYCHAIN_ACCOUNT = "friday";
+
+function readKeychainMasterKey(): Buffer | null {
+  if (process.platform !== "darwin") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY_SOURCE=keychain is only supported on macOS",
+      { httpStatus: 400 },
+    );
+  }
+
+  const service = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE ?? MASTER_KEY_KEYCHAIN_SERVICE;
+  const account = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT ?? MASTER_KEY_KEYCHAIN_ACCOUNT;
+  try {
+    const hex = execFileSync("security", [
+      "find-generic-password",
+      "-a",
+      account,
+      "-s",
+      service,
+      "-w",
+    ], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const buf = Buffer.from(hex, "hex");
+    if (buf.length !== KEY_BYTES) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `Keychain master key must be ${KEY_BYTES} bytes (${KEY_BYTES * 2} hex chars), got ${String(buf.length)} bytes`,
+        { httpStatus: 400 },
+      );
+    }
+    return buf;
+  } catch (error) {
+    if (error instanceof FridayDomainError) throw error;
+    return null;
+  }
+}
+
+function writeKeychainMasterKey(key: Buffer): void {
+  if (process.platform !== "darwin") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY_SOURCE=keychain is only supported on macOS",
+      { httpStatus: 400 },
+    );
+  }
+
+  const service = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE ?? MASTER_KEY_KEYCHAIN_SERVICE;
+  const account = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT ?? MASTER_KEY_KEYCHAIN_ACCOUNT;
+  execFileSync("security", [
+    "add-generic-password",
+    "-U",
+    "-a",
+    account,
+    "-s",
+    service,
+    "-w",
+    key.toString("hex"),
+  ], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+}
 
 /**
  * Resolves the master key from `FRIDAY_MASTER_KEY` env var (hex-encoded),
@@ -113,7 +179,24 @@ export function getMasterKey(): Buffer {
     return cachedMasterKey;
   }
 
-  // 2. Try to read persisted key file
+  // 2. Optional OS keystore mode. This is opt-in to avoid unexpected keychain
+  // prompts in CI and headless environments.
+  if (process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
+    const keychainKey = readKeychainMasterKey();
+    if (keychainKey) {
+      cachedMasterKey = keychainKey;
+      cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
+      return cachedMasterKey;
+    }
+
+    const generatedKey = crypto.randomBytes(KEY_BYTES);
+    writeKeychainMasterKey(generatedKey);
+    cachedMasterKey = generatedKey;
+    cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
+    return cachedMasterKey;
+  }
+
+  // 3. Try to read persisted key file
   try {
     const hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
     // P2-SEC: Verify and fix master key file permissions
@@ -145,7 +228,7 @@ export function getMasterKey(): Buffer {
     console.warn("[friday][secret-crypto] master key file unreadable:", err instanceof Error ? err.message : String(err));
   }
 
-  // 3. Generate, persist, and warn
+  // 4. Generate, persist, and warn
   const newKey = crypto.randomBytes(KEY_BYTES);
 
   try {

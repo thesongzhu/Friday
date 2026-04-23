@@ -1,10 +1,21 @@
+import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Background,
+  Controls,
+  MarkerType,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
 import { GitBranch, Package, PlayCircle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { HelpTooltip } from "@/components/core/help-tooltip";
+import { useSystemEvents } from "@/hooks/use-system-events";
 import { workflowRunsApi } from "@/lib/api/workflow-runs";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
@@ -46,6 +57,73 @@ function focusLabel(focus: FridayWorkflowFocus, locale?: string): string {
   return locale === "zh" ? "工作流详情" : "Workflow detail";
 }
 
+type WorkflowGraphNodeStatus = "idle" | "queued" | "running" | "completed" | "failed" | "cancelled" | "paused";
+
+interface WorkflowOperatorGraphNodeData extends Record<string, unknown> {
+  label: string;
+  nodeType: string;
+  status: WorkflowGraphNodeStatus;
+  message?: string;
+  attempt?: number;
+}
+
+type WorkflowOperatorGraphNode = Node<WorkflowOperatorGraphNodeData, "workflow_operator_node">;
+type WorkflowOperatorGraphEdge = Edge<{ branch?: string; status?: WorkflowGraphNodeStatus }>;
+
+function normalizeGraphStatus(status?: string): WorkflowGraphNodeStatus {
+  if (
+    status === "queued" ||
+    status === "running" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "paused"
+  ) {
+    return status;
+  }
+  return "idle";
+}
+
+function graphStatusClass(status: WorkflowGraphNodeStatus): string {
+  if (status === "completed") return "border-emerald-400/60 bg-emerald-500/10";
+  if (status === "failed" || status === "cancelled") return "border-red-400/60 bg-red-500/10";
+  if (status === "running" || status === "queued" || status === "paused") return "border-amber-400/70 bg-amber-500/10";
+  return "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)]";
+}
+
+function WorkflowOperatorNode(props: NodeProps<WorkflowOperatorGraphNode>) {
+  const data = props.data;
+  return (
+    <div className={`w-[190px] rounded-xl border px-3 py-3 shadow-[0_14px_32px_rgba(0,0,0,0.24)] ${graphStatusClass(data.status)}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase text-[color:var(--color-text-faint)]">
+          <GitBranch className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{data.nodeType}</span>
+        </div>
+        <span className="shrink-0 rounded-full border border-[color:var(--color-border-soft)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
+          {data.status}
+        </span>
+      </div>
+      <p className="mt-2 truncate text-sm font-semibold text-[color:var(--color-text-primary)]">{data.label}</p>
+      {data.message ? (
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">{data.message}</p>
+      ) : null}
+      {data.attempt != null ? (
+        <p className="mt-2 text-[11px] text-[color:var(--color-text-faint)]">Attempt {data.attempt}</p>
+      ) : null}
+    </div>
+  );
+}
+
+const workflowOperatorNodeTypes = {
+  workflow_operator_node: WorkflowOperatorNode,
+};
+
+function payloadString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function WorkflowsPage() {
   const { locale } = useAppLocale();
   const queryClient = useQueryClient();
@@ -61,6 +139,7 @@ export function WorkflowsPage() {
   });
 
   const workflows = workflowsQuery.data?.items ?? [];
+  const systemEvents = useSystemEvents(selectedWorkflowId !== null);
 
   useEffect(() => {
     if (requestedWorkflowId && workflows.some((workflow) => workflow.id === requestedWorkflowId)) {
@@ -89,6 +168,32 @@ export function WorkflowsPage() {
     enabled: selectedWorkflowId !== null,
     refetchInterval: 10_000,
   });
+
+  useEffect(() => {
+    if (!selectedWorkflowId) return;
+    const latestEvent = [...systemEvents.events].reverse().find((event) => {
+      if (!event.event.startsWith("workflow.")) return false;
+      const workflowId = payloadString(event.payload, "workflowId");
+      const runId = payloadString(event.payload, "runId");
+      return workflowId === selectedWorkflowId || runId === overviewQuery.data?.latestRun?.id;
+    });
+    if (!latestEvent) return;
+
+    void queryClient.invalidateQueries({ queryKey: systemKeys.workflowOverview(selectedWorkflowId) });
+    void queryClient.invalidateQueries({
+      queryKey: systemKeys.workflowVisualization(
+        selectedWorkflowId,
+        overviewQuery.data?.latestDraft?.draftId ?? overviewQuery.data?.publishedVersion?.id ?? "default",
+      ),
+    });
+  }, [
+    overviewQuery.data?.latestDraft?.draftId,
+    overviewQuery.data?.latestRun?.id,
+    overviewQuery.data?.publishedVersion?.id,
+    queryClient,
+    selectedWorkflowId,
+    systemEvents.events,
+  ]);
 
   const visualizationQuery = useQuery({
     queryKey: selectedWorkflowId
@@ -199,20 +304,73 @@ export function WorkflowsPage() {
     },
   });
 
-  const graphNodes = useMemo(() => {
+  const graphModel = useMemo<{
+    nodes: WorkflowOperatorGraphNode[];
+    edges: WorkflowOperatorGraphEdge[];
+  }>(() => {
     const spec = visualizationQuery.data?.spec;
     const visual = visualizationQuery.data?.visual;
-    if (!spec || !visual) return [];
-    return visual.nodes.map((node) => {
-      const step = spec.steps.find((entry) => entry.id === node.nodeId);
+    if (!spec || !visual) return { nodes: [], edges: [] };
+
+    const latestTimelineByNode = new Map<string, NonNullable<typeof visualizationQuery.data>["nodeTimeline"][number]>();
+    for (const entry of visualizationQuery.data?.nodeTimeline ?? []) {
+      const previous = latestTimelineByNode.get(entry.nodeId);
+      if (!previous || entry.attempt >= previous.attempt) {
+        latestTimelineByNode.set(entry.nodeId, entry);
+      }
+    }
+    const visualLayoutByNode = new Map(visual.nodes.map((node) => [node.nodeId, node]));
+    const nodeIds = ["__trigger__", ...spec.steps.map((step) => step.id)];
+    const nodes: WorkflowOperatorGraphNode[] = nodeIds.map((nodeId, index) => {
+      const layout = visualLayoutByNode.get(nodeId);
+      const step = spec.steps.find((entry) => entry.id === nodeId);
+      const timeline = latestTimelineByNode.get(nodeId);
+      const status = nodeId === "__trigger__"
+        ? normalizeGraphStatus(visualizationQuery.data?.latestRun?.status)
+        : normalizeGraphStatus(timeline?.status);
       return {
-        id: node.nodeId,
-        x: node.x,
-        y: node.y,
-        label: step?.id ?? (node.nodeId === "__trigger__" ? "Trigger" : node.nodeId),
-        type: step?.type ?? "trigger",
+        id: nodeId,
+        type: "workflow_operator_node",
+        position: {
+          x: layout?.x ?? (index % 3) * 260,
+          y: layout?.y ?? Math.floor(index / 3) * 170,
+        },
+        data: {
+          label: nodeId === "__trigger__" ? "Trigger" : step?.id ?? nodeId,
+          nodeType: nodeId === "__trigger__" ? "trigger" : step?.type ?? "step",
+          status,
+          message: timeline?.message,
+          attempt: timeline?.attempt,
+        },
       };
     });
+
+    const edges: WorkflowOperatorGraphEdge[] = [];
+    if (spec.startStepId) {
+      edges.push({
+        id: `trigger:${spec.startStepId}`,
+        source: "__trigger__",
+        target: spec.startStepId,
+        label: "start",
+        type: "smoothstep",
+        markerEnd: { type: MarkerType.ArrowClosed },
+      });
+    }
+    for (const edge of spec.edges) {
+      edges.push({
+        id: `${edge.from}:${edge.to}:${edge.when ?? "success"}`,
+        source: edge.from,
+        target: edge.to,
+        label: edge.when ?? "success",
+        type: "smoothstep",
+        markerEnd: { type: MarkerType.ArrowClosed },
+        data: {
+          branch: edge.when,
+          status: latestTimelineByNode.has(edge.to) ? normalizeGraphStatus(latestTimelineByNode.get(edge.to)?.status) : "idle",
+        },
+      });
+    }
+    return { nodes, edges };
   }, [visualizationQuery.data]);
 
   const attentionSummary = useMemo(
@@ -616,7 +774,11 @@ export function WorkflowsPage() {
         <ShellCard
           eyebrow={locale === "zh" ? "操作图表" : "Operator graph"}
           title={selectedWorkflow?.name ? `${selectedWorkflow.name} dependency map` : "Workflow graph"}
-          aside={<StatusPill tone="neutral">advanced</StatusPill>}
+          aside={
+            <StatusPill tone={systemEvents.connectionState === "streaming" ? "success" : "neutral"}>
+              {systemEvents.connectionState === "streaming" ? "live" : "syncing"}
+            </StatusPill>
+          }
         >
           {visualizationQuery.data ? (
             <div className="space-y-4">
@@ -625,22 +787,29 @@ export function WorkflowsPage() {
                   ? "Friday 将原始图表保留在此作为操作上下文。恢复、部署、重运行和导出在上方，使此页面保持点击优先。"
                   : "Friday keeps the raw graph here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work."}
               </p>
-              <div className="relative overflow-hidden rounded-[26px] border border-[color:var(--color-border-soft)] bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6">
-                <div className="relative min-h-[360px]">
-                  {graphNodes.map((node) => (
-                    <div
-                      key={node.id}
-                      className="absolute w-40 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)] p-3 shadow-[0_12px_32px_rgba(0,0,0,0.25)]"
-                      style={{ left: `${node.x / 1.6}px`, top: `${node.y / 1.6}px` }}
-                    >
-                      <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-                        <GitBranch className="h-3.5 w-3.5" />
-                        {node.type}
-                      </div>
-                      <p className="mt-2 font-medium text-[color:var(--color-text-primary)]">{node.label}</p>
-                    </div>
-                  ))}
-                </div>
+              <div className="h-[420px] overflow-hidden rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]">
+                <ReactFlow
+                  nodes={graphModel.nodes}
+                  edges={graphModel.edges}
+                  nodeTypes={workflowOperatorNodeTypes}
+                  nodesDraggable={false}
+                  nodesConnectable={false}
+                  elementsSelectable={false}
+                  fitView
+                  fitViewOptions={{ padding: 0.18 }}
+                  minZoom={0.35}
+                  maxZoom={1.4}
+                  proOptions={{ hideAttribution: true }}
+                >
+                  <Background color="rgba(148, 163, 184, 0.22)" gap={18} />
+                  <Controls showInteractive={false} />
+                </ReactFlow>
+              </div>
+              <div className="grid gap-2 text-xs text-[color:var(--color-text-secondary)] sm:grid-cols-4">
+                <WorkflowGraphLegend status="running" label={locale === "zh" ? "执行中" : "Running"} />
+                <WorkflowGraphLegend status="completed" label={locale === "zh" ? "已完成" : "Completed"} />
+                <WorkflowGraphLegend status="failed" label={locale === "zh" ? "失败" : "Failed"} />
+                <WorkflowGraphLegend status="idle" label={locale === "zh" ? "未触发" : "Idle"} />
               </div>
             </div>
           ) : (
@@ -657,6 +826,15 @@ function WorkflowMetric(props: { label: string; value: string }) {
     <div className="agent-metric-card">
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{props.label}</p>
       <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{props.value}</p>
+    </div>
+  );
+}
+
+function WorkflowGraphLegend(props: { status: WorkflowGraphNodeStatus; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`h-2.5 w-2.5 rounded-full border ${graphStatusClass(props.status)}`} />
+      <span>{props.label}</span>
     </div>
   );
 }

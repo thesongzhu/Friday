@@ -38,7 +38,7 @@ export function createFridaySecretRoutes(
       operationId: "secrets.list",
       method: "GET",
       path: "/v1/secrets",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: false, anyOfScopes: ["secrets.read", "security.read"] },
       async handler(ctx): Promise<FridayListSecretsResponse> {
         const query = ctx.query as Record<string, unknown>;
         return {
@@ -54,7 +54,7 @@ export function createFridaySecretRoutes(
       operationId: "secrets.get",
       method: "GET",
       path: "/v1/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: false, anyOfScopes: ["secrets.read", "security.read"] },
       async handler(ctx): Promise<FridayGetSecretResponse> {
         const { secretId } = ctx.params as { secretId: string };
         const secret = deps.service.getSecret(secretId);
@@ -68,7 +68,7 @@ export function createFridaySecretRoutes(
       operationId: "secrets.create",
       method: "POST",
       path: "/v1/secrets",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: false, anyOfScopes: ["secrets.write", "security.write"] },
       async handler(ctx): Promise<FridayCreateSecretResponse> {
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         if (typeof body.scope !== "string" || body.scope.trim() === "") {
@@ -89,7 +89,7 @@ export function createFridaySecretRoutes(
       operationId: "secrets.update",
       method: "PATCH",
       path: "/v1/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: false, anyOfScopes: ["secrets.write", "security.write"] },
       async handler(ctx): Promise<FridayUpdateSecretResponse> {
         const { secretId } = ctx.params as { secretId: string };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -113,7 +113,7 @@ export function createFridaySecretRoutes(
       operationId: "secrets.delete",
       method: "DELETE",
       path: "/v1/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: false, anyOfScopes: ["secrets.write", "security.write"] },
       async handler(ctx): Promise<FridayDeleteSecretResponse> {
         const { secretId } = ctx.params as { secretId: string };
         return { deleted: deps.service.deleteSecret(secretId) };
