@@ -247,7 +247,7 @@ describe("Agent parity acceptance (integration)", () => {
 
     const response = await route!.handler({
       params: { sessionKey: "discord:default:user-ctx" },
-      body: {},
+      body: { useLastUserMessage: true },
     } as never);
 
     expect(response).toMatchObject({
