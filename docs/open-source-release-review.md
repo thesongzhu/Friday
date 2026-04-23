@@ -80,18 +80,15 @@ detect-secrets audit .secrets.baseline
 
 The public README positioning was updated around recurring themes found in current Chinese and English agent discussions:
 
-- Memory and context: Hermes positions itself around persistent memory and cross-session context, and Chinese Hermes docs emphasize human-readable memory files, session search, and context snapshots.
+- Memory and context: current agent-memory discussions emphasize durable, human-readable memory, retrieval, session search, and context snapshots.
 - Skills and discoverability: OpenClaw docs describe skill folders, bundled/local skills, watcher refresh, and skill lifecycle concerns.
-- Self-healing and self-improvement: community writeups around Hermes and agent skills focus on reusable skills, generated workflows, and learning loops, but the claims need clear evidence boundaries.
+- Self-healing and self-improvement: community writeups around agent skills focus on reusable skills, generated workflows, and learning loops, but the claims need clear evidence boundaries.
 - Stability and boundaries: security discussions repeatedly warn that prompt injection, untrusted skills, and tool permissions are not solved by better prompts alone.
 - Approval and blast radius: public incidents around email deletion and context compaction show why long-running agents need durable rules, explicit approvals, and tool-level enforcement.
 
 Sources checked:
 
-- [Hermes Agent official site](https://hermes-agent.ai/)
-- [Hermes Agent Chinese memory docs](https://hermes.xaapi.ai/features/memory)
 - [OpenClaw skills docs](https://docs.openclaw.ai/skills)
 - [OpenClaw security docs](https://docs.openclaw.ai/security)
 - [TechRadar: OpenClaw security risks](https://www.techradar.com/pro/here-are-the-openclaw-security-risks-you-should-know-about)
 - [Tom's Hardware: OpenClaw inbox deletion incident](https://www.tomshardware.com/tech-industry/artificial-intelligence/openclaw-wipes-inbox-of-meta-ai-alignment-director-executive-finds-out-the-hard-way-how-spectacularly-efficient-ai-tool-is-at-maintaining-her-inbox)
-- [人人都是产品经理: Hermes Agent memory discussion](https://www.woshipm.com/ai/6376504.html)

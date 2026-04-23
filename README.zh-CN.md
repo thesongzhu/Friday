@@ -28,7 +28,7 @@ Friday 是一个自部署 Agent OS，目标是让你的 AI 真正能在本机做
 
 ## 为什么是现在？
 
-最近中文和英文社区围绕 [Hermes Agent](https://hermes-agent.ai/)、[Agent 记忆](https://hermes.xaapi.ai/features/memory)、[技能系统](https://docs.openclaw.ai/skills) 和 [Agent 安全边界](https://docs.openclaw.ai/security) 的讨论，反复集中在几个问题上：
+最近中文和英文社区围绕长期记忆、可复用技能、自我修复循环和工具安全边界的讨论，反复集中在几个问题上：
 
 - 记忆不能只是更长上下文，必须有结构、检索和人类可见性。
 - 技能让 Agent 变强，但不可信技能也是供应链和本地执行风险。
