@@ -496,6 +496,44 @@ describe("FridayAgentRoutes", () => {
       );
     });
 
+    it("does not synthesize plan constraints for normal chat requests", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: {
+          task: "What is 2+2?",
+          executionContext: { surface: "chat", interactive: true },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+      await route.handler(ctx);
+      const [input] = vi.mocked(stubDeps.startRun).mock.calls[0]!;
+      expect(input.constraints).toBeUndefined();
+    });
+
+    it("forwards explicit operationalMode constraints without making them a UI default", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const ctx = {
+        body: { task: "Plan this", constraints: { readOnly: true, operationalMode: "plan" } },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+      await route.handler(ctx);
+      expect(stubDeps.startRun).toHaveBeenCalledWith(
+        expect.objectContaining({ constraints: { readOnly: true, operationalMode: "plan" } }),
+      );
+    });
+
     it("forwards timezone when provided", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;

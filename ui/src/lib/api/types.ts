@@ -169,6 +169,7 @@ export interface AgentRunRecord {
   errorMessage?: string;
   constraints?: {
     readOnly?: boolean;
+    operationalMode?: "plan" | "execute" | "restricted";
   };
   planReview?: {
     plan: {

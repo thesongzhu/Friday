@@ -109,6 +109,7 @@ import type {
   FridayAgentAutomationService,
   FridayAgentExecutionContext,
   FridayAgentMessage,
+  FridayAgentRunConstraints,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentRuntimeResult,
@@ -2351,7 +2352,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timeoutMs?: number;
       signal?: AbortSignal;
       reviewRequired?: boolean;
-      constraints?: { readOnly?: boolean };
+      constraints?: FridayAgentRunConstraints;
       principalId?: string;
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
@@ -2537,7 +2538,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timezone?: string;
       timeoutMs?: number;
       requireReview?: boolean;
-      constraints?: { readOnly?: boolean };
+      constraints?: FridayAgentRunConstraints;
       executionContext?: FridayAgentExecutionContext;
       taskProfile?: FridayAgentTaskProfileInput;
       principalId?: string;

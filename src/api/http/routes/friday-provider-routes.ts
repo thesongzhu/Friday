@@ -47,6 +47,83 @@ const VALID_KINDS = new Set<string>(FRIDAY_PROVIDER_KINDS);
 const VALID_APIS = new Set<string>(FRIDAY_PROVIDER_APIS);
 const VALID_BACKEND_KINDS = new Set<string>(FRIDAY_PROVIDER_BACKEND_KINDS);
 const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "external-session", "none"]);
+const VALID_DEPLOYMENT_KINDS = new Set(["hosted", "local", "self-hosted", "consumer-cli"]);
+const VALID_REGION_TAGS = new Set(["global", "us", "china", "local", "custom"]);
+
+const PROVIDER_CREATE_ACCEPTED_FIELDS = [
+  "kind",
+  "name",
+  "backendKind",
+  "baseUrl",
+  "authMode",
+  "api",
+  "apiKey",
+  "supportedModels",
+  "defaultModel",
+  "headers",
+  "cliConfig",
+  "deploymentKind",
+  "regionTag",
+  "enabled",
+  "validateOnSave",
+] as const;
+
+const PROVIDER_CREATE_REQUIRED_FIELDS = [
+  "kind",
+  "name",
+  "baseUrl",
+  "authMode",
+  "api",
+  "supportedModels",
+] as const;
+
+const PROVIDER_CREATE_FIELD_ALIASES = {
+  providerKind: "kind",
+  displayName: "name",
+  providerName: "name",
+  apiBaseUrl: "baseUrl",
+  baseURL: "baseUrl",
+  providerApi: "api",
+  models: "supportedModels",
+  modelIds: "supportedModels",
+  validate: "validateOnSave",
+} as const;
+
+function providerCreateSchemaDetails(): Record<string, unknown> {
+  return {
+    acceptedFields: [...PROVIDER_CREATE_ACCEPTED_FIELDS],
+    requiredFields: [...PROVIDER_CREATE_REQUIRED_FIELDS],
+    aliases: PROVIDER_CREATE_FIELD_ALIASES,
+    enums: {
+      kind: [...FRIDAY_PROVIDER_KINDS],
+      backendKind: [...FRIDAY_PROVIDER_BACKEND_KINDS],
+      authMode: [...VALID_AUTH_MODES],
+      api: [...FRIDAY_PROVIDER_APIS],
+      deploymentKind: [...VALID_DEPLOYMENT_KINDS],
+      regionTag: [...VALID_REGION_TAGS],
+    },
+    example: {
+      kind: "openai",
+      name: "OpenAI",
+      backendKind: "http",
+      baseUrl: "https://api.openai.com",
+      authMode: "api-key",
+      api: "openai-completions",
+      apiKey: "<secret>",
+      supportedModels: ["gpt-4o"],
+      defaultModel: "gpt-4o",
+      validateOnSave: true,
+    },
+  };
+}
+
+function pushProviderCreateAliasErrors(body: Record<string, unknown>, errors: string[]): void {
+  for (const [alias, canonical] of Object.entries(PROVIDER_CREATE_FIELD_ALIASES)) {
+    if (body[alias] !== undefined) {
+      errors.push(`${alias} is not accepted; use ${canonical}`);
+    }
+  }
+}
 
 function validateCliConfig(value: unknown, errors: string[]): void {
   if (value === undefined) return;
@@ -69,6 +146,7 @@ function validateCreateBody(body: unknown): asserts body is FridayCreateProvider
   }
   const b = body as Record<string, unknown>;
   const errors: string[] = [];
+  pushProviderCreateAliasErrors(b, errors);
 
   if (typeof b.kind !== "string" || !VALID_KINDS.has(b.kind)) {
     errors.push(`kind must be one of: ${[...VALID_KINDS].join(", ")}`);
@@ -110,10 +188,22 @@ function validateCreateBody(body: unknown): asserts body is FridayCreateProvider
   if (b.headers !== undefined && (b.headers == null || typeof b.headers !== "object" || Array.isArray(b.headers))) {
     errors.push("headers must be an object when provided");
   }
+  if (b.deploymentKind !== undefined && (typeof b.deploymentKind !== "string" || !VALID_DEPLOYMENT_KINDS.has(b.deploymentKind))) {
+    errors.push(`deploymentKind must be one of: ${[...VALID_DEPLOYMENT_KINDS].join(", ")}`);
+  }
+  if (b.regionTag !== undefined && (typeof b.regionTag !== "string" || !VALID_REGION_TAGS.has(b.regionTag))) {
+    errors.push(`regionTag must be one of: ${[...VALID_REGION_TAGS].join(", ")}`);
+  }
   validateCliConfig(b.cliConfig, errors);
 
   if (errors.length > 0) {
-    throw new FridayDomainError("VALIDATION_ERROR", `Invalid request body: ${errors.join("; ")}`, { httpStatus: 400 });
+    throw new FridayDomainError("VALIDATION_ERROR", `Invalid provider create request: ${errors.join("; ")}`, {
+      httpStatus: 422,
+      details: {
+        errors,
+        schema: providerCreateSchemaDetails(),
+      },
+    });
   }
 }
 
