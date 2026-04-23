@@ -28,7 +28,7 @@ The long-term vision is an **AI automation employee**: not a passive chatbot, bu
 
 ## Why Now?
 
-Recent agent discussions around [Hermes Agent](https://hermes-agent.ai/), [agent memory](https://hermes.xaapi.ai/features/memory), [skills](https://docs.openclaw.ai/skills), and [agent security](https://docs.openclaw.ai/security) keep converging on the same problems:
+Recent agent discussions around long-term memory, reusable skills, self-healing loops, and tool security keep converging on the same problems:
 
 - Memory needs structure, retrieval, and human visibility, not just a longer context window.
 - Skills make agents powerful, but untrusted skills are a supply-chain and local-execution risk.
