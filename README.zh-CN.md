@@ -6,7 +6,8 @@
 
 <p align="center">
   <strong>陪你一起成长的 AI。</strong><br>
-  自部署。技能驱动。有记忆。先审批再行动。
+  既是永远在线的<b>个人 AI 助手</b>，也是会自我修复、能把重复工作沉淀成 skill 的<b>自动化员工</b>。<br>
+  自部署 · 自带模型 · 先审批再行动
 </p>
 
 <p align="center">
@@ -20,11 +21,32 @@
 
 ## Friday 是什么？
 
-Friday 是一个自部署 Agent OS，目标是让你的 AI 真正能在本机做事，同时不假装自己是万能系统。
+Friday 是一个自部署 Agent OS，一份代码同时给你两个产品：
 
-它可以对话、调用已安装技能、在缺少技能时走可审核的技能生成流程、运行工作流、保留长期上下文、诊断失败、提出修复方案，并在高风险动作前请求你批准。你使用自己的模型/API Key。Friday 默认跑在本机，敏感凭证应该放在环境变量或托管 secret 引用里。
+- **个人 AI** —— 对话、技能、记忆、多通道收件箱、桌面控制。永远在线，跑在你自己的硬件上。
+- **自动化员工** —— 工作流、自我修复、审批门禁、技能自动生成。有边界的 operator，把重复工作沉淀成可复用产物。
 
-长期愿景是一个 **AI 自动化员工**：不是被动聊天机器人，而是一个有边界的 operator，会理解你的上下文，把重复工作沉淀成技能或工作流，并在可检查、可回滚、可审计的前提下越用越顺手。
+你用自己的模型/API Key。Friday 默认跑在本机，敏感凭证放在环境变量或托管 secret 引用里。高风险动作必走显式审批。
+
+## 它长什么样？
+
+四个 30 秒快照：既是个人 AI，也是自动化员工，看完就知道 Friday 怎么挣自己的工资。
+
+### 1. 自我进化，也自我修复
+
+你说一次：*"以后周报别罗列细节，只要 3 个洞察。"* Friday 写进 memory。下周周报 skill 自动改写。再下一周 skill 跑挂了——Friday 自己 diagnose 原因、改 skill、跑 self-test，通过后再 ping 你确认才复用。
+
+### 2. 凌晨 3 点 Incident，它先动手你后批
+
+Slack `#alerts` 弹 5xx 突增。workflow 触发，Friday diagnose 出 OOM，写好调高内存的 PR，推到 Slack 等你点 approve。你点一下，merge，跑 verify workflow，回执 ✓。每一步修复都要你点头。
+
+### 3. 半小时的重复活，看一次就变 skill
+
+每周一你花 30 分钟看 GitHub PR 队列、拉 metrics、写总结。Friday 看你跑一次 → 问 4 个澄清问题 → 生成 skill → self-test 通过 → 你审一遍存进 registry。下周一自动跑，你只读输出。
+
+### 4. 偏好不靠反复说
+
+你说一次：*"我用 pnpm，部署只走 GitHub Actions。"* Friday 写进 `memory/preferences.md`，带置信度和时间戳。三个月后开新项目，它自动用 pnpm + 写 GHA workflow。哪天你换 bun？打开那个 markdown 改一行，不需要"重新训练"。
 
 ## 为什么是现在？
 
@@ -37,45 +59,6 @@ Friday 是一个自部署 Agent OS，目标是让你的 AI 真正能在本机做
 - 上下文压缩和模糊指令可能丢掉关键边界，所以审批和审计轨迹非常重要。
 
 Friday 的方向很实际：把记忆、技能、工作流、可观测性和审批门禁做成产品能力，而不是把一切赌在一条无限对话里。
-
-## Friday 现在能做什么？
-
-### 技能与工具
-
-- 发现已安装和内置技能，包括你从没主动用过的技能。
-- 在技能路由启用时，优先为 review、QA、发布、工作流、安全、写作、画图、自动化等任务选择合适的已安装技能。
-- 扫描本机 AI 技能位置，例如 `~/.claude`、`~/.cursor`、`~/.codex`、本地项目技能目录、工作流目录和 Friday 托管技能目录。
-- 把支持的来源导入或转换成 Friday 技能，然后验证、安装、刷新注册表，并通过 ID 或意图直接调用。
-- 在转换器能识别清楚能力时，支持转换 `SKILL.md` 风格技能、ADK 风格技能、n8n 节点、OpenAPI/GPT Actions、代码仓库、压缩包、Git URL 和桌面录制。
-- 当没有现成技能适配时，走技能生成流程：澄清问题、生成草稿文件、安全检查、自测证据、审批、保存，并立即刷新技能注册表。
-- 如果新技能没有定义清楚，Friday 应该先问你，而不是乱写。它不是万能自动补全系统。
-
-### 记忆与上下文
-
-- 从 `context/AGENTS.md`、`context/SOUL.md`、`context/USER.md`、`context/MEMORY.md` 和 `memory/` 下的每日笔记加载工作区上下文。
-- 用带置信度和衰减的学习偏好，让语气、直接程度和引导风格逐渐适配你。
-- 在运行态配置完成后，通过 API 搜索记忆和会话历史。
-- 保持记忆人类可读、可编辑，而不是只藏在不透明向量里。
-
-### 工作流与自动化
-
-- 用可视化方式把技能、条件、规则和证据串成工作流。
-- 通过产品 API 部署工作流草稿，而不是手动串联 compile、publish、run、export 和 trace。
-- 运行自动化、重试失败、暴露证据，并在重复失败时暂停。
-- 在 fleet 已配置时，把任务放到 hub 或已注册 satellite 上执行。
-
-### 自我修复与可观测性
-
-- 检测事件、诊断可能原因、提出修复、执行低风险修复、验证结果，并在需要时回滚或暂停。
-- 对高风险或破坏性改动要求明确批准。
-- 向 operator 展示 trace、审计日志、健康状态、成本、SLO、告警、重试证据和规则决策。
-- Expert autonomy 是可选且有边界的，仍受策略、审批和运行态权限约束。
-
-### 渠道与桌面
-
-- 在凭证和通道接线完成后连接 Discord、Slack、Telegram、WhatsApp、Signal、LINE、IRC、QQ、飞书和 Webchat。
-- 在 native companion 和系统权限准备好后执行点击、输入、截图、滚动、拖拽、App/window 操作。
-- 对不可用集成返回明确 blocked 状态，而不是静默降级。
 
 ## Friday 不是什么？
 
@@ -117,15 +100,11 @@ docker compose -f docker/docker-compose.yml up --build
 
 ## 下载与分发
 
-| 平台 | 方式 | 当前状态 |
+| 平台 | 方式 | 状态 |
 | --- | --- | --- |
 | macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | npm 已发布 `1.0.0` |
 | 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
-| macOS 原生 App | DMG/Homebrew 打包脚本 | 流水线存在，公开签名产物尚未发布 |
-| Linux 包 | `.deb` / `.AppImage` 打包脚本 | 流水线存在，公开产物尚未发布 |
-| Windows 原生安装器 | MSI/native shell | 规划中 |
-| iOS / Android | 移动端/远程控制台 | 规划中 |
 
 官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
 
@@ -149,9 +128,15 @@ friday import https://github.com/example/skill-repo.git
 - 发布或部署前运行检查：`npm run release:verify:repo` 用于仓库健康，`npm run release:verify` 用于真实运行态证明。
 - 漏洞报告见 [安全策略](.github/SECURITY.md)。
 
+## 社区
+
+- **Discord** —— 加入 [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u) 聊问题、共享技能、讨论 roadmap。
+- **Issues** —— bug 和功能反馈走 [GitHub Issues](https://github.com/thesongzhu/Friday/issues)。
+- **安全** —— 漏洞报告见 [安全策略](.github/SECURITY.md)。
+
 ## 开源发布状态
 
-Friday 是开源软件，许可证以 [LICENSE](LICENSE) 为准。公开发布源码快照前请先看 [开源发布审查](docs/open-source-release-review.md)。当前仓库包含生成的审计/证明产物，干净公开发布前应该先裁剪或脱敏。
+Friday 是开源软件，许可证以 [LICENSE](LICENSE) 为准。公开发布源码快照前请先看 [开源发布审查](docs/open-source-release-review.md)。
 
 ---
 

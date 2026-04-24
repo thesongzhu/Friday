@@ -6,7 +6,8 @@
 
 <p align="center">
   <strong>Your AI that grows with you.</strong><br>
-  Self-hosted. Skill-driven. Memory-aware. Approval-first.
+  Part always-on personal AI. Part self-healing automation employee that turns repeated work into skills.<br>
+  Self-hosted · BYOK · Approval-first
 </p>
 
 <p align="center">
@@ -20,11 +21,32 @@
 
 ## What Is Friday?
 
-Friday is a self-hosted Agent OS for people who want an AI assistant that can do real work on their own machine without pretending to be magic.
+Friday is a self-hosted Agent OS that ships two products in one:
 
-It can chat, use installed skills, generate missing skills through a reviewable flow, run workflows, remember durable context, diagnose failures, propose repairs, and ask for approval before high-risk actions. You bring your own model/API keys. Friday runs locally by default, and sensitive credentials should stay in environment variables or managed secret refs.
+- **A personal AI** — chat, skills, memory, multi-channel inbox, desktop control. The always-on assistant that runs on your hardware.
+- **An automation employee** — workflows, self-healing, approval gates, skill auto-generation. The bounded operator that turns repeated work into reusable artifacts.
 
-The long-term vision is an **AI automation employee**: not a passive chatbot, but a bounded operator that learns your context, turns repeated work into reusable skills or workflows, and gets more useful over time while staying inspectable.
+You bring your own model/API keys. Friday runs locally by default. Sensitive credentials stay in environment variables or managed secret refs. High-risk actions go through explicit approval.
+
+## What It Looks Like
+
+Four 30-second snapshots of how Friday earns its keep — both as a personal AI and as an automation employee.
+
+### 1. It Evolves Itself, And Repairs Itself
+
+You say once: *"From now on weekly reports should give me 3 insights, not a list of details."* Friday writes that into memory. Next week the report skill rewrites accordingly. The week after, the skill fails — Friday diagnoses the cause, patches the skill, runs self-tests, then pings you for approval before reusing it.
+
+### 2. Incident Hits At 3 AM, It Acts First, You Approve Second
+
+Slack `#alerts` fires a 5xx spike. A workflow triggers. Friday diagnoses it as OOM, drafts a PR raising the memory limit, posts it to Slack and waits. You tap approve, it merges, runs the verify workflow, and replies ✓. Every fix step is gated.
+
+### 3. Half An Hour Of Repeated Work Becomes A Skill
+
+Every Monday you spend 30 minutes triaging GitHub PRs, pulling metrics, and writing a summary. Friday watches you do it once, asks four clarifying questions, drafts a skill, runs self-tests, and waits for your review. Next Monday it runs on its own and you only read the output.
+
+### 4. Preferences Stop Needing Repetition
+
+You mention once: *"Use pnpm, deploy only via GitHub Actions."* Friday writes it to `memory/preferences.md` with a confidence score and timestamp. Three months later when you spin up a new project it picks pnpm and writes the GHA workflow. Switch to bun next year? Open the markdown file, change one line — no retraining.
 
 ## Why Now?
 
@@ -37,45 +59,6 @@ Recent agent discussions around long-term memory, reusable skills, self-healing 
 - Context compaction and vague instructions can erase important boundaries, so approvals and audit trails matter.
 
 Friday's answer is a practical one: make memory, skills, workflows, observability, and approval gates part of the product instead of relying on one endless chat thread.
-
-## What Friday Can Do Today
-
-### Skills And Tools
-
-- Discover installed and bundled skills, including skills you have not used before.
-- Prefer the right installed skill for review, QA, release, workflow, security, writing, diagramming, and automation-style requests when skill routing is enabled.
-- Scan local AI skill locations such as `~/.claude`, `~/.cursor`, `~/.codex`, local project skill folders, workflow folders, and managed Friday skills.
-- Import or convert supported sources into Friday skills, then validate, install, refresh the registry, and run them by ID or intent.
-- Convert supported `SKILL.md` style skills, ADK-style skills, n8n nodes, OpenAPI/GPT Actions, code repositories, archives, Git URLs, and desktop recordings when the converter can detect a clear capability.
-- Generate a new skill when no existing skill fits, including clarification questions, draft files, safety checks, explicit self-test evidence, approval, save, and immediate registry refresh.
-- Ask you first when a new skill is not defined clearly enough. Friday is not an infinite auto-complete system and should not invent unclear tools silently.
-
-### Memory And Context
-
-- Load workspace context from `context/AGENTS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, and daily notes under `memory/`.
-- Store learned preferences with confidence and decay so tone, directness, and guidance can adapt over time.
-- Search memory and session history through runtime APIs when configured.
-- Keep memory human-readable and editable instead of hiding it only in opaque embeddings.
-
-### Workflows And Automation
-
-- Build visual workflows with skills, conditions, rules, and evidence.
-- Deploy workflow drafts through product APIs instead of manually chaining compile, publish, run, export, and trace steps.
-- Run automations, retry failures, expose evidence, and pause when repeated failures suggest the system should stop.
-- Place work across hub and registered satellites when the fleet surface is configured.
-
-### Self-Healing And Observability
-
-- Detect incidents, diagnose likely causes, propose fixes, run low-risk repairs, verify results, and roll back or pause when needed.
-- Require approval for high-risk or destructive changes.
-- Expose traces, audit logs, health, costs, SLOs, alerts, retry evidence, and rule decisions to operators.
-- Keep expert autonomy opt-in and bounded by policy, approvals, and runtime permissions.
-
-### Channels And Desktop
-
-- Connect Discord, Slack, Telegram, WhatsApp, Signal, LINE, IRC, QQ, Lark, and webchat when credentials and channel wiring are configured.
-- Use desktop automation for click, type, screenshot, scroll, drag, and app/window actions when the native companion and OS permissions are ready.
-- Treat unavailable integrations as explicit blocked states, not silent fallbacks.
 
 ## What Friday Is Not
 
@@ -117,15 +100,11 @@ First run setup depends on your provider keys, local permissions, and which opti
 
 ## Download And Distribution
 
-| Platform | Method | Current status |
+| Platform | Method | Status |
 | --- | --- | --- |
 | macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Published on npm as `1.0.0` |
 | Source | `git clone` + `npm install` + `npm run build` | Available |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
-| macOS native app | DMG/Homebrew packaging scripts | Pipeline exists, public signed artifact not yet published |
-| Linux packages | `.deb` / `.AppImage` packaging scripts | Pipeline exists, public artifacts not yet published |
-| Windows native installer | MSI/native shell | Planned |
-| iOS / Android | Mobile/remote console | Planned |
 
 The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
 
@@ -149,9 +128,15 @@ Supported import paths are deliberately bounded. Friday can detect, convert, val
 - Run release checks before publishing or deploying: `npm run release:verify:repo` for repo health, and `npm run release:verify` for real runtime proof.
 - See [Security](.github/SECURITY.md) for vulnerability reporting.
 
+## Community
+
+- **Discord** — chat with us at [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u) for help, skill sharing, and roadmap discussion.
+- **Issues** — bugs and feature requests via [GitHub Issues](https://github.com/thesongzhu/Friday/issues).
+- **Security** — see [SECURITY](.github/SECURITY.md) for vulnerability reporting.
+
 ## Open Source Readiness
 
-Friday is open-source software under the license in [LICENSE](LICENSE). Before publishing a public source snapshot, review [Open Source Release Review](docs/open-source-release-review.md). The current repo contains generated audit/proof artifacts that should be pruned or redacted before a clean public launch.
+Friday is open-source software under the license in [LICENSE](LICENSE). Before publishing a public source snapshot, review [Open Source Release Review](docs/open-source-release-review.md).
 
 ---
 
