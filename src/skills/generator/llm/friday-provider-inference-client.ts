@@ -40,11 +40,60 @@ export interface CreateFridayProviderInferenceClientDeps {
   providerService: FridayProviderService;
 }
 
+const FRIDAY_PROVIDER_INFERENCE_ERROR_BODY_MAX_BYTES = 4096;
+
 // ─── Message shape for provider APIs ───
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+}
+
+async function readProviderErrorText(response: Response): Promise<string> {
+  if (!response.body) {
+    return response.text();
+  }
+
+  const byteLimit = FRIDAY_PROVIDER_INFERENCE_ERROR_BODY_MAX_BYTES + 1;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = byteLimit - bytesRead;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (bytesRead >= byteLimit) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  const text = chunks.join("");
+  return text.length > FRIDAY_PROVIDER_INFERENCE_ERROR_BODY_MAX_BYTES
+    ? `${text.slice(0, FRIDAY_PROVIDER_INFERENCE_ERROR_BODY_MAX_BYTES)}...[truncated]`
+    : text;
 }
 
 // ─── Build request body per provider API ───
@@ -367,7 +416,7 @@ export function createFridayProviderInferenceClient(
                   signal: AbortSignal.timeout(120_000),
                 });
                 if (!resp.ok) {
-                  const errorText = await resp.text();
+                  const errorText = await readProviderErrorText(resp);
                   throw new FridayDomainError(
                     "PROVIDER_ERROR",
                     `Compaction summary failed: ${errorText.slice(0, 500)}`,
@@ -505,7 +554,7 @@ export function createFridayProviderInferenceClient(
           });
 
           if (!response.ok) {
-            const errorText = await response.text();
+            const errorText = await readProviderErrorText(response);
             console.error(
               `[friday][generator-llm] Provider ${provider.name} (${api}, model=${model}) returned ${response.status}:`,
               errorText.slice(0, 1000),

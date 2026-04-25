@@ -47,6 +47,17 @@ export default [
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "test/**"],
+    ignores: [
+      ".claude/**",
+      ".friday/**",
+      "artifacts/**",
+      "audit-fix/**",
+      "dist/**",
+      "managed-skills/**",
+      "node_modules/**",
+      "screenshots/**",
+      "test/**",
+      "tmp/**",
+    ],
   },
 ];

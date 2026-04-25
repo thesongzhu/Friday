@@ -158,6 +158,7 @@ describe("Marketplace workflow one-time run guard (integration)", () => {
         const result = await assertListingExecutionReady(
           {
             listingId,
+            tenantId: principal.tenantId ?? principalId,
             principalId,
           },
           {

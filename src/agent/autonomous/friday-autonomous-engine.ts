@@ -11,6 +11,7 @@
  */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 import { FridayDomainError } from "#errors";
 
@@ -91,6 +92,7 @@ Observations:
 
 const FILE_STATE_OBSERVATION_PREFIX = "FILE_STATE: ";
 const FILE_OBSERVATION_MAX_BYTES = 16_384;
+const OUTSIDE_WORKSPACE_FILE_ERROR = "Path is outside the autonomous workspace root";
 
 type FridayDeterministicFileMatch = {
   readonly expectedContent: string;
@@ -116,6 +118,19 @@ function buildAutonomousSessionKey(scope: "decision" | "action" | "plan", id: st
 
 function buildAutonomousBrowserSessionId(goalId: UUID): string {
   return `autonomous-goal:${goalId}`;
+}
+
+function resolveExistingOrLexicalPath(filePath: string): string {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function isPathInsideRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 const FILE_CONTENT_PATTERN_PRECEDENCE: ReadonlyArray<{
@@ -306,6 +321,7 @@ export function createFridayAutonomousEngine(
     ...FRIDAY_AUTONOMOUS_DEFAULT_CONFIG,
     ...deps.config,
   };
+  const workspaceRoot = resolveExistingOrLexicalPath(deps.workspaceRoot ?? process.cwd());
 
   const persistence = deps.persistence;
 
@@ -758,6 +774,14 @@ export function createFridayAutonomousEngine(
     return collectInspectionFilePaths(step).length > 0;
   }
 
+  function resolveAllowedInspectionPath(filePath: string): { path: string; error?: string } {
+    const resolvedPath = resolveExistingOrLexicalPath(filePath);
+    if (!isPathInsideRoot(workspaceRoot, resolvedPath)) {
+      return { path: resolvedPath, error: OUTSIDE_WORKSPACE_FILE_ERROR };
+    }
+    return { path: resolvedPath };
+  }
+
   function captureFileStateObservations(step: FridayAutonomousStep): FridayAutonomousObservation[] {
     const observations: FridayAutonomousObservation[] = [];
 
@@ -770,13 +794,18 @@ export function createFridayAutonomousEngine(
       let errorMessage: string | undefined;
 
       try {
-        const stat = fs.statSync(filePath);
-        exists = true;
-        isFile = stat.isFile();
-        isDirectory = stat.isDirectory();
-        size = stat.size;
-        if (isFile && stat.size <= FILE_OBSERVATION_MAX_BYTES) {
-          content = fs.readFileSync(filePath, "utf8");
+        const resolved = resolveAllowedInspectionPath(filePath);
+        if (resolved.error) {
+          errorMessage = resolved.error;
+        } else {
+          const stat = fs.statSync(resolved.path);
+          exists = true;
+          isFile = stat.isFile();
+          isDirectory = stat.isDirectory();
+          size = stat.size;
+          if (isFile && stat.size <= FILE_OBSERVATION_MAX_BYTES) {
+            content = fs.readFileSync(resolved.path, "utf8");
+          }
         }
       } catch (err) {
         if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {

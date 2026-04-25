@@ -35,6 +35,7 @@ export function createFridayChannelWebhookRoutes(
       method: "POST",
       path: "/v1/channel-webhooks/line",
       auth: { public: true },
+      rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.lineWebhookRelay;
         if (!relay?.handleHttpWebhook || relay.isListening() !== true) {
@@ -85,6 +86,7 @@ export function createFridayChannelWebhookRoutes(
       method: "GET",
       path: "/v1/channel-webhooks/whatsapp",
       auth: { public: true },
+      rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.whatsappWebhookRelay;
         if (!relay?.handleVerificationChallenge || relay.isListening() !== true) {
@@ -118,6 +120,7 @@ export function createFridayChannelWebhookRoutes(
       method: "POST",
       path: "/v1/channel-webhooks/whatsapp",
       auth: { public: true },
+      rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.whatsappWebhookRelay;
         if (!relay?.handleHttpWebhook || relay.isListening() !== true) {
@@ -168,6 +171,7 @@ export function createFridayChannelWebhookRoutes(
       method: "POST",
       path: "/v1/channel-webhooks/lark",
       auth: { public: true },
+      rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.larkWebhookRelay;
         if (!relay || relay.isListening() !== true) {

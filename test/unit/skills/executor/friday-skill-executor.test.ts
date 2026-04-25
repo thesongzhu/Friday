@@ -40,6 +40,7 @@ function makeRegisteredSkill(
     runtimeKind?: "shell" | "node" | "builtin" | "python" | "remote-http";
     entrypoint?: string;
     skillDir?: string;
+    inputs?: FridayRegisteredSkill["manifest"]["inputs"];
     timeoutMs?: number;
     source?: FridayRegisteredSkill["source"];
     origin?: FridayRegisteredSkill["origin"];
@@ -56,6 +57,7 @@ function makeRegisteredSkill(
       apiVersion: "1",
       timeoutMsDefault: overrides.timeoutMs ?? 30_000,
     },
+    ...(overrides.inputs ? { inputs: overrides.inputs } : {}),
   });
 
   return {
@@ -199,6 +201,42 @@ describe("FridaySkillExecutor", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("not found");
+  });
+
+  it("rejects unsafe manifest input regex patterns before execution", async () => {
+    const skill = makeRegisteredSkill({
+      id: "regex-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      inputs: [
+        {
+          key: "message",
+          label: "Message",
+          type: "string",
+          required: true,
+          validation: { regex: "^(a+)+$" },
+        },
+      ],
+    });
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("regex-skill", skill);
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "regex-skill",
+      input: { message: "aaaaaaaaaaaaaaaa!" },
+    }).result;
+
+    expect(result.status).toBe("failed");
+    expect(result.output.code).toBe("SKILL_INPUT_INVALID");
+    expect(result.stderr).toContain("invalid or unsafe regex pattern");
   });
 
   it("routes python skills through the configured interpreter", async () => {

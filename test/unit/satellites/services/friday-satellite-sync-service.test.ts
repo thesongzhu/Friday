@@ -137,7 +137,7 @@ describe("FridaySatelliteSyncService", () => {
       satelliteId: "sat-1",
       streamId: "outbox",
       lastAckedSeq: 0,
-      subscriptions: ["outbox"],
+      subscriptions: ["workflow.node.execute"],
     });
 
     expect(pulled.queueItems).toHaveLength(1);
@@ -156,6 +156,74 @@ describe("FridaySatelliteSyncService", () => {
 
     const message = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-1"));
     expect(message?.status).toBe("acked");
+  });
+
+  it("pull does not lease queued messages when subscriptions are empty or invalid", () => {
+    db.withWriteTransaction((d) => {
+      outboxRepo.insertMessage(d, "cmd-no-sub", {
+        satelliteId: "sat-1",
+        queueKey: "workflow:run-no-sub",
+        messageType: "workflow.node.execute",
+        payloadCiphertext: Buffer.from(JSON.stringify({ runId: "run-no-sub" }), "utf8").toString("base64"),
+        nonce: "inline",
+        keyId: "inline:v1",
+        idempotencyKey: "idem-no-sub",
+      }, NOW);
+    });
+
+    const service = createService();
+    const pulled = service.pull({
+      satelliteId: "sat-1",
+      streamId: "outbox",
+      lastAckedSeq: 0,
+      subscriptions: ["outbox", "  "],
+    });
+
+    expect(pulled.queueItems).toEqual([]);
+    const message = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-no-sub"));
+    expect(message?.status).toBe("queued");
+  });
+
+  it("pull leases only subscribed message types", () => {
+    db.withWriteTransaction((d) => {
+      outboxRepo.insertMessage(d, "cmd-other", {
+        satelliteId: "sat-1",
+        queueKey: "other:1",
+        messageType: "other.command",
+        payloadCiphertext: Buffer.from(JSON.stringify({ ok: true }), "utf8").toString("base64"),
+        nonce: "inline",
+        keyId: "inline:v1",
+        idempotencyKey: "idem-other",
+      }, NOW);
+      outboxRepo.insertMessage(d, "cmd-workflow", {
+        satelliteId: "sat-1",
+        queueKey: "workflow:run-1",
+        messageType: "workflow.node.execute",
+        payloadCiphertext: Buffer.from(JSON.stringify({ runId: "run-1" }), "utf8").toString("base64"),
+        nonce: "inline",
+        keyId: "inline:v1",
+        idempotencyKey: "idem-workflow",
+      }, NOW);
+    });
+
+    const service = createService();
+    const pulled = service.pull({
+      satelliteId: "sat-1",
+      streamId: "outbox",
+      lastAckedSeq: 0,
+      subscriptions: ["workflow.node.execute"],
+    });
+
+    expect(pulled.queueItems).toHaveLength(1);
+    expect(pulled.queueItems[0]).toMatchObject({
+      id: "cmd-workflow",
+      messageType: "workflow.node.execute",
+    });
+
+    const other = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-other"));
+    const workflow = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-workflow"));
+    expect(other?.status).toBe("queued");
+    expect(workflow?.status).toBe("leased");
   });
 
   it("push reports node results and surfaces stale-attempt conflicts", async () => {
@@ -208,6 +276,71 @@ describe("FridaySatelliteSyncService", () => {
       code: "WORKFLOW_RUN_NODE_ATTEMPT_MISMATCH",
       message: "Workflow node attempt number mismatch",
     });
+  });
+
+  it("does not ack leased outbox messages when a pushed node result is rejected", async () => {
+    db.withWriteTransaction((d) => {
+      outboxRepo.insertMessage(d, "cmd-rejected-result", {
+        satelliteId: "sat-1",
+        queueKey: "workflow:run-1",
+        messageType: "workflow.node.execute",
+        payloadCiphertext: Buffer.from(JSON.stringify({ runId: "run-1" }), "utf8").toString("base64"),
+        nonce: "inline",
+        keyId: "inline:v1",
+        idempotencyKey: "idem-rejected-result",
+      }, NOW);
+    });
+    const writer = vi.fn(async () => {
+      throw Object.assign(new Error("Workflow node attempt number mismatch"), {
+        code: "WORKFLOW_RUN_NODE_ATTEMPT_MISMATCH",
+      });
+    });
+    const service = createFridaySatelliteSyncService({
+      db,
+      checkpointRepo,
+      outboxRepo,
+      cursorSigner,
+      ackValidator,
+      nowIso: () => NOW,
+      remoteNodeResultWriter: writer,
+    });
+    const pulled = service.pull({
+      satelliteId: "sat-1",
+      streamId: "outbox",
+      lastAckedSeq: 0,
+      subscriptions: ["workflow.node.execute"],
+    });
+
+    const result = await service.push({
+      satelliteId: "sat-1",
+      acks: [{ streamId: "outbox", seq: pulled.queueItems[0]!.seq, epoch: pulled.epoch }],
+      nodeResults: [{
+        runId: "run-1",
+        nodeId: "node-a",
+        attemptId: "attempt-stale",
+        attempt: 0,
+        status: "completed",
+      }],
+    });
+
+    expect(result.acceptedAcks).toEqual([]);
+    expect(result.conflicts).toEqual(expect.arrayContaining([
+      {
+        streamId: "workflow:run-1",
+        seq: 0,
+        code: "WORKFLOW_RUN_NODE_ATTEMPT_MISMATCH",
+        message: "Workflow node attempt number mismatch",
+      },
+      {
+        streamId: "outbox",
+        seq: pulled.queueItems[0]!.seq,
+        code: "SATELLITE_ACK_BLOCKED_BY_NODE_RESULT_CONFLICT",
+        message: "Ack was not accepted because one or more node results in the push were rejected",
+      },
+    ]));
+
+    const message = db.withReadConnection((d) => outboxRepo.getMessage(d, "cmd-rejected-result"));
+    expect(message?.status).toBe("leased");
   });
 
   it("pull with valid resume cursor succeeds", () => {

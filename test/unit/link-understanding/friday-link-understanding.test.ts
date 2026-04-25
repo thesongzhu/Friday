@@ -240,6 +240,11 @@ describe("FridayLinkUnderstandingService", () => {
     expect(result[0].title).toBe("Test Page");
     expect(result[0].summary).toContain("Page content");
     expect(result[0].cached).toBe(false);
+    expect(fetchFn).toHaveBeenCalledWith("https://example.com", expect.objectContaining({
+      timeoutMs: DEFAULT_LINK_UNDERSTANDING_CONFIG.fetchTimeoutMs,
+      maxRedirects: DEFAULT_LINK_UNDERSTANDING_CONFIG.maxRedirects,
+      maxResponseSizeBytes: DEFAULT_LINK_UNDERSTANDING_CONFIG.maxResponseSizeBytes,
+    }));
 
     // Second call should use cache
     const result2 = await service.processText("Check https://example.com for details");

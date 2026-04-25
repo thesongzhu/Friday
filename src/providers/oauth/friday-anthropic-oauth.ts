@@ -228,6 +228,7 @@ export function createFridayAnthropicOAuthProvider(
       const response = await fetchFn(FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           grant_type: "authorization_code",
           client_id: FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,

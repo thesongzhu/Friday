@@ -24,6 +24,7 @@ import type {
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05";
 const MAX_LIST_PAGES = 20;
+const MAX_HTTP_RESPONSE_BYTES = 1024 * 1024;
 const FRAME_SEPARATOR = Buffer.from("\r\n\r\n", "utf8");
 const LINE_SEPARATOR = "\n";
 
@@ -50,6 +51,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
   cleanupAbort?: () => void;
+}
+
+interface LimitedTextResult {
+  text: string;
+  truncated: boolean;
 }
 
 interface McpSession {
@@ -1188,6 +1194,62 @@ function createHttpMcpSession(params: {
   };
 }
 
+async function readHttpResponseTextWithLimit(response: Response, maxBytes: number): Promise<LimitedTextResult> {
+  const byteLimit = Math.max(0, Math.floor(maxBytes) + 1);
+  if (byteLimit === 0) {
+    await response.body?.cancel();
+    return { text: "", truncated: true };
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    return {
+      text: text.length > maxBytes ? text.slice(0, maxBytes + 1) : text,
+      truncated: text.length > maxBytes,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+  let truncated = false;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = byteLimit - bytesRead;
+      if (remaining <= 0) {
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (value.byteLength > remaining || bytesRead >= byteLimit) {
+        truncated = true;
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  return { text: chunks.join(""), truncated };
+}
+
 async function sendHttpRpc(
   payload: Record<string, unknown>,
   input: {
@@ -1225,11 +1287,23 @@ async function sendHttpRpc(
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new FridayDomainError("INTERNAL_ERROR", `MCP HTTP ${String(response.status)} ${response.statusText}${body ? `: ${body}` : ""}`, { httpStatus: 500 });
+      const body = await readHttpResponseTextWithLimit(response, MAX_HTTP_RESPONSE_BYTES)
+        .catch(() => ({ text: "", truncated: false }));
+      const suffix = body.text
+        ? `: ${body.text.slice(0, 4096)}${body.truncated ? "...[truncated]" : ""}`
+        : "";
+      throw new FridayDomainError("INTERNAL_ERROR", `MCP HTTP ${String(response.status)} ${response.statusText}${suffix}`, { httpStatus: 500 });
     }
 
-    const rawText = await response.text();
+    const raw = await readHttpResponseTextWithLimit(response, MAX_HTTP_RESPONSE_BYTES);
+    if (raw.truncated) {
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
+        `MCP HTTP response exceeded maximum size of ${String(MAX_HTTP_RESPONSE_BYTES)} bytes`,
+        { httpStatus: 500 },
+      );
+    }
+    const rawText = raw.text;
     if (!rawText.trim()) {
       return {};
     }

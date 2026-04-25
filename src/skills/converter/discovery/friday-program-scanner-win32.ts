@@ -6,7 +6,7 @@
  * common CLI tool locations.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
@@ -123,9 +123,10 @@ interface RegistryEntry {
 
 function queryRegistryUninstallKeys(regPath: string): RegistryEntry[] {
   try {
-    const output = execSync(
-      `reg query "${regPath}" /s 2>nul`,
-      { encoding: "utf-8", timeout: 10000 },
+    const output = execFileSync(
+      "reg",
+      ["query", regPath, "/s"],
+      { encoding: "utf-8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
     );
     return parseRegistryOutput(output);
   } catch (err) {
@@ -218,10 +219,14 @@ function redactMetadata(
   const home = homedir();
   const user = basename(home);
   for (const [k, v] of Object.entries(meta)) {
-    redacted[k] = v.replace(new RegExp(home.replace(/\\/g, "\\\\"), "g"), "%USERPROFILE%")
-      .replace(new RegExp(user, "g"), "[REDACTED]");
+    redacted[k] = replaceAllLiteral(replaceAllLiteral(v, home, "%USERPROFILE%"), user, "[REDACTED]");
   }
   return redacted;
+}
+
+function replaceAllLiteral(value: string, search: string, replacement: string): string {
+  if (search.length === 0) return value;
+  return value.split(search).join(replacement);
 }
 
 function filterUndefined(obj: Record<string, string | undefined>): Record<string, string> {

@@ -844,6 +844,7 @@ export function createFridayWorkflowExecutionService(
   async function applyBatchResults(
     runId: UUID,
     results: PromiseSettledResult<NodeExecutionOutcome>[],
+    attempts: FridayWorkflowRunNodeEntity[],
     plan: FridayWorkflowExecutionPlan,
     runEntity: FridayWorkflowRunEntity,
     nodeStatuses: Map<string, NodeAttemptStatus>,
@@ -853,8 +854,41 @@ export function createFridayWorkflowExecutionService(
     let hasPause = false;
     let hasBlocked = false;
 
-    for (const result of results) {
-      if (result.status === "rejected") continue;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        const attempt = attempts[index];
+        if (!attempt) {
+          hasFailure = true;
+          continue;
+        }
+        const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        const errorObj = {
+          code: "NODE_EXECUTION_REJECTED",
+          message: errorMessage,
+          retryable: false,
+        } as const;
+        const failureStatus = await persistNodeFailure({
+          runId,
+          workflowId: runEntity.workflowId,
+          attempt,
+          node: plan.nodeMap.get(attempt.nodeId)!,
+          error: errorObj,
+        });
+        nodeStatuses.set(attempt.nodeId, failureStatus);
+        if (failureStatus === "retrying") {
+          nodeStatuses.delete(attempt.nodeId);
+          nodeContexts.set(attempt.nodeId, {
+            output: { status: failureStatus, error: errorMessage },
+          });
+        } else {
+          nodeContexts.set(attempt.nodeId, {
+            output: { status: failureStatus, error: errorMessage },
+            status: failureStatus,
+          });
+          hasFailure = true;
+        }
+        continue;
+      }
       const { value } = result;
 
       if (value.status === "completed") {
@@ -1118,7 +1152,7 @@ export function createFridayWorkflowExecutionService(
       );
 
       // Process results and apply failure policy
-      const outcome = await applyBatchResults(runId, results, plan, runEntity, nodeStatuses, nodeContexts);
+      const outcome = await applyBatchResults(runId, results, attempts, plan, runEntity, nodeStatuses, nodeContexts);
       if (outcome.aborted) {
         aborted = true;
         return;

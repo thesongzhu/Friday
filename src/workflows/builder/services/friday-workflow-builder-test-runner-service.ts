@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
+import { precompileRegexPattern } from "../../../rules/engine/condition-evaluator.js";
 import type { FridayWorkflowSpecTestCase, FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
 import type {
   FridayWorkflowTestAssertionResult,
@@ -74,7 +75,11 @@ function evaluateAssertion(
       break;
     case "matches":
       if (typeof actual === "string" && typeof assertion.expected === "string") {
-        passed = new RegExp(assertion.expected).test(actual);
+        try {
+          passed = precompileRegexPattern(assertion.expected).test(actual);
+        } catch {
+          passed = false;
+        }
       }
       break;
   }

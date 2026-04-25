@@ -88,18 +88,27 @@ function executionErrorToNodeResult(
   };
 }
 
+function nodeResultKey(result: Pick<FridaySyncNodeResultInput, "runId" | "nodeId" | "attemptId">): string {
+  return `${result.runId}\u0000${result.nodeId}\u0000${result.attemptId}`;
+}
+
 export function createFridaySatelliteLocalRunnerService(
   deps: CreateFridaySatelliteLocalRunnerServiceDeps,
 ): FridaySatelliteLocalRunnerService {
   return {
     async drain(input) {
       const streamId = input.streamId ?? `outbox:${input.satelliteId}`;
+      const maxItems =
+        typeof input.maxItems === "number" && Number.isInteger(input.maxItems) && input.maxItems > 0
+          ? input.maxItems
+          : undefined;
       const pull = deps.sync.pull({
         satelliteId: input.satelliteId,
         streamId,
         lastAckedSeq: input.lastAckedSeq ?? 0,
         subscriptions: ["workflow.node.execute"],
         resumeCursor: input.resumeCursor,
+        limit: maxItems,
       });
 
       if (pull.fullPullRequired || pull.queueItems.length === 0) {
@@ -115,21 +124,22 @@ export function createFridaySatelliteLocalRunnerService(
         };
       }
 
-      const queueItems = pull.queueItems.slice(0, input.maxItems ?? pull.queueItems.length);
+      const queueItems = pull.queueItems;
       const nodeResults: FridaySyncNodeResultInput[] = [];
+      const processed: Array<{ seq: number; result: FridaySyncNodeResultInput }> = [];
       let failed = 0;
-      let lastAckSeq = 0;
 
       for (const item of queueItems) {
         if (item.messageType !== "workflow.node.execute") {
-          lastAckSeq = item.seq;
-          continue;
+          failed += 1;
+          break;
         }
 
+        let task: FridaySatelliteWorkflowNodeTask | undefined;
         try {
-          const task = decodeWorkflowTask(item.payloadCiphertext);
+          task = decodeWorkflowTask(item.payloadCiphertext);
           const result = await input.executor(task);
-          nodeResults.push({
+          const nodeResult: FridaySyncNodeResultInput = {
             runId: task.runId,
             nodeId: task.nodeId,
             attemptId: task.attemptId,
@@ -137,21 +147,25 @@ export function createFridaySatelliteLocalRunnerService(
             status: result.status,
             output: result.output,
             ...(result.status === "failed" ? { error: result.error } : {}),
-          });
-          lastAckSeq = item.seq;
+          };
+          if (result.status === "failed") {
+            failed += 1;
+          }
+          nodeResults.push(nodeResult);
+          processed.push({ seq: item.seq, result: nodeResult });
         } catch (error) {
           failed += 1;
-          try {
-            const task = decodeWorkflowTask(item.payloadCiphertext);
-            nodeResults.push(executionErrorToNodeResult(task, error));
-            lastAckSeq = item.seq;
-          } catch {
+          if (task === undefined) {
             // Malformed queue payloads remain leased until expiry so the hub can requeue or dead-letter them.
+            break;
           }
+          const nodeResult = executionErrorToNodeResult(task, error);
+          nodeResults.push(nodeResult);
+          processed.push({ seq: item.seq, result: nodeResult });
         }
       }
 
-      if (lastAckSeq === 0 && nodeResults.length === 0) {
+      if (nodeResults.length === 0) {
         return {
           epoch: pull.epoch,
           streamId: pull.streamId,
@@ -163,19 +177,39 @@ export function createFridaySatelliteLocalRunnerService(
         };
       }
 
-      const push = await deps.sync.push({
+      const resultPush = await deps.sync.push({
         satelliteId: input.satelliteId,
-        acks: [{ streamId: pull.streamId, seq: lastAckSeq, epoch: pull.epoch }],
+        acks: [],
         nodeResults,
       });
+      const acceptedKeys = new Set(resultPush.acceptedNodeResults.map(nodeResultKey));
+      let lastAckSeq = 0;
+      for (const item of processed) {
+        if (!acceptedKeys.has(nodeResultKey(item.result))) {
+          break;
+        }
+        lastAckSeq = item.seq;
+      }
+
+      let acked = 0;
+      const conflicts = [...resultPush.conflicts];
+      if (lastAckSeq > 0) {
+        const ackPush = await deps.sync.push({
+          satelliteId: input.satelliteId,
+          acks: [{ streamId: pull.streamId, seq: lastAckSeq, epoch: pull.epoch }],
+          nodeResults: [],
+        });
+        acked = ackPush.acceptedAcks.length;
+        conflicts.push(...ackPush.conflicts);
+      }
 
       return {
         epoch: pull.epoch,
         streamId: pull.streamId,
         executed: nodeResults.length,
-        acked: push.acceptedAcks.length,
+        acked,
         failed,
-        conflicts: push.conflicts,
+        conflicts,
         nextCursor: pull.nextCursor,
       };
     },

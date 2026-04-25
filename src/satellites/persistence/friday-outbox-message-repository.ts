@@ -14,6 +14,7 @@ export interface FridayOutboxMessageRepository {
     limit: number,
     leaseUntilIso: string,
     nowIso: string,
+    messageTypes?: readonly string[],
   ): FridayOutboxLeasedItem[];
   ackUpToSeq(db: Database.Database, satelliteId: string, seq: number, ackedAt: string): number;
   ackById(db: Database.Database, satelliteId: string, id: string, ackedAt: string): boolean;
@@ -59,20 +60,28 @@ export function createFridayOutboxMessageRepository(): FridayOutboxMessageReposi
       );
     },
 
-    leaseBatch(db, satelliteId, limit, leaseUntilIso, nowIso) {
+    leaseBatch(db, satelliteId, limit, leaseUntilIso, nowIso, messageTypes) {
       // Select eligible messages: queued, deliver_after satisfied, not expired
+      const filteredMessageTypes = (messageTypes ?? []).filter((type) => type.trim().length > 0);
+      if (messageTypes !== undefined && filteredMessageTypes.length === 0) {
+        return [];
+      }
+      const messageTypeClause = filteredMessageTypes.length > 0
+        ? `AND message_type IN (${filteredMessageTypes.map(() => "?").join(", ")})`
+        : "";
       const rows = db
         .prepare(
           `SELECT id, rowid AS seq, payload_ciphertext, message_type
            FROM outbox_messages
            WHERE satellite_id = ?
              AND status = 'queued'
+             ${messageTypeClause}
              AND (deliver_after IS NULL OR deliver_after <= ?)
              AND (expires_at IS NULL OR expires_at > ?)
            ORDER BY created_at ASC
            LIMIT ?`,
         )
-        .all(satelliteId, nowIso, nowIso, limit) as Array<{
+        .all(satelliteId, ...filteredMessageTypes, nowIso, nowIso, limit) as Array<{
         id: string;
         seq: number;
         payload_ciphertext: string;

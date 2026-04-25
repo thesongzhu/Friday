@@ -57,12 +57,17 @@ function isUnsafeRegexPattern(pattern: string): boolean {
  * Precompile a regex pattern once and cache it for hot-path reuse.
  * Throws if the pattern is invalid.
  */
-export function precompileRegexPattern(pattern: string): RegExp {
-  const cached = precompiledRegexCache.get(pattern);
+export function precompileRegexPattern(pattern: string, flags = ""): RegExp {
+  if (!/^[dgimsuvy]*$/.test(flags) || new Set(flags).size !== flags.length) {
+    throw new FridayDomainError("VALIDATION_ERROR", "Regex pattern rejected: invalid flags", { httpStatus: 400 });
+  }
+
+  const cacheKey = `${flags}\0${pattern}`;
+  const cached = precompiledRegexCache.get(cacheKey);
   if (cached) {
     // Map insertion order lets us implement LRU by re-inserting on access.
-    precompiledRegexCache.delete(pattern);
-    precompiledRegexCache.set(pattern, cached);
+    precompiledRegexCache.delete(cacheKey);
+    precompiledRegexCache.set(cacheKey, cached);
     return cached;
   }
 
@@ -70,14 +75,14 @@ export function precompileRegexPattern(pattern: string): RegExp {
     throw new FridayDomainError("VALIDATION_ERROR", `Regex pattern rejected: potentially unsafe (ReDoS risk or exceeds max length ${String(MAX_REGEX_PATTERN_LENGTH)})`, { httpStatus: 400 });
   }
 
-  const compiled = new RegExp(pattern);
+  const compiled = new RegExp(pattern, flags);
   if (precompiledRegexCache.size >= MAX_REGEX_CACHE_ENTRIES) {
     const leastRecentlyUsedKey = precompiledRegexCache.keys().next().value;
     if (leastRecentlyUsedKey !== undefined) {
       precompiledRegexCache.delete(leastRecentlyUsedKey);
     }
   }
-  precompiledRegexCache.set(pattern, compiled);
+  precompiledRegexCache.set(cacheKey, compiled);
   return compiled;
 }
 

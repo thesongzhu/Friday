@@ -135,6 +135,7 @@ describe("FridayAnthropicOAuthProvider", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: expect.any(AbortSignal),
         }),
       );
 

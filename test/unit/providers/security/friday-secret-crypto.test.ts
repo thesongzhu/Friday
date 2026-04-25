@@ -118,6 +118,13 @@ describe("FridaySecretCrypto", () => {
       expect(result).toEqual(key);
     });
 
+    it("does not generate and write a keychain master key through process arguments", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
+
+      expect(() => getMasterKey()).toThrow();
+    });
+
     it("generates random key when env var not set", () => {
       delete process.env.FRIDAY_MASTER_KEY;
       const key = getMasterKey();

@@ -91,4 +91,8 @@ export interface CreateFridayPluginServiceDeps {
   idGenerator: () => string;
   /** Read a file from disk as a Buffer. Used to compute fingerprints for local installs. */
   readFileAsBuffer?: (filePath: string) => Buffer;
+  /** Resolve a marketplace signature key id to a trusted Ed25519 public key PEM. */
+  resolveMarketplacePublicKeyPem?: (keyId: string, manifest: FridayPluginManifest) => string | undefined;
+  /** Optional pinned marketplace key ids. Empty means no additional pin constraint. */
+  pinnedMarketplaceKeyIds?: readonly string[];
 }

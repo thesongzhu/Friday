@@ -11,13 +11,32 @@ describe("FridayMemoryEmbeddingRepository", () => {
   let repo: FridayMemoryEmbeddingRepository;
   const NOW = "2026-02-17T10:00:00.000Z";
 
-  function insertMemoryItem(id: string, namespace = "test", key?: string, expiresAt?: string) {
+  function insertMemoryItem(
+    id: string,
+    namespace = "test",
+    key?: string,
+    expiresAt?: string,
+    tags: string[] = [],
+  ) {
     db.writer
       .prepare(
         `INSERT INTO memory_items (id, namespace, key, value_json, content_text, source, tags_json, tags_text, metadata_json, expires_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, namespace, key ?? id, "{}", "test content", "system", "[]", "", "{}", expiresAt ?? null, NOW, NOW);
+      .run(
+        id,
+        namespace,
+        key ?? id,
+        "{}",
+        "test content",
+        "system",
+        JSON.stringify(tags),
+        tags.join(" "),
+        "{}",
+        expiresAt ?? null,
+        NOW,
+        NOW,
+      );
   }
 
   function makeEmbedding(overrides: Partial<FridayMemoryEmbedding> = {}): FridayMemoryEmbedding {
@@ -230,6 +249,27 @@ describe("FridayMemoryEmbeddingRepository", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].itemId).toBe("mi-2");
+  });
+
+  it("filters semantic candidates by exact tag match", () => {
+    insertMemoryItem("mi-1", "test", "mi-1", undefined, ["data"]);
+    insertMemoryItem("mi-2", "test", "mi-2", undefined, ["database"]);
+
+    db.writer.transaction(() => {
+      repo.upsert(db.writer, makeEmbedding({ id: "e1", itemId: "mi-1", vector: [1.0, 0.0, 0.0] }));
+      repo.upsert(db.writer, makeEmbedding({ id: "e2", itemId: "mi-2", providerId: "prov-1", vector: [1.0, 0.0, 0.0] }));
+    })();
+
+    const results = repo.querySimilar(db.writer, {
+      queryVector: [1.0, 0.0, 0.0],
+      model: "text-embedding-3-small",
+      nowIso: NOW,
+      tagsAny: ["data"],
+      limit: 10,
+      candidateLimit: 100,
+    });
+
+    expect(results.map((result) => result.itemId)).toEqual(["mi-1"]);
   });
 
   // ─── Vector validation ───

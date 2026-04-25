@@ -29,6 +29,7 @@ import { FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES } from "../api/friday-multi-te
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
+import { resolveRoleHierarchyLevelFromLabel } from "./role-hierarchy.js";
 
 // ─── Input Types ───
 
@@ -732,20 +733,7 @@ export class TenantManager {
     let highestRank = -1;
 
     for (const role of roles) {
-      const normalized = role.trim().toLowerCase().replaceAll(/[:\s-]+/g, "_");
-      let level: FridayRoleHierarchyLevel | null = null;
-
-      if (normalized.includes("superadmin")) {
-        level = "superadmin";
-      } else if (normalized.includes("tenant_admin") || normalized.includes("tenantadmin")) {
-        level = "tenant_admin";
-      } else if (normalized.includes("workspace_admin") || normalized.includes("workspaceadmin")) {
-        level = "workspace_admin";
-      } else if (normalized.includes("member")) {
-        level = "member";
-      } else if (normalized.includes("viewer")) {
-        level = "viewer";
-      }
+      const level = resolveRoleHierarchyLevelFromLabel(role);
 
       if (!level) continue;
 

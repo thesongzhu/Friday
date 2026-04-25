@@ -60,7 +60,7 @@ describe("FridayAgentSelfTestService", () => {
     expect(results).toHaveLength(1);
     expect(results[0].strategy).toBe("syntax");
     expect(results[0].passed).toBe(true);
-    expect(execCommand).toHaveBeenCalledWith('node --check "/tmp/app.js"', undefined);
+    expect(execCommand).toHaveBeenCalledWith("node --check '/tmp/app.js'", undefined);
   });
 
   it("fails JS syntax check when node --check exits non-zero", async () => {
@@ -93,7 +93,22 @@ describe("FridayAgentSelfTestService", () => {
 
     expect(results[0].strategy).toBe("syntax");
     expect(results[0].passed).toBe(true);
-    expect(execCommand).toHaveBeenCalledWith('node --check "/tmp/module.ts"', undefined);
+    expect(execCommand).toHaveBeenCalledWith("node --check '/tmp/module.ts'", undefined);
+  });
+
+  it("shell-quotes artifact paths before syntax checks", async () => {
+    const execCommand = vi.fn<(cmd: string, wd?: string) => Promise<FridayAgentExecOutput>>()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    const svc = createFridayAgentSelfTestService(makeDeps({ execCommand }));
+
+    await svc.runTests({
+      artifacts: [makeArtifact({ path: "/tmp/a'; touch /tmp/pwned; '.js" })],
+    });
+
+    expect(execCommand).toHaveBeenCalledWith(
+      "node --check '/tmp/a'\\''; touch /tmp/pwned; '\\''.js'",
+      undefined,
+    );
   });
 
   // ─── Code syntax: Python ───
@@ -141,7 +156,7 @@ describe("FridayAgentSelfTestService", () => {
 
     expect(results[0].strategy).toBe("syntax");
     expect(results[0].passed).toBe(true);
-    expect(execCommand).toHaveBeenCalledWith('bash -n "/tmp/deploy.sh"', undefined);
+    expect(execCommand).toHaveBeenCalledWith("bash -n '/tmp/deploy.sh'", undefined);
   });
 
   it("fails shell syntax check on error", async () => {
@@ -376,7 +391,7 @@ describe("FridayAgentSelfTestService", () => {
       workdir: "/project",
     });
 
-    expect(execCommand).toHaveBeenCalledWith('node --check "/tmp/app.js"', "/project");
+    expect(execCommand).toHaveBeenCalledWith("node --check '/tmp/app.js'", "/project");
   });
 
   // ─── Duration tracking ───

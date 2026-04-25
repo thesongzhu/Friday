@@ -268,7 +268,7 @@ export interface CreateFridayApiRuntimeDeps {
   /** Optional: canonical skills lifecycle service. */
   skillLifecycle?: FridaySkillLifecycleService;
   /** Optional: runtime entitlement guard for marketplace-protected listings. */
-  marketplaceEntitlementCheck?: (input: { listingId: string; principalId: string }) => Promise<void>;
+  marketplaceEntitlementCheck?: (input: { listingId: string; tenantId: string; principalId: string }) => Promise<void>;
   /** Optional: satellite pairing/handshake route surface. */
   satellitePairing?: FridaySatellitePairingRoutesDeps;
   /** Optional: satellite runtime sync/command route surface. */

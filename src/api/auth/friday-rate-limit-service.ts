@@ -21,6 +21,7 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   { id: "session.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "workflow.start_run", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "workflow.publish", windowMs: 60_000, maxHits: 20, keyBy: "principal" },
+  { id: "workflow.webhook", windowMs: 60_000, maxHits: 120, keyBy: "ip" },
   { id: "workflow.resolve_conflict", windowMs: 60_000, maxHits: 20, keyBy: "principal" },
   { id: "realtime.subscribe", windowMs: 60_000, maxHits: 120, keyBy: "principal" },
   { id: "realtime.pull", windowMs: 60_000, maxHits: 300, keyBy: "principal" },
@@ -30,6 +31,9 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   { id: "provider.validate", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   // Agent / memory / marketplace writes
   { id: "agent.run", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
+  { id: "channel.webhook", windowMs: 60_000, maxHits: 120, keyBy: "ip" },
+  { id: "satellite.register", windowMs: 60_000, maxHits: 20, keyBy: "ip" },
+  { id: "satellite.handshake", windowMs: 60_000, maxHits: 30, keyBy: "ip" },
   { id: "memory.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "marketplace.checkout", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   { id: "marketplace.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },

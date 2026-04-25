@@ -7,6 +7,7 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 500;
+const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
 const SAFE_PARENT_ENV_KEYS = [
   "PATH",
   "HOME",
@@ -38,6 +39,35 @@ function buildChildEnv(overrides?: Record<string, string>): NodeJS.ProcessEnv {
   return overrides ? { ...env, ...overrides } : env;
 }
 
+function createBoundedOutputCollector(streamName: "stdout" | "stderr", maxBytes: number = DEFAULT_MAX_OUTPUT_BYTES) {
+  const chunks: Buffer[] = [];
+  let capturedBytes = 0;
+  let discardedBytes = 0;
+
+  return {
+    append(chunk: Buffer | string): void {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remainingBytes = maxBytes - capturedBytes;
+      if (remainingBytes > 0) {
+        const captured = buffer.subarray(0, remainingBytes);
+        chunks.push(captured);
+        capturedBytes += captured.length;
+      }
+      if (buffer.length > remainingBytes) {
+        discardedBytes += buffer.length - Math.max(remainingBytes, 0);
+      }
+    },
+    toString(): string {
+      const output = Buffer.concat(chunks).toString("utf-8");
+      if (discardedBytes === 0) {
+        return output;
+      }
+      const separator = output.length === 0 || output.endsWith("\n") ? "" : "\n";
+      return `${output}${separator}[friday] ${streamName} truncated after ${String(maxBytes)} bytes; discarded ${String(discardedBytes)} bytes.`;
+    },
+  };
+}
+
 /**
  * Creates a shell executor that spawns child processes and captures output.
  * Uses `child_process.spawn` for streaming; never throws on process failure.
@@ -49,8 +79,8 @@ export function createFridayShellExecutor(): FridayShellExecutor {
         const startMs = Date.now();
         const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-        const stdoutChunks: Buffer[] = [];
-        const stderrChunks: Buffer[] = [];
+        const stdout = createBoundedOutputCollector("stdout");
+        const stderr = createBoundedOutputCollector("stderr");
         let timedOut = false;
         let cancelled = false;
         let settled = false;
@@ -104,7 +134,7 @@ export function createFridayShellExecutor(): FridayShellExecutor {
 
         const onStdinError = (err: unknown) => {
           if (!isIgnorableStdinError(err)) {
-            stderrChunks.push(Buffer.from(err instanceof Error ? err.message : String(err)));
+            stderr.append(err instanceof Error ? err.message : String(err));
           }
         };
 
@@ -116,7 +146,7 @@ export function createFridayShellExecutor(): FridayShellExecutor {
             child.stdin.end();
           } catch (err) {
             if (!isIgnorableStdinError(err)) {
-              stderrChunks.push(Buffer.from(err instanceof Error ? err.message : String(err)));
+              stderr.append(err instanceof Error ? err.message : String(err));
             }
           }
         };
@@ -125,13 +155,13 @@ export function createFridayShellExecutor(): FridayShellExecutor {
           try {
             child.stdin.write(options.stdin, (writeErr) => {
               if (writeErr && !isIgnorableStdinError(writeErr)) {
-                stderrChunks.push(Buffer.from(writeErr.message));
+                stderr.append(writeErr.message);
               }
               safeEndStdin();
             });
           } catch (err) {
             if (!isIgnorableStdinError(err)) {
-              stderrChunks.push(Buffer.from(err instanceof Error ? err.message : String(err)));
+              stderr.append(err instanceof Error ? err.message : String(err));
             }
             safeEndStdin();
           }
@@ -140,11 +170,11 @@ export function createFridayShellExecutor(): FridayShellExecutor {
         }
 
         child.stdout.on("data", (chunk: Buffer) => {
-          stdoutChunks.push(chunk);
+          stdout.append(chunk);
         });
 
         child.stderr.on("data", (chunk: Buffer) => {
-          stderrChunks.push(chunk);
+          stderr.append(chunk);
         });
 
         const timer = setTimeout(() => {
@@ -169,8 +199,8 @@ export function createFridayShellExecutor(): FridayShellExecutor {
 
           resolve({
             exitCode: exitCode ?? (timedOut ? 124 : cancelled ? 125 : 1),
-            stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
-            stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
             timedOut,
             cancelled,
             durationMs: Date.now() - startMs,
@@ -183,7 +213,7 @@ export function createFridayShellExecutor(): FridayShellExecutor {
 
         child.on("error", (err) => {
           // Spawn itself failed (e.g. command not found)
-          stderrChunks.push(Buffer.from(err.message));
+          stderr.append(err.message);
           finish(1);
         });
 

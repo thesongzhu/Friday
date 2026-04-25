@@ -21,7 +21,7 @@ export interface FridayLinkFetchResult {
 
 export type FridayLinkFetchFn = (
   url: string,
-  options: { timeoutMs: number; maxRedirects: number },
+  options: { timeoutMs: number; maxRedirects: number; maxResponseSizeBytes: number },
 ) => Promise<{ statusCode: number; contentType: string | null; body: string }>;
 
 /**
@@ -35,6 +35,7 @@ export async function fetchLink(
   const response = await fetchFn(url, {
     timeoutMs: config.fetchTimeoutMs,
     maxRedirects: config.maxRedirects,
+    maxResponseSizeBytes: config.maxResponseSizeBytes,
   });
 
   let body = response.body;

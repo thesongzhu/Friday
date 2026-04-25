@@ -660,6 +660,26 @@ describe("RbacEngine", () => {
         requiredRole: "workspace_admin",
       })).toBe(false);
     });
+
+    it("does not infer hierarchy from role-name substrings", () => {
+      const fakeSuperadminRole = rbac.createRole(null, {
+        name: "not-superadmin",
+        scopeType: "system",
+        permissions: [],
+      });
+      rbac.grantRole({
+        principalId: "fake-root",
+        roleId: fakeSuperadminRole.id,
+        scope: { scopeType: "system" },
+        grantedBy: "bootstrap",
+      });
+
+      expect(rbac.hasRoleAtLeast({
+        principalId: "fake-root",
+        tenantId,
+        requiredRole: "tenant_admin",
+      })).toBe(false);
+    });
   });
 
   describe("permission check auditing", () => {

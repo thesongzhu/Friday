@@ -123,7 +123,7 @@ describe("FridayApiRuntime — Memory Guard Registration", () => {
     expect(memoryRouteIds).toContain("memory.prune");
   });
 
-  it("forPrincipal returns a working guarded service", () => {
+  it("forPrincipal returns a working guarded service for an authenticated principal", () => {
     const providerService = createMockProviderService();
     const memoryService = createMockMemoryService();
 
@@ -139,13 +139,39 @@ describe("FridayApiRuntime — Memory Guard Registration", () => {
       invokeSkill: async () => ({}),
     });
 
-    const guardedService = runtime.memoryGuardFactory!.forPrincipal(null);
+    const guardedService = runtime.memoryGuardFactory!.forPrincipal({
+      principalType: "user",
+      principalId: "principal-1",
+      userId: "user-1",
+      tenantId: "tenant-1",
+      role: "owner",
+      scopes: ["memory.write"],
+      tokenId: "token-1",
+      tokenKind: "access",
+      issuedAt: NOW,
+    });
     expect(guardedService.store).toBeTypeOf("function");
     expect(guardedService.search).toBeTypeOf("function");
     expect(guardedService.get).toBeTypeOf("function");
     expect(guardedService.list).toBeTypeOf("function");
     expect(guardedService.delete).toBeTypeOf("function");
     expect(guardedService.prune).toBeTypeOf("function");
+  });
+
+  it("forPrincipal rejects null principals instead of granting system memory scope", () => {
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService: createMockProviderService(),
+      memoryService: createMockMemoryService(),
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!",
+      computeChecksum: (s: string) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    expect(() => runtime.memoryGuardFactory!.forPrincipal(null)).toThrow("authenticated principal");
   });
 
   it("forContext returns a working guarded service", () => {

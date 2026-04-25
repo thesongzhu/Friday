@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { Copy, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { redactSecretLikeText } from "@/lib/security/redact-secrets";
+import { isSafeHref, toSafeHref } from "@/lib/security/safe-url";
 import type { ChatMessage } from "@/hooks/use-chat-session";
 
 interface ChatMessageBubbleProps {
@@ -222,6 +223,10 @@ function MarkdownContent({ text }: { text: string }) {
   return <>{parts}</>;
 }
 
+export function isSafeMarkdownLinkHref(href: string): boolean {
+  return isSafeHref(href, { allowRelative: false });
+}
+
 function renderInline(text: string, baseKey: number): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let k = baseKey * 1000;
@@ -241,18 +246,22 @@ function renderInline(text: string, baseKey: number): React.ReactNode[] {
       // Inline code
       nodes.push(<code key={k++} className="rounded bg-[color:var(--color-bg-contrast)] px-1 py-0.5 text-[color:var(--color-text-primary)]">{match[4]}</code>);
     } else if (match[6] !== undefined && match[7] !== undefined) {
-      // Link — clickable
-      nodes.push(
-        <a
-          key={k++}
-          href={match[7]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline text-[color:var(--color-text-primary)] hover:text-[color:var(--color-accent)] transition-colors"
-        >
-          {match[6]}
-        </a>,
-      );
+      const safeHref = toSafeHref(match[7], { allowRelative: false });
+      if (safeHref) {
+        nodes.push(
+          <a
+            key={k++}
+            href={safeHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-[color:var(--color-text-primary)] hover:text-[color:var(--color-accent)] transition-colors"
+          >
+            {match[6]}
+          </a>,
+        );
+      } else {
+        nodes.push(<span key={k++}>{match[6]}</span>);
+      }
     }
     lastIndex = match.index + match[0].length;
   }

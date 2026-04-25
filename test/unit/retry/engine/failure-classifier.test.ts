@@ -231,10 +231,20 @@ describe("FailureClassifier", () => {
       expect(result.classificationSource).toBe("http_status");
     });
 
+    it("keeps hard 429/rate-limit signals retryable when wrapped in auth wording", () => {
+      const result = classifier.classifyError({
+        errorCode: "PROVIDER_AUTH_INVALID",
+        errorMessage: "429 rate limit exceeded while refreshing auth profile",
+      });
+      expect(result.category).toBe("rate_limit");
+      expect(result.classificationSource).toBe("error_message");
+      expect(result.retryable).toBe(true);
+    });
+
     it("prefers error code over error message", () => {
       const result = classifier.classifyError({
         errorCode: "ECONNRESET",
-        errorMessage: "rate limit exceeded",
+        errorMessage: "validation failed",
       });
       expect(result.category).toBe("transient");
       expect(result.classificationSource).toBe("error_code");
@@ -287,20 +297,15 @@ describe("FailureClassifier", () => {
       expect(result.category).toBe("transient");
     });
 
-    it("HTTP status takes priority over retry hint", () => {
+    it("HTTP 429 takes priority over non-retryable retry hints", () => {
       const hint: FridayRetryHint = { retryable: false };
       const result = classifier.classifyError(
         { httpStatusCode: 429 },
         hint,
       );
-      // HTTP status classification runs after retry hint in chain,
-      // but retry hint runs before HTTP status — yet custom rules run first.
-      // Actually: custom rules → retry hint → HTTP status
-      // Since hint says not retryable, it should classify as logic (from hint)
-      // BUT the hint is checked before HTTP in the chain.
-      // Let me verify: chain is custom → hint → http → error code → message.
-      expect(result.category).toBe("logic");
-      expect(result.classificationSource).toBe("retry_hint");
+      expect(result.category).toBe("rate_limit");
+      expect(result.classificationSource).toBe("http_status");
+      expect(result.retryable).toBe(true);
     });
   });
 
@@ -354,6 +359,19 @@ describe("FailureClassifier", () => {
       });
       expect(result.category).toBe("rate_limit");
       expect(result.classificationSource).toBe("custom_rule");
+    });
+
+    it("rejects unsafe custom regex patterns at registration", () => {
+      expect(() =>
+        classifier.registerCustomRule({
+          id: "custom-unsafe",
+          name: "Unsafe regex",
+          errorMessagePattern: "^(a+)+$",
+          category: "transient",
+          severity: "minor",
+          priority: 1,
+        }),
+      ).toThrow("Regex pattern rejected");
     });
 
     it("getCustomRules returns registered rules", () => {

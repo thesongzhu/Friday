@@ -1055,7 +1055,7 @@ export function createFridayObservabilityApiService(
         enabled: destination.enabled,
         createdAt: destination.createdAt,
         updatedAt: destination.updatedAt,
-        webhookUrl: readStoredSecret(destination.config.webhookRefKey) ?? "",
+        webhookUrl: REDACTED_SECRET,
         channel: destination.config.channel,
       };
     }
@@ -1198,6 +1198,7 @@ export function createFridayObservabilityApiService(
     alertEngine: alerts,
     nowIso: deps.nowIso,
   });
+  const REDACTED_SECRET = "********";
 
   async function appendAudit(input: {
     actor: FridayObservedOperationActor;
@@ -1213,7 +1214,7 @@ export function createFridayObservabilityApiService(
     spanId?: string;
     metadata?: JsonObject;
     errorMessage?: string;
-  }): Promise<string | undefined> {
+  }): Promise<string> {
     try {
       const entry = await audit.append({
         actor: {
@@ -1239,7 +1240,11 @@ export function createFridayObservabilityApiService(
       return entry.id;
     } catch (error) {
       console.warn("[friday] observability audit append failed", error);
-      return undefined;
+      throw new FridayDomainError(
+        "OBS_AUDIT_APPEND_FAILED",
+        "Observability audit append failed; refusing to complete audited operation",
+        { httpStatus: 503, cause: error },
+      );
     }
   }
 
@@ -1614,7 +1619,9 @@ export function createFridayObservabilityApiService(
           return;
         }
         await dispatchAlert(event, rule);
-      }));
+      })).catch((error: unknown) => {
+        console.warn("[friday] observability alert evaluation failed", error);
+      });
     } catch (error) {
       console.warn("[friday] observability alert evaluation failed", error);
     }
@@ -2356,6 +2363,8 @@ export function createFridayObservabilityApiService(
               userId: incident.userId,
             },
             errorMessage: incident.signature,
+          }).catch((error: unknown) => {
+            console.warn("[friday] observability audit append failed", error);
           });
         }
 
@@ -2383,6 +2392,8 @@ export function createFridayObservabilityApiService(
               confidence: diagnosis.confidence,
               errorFingerprint: diagnosis.errorFingerprint,
             },
+          }).catch((error: unknown) => {
+            console.warn("[friday] observability audit append failed", error);
           });
         }
       }

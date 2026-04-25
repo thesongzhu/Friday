@@ -6,13 +6,26 @@ const KEYS = {
   user: "friday.auth.user",
 } as const;
 
+let inMemoryAccessToken: string | null = null;
+let inMemoryRefreshToken: string | null = null;
+
+function readAndClearLegacyToken(key: string): string | null {
+  const token = localStorage.getItem(key);
+  if (token) {
+    localStorage.removeItem(key);
+  }
+  return token;
+}
+
 export const authStorage = {
   getAccessToken(): string | null {
-    return localStorage.getItem(KEYS.accessToken);
+    inMemoryAccessToken ??= readAndClearLegacyToken(KEYS.accessToken);
+    return inMemoryAccessToken;
   },
 
   getRefreshToken(): string | null {
-    return localStorage.getItem(KEYS.refreshToken);
+    inMemoryRefreshToken ??= readAndClearLegacyToken(KEYS.refreshToken);
+    return inMemoryRefreshToken;
   },
 
   getUser(): FridayUser | null {
@@ -26,8 +39,10 @@ export const authStorage = {
   },
 
   setTokens(accessToken: string, refreshToken: string): void {
-    localStorage.setItem(KEYS.accessToken, accessToken);
-    localStorage.setItem(KEYS.refreshToken, refreshToken);
+    inMemoryAccessToken = accessToken;
+    inMemoryRefreshToken = refreshToken;
+    localStorage.removeItem(KEYS.accessToken);
+    localStorage.removeItem(KEYS.refreshToken);
   },
 
   setUser(user: FridayUser): void {
@@ -35,6 +50,8 @@ export const authStorage = {
   },
 
   clear(): void {
+    inMemoryAccessToken = null;
+    inMemoryRefreshToken = null;
     localStorage.removeItem(KEYS.accessToken);
     localStorage.removeItem(KEYS.refreshToken);
     localStorage.removeItem(KEYS.user);

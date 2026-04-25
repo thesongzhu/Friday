@@ -23,6 +23,7 @@ import { FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES } from "../api/friday-multi-te
 
 import { cloneAndFreeze, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
+import { isSuperadminRoleLabel } from "./role-hierarchy.js";
 import type { TenantManager} from "./tenant-manager.js";
 import { MIGRATION_ACTOR } from "./tenant-manager.js";
 import type { RbacEngine } from "./rbac-engine.js";
@@ -613,6 +614,6 @@ export class MigrationManager {
   }
 
   private isSuperadminRole(roleName: string): boolean {
-    return roleName.trim().toLowerCase().replaceAll(/[:\s-]+/g, "_").includes("superadmin");
+    return isSuperadminRoleLabel(roleName);
   }
 }

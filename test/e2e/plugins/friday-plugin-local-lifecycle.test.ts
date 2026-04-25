@@ -96,6 +96,8 @@ function buildPluginServiceStack(
   const registry = createFridayPluginRegistryService({ sqlite, pluginRepository: pluginRepo });
   const resolver = createFridayPluginDependencyResolver();
   const signatureVerifier = createFridayPluginSignatureVerifier();
+  const stubbedFileBytes = Buffer.from("test-file-content");
+  const packageBytes = Buffer.concat([stubbedFileBytes, stubbedFileBytes]);
 
   // Stub loader — load() and unload() resolve without side effects.
   // importModule is overridable to test load-failure paths.
@@ -103,6 +105,7 @@ function buildPluginServiceStack(
     registry,
     signatureVerifier,
     nowIso: () => NOW,
+    readPackageBytes: () => packageBytes,
     importModule: opts?.importModule ?? (async () => ({
       activate: async () => {},
       deactivate: async () => {},
@@ -121,7 +124,7 @@ function buildPluginServiceStack(
     signatureVerifier,
     nowIso: () => NOW,
     idGenerator: () => crypto.randomUUID(),
-    readFileAsBuffer: () => Buffer.from("test-file-content"),
+    readFileAsBuffer: () => stubbedFileBytes,
   });
 
   return { pluginService };

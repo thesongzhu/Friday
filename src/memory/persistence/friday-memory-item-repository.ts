@@ -206,10 +206,7 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       }
 
       if (input?.tagsAny && input.tagsAny.length > 0) {
-        // Match if tags_text contains any of the tags
-        const tagConditions = input.tagsAny.map(() => "tags_text LIKE ?");
-        conditions.push(`(${tagConditions.join(" OR ")})`);
-        params.push(...input.tagsAny.map((t) => `%${t}%`));
+        conditions.push(buildTagExactConditions("memory_items", input.tagsAny, "any", params));
       }
 
       if (!input?.includeExpired) {
@@ -251,9 +248,7 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       }
 
       if (options.tagsAny && options.tagsAny.length > 0) {
-        const tagConditions = options.tagsAny.map(() => "tags_text LIKE ?");
-        conditions.push(`(${tagConditions.join(" OR ")})`);
-        params.push(...options.tagsAny.map((t) => `%${t}%`));
+        conditions.push(buildTagExactConditions("memory_items", options.tagsAny, "any", params));
       }
 
       if (shouldPruneExpiredByDefault(options)) {

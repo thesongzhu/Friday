@@ -1166,6 +1166,7 @@ describe("FridayAutonomousEngine", () => {
         agentRuntime: runtime,
         toolExecutor,
         analyzeImages,
+        workspaceRoot: workspaceDir,
         persistence: persistenceHarness.persistence,
         config: { iterationDelayMs: 0 },
       });
@@ -1318,6 +1319,69 @@ describe("FridayAutonomousEngine", () => {
       }
     });
 
+    it("does not read file-state observations outside the configured workspace root", async () => {
+      const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-workspace-"));
+      const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-outside-"));
+      const outsidePath = path.join(outsideDir, "secret.txt");
+      const secretContent = "outside-secret-content";
+      fs.writeFileSync(outsidePath, secretContent, "utf8");
+
+      const runtime = {
+        executeRun: vi.fn().mockImplementation(async (params: { task: string; executionContext?: { surface?: string } }) => {
+          if (params.executionContext?.surface === "autonomous_internal_plan") {
+            return {
+              runId: "run-plan",
+              status: "completed",
+              response: JSON.stringify([
+                {
+                  instruction: `Inspect '${outsidePath}'`,
+                  domain: "file",
+                  verification: `Verify '${outsidePath}' exists`,
+                },
+              ]),
+              usageInput: 20,
+              usageOutput: 10,
+            };
+          }
+
+          expect(params.executionContext?.surface).toBe("autonomous_internal_decision");
+          expect(params.task).toContain("Path is outside the autonomous workspace root");
+          expect(params.task).not.toContain(secretContent);
+          return {
+            runId: "run-decision",
+            status: "completed",
+            response: JSON.stringify({ kind: "abort", reason: "outside workspace" }),
+            usageInput: 10,
+            usageOutput: 5,
+          };
+        }),
+      };
+
+      try {
+        engine = createFridayAutonomousEngine({
+          ...deps,
+          agentRuntime: runtime,
+          workspaceRoot: workspaceDir,
+          config: {
+            iterationDelayMs: 0,
+            screenshotBeforeDecision: false,
+            structuredSnapshotBeforeDecision: false,
+          },
+        });
+
+        const result = await engine.executeGoal({
+          description: "Inspect an external proof file",
+          signal: signal(),
+        });
+
+        expect(result.status).toBe("failed");
+        expect(runtime.executeRun).toHaveBeenCalledTimes(1);
+      } finally {
+        fs.rmSync(workspaceDir, { recursive: true, force: true });
+        fs.rmSync(outsideDir, { recursive: true, force: true });
+      }
+    });
+
     it("locks precedence to the more specific content family instead of a looser fallback family", async () => {
       const preferred = "preferred-content";
       const ignored = "fallback-content";
@@ -1429,6 +1493,7 @@ describe("FridayAutonomousEngine", () => {
           agentRuntime: runtime,
           analyzeImages,
           toolExecutor,
+          workspaceRoot: workspaceDir,
           persistence: persistenceHarness.persistence,
           config: { iterationDelayMs: 0 },
         });

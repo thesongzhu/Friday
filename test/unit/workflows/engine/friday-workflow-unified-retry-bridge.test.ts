@@ -35,6 +35,17 @@ describe("A-005 classifyWorkflowError", () => {
     expect(classifyWorkflowError("COST_LIMIT")).toBe("rate_limit");
   });
 
+  it("keeps 429/rate-limit provider wrappers retryable instead of auth", () => {
+    expect(classifyWorkflowError(
+      "PROVIDER_AUTH_INVALID",
+      "429 rate limit exceeded while refreshing auth profile",
+    )).toBe("rate_limit");
+    expect(classifyWorkflowError(
+      "POLICY_DENIED",
+      "Too many requests from upstream",
+    )).toBe("rate_limit");
+  });
+
   it("classifies timeout errors as timeout", () => {
     expect(classifyWorkflowError("TIMEOUT")).toBe("timeout");
     expect(classifyWorkflowError("REQUEST_TIMEOUT")).toBe("timeout");

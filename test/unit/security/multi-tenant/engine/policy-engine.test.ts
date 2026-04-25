@@ -66,6 +66,42 @@ describe("PolicyEngine", () => {
       ).toThrow(SecurityEngineError);
     });
 
+    it("rejects unsafe regex conditions before policy storage", () => {
+      expect(() =>
+        engine.createPolicy(tenantId, {
+          name: "Unsafe Regex",
+          rules: [{
+            name: "redos",
+            resource: "secret",
+            action: "read",
+            conditions: {
+              all: [{ field: "resourceId", operator: "matches", value: "(a+)+$" }],
+            },
+            effect: "allow",
+          }],
+        }),
+      ).toThrow(SecurityEngineError);
+
+      try {
+        engine.createPolicy(tenantId, {
+          name: "Unsafe Regex",
+          rules: [{
+            name: "redos",
+            resource: "secret",
+            action: "read",
+            conditions: {
+              all: [{ field: "resourceId", operator: "matches", value: "(a+)+$" }],
+            },
+            effect: "allow",
+          }],
+        });
+      } catch (err) {
+        expect((err as SecurityEngineError).code).toBe(
+          FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES.VALIDATION_FAILED,
+        );
+      }
+    });
+
     it("uses POLICY_NAME_CONFLICT for duplicate policy names", () => {
       engine.createPolicy(tenantId, { name: "Duplicate", rules: [] });
 
@@ -521,6 +557,37 @@ describe("PolicyEngine", () => {
 
       const r2 = engine.evaluate(tenantId, { principalId: "user", resource: "secret", action: "read" });
       expect(r2.decision).toBe("deny");
+    });
+
+    it("evaluates safe 'matches' conditions through the bounded regex compiler", () => {
+      engine.createPolicy(tenantId, {
+        name: "Matches",
+        rules: [{
+          name: "r1",
+          resource: "secret",
+          action: "read",
+          conditions: {
+            all: [{ field: "resourceId", operator: "matches", value: "^secret-[0-9]+$" }],
+          },
+          effect: "allow",
+        }],
+      });
+
+      const allowed = engine.evaluate(tenantId, {
+        principalId: "user",
+        resource: "secret",
+        action: "read",
+        resourceId: "secret-123",
+      });
+      expect(allowed.decision).toBe("allow");
+
+      const denied = engine.evaluate(tenantId, {
+        principalId: "user",
+        resource: "secret",
+        action: "read",
+        resourceId: "token-123",
+      });
+      expect(denied.decision).toBe("deny");
     });
 
     it("evaluates numeric comparisons (gt, gte, lt, lte)", () => {

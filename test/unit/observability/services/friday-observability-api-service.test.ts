@@ -122,6 +122,24 @@ describe("createFridayObservabilityApiService", () => {
     expect(alerts.items[0]?.ruleId).toBe("builtin-self-healing-repeat-failures");
   });
 
+  it("fails audited rule mutations when audit persistence is unavailable", async () => {
+    const service = createService();
+    allocatedDbs.pop()?.close();
+
+    await expect(
+      service.routes.alertRules.create({
+        name: "Audit must persist",
+        description: "Exercise fail-closed audit behavior",
+        severity: "critical",
+        metric: "friday.learning.failures.total",
+        operator: ">",
+        threshold: 0,
+        evaluationIntervalSec: 60,
+        channelIds: [],
+      }),
+    ).rejects.toMatchObject({ code: "OBS_AUDIT_APPEND_FAILED" });
+  });
+
   it("records agent-loop events into traces, audit, and metrics", async () => {
     const service = createService();
 
@@ -341,6 +359,34 @@ describe("createFridayObservabilityApiService", () => {
     const deleted = await service.routes.alertDestinations.delete(created.destination.id);
     expect(deleted).toEqual({ deleted: true, destinationId: created.destination.id });
     expect(service.routes.alertDestinations.list().items).toHaveLength(0);
+  });
+
+  it("redacts Slack webhook URLs from alert destination responses", async () => {
+    const service = createService();
+
+    const created = await service.routes.alertDestinations.create({
+      type: "slack",
+      name: "Ops Slack",
+      webhookUrl: "https://hooks.slack.example/secret-token",
+    });
+    const rule = await service.routes.alertRules.create({
+      name: "Slack rule",
+      description: "Rule with Slack channel",
+      severity: "warning",
+      metric: "friday.learning.failures.total",
+      operator: ">",
+      threshold: 0,
+      evaluationIntervalSec: 60,
+      channelIds: [created.destination.id],
+    });
+    const fetched = service.routes.alertRules.get(rule.rule.id);
+
+    expect(created.destination.type).toBe("slack");
+    expect(fetched.channels[0]?.type).toBe("slack");
+    if (fetched.channels[0]?.type === "slack") {
+      expect(fetched.channels[0].webhookUrl).toBe("********");
+      expect(fetched.channels[0].webhookUrl).not.toContain("secret-token");
+    }
   });
 
   it("dispatches alerts to Slack destinations", async () => {

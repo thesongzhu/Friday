@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { parseArgs } from "#cli";
+import { buildOpenAuthorizationUrlCommand } from "../../../src/cli/friday-cli-auth.js";
 
 describe("CLI auth argument parsing", () => {
   const argv = (...args: string[]) => ["node", "friday-cli.js", ...args];
@@ -74,5 +75,18 @@ describe("CLI auth argument parsing", () => {
     expect(result.command).toBe("auth");
     expect(result.authSubcommand).toBe("status");
     expect(result.authTarget).toBeUndefined();
+  });
+
+  it("builds browser open commands with URL as argv, not shell text", () => {
+    const url = "https://example.com/oauth?next=$(touch%20/tmp/friday-pwn)&x=a%26b";
+    const command = buildOpenAuthorizationUrlCommand(url, "darwin");
+    expect(command.command).toBe("open");
+    expect(command.args).toEqual([url]);
+  });
+
+  it("rejects non-http OAuth browser URLs", () => {
+    expect(() =>
+      buildOpenAuthorizationUrlCommand("javascript:alert(1)", "linux"),
+    ).toThrow("Browser URL must use http or https");
   });
 });

@@ -5,7 +5,7 @@
  * Error is reachable from any state.
  */
 
-import * as path from "node:path";
+import * as fs from "node:fs";
 
 import { FridayDomainError } from "#errors";
 import type {
@@ -19,6 +19,7 @@ import type {
 import { FRIDAY_CORE_CHANNEL_PLUGIN_IDS, FRIDAY_PLUGIN_ERROR_CODES } from "../model/friday-plugin.types.js";
 import type { FridayPluginRegistryService } from "./friday-plugin-registry-service.js";
 import type { FridayPluginSignatureVerifier } from "../security/friday-plugin-signature-verifier.js";
+import { buildPluginLocalPackageBytes, resolvePluginInstallPath } from "./friday-plugin-package-bytes.js";
 
 // ─── Types ───
 
@@ -82,6 +83,76 @@ export function createFridayPluginLoader(
     }
   }
 
+  function readDefaultPackageBytes(entity: FridayPluginEntity): Buffer | null {
+    try {
+      return buildPluginLocalPackageBytes(entity.installPath, entity.manifest, (filePath) => fs.readFileSync(filePath));
+    } catch (err) {
+      if (err instanceof FridayDomainError) {
+        throw err;
+      }
+      return null;
+    }
+  }
+
+  function verifyTrustOnInstallFingerprint(entity: FridayPluginEntity): void {
+    if (entity.trustMode !== "trust_on_install" || entity.source === "bundled") {
+      return;
+    }
+
+    if (!entity.trustedFingerprintSha256) {
+      throw new FridayDomainError(
+        FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
+        `Plugin "${entity.id}" is trust-on-install but has no trusted fingerprint`,
+        { httpStatus: 403, details: { pluginId: entity.id } },
+      );
+    }
+    if (!signatureVerifier) {
+      throw new FridayDomainError(
+        FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_REQUIRED,
+        `Plugin "${entity.id}" requires fingerprint verification before loading`,
+        { httpStatus: 403, details: { pluginId: entity.id } },
+      );
+    }
+
+    const packageBytes = readPackageBytes
+      ? readPackageBytes(entity.installPath)
+      : readDefaultPackageBytes(entity);
+    if (!packageBytes) {
+      throw new FridayDomainError(
+        FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
+        `Unable to read package bytes for plugin "${entity.id}" fingerprint verification`,
+        { httpStatus: 403, details: { pluginId: entity.id } },
+      );
+    }
+
+    const currentFingerprint = signatureVerifier.computeChecksum(
+      Buffer.concat([
+        Buffer.from(`${entity.id}\n${entity.version}\n`),
+        packageBytes,
+      ]),
+    );
+    if (currentFingerprint !== entity.trustedFingerprintSha256) {
+      registry.setError(
+        entity.id,
+        FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
+        `Fingerprint mismatch for plugin "${entity.id}": expected ${entity.trustedFingerprintSha256}, got ${currentFingerprint}`,
+        nowIso(),
+      );
+      throw new FridayDomainError(
+        FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
+        `Fingerprint mismatch for plugin "${entity.id}": package has been modified since installation`,
+        {
+          httpStatus: 403,
+          details: {
+            pluginId: entity.id,
+            expected: entity.trustedFingerprintSha256,
+            actual: currentFingerprint,
+          },
+        },
+      );
+    }
+  }
+
   async function loadSinglePlugin(entity: FridayPluginEntity): Promise<FridayLoadedPlugin> {
     const modules = new Map<FridayPluginKind, FridayPluginEntrypointModule>();
 
@@ -95,7 +166,12 @@ export function createFridayPluginLoader(
         );
       }
 
-      const entrypointPath = path.resolve(entity.installPath, entrypointRelative);
+      const entrypointPath = resolvePluginInstallPath(
+        entity.installPath,
+        entrypointRelative,
+        entity.id,
+        `entrypoint "${kind}"`,
+      );
 
       try {
         const mod = await importModule(entrypointPath);
@@ -144,43 +220,7 @@ export function createFridayPluginLoader(
             );
           }
 
-          // Verify fingerprint for trust-on-install plugins before loading
-          if (
-            entity.trustMode === "trust_on_install" &&
-            entity.trustedFingerprintSha256 &&
-            signatureVerifier &&
-            readPackageBytes
-          ) {
-            const packageBytes = readPackageBytes(entity.installPath);
-            if (packageBytes) {
-              const currentFingerprint = signatureVerifier.computeChecksum(
-                Buffer.concat([
-                  Buffer.from(`${entity.id}\n${entity.version}\n`),
-                  packageBytes,
-                ]),
-              );
-              if (currentFingerprint !== entity.trustedFingerprintSha256) {
-                registry.setError(
-                  pluginId,
-                  FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
-                  `Fingerprint mismatch for plugin "${pluginId}": expected ${entity.trustedFingerprintSha256}, got ${currentFingerprint}`,
-                  nowIso(),
-                );
-                throw new FridayDomainError(
-                  FRIDAY_PLUGIN_ERROR_CODES.TRUST_FINGERPRINT_MISMATCH,
-                  `Fingerprint mismatch for plugin "${pluginId}": package has been modified since installation`,
-                  {
-                    httpStatus: 403,
-                    details: {
-                      pluginId,
-                      expected: entity.trustedFingerprintSha256,
-                      actual: currentFingerprint,
-                    },
-                  },
-                );
-              }
-            }
-          }
+          verifyTrustOnInstallFingerprint(entity);
 
           // Transition to enabled if currently configured
           if (currentStatus === "configured") {

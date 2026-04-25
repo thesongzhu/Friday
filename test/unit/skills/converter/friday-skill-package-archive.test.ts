@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { createFridaySkillPackageArchiver } from "#skills/converter";
 
 describe("FridaySkillPackageArchiver", () => {
@@ -84,6 +85,18 @@ describe("FridaySkillPackageArchiver", () => {
       expect(existsSync(result.packageFile)).toBe(true);
     });
 
+    it("rejects symbolic links in source skill directories", () => {
+      const skillDir = join(testDir, "my-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "skill.manifest.json"), "{}");
+      writeFileSync(join(testDir, "outside.txt"), "outside");
+      symlinkSync(join(testDir, "outside.txt"), join(skillDir, "outside-link"));
+
+      expect(() => archiver.packSkill(skillDir, join(testDir, "output"))).toThrow(
+        "must not contain symbolic links",
+      );
+    });
+
     it("includes subdirectories in archive", () => {
       const skillDir = join(testDir, "my-skill");
       mkdirSync(join(skillDir, "assets"), { recursive: true });
@@ -146,6 +159,31 @@ describe("FridaySkillPackageArchiver", () => {
         "Archive not found",
       );
     });
+
+    it("rejects archive entries that escape the output directory", () => {
+      const archivePath = join(testDir, "malicious.friday.tgz");
+      writeTarGzArchive(archivePath, [
+        { name: "skill/", type: "directory" },
+        { name: "skill/../../outside.txt", type: "file", content: "escape" },
+      ]);
+
+      expect(() => archiver.unpackSkill(archivePath, join(testDir, "extracted"))).toThrow(
+        "Unsafe archive entry",
+      );
+      expect(existsSync(join(testDir, "outside.txt"))).toBe(false);
+    });
+
+    it("rejects archive symlink entries before extraction", () => {
+      const archivePath = join(testDir, "symlink.friday.tgz");
+      writeTarGzArchive(archivePath, [
+        { name: "skill/", type: "directory" },
+        { name: "skill/link", type: "symlink", linkName: "/tmp/friday-escape" },
+      ]);
+
+      expect(() => archiver.unpackSkill(archivePath, join(testDir, "extracted"))).toThrow(
+        "unsupported entry type",
+      );
+    });
   });
 
   describe("round-trip", () => {
@@ -178,3 +216,55 @@ describe("FridaySkillPackageArchiver", () => {
     });
   });
 });
+
+type TestTarEntry =
+  | { name: string; type: "directory" }
+  | { name: string; type: "file"; content: string }
+  | { name: string; type: "symlink"; linkName: string };
+
+function writeTarGzArchive(archivePath: string, entries: TestTarEntry[]): void {
+  const blocks: Buffer[] = [];
+  for (const entry of entries) {
+    const content = entry.type === "file" ? Buffer.from(entry.content) : Buffer.alloc(0);
+    blocks.push(buildTarHeader(entry, content.length));
+    if (content.length > 0) {
+      blocks.push(content);
+      const padding = (512 - (content.length % 512)) % 512;
+      if (padding > 0) blocks.push(Buffer.alloc(padding));
+    }
+  }
+  blocks.push(Buffer.alloc(1024));
+  writeFileSync(archivePath, gzipSync(Buffer.concat(blocks)));
+}
+
+function buildTarHeader(entry: TestTarEntry, size: number): Buffer {
+  const header = Buffer.alloc(512);
+  writeTarString(header, 0, 100, entry.name);
+  writeTarOctal(header, 100, 8, entry.type === "directory" ? 0o755 : 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, size);
+  writeTarOctal(header, 136, 12, Math.floor(Date.now() / 1000));
+  header.fill(0x20, 148, 156);
+  header[156] = entry.type === "directory" ? 0x35 : entry.type === "symlink" ? 0x32 : 0x30;
+  if (entry.type === "symlink") {
+    writeTarString(header, 157, 100, entry.linkName);
+  }
+  writeTarString(header, 257, 6, "ustar");
+  writeTarString(header, 263, 2, "00");
+
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  writeTarOctal(header, 148, 8, checksum);
+  return header;
+}
+
+function writeTarString(header: Buffer, offset: number, length: number, value: string): void {
+  header.write(value, offset, Math.min(Buffer.byteLength(value), length), "utf8");
+}
+
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
+  const encoded = value.toString(8).padStart(length - 1, "0").slice(-(length - 1));
+  header.write(encoded, offset, length - 1, "ascii");
+  header[offset + length - 1] = 0;
+}

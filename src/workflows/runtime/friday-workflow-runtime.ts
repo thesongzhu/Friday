@@ -433,6 +433,7 @@ export interface CreateFridayWorkflowRuntimeDeps {
     context?: JsonObject;
   }) => Promise<{ contextPatch?: JsonObject } | void>;
   onRunCompleted?: CreateWorkflowExecutionServiceDeps["onRunCompleted"];
+  resolveWebhookSecretRef?: (refKey: string) => string | null | Promise<string | null>;
 }
 
 /** @deprecated Use `CreateFridayWorkflowRuntimeDeps` instead. */
@@ -1483,6 +1484,7 @@ export function createFridayWorkflowRuntime(
     executionService: execution,
     workflowRepo,
     triggerRepo: deps.triggerRepo,
+    resolveWebhookSecretRef: deps.resolveWebhookSecretRef,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });

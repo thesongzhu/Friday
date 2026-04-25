@@ -34,6 +34,7 @@ import type { FridayNodeExecutionResult } from "../../node-runner/model/friday-n
 import type { ISODateTime, UUID } from "../../rules/model/friday-rules-engine.types.js";
 
 import { FRIDAY_FAILURE_CATEGORY_PRIORITY } from "../model/friday-retry-engine.types.js";
+import { precompileRegexPattern } from "../../rules/engine/condition-evaluator.js";
 
 // ─── Failure Class Definitions ───
 
@@ -50,7 +51,7 @@ export const FAILURE_CLASS_DEFINITIONS: readonly FridayFailureClass[] = [
     defaultSeverity: "minor",
     defaultMaxAttempts: 5,
     httpStatusCodes: [429],
-    errorCodes: ["RATE_LIMIT_EXCEEDED", "THROTTLED"],
+    errorCodes: ["RATE_LIMIT", "RATE_LIMIT_EXCEEDED", "THROTTLED", "TOO_MANY_REQUESTS"],
     errorMessagePatterns: [
       "rate.?limit",
       "throttl",
@@ -219,7 +220,21 @@ function selectBestCandidate(
  */
 function matchesMessagePattern(message: string, patterns: string[]): boolean {
   const lower = message.toLowerCase();
-  return patterns.some((p) => new RegExp(p, "i").test(lower));
+  return patterns.some((p) => precompileRegexPattern(p, "i").test(lower));
+}
+
+function matchesCustomPattern(pattern: string, value: string): boolean {
+  return precompileRegexPattern(pattern, "i").test(value);
+}
+
+function hasRateLimitErrorCode(errorCode?: string): boolean {
+  return typeof errorCode === "string"
+    && /(?:^|[_-])(?:RATE[_-]?LIMIT|THROTTLED|TOO[_-]?MANY[_-]?REQUESTS)(?:$|[_-])/i.test(errorCode);
+}
+
+function hasRateLimitMessage(errorMessage?: string): boolean {
+  return typeof errorMessage === "string"
+    && /(?:\b429\b|rate.?limit|throttl|too many requests|quota exceeded)/i.test(errorMessage);
 }
 
 /**
@@ -320,7 +335,7 @@ export function createFailureClassifier(config: FailureClassifierConfig) {
         };
       }
       if (rule.errorCodePattern && errorCode) {
-        if (new RegExp(rule.errorCodePattern, "i").test(errorCode)) {
+        if (matchesCustomPattern(rule.errorCodePattern, errorCode)) {
           return {
             category: rule.category,
             severity: rule.severity,
@@ -330,7 +345,7 @@ export function createFailureClassifier(config: FailureClassifierConfig) {
         }
       }
       if (rule.errorMessagePattern && errorMessage) {
-        if (new RegExp(rule.errorMessagePattern, "i").test(errorMessage)) {
+        if (matchesCustomPattern(rule.errorMessagePattern, errorMessage)) {
           return {
             category: rule.category,
             severity: rule.severity,
@@ -466,9 +481,30 @@ export function createFailureClassifier(config: FailureClassifierConfig) {
     const errorMessage = (error as { errorMessage?: string }).errorMessage;
     const httpStatusCode = (error as { httpStatusCode?: number }).httpStatusCode;
 
-    // Priority chain: custom rules → retry hint → HTTP status → error code → message → default
+    const rateLimitSignalSource: FridayFailureClassificationSource | undefined = httpStatusCode === 429
+      ? "http_status"
+      : hasRateLimitErrorCode(errorCode)
+        ? "error_code"
+        : hasRateLimitMessage(errorMessage)
+          ? "error_message"
+          : undefined;
+    const rateLimitCandidate: ClassificationCandidate | undefined = rateLimitSignalSource
+      ? {
+          category: "rate_limit",
+          severity: getFailureClass("rate_limit").defaultSeverity,
+          source: rateLimitSignalSource,
+          confidence: rateLimitSignalSource === "http_status"
+            ? 90
+            : rateLimitSignalSource === "error_code"
+              ? 85
+              : 60,
+        }
+      : undefined;
+
+    // Priority chain: custom rules → hard rate-limit signals → retry hint → HTTP status → error code → message → default
     const candidate =
       classifyByCustomRules(errorCode, errorMessage, httpStatusCode) ??
+      rateLimitCandidate ??
       (retryHint ? classifyByRetryHint(retryHint) : undefined) ??
       (httpStatusCode !== undefined ? classifyByHttpStatus(httpStatusCode) : undefined) ??
       (errorCode ? classifyByErrorCode(errorCode) : undefined) ??
@@ -520,6 +556,12 @@ export function createFailureClassifier(config: FailureClassifierConfig) {
    * Register a custom classification rule.
    */
   function registerCustomRule(rule: FridayCustomClassificationRule): void {
+    if (rule.errorCodePattern) {
+      precompileRegexPattern(rule.errorCodePattern, "i");
+    }
+    if (rule.errorMessagePattern) {
+      precompileRegexPattern(rule.errorMessagePattern, "i");
+    }
     customRules.push(rule);
   }
 
