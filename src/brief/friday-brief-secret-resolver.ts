@@ -7,7 +7,7 @@ import {
   getMasterKey,
 } from "../providers/security/friday-secret-crypto.js";
 
-const BRIEF_SECRET_SCOPE = "brief";
+const BRIEF_SECRET_SCOPE = "brief"; // pragma: allowlist secret
 
 /**
  * Resolve a secret reference.

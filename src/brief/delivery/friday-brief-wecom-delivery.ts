@@ -153,7 +153,7 @@ export function createFridayBriefWeComDelivery(
       if (!cfg.enabled) return false;
       if (!cfg.corpId || !cfg.agentId) return false;
       const secret = deps.resolveSecret(cfg.secretRefKey);
-      return typeof secret === "string" && secret.length > 0;
+      return typeof secret === "string" && secret.length > 0; // pragma: allowlist secret
     },
     async deliver(
       payload: FridayBriefDeliveryPayload,

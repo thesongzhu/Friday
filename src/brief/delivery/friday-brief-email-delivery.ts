@@ -48,7 +48,7 @@ export function createFridayBriefEmailDelivery(
       if (!cfg.enabled) return false;
       if (!cfg.host || !cfg.username || !cfg.fromAddress || !cfg.toAddress) return false;
       const password = deps.resolveSecret(cfg.passwordRefKey);
-      return typeof password === "string" && password.length > 0;
+      return typeof password === "string" && password.length > 0; // pragma: allowlist secret
     },
     async deliver(
       payload: FridayBriefDeliveryPayload,
