@@ -5,18 +5,21 @@ import * as path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, createAnthropicProvider } from "./_helpers/api.js";
+import { apiFetch, createOpenAiProvider } from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
-  cleanupFridayDeepProofHubEnv,
-  createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
-  FRIDAY_DEEP_PROOF_GATED,
+  cleanupRealHubEnv,
+  createRealHubEnv,
+  E2E_GATED,
+  FAST_MODEL,
+  LIVE_PROVIDER_KIND,
+  OPENAI_API_KEY_ENV,
+  OPENAI_BASE_URL,
   type RealHubEnv,
-} from "./_helpers/deep-proof-env.js";
+} from "./_helpers/real-env.js";
 
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
+const OPENAI_PROOF_GATED = E2E_GATED && LIVE_PROVIDER_KIND === "openai";
+const LIVE_MODEL = FAST_MODEL;
 
 interface SessionRunResponse {
   ok: boolean;
@@ -117,18 +120,16 @@ function readWorldModelEvidence(dbPath: string, userId: string, taskToken: strin
   }
 }
 
-async function ensureAnthropicLearningProvider(
+async function ensureOpenAiLearningProvider(
   env: RealHubEnv,
   name: string,
 ): Promise<string> {
-  const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-    ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })();
-  return createAnthropicProvider(env.baseUrl, env.accessToken, {
+  return createOpenAiProvider(env.baseUrl, env.accessToken, {
     name,
-    anthropicBaseUrl: ANTHROPIC_BASE_URL,
-    models: [LIVE_ANTHROPIC_MODEL],
-    defaultModel: LIVE_ANTHROPIC_MODEL,
-    apiKeyEnvRef,
+    openAiBaseUrl: OPENAI_BASE_URL,
+    models: [LIVE_MODEL],
+    defaultModel: LIVE_MODEL,
+    apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
   });
 }
 
@@ -147,18 +148,18 @@ async function readAuthenticatedUserId(env: RealHubEnv): Promise<string> {
   return response.json.data.user.id.trim();
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API key)", () => {
+describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", () => {
   let env: RealHubEnv;
   let providerId: string;
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
-    providerId = await ensureAnthropicLearningProvider(env, "Learning Live Anthropic");
+    env = await createRealHubEnv();
+    providerId = await ensureOpenAiLearningProvider(env, "Learning Live OpenAI");
   }, 60_000);
 
   afterAll(async () => {
     if (env) {
-      await cleanupFridayDeepProofHubEnv(env);
+      await cleanupRealHubEnv(env);
     }
   }, 30_000);
 
@@ -213,7 +214,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
         {
           task: recallTask,
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: LIVE_MODEL,
           timeoutMs: 90_000,
         },
         { timeoutMs: 100_000 },
@@ -230,7 +231,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
         {
           task: recallTask,
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: LIVE_MODEL,
           timeoutMs: 90_000,
         },
         { timeoutMs: 100_000 },
@@ -305,7 +306,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
             "Summarize the prior retention proof discussion in one short sentence, " +
             "including the exact canonical evidence token.",
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: LIVE_MODEL,
           timeoutMs: 90_000,
         },
         { timeoutMs: 100_000 },
@@ -354,10 +355,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
         "Return the exact canonical evidence token from that previous session context. " +
         "Answer with the token only. If unknown, answer UNKNOWN.";
 
-      const controlEnv = await createFridayDeepProofHubEnv();
+      const controlEnv = await createRealHubEnv();
       let controlProviderId = "";
       try {
-        controlProviderId = await ensureAnthropicLearningProvider(controlEnv, "Learning Live Control Anthropic");
+        controlProviderId = await ensureOpenAiLearningProvider(controlEnv, "Learning Live Control OpenAI");
 
         const controlRun = await apiFetch<SessionRunResponse>(
           controlEnv.baseUrl,
@@ -367,7 +368,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
           {
             task: recallTask,
             providerId: controlProviderId,
-            model: LIVE_ANTHROPIC_MODEL,
+            model: LIVE_MODEL,
             timeoutMs: 90_000,
           },
           { timeoutMs: 100_000 },
@@ -384,7 +385,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
           {
             task: recallTask,
             providerId,
-            model: LIVE_ANTHROPIC_MODEL,
+            model: LIVE_MODEL,
             timeoutMs: 90_000,
           },
           { timeoutMs: 100_000 },
@@ -407,7 +408,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
         expect(controlRun.json.data.run.response.includes(evidenceToken)).toBe(false);
         expect(recallRun.json.data.run.response).toContain(evidenceToken);
       } finally {
-        await cleanupFridayDeepProofHubEnv(controlEnv);
+        await cleanupRealHubEnv(controlEnv);
       }
     },
   );
@@ -420,11 +421,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
       const seedChatId = `world-seed-${Date.now().toString(36)}`;
       const recallChatId = `${seedChatId}-recall`;
       const controlChatId = `${seedChatId}-control`;
-      const isolatedEnv = await createFridayDeepProofHubEnv();
-      const controlEnv = await createFridayDeepProofHubEnv();
+      const isolatedEnv = await createRealHubEnv();
+      const controlEnv = await createRealHubEnv();
       try {
-        const isolatedProviderId = await ensureAnthropicLearningProvider(isolatedEnv, "Learning World Model Anthropic");
-        const controlProviderId = await ensureAnthropicLearningProvider(controlEnv, "Learning World Model Control Anthropic");
+        const isolatedProviderId = await ensureOpenAiLearningProvider(isolatedEnv, "Learning World Model OpenAI");
+        const controlProviderId = await ensureOpenAiLearningProvider(controlEnv, "Learning World Model Control OpenAI");
         const principalUserId = await readAuthenticatedUserId(isolatedEnv);
 
         const createSeedSession = await apiFetch<{
@@ -452,7 +453,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
               `The exact release codename is ${taskToken}. ` +
               `Reply with ACK ${taskToken} and nothing else.`,
             providerId: isolatedProviderId,
-            model: LIVE_ANTHROPIC_MODEL,
+            model: LIVE_MODEL,
             timeoutMs: 90_000,
           },
           { timeoutMs: 100_000 },
@@ -509,7 +510,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
           {
             task: recallTask,
             providerId: isolatedProviderId,
-            model: LIVE_ANTHROPIC_MODEL,
+            model: LIVE_MODEL,
             timeoutMs: 90_000,
           },
           { timeoutMs: 100_000 },
@@ -526,7 +527,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
           {
             task: recallTask,
             providerId: controlProviderId,
-            model: LIVE_ANTHROPIC_MODEL,
+            model: LIVE_MODEL,
             timeoutMs: 90_000,
           },
           { timeoutMs: 100_000 },
@@ -538,8 +539,8 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Learning Live (Anthropic API k
         expect(controlRun.json.data.run.response.includes(taskToken)).toBe(false);
         expect(recallRun.json.data.run.response).toContain(taskToken);
       } finally {
-        await cleanupFridayDeepProofHubEnv(controlEnv);
-        await cleanupFridayDeepProofHubEnv(isolatedEnv);
+        await cleanupRealHubEnv(controlEnv);
+        await cleanupRealHubEnv(isolatedEnv);
       }
     },
   );
