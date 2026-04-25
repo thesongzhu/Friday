@@ -15,10 +15,11 @@ function signalWithPrincipal(principalId: string): AbortSignal {
 function signalWithContext(input: {
   principalId?: string;
   taskPrompt?: string;
+  sessionKey?: string;
 }): AbortSignal {
   return attachFridayAgentToolExecutionContext(new AbortController().signal, {
     runId: "run-1",
-    sessionKey: "agent:run:run-1",
+    sessionKey: input.sessionKey ?? "agent:run:run-1",
     readOnly: false,
     principalId: input.principalId,
     taskPrompt: input.taskPrompt,
@@ -112,7 +113,6 @@ describe("FridayAgentMemoryTools", () => {
       expect(parsed).toHaveLength(1);
       expect(parsed[0]).toMatchObject({
         content: "The weather in Seattle is rainy",
-        score: 0.95,
         metadata: {
           id: "item-1",
           namespace: "agent",
@@ -131,7 +131,7 @@ describe("FridayAgentMemoryTools", () => {
       );
 
       expect(svc.search).toHaveBeenCalledWith("test", {
-        namespace: "custom",
+        namespace: "agent.custom",
         limit: 5,
       });
     });
@@ -143,7 +143,7 @@ describe("FridayAgentMemoryTools", () => {
       await searchTool!.execute({ query: "test" }, signal());
 
       expect(svc.search).toHaveBeenCalledWith("test", {
-        namespace: undefined,
+        namespace: "agent",
         limit: 10,
       });
     });
@@ -219,9 +219,33 @@ describe("FridayAgentMemoryTools", () => {
       );
 
       expect(svc.search).toHaveBeenCalledWith("preferred name", {
-        namespace: "preference",
+        namespace: "agent.preference",
         limit: 5,
       });
+    });
+
+    it("never searches without a namespace", async () => {
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({ memoryService: svc });
+
+      await searchTool!.execute({ query: "anything" }, signal());
+
+      const [, options] = vi.mocked(svc.search).mock.calls[0]!;
+      expect(options?.namespace).toBeDefined();
+    });
+
+    it("rejects reserved namespaces instead of searching them", async () => {
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({ memoryService: svc });
+
+      const result = await searchTool!.execute(
+        { query: "secret", namespace: "tenant.default.user.other" },
+        signal(),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("reserved");
+      expect(svc.search).not.toHaveBeenCalled();
     });
 
     it("matches learned facts through token overlap when the model phrases the query differently", async () => {
@@ -313,7 +337,7 @@ describe("FridayAgentMemoryTools", () => {
         signal(),
       );
 
-      expect(svc.store).toHaveBeenCalledWith("custom-ns", "data", {
+      expect(svc.store).toHaveBeenCalledWith("agent.custom-ns", "data", {
         source: "agent",
         tags: ["tag1", "tag2"],
         expiresAt: "2026-12-31T00:00:00.000Z",
@@ -399,6 +423,21 @@ describe("FridayAgentMemoryTools", () => {
       );
     });
 
+    it("rejects reserved namespaces instead of storing to them", async () => {
+      const svc = mockMemoryService();
+      const tools = createFridayAgentMemoryTools({ memoryService: svc });
+      const storeTool = tools[1]!;
+
+      const result = await storeTool.execute(
+        { content: "secret", namespace: "system.config" },
+        signal(),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("reserved");
+      expect(svc.store).not.toHaveBeenCalled();
+    });
+
     it("returns error on store failure", async () => {
       const svc = mockMemoryService(
         undefined,
@@ -480,12 +519,12 @@ describe("FridayAgentMemoryTools", () => {
 
       expect(svc.store).toHaveBeenCalledWith("agent:session-A", "hello", expect.any(Object));
       expect(svc.search).toHaveBeenCalledWith("hello", {
-        namespace: undefined,
+        namespace: "agent:session-A",
         limit: 10,
       });
     });
 
-    it("respects explicit namespaces without remapping them to a session key", async () => {
+    it("scopes explicit agent namespace to the current session key", async () => {
       const svc = mockMemoryService();
       const [searchTool, storeTool] = createFridayAgentMemoryTools({
         memoryService: svc,
@@ -501,9 +540,9 @@ describe("FridayAgentMemoryTools", () => {
         signal(),
       );
 
-      expect(svc.store).toHaveBeenCalledWith("agent", "hello", expect.any(Object));
+      expect(svc.store).toHaveBeenCalledWith("agent:session-A", "hello", expect.any(Object));
       expect(svc.search).toHaveBeenCalledWith("hello", {
-        namespace: "agent",
+        namespace: "agent:session-A",
         limit: 10,
       });
     });
@@ -526,9 +565,78 @@ describe("FridayAgentMemoryTools", () => {
 
       expect(svc.store).toHaveBeenCalledWith("agent:session-from-runtime", "hello", expect.any(Object));
       expect(svc.search).toHaveBeenCalledWith("hello", {
-        namespace: undefined,
+        namespace: "agent:session-from-runtime",
         limit: 10,
       });
+    });
+
+    it("prefers attached execution context over internal session args", async () => {
+      const svc = mockMemoryService();
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+      });
+
+      await searchTool!.execute(
+        { query: "hello", __sessionId: "attacker-session" },
+        signalWithContext({ sessionKey: "trusted-session" }),
+      );
+
+      expect(svc.search).toHaveBeenCalledWith("hello", {
+        namespace: "agent:trusted-session",
+        limit: 10,
+      });
+    });
+
+    it("prefers attached execution context over internal principal args", async () => {
+      const svc = mockMemoryService([]);
+      const observedUserIds: string[] = [];
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        listLearnedFacts: (input) => {
+          observedUserIds.push(input.userId);
+          return [{
+            key: "pref:name",
+            value: "Trusted User",
+            confidence: 0.8,
+            evidenceCount: 1,
+            lastConfirmedAt: "2026-02-19T00:00:00.000Z",
+          }];
+        },
+      });
+
+      await searchTool!.execute(
+        { query: "name", __principalId: "attacker-user" },
+        signalWithContext({ principalId: "trusted-user" }),
+      );
+
+      expect(observedUserIds).toEqual(["trusted-user"]);
+    });
+
+    it("stores user-facing aliases in the resolved session namespace", async () => {
+      const svc = mockMemoryService();
+      const [, storeTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespace: async () => "tenant.default.channel.webchat.user.user-1.shared",
+      });
+
+      const result = await storeTool!.execute(
+        {
+          content: "My preferred editor is Vim",
+          namespace: "preference",
+        },
+        signalWithContext({
+          principalId: "user-1",
+          sessionKey: "webchat:default:chat-1",
+          taskPrompt: "I prefer Vim.",
+        }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(svc.store).toHaveBeenCalledWith(
+        "tenant.default.channel.webchat.user.user-1.shared",
+        "My preferred editor is Vim",
+        expect.any(Object),
+      );
     });
   });
 });

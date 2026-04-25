@@ -845,6 +845,15 @@ describe("Approval → execution linkage", () => {
         nowIso: () => NOW,
       }),
       nowIso: () => NOW,
+      stepExecutors: {
+        disable_skill: (step) => {
+          const payload = step.payload as Record<string, unknown> | null;
+          if (payload && typeof payload === "object") {
+            payload._skillDisabled = true;
+          }
+          return true;
+        },
+      },
     });
 
     const approvalService = createFridayApprovalWorkflowService({
@@ -974,6 +983,15 @@ describe("Approval → execution linkage", () => {
         nowIso: () => NOW,
       }),
       nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: (step) => {
+          const payload = step.payload as Record<string, unknown> | null;
+          if (payload && typeof payload === "object") {
+            payload._retryRequested = true;
+          }
+          return true;
+        },
+      },
     });
 
     const dispatcher = createFridayAutoFixDispatcherService({

@@ -11,6 +11,7 @@ import { createFridayAutoFixLessonExtractionService } from "#learning";
 import type { FridayAutoFixExecutionService } from "#learning";
 import type { FridayAutoFixActionEntity, FridayAutoFixPlan } from "#learning";
 import type { FridayAutoFixActionRepository } from "#learning";
+import type { FridayAutoFixStepKind, StepExecutor } from "#learning";
 
 describe("FridayAutoFixExecutionService", () => {
   let db: FridaySqliteLayer;
@@ -36,6 +37,41 @@ describe("FridayAutoFixExecutionService", () => {
       recurrenceCount: 1,
     },
   };
+
+  const markerByKind: Partial<Record<FridayAutoFixStepKind, string>> = {
+    retry_node: "_retryRequested",
+    switch_model_fallback: "_modelFallbackRequested",
+    trim_payload: "_trimRequested",
+    apply_config_patch: "_configPatchApplied",
+    grant_permission: "_permissionGranted",
+    disable_skill: "_skillDisabled",
+    pause_workflow: "_workflowPaused",
+  };
+
+  const timestampMarkerByKind: Partial<Record<FridayAutoFixStepKind, string>> = {
+    retry_node: "_retryAt",
+    switch_model_fallback: "_fallbackAt",
+    apply_config_patch: "_appliedAt",
+    grant_permission: "_grantedAt",
+    disable_skill: "_disabledAt",
+    pause_workflow: "_pausedAt",
+  };
+
+  function markerExecutor(kind: FridayAutoFixStepKind): StepExecutor {
+    return (step) => {
+      if (!step.target) return false;
+      const payload = step.payload as Record<string, unknown> | null;
+      const marker = markerByKind[kind];
+      if (payload && typeof payload === "object" && marker) {
+        payload[marker] = true;
+        const timestampMarker = timestampMarkerByKind[kind];
+        if (timestampMarker) {
+          payload[timestampMarker] = NOW;
+        }
+      }
+      return true;
+    };
+  }
 
   function setupDeps() {
     const incidentRepo = createFridayErrorIncidentRepository();
@@ -83,6 +119,9 @@ describe("FridayAutoFixExecutionService", () => {
       diagnosisRepo,
       rollbackService,
       nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: markerExecutor("retry_node"),
+      },
     });
 
     // Insert a planned action
@@ -161,7 +200,7 @@ describe("FridayAutoFixExecutionService", () => {
       marker: "_workflowPaused",
       timestampMarker: "_pausedAt",
     },
-  ])("executes and verifies directive-level step kind '$kind'", async ({
+  ])("executes and verifies injected step kind '$kind'", async ({
     kind,
     target,
     payload,
@@ -273,6 +312,9 @@ describe("FridayAutoFixExecutionService", () => {
         nowIso: () => NOW,
       }),
       nowIso: () => NOW,
+      stepExecutors: {
+        [kind]: markerExecutor(kind),
+      },
     });
 
     const result = await executionService.execute(actionId);
@@ -287,6 +329,95 @@ describe("FridayAutoFixExecutionService", () => {
     if (timestampMarker) {
       expect(typeof persistedPayload?.[timestampMarker]).toBe("string");
     }
+  });
+
+  it("fails closed when an external-state step has no injected executor", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-no-executor",
+      userId: "test-user",
+      ts: NOW,
+      category: "config",
+      severity: "medium",
+      signature: "sig-no-executor",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    diagnosisRepo.insert(db.writer, {
+      id: "diag-no-executor",
+      incidentId: "inc-no-executor",
+      errorFingerprint: "sig-no-executor",
+      confidence: 0.8,
+      diagnosis: { summary: "test" },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const plan: FridayAutoFixPlan = {
+      title: "Auto-fix: config patch",
+      summary: "Patch config",
+      steps: [
+        {
+          stepId: "step-no-executor",
+          kind: "apply_config_patch",
+          target: "runtime-config",
+          payload: { key: "value" },
+          verify: { method: "error_absent", timeoutMs: 5000 },
+        },
+      ],
+      rollbackPlan: {
+        summary: "Rollback config patch",
+        steps: [
+          {
+            stepId: "rollback-no-executor",
+            kind: "apply_config_patch",
+            target: "runtime-config",
+            payload: { revert: true },
+          },
+        ],
+      },
+      evidence: {
+        fingerprint: "sig-no-executor",
+        matchedLessonIds: [],
+        diagnosisId: "diag-no-executor",
+        recurrenceCount: 1,
+      },
+    };
+    actionRepo.insert(db.writer, {
+      actionId: "action-no-executor",
+      incidentId: "inc-no-executor",
+      userId: "test-user",
+      riskTier: 1,
+      plan,
+      rollbackPlan: plan.rollbackPlan,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const executionService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo,
+      diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+      }),
+      nowIso: () => NOW,
+    });
+
+    const result = await executionService.execute("action-no-executor");
+
+    expect(result.success).toBe(false);
+    expect(result.errorMessage).toContain("has no executor");
+    expect(result.action.status).toBe("applied");
+    expect(result.action.outcome).toBe("failed");
   });
 
   it("honors injected executors and verifiers for supported kinds", async () => {
@@ -425,6 +556,9 @@ describe("FridayAutoFixExecutionService", () => {
         nowIso: () => NOW,
       }),
       nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: markerExecutor("retry_node"),
+      },
     });
 
     const result = await lessonAwareService.execute("action-001");
@@ -729,6 +863,9 @@ describe("FridayAutoFixExecutionService", () => {
           nowIso: () => NOW,
         }),
         nowIso: () => NOW,
+        stepExecutors: {
+          retry_node: markerExecutor("retry_node"),
+        },
         stepVerifiers: {
           retry_node: () => false, // Verification fails
         },

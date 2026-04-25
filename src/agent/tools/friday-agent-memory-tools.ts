@@ -31,21 +31,82 @@ export interface CreateFridayAgentMemoryToolsDeps {
 
 // ─── Namespace scoping ───
 
-/**
- * Returns the namespace for memory operations.
- *
- * For user-facing namespaces ("default", "user", "preference"), we do NOT
- * scope by sessionId so that memories are accessible across sessions and
- * subagents. Only internal/agent namespaces get session-scoped to prevent
- * pollution between concurrent runs.
- */
-function scopedNamespace(raw: string, sessionId: string | undefined): string {
-  const normalized = normalizeMemoryNamespace(raw);
-  // User-facing namespaces should be globally accessible, not session-scoped
-  const userFacingNamespaces = new Set(["default", "user", "preference", "system"]);
-  if (userFacingNamespaces.has(normalized)) return normalized;
-  if (!sessionId) return normalized;
-  return `${normalized}:${sessionId}`;
+const AGENT_MEMORY_BASE_NAMESPACE = "agent";
+const USER_FACING_MEMORY_NAMESPACES = new Set(["default", "user", "preference"]);
+const RESERVED_MEMORY_NAMESPACE_PREFIXES = ["system", "tenant"];
+
+function normalizeAgentMemoryScopeId(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeAgentCustomNamespaceSegment(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
+}
+
+function resolveAgentScopedNamespace(input: {
+  scopeId: string | undefined;
+  segment?: string;
+}): string {
+  const scopeId = normalizeAgentMemoryScopeId(input.scopeId);
+  const segment = input.segment ? normalizeAgentCustomNamespaceSegment(input.segment) : "";
+  const scopeSuffix = scopeId ? `:${scopeId}` : "";
+  return segment.length > 0
+    ? `${AGENT_MEMORY_BASE_NAMESPACE}${scopeSuffix}.${segment}`
+    : `${AGENT_MEMORY_BASE_NAMESPACE}${scopeSuffix}`;
+}
+
+function isUserFacingMemoryNamespace(namespace: string | undefined): boolean {
+  return typeof namespace === "string" && USER_FACING_MEMORY_NAMESPACES.has(namespace);
+}
+
+function isReservedMemoryNamespace(namespace: string): boolean {
+  const normalized = normalizeAgentCustomNamespaceSegment(namespace);
+  return RESERVED_MEMORY_NAMESPACE_PREFIXES.some((prefix) =>
+    normalized === prefix || normalized.startsWith(`${prefix}.`) || normalized.startsWith(`${prefix}-`));
+}
+
+function resolveAgentScopedExplicitNamespace(input: {
+  explicitNamespace: string;
+  implicitSessionNamespace?: string;
+  scopeId?: string;
+}): { namespace?: string; isUserFacing: boolean; error?: string } {
+  const normalized = normalizeMemoryNamespace(input.explicitNamespace);
+  if (normalized === AGENT_MEMORY_BASE_NAMESPACE) {
+    return {
+      namespace: resolveAgentScopedNamespace({ scopeId: input.scopeId }),
+      isUserFacing: false,
+    };
+  }
+  if (isUserFacingMemoryNamespace(normalized)) {
+    return {
+      namespace: input.implicitSessionNamespace
+        ?? resolveAgentScopedNamespace({ scopeId: input.scopeId, segment: normalized }),
+      isUserFacing: true,
+    };
+  }
+  if (isReservedMemoryNamespace(normalized)) {
+    return {
+      isUserFacing: false,
+      error: `Memory namespace '${input.explicitNamespace}' is reserved and cannot be used by agent memory tools.`,
+    };
+  }
+  const segment = normalizeAgentCustomNamespaceSegment(normalized);
+  if (!segment) {
+    return {
+      isUserFacing: false,
+      error: "Memory namespace is invalid.",
+    };
+  }
+  return {
+    namespace: resolveAgentScopedNamespace({ scopeId: input.scopeId, segment }),
+    isUserFacing: false,
+  };
 }
 
 function normalizeMemoryNamespace(raw: string): string {
@@ -58,7 +119,6 @@ function normalizeMemoryNamespace(raw: string): string {
     normalized === "default"
     || normalized === "user"
     || normalized === "preference"
-    || normalized === "system"
     || normalized === "agent"
   ) {
     return normalized;
@@ -256,8 +316,7 @@ function namespaceShouldOverlaySessionMemory(namespace: string | undefined): boo
   const normalized = normalizeMemoryNamespace(namespace);
   return normalized === "user"
     || normalized === "preference"
-    || normalized === "default"
-    || normalized === "system";
+    || normalized === "default";
 }
 
 function resolveSessionIdFromArgs(
@@ -265,13 +324,13 @@ function resolveSessionIdFromArgs(
   fallback: string | undefined,
   signal: AbortSignal,
 ): string | undefined {
-  const fromRuntime = args["__sessionId"];
-  if (typeof fromRuntime === "string" && fromRuntime.trim().length > 0) {
-    return fromRuntime;
-  }
   const contextSessionKey = getFridayAgentToolExecutionContext(signal)?.sessionKey?.trim();
   if (contextSessionKey && contextSessionKey.length > 0) {
     return contextSessionKey;
+  }
+  const fromRuntime = args["__sessionId"];
+  if (typeof fromRuntime === "string" && fromRuntime.trim().length > 0) {
+    return fromRuntime;
   }
   return fallback;
 }
@@ -313,13 +372,24 @@ function resolvePrincipalId(
   args: Record<string, unknown>,
   signal: AbortSignal,
 ): string | undefined {
+  const context = getFridayAgentToolExecutionContext(signal);
+  const principalId = context?.principalId?.trim();
+  if (principalId && principalId.length > 0) {
+    return principalId;
+  }
   const fromArgs = args["__principalId"];
   if (typeof fromArgs === "string" && fromArgs.trim().length > 0) {
     return fromArgs.trim();
   }
-  const context = getFridayAgentToolExecutionContext(signal);
-  const principalId = context?.principalId?.trim();
-  return principalId && principalId.length > 0 ? principalId : undefined;
+  return undefined;
+}
+
+function resolveMemoryScopeId(input: {
+  sessionId: string | undefined;
+  principalId: string | undefined;
+}): string | undefined {
+  return normalizeAgentMemoryScopeId(input.sessionId)
+    ?? normalizeAgentMemoryScopeId(input.principalId);
 }
 
 async function resolveImplicitSessionNamespace(params: {
@@ -460,6 +530,7 @@ function createMemorySearchTool(
     ): Promise<FridayAgentToolResult> {
       const sessionId = resolveSessionIdFromArgs(args, deps.sessionId, signal);
       const principalId = resolvePrincipalId(args, signal);
+      const scopeId = resolveMemoryScopeId({ sessionId, principalId });
       const query = readStringParam(args, "query", { required: true });
       const explicitNamespace = readExplicitNamespace(args);
       const implicitSessionNamespace = await resolveImplicitSessionNamespace({
@@ -468,18 +539,25 @@ function createMemorySearchTool(
         sessionId,
       });
       const limit = readNumberParam(args, "limit", { integer: true }) ?? 10;
-      const scopedNamespace =
-        explicitNamespace && implicitSessionNamespace && namespaceShouldOverlaySessionMemory(explicitNamespace)
-          ? [explicitNamespace, implicitSessionNamespace]
-          : explicitNamespace ?? implicitSessionNamespace;
+      const agentNamespace = resolveAgentScopedNamespace({ scopeId });
+      const explicitResolution = explicitNamespace
+        ? resolveAgentScopedExplicitNamespace({
+          explicitNamespace,
+          implicitSessionNamespace,
+          scopeId,
+        })
+        : undefined;
+      if (explicitResolution?.error) {
+        return errorResult(`Memory search rejected: ${explicitResolution.error}`);
+      }
+      const scopedNamespace = explicitResolution?.namespace
+        ?? (implicitSessionNamespace ? [agentNamespace, implicitSessionNamespace] : agentNamespace);
 
       try {
-        const scopedResults = scopedNamespace
-          ? await deps.memoryService.search(query, {
-            namespace: scopedNamespace,
-            limit,
-          })
-          : [];
+        const scopedResults = await deps.memoryService.search(query, {
+          namespace: scopedNamespace,
+          limit: implicitSessionNamespace ? Math.max(limit * 2, limit) : limit,
+        });
         const shouldUseSessionFallback =
           Boolean(implicitSessionNamespace && sessionId)
           && (
@@ -497,18 +575,8 @@ function createMemorySearchTool(
               limit,
             })
             : [];
-        const fallbackResults = explicitNamespace
-          ? scopedResults.length > 0
-            ? scopedResults
-            : await deps.memoryService.search(query, {
-              ...(implicitSessionNamespace ? { namespace: implicitSessionNamespace } : {}),
-              limit: Math.max(limit * 2, limit),
-            })
-          : await deps.memoryService.search(query, {
-            limit: implicitSessionNamespace ? Math.max(limit * 2, limit) : limit,
-          });
         const dedupedResults = (() => {
-          const merged = [...scopedResults, ...sessionLexicalCandidates, ...fallbackResults];
+          const merged = [...scopedResults, ...sessionLexicalCandidates];
           const seen = new Set<string>();
           const itemsByContent = new Map<string, FridayMemorySearchResult>();
           for (const result of merged) {
@@ -585,9 +653,26 @@ function createMemoryStoreTool(
       signal: AbortSignal,
     ): Promise<FridayAgentToolResult> {
       const sessionId = resolveSessionIdFromArgs(args, deps.sessionId, signal);
+      const principalId = resolvePrincipalId(args, signal);
+      const scopeId = resolveMemoryScopeId({ sessionId, principalId });
       const content = readStringParam(args, "content", { required: true });
       const explicitNamespace = readExplicitNamespace(args);
-      const namespace = explicitNamespace ?? scopedNamespace("agent", sessionId);
+      const implicitSessionNamespace = await resolveImplicitSessionNamespace({
+        deps,
+        explicitNamespace,
+        sessionId,
+      });
+      const explicitResolution = explicitNamespace
+        ? resolveAgentScopedExplicitNamespace({
+          explicitNamespace,
+          implicitSessionNamespace,
+          scopeId,
+        })
+        : undefined;
+      if (explicitResolution?.error) {
+        return errorResult(`Memory store rejected: ${explicitResolution.error}`);
+      }
+      const namespace = explicitResolution?.namespace ?? resolveAgentScopedNamespace({ scopeId });
       const expiresAt = sanitizeExpiresAt(readStringParam(args, "expiresAt"), deps.nowIso);
 
       const rawTags = args["tags"];
@@ -598,9 +683,7 @@ function createMemoryStoreTool(
       const executionContext = getFridayAgentToolExecutionContext(signal);
 
       const storingUserFacingMemory =
-        namespace === "default"
-        || namespace === "user"
-        || namespace === "preference"
+        explicitResolution?.isUserFacing === true
         || tags.some((tag) => normalizePreferenceTag(tag) === "preference");
 
       if (

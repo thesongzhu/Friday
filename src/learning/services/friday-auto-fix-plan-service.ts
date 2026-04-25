@@ -20,17 +20,19 @@ export interface CreateAutoFixPlanServiceDeps {
   idGenerator: () => string;
 }
 
-const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAutoFixStepKind> = {
+const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAutoFixStepKind | undefined> = {
   tool: "retry_node",
   model: "switch_model_fallback",
-  config: "apply_config_patch",
+  // Config patches require a product-specific config writer. Until a real
+  // executor is injected, fail closed rather than emitting a marker-only fix.
+  config: undefined,
   routing: "trim_payload",
   workflow: "retry_node",
 };
 
 function deriveAutoFixStepKind(
   incident: FridayErrorIncidentEntity,
-): FridayAutoFixStepKind {
+): FridayAutoFixStepKind | undefined {
   const source = typeof incident.context.source === "string"
     ? incident.context.source
     : undefined;
@@ -66,6 +68,9 @@ export function createFridayAutoFixPlanService(
       const { incident, diagnosis, matchedLessons, recurrenceCount } = input;
       const plans: FridayAutoFixPlan[] = [];
       const stepKind = deriveAutoFixStepKind(incident);
+      if (!stepKind) {
+        return plans;
+      }
       const target = deriveAutoFixTarget(incident, stepKind);
       const fallbackProviderIds = Array.isArray(incident.context.fallbackProviderIds)
         ? incident.context.fallbackProviderIds.filter(
