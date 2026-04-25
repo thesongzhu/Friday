@@ -3,8 +3,8 @@ import type Database from "better-sqlite3";
 import { createFridaySecretRepository } from "../providers/persistence/friday-secret-repository.js";
 import {
   decryptSecret,
-  getMasterKey,
   type FridayEncryptedEnvelope,
+  getMasterKey,
 } from "../providers/security/friday-secret-crypto.js";
 
 const BRIEF_SECRET_SCOPE = "brief";

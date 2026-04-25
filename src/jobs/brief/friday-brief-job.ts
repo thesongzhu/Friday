@@ -1,4 +1,4 @@
-import type { FridayBriefService, FridayBriefRunRecord } from "#brief";
+import type { FridayBriefRunRecord, FridayBriefService } from "#brief";
 
 export interface FridayBriefJobResult {
   run: FridayBriefRunRecord;

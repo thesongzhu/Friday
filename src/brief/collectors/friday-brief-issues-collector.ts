@@ -1,8 +1,8 @@
 import {
   buildSkippedCollectionResult,
-  runCollectorSafely,
   type FridayBriefCollector,
   type FridayBriefCollectorContext,
+  runCollectorSafely,
 } from "./friday-brief-collector.types.js";
 import type { FridayBriefEvent } from "../friday-brief.types.js";
 

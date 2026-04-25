@@ -2,9 +2,9 @@ import type Database from "better-sqlite3";
 
 import {
   buildDefaultFridayBriefConfig,
+  type FridayBriefConfig,
   FridayBriefConfigSchema,
   normalizeFridayBriefFallbackOrder,
-  type FridayBriefConfig,
 } from "./friday-brief-config.types.js";
 
 const SINGLETON_ID = "singleton";

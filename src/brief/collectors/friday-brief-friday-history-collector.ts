@@ -4,9 +4,9 @@ import type { FridayLearningEventLedger } from "../../ledger/learning/friday-lea
 import type { FridaySqliteLayer } from "../../state/sqlite/friday-sqlite.types.js";
 import {
   buildSkippedCollectionResult,
-  runCollectorSafely,
   type FridayBriefCollector,
   type FridayBriefCollectorContext,
+  runCollectorSafely,
 } from "./friday-brief-collector.types.js";
 import type { FridayBriefEvent } from "../friday-brief.types.js";
 

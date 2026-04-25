@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 
 import {
   buildSkippedCollectionResult,
-  runCollectorSafely,
   type FridayBriefCollector,
   type FridayBriefCollectorContext,
+  runCollectorSafely,
 } from "./friday-brief-collector.types.js";
 import type { FridayBriefEvent } from "../friday-brief.types.js";
 import type { FridayBriefGitRepoConfig } from "../friday-brief-config.types.js";
