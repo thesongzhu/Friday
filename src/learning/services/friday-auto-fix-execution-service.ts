@@ -64,91 +64,16 @@ export const AUTO_FIX_STEP_KINDS_REQUIRING_ROLLBACK_PLAN: ReadonlySet<FridayAuto
 ]);
 
 /**
- * Default executors perform real operations for each step kind.
- *
- * When hub-level services are available (skill registry, workflow runtime,
- * provider service) callers should inject richer executors via `stepExecutors`.
- * These defaults handle each kind with best-effort deterministic logic using
- * only the step payload, without requiring external service references.
+ * Default executors are intentionally limited to payload-local transforms.
+ * Steps that mutate runtime or external state must be supplied by the hub via
+ * `stepExecutors`; otherwise execution fails closed with "No executor".
  */
-export const DEFAULT_EXECUTORS: Record<FridayAutoFixStepKind, StepExecutor> = {
-  retry_node: (step) => {
-    // Retry is a signal to the pipeline to re-run the node.
-    // The executor validates that the step has a valid target.
-    if (!step.target) return false;
-    // Mark the step payload with a retry directive that the pipeline reads.
-    const payload = step.payload as Record<string, unknown> | null;
-    if (payload && typeof payload === "object") {
-      payload._retryRequested = true;
-      payload._retryAt = new Date().toISOString();
-    }
-    return true;
-  },
-
-  switch_model_fallback: (step) => {
-    // Validate step has required target info for model switching.
-    if (!step.target) return false;
-    const payload = step.payload as Record<string, unknown> | null;
-    if (payload && typeof payload === "object") {
-      payload._modelFallbackRequested = true;
-      payload._fallbackAt = new Date().toISOString();
-    }
-    return true;
-  },
-
+export const DEFAULT_EXECUTORS: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {
   trim_payload: (step) => {
-    // Payload trimming: mark step as trimmed. Actual trimming happens at
-    // the routing/executor layer when it reads this directive.
     if (!step.target) return false;
     const payload = step.payload as Record<string, unknown> | null;
     if (payload && typeof payload === "object") {
       payload._trimRequested = true;
-    }
-    return true;
-  },
-
-  apply_config_patch: (step) => {
-    // Config patches require an explicit target and non-empty payload.
-    if (!step.target) return false;
-    const payload = step.payload as Record<string, unknown> | null;
-    if (!payload || typeof payload !== "object") return false;
-    // Reject empty patches — nothing to apply.
-    const keys = Object.keys(payload).filter((k) => !k.startsWith("_"));
-    if (keys.length === 0) return false;
-    payload._configPatchApplied = true;
-    payload._appliedAt = new Date().toISOString();
-    return true;
-  },
-
-  grant_permission: (step) => {
-    // Permission grants require a target (the resource) and a payload
-    // describing the permission. Reject if either is missing.
-    if (!step.target) return false;
-    const payload = step.payload as Record<string, unknown> | null;
-    if (!payload || typeof payload !== "object") return false;
-    payload._permissionGranted = true;
-    payload._grantedAt = new Date().toISOString();
-    return true;
-  },
-
-  disable_skill: (step) => {
-    // Disable skill: requires a target identifying the skill.
-    if (!step.target) return false;
-    const payload = step.payload as Record<string, unknown> | null;
-    if (payload && typeof payload === "object") {
-      payload._skillDisabled = true;
-      payload._disabledAt = new Date().toISOString();
-    }
-    return true;
-  },
-
-  pause_workflow: (step) => {
-    // Pause workflow: requires a target identifying the workflow.
-    if (!step.target) return false;
-    const payload = step.payload as Record<string, unknown> | null;
-    if (payload && typeof payload === "object") {
-      payload._workflowPaused = true;
-      payload._pausedAt = new Date().toISOString();
     }
     return true;
   },
@@ -204,7 +129,7 @@ export const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
 export function createFridayAutoFixExecutionService(
   deps: CreateAutoFixExecutionServiceDeps,
 ): FridayAutoFixExecutionService {
-  const executors = { ...DEFAULT_EXECUTORS, ...deps.stepExecutors };
+  const executors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = { ...DEFAULT_EXECUTORS, ...deps.stepExecutors };
   const verifiers = { ...DEFAULT_VERIFIERS, ...deps.stepVerifiers };
 
   function persistPlanEvidence(

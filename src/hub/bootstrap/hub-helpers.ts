@@ -1040,9 +1040,9 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   workflowRuntime?: FridayWorkflowRuntime;
   nowIso: () => string;
 }): FridayHubAutoFixExecutionSupport {
-  // P2-07: Only override step kinds that need hub-level service access.
-  // All other kinds use DEFAULT_EXECUTORS from the execution service which
-  // correctly set directive markers and return true.
+  // P2-07: External-state remediation must be backed by hub-level services.
+  // The execution service fails closed for these kinds unless an executor is
+  // injected here.
   const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
   const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
 
