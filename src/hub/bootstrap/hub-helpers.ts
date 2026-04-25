@@ -55,6 +55,7 @@ import {
 } from "#providers";
 import type { FridayWorkflowGeneratorService, FridayWorkflowRuntime } from "#workflows";
 import type { FridayApiRuntime } from "#api";
+import type { FridayBriefService } from "#brief";
 import type { FridayChannelRegistry, WebchatWsService } from "#channels";
 import type { FridaySatelliteRuntime } from "#satellites";
 import type { FridayBrowserPresentationMode } from "#browser";
@@ -1460,6 +1461,7 @@ export interface FridayHub {
   satelliteRuntime: FridaySatelliteRuntime;
   mcpAdapter?: FridayMcpAdapter;
   webchatWsService?: WebchatWsService;
+  briefService?: FridayBriefService;
 }
 
 export interface FridayHubStatus {

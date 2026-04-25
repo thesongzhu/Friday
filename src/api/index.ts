@@ -145,6 +145,8 @@ export { createFridaySkillGeneratorRoutes } from "./http/routes/friday-skill-gen
 export type { FridaySkillGeneratorRoutesDeps } from "./http/routes/friday-skill-generator-routes.js";
 export { createFridayDiagnosisRoutes } from "./http/routes/friday-diagnosis-routes.js";
 export type { FridayDiagnosisRoutesDeps } from "./http/routes/friday-diagnosis-routes.js";
+export { createFridayBriefRoutes } from "./http/routes/friday-brief-routes.js";
+export type { FridayBriefRoutesDeps } from "./http/routes/friday-brief-routes.js";
 export { createFridayAutoFixRoutes } from "./http/routes/friday-auto-fix-routes.js";
 export type { FridayAutoFixRoutesDeps } from "./http/routes/friday-auto-fix-routes.js";
 export { createFridayAgentLoopRoutes } from "./http/routes/friday-agent-loop-routes.js";

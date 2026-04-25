@@ -18,6 +18,7 @@ describe("agent os navigation", () => {
       "/plugins",
       "/workflows",
       "/automations",
+      "/brief",
       "/memory",
       "/mcp",
       "/fleet",
@@ -44,6 +45,7 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/workflows/123")).toEqual({ zh: "自动化", en: "Workflows" });
     expect(resolvePageTitle("/fleet")).toEqual({ zh: "执行节点", en: "Fleet" });
     expect(resolvePageTitle("/automations")).toEqual({ zh: "任务队列", en: "Task Queue" });
+    expect(resolvePageTitle("/brief")).toEqual({ zh: "每日简报", en: "Daily Brief" });
     expect(resolvePageTitle("/memory")).toEqual({ zh: "记忆", en: "Memory" });
     expect(resolvePageTitle("/observability")).toEqual({ zh: "可观测性", en: "Observability" });
     expect(resolvePageTitle("/settings")).toEqual({ zh: "设置", en: "Settings" });

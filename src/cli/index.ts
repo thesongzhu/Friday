@@ -14,3 +14,4 @@ export {
 export { runFridayCliLoop, type FridayCliRunLoopDeps } from "./friday-cli-run-loop.js";
 export { runFridayCliAuthLoginAnthropic, type FridayCliAuthCommandInput, type FridayCliAuthCommandDeps } from "./friday-cli-auth.js";
 export { cmdRuns, type FridayCliRunsCommandInput } from "./friday-cli-runs.js";
+export { cmdBrief, type FridayCliBriefCommandInput } from "./friday-cli-brief.js";

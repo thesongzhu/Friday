@@ -26,6 +26,11 @@ export { createFridayPreferenceDecayJob } from "./learning/friday-preference-dec
 export { createFridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
 export type { FridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
 
+// ─── Daily voice brief job ───
+
+export { createFridayBriefJob } from "./brief/friday-brief-job.js";
+export type { FridayBriefJob, FridayBriefJobResult, CreateFridayBriefJobDeps } from "./brief/friday-brief-job.js";
+
 // ─── Session lifecycle & extraction jobs ───
 
 export type { FridaySessionLifecycleJobResult } from "./sessions/friday-session-lifecycle-job.types.js";

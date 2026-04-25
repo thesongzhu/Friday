@@ -245,6 +245,7 @@
     "#tui": "./dist/tui/index.js",
     "#media-understanding": "./dist/media-understanding/index.js",
     "#link-understanding": "./dist/link-understanding/index.js",
-    "#heartbeat": "./dist/heartbeat/index.js"
+    "#heartbeat": "./dist/heartbeat/index.js",
+    "#brief": "./dist/brief/index.js"
   }
 }

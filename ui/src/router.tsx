@@ -43,6 +43,7 @@ const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => 
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
+const BriefPage = lazy(async () => import("@/routes/brief-page").then((module) => ({ default: module.BriefPage })));
 
 /**
  * Router-level loading splash. Resolves `LocalizedText` into the active locale
@@ -490,6 +491,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载记忆", "Loading memory")} detail={localizedText("Friday 正在准备记忆存储视图。", "Friday is preparing the memory store view.")}>
                 <MemoryPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "brief",
+            element: (
+              <RouteSuspense title={localizedText("加载每日简报", "Loading daily brief")} detail={localizedText("Friday 正在准备每日语音简报面板。", "Friday is preparing the daily voice brief panel.")}>
+                <BriefPage />
               </RouteSuspense>
             ),
           },

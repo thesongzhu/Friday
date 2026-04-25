@@ -48,6 +48,7 @@ import {
   createFridayProviderService,
   createFridaySecretRepository,
   decryptSecret,
+  encryptSecret,
   getFridayProviderPreset,
   getMasterKey,
   normalizeFridayProviderSupportedModels,
@@ -57,7 +58,7 @@ import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, Fr
 import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
-import { createFridaySkillGeneratorService } from "#skills/generator";
+import { createFridayProviderInferenceClient, createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
 import {
   createDarwinProgramScanner,
@@ -71,8 +72,32 @@ import {
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
   type FridaySkillSourceFormat,
 } from "#skills/converter";
-import { createFridaySkillRunStore } from "#ledger";
+import { createFridayLearningEventLedger, createFridaySkillRunStore } from "#ledger";
 import type { FridayLearningEventAppendInput } from "#ledger";
+import {
+  createFridayBriefAzureTtsProvider,
+  createFridayBriefCalendarCollector,
+  createFridayBriefConfigRepository,
+  createFridayBriefDeliverer,
+  createFridayBriefEmailDelivery,
+  createFridayBriefFridayHistoryCollector,
+  createFridayBriefGitCollector,
+  createFridayBriefGoogleTtsProvider,
+  createFridayBriefHistoryRepository,
+  createFridayBriefIssuesCollector,
+  createFridayBriefLlmSummarize,
+  createFridayBriefLocalTtsProvider,
+  createFridayBriefMailCollector,
+  createFridayBriefService,
+  createFridayBriefSlackCollector,
+  createFridayBriefSummarizer,
+  createFridayBriefTelegramDelivery,
+  createFridayBriefTtsRegistry,
+  createFridayBriefWeComDelivery,
+  FRIDAY_BRIEF_SECRET_SCOPE,
+  resolveBriefSecret,
+} from "#brief";
+import type { FridayBriefService } from "#brief";
 import {
   createFridayWorkflowBuilderRuntime,
   createFridayWorkflowCompiler,
@@ -85,6 +110,7 @@ import {
 import { createFridayWorkflowTriggerRepository } from "#workflows";
 import {
   createFridayApiRuntime,
+  createFridayBriefRoutes,
   createFridayDeterministicPipelineRuntime,
   getChannelPersona,
   hydrateChannelPersonaStore,
@@ -262,6 +288,7 @@ import { createFridaySessionService } from "#sessions";
 import {
   computeNextRunAtMs,
   createFridayApprovalExpiryJob,
+  createFridayBriefJob,
   createFridayJobSchedulerRepository,
   createFridayJobSchedulerService,
   createFridayLearningMetricsJob,
@@ -5379,6 +5406,134 @@ export async function createFridayHub(
     heartbeatTriggerRef = () => heartbeatJob!.run();
   }
 
+  // ─── Daily Voice Brief ───
+  //
+  // Opt-in feature: collects the day's activity across configurable sources,
+  // summarizes it, synthesizes speech, and delivers a voice message over the
+  // user's preferred channel with automatic fallback. Single-user system.
+
+  let briefService: FridayBriefService | undefined;
+  const briefSchedulerRef: { sync?: (cronExpr: string, tz: string) => void } = {};
+  {
+    const briefDefaultUserId = process.env.FRIDAY_BRIEF_USER_ID?.trim() || "admin-001";
+    const briefConfigRepo = createFridayBriefConfigRepository();
+    const briefHistoryRepo = createFridayBriefHistoryRepository();
+    const briefLedger = createFridayLearningEventLedger({ db: stateRuntime.sqlite });
+    const resolveBriefSecretRef = (refKey: string | undefined): string | undefined => {
+      if (!refKey) return undefined;
+      try {
+        return stateRuntime.sqlite.withReadConnection((db) =>
+          resolveBriefSecret(db, refKey),
+        );
+      } catch {
+        return undefined;
+      }
+    };
+
+    const getBriefTtsConfig = () =>
+      stateRuntime.sqlite.withReadConnection((db) => briefConfigRepo.get(db).tts);
+    const getBriefChannelsConfig = () =>
+      stateRuntime.sqlite.withReadConnection((db) => briefConfigRepo.get(db).channels);
+
+    const briefTtsRegistry = createFridayBriefTtsRegistry([
+      createFridayBriefAzureTtsProvider({
+        getConfig: getBriefTtsConfig,
+        resolveKey: resolveBriefSecretRef,
+      }),
+      createFridayBriefGoogleTtsProvider({
+        getConfig: getBriefTtsConfig,
+        resolveKey: resolveBriefSecretRef,
+      }),
+      createFridayBriefLocalTtsProvider({
+        getConfig: getBriefTtsConfig,
+      }),
+    ]);
+
+    const briefCollectors = [
+      createFridayBriefFridayHistoryCollector({
+        ledger: briefLedger,
+        stateDb: stateRuntime.sqlite,
+      }),
+      createFridayBriefGitCollector({}),
+      createFridayBriefSlackCollector({ resolveSecret: resolveBriefSecretRef }),
+      createFridayBriefMailCollector({ resolveSecret: resolveBriefSecretRef }),
+      createFridayBriefCalendarCollector({ resolveSecret: resolveBriefSecretRef }),
+      createFridayBriefIssuesCollector({ resolveSecret: resolveBriefSecretRef }),
+    ];
+
+    const briefDeliverer = createFridayBriefDeliverer({
+      clients: [
+        createFridayBriefWeComDelivery({
+          getConfig: getBriefChannelsConfig,
+          resolveSecret: resolveBriefSecretRef,
+        }),
+        createFridayBriefTelegramDelivery({
+          getConfig: getBriefChannelsConfig,
+          resolveSecret: resolveBriefSecretRef,
+        }),
+        createFridayBriefEmailDelivery({
+          getConfig: getBriefChannelsConfig,
+          resolveSecret: resolveBriefSecretRef,
+        }),
+      ],
+      nowIso,
+    });
+
+    const briefInferenceClient = createFridayProviderInferenceClient({ providerService });
+    const briefSummarizer = createFridayBriefSummarizer({
+      llmSummarize: createFridayBriefLlmSummarize({ inferenceClient: briefInferenceClient }),
+    });
+
+    const briefSecretRepo = createFridaySecretRepository();
+    const briefSecretStore = {
+      upsert: (refKey: string, plaintext: string): void => {
+        const envelope = encryptSecret(plaintext, getMasterKey());
+        stateRuntime.sqlite.withWriteTransaction((db) => {
+          briefSecretRepo.upsert(db, {
+            id: `${FRIDAY_BRIEF_SECRET_SCOPE}:${refKey}`,
+            scope: FRIDAY_BRIEF_SECRET_SCOPE,
+            refKey,
+            encryptedValue: JSON.stringify(envelope),
+            keyId: "master-v1",
+            nowIso: nowIso(),
+          });
+        });
+      },
+      remove: (refKey: string): void => {
+        stateRuntime.sqlite.withWriteTransaction((db) => {
+          briefSecretRepo.deleteByRef(db, FRIDAY_BRIEF_SECRET_SCOPE, refKey);
+        });
+      },
+    };
+
+    briefService = createFridayBriefService({
+      db: stateRuntime.sqlite,
+      configRepo: briefConfigRepo,
+      historyRepo: briefHistoryRepo,
+      collectors: briefCollectors,
+      summarizer: briefSummarizer,
+      ttsRegistry: briefTtsRegistry,
+      deliverer: briefDeliverer,
+      idGenerator,
+      nowIso,
+      audioWorkDir: path.join(stateRuntime.stateDir, "brief", "audio"),
+      userId: briefDefaultUserId,
+      secretStore: briefSecretStore,
+      onConfigUpdated: (next) => {
+        briefSchedulerRef.sync?.(next.cronExpression, next.timezone);
+      },
+    });
+    try {
+      briefService.cleanupOrphanedAudio();
+    } catch (err) {
+      console.warn("[friday] brief cleanupOrphanedAudio at startup failed", err);
+    }
+
+    for (const route of createFridayBriefRoutes({ service: briefService })) {
+      apiRuntime.routes.register(route as Parameters<typeof apiRuntime.routes.register>[0]);
+    }
+  }
+
   // ─── Unified Job Scheduler (F10: register ALL job modules) ───
 
   let jobScheduler: FridayJobSchedulerService | undefined;
@@ -5505,6 +5660,30 @@ export async function createFridayHub(
       });
     }
 
+    // Daily voice brief — user-configurable cron
+    if (briefService) {
+      const briefJob = createFridayBriefJob({ briefService });
+      const briefCfg = briefService.getConfig();
+      schedulerJobs.push({
+        id: "daily-voice-brief",
+        schedule: { kind: "cron", cronExpr: briefCfg.cronExpression, tz: briefCfg.timezone },
+        timeoutMs: 600_000, // 10 min — allows slow TTS + delivery
+        catchUpRuns: 0,
+        run: async () => { await briefJob.run(); },
+      });
+
+      const briefServiceRef = briefService;
+      schedulerJobs.push({
+        id: "daily-voice-brief-prune",
+        intervalMs: 86_400_000, // every 24h
+        timeoutMs: 60_000, // 1 min
+        catchUpRuns: 0,
+        run: async () => {
+          briefServiceRef.pruneHistory();
+        },
+      });
+    }
+
     // Approval expiry sweep — expires stale pending approval requests
     {
       const approvalExpiryJob = createFridayApprovalExpiryJob({
@@ -5617,6 +5796,18 @@ export async function createFridayHub(
       jobs: schedulerJobs,
     });
     const schedulerService = jobScheduler;
+
+    // Brief service → scheduler bridge: keep cron in sync when user edits it.
+    if (briefService) {
+      briefSchedulerRef.sync = (cronExpr, tz) => {
+        schedulerService.updateJobSchedule("daily-voice-brief", {
+          kind: "cron",
+          cronExpr,
+          tz,
+        });
+        schedulerService.wakeNow("brief-config-updated");
+      };
+    }
 
     // Link agent automations to the unified scheduler.
     if (apiRuntime.agentAutomationService) {
@@ -6673,6 +6864,7 @@ export async function createFridayHub(
     satelliteRuntime,
     mcpAdapter,
     webchatWsService,
+    briefService,
   };
 
   return hub;

@@ -62,6 +62,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("管理定时任务、快速运行和队列状态。", "Scheduled work, quick runs, and queue control."),
   },
   {
+    label: localizedText("每日简报", "Daily Brief"),
+    path: "/brief",
+    description: localizedText("配置、触发和回放每日语音简报。", "Configure, trigger, and replay the daily voice brief."),
+  },
+  {
     label: localizedText("记忆", "Memory"),
     path: "/memory",
     description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
@@ -139,6 +144,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/automations")) {
     return localizedText("任务队列", "Task Queue");
+  }
+  if (pathname.startsWith("/brief")) {
+    return localizedText("每日简报", "Daily Brief");
   }
   if (pathname.startsWith("/observability")) {
     return localizedText("可观测性", "Observability");

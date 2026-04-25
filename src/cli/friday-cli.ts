@@ -73,11 +73,12 @@ import {
   runFridayCliAuthStatus,
 } from "./friday-cli-auth.js";
 import { cmdRuns } from "./friday-cli-runs.js";
+import { cmdBrief } from "./friday-cli-brief.js";
 
 // ─── Arg parser ───
 
 export interface ParsedArgs {
-  command: "start" | "list" | "run" | "runs" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup" | "tui";
+  command: "start" | "list" | "run" | "runs" | "status" | "help" | "import" | "convert" | "converters" | "pack" | "auth" | "skills" | "daemon" | "phases" | "setup" | "tui" | "brief";
   showHelp: boolean;
   skillDirs: string[];
   port: number | undefined;
@@ -116,6 +117,10 @@ export interface ParsedArgs {
   json: boolean;
   apply: boolean;
   runsSubcommand: "backfill-pack-context" | undefined;
+  briefSubcommand: "now" | "status" | "replay" | undefined;
+  runIdArg: string | undefined;
+  windowStartIso: string | undefined;
+  windowEndIso: string | undefined;
 }
 
 function isHelpFlag(value: string | undefined): boolean {
@@ -162,6 +167,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
     json: false,
     apply: false,
     runsSubcommand: undefined,
+    briefSubcommand: undefined,
+    runIdArg: undefined,
+    windowStartIso: undefined,
+    windowEndIso: undefined,
   };
 
   if (args.length === 0) {
@@ -175,7 +184,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return result;
   }
 
-  const validCommands = ["start", "list", "run", "runs", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup", "tui"] as const;
+  const validCommands = ["start", "list", "run", "runs", "status", "import", "convert", "converters", "pack", "auth", "skills", "daemon", "phases", "setup", "tui", "brief"] as const;
   type ValidCommand = (typeof validCommands)[number];
 
   if ((validCommands as readonly string[]).includes(cmd)) {
@@ -225,6 +234,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
       result.runsSubcommand = sub as (typeof validSubs)[number];
     }
     i = 2;
+  }
+
+  if (cmd === "brief") {
+    const sub = args[1];
+    const validSubs = ["now", "status", "replay"] as const;
+    if (sub && (validSubs as readonly string[]).includes(sub)) {
+      result.briefSubcommand = sub as (typeof validSubs)[number];
+    }
+    if (result.briefSubcommand === "replay" && args[2] && !args[2]!.startsWith("--")) {
+      result.runIdArg = args[2]!;
+      i = 3;
+    } else {
+      i = 2;
+    }
   }
 
   while (i < args.length) {
@@ -306,6 +329,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (arg === "--json") {
       result.json = true;
       i += 1;
+      continue;
+    }
+
+    if (arg === "--window-start" && i + 1 < args.length) {
+      result.windowStartIso = args[i + 1]!;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--window-end" && i + 1 < args.length) {
+      result.windowEndIso = args[i + 1]!;
+      i += 2;
       continue;
     }
 
@@ -479,6 +514,19 @@ Backfill historical packContext metadata onto agent runs using strict session ev
     return;
   }
 
+  if (command === "brief") {
+    console.log(`
+friday brief now     [--window-start <iso>] [--window-end <iso>] [--json]
+friday brief status  [--json]
+friday brief replay  <runId> [--json]
+
+Trigger, inspect, or replay the Friday daily voice brief. Requires a running daemon
+(start with 'friday start' or 'friday daemon start'). Use FRIDAY_HOST / FRIDAY_PORT or
+--host/--port to target a non-default binding.
+    `.trim());
+    return;
+  }
+
   if (command === "setup") {
     console.log(`
 friday setup
@@ -603,6 +651,9 @@ Usage:
 
   friday runs backfill-pack-context [--dry-run|--apply] [--json]
       Backfill historical packContext metadata onto agent runs using strict session evidence.
+
+  friday brief now|status|replay [--window-start <iso>] [--window-end <iso>] [--json]
+      Trigger, inspect, or replay the Friday daily voice brief (requires a running daemon).
 
   friday status
       Show hub status (running / stopped).
@@ -2412,6 +2463,16 @@ async function main(): Promise<void> {
       break;
     case "runs":
       await cmdRuns(parsed);
+      break;
+    case "brief":
+      await cmdBrief({
+        briefSubcommand: parsed.briefSubcommand,
+        runIdArg: parsed.runIdArg,
+        windowStartIso: parsed.windowStartIso,
+        windowEndIso: parsed.windowEndIso,
+        json: parsed.json,
+        baseUrl: resolveFridayTuiBaseUrl(parsed),
+      });
       break;
     case "status":
       cmdStatus();
