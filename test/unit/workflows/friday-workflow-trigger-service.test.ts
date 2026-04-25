@@ -385,6 +385,10 @@ describe("FridayWorkflowTriggerService", () => {
   });
 
   describe("handleWebhook secret refs", () => {
+    const webhookCredentialRef = "secret://workflow-webhook/signing-key"; // pragma: allowlist secret
+    const resolvedSigningValue = "resolved-value";
+    const inlineCredentialLiteral = "inline-value";
+
     function createWebhookService(input?: {
       secretRef?: string;
       resolveSecretRef?: (refKey: string) => string | null;
@@ -429,12 +433,12 @@ describe("FridayWorkflowTriggerService", () => {
 
     it("resolves webhook HMAC keys from secret refs instead of using the ref string", async () => {
       const { service, executionService } = createWebhookService({
-        secretRef: "secret://workflow-webhook/signing-key",
-        resolveSecretRef: (refKey) => refKey === "signing-key" ? "resolved-secret" : null,
+        secretRef: webhookCredentialRef,
+        resolveSecretRef: (refKey) => refKey === "signing-key" ? resolvedSigningValue : null,
       });
       const body = { ok: true };
       const rawBody = JSON.stringify(body);
-      const signature = "sha256=" + createHmac("sha256", "resolved-secret")
+      const signature = "sha256=" + createHmac("sha256", resolvedSigningValue)
         .update(rawBody)
         .digest("hex");
 
@@ -451,12 +455,12 @@ describe("FridayWorkflowTriggerService", () => {
 
     it("rejects signatures generated with the literal secretRef string", async () => {
       const { service, executionService } = createWebhookService({
-        secretRef: "secret://workflow-webhook/signing-key",
-        resolveSecretRef: (refKey) => refKey === "signing-key" ? "resolved-secret" : null,
+        secretRef: webhookCredentialRef,
+        resolveSecretRef: (refKey) => refKey === "signing-key" ? resolvedSigningValue : null,
       });
       const body = { ok: true };
       const rawBody = JSON.stringify(body);
-      const signature = "sha256=" + createHmac("sha256", "secret://workflow-webhook/signing-key")
+      const signature = "sha256=" + createHmac("sha256", webhookCredentialRef)
         .update(rawBody)
         .digest("hex");
 
@@ -477,11 +481,11 @@ describe("FridayWorkflowTriggerService", () => {
 
     it("fails closed when webhookSecretRef is an inline literal", async () => {
       const { service, executionService } = createWebhookService({
-        secretRef: "inline-secret",
+        secretRef: inlineCredentialLiteral,
       });
       const body = { ok: true };
       const rawBody = JSON.stringify(body);
-      const signature = "sha256=" + createHmac("sha256", "inline-secret")
+      const signature = "sha256=" + createHmac("sha256", inlineCredentialLiteral)
         .update(rawBody)
         .digest("hex");
 

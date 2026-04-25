@@ -1322,9 +1322,9 @@ describe("FridayAutonomousEngine", () => {
     it("does not read file-state observations outside the configured workspace root", async () => {
       const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-workspace-"));
       const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-autonomous-outside-"));
-      const outsidePath = path.join(outsideDir, "secret.txt");
-      const secretContent = "outside-secret-content";
-      fs.writeFileSync(outsidePath, secretContent, "utf8");
+      const outsidePath = path.join(outsideDir, "outside.txt");
+      const outsideContent = "outside-file-content";
+      fs.writeFileSync(outsidePath, outsideContent, "utf8");
 
       const runtime = {
         executeRun: vi.fn().mockImplementation(async (params: { task: string; executionContext?: { surface?: string } }) => {
@@ -1346,7 +1346,7 @@ describe("FridayAutonomousEngine", () => {
 
           expect(params.executionContext?.surface).toBe("autonomous_internal_decision");
           expect(params.task).toContain("Path is outside the autonomous workspace root");
-          expect(params.task).not.toContain(secretContent);
+          expect(params.task).not.toContain(outsideContent);
           return {
             runId: "run-decision",
             status: "completed",
