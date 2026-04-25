@@ -5,11 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { apiFetch } from "./_helpers/api.js";
 import {
-  cleanupFridayDeepProofHubEnv,
-  createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_GATED,
+  cleanupRealHubEnv,
+  createRealHubEnv,
+  E2E_GATED,
+  LIVE_PROVIDER_KIND,
   type RealHubEnv,
-} from "./_helpers/deep-proof-env.js";
+} from "./_helpers/real-env.js";
+
+const OPENAI_PROOF_GATED = E2E_GATED && LIVE_PROVIDER_KIND === "openai";
 
 interface CandidateRecord {
   id: string;
@@ -249,16 +252,16 @@ async function rollbackPlaybook(env: RealHubEnv, playbookId: string, targetVersi
   return response.json.data.playbook;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Playbook Upgrade Boundary Live (Anthropic API key)", () => {
+describe.skipIf(!OPENAI_PROOF_GATED)("Friday Playbook Upgrade Boundary Live (OpenAI API key)", () => {
   let env: RealHubEnv;
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
+    env = await createRealHubEnv();
   }, 60_000);
 
   afterAll(async () => {
     if (env) {
-      await cleanupFridayDeepProofHubEnv(env);
+      await cleanupRealHubEnv(env);
     }
   }, 30_000);
 
