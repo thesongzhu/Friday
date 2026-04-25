@@ -221,6 +221,32 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.autoFixEligible).toBe(true);
   });
 
+  it("does not emit marker-only config candidate plans from matched lessons", () => {
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const configIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      incidentId: "inc-config-lesson",
+      category: "config",
+      signature: "sig-config-lesson",
+      context: { key: "provider.defaultModel", error: "invalid" },
+    };
+    createFridayErrorIncidentRepository().insert(db.writer, configIncident);
+    lessonRepo.upsertByFingerprint(db.writer, {
+      id: "lesson-config-001",
+      fingerprint: "sig-config-lesson",
+      title: "Config Fix",
+      cause: "Invalid config",
+      fix: "Patch provider.defaultModel",
+      nowIso: NOW,
+    });
+
+    const result = service.diagnose({ incident: configIncident, nowIso: NOW });
+
+    expect(result.autoFixEligible).toBe(true);
+    expect(result.matchedLessons).toHaveLength(1);
+    expect(result.candidatePlans).toHaveLength(0);
+  });
+
   it("boosts structured workflow runtime failures with run and node evidence", () => {
     db.writer.prepare(
       `INSERT INTO workflows (

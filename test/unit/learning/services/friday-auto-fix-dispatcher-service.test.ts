@@ -130,6 +130,15 @@ describe("FridayAutoFixDispatcherService", () => {
         nowIso: () => NOW,
       }),
       nowIso: () => NOW,
+      stepExecutors: {
+        retry_node: (step) => {
+          const payload = step.payload as Record<string, unknown> | null;
+          if (payload && typeof payload === "object") {
+            payload._retryRequested = true;
+          }
+          return true;
+        },
+      },
     });
     const riskService = createFridayAutoFixRiskAssessmentService({
       db,

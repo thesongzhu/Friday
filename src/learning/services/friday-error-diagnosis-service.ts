@@ -129,7 +129,7 @@ function isStructuredInternalRuntimeFailure(
 
 function derivePlanStepKind(
   incident: FridayErrorIncidentEntity,
-): FridayAutoFixPlan["steps"][number]["kind"] {
+): FridayAutoFixPlan["steps"][number]["kind"] | undefined {
   const source = typeof incident.context.source === "string"
     ? incident.context.source
     : undefined;
@@ -294,6 +294,9 @@ export function createFridayErrorDiagnosisService(
 
       for (const l of matchedLessons) {
         const planStepKind = derivePlanStepKind(incident);
+        if (!planStepKind) {
+          continue;
+        }
         const target = derivePlanTarget(incident, planStepKind);
         const plan: FridayAutoFixPlan = {
           title: buildAutoFixPlanTitle(l.title),
@@ -362,14 +365,16 @@ export function createFridayErrorDiagnosisService(
 
 function mapCategoryToStepKind(
   category: FridayErrorIncidentEntity["category"],
-): FridayAutoFixPlan["steps"][number]["kind"] {
+): FridayAutoFixPlan["steps"][number]["kind"] | undefined {
   switch (category) {
     case "tool":
       return "retry_node";
     case "model":
       return "switch_model_fallback";
     case "config":
-      return "apply_config_patch";
+      // Config patches need a concrete config writer. Do not emit
+      // marker-only remediation plans from diagnosis.
+      return undefined;
     case "routing":
       return "trim_payload";
     case "workflow":

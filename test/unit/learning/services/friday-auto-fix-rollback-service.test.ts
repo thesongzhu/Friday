@@ -125,7 +125,7 @@ describe("FridayAutoFixRollbackService", () => {
     ).toBe("applied");
   });
 
-  it("falls back to default rollback executors when no hub override is provided", async () => {
+  it("fails closed when no hub executor backs a rollback step", async () => {
     const actionRepo = seedAppliedAction();
 
     const service = createFridayAutoFixRollbackService({
@@ -137,10 +137,12 @@ describe("FridayAutoFixRollbackService", () => {
 
     const result = await service.rollback("action-rb-001", "verification failed");
 
-    expect(result.rollbackSucceeded).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.rollbackSucceeded).toBe(false);
+    expect(result.errorMessage).toContain("has no executor");
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"))?.status,
-    ).toBe("rolled_back");
+    ).toBe("applied");
   });
 
   it("fails closed when an explicit override removes the executor", async () => {
