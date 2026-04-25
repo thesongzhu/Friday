@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import type { FridaySqliteLayer } from "#state";
 import {
   createFridayWorkflowTriggerRepository,
@@ -380,6 +381,123 @@ describe("FridayWorkflowTriggerService", () => {
       expect(started2).toBe(0);
       // startRun should not be called again
       expect(executionService.startRun).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("handleWebhook secret refs", () => {
+    function createWebhookService(input?: {
+      secretRef?: string;
+      resolveSecretRef?: (refKey: string) => string | null;
+    }) {
+      const wfRepo = createFridayWorkflowRepository({ db });
+      const triggerRepo = createFridayWorkflowTriggerRepository({ db });
+      const executionService = createMockExecutionService();
+      const idGen = createTestIdGenerator();
+
+      db.withWriteTransaction((conn) => {
+        wfRepo.insertWorkflow(conn, "wf-hook-1", { slug: "hook-wf", name: "Hook WF" }, "etag-hook", NOW);
+        wfRepo.insertVersion(conn, "wv-hook-1", "wf-hook-1", 1, "cs-hook", "{}", undefined, undefined, NOW);
+      });
+
+      triggerRepo.upsertManyForVersion([{
+        id: "tr-hook-1",
+        workflowId: "wf-hook-1",
+        workflowVersionId: "wv-hook-1",
+        triggerNodeId: "trigger-hook-1",
+        triggerType: "webhook",
+        enabled: true,
+        webhookPathToken: "hook-token",
+        webhookSecretRef: input?.secretRef,
+        webhookSignatureHeader: "x-signature",
+        dedupeWindowSec: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }]);
+
+      const service = createFridayWorkflowTriggerService({
+        db,
+        executionService,
+        workflowRepo: wfRepo,
+        triggerRepo,
+        resolveWebhookSecretRef: input?.resolveSecretRef,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+      });
+
+      return { service, executionService };
+    }
+
+    it("resolves webhook HMAC keys from secret refs instead of using the ref string", async () => {
+      const { service, executionService } = createWebhookService({
+        secretRef: "secret://workflow-webhook/signing-key",
+        resolveSecretRef: (refKey) => refKey === "signing-key" ? "resolved-secret" : null,
+      });
+      const body = { ok: true };
+      const rawBody = JSON.stringify(body);
+      const signature = "sha256=" + createHmac("sha256", "resolved-secret")
+        .update(rawBody)
+        .digest("hex");
+
+      const result = await service.handleWebhook({
+        pathToken: "hook-token",
+        body,
+        rawBody,
+        headers: { "x-signature": signature },
+      });
+
+      expect(result.accepted).toBe(true);
+      expect(executionService.startRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects signatures generated with the literal secretRef string", async () => {
+      const { service, executionService } = createWebhookService({
+        secretRef: "secret://workflow-webhook/signing-key",
+        resolveSecretRef: (refKey) => refKey === "signing-key" ? "resolved-secret" : null,
+      });
+      const body = { ok: true };
+      const rawBody = JSON.stringify(body);
+      const signature = "sha256=" + createHmac("sha256", "secret://workflow-webhook/signing-key")
+        .update(rawBody)
+        .digest("hex");
+
+      const result = await service.handleWebhook({
+        pathToken: "hook-token",
+        body,
+        rawBody,
+        headers: { "x-signature": signature },
+      });
+
+      expect(result).toMatchObject({
+        accepted: false,
+        statusCode: 403,
+        errorCode: "WEBHOOK_SIGNATURE_INVALID",
+      });
+      expect(executionService.startRun).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when webhookSecretRef is an inline literal", async () => {
+      const { service, executionService } = createWebhookService({
+        secretRef: "inline-secret",
+      });
+      const body = { ok: true };
+      const rawBody = JSON.stringify(body);
+      const signature = "sha256=" + createHmac("sha256", "inline-secret")
+        .update(rawBody)
+        .digest("hex");
+
+      const result = await service.handleWebhook({
+        pathToken: "hook-token",
+        body,
+        rawBody,
+        headers: { "x-signature": signature },
+      });
+
+      expect(result).toMatchObject({
+        accepted: false,
+        statusCode: 500,
+        errorCode: "WEBHOOK_SECRET_REF_INVALID",
+      });
+      expect(executionService.startRun).not.toHaveBeenCalled();
     });
   });
 });

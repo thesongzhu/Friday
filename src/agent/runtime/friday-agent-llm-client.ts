@@ -81,6 +81,55 @@ const FRIDAY_CLI_BACKEND_TEXT_ONLY_NOTE = [
   "- If the request depends on those capabilities, clearly say this Friday CLI backend is text-only and ask to reroute to an HTTP backend for tool-using tasks.",
 ].join("\n");
 
+const FRIDAY_AGENT_LLM_ERROR_BODY_MAX_BYTES = 4096;
+
+async function readErrorTextWithLimit(response: Response): Promise<string> {
+  if (!response.body) {
+    return response.text();
+  }
+
+  const byteLimit = FRIDAY_AGENT_LLM_ERROR_BODY_MAX_BYTES + 1;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = byteLimit - bytesRead;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (bytesRead >= byteLimit) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  const text = chunks.join("");
+  return text.length > FRIDAY_AGENT_LLM_ERROR_BODY_MAX_BYTES
+    ? `${text.slice(0, FRIDAY_AGENT_LLM_ERROR_BODY_MAX_BYTES)}...[truncated]`
+    : text;
+}
+
 function toOAuthToolName(fridayName: string): string {
   return FRIDAY_TO_CLAUDE_CODE_NAMES.get(fridayName) ?? fridayName;
 }
@@ -290,7 +339,7 @@ async function* handleAnthropicStream(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "unknown error");
+    const errorText = await readErrorTextWithLimit(response).catch(() => "unknown error");
     throw new FridayDomainError(
       FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
       `LLM request failed (${String(response.status)}): ${errorText}`,
@@ -361,7 +410,7 @@ async function* handleOllamaStream(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "unknown error");
+    const errorText = await readErrorTextWithLimit(response).catch(() => "unknown error");
     throw new FridayDomainError(
       FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
       `LLM request failed (${String(response.status)}): ${errorText}`,
@@ -511,7 +560,7 @@ async function* handleOpenAIStream(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "unknown error");
+    const errorText = await readErrorTextWithLimit(response).catch(() => "unknown error");
     throw new FridayDomainError(
       FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
       `LLM request failed (${String(response.status)}): ${errorText}`,

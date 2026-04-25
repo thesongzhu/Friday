@@ -58,6 +58,7 @@ export type FridayRateLimitPolicyId =
   | "auth.logout"
   | "workflow.start_run"
   | "workflow.publish"
+  | "workflow.webhook"
   | "workflow.resolve_conflict"
   | "realtime.subscribe"
   | "realtime.pull"
@@ -74,6 +75,9 @@ export type FridayRateLimitPolicyId =
   | "playbook.promote"
   | "playbook.select"
   | "agent.run"
+  | "channel.webhook"
+  | "satellite.register"
+  | "satellite.handshake"
   | "session.write"
   | "memory.write";
 

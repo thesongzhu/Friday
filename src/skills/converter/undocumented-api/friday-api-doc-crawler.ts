@@ -316,6 +316,55 @@ function isNonDocUrl(url: string): boolean {
 
 // ─── Fetch Helpers ───
 
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const byteLimit = Math.max(0, Math.floor(maxBytes) + 1);
+  if (byteLimit === 0) {
+    await response.body?.cancel();
+    return "";
+  }
+
+  if (!response.body) {
+    return response.text();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = byteLimit - bytesRead;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (bytesRead >= byteLimit) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
 async function fetchTextWithLimit(
   fetchFn: typeof fetch,
   ssrfGuard: ReturnType<typeof createFridayAgentSsrfGuard>,
@@ -346,7 +395,7 @@ async function fetchTextWithLimit(
         { httpStatus: 422 },
       );
     }
-    const text = await response.text();
+    const text = await readResponseTextWithLimit(response, maxBytes);
     return text.slice(0, maxBytes);
   } catch (error) {
     if (error instanceof FridayDomainError) {

@@ -1,5 +1,10 @@
 import { beforeEach, describe, it, expect, vi, afterEach } from "vitest";
-import { createFridayAgentWebFetchTool, createFridayAgentSsrfGuard, rewriteUrl } from "#agent";
+import {
+  createFridayAgentWebFetchTool,
+  createFridayAgentSsrfGuard,
+  FRIDAY_AGENT_WEB_FETCH_MAX_BYTES,
+  rewriteUrl,
+} from "#agent";
 import type { FridayAgentSsrfGuard } from "#agent";
 
 describe("FridayAgentWebFetchTool", () => {
@@ -118,6 +123,25 @@ describe("FridayAgentWebFetchTool", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain("Fetch error");
+  });
+
+  it("streams only the bounded response body before truncating", async () => {
+    const response = new Response("a".repeat((600 * 1024) + 50), {
+      status: 200,
+      headers: { "content-type": "text/plain" },
+    });
+    const textSpy = vi.spyOn(response, "text");
+    globalThis.fetch = vi.fn().mockResolvedValue(response) as unknown as typeof fetch;
+    const tool = createFridayAgentWebFetchTool();
+
+    const result = await tool.execute(
+      { url: "https://example.com/large" },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toContain("truncated");
+    expect(textSpy).not.toHaveBeenCalled();
   });
 
   // ─── Missing URL ───

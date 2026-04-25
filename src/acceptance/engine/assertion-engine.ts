@@ -31,6 +31,7 @@ import type {
 } from "../model/friday-acceptance.types.js";
 
 import type { JsonObject, JsonValue, UUID } from "../../rules/model/friday-rules-engine.types.js";
+import { precompileRegexPattern } from "../../rules/engine/condition-evaluator.js";
 
 // ─── Custom Handler Registry ───
 
@@ -148,9 +149,15 @@ function validateSchema(value: JsonValue, schema: JsonObject, path: string = "")
       errors.push(`${prefix}string length ${value.length} exceeds maximum ${schema["maxLength"]}`);
     }
     if (typeof schema["pattern"] === "string") {
-      const regex = new RegExp(schema["pattern"] as string);
-      if (!regex.test(value)) {
-        errors.push(`${prefix}string does not match pattern "${schema["pattern"]}"`);
+      const pattern = schema["pattern"] as string;
+      try {
+        const regex = precompileRegexPattern(pattern);
+        if (!regex.test(value)) {
+          errors.push(`${prefix}string does not match pattern "${pattern}"`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${prefix}invalid or unsafe pattern "${formatPatternForError(pattern)}": ${message}`);
       }
     }
   }
@@ -247,6 +254,10 @@ function deepEqual(a: JsonValue, b: JsonValue): boolean {
   }
 
   return false;
+}
+
+function formatPatternForError(pattern: string): string {
+  return pattern.length > 80 ? `${pattern.slice(0, 77)}...` : pattern;
 }
 
 // ─── Quality Scoring ───
@@ -640,22 +651,43 @@ function executeSandboxedCustomAssertion(
   const wrapped = [
     "(function () {",
     "\"use strict\";",
+    "const content = JSON.parse(__contentJson);",
+    "const config = JSON.parse(__configJson);",
     "const result = (() => {",
     scriptSource,
     "})();",
     "return result;",
     "})()",
   ].join("\n");
-  const sandbox = {
-    content,
-    config: config.handlerConfig ?? {},
-    Math,
-    JSON,
+  const sandbox = Object.create(null) as {
+    __contentJson: string;
+    __configJson: string;
   };
+  Object.defineProperties(sandbox, {
+    __contentJson: {
+      value: JSON.stringify(content),
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    },
+    __configJson: {
+      value: JSON.stringify(config.handlerConfig ?? {}),
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    },
+  });
   const script = new vm.Script(wrapped, {
     filename: `friday-acceptance-custom-${config.handlerRef}.vm.js`,
   });
-  const result = script.runInNewContext(sandbox, {
+  const context = vm.createContext(sandbox, {
+    name: `friday-acceptance-custom-${config.handlerRef}`,
+    codeGeneration: {
+      strings: false,
+      wasm: false,
+    },
+  });
+  const result = script.runInContext(context, {
     timeout: SANDBOX_TIMEOUT_MS,
   }) as Partial<FridayAcceptanceVerdict> | undefined;
 

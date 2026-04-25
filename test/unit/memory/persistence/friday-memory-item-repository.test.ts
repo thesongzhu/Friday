@@ -133,6 +133,16 @@ describe("FridayMemoryItemRepository", () => {
     expect(items[0].id).toBe("i1");
   });
 
+  it("lists tagsAny with exact tag matches only", () => {
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", tags: ["data"] }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", tags: ["database"] }));
+    })();
+
+    const items = repo.list(db.writer, { tagsAny: ["data"], nowIso: NOW });
+    expect(items.map((item) => item.id)).toEqual(["i1"]);
+  });
+
   it("excludes expired items by default", () => {
     const past = "2026-01-01T00:00:00.000Z";
     const future = "2099-01-01T00:00:00.000Z";

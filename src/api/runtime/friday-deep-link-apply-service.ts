@@ -13,12 +13,21 @@ import type {
   FridayDeepLinkApplyResult,
   FridayDeepLinkPayload,
 } from "../../deeplink/index.js";
+import { fetchWithFridayAgentSsrfGuard } from "../../agent/security/friday-agent-fetch-guard.js";
+import {
+  createFridayAgentSsrfGuard,
+  type FridayAgentSsrfGuard,
+  FridaySsrfBlockedError,
+} from "../../agent/security/friday-agent-ssrf-guard.js";
+
+const WORKFLOW_TEMPLATE_FETCH_TIMEOUT_MS = 15_000;
 
 export interface CreateFridayDeepLinkApplyServiceDeps {
   idGenerator: () => string;
   providerService: FridayProviderService;
   converterService?: FridaySkillConverterService;
   workflowImportExport: Pick<FridayWorkflowBuilderImportExportService, "importBundle">;
+  workflowTemplateSsrfGuard?: FridayAgentSsrfGuard;
 }
 
 export interface FridayDeepLinkApplyService {
@@ -190,12 +199,43 @@ async function applyWorkflowTemplateDeepLink(
     throw new FridayDomainError("VALIDATION_FAILED", "Workflow template URL is required", { httpStatus: 400 });
   }
 
-  const response = await fetch(workflowTemplate.url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "Friday/1.0",
-    },
-  });
+  const ssrfGuard = deps.workflowTemplateSsrfGuard ?? createFridayAgentSsrfGuard();
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), WORKFLOW_TEMPLATE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchWithFridayAgentSsrfGuard({
+      url: workflowTemplate.url,
+      guard: ssrfGuard,
+      init: {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Friday/1.0",
+        },
+        signal: abortController.signal,
+      },
+      options: { maxRedirects: 3 },
+    });
+  } catch (err) {
+    if (err instanceof FridaySsrfBlockedError) {
+      throw new FridayDomainError(
+        "WORKFLOW_TEMPLATE_URL_BLOCKED",
+        "Workflow template URL was blocked by SSRF protection.",
+        { httpStatus: 403, cause: err },
+      );
+    }
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new FridayDomainError(
+        "WORKFLOW_TEMPLATE_FETCH_TIMEOUT",
+        "Timed out while fetching workflow template.",
+        { httpStatus: 504, cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) {
     throw new FridayDomainError(
       "WORKFLOW_TEMPLATE_FETCH_FAILED",

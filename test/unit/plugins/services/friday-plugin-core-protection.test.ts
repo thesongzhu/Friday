@@ -5,6 +5,7 @@ import {
   createFridayPluginRepository,
   createFridayPluginRegistryService,
   createFridayPluginLoader,
+  createFridayPluginSignatureVerifier,
 } from "#plugins";
 import type {
   FridayPluginRepository,
@@ -168,6 +169,14 @@ describe("Loader rejects load from invalid statuses", () => {
   let db: FridaySqliteLayer;
   let registry: FridayPluginRegistryService;
   let loader: FridayPluginLoader;
+  const packageBytes = Buffer.from("trusted-package-bytes");
+  const signatureVerifier = createFridayPluginSignatureVerifier();
+  const trustedFingerprintSha256 = signatureVerifier.computeChecksum(
+    Buffer.concat([
+      Buffer.from("friday.test.alpha\n1.0.0\n"),
+      packageBytes,
+    ]),
+  );
 
   function makeModule(): FridayPluginEntrypointModule {
     return {
@@ -183,8 +192,10 @@ describe("Loader rejects load from invalid statuses", () => {
 
     loader = createFridayPluginLoader({
       registry,
+      signatureVerifier,
       nowIso: () => "2026-01-15T00:00:00.000Z",
       importModule: async () => makeModule(),
+      readPackageBytes: () => packageBytes,
     });
   });
 
@@ -193,7 +204,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from disabled status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "disabled" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "disabled", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -205,7 +216,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from error status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "error" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "error", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -217,7 +228,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from uninstalled status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "uninstalled" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "uninstalled", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -229,7 +240,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from not_installed status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "not_installed" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "not_installed", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -241,7 +252,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from running status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "running" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "running", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -253,7 +264,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("rejects load from installed status (must be configured first)", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "installed" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "installed", trustedFingerprintSha256 }));
 
     try {
       await loader.load({ order: ["friday.test.alpha"], warnings: [] });
@@ -265,7 +276,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("allows load from configured status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "configured" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "configured", trustedFingerprintSha256 }));
 
     const loaded = await loader.load({ order: ["friday.test.alpha"], warnings: [] });
     expect(loaded).toHaveLength(1);
@@ -274,7 +285,7 @@ describe("Loader rejects load from invalid statuses", () => {
   });
 
   it("allows load from enabled status", async () => {
-    registry.upsert(makeInput("friday.test.alpha", { status: "enabled" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "enabled", trustedFingerprintSha256 }));
 
     const loaded = await loader.load({ order: ["friday.test.alpha"], warnings: [] });
     expect(loaded).toHaveLength(1);
@@ -286,7 +297,7 @@ describe("Loader rejects load from invalid statuses", () => {
 
   it("unload rejects plugin not in running status", async () => {
     // Load a plugin to get it in the loaded map
-    registry.upsert(makeInput("friday.test.alpha", { status: "configured" }));
+    registry.upsert(makeInput("friday.test.alpha", { status: "configured", trustedFingerprintSha256 }));
     await loader.load({ order: ["friday.test.alpha"], warnings: [] });
 
     // Manually change its status in the registry to simulate state drift

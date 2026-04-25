@@ -27,6 +27,7 @@ export interface FridaySyncPullInput {
   lastAckedSeq: number;
   subscriptions: string[];
   resumeCursor?: string;
+  limit?: number;
 }
 
 export interface FridaySyncPullResult {
@@ -105,13 +106,23 @@ export function createFridaySatelliteSyncService(
         // Lease queued messages for this satellite
         const leaseMs = 60_000;
         const leaseUntilIso = new Date(new Date(nowIso).getTime() + leaseMs).toISOString();
-        const queueItems = deps.outboxRepo.leaseBatch(
-          db,
-          input.satelliteId,
-          50,
-          leaseUntilIso,
-          nowIso,
-        );
+        const leaseLimit =
+          typeof input.limit === "number" && Number.isInteger(input.limit) && input.limit > 0
+            ? Math.min(input.limit, 100)
+            : 50;
+        const subscriptions = input.subscriptions
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0 && entry.includes("."));
+        const queueItems = subscriptions.length > 0
+          ? deps.outboxRepo.leaseBatch(
+            db,
+            input.satelliteId,
+            leaseLimit,
+            leaseUntilIso,
+            nowIso,
+            subscriptions,
+          )
+          : [];
 
         // Generate next cursor
         const maxSeq = queueItems.length > 0
@@ -136,6 +147,44 @@ export function createFridaySatelliteSyncService(
     },
 
     async push(input) {
+      const acceptedNodeResults: FridaySyncPushResult["acceptedNodeResults"] = [];
+      const nodeResultConflicts: FridaySyncPushResult["conflicts"] = [];
+
+      if (input.nodeResults?.length) {
+        if (!deps.remoteNodeResultWriter) {
+          nodeResultConflicts.push(
+            ...input.nodeResults.map((result) => ({
+              streamId: `workflow:${result.runId}`,
+              seq: 0,
+              code: "SATELLITE_NODE_RESULT_UNSUPPORTED",
+              message: "This hub does not accept node results via satellite sync push",
+            })),
+          );
+        } else {
+          for (const result of input.nodeResults) {
+            try {
+              await deps.remoteNodeResultWriter({
+                ...result,
+                satelliteId: input.satelliteId,
+              });
+              acceptedNodeResults.push({
+                runId: result.runId,
+                nodeId: result.nodeId,
+                attemptId: result.attemptId,
+              });
+            } catch (err) {
+              const record = err as { code?: unknown; message?: unknown };
+              nodeResultConflicts.push({
+                streamId: `workflow:${result.runId}`,
+                seq: 0,
+                code: typeof record.code === "string" ? record.code : "SATELLITE_NODE_RESULT_CONFLICT",
+                message: typeof record.message === "string" ? record.message : "Satellite node result was rejected",
+              });
+            }
+          }
+        }
+      }
+
       const baseResult = deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
         const currentEpoch = deps.checkpointRepo.getEpoch(db);
@@ -143,7 +192,18 @@ export function createFridaySatelliteSyncService(
         const acceptedAcks: Array<{ streamId: string; seq: number }> = [];
         const conflicts: Array<{ streamId: string; seq: number; code: string; message: string }> = [];
 
-        for (const ack of input.acks) {
+        if (nodeResultConflicts.length > 0) {
+          for (const ack of input.acks) {
+            conflicts.push({
+              streamId: ack.streamId,
+              seq: ack.seq,
+              code: "SATELLITE_ACK_BLOCKED_BY_NODE_RESULT_CONFLICT",
+              message: "Ack was not accepted because one or more node results in the push were rejected",
+            });
+          }
+        }
+
+        for (const ack of nodeResultConflicts.length === 0 ? input.acks : []) {
           // Epoch validation
           if (ack.epoch !== currentEpoch) {
             conflicts.push({
@@ -223,52 +283,10 @@ export function createFridaySatelliteSyncService(
         return { acceptedAcks, acceptedNodeResults: [], conflicts };
       });
 
-      if (!input.nodeResults?.length) {
-        return baseResult;
-      }
-      if (!deps.remoteNodeResultWriter) {
-        return {
-          ...baseResult,
-          conflicts: [
-            ...baseResult.conflicts,
-            ...input.nodeResults.map((result) => ({
-              streamId: `workflow:${result.runId}`,
-              seq: 0,
-              code: "SATELLITE_NODE_RESULT_UNSUPPORTED",
-              message: "This hub does not accept node results via satellite sync push",
-            })),
-          ],
-        };
-      }
-
-      const acceptedNodeResults: FridaySyncPushResult["acceptedNodeResults"] = [];
-      const conflicts = [...baseResult.conflicts];
-      for (const result of input.nodeResults) {
-        try {
-          await deps.remoteNodeResultWriter({
-            ...result,
-            satelliteId: input.satelliteId,
-          });
-          acceptedNodeResults.push({
-            runId: result.runId,
-            nodeId: result.nodeId,
-            attemptId: result.attemptId,
-          });
-        } catch (err) {
-          const record = err as { code?: unknown; message?: unknown };
-          conflicts.push({
-            streamId: `workflow:${result.runId}`,
-            seq: 0,
-            code: typeof record.code === "string" ? record.code : "SATELLITE_NODE_RESULT_CONFLICT",
-            message: typeof record.message === "string" ? record.message : "Satellite node result was rejected",
-          });
-        }
-      }
-
       return {
         ...baseResult,
         acceptedNodeResults,
-        conflicts,
+        conflicts: [...nodeResultConflicts, ...baseResult.conflicts],
       };
     },
   };

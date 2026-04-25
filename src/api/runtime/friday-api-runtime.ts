@@ -1,7 +1,13 @@
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
-import { createFridaySecretAdminService } from "#providers";
-import type { FridayProviderTenantContext } from "#providers";
+import type { FridaySqliteLayer } from "#state";
+import {
+  createFridaySecretAdminService,
+  createFridaySecretRepository,
+  decryptSecret,
+  getMasterKey,
+} from "#providers";
+import type { FridayEncryptedEnvelope, FridayProviderTenantContext } from "#providers";
 import {
   createFridaySessionMemoryExtractionService,
   createFridaySessionService,
@@ -150,6 +156,7 @@ const DEFAULT_ACCESS_TTL = 3600; // 1 hour
 const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 const CURRENT_EPOCH = 1;
 const SESSION_CONTEXT_HISTORY_LIMIT = 24;
+const WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
 
 function readStringListQuery(
   value: unknown,
@@ -253,6 +260,28 @@ function resolvePrincipalTenantId(principal: FridayAuthPrincipal | null): string
     return principal.tenantId.trim();
   }
   return principal.principalId;
+}
+
+function createWorkflowWebhookSecretResolver(
+  db: FridaySqliteLayer,
+): (refKey: string) => string | null {
+  const secretRepo = createFridaySecretRepository();
+  return (refKey) => {
+    try {
+      for (const scope of WORKFLOW_WEBHOOK_SECRET_SCOPES) {
+        const entity = db.withReadConnection((conn) =>
+          secretRepo.getByRef(conn, scope, refKey),
+        );
+        if (!entity) continue;
+        const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
+        return decryptSecret(envelope, getMasterKey());
+      }
+      return null;
+    } catch (error) {
+      console.warn("[friday][workflow-webhook] secret resolution failed:", error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  };
 }
 
 function resolveRunTenantContext(input: {
@@ -543,6 +572,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       invokeSkill: deps.invokeSkill,
       publishEvent: publishWorkflowRealtimeEvent,
       triggerRepo,
+      resolveWebhookSecretRef: createWorkflowWebhookSecretResolver(deps.db),
     });
   })();
 
@@ -1391,6 +1421,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       }
       await deps.marketplaceEntitlementCheck({
         listingId,
+        tenantId: resolvePrincipalTenantId(principal) ?? principal.principalId,
         principalId: principal.principalId,
       });
     },
@@ -1701,6 +1732,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     method: "POST",
     path: "/v1/workflow-webhooks/:pathToken",
     auth: { public: true },
+    rateLimitPolicyId: "workflow.webhook",
     async handler(ctx) {
       const { pathToken } = ctx.params as { pathToken: string };
       const body = (ctx.body ?? {}) as JsonObject;
@@ -1724,6 +1756,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             result.errorCode ?? "WEBHOOK_SIGNATURE_INVALID",
             "Webhook signature verification failed",
             { httpStatus: 403 },
+          );
+        }
+        if (result.statusCode === 500) {
+          throw new FridayDomainError(
+            result.errorCode ?? "WEBHOOK_SECRET_REF_UNRESOLVED",
+            "Webhook signing secret could not be resolved",
+            { httpStatus: 500 },
           );
         }
         throw new FridayDomainError("WORKFLOW_WEBHOOK_NOT_FOUND", "Webhook not found or disabled", { httpStatus: 404 });
@@ -2623,11 +2662,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     });
 
     for (const route of createFridayAgentRoutes({
-      assertListingEntitled: async (listingId, principalId) => {
+      assertListingEntitled: async (listingId, principal) => {
         if (!deps.marketplaceEntitlementCheck) return;
+        if (!principal?.principalId) {
+          throw new FridayDomainError("UNAUTHORIZED", "Authentication required", { httpStatus: 401 });
+        }
         await deps.marketplaceEntitlementCheck({
           listingId,
-          principalId,
+          tenantId: resolvePrincipalTenantId(principal) ?? principal.principalId,
+          principalId: principal.principalId,
         });
       },
       validateRequestedRoute: async (providerId, model) => {

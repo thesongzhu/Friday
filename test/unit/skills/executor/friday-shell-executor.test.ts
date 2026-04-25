@@ -114,6 +114,30 @@ describe("FridayShellExecutor", () => {
     expect(result.stdout.trim()).toBe("line1\nline2\nline3");
   });
 
+  it("bounds captured stdout from noisy commands", async () => {
+    const executor = createExecutor();
+    const result = await executor.run({
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('x'.repeat(1100000))"],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.length).toBeLessThan(1_100_000);
+    expect(result.stdout).toContain("stdout truncated");
+  });
+
+  it("bounds captured stderr from noisy commands", async () => {
+    const executor = createExecutor();
+    const result = await executor.run({
+      command: process.execPath,
+      args: ["-e", "process.stderr.write('x'.repeat(1100000))"],
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.length).toBeLessThan(1_100_000);
+    expect(result.stderr).toContain("stderr truncated");
+  });
+
   it("does not throw when child closes stdin early (EPIPE path)", async () => {
     const executor = createExecutor();
     const result = await executor.run({

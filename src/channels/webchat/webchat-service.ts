@@ -32,6 +32,13 @@ export interface WebchatOutboundMessage {
   timestamp: number;
 }
 
+export type WebchatAuthMode = "none" | "token" | "session";
+
+export interface WebchatStartOptions {
+  readonly authMode?: WebchatAuthMode;
+  readonly maxClients?: number;
+}
+
 // ─── Service Interface ───
 
 export interface WebchatWsService {
@@ -40,6 +47,7 @@ export interface WebchatWsService {
     wsPath: string,
     allowedOrigins: string[],
     onMessage: (msg: WebchatInboundMessage) => void,
+    options?: WebchatStartOptions,
   ): Promise<void>;
   /** Stop the WebSocket server. */
   stop(): Promise<void>;
@@ -104,9 +112,13 @@ function sendWsClose(socket: Socket, code = 1000): void {
   socket.write(frame);
 }
 
-function buildClientId(url: URL): string {
+const CLIENT_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+function buildClientId(url: URL, existingClients: ReadonlyMap<string, Socket>): string {
   const explicit = url.searchParams.get("clientId")?.trim();
-  if (explicit) return explicit;
+  if (explicit && CLIENT_ID_RE.test(explicit) && !existingClients.has(explicit)) {
+    return explicit;
+  }
   return crypto.randomUUID();
 }
 
@@ -121,6 +133,8 @@ export function createWebchatWsService(): WebchatWsService {
   let running = false;
   let wsPath = "/ws/chat";
   let allowedOrigins: string[] = [];
+  let authMode: WebchatAuthMode = "none";
+  let maxClients = 100;
   let onMessage: ((msg: WebchatInboundMessage) => void) | null = null;
 
   const clients = new Map<string, Socket>();
@@ -138,7 +152,9 @@ export function createWebchatWsService(): WebchatWsService {
   function cleanupSocket(socket: Socket): void {
     const clientId = socketToClientId.get(socket);
     if (clientId) {
-      clients.delete(clientId);
+      if (clients.get(clientId) === socket) {
+        clients.delete(clientId);
+      }
       socketToClientId.delete(socket);
     }
     socketBuffers.delete(socket);
@@ -150,10 +166,12 @@ export function createWebchatWsService(): WebchatWsService {
   }
 
   return {
-    async start(path, origins, handler) {
+    async start(path, origins, handler, options) {
       running = true;
       wsPath = normalizeWsPath(path);
       allowedOrigins = [...origins];
+      authMode = options?.authMode ?? "none";
+      maxClients = options?.maxClients ?? 100;
       onMessage = handler;
     },
 
@@ -223,6 +241,18 @@ export function createWebchatWsService(): WebchatWsService {
         return true;
       }
 
+      if (authMode !== "none") {
+        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return true;
+      }
+
+      if (clients.size >= maxClients) {
+        socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return true;
+      }
+
       const accept = computeWsAccept(wsKey);
       socket.write(
         "HTTP/1.1 101 Switching Protocols\r\n" +
@@ -232,18 +262,8 @@ export function createWebchatWsService(): WebchatWsService {
           "\r\n",
       );
 
-      const clientId = buildClientId(parsedUrl);
+      const clientId = buildClientId(parsedUrl, clients);
       const clientName = buildClientName(parsedUrl);
-      const previous = clients.get(clientId);
-      if (previous && previous !== socket) {
-        try {
-          sendWsClose(previous, 1001);
-          previous.destroy();
-        } catch (err) {
-        console.warn("[friday][webchat-service] operation failed:", err instanceof Error ? err.message : String(err));
-          // Best-effort stale client replacement.
-        }
-      }
 
       clients.set(clientId, socket);
       socketToClientId.set(socket, clientId);
@@ -379,7 +399,7 @@ export function createWebchatWsServiceStub(): WebchatWsService {
   let clients = 0;
 
   return {
-    async start(configuredWsPath, _allowedOrigins, _onMessage) {
+    async start(configuredWsPath, _allowedOrigins, _onMessage, _options) {
       running = true;
       wsPath = normalizeWsPath(configuredWsPath);
       // Stub: in production, creates a WebSocket server

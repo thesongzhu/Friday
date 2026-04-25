@@ -1,5 +1,5 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,6 +13,8 @@ import type {
 } from "../model/friday-provider.types.js";
 
 const execFile = promisify(execFileCb);
+const CLI_OUTPUT_MAX_BYTES = 1_048_576;
+const CLI_COMPLETION_TIMEOUT_MS = 300_000;
 
 interface FridayCliBackendSpec {
   id: FridayProviderCliBackendId;
@@ -60,6 +62,53 @@ function sanitizeEnv(extraAllowlist?: readonly string[]): NodeJS.ProcessEnv {
   return env;
 }
 
+function truncateOutput(streamName: "stdout" | "stderr", value: string | Buffer, maxBytes: number = CLI_OUTPUT_MAX_BYTES): string {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  if (buffer.length <= maxBytes) {
+    return buffer.toString("utf8");
+  }
+  const prefix = buffer.subarray(0, maxBytes).toString("utf8");
+  const separator = prefix.length === 0 || prefix.endsWith("\n") ? "" : "\n";
+  return `${prefix}${separator}[friday] ${streamName} truncated after ${String(maxBytes)} bytes; discarded ${String(buffer.length - maxBytes)} bytes.`;
+}
+
+function createBoundedOutputCollector(streamName: "stdout" | "stderr", maxBytes: number = CLI_OUTPUT_MAX_BYTES) {
+  const chunks: Buffer[] = [];
+  let capturedBytes = 0;
+  let discardedBytes = 0;
+  return {
+    append(chunk: Buffer | string): void {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remainingBytes = maxBytes - capturedBytes;
+      if (remainingBytes > 0) {
+        const captured = buffer.subarray(0, remainingBytes);
+        chunks.push(captured);
+        capturedBytes += captured.length;
+      }
+      if (buffer.length > remainingBytes) {
+        discardedBytes += buffer.length - Math.max(remainingBytes, 0);
+      }
+    },
+    toString(): string {
+      const output = Buffer.concat(chunks).toString("utf8");
+      if (discardedBytes === 0) return output;
+      const separator = output.length === 0 || output.endsWith("\n") ? "" : "\n";
+      return `${output}${separator}[friday] ${streamName} truncated after ${String(maxBytes)} bytes; discarded ${String(discardedBytes)} bytes.`;
+    },
+  };
+}
+
+async function readFileBounded(path: string, streamName: "stdout" | "stderr", maxBytes: number = CLI_OUTPUT_MAX_BYTES): Promise<string> {
+  const file = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    return truncateOutput(streamName, buffer.subarray(0, bytesRead), maxBytes);
+  } finally {
+    await file.close();
+  }
+}
+
 async function runExecFile(
   binary: string,
   args: readonly string[],
@@ -70,12 +119,13 @@ async function runExecFile(
     const result = await execFile(binary, [...args], {
       encoding: "utf8",
       timeout: 15_000,
+      maxBuffer: CLI_OUTPUT_MAX_BYTES,
       env: sanitizeEnv(envAllowlist),
       ...(input !== undefined ? { input } : {}),
     });
     return {
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
+      stdout: truncateOutput("stdout", result.stdout ?? ""),
+      stderr: truncateOutput("stderr", result.stderr ?? ""),
       exitCode: 0,
     };
   } catch (error) {
@@ -92,8 +142,8 @@ async function runExecFile(
       );
     }
     return {
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? err.message,
+      stdout: truncateOutput("stdout", err.stdout ?? ""),
+      stderr: truncateOutput("stderr", err.stderr ?? err.message),
       exitCode: typeof err.code === "number" ? err.code : 1,
     };
   }
@@ -110,25 +160,35 @@ async function runSpawned(
       env: sanitizeEnv(envAllowlist),
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let stdout = "";
-    let stderr = "";
+    const stdout = createBoundedOutputCollector("stdout");
+    const stderr = createBoundedOutputCollector("stderr");
+    let timedOut = false;
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stderr.append(`CLI backend timed out after ${String(CLI_COMPLETION_TIMEOUT_MS)}ms`);
+      child.kill("SIGKILL");
+    }, CLI_COMPLETION_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.append(chunk);
     });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.append(chunk);
+    });
+    child.stdin.on("error", (error) => {
+      stderr.append(error.message);
     });
     child.on("error", (error) => {
+      clearTimeout(timer);
       reject(error);
     });
     child.on("close", (code) => {
+      clearTimeout(timer);
       resolve({
-        stdout,
-        stderr,
-        exitCode: code ?? 1,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        exitCode: timedOut ? 124 : code ?? 1,
       });
     });
 
@@ -347,7 +407,7 @@ export async function runFridayCliBackendTextCompletion(input: {
             { httpStatus: 502 },
           );
         }
-        const output = await readFile(outputPath, "utf8").catch(() => result.stdout);
+        const output = await readFileBounded(outputPath, "stdout").catch(() => result.stdout);
         return output.trim();
       } finally {
         await rm(tempDir, { recursive: true, force: true }).catch(() => {});

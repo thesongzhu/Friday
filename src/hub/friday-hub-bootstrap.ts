@@ -163,6 +163,7 @@ import {
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
   createFridayWorldStateManager,
+  fetchWithFridayAgentSsrfGuard,
   inferFridaySubagentProfile,
   listFridayMcpServerReadiness,
   parseFridayMcpServersFromEnv,
@@ -400,6 +401,7 @@ const FRIDAY_HUB_SKILL_COMPAT_VERSION = "1.0.0";
 
 const FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH = 4000;
 const FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT = Number(process.env.FRIDAY_SESSION_HISTORY_LIMIT) || 24;
+const FRIDAY_WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
 
 function createDiscoveryScannerForPlatform(platform: NodeJS.Platform) {
   switch (platform) {
@@ -687,6 +689,55 @@ export function resolveFridayHubConfig(
     pipelineMode: pipelineRuntimeConfig.mode,
     ssrfPolicy: { allowPrivateNetwork },
   };
+}
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const safeLimit = Math.max(0, Math.floor(maxBytes));
+  if (safeLimit === 0) {
+    await response.body?.cancel();
+    return "";
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = safeLimit - bytesRead;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (bytesRead >= safeLimit) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
 }
 
 // ─── Factory ───
@@ -1151,6 +1202,23 @@ export async function createFridayHub(
   };
 
   let crossBorderPackServiceRef: FridayCrossBorderPackService | null = null;
+  const workflowWebhookSecretRepository = createFridaySecretRepository();
+  const resolveWorkflowWebhookSecretRef = (refKey: string): string | null => {
+    try {
+      for (const scope of FRIDAY_WORKFLOW_WEBHOOK_SECRET_SCOPES) {
+        const entity = stateRuntime!.sqlite.withReadConnection((db) =>
+          workflowWebhookSecretRepository.getByRef(db, scope, refKey),
+        );
+        if (!entity) continue;
+        const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
+        return decryptSecret(envelope, getMasterKey());
+      }
+      return null;
+    } catch (error) {
+      warnHubBootstrapOperationFailureOnce(error);
+      return null;
+    }
+  };
 
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
@@ -1164,6 +1232,7 @@ export async function createFridayHub(
     invokeSkill: invokeSkillForWorkflow,
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
+    resolveWebhookSecretRef: resolveWorkflowWebhookSecretRef,
     onRunIntake: async (input) => {
       const workflow = workflowRuntimeRef?.crud.getWorkflow(input.workflowId) ?? null;
       if (!workflow?.ownerUserId || !crossBorderPackServiceRef) {
@@ -2636,16 +2705,20 @@ export async function createFridayHub(
     const { createFridayLinkUnderstandingService, createFridayLinkCacheRepository } = await import("#link-understanding");
     const linkCacheRepo = createFridayLinkCacheRepository();
     const linkService = createFridayLinkUnderstandingService({
-      fetchFn: async (url) => {
-        const response = await fetch(url, {
-          headers: { "User-Agent": "Friday/1.0" },
-          redirect: "follow",
-          signal: AbortSignal.timeout(15_000),
+      fetchFn: async (url, options) => {
+        const response = await fetchWithFridayAgentSsrfGuard({
+          url,
+          guard: agentSsrfGuard,
+          init: {
+            headers: { "User-Agent": "Friday/1.0" },
+            signal: AbortSignal.timeout(options.timeoutMs),
+          },
+          options: { maxRedirects: options.maxRedirects },
         });
         return {
           statusCode: response.status,
           contentType: response.headers.get("content-type"),
-          body: await response.text(),
+          body: await readResponseTextWithLimit(response, options.maxResponseSizeBytes),
         };
       },
       cache: linkCacheRepo,
@@ -3919,7 +3992,7 @@ export async function createFridayHub(
     }
     : undefined;
   const marketplaceEntitlementCheck = marketplaceCommercePersistence
-    ? async (input: { listingId: string; principalId: string }) => {
+    ? async (input: { listingId: string; tenantId: string; principalId: string }) => {
       const result = await assertListingExecutionReady(
         input,
         {

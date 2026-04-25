@@ -1,4 +1,5 @@
 import type { FridayAuthPrincipal } from "#api";
+import { FridayDomainError } from "#errors";
 
 import type {
   CreateFridayMemoryGuardServiceFactoryDeps,
@@ -15,14 +16,11 @@ import { createFridayMemoryGuardQuotaRepository } from "../persistence/friday-me
 
 function defaultResolveContext(principal: FridayAuthPrincipal | null): FridayMemoryGuardContext {
   if (!principal) {
-    // Anonymous / unauthenticated — treat as system-level for internal calls
-    return {
-      subject: {
-        hubId: "default",
-        accessLevel: "system",
-      },
-      principalId: "anonymous",
-    };
+    throw new FridayDomainError(
+      "MEMORY_AUTH_REQUIRED",
+      "A non-null authenticated principal is required for guarded memory access",
+      { httpStatus: 401 },
+    );
   }
 
   // If the principal is a service or workflow-runner, treat as system

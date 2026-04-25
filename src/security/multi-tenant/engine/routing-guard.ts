@@ -13,6 +13,7 @@ import { FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES } from "../api/friday-multi-te
 
 import type { AuditLogger } from "./audit-logger.js";
 import { SecurityEngineError } from "./utils.js";
+import { isSuperadminRoleLabel } from "./role-hierarchy.js";
 
 /** Auth context required for route-level tenant boundary checks. */
 export interface RoutingAuthContext {
@@ -108,8 +109,7 @@ function assertRequiredString(value: unknown, fieldName: string): asserts value 
 /** Detect whether auth roles include superadmin privileges. */
 function isSuperadmin(roles: readonly string[]): boolean {
   for (const role of roles) {
-    const normalized = role.trim().toLowerCase().replaceAll(/[:\s-]+/g, "_");
-    if (normalized.includes("superadmin")) return true;
+    if (isSuperadminRoleLabel(role)) return true;
   }
   return false;
 }

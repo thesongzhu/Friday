@@ -6,7 +6,6 @@
  */
 
 import * as crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -504,6 +503,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
       if (parsed.kind === "env-ref") {
         const envValue = env[parsed.envVar];
         if (!envValue || envValue.trim().length === 0) {
+          delete config[field.field];
           errors.push(
             `Environment variable "${parsed.envVar}" is not set for channel ${instance.kind}.${field.field}`,
           );
@@ -516,6 +516,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
       if (parsed.kind === "secret-ref") {
         const resolved = resolveSecretRef(parsed.refKey);
         if (!resolved) {
+          delete config[field.field];
           errors.push(
             `Stored secret ref "${parsed.refKey}" was not found for channel ${instance.kind}.${field.field}`,
           );
@@ -527,6 +528,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
 
       if (parsed.kind === "file-ref") {
         if (!parsed.path.startsWith("/")) {
+          delete config[field.field];
           errors.push(
             `File secret ref must use an absolute path for channel ${instance.kind}.${field.field}`,
           );
@@ -535,6 +537,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
         try {
           const fileValue = fs.readFileSync(parsed.path, "utf8").trim();
           if (fileValue.length === 0) {
+            delete config[field.field];
             errors.push(
               `Secret file "${parsed.path}" is empty for channel ${instance.kind}.${field.field}`,
             );
@@ -542,6 +545,7 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
             config[field.field] = fileValue;
           }
         } catch (err) {
+          delete config[field.field];
           errors.push(
             `Failed to read secret file "${parsed.path}" for channel ${instance.kind}.${field.field}: ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -550,31 +554,18 @@ export function resolveChannelInitConfigWithSecretPolicy(params: {
       }
 
       if (parsed.kind === "command-ref") {
-        try {
-          const output = execFileSync("/bin/sh", ["-c", parsed.command], {
-            timeout: 5_000,
-            encoding: "utf8",
-            maxBuffer: 1024 * 1024,
-          }).trim();
-          if (output.length === 0) {
-            errors.push(
-              `Secret command returned empty output for channel ${instance.kind}.${field.field}`,
-            );
-          } else {
-            config[field.field] = output;
-          }
-        } catch (err) {
-          errors.push(
-            `Failed to execute secret command for channel ${instance.kind}.${field.field}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+        delete config[field.field];
+        errors.push(
+          `Command secret refs are disabled for channel ${instance.kind}.${field.field}; use env:, file:, or secret:// refs instead`,
+        );
         continue;
       }
     }
 
     if (secretPolicy === "strict") { // pragma: allowlist secret
+      delete config[field.field];
       errors.push(
-        `Plaintext secret is blocked by policy for channel ${instance.kind}.${field.field}; use env:, $ENV_VAR, file:, command:, or secret://...`,
+        `Plaintext secret is blocked by policy for channel ${instance.kind}.${field.field}; use env:, $ENV_VAR, file:, or secret://...`,
       );
       continue;
     }

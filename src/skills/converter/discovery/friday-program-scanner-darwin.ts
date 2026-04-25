@@ -6,7 +6,7 @@
  * and `system_profiler` as a fallback.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
@@ -129,9 +129,10 @@ function readAppBundleInfo(appPath: string): AppBundleInfo | null {
     const plistPath = join(appPath, "Contents", "Info.plist");
     if (!existsSync(plistPath)) return null;
 
-    const output = execSync(
-      `defaults read "${plistPath.replace(/\.plist$/, "")}" 2>/dev/null || true`,
-      { encoding: "utf-8", timeout: 5000 },
+    const output = execFileSync(
+      "defaults",
+      ["read", plistPath.replace(/\.plist$/, "")],
+      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] },
     );
 
     return {
@@ -200,9 +201,14 @@ function redactMetadata(
   if (!policy.redactSensitiveDetails) return meta;
   const redacted: Record<string, string> = {};
   for (const [k, v] of Object.entries(meta)) {
-    redacted[k] = v.replace(new RegExp(homedir(), "g"), "~");
+    redacted[k] = replaceAllLiteral(v, homedir(), "~");
   }
   return redacted;
+}
+
+function replaceAllLiteral(value: string, search: string, replacement: string): string {
+  if (search.length === 0) return value;
+  return value.split(search).join(replacement);
 }
 
 function filterUndefined(obj: Record<string, string | undefined>): Record<string, string> {

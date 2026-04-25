@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,6 +8,27 @@ import {
   detectSourceProtocol,
   materializeFridayCodeRepoSource,
 } from "../../../../../src/skills/converter/code-repo/friday-source-materializer.js";
+
+function writeSingleFileTar(archivePath: string, entryName: string, content: string): void {
+  const data = Buffer.from(content, "utf8");
+  const header = Buffer.alloc(512, 0);
+  header.write(entryName, 0, Math.min(Buffer.byteLength(entryName), 100), "utf8");
+  header.write("0000644\0", 100, "ascii");
+  header.write("0000000\0", 108, "ascii");
+  header.write("0000000\0", 116, "ascii");
+  header.write(data.length.toString(8).padStart(11, "0") + "\0", 124, "ascii");
+  header.write(Math.floor(Date.now() / 1000).toString(8).padStart(11, "0") + "\0", 136, "ascii");
+  header.fill(0x20, 148, 156);
+  header.write("0", 156, "ascii");
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+
+  const padding = Buffer.alloc((512 - (data.length % 512)) % 512, 0);
+  writeFileSync(archivePath, Buffer.concat([header, data, padding, Buffer.alloc(1024, 0)]));
+}
 
 // ─── Protocol Detection Tests ───
 
@@ -200,6 +222,38 @@ describe("materializeFridayCodeRepoSource (archive)", () => {
       expect(() =>
         materializeFridayCodeRepoSource(archivePath, { maxTotalBytes: 1 }),
       ).toThrow("size limit");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects tar archives with unsafe entry paths before extraction", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-test-archive-"));
+    const safeDir = join(tempDir, "safe");
+    const archivePath = join(tempDir, "unsafe.tar");
+    mkdirSync(safeDir);
+    writeFileSync(join(safeDir, "ok.ts"), "export const ok = true;");
+    writeFileSync(join(tempDir, "escape.ts"), "export const escaped = true;");
+
+    try {
+      writeSingleFileTar(archivePath, "../escape.ts", "export const escaped = true;");
+      expect(() => materializeFridayCodeRepoSource(archivePath)).toThrow("Unsafe archive entry");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects tar archives containing symlinks", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-test-archive-"));
+    const sourceDir = join(tempDir, "src");
+    const archivePath = join(tempDir, "symlink.tar");
+    mkdirSync(sourceDir);
+    writeFileSync(join(sourceDir, "outside.ts"), "export const secret = true;");
+    symlinkSync(join(sourceDir, "outside.ts"), join(sourceDir, "link.ts"));
+
+    try {
+      execFileSync("tar", ["-cf", archivePath, "-C", sourceDir, "link.ts"], { stdio: "pipe" });
+      expect(() => materializeFridayCodeRepoSource(archivePath)).toThrow("unsupported entry");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

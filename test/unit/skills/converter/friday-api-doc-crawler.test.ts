@@ -81,6 +81,18 @@ describe("FridayApiDocCrawler — SSRF protection", () => {
     expect(result.pages[0].content).toContain("GET /v1/users");
     expect(result.sourceRef).toBe(`${BASE}/docs`);
   });
+
+  it("streams fetched content only up to maxBytes before truncating", async () => {
+    const response = new Response("a".repeat(3000), { status: 200 });
+    const textSpy = vi.spyOn(response, "text");
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(response);
+    const crawler = createFridayApiDocCrawler({ fetchFn, nowIso: () => NOW_ISO, maxBytes: 1024 });
+
+    const result = await crawler.crawl({ uri: `${BASE}/large-docs` });
+
+    expect(result.pages[0].content).toHaveLength(1024);
+    expect(textSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ─── Single-Page Crawl Tests ───

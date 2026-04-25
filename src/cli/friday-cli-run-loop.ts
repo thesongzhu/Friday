@@ -5,13 +5,14 @@
  * an HTTP server and handling graceful shutdown via SIGINT/SIGTERM.
  */
 
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "../api/http/friday-http-server.js";
 import type { FridayHttpTrustProxyMode } from "../api/http/friday-http-client-ip.js";
+import { buildOpenBrowserUrlCommand } from "./friday-cli-open-url.js";
 
 // Resolve the UI bundle shipped alongside this CLI module.
 // After build, this file lives at dist/cli/friday-cli-run-loop.js, so dist/ui
@@ -77,12 +78,8 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
 
         // Auto-open browser for local mode (not when binding to all interfaces for remote access).
         if (listenHost === "127.0.0.1" || listenHost === "localhost") {
-          const openCmd = process.platform === "darwin"
-            ? `open "${url}"`
-            : process.platform === "win32"
-              ? `start "" "${url}"`
-              : `xdg-open "${url}"`;
-          exec(openCmd, () => {
+          const { command, args } = buildOpenBrowserUrlCommand(url);
+          execFile(command, args, { windowsHide: true }, () => {
             // Best-effort — ignore errors (e.g., headless server, no display).
           });
         }

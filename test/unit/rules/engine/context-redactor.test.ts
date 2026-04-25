@@ -120,6 +120,15 @@ describe("redactContext", () => {
     expect(result.redactedFields).toContain("nested.safe");
   });
 
+  it("rejects unsafe custom redaction regex patterns", () => {
+    expect(() =>
+      redactContext(
+        { value: "safe" },
+        { sensitiveKeyPatterns: ["^(a+)+$"] },
+      ),
+    ).toThrow("Regex pattern rejected");
+  });
+
   it("keeps default rule behavior when custom rules are omitted", () => {
     const result = redactContext({
       token: "secret-token",

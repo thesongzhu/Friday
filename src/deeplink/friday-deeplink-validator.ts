@@ -13,29 +13,22 @@ import type {
   FridayDeepLinkPayload,
   FridayDeepLinkPreviewResult,
 } from "./friday-deeplink-types.js";
+import {
+  createFridayAgentSsrfGuard,
+  FridaySsrfBlockedError,
+} from "../agent/security/friday-agent-ssrf-guard.js";
 
 const REDACTED_SECRET_VALUE = "[redacted]";
+const deepLinkPreviewSsrfGuard = createFridayAgentSsrfGuard();
 
 function isPrivateUrl(urlString: string): boolean {
   try {
-    const parsed = new URL(urlString);
-    const hostname = parsed.hostname.toLowerCase();
-    // Check for private/reserved hostnames
-    if (hostname === "localhost" || hostname === "[::1]" || hostname === "::1") return true;
-    // Check for private IP ranges (strip brackets for IPv6)
-    const ip = hostname.replace(/^\[|\]$/g, "");
-    if (/^127\./.test(ip)) return true;
-    if (/^10\./.test(ip)) return true;
-    if (/^192\.168\./.test(ip)) return true;
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return true;
-    if (ip === "::1" || ip === "0.0.0.0" || ip === "0:0:0:0:0:0:0:1") return true;
-    // Check for link-local and other reserved ranges
-    if (/^169\.254\./.test(ip)) return true;
-    if (/^fc[0-9a-f]{2}:/i.test(ip) || /^fd[0-9a-f]{2}:/i.test(ip)) return true;
-    if (/^fe80:/i.test(ip)) return true;
+    deepLinkPreviewSsrfGuard.validate(urlString);
     return false;
-  } catch {
-    // If URL parsing fails, treat as potentially private (fail-closed)
+  } catch (err) {
+    if (!(err instanceof FridaySsrfBlockedError)) {
+      console.warn("[friday][deeplink-validator] URL safety check failed:", err instanceof Error ? err.message : String(err));
+    }
     return true;
   }
 }
@@ -207,6 +200,8 @@ function validateWorkflowTemplate(
   }
   if (!template.url) {
     checks.push({ id: "workflow-url", label: "Template URL", level: "blocking", summary: "Workflow template URL is required." });
+  } else if (isPrivateUrl(template.url)) {
+    checks.push({ id: "workflow-url-private", label: "Template URL", level: "blocking", summary: "Workflow template URL points to a private/local address." });
   }
   permissions.push("Will import a workflow template.");
 }

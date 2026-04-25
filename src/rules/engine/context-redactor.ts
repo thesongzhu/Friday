@@ -10,6 +10,7 @@ import type {
   JsonObject,
   JsonValue,
 } from "../model/friday-rules-engine.types.js";
+import { precompileRegexPattern } from "./condition-evaluator.js";
 
 // ─── Constants ───
 
@@ -85,7 +86,7 @@ function normalizeRedactionRules(rules?: ContextRedactionRules): NormalizedRedac
   const sensitiveKeyPatterns: RegExp[] = [DEFAULT_SENSITIVE_KEY_PATTERN];
   if (rules?.sensitiveKeyPatterns) {
     for (const pattern of rules.sensitiveKeyPatterns) {
-      sensitiveKeyPatterns.push(new RegExp(pattern, "i"));
+      sensitiveKeyPatterns.push(precompileRegexPattern(pattern, "i"));
     }
   }
 

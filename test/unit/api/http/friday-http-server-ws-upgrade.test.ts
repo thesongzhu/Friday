@@ -155,4 +155,24 @@ describe("FridayHttpServer WS upgrade routing", () => {
 
     await webchatWsService.stop();
   });
+
+  it("rejects webchat upgrades when token auth mode lacks a verifier", async () => {
+    const webchatWsService = createWebchatWsService();
+    await webchatWsService.start("/ws/chat", [], () => {}, { authMode: "token" });
+
+    server = createFridayHttpServer({
+      routes: createFridayHttpRouteRegistry(),
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      webchatWsService,
+      host: "127.0.0.1",
+      port,
+    });
+    await server.listen();
+
+    const response = await sendUpgradeRequest(port, "/ws/chat");
+    expect(response.startsWith("HTTP/1.1 401 Unauthorized")).toBe(true);
+
+    await webchatWsService.stop();
+  });
 });

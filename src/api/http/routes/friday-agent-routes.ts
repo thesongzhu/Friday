@@ -1,4 +1,4 @@
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayAgentRunExecutionResponse,
   FridayCancelAgentRunResponse,
@@ -161,7 +161,7 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
 // ─── Deps ───
 
 export interface FridayAgentRoutesDeps {
-  assertListingEntitled?: (listingId: string, principalId: string) => Promise<void>;
+  assertListingEntitled?: (listingId: string, principal: FridayAuthPrincipal | null) => Promise<void>;
   validateRequestedRoute?: (
     providerId?: string,
     model?: string,
@@ -358,8 +358,8 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        if (marketplaceListingId && ctx.principal?.principalId) {
-          await deps.assertListingEntitled?.(marketplaceListingId, ctx.principal.principalId);
+        if (marketplaceListingId) {
+          await deps.assertListingEntitled?.(marketplaceListingId, ctx.principal);
         }
 
         assertNoAliasConflict(body.providerId, body.requestedProviderId, "providerId", "requestedProviderId");

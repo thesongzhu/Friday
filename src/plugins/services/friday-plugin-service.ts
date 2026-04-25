@@ -3,14 +3,12 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 import { FridayDomainError } from "#errors";
 import { safeDirName } from "#utilities";
 import {
   FRIDAY_CORE_CHANNEL_PLUGIN_IDS,
   FRIDAY_PLUGIN_ERROR_CODES,
-  FRIDAY_PLUGIN_MANIFEST_FILENAME,
   FRIDAY_PLUGIN_SDK_PREVIEW_VERSION,
   FRIDAY_PLUGIN_VALID_SDK_PREVIEW_CAPABILITIES,
 } from "../model/friday-plugin.types.js";
@@ -34,6 +32,7 @@ import type {
   FridayMarketplaceSearchQuery,
   FridayMarketplaceSearchResult,
 } from "./friday-plugin-marketplace-client.js";
+import { buildPluginLocalPackageBytes } from "./friday-plugin-package-bytes.js";
 
 // ─── Factory ───
 
@@ -48,6 +47,8 @@ export function createFridayPluginService(
     signatureVerifier,
     previewPolicy,
     nowIso,
+    resolveMarketplacePublicKeyPem,
+    pinnedMarketplaceKeyIds,
   } = deps;
 
   const readFileAsBuffer = deps.readFileAsBuffer ?? ((filePath: string): Buffer =>
@@ -85,20 +86,7 @@ export function createFridayPluginService(
    * fingerprint that the loader can re-verify on load.
    */
   function buildLocalPackageBytes(installPath: string, manifest: FridayPluginManifest): Buffer {
-    const manifestPath = path.join(installPath, FRIDAY_PLUGIN_MANIFEST_FILENAME);
-    const parts: Buffer[] = [readFileAsBuffer(manifestPath)];
-
-    // Append entrypoint file contents in deterministic (sorted) order
-    const entrypointKeys = Object.keys(manifest.entrypoints).sort();
-    for (const kind of entrypointKeys) {
-      const relative = manifest.entrypoints[kind as keyof typeof manifest.entrypoints];
-      if (relative) {
-        const fullPath = path.resolve(installPath, relative);
-        parts.push(readFileAsBuffer(fullPath));
-      }
-    }
-
-    return Buffer.concat(parts);
+    return buildPluginLocalPackageBytes(installPath, manifest, readFileAsBuffer);
   }
 
   function requirePlugin(pluginId: string): FridayPluginEntity {
@@ -293,13 +281,22 @@ export function createFridayPluginService(
 
         // Compute checksum and verify Ed25519 signature
         const expectedChecksum = signatureVerifier.computeChecksum(packageBytes);
+        const publicKeyPem = resolveMarketplacePublicKeyPem?.(manifest.signature.keyId, manifest);
+        if (!publicKeyPem || publicKeyPem.trim().length === 0) {
+          throw new FridayDomainError(
+            FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_INVALID,
+            `Marketplace plugin "${manifest.id}" signature key "${manifest.signature.keyId}" is not configured`,
+            { httpStatus: 403, details: { pluginId: manifest.id, keyId: manifest.signature.keyId } },
+          );
+        }
         const verifyResult = signatureVerifier.verifyMarketplacePackage({
           pluginId: manifest.id,
           version: manifest.version,
           packageBytes,
           expectedChecksum,
           signature: manifest.signature,
-          publicKeyPem: manifest.signature.keyId, // resolved by verifier
+          publicKeyPem,
+          pinnedKeyIds: [...(pinnedMarketplaceKeyIds ?? [])],
         });
 
         trustMode = "signed";

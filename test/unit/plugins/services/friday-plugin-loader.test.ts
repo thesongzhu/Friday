@@ -5,6 +5,7 @@ import {
   createFridayPluginRepository,
   createFridayPluginRegistryService,
   createFridayPluginLoader,
+  createFridayPluginSignatureVerifier,
 } from "#plugins";
 import type {
   FridayPluginRegistryService,
@@ -40,6 +41,7 @@ function makeInput(id: string, overrides?: Partial<FridayUpsertPluginInput>): Fr
     status: "configured",
     enabled: false,
     trustMode: "trust_on_install",
+    trustedFingerprintSha256: "fingerprint-123",
     installPath: `/plugins/${id}`,
     kinds: ["skill"],
     manifest: makeManifest(id, overrides?.manifest ? overrides.manifest : undefined),
@@ -76,6 +78,8 @@ describe("FridayPluginLoader", () => {
 
     loader = createFridayPluginLoader({
       registry,
+      signatureVerifier: createFridayPluginSignatureVerifier({ computeSha256: () => "fingerprint-123" }),
+      readPackageBytes: () => Buffer.from("package-bytes"),
       nowIso: () => "2026-01-15T00:00:00.000Z",
       importModule: async (modulePath: string) => {
         // Extract plugin ID from path
@@ -182,6 +186,8 @@ describe("FridayPluginLoader", () => {
 
     const failLoader = createFridayPluginLoader({
       registry,
+      signatureVerifier: createFridayPluginSignatureVerifier({ computeSha256: () => "fingerprint-123" }),
+      readPackageBytes: () => Buffer.from("package-bytes"),
       nowIso: () => "2026-01-15T00:00:00.000Z",
       importModule: async () => {
         throw new Error("Module not found");
@@ -202,6 +208,8 @@ describe("FridayPluginLoader", () => {
 
     const failLoader = createFridayPluginLoader({
       registry,
+      signatureVerifier: createFridayPluginSignatureVerifier({ computeSha256: () => "fingerprint-123" }),
+      readPackageBytes: () => Buffer.from("package-bytes"),
       nowIso: () => "2026-01-15T00:00:00.000Z",
       importModule: async () => ({
         activate: () => { throw new Error("activate failed"); },
@@ -215,6 +223,43 @@ describe("FridayPluginLoader", () => {
       expect(err).toBeInstanceOf(FridayDomainError);
       expect((err as FridayDomainError).code).toBe("PLUGIN_LIFECYCLE_ERROR");
     }
+  });
+
+  it("rejects entrypoints that escape the plugin install directory", async () => {
+    registry.upsert(makeInput("friday.test.escape", {
+      manifest: makeManifest("friday.test.escape", {
+        entrypoints: { skill: "../escape.js" },
+      }),
+    }));
+
+    await expect(loader.load({ order: ["friday.test.escape"], warnings: [] }))
+      .rejects.toMatchObject({ code: "PLUGIN_ENTRYPOINT_INVALID" });
+  });
+
+  it("fails closed when trust-on-install fingerprint verification is unavailable", async () => {
+    registry.upsert(makeInput("friday.test.no-verifier"));
+    const unsafeLoader = createFridayPluginLoader({
+      registry,
+      nowIso: () => "2026-01-15T00:00:00.000Z",
+      importModule: async () => makeModule("friday.test.no-verifier"),
+    });
+
+    await expect(unsafeLoader.load({ order: ["friday.test.no-verifier"], warnings: [] }))
+      .rejects.toMatchObject({ code: "PLUGIN_SIGNATURE_REQUIRED" });
+  });
+
+  it("rejects trust-on-install plugins when the current fingerprint differs", async () => {
+    registry.upsert(makeInput("friday.test.changed"));
+    const changedLoader = createFridayPluginLoader({
+      registry,
+      signatureVerifier: createFridayPluginSignatureVerifier({ computeSha256: () => "changed-fingerprint" }),
+      readPackageBytes: () => Buffer.from("changed-package-bytes"),
+      nowIso: () => "2026-01-15T00:00:00.000Z",
+      importModule: async () => makeModule("friday.test.changed"),
+    });
+
+    await expect(changedLoader.load({ order: ["friday.test.changed"], warnings: [] }))
+      .rejects.toMatchObject({ code: "PLUGIN_TRUST_FINGERPRINT_MISMATCH" });
   });
 
   it("allows unloading core plugin (disable is permitted per design)", async () => {

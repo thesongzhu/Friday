@@ -52,4 +52,18 @@ describe("assertTenantRouteBoundary()", () => {
     });
     expect(allows).toHaveLength(1);
   });
+
+  it("does not allow cross-tenant routes for superadmin substrings", () => {
+    expect(() =>
+      assertTenantRouteBoundary(
+        "tenant-route",
+        {
+          principalId: "fake-root",
+          tenantId: "different-tenant",
+          roles: ["not-superadmin"],
+        },
+        auditLogger,
+      ),
+    ).toThrow(SecurityEngineError);
+  });
 });

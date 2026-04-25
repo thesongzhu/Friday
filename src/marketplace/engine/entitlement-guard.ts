@@ -33,6 +33,7 @@ export type EntitlementGuardResult =
 
 export interface EntitlementGuardInput {
   readonly listingId: UUID;
+  readonly tenantId: string;
   readonly principalId: string;
 }
 
@@ -51,11 +52,12 @@ export async function assertListingExecutionReady(
   deps: EntitlementGuardDeps,
 ): Promise<EntitlementGuardResult> {
   const entitlements = await deps.listEntitlements({
-    tenantId: input.principalId,
+    tenantId: input.tenantId,
     listingId: input.listingId,
   });
   const active = entitlements.find((entitlement) =>
-    entitlement.status === "active" || entitlement.status === "grace"
+    entitlement.principalId === input.principalId
+    && (entitlement.status === "active" || entitlement.status === "grace")
   );
   if (!active) {
     return {
@@ -80,11 +82,11 @@ export async function assertListingExecutionReady(
   }
 
   const installations = await deps.listInstallations({
-    tenantId: input.principalId,
+    tenantId: input.tenantId,
     listingId: input.listingId,
     status: "installed",
   });
-  const installation = installations[0] ?? null;
+  const installation = installations.find((candidate) => candidate.principalId === input.principalId) ?? null;
   if (!installation) {
     return {
       ok: false,

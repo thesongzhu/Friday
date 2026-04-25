@@ -19,6 +19,7 @@ import { useSystemEvents } from "@/hooks/use-system-events";
 import { workflowRunsApi } from "@/lib/api/workflow-runs";
 import { workflowsApi } from "@/lib/api/workflows";
 import { buildObservabilityHref } from "@/lib/observability/view-models";
+import { toSafeHref } from "@/lib/security/safe-url";
 import { systemApi } from "@/lib/api/system";
 import { systemKeys } from "@/lib/system/query-keys";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -747,24 +748,39 @@ export function WorkflowsPage() {
         <ShellCard eyebrow={locale === "zh" ? "证据" : "Evidence"} title={locale === "zh" ? "最近的打包和部署产物" : "Recent bundles and deployment artifacts"}>
           {visualizationQuery.data?.latestEvidenceExports.length ? (
             <div className="space-y-3">
-              {visualizationQuery.data.latestEvidenceExports.map((item) => (
-                <a
-                  key={item.exportId}
-                  href={item.uri}
-                  className="agent-selection-card block"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-[color:var(--color-text-primary)]">{item.exportId}</p>
-                      <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(item.createdAt)}</p>
+              {visualizationQuery.data.latestEvidenceExports.map((item) => {
+                const safeHref = toSafeHref(item.uri, {
+                  allowRelative: false,
+                  allowedProtocols: ["http:", "https:", "file:"],
+                });
+                const content = (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-[color:var(--color-text-primary)]">{item.exportId}</p>
+                        <p className="text-xs text-[color:var(--color-text-tertiary)]">{formatTimestamp(item.createdAt)}</p>
+                      </div>
+                      <RefreshCcw className="h-4 w-4 text-[color:var(--color-text-faint)]" />
                     </div>
-                    <RefreshCcw className="h-4 w-4 text-[color:var(--color-text-faint)]" />
+                    <p className="mt-3 break-all text-sm text-[color:var(--color-text-secondary)]">{item.checksum}</p>
+                  </>
+                );
+                return safeHref ? (
+                  <a
+                    key={item.exportId}
+                    href={safeHref}
+                    className="agent-selection-card block"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {content}
+                  </a>
+                ) : (
+                  <div key={item.exportId} className="agent-selection-card block">
+                    {content}
                   </div>
-                  <p className="mt-3 break-all text-sm text-[color:var(--color-text-secondary)]">{item.checksum}</p>
-                </a>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-[color:var(--color-text-secondary)]">{locale === "zh" ? "导出证据将在打包导出或运行证据导出后显示在此。" : "Export evidence will show up here after a bundle export or run evidence export."}</p>

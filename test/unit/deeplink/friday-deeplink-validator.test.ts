@@ -117,6 +117,27 @@ describe("validateFridayDeepLink", () => {
     });
   });
 
+  describe("workflow-template", () => {
+    it("blocks private workflow template URLs", () => {
+      const result = validateFridayDeepLink(makePayload({
+        type: "workflow-template",
+        workflowTemplate: { url: "http://169.254.169.254/latest/meta-data" },
+      }));
+
+      expect(result.verdict).toBe("blocked");
+      expect(result.checks.some((c) => c.level === "blocking" && c.id === "workflow-url-private")).toBe(true);
+    });
+
+    it("passes public workflow template URLs", () => {
+      const result = validateFridayDeepLink(makePayload({
+        type: "workflow-template",
+        workflowTemplate: { url: "https://example.com/workflows/template.json" },
+      }));
+
+      expect(result.verdict).toBe("ready");
+    });
+  });
+
   describe("SSRF protection — private URL detection", () => {
     const privateUrls = [
       "http://127.0.0.1:8080/api",
@@ -128,6 +149,9 @@ describe("validateFridayDeepLink", () => {
       "http://[::1]:8080/api",
       "http://0.0.0.0:3000/probe",
       "http://169.254.169.254/metadata",
+      "http://100.64.0.1/internal",
+      "http://198.18.0.1/benchmark",
+      "http://metadata.google.internal/computeMetadata/v1",
     ];
 
     for (const url of privateUrls) {

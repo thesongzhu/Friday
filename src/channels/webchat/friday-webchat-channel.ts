@@ -122,7 +122,7 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
 
       await wsService.start(config.wsPath, config.allowedOrigins, (msg) => {
         eventHandler(msg);
-      });
+      }, { authMode: config.authMode, maxClients: config.maxClients });
 
       connectionStatus = "connected";
     },
@@ -180,7 +180,7 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
       await wsService.start(config.wsPath, config.allowedOrigins, (msg) => {
         const normalized = inboundAdapter.normalize(msg);
         if (normalized) handler(normalized);
-      });
+      }, { authMode: config.authMode, maxClients: config.maxClients });
 
       connectionStatus = "connected";
     },

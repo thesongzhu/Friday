@@ -139,6 +139,15 @@ describe("TenantManager", () => {
       ).toThrow(SecurityEngineError);
     });
 
+    it("does not authorize tenant CRUD from role-name substrings", () => {
+      expect(() =>
+        manager.createTenant(
+          { name: "Substring", slug: "substring" },
+          { principalId: "fake-root", roles: ["not-superadmin"] },
+        ),
+      ).toThrow(SecurityEngineError);
+    });
+
     it("allows tenant CRUD for superadmin", () => {
       const created = manager.createTenant({ name: "Allowed", slug: "allowed" }, superadminActor);
       const fetched = manager.getTenant(created.id, superadminActor);

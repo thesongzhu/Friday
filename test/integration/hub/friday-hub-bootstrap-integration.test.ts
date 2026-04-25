@@ -52,6 +52,20 @@ describe("FridayHub Bootstrap Integration", () => {
     return hub;
   }
 
+  async function withAutoFixDispatcherEnabled<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.FRIDAY_AUTOFIX_DISPATCHER_ENABLED;
+    process.env.FRIDAY_AUTOFIX_DISPATCHER_ENABLED = "true";
+    try {
+      return await fn();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FRIDAY_AUTOFIX_DISPATCHER_ENABLED;
+      } else {
+        process.env.FRIDAY_AUTOFIX_DISPATCHER_ENABLED = previous;
+      }
+    }
+  }
+
   function makeApprovalOnlyGraph(
     workflowId: string,
     versionId: string,
@@ -494,22 +508,24 @@ describe("FridayHub Bootstrap Integration", () => {
   });
 
   it("registers autofix-dispatch scheduler job on startup", async () => {
-    const hub = await createIsolatedHub();
-    await hub.start();
+    await withAutoFixDispatcherEnabled(async () => {
+      const hub = await createIsolatedHub();
+      await hub.start();
 
-    const dbPath = path.join(lastStateDir ?? "", "friday.db");
-    const db = new Database(dbPath);
-    try {
-      const row = db
-        .prepare("SELECT id, interval_ms, enabled FROM friday_scheduler_jobs WHERE id = 'autofix-dispatch'")
-        .get() as { id: string; interval_ms: number; enabled: number } | undefined;
-      expect(row).toBeDefined();
-      expect(row!.id).toBe("autofix-dispatch");
-      expect(row!.interval_ms).toBe(60_000);
-      expect(row!.enabled).toBe(1);
-    } finally {
-      db.close();
-    }
+      const dbPath = path.join(lastStateDir ?? "", "friday.db");
+      const db = new Database(dbPath);
+      try {
+        const row = db
+          .prepare("SELECT id, interval_ms, enabled FROM friday_scheduler_jobs WHERE id = 'autofix-dispatch'")
+          .get() as { id: string; interval_ms: number; enabled: number } | undefined;
+        expect(row).toBeDefined();
+        expect(row!.id).toBe("autofix-dispatch");
+        expect(row!.interval_ms).toBe(60_000);
+        expect(row!.enabled).toBe(1);
+      } finally {
+        db.close();
+      }
+    });
   });
 
   it("registers the agent-loop cooldown sweep job on startup", async () => {
@@ -532,46 +548,48 @@ describe("FridayHub Bootstrap Integration", () => {
   });
 
   it("exposes hub-registered scheduler jobs through /v1/jobs", async () => {
-    const hub = await createIsolatedHub();
-    await hub.start();
+    await withAutoFixDispatcherEnabled(async () => {
+      const hub = await createIsolatedHub();
+      await hub.start();
 
-    const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === "tui.jobs.list");
-    expect(route).toBeDefined();
+      const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === "tui.jobs.list");
+      expect(route).toBeDefined();
 
-    const jobs = await route!.handler({
-      params: {},
-      query: {},
-      body: null,
-      headers: {},
-      principal: {
-        principalType: "user",
-        principalId: "scheduler-admin",
-        role: "admin",
-        scopes: ["hub.admin"],
-        tokenId: "token-scheduler-admin",
-        tokenKind: "access",
-        issuedAt: "2026-04-23T00:00:00.000Z",
-      },
-      requestId: "req-scheduler-jobs",
-      receivedAt: "2026-04-23T00:00:00.000Z",
-    } as never) as Array<{
-      jobId: string;
-      status: string;
-      nextRunAt: string | null;
-    }>;
+      const jobs = await route!.handler({
+        params: {},
+        query: {},
+        body: null,
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: "scheduler-admin",
+          role: "admin",
+          scopes: ["hub.admin"],
+          tokenId: "token-scheduler-admin",
+          tokenKind: "access",
+          issuedAt: "2026-04-23T00:00:00.000Z",
+        },
+        requestId: "req-scheduler-jobs",
+        receivedAt: "2026-04-23T00:00:00.000Z",
+      } as never) as Array<{
+        jobId: string;
+        status: string;
+        nextRunAt: string | null;
+      }>;
 
-    const jobById = new Map(jobs.map((job) => [job.jobId, job]));
-    expect(jobById.get("workflow-timeout-sweep")).toMatchObject({
-      jobId: "workflow-timeout-sweep",
-      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
-    });
-    expect(jobById.get("autofix-dispatch")).toMatchObject({
-      jobId: "autofix-dispatch",
-      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
-    });
-    expect(jobById.get("agent-loop-cooldown-sweep")).toMatchObject({
-      jobId: "agent-loop-cooldown-sweep",
-      status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+      const jobById = new Map(jobs.map((job) => [job.jobId, job]));
+      expect(jobById.get("workflow-timeout-sweep")).toMatchObject({
+        jobId: "workflow-timeout-sweep",
+        status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+      });
+      expect(jobById.get("autofix-dispatch")).toMatchObject({
+        jobId: "autofix-dispatch",
+        status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+      });
+      expect(jobById.get("agent-loop-cooldown-sweep")).toMatchObject({
+        jobId: "agent-loop-cooldown-sweep",
+        status: expect.stringMatching(/^(scheduled|pending|idle)$/),
+      });
     });
   });
 

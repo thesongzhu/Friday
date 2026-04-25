@@ -104,6 +104,22 @@ describe("validateSchema", () => {
     expect(validateSchema("abc", schema)).toEqual([]);
   });
 
+  it("rejects unsafe string patterns without evaluating them", () => {
+    const schema = { type: "string", pattern: "(a+)+$" };
+    const errors = validateSchema("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!", schema);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("invalid or unsafe pattern");
+  });
+
+  it("reports invalid string patterns as validation errors", () => {
+    const schema = { type: "string", pattern: "[" };
+    const errors = validateSchema("abc", schema);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("invalid or unsafe pattern");
+  });
+
   it("validates number minimum", () => {
     const schema = { type: "number", minimum: 10 };
     expect(validateSchema(5, schema)).toHaveLength(1);
@@ -571,5 +587,62 @@ describe("evaluateAssertion — custom", () => {
     };
     const result = evaluateAssertion("c-5", {}, config);
     expect(result.verdict).toBe("fail");
+  });
+
+  it("executes sandboxed scripts with JSON-isolated content and config", () => {
+    const config: FridayAcceptanceCustomCheckConfig = {
+      checkType: "custom",
+      handlerRef: "scripted",
+      handlerConfig: {
+        min: 2,
+        script: `
+          return {
+            verdict: content.count >= config.min ? "pass" : "fail",
+            severity: "info",
+            evidence: [{ message: "scripted check" }],
+          };
+        `,
+      },
+    };
+
+    const result = evaluateAssertion("c-script", { count: 3 }, config);
+
+    expect(result.verdict).toBe("pass");
+    expect(result.evidence[0].metadata?.sandboxed).toBe(true);
+  });
+
+  it("blocks dynamic code generation inside sandboxed scripts", () => {
+    const config: FridayAcceptanceCustomCheckConfig = {
+      checkType: "custom",
+      handlerRef: "scripted",
+      handlerConfig: {
+        script: `
+          content.constructor.constructor("return process")();
+          return { verdict: "pass", severity: "info", evidence: [] };
+        `,
+      },
+    };
+
+    const result = evaluateAssertion("c-script-blocked-codegen", {}, config);
+
+    expect(result.verdict).toBe("fail");
+    expect(result.severity).toBe("critical");
+    expect(result.evidence[0].message).toContain("Sandboxed custom check failed");
+  });
+
+  it("terminates runaway sandboxed scripts", () => {
+    const config: FridayAcceptanceCustomCheckConfig = {
+      checkType: "custom",
+      handlerRef: "scripted",
+      handlerConfig: {
+        script: "while (true) {}",
+      },
+    };
+
+    const result = evaluateAssertion("c-script-timeout", {}, config);
+
+    expect(result.verdict).toBe("fail");
+    expect(result.severity).toBe("critical");
+    expect(result.evidence[0].message).toContain("timed out");
   });
 });

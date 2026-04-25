@@ -110,6 +110,7 @@ export function createFridaySatellitePairingRoutes(
       method: "POST",
       path: "/v1/satellites/register",
       auth: { public: true },
+      rateLimitPolicyId: "satellite.register",
       async handler(ctx: Ctx) {
         const body = ctx.body as Record<string, unknown>;
         const type = body.type as string | undefined;
@@ -232,6 +233,7 @@ export function createFridaySatellitePairingRoutes(
       method: "POST",
       path: "/v1/satellites/:satelliteId/handshake",
       auth: { public: true },
+      rateLimitPolicyId: "satellite.handshake",
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;

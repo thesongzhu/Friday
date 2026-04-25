@@ -223,6 +223,35 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
     expect(second.content).toContain("recovered");
   });
 
+  it("rejects oversized HTTP transport responses before full text buffering", async () => {
+    const response = new Response("x".repeat(1024 * 1024 + 2), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    const textSpy = vi.spyOn(response, "text");
+    vi.stubGlobal("fetch", vi.fn(async () => response) as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "huge-http",
+          transport: "http",
+          url: "https://mcp.example.com/rpc",
+        },
+      ],
+    });
+
+    await expect(adapter.listTools({ serverId: "huge-http" })).rejects.toSatisfy((error: unknown) => {
+      if (!isFridayMcpAdapterError(error)) {
+        return false;
+      }
+      expect(error.code).toBe(FRIDAY_MCP_ADAPTER_ERROR_CODES.REQUEST_FAILED);
+      expect(error.message).toContain("exceeded maximum size");
+      return true;
+    });
+    expect(textSpy).not.toHaveBeenCalled();
+  });
+
   it("deduplicates repeated read-only resource reads", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {

@@ -166,6 +166,32 @@ describe("FridayAgentLlmClient", () => {
     }).rejects.toThrow("LLM request failed (401)");
   });
 
+  it("streams bounded provider error bodies instead of buffering full text", async () => {
+    const response = new Response("x".repeat(5000), { status: 502 });
+    const textSpy = vi.spyOn(response, "text");
+    const fetchImpl = vi.fn().mockResolvedValue(response) as unknown as typeof fetch;
+    const client = createFridayAgentLlmClient({
+      baseUrl: "https://api.example.com",
+      apiKey: "test-key",
+      fetchImpl,
+    });
+
+    const stream = client.stream({
+      model: "test-model",
+      systemPrompt: "Test",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    await expect(async () => {
+      for await (const _event of stream) {
+        // no events expected
+      }
+    }).rejects.toThrow("[truncated]");
+    expect(textSpy).not.toHaveBeenCalled();
+  });
+
   // ─── Sends correct request format ───
 
   it("sends correct Anthropic API request", async () => {

@@ -13,6 +13,7 @@
 import type { UUID } from "../model/friday-multi-tenant-security.types.js";
 import { assertTenantRouteBoundary, type RoutingAuthContext } from "./routing-guard.js";
 import type { AuditLogger, CreateAuditEntryInput } from "./audit-logger.js";
+import { isSuperadminRoleLabel } from "./role-hierarchy.js";
 
 // ─── Extended Principal Context ───
 
@@ -133,8 +134,7 @@ export function createTenantIsolationMiddleware(
 
   function isSuperadmin(roles: readonly string[]): boolean {
     for (const role of roles) {
-      const normalized = role.trim().toLowerCase().replaceAll(/[:\s-]+/g, "_");
-      if (normalized.includes("superadmin")) return true;
+      if (isSuperadminRoleLabel(role)) return true;
     }
     return false;
   }

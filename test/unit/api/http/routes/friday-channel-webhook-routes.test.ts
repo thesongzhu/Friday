@@ -35,6 +35,15 @@ function findRoute(
 }
 
 describe("createFridayChannelWebhookRoutes", () => {
+  it("rate-limits all public channel webhook routes", () => {
+    const routes = createFridayChannelWebhookRoutes({});
+
+    for (const route of routes) {
+      expect(route.auth).toEqual({ public: true });
+      expect(route.rateLimitPolicyId).toBe("channel.webhook");
+    }
+  });
+
   it("returns CAPABILITY_DISABLED when LINE listener is absent", async () => {
     const routes = createFridayChannelWebhookRoutes({});
     const route = findRoute(routes, "channels.webhooks.line");

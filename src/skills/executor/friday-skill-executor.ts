@@ -11,6 +11,7 @@ import type { SkillExecutionMode } from "../model/friday-skill-trust.types.js";
 import type { FridayRegisteredSkill } from "../registry/friday-skill-registry.types.js";
 import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
+import { precompileRegexPattern } from "../../rules/engine/condition-evaluator.js";
 import {
   FRIDAY_ANTHROPIC_OAUTH_HEADERS,
   FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
@@ -256,12 +257,12 @@ function validateInputField(
     const pattern = field.validation?.regex;
     if (pattern) {
       try {
-        const regex = new RegExp(pattern);
+        const regex = precompileRegexPattern(pattern);
         if (!regex.test(value)) {
           issues.push(`Input "${field.key}" does not match the required pattern.`);
         }
       } catch {
-        issues.push(`Input "${field.key}" uses an invalid regex pattern.`);
+        issues.push(`Input "${field.key}" uses an invalid or unsafe regex pattern.`);
       }
     }
 

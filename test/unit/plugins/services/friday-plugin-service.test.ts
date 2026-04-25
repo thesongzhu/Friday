@@ -50,14 +50,16 @@ describe("FridayPluginService", () => {
     const repo = createFridayPluginRepository();
     registry = createFridayPluginRegistryService({ sqlite: db, pluginRepository: repo });
     resolver = createFridayPluginDependencyResolver();
-    loader = createFridayPluginLoader({
-      registry,
-      nowIso: () => NOW,
-      importModule: vi.fn(async () => ({})),
-    });
     signatureVerifier = createFridayPluginSignatureVerifier({
       computeSha256: () => "checksum-123",
       verifyEd25519: () => true,
+    });
+    loader = createFridayPluginLoader({
+      registry,
+      signatureVerifier,
+      readPackageBytes: () => Buffer.from("mock-file-content"),
+      nowIso: () => NOW,
+      importModule: vi.fn(async () => ({})),
     });
     service = createFridayPluginService({
       sqlite: db,
@@ -65,6 +67,7 @@ describe("FridayPluginService", () => {
       resolver,
       loader,
       signatureVerifier,
+      resolveMarketplacePublicKeyPem: () => "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
       nowIso: () => NOW,
       idGenerator: () => "test-id",
       readFileAsBuffer: () => Buffer.from("mock-file-content"),
@@ -189,6 +192,21 @@ describe("FridayPluginService", () => {
     expect(entity.signatureVerified).toBe(true);
   });
 
+  it("rejects local fingerprint reads for entrypoints outside the install directory", () => {
+    const manifest = makeManifest("friday.test.escape", {
+      entrypoints: { skill: "../escape.js" },
+    });
+
+    expect(() =>
+      service.installPlugin({
+        manifest,
+        installPath: "/plugins/friday.test.escape",
+        source: "local",
+        userApproved: true,
+      }),
+    ).toThrow(FridayDomainError);
+  });
+
   it("installs a local plugin with packageBytes", () => {
     const manifest = makeManifest("friday.test.alpha");
     const entity = service.installPlugin({
@@ -260,6 +278,63 @@ describe("FridayPluginService", () => {
 
     expect(entity.trustMode).toBe("signed");
     expect(entity.signatureVerified).toBe(true);
+  });
+
+  it("resolves marketplace keyId to a public key PEM instead of using keyId as the key", () => {
+    let seenPublicKeyPem = "";
+    const verifier = createFridayPluginSignatureVerifier({
+      computeSha256: () => "checksum-123",
+      verifyEd25519: (publicKeyPem) => {
+        seenPublicKeyPem = publicKeyPem;
+        return true;
+      },
+    });
+    const serviceWithKeyResolver = createFridayPluginService({
+      sqlite: db,
+      registry,
+      resolver,
+      loader,
+      signatureVerifier: verifier,
+      resolveMarketplacePublicKeyPem: (keyId) => `pem-for-${keyId}`,
+      nowIso: () => NOW,
+      idGenerator: () => "test-id",
+      readFileAsBuffer: () => Buffer.from("mock-file-content"),
+    });
+
+    serviceWithKeyResolver.installPlugin({
+      manifest: makeManifest("friday.test.keyed", {
+        signature: { algorithm: "ed25519", keyId: "key-1", value: "c2lnbmF0dXJl" },
+      }),
+      installPath: "/plugins/mp/friday.test.keyed",
+      source: "marketplace",
+      packageBytes: Buffer.from("marketplace-package"),
+    });
+
+    expect(seenPublicKeyPem).toBe("pem-for-key-1");
+  });
+
+  it("rejects marketplace install when the signature key is not configured", () => {
+    const serviceWithoutKeyResolver = createFridayPluginService({
+      sqlite: db,
+      registry,
+      resolver,
+      loader,
+      signatureVerifier,
+      nowIso: () => NOW,
+      idGenerator: () => "test-id",
+      readFileAsBuffer: () => Buffer.from("mock-file-content"),
+    });
+
+    expect(() =>
+      serviceWithoutKeyResolver.installPlugin({
+        manifest: makeManifest("friday.test.unresolved-key", {
+          signature: { algorithm: "ed25519", keyId: "key-1", value: "c2lnbmF0dXJl" },
+        }),
+        installPath: "/plugins/mp/friday.test.unresolved-key",
+        source: "marketplace",
+        packageBytes: Buffer.from("marketplace-package"),
+      }),
+    ).toThrow(FridayDomainError);
   });
 
   it("rejects marketplace install without packageBytes", () => {

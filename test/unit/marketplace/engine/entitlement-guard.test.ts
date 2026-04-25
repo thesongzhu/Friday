@@ -6,6 +6,7 @@ describe("assertListingExecutionReady", () => {
     const result = await assertListingExecutionReady(
       {
         listingId: "listing-1",
+        tenantId: "tenant-1",
         principalId: "tenant-1",
       },
       {
@@ -40,6 +41,7 @@ describe("assertListingExecutionReady", () => {
     const result = await assertListingExecutionReady(
       {
         listingId: "listing-1",
+        tenantId: "tenant-1",
         principalId: "tenant-1",
       },
       {
@@ -57,6 +59,7 @@ describe("assertListingExecutionReady", () => {
     const result = await assertListingExecutionReady(
       {
         listingId: "listing-1",
+        tenantId: "tenant-1",
         principalId: "tenant-1",
       },
       {
@@ -89,6 +92,7 @@ describe("assertListingExecutionReady", () => {
     const result = await assertListingExecutionReady(
       {
         listingId: "listing-1",
+        tenantId: "tenant-1",
         principalId: "tenant-1",
       },
       {
@@ -128,5 +132,46 @@ describe("assertListingExecutionReady", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.installation?.id).toBe("inst-1");
+  });
+
+  it("uses tenantId for store lookups and principalId for ownership filtering", async () => {
+    const entitlementFilters: unknown[] = [];
+    const installationFilters: unknown[] = [];
+    const result = await assertListingExecutionReady(
+      {
+        listingId: "listing-1",
+        tenantId: "tenant-1",
+        principalId: "user-1",
+      },
+      {
+        listEntitlements: async (filters) => {
+          entitlementFilters.push(filters);
+          return [{
+            id: "ent-1",
+            tenantId: "tenant-1",
+            principalId: "other-user",
+            listingId: "listing-1",
+            packageName: "@friday/agent-a",
+            sourceType: "purchase",
+            sourceId: "purchase-1",
+            status: "active",
+            grantedAt: "2026-03-01T00:00:00.000Z",
+            expiresAt: null,
+            gracePeriodEndsAt: null,
+            grandfathered: false,
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-01T00:00:00.000Z",
+          }];
+        },
+        listInstallations: async (filters) => {
+          installationFilters.push(filters);
+          return [];
+        },
+      },
+    );
+
+    expect(entitlementFilters).toEqual([{ tenantId: "tenant-1", listingId: "listing-1" }]);
+    expect(installationFilters).toEqual([]);
+    expect(result.ok).toBe(false);
   });
 });

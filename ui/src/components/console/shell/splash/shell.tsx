@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { toSafeHref } from "@/lib/security/safe-url";
 
 export interface SplashAction {
   label: string;
@@ -119,8 +120,10 @@ export function SplashShell(props: SplashShellProps) {
                   };
               const className = "inline-flex min-h-[40px] items-center gap-2 rounded-[var(--radius-md)] px-4 text-sm font-medium transition-opacity hover:opacity-90";
               if (action.href) {
+                const safeHref = toSafeHref(action.href, { allowRelative: true });
+                if (!safeHref) return null;
                 return (
-                  <a key={action.label} href={action.href} className={className} style={style}>
+                  <a key={action.label} href={safeHref} className={className} style={style}>
                     {action.label}
                   </a>
                 );

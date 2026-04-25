@@ -35,6 +35,7 @@ import { FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES } from "../api/friday-multi-te
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
+import { resolveRoleHierarchyLevelFromLabel } from "./role-hierarchy.js";
 
 // ─── Input Types ───
 
@@ -684,12 +685,6 @@ export class RbacEngine {
 
   /** Map a role name to a hierarchical RBAC level. */
   private resolveRoleHierarchyLevel(roleName: string): FridayRoleHierarchyLevel | null {
-    const normalized = roleName.trim().toLowerCase().replaceAll(/[:\s-]+/g, "_");
-    if (normalized.includes("superadmin")) return "superadmin";
-    if (normalized.includes("tenant_admin") || normalized.includes("tenantadmin")) return "tenant_admin";
-    if (normalized.includes("workspace_admin") || normalized.includes("workspaceadmin")) return "workspace_admin";
-    if (normalized.includes("member")) return "member";
-    if (normalized.includes("viewer")) return "viewer";
-    return null;
+    return resolveRoleHierarchyLevelFromLabel(roleName);
   }
 }

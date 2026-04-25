@@ -16,6 +16,7 @@ import {
 // ─── Default timeout for web fetch (30 seconds) ───
 
 const FRIDAY_AGENT_WEB_FETCH_TIMEOUT_MS = 30_000;
+const FRIDAY_AGENT_WEB_FETCH_READ_MAX_BYTES = 512 * 1024;
 
 // ─── Valid HTTP methods ───
 
@@ -32,6 +33,55 @@ const DEFAULT_HEADERS: Record<string, string> = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.1",
   "Accept-Language": "en-US,en;q=0.9",
 };
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const byteLimit = Math.max(0, Math.floor(maxBytes) + 1);
+  if (byteLimit === 0) {
+    await response.body?.cancel();
+    return "";
+  }
+
+  if (!response.body) {
+    return response.text();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      const remaining = byteLimit - bytesRead;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      chunks.push(decoder.decode(chunk, { stream: true }));
+      bytesRead += chunk.byteLength;
+
+      if (bytesRead >= byteLimit) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
 
 // ─── URL rewriting ───
 // Some sites serve JS-heavy SPAs on their main domain but have lightweight
@@ -143,7 +193,7 @@ export function createFridayAgentWebFetchTool(
           ? await fetchWithFridayAgentSsrfGuard({ url: effectiveUrl, init: fetchInit, guard: ssrfGuard })
           : await fetch(effectiveUrl, fetchInit);
 
-        const responseBody = await response.text();
+        const responseBody = await readResponseTextWithLimit(response, FRIDAY_AGENT_WEB_FETCH_READ_MAX_BYTES);
         const contentType = response.headers.get("content-type") ?? "";
 
         // Parse HTML to readable text when appropriate

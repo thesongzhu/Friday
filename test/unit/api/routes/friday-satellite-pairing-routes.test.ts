@@ -97,6 +97,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       expect(route.method).toBe("POST");
       expect(route.path).toBe("/v1/satellites/register");
       expect(route.auth).toEqual({ public: true });
+      expect(route.rateLimitPolicyId).toBe("satellite.register");
 
       const result = await route.handler(makeCtx({
         body: { type: "edge", displayName: "Test", publicKey: "pk-abc" },
@@ -284,6 +285,7 @@ describe("createFridaySatellitePairingRoutes", () => {
       expect(route.method).toBe("POST");
       expect(route.path).toBe("/v1/satellites/:satelliteId/handshake");
       expect(route.auth).toEqual({ public: true });
+      expect(route.rateLimitPolicyId).toBe("satellite.handshake");
 
       const result = await route.handler(makeCtx({
         params: { satelliteId: "sat-001" },

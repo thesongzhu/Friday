@@ -1,6 +1,6 @@
-import { execSync } from "node:child_process";
-import { createReadStream, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { basename, extname, join, normalize, relative, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createReadStream, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { createGunzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
@@ -232,8 +232,9 @@ function materializeGitSource(
 
   try {
     // Shallow clone (depth=1) without submodules for safety
-    execSync(
-      `git clone --depth 1 --single-branch --no-recurse-submodules ${escapeShellArg(sourceUri)} ${escapeShellArg(tempDir)}`,
+    execFileSync(
+      "git",
+      ["clone", "--depth", "1", "--single-branch", "--no-recurse-submodules", sourceUri, tempDir],
       {
         encoding: "utf-8",
         timeout: GIT_CLONE_TIMEOUT_MS,
@@ -303,10 +304,13 @@ function materializeArchiveSource(
 
   try {
     if (lower.endsWith(".zip")) {
+      validateZipArchiveEntries(archivePath);
       extractZip(archivePath, tempDir);
     } else if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
+      validateTarArchiveEntries(archivePath, true);
       extractTarGz(archivePath, tempDir);
     } else if (lower.endsWith(".tar")) {
+      validateTarArchiveEntries(archivePath, false);
       extractTar(archivePath, tempDir);
     } else {
       throw new FridayDomainError(
@@ -349,8 +353,9 @@ function materializeArchiveSource(
 // ─── Archive Extraction Helpers ───
 
 function extractZip(archivePath: string, destDir: string): void {
-  execSync(
-    `unzip -q -o ${escapeShellArg(archivePath)} -d ${escapeShellArg(destDir)}`,
+  execFileSync(
+    "unzip",
+    ["-q", "-o", archivePath, "-d", destDir],
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
@@ -360,8 +365,9 @@ function extractZip(archivePath: string, destDir: string): void {
 }
 
 function extractTarGz(archivePath: string, destDir: string): void {
-  execSync(
-    `tar -xzf ${escapeShellArg(archivePath)} -C ${escapeShellArg(destDir)}`,
+  execFileSync(
+    "tar",
+    ["-xzf", archivePath, "-C", destDir],
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
@@ -371,8 +377,9 @@ function extractTarGz(archivePath: string, destDir: string): void {
 }
 
 function extractTar(archivePath: string, destDir: string): void {
-  execSync(
-    `tar -xf ${escapeShellArg(archivePath)} -C ${escapeShellArg(destDir)}`,
+  execFileSync(
+    "tar",
+    ["-xf", archivePath, "-C", destDir],
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
@@ -382,6 +389,76 @@ function extractTar(archivePath: string, destDir: string): void {
 }
 
 // ─── Safety Helpers ───
+
+function validateZipArchiveEntries(archivePath: string): void {
+  const listing = execFileSync("unzip", ["-Z1", archivePath], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  for (const rawEntry of listing.split(/\r?\n/)) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    validateArchiveEntryPath(entry);
+  }
+}
+
+function validateTarArchiveEntries(archivePath: string, gzipped: boolean): void {
+  const listArgs = gzipped ? ["-tzf", archivePath] : ["-tf", archivePath];
+  const verboseArgs = gzipped ? ["-tvzf", archivePath] : ["-tvf", archivePath];
+  const listing = execFileSync("tar", listArgs, { encoding: "utf8", stdio: "pipe" });
+  const verboseListing = execFileSync("tar", verboseArgs, { encoding: "utf8", stdio: "pipe" });
+  const unsupportedEntryLine = verboseListing
+    .split(/\r?\n/)
+    .find((line) => {
+      if (!line.trim()) return false;
+      const type = line[0];
+      return type !== "-" && type !== "d";
+    });
+  if (unsupportedEntryLine) {
+    throw new FridayDomainError("CONVERTER_UNSUPPORTED_ARCHIVE_ENTRY", `Archive contains unsupported entry type: ${unsupportedEntryLine}`, { httpStatus: 422 });
+  }
+
+  for (const rawEntry of listing.split(/\r?\n/)) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    validateArchiveEntryPath(entry);
+  }
+}
+
+function validateArchiveEntryPath(entry: string): void {
+  const normalizedEntry = normalizeArchiveEntry(entry);
+  if (isUnsafeRelativePath(normalizedEntry)) {
+    throw new FridayDomainError("CONVERTER_PATH_TRAVERSAL", `Unsafe archive entry: ${entry}`, { httpStatus: 422 });
+  }
+}
+
+function normalizeArchiveEntry(entry: string): string {
+  if (entry.includes("\0") || entry.includes("\\")) {
+    throw new FridayDomainError("CONVERTER_PATH_TRAVERSAL", `Unsafe archive entry: ${entry}`, { httpStatus: 422 });
+  }
+  let normalizedEntry = entry;
+  while (normalizedEntry.startsWith("./")) {
+    normalizedEntry = normalizedEntry.slice(2);
+  }
+  if (
+    normalizedEntry.startsWith("/") ||
+    /^[A-Za-z]:/.test(normalizedEntry) ||
+    normalizedEntry.split("/").some((part) => part === "..")
+  ) {
+    throw new FridayDomainError("CONVERTER_PATH_TRAVERSAL", `Unsafe archive entry: ${entry}`, { httpStatus: 422 });
+  }
+  return normalizedEntry;
+}
+
+function isUnsafeRelativePath(rel: string): boolean {
+  const normalizedRel = normalize(rel);
+  return (
+    normalizedRel === ".." ||
+    normalizedRel.startsWith(`..${sep}`) ||
+    isAbsolute(normalizedRel) ||
+    normalizedRel.includes("\0")
+  );
+}
 
 function validateExtractedPaths(baseDir: string): void {
   const resolvedBase = resolve(baseDir);
@@ -398,10 +475,18 @@ function validateExtractedPaths(baseDir: string): void {
 
     for (const entry of entries) {
       const fullPath = resolve(join(dir, entry.name));
-      if (!fullPath.startsWith(resolvedBase)) {
+      if (!isWithinBase(resolvedBase, fullPath)) {
         throw new FridayDomainError(
           "CONVERTER_PATH_TRAVERSAL",
           `Extracted path escapes workspace: ${entry.name}`,
+          { httpStatus: 422 },
+        );
+      }
+      const stat = lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        throw new FridayDomainError(
+          "CONVERTER_UNSUPPORTED_ARCHIVE_ENTRY",
+          `Archive contains unsupported symbolic link: ${entry.name}`,
           { httpStatus: 422 },
         );
       }
@@ -470,12 +555,6 @@ export function cleanupTempWorkspace(dir: string): void {
     console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
     // Best effort cleanup
   }
-}
-
-// ─── Shell Helpers ───
-
-function escapeShellArg(arg: string): string {
-  return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
 // ─── File Filter ───

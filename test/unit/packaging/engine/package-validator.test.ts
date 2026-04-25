@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import {
   validatePackage,
@@ -17,13 +17,19 @@ import type {
 const NOW = "2026-02-24T12:00:00.000Z";
 const FUTURE = "2027-02-24T12:00:00.000Z";
 const PAST = "2025-01-01T00:00:00.000Z";
-const TRUSTED_KEY_MATERIAL = "friday-packaging-test-key";
-const TRUSTED_KEY_B64 = Buffer.from(TRUSTED_KEY_MATERIAL, "utf8").toString("base64");
+const TEST_KEY_PAIR = generateKeyPairSync("ed25519");
+const TRUSTED_KEY_B64 = TEST_KEY_PAIR.publicKey.export({ format: "der", type: "spki" }).toString("base64");
 
-function signArchiveDigest(archiveDigest: string, keyB64: string = TRUSTED_KEY_B64): string {
-  return createHmac("sha256", Buffer.from(keyB64, "base64"))
-    .update(archiveDigest, "utf8")
-    .digest("base64");
+function buildSignaturePayload(archiveDigest: string, manifestDigest: string): Buffer {
+  return Buffer.from(JSON.stringify({ digest: archiveDigest, manifestDigest }), "utf8");
+}
+
+function signPackageDigests(
+  archiveDigest: string,
+  manifestDigest = "sha256:manifest789",
+): string {
+  return sign(null, buildSignaturePayload(archiveDigest, manifestDigest), TEST_KEY_PAIR.privateKey)
+    .toString("base64");
 }
 
 function validManifest(): FridayPackageManifest {
@@ -41,12 +47,13 @@ function validManifest(): FridayPackageManifest {
 
 function validSignature(): FridayPackageSignature {
   const digest = "sha256:abc123def456";
+  const manifestDigest = "sha256:manifest789";
   return {
     algorithm: "Ed25519",
     publicKey: TRUSTED_KEY_B64,
-    signature: signArchiveDigest(digest),
+    signature: signPackageDigests(digest, manifestDigest),
     digest,
-    manifestDigest: "sha256:manifest789",
+    manifestDigest,
     timestamp: NOW,
     expiresAt: FUTURE,
     keyId: "test-key-1",
@@ -223,7 +230,7 @@ describe("verifySignatureLogical", () => {
   });
 
   it("rejects cryptographically invalid signatures", () => {
-    const sig = { ...validSignature(), signature: signArchiveDigest("sha256:different") };
+    const sig = { ...validSignature(), signature: signPackageDigests("sha256:different") };
     const result = verifySignatureLogical(sig, sig.manifestDigest, sig.digest, [validTrustedKey()], NOW);
     expect(result.valid).toBe(false);
     expect(result.outcome).toBe("signature_invalid");

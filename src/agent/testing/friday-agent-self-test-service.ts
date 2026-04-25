@@ -15,6 +15,10 @@ const EXTENSION_KIND_MAP: Record<string, FridayAgentArtifactKind> = {
   ".sh": "code_sh",
 };
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 // ─── Factory ───
 
 export function createFridayAgentSelfTestService(
@@ -117,7 +121,7 @@ export function createFridayAgentSelfTestService(
     }
 
     try {
-      const { exitCode, stderr } = await execCommand(`node --check "${artifact.path}"`, workdir);
+      const { exitCode, stderr } = await execCommand(`node --check ${shellQuote(artifact.path)}`, workdir);
       if (exitCode === 0) {
         return { strategy: "syntax", passed: true, errors: [], durationMs: Date.now() - startMs };
       }
@@ -156,7 +160,7 @@ export function createFridayAgentSelfTestService(
 
     try {
       const { exitCode, stderr } = await execCommand(
-        `python3 -c "import py_compile; py_compile.compile('${artifact.path}', doraise=True)"`,
+        `python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], doraise=True)' ${shellQuote(artifact.path)}`,
         workdir,
       );
       if (exitCode === 0) {
@@ -196,7 +200,7 @@ export function createFridayAgentSelfTestService(
     }
 
     try {
-      const { exitCode, stderr } = await execCommand(`bash -n "${artifact.path}"`, workdir);
+      const { exitCode, stderr } = await execCommand(`bash -n ${shellQuote(artifact.path)}`, workdir);
       if (exitCode === 0) {
         return { strategy: "syntax", passed: true, errors: [], durationMs: Date.now() - startMs };
       }

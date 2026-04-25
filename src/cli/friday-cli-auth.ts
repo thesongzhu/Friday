@@ -9,8 +9,7 @@
  * - `friday auth status [--provider-id <id>]`
  */
 
-import { exec as cpExec } from "node:child_process";
-import { platform } from "node:os";
+import { execFile as cpExecFile } from "node:child_process";
 import {
   probeFridayCliSession,
 } from "#providers";
@@ -20,6 +19,12 @@ import type {
   FridayProviderService,
 } from "#providers";
 import { FridayDomainError } from "#errors";
+import { buildOpenBrowserUrlCommand } from "./friday-cli-open-url.js";
+
+export {
+  buildOpenBrowserUrlCommand,
+  buildOpenBrowserUrlCommand as buildOpenAuthorizationUrlCommand,
+} from "./friday-cli-open-url.js";
 
 // ─── Types ───
 
@@ -174,12 +179,8 @@ export async function runFridayCliAuthLoginAnthropic(
 
   // Open browser automatically unless --no-browser was passed
   if (!input.noBrowser) {
-    const os = platform();
-    const openCmd =
-      os === "darwin" ? "open"
-        : os === "win32" ? "start"
-        : "xdg-open";
-    cpExec(`${openCmd} ${JSON.stringify(initiation.authorizationUrl)}`, (err) => {
+    const { command, args } = buildOpenBrowserUrlCommand(initiation.authorizationUrl);
+    cpExecFile(command, args, { windowsHide: true }, (err) => {
       if (err) {
         stderr("Could not open browser automatically.");
       }

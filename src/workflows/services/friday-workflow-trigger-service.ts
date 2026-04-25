@@ -15,6 +15,7 @@ import type { FridayWorkflowExecutionService } from "./friday-workflow-execution
 import type { FridayWorkflowRepository } from "../persistence/friday-workflow-repository.js";
 import type { FridayWorkflowTriggerRepository } from "../persistence/friday-workflow-trigger-repository.js";
 import { type FridayCompiledWorkflowGraphV2, parseGraphJson } from "../model/friday-workflow-graph.types.js";
+import { parseFridaySecretInput, resolveFridaySecretInput } from "../../security/friday-secret-ref.js";
 // F12: Use shared cron utils — no local matcher
 import { computeNextCronFire, matchesCron } from "./friday-workflow-cron-utils.js";
 
@@ -93,8 +94,50 @@ export interface CreateWorkflowTriggerServiceDeps {
   executionService: FridayWorkflowExecutionService;
   workflowRepo: FridayWorkflowRepository;
   triggerRepo?: FridayWorkflowTriggerRepository;
+  resolveWebhookSecretRef?: (refKey: string) => string | null | Promise<string | null>;
   idGenerator: () => string;
   nowIso: () => string;
+}
+
+async function resolveWebhookSigningSecret(
+  secretRef: string,
+  resolveSecretRef: CreateWorkflowTriggerServiceDeps["resolveWebhookSecretRef"],
+): Promise<{ ok: true; value: string } | { ok: false; statusCode: number; errorCode: string }> {
+  const parsed = parseFridaySecretInput(secretRef, {
+    secretRefPrefixes: ["secret://workflow-webhook/", "secret://workflow/", "secret://"],
+  });
+
+  if (parsed.kind === "inline") {
+    return {
+      ok: false,
+      statusCode: 500,
+      errorCode: "WEBHOOK_SECRET_REF_INVALID",
+    };
+  }
+
+  if (parsed.kind === "command-ref") {
+    return {
+      ok: false,
+      statusCode: 500,
+      errorCode: "WEBHOOK_SECRET_COMMAND_REF_DISABLED",
+    };
+  }
+
+  const resolved = await resolveFridaySecretInput(parsed, {
+    env: process.env,
+    readSecretRef: async (refKey) => resolveSecretRef?.(refKey) ?? null,
+    allowCommandRefs: false,
+  });
+
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      statusCode: 500,
+      errorCode: "WEBHOOK_SECRET_REF_UNRESOLVED",
+    };
+  }
+
+  return { ok: true, value: resolved.value };
 }
 
 // ─── Shared fire helper (F7: avoids DB vs in-memory divergence) ───
@@ -415,6 +458,15 @@ export function createFridayWorkflowTriggerService(
 
       // ─── HMAC signature verification (M4) ───
       if (reg.webhookSecretRef) {
+        const secret = await resolveWebhookSigningSecret(reg.webhookSecretRef, deps.resolveWebhookSecretRef);
+        if (!secret.ok) {
+          return {
+            accepted: false,
+            statusCode: secret.statusCode,
+            errorCode: secret.errorCode,
+          };
+        }
+
         const sigHeader = reg.webhookSignatureHeader ?? "x-hub-signature-256";
         const receivedSig = input.headers?.[sigHeader] ?? input.headers?.[sigHeader.toLowerCase()];
 
@@ -427,7 +479,7 @@ export function createFridayWorkflowTriggerService(
         }
 
         const rawBody = input.rawBody ?? JSON.stringify(input.body);
-        const expectedSig = "sha256=" + createHmac("sha256", reg.webhookSecretRef)
+        const expectedSig = "sha256=" + createHmac("sha256", secret.value)
           .update(rawBody)
           .digest("hex");
 

@@ -122,31 +122,6 @@ function readKeychainMasterKey(): Buffer | null {
   }
 }
 
-function writeKeychainMasterKey(key: Buffer): void {
-  if (process.platform !== "darwin") {
-    throw new FridayDomainError(
-      "VALIDATION_ERROR",
-      "FRIDAY_MASTER_KEY_SOURCE=keychain is only supported on macOS",
-      { httpStatus: 400 },
-    );
-  }
-
-  const service = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE ?? MASTER_KEY_KEYCHAIN_SERVICE;
-  const account = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT ?? MASTER_KEY_KEYCHAIN_ACCOUNT;
-  execFileSync("security", [
-    "add-generic-password",
-    "-U",
-    "-a",
-    account,
-    "-s",
-    service,
-    "-w",
-    key.toString("hex"),
-  ], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-}
-
 /**
  * Resolves the master key from `FRIDAY_MASTER_KEY` env var (hex-encoded),
  * or persists/reads a random one from `~/.friday/master.key`.
@@ -189,11 +164,11 @@ export function getMasterKey(): Buffer {
       return cachedMasterKey;
     }
 
-    const generatedKey = crypto.randomBytes(KEY_BYTES);
-    writeKeychainMasterKey(generatedKey);
-    cachedMasterKey = generatedKey;
-    cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
-    return cachedMasterKey;
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY_SOURCE=keychain requires a pre-provisioned macOS keychain item; Friday will not pass generated master keys through process arguments",
+      { httpStatus: 400 },
+    );
   }
 
   // 3. Try to read persisted key file

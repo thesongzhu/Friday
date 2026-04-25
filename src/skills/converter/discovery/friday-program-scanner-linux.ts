@@ -257,9 +257,14 @@ function redactMetadata(
   const redacted: Record<string, string> = {};
   const home = homedir();
   for (const [k, v] of Object.entries(meta)) {
-    redacted[k] = v.replace(new RegExp(home, "g"), "~");
+    redacted[k] = replaceAllLiteral(v, home, "~");
   }
   return redacted;
+}
+
+function replaceAllLiteral(value: string, search: string, replacement: string): string {
+  if (search.length === 0) return value;
+  return value.split(search).join(replacement);
 }
 
 function filterUndefined(obj: Record<string, string | undefined>): Record<string, string> {

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   createPackageInstaller,
@@ -20,9 +20,13 @@ import {
 
 const NOW = "2026-02-24T12:00:00.000Z";
 const PLATFORM_VERSION = "0.5.0";
-const TRUSTED_KEY_MATERIAL = "friday-installer-test-key";
-const TRUSTED_KEY_B64 = Buffer.from(TRUSTED_KEY_MATERIAL, "utf8").toString("base64");
+const TEST_KEY_PAIR = generateKeyPairSync("ed25519");
+const TRUSTED_KEY_B64 = TEST_KEY_PAIR.publicKey.export({ format: "der", type: "spki" }).toString("base64");
 let idCounter = 0;
+
+function buildSignaturePayload(archiveDigest: string, manifestDigest: string): Buffer {
+  return Buffer.from(JSON.stringify({ digest: archiveDigest, manifestDigest }), "utf8");
+}
 
 function makeConfig() {
   return {
@@ -35,17 +39,17 @@ function makeConfig() {
 function makeSignature(overrides: Partial<FridayPackageSignature> = {}): FridayPackageSignature {
   const digest = overrides.digest ?? "sha256:abc";
   const publicKey = overrides.publicKey ?? TRUSTED_KEY_B64;
+  const manifestDigest = overrides.manifestDigest ?? "sha256:def";
   const signature = overrides.signature
-    ?? createHmac("sha256", Buffer.from(publicKey, "base64"))
-      .update(digest, "utf8")
-      .digest("base64");
+    ?? sign(null, buildSignaturePayload(digest, manifestDigest), TEST_KEY_PAIR.privateKey)
+      .toString("base64");
 
   return {
     algorithm: "Ed25519",
     publicKey,
     signature,
     digest,
-    manifestDigest: overrides.manifestDigest ?? "sha256:def",
+    manifestDigest,
     timestamp: NOW,
     expiresAt: "2027-01-01T00:00:00.000Z",
     keyId: "key-1",

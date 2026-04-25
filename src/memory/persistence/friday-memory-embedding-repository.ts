@@ -88,6 +88,14 @@ function toArray(val: string | string[] | undefined): string[] | undefined {
   return Array.isArray(val) ? val : [val];
 }
 
+function buildTagExactConditions(tags: string[], params: unknown[]): string {
+  const clauses = tags.map((tag) => {
+    params.push(tag);
+    return "EXISTS (SELECT 1 FROM json_each(mi.tags_json) WHERE value = ?)";
+  });
+  return `(${clauses.join(" OR ")})`;
+}
+
 // ─── Factory ───
 
 export function createFridayMemoryEmbeddingRepository(): FridayMemoryEmbeddingRepository {
@@ -175,9 +183,7 @@ export function createFridayMemoryEmbeddingRepository(): FridayMemoryEmbeddingRe
       }
 
       if (input.tagsAny && input.tagsAny.length > 0) {
-        const tagConditions = input.tagsAny.map(() => "mi.tags_text LIKE ?");
-        conditions.push(`(${tagConditions.join(" OR ")})`);
-        params.push(...input.tagsAny.map((t) => `%${t}%`));
+        conditions.push(buildTagExactConditions(input.tagsAny, params));
       }
 
       if (!input.includeExpired) {

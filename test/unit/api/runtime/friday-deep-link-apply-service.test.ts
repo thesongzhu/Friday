@@ -7,6 +7,7 @@ import type {
   FridayWorkflowBuilderImportExportService,
   FridayWorkflowSpecBundleV1,
 } from "#workflows";
+import type { FridayAgentSsrfGuard } from "#agent";
 
 function makeProviderService(): FridayProviderService {
   return {
@@ -77,6 +78,13 @@ function makeWorkflowImportExport(): Pick<FridayWorkflowBuilderImportExportServi
       validation: { valid: true, errors: [], warnings: [] },
       warnings: [],
     } as never)),
+  };
+}
+
+function makeSsrfGuard(): FridayAgentSsrfGuard {
+  return {
+    validate: vi.fn(),
+    validateWithDns: vi.fn(async () => undefined),
   };
 }
 
@@ -156,6 +164,7 @@ describe("createFridayDeepLinkApplyService", () => {
 
   it("applies workflow-template payloads by fetching and importing a workflow bundle", async () => {
     const workflowImportExport = makeWorkflowImportExport();
+    const ssrfGuard = makeSsrfGuard();
     const bundle: FridayWorkflowSpecBundleV1 = {
       bundleSchemaVersion: "1.0",
       exportedAt: "2026-04-21T00:00:00.000Z",
@@ -196,6 +205,7 @@ describe("createFridayDeepLinkApplyService", () => {
       providerService: makeProviderService(),
       converterService: makeConverterService(),
       workflowImportExport,
+      workflowTemplateSsrfGuard: ssrfGuard,
     });
 
     const result = await service.apply({
@@ -213,7 +223,33 @@ describe("createFridayDeepLinkApplyService", () => {
       resourceId: "draft-1",
       message: 'Imported workflow template as draft "Imported Workflow".',
     });
+    expect(ssrfGuard.validateWithDns).toHaveBeenCalledWith("https://example.com/workflow.json");
     expect(workflowImportExport.importBundle).toHaveBeenCalledWith(bundle, "wf-import-1");
+  });
+
+  it("blocks private workflow-template URLs before fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const service = createFridayDeepLinkApplyService({
+      idGenerator: () => "wf-import-1",
+      providerService: makeProviderService(),
+      converterService: makeConverterService(),
+      workflowImportExport: makeWorkflowImportExport(),
+    });
+
+    await expect(service.apply({
+      version: 1,
+      type: "workflow-template",
+      label: "Import workflow",
+      workflowTemplate: {
+        url: "http://127.0.0.1:8080/workflow.json",
+      },
+    })).rejects.toMatchObject({
+      code: "WORKFLOW_TEMPLATE_URL_BLOCKED",
+      httpStatus: 403,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("returns an honest unsupported result for marketplace assets", async () => {

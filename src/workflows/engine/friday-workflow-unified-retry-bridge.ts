@@ -26,6 +26,21 @@ export function classifyWorkflowError(
   const code = errorCode.toUpperCase();
   const msg = (errorMessage ?? "").toUpperCase();
 
+  // Hard provider throttling signals must stay retryable even when the text
+  // also includes broad auth/policy wording from an upstream wrapper.
+  if (
+    code.includes("RATE_LIMIT")
+    || code.includes("THROTTLED")
+    || code.includes("TOO_MANY_REQUESTS")
+    || msg.includes("429")
+    || msg.includes("RATE LIMIT")
+    || msg.includes("RATE_LIMIT")
+    || msg.includes("TOO MANY REQUESTS")
+    || msg.includes("THROTTL")
+  ) {
+    return "rate_limit";
+  }
+
   // Schema / validation / parse errors → logic (non-retryable)
   if (code.includes("SCHEMA") || code.includes("VALIDATION") || code.includes("PARSE") || code.includes("INVALID_JSON")) {
     return "logic";
@@ -41,8 +56,8 @@ export function classifyWorkflowError(
     return "auth";
   }
 
-  // Budget / rate-limit errors → rate_limit (retryable with backoff)
-  if (code.includes("BUDGET") || code.includes("QUOTA") || code.includes("RATE_LIMIT") || code.includes("COST")) {
+  // Budget / quota errors → rate_limit (retryable with backoff)
+  if (code.includes("BUDGET") || code.includes("QUOTA") || code.includes("COST")) {
     return "rate_limit";
   }
 

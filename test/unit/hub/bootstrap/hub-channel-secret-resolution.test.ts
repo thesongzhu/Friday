@@ -29,7 +29,7 @@ describe("resolveChannelInitConfigWithSecretPolicy", () => {
     }
   });
 
-  it("resolves command-ref secrets for channel init", () => {
+  it("rejects command-ref secrets for channel init", () => {
     const result = resolveChannelInitConfigWithSecretPolicy({
       instance: {
         kind: "discord",
@@ -41,7 +41,9 @@ describe("resolveChannelInitConfigWithSecretPolicy", () => {
       resolveSecretRef: () => null,
     });
 
-    expect(result.errors).toEqual([]);
-    expect(result.config.token).toBe("discord-command-secret");
+    expect(result.errors).toEqual([
+      "Command secret refs are disabled for channel discord.token; use env:, file:, or secret:// refs instead",
+    ]);
+    expect(result.config.token).toBeUndefined();
   });
 });

@@ -659,7 +659,7 @@ describe("FridayAgentRoutes", () => {
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       await route.handler(ctx);
-      expect(assertListingEntitled).toHaveBeenCalledWith("listing-1", "principal-1");
+      expect(assertListingEntitled).toHaveBeenCalledWith("listing-1", ctx.principal);
     });
 
     it("validates marketplaceListingId is non-empty when provided", async () => {

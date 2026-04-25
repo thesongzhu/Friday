@@ -115,6 +115,10 @@ describe("B-001 FridayTenantIsolationMiddleware", () => {
       expect(mw.extractTenantContext({
         principalId: "a", roles: ["super-admin"],
       }).isSuperadmin).toBe(false);
+
+      expect(mw.extractTenantContext({
+        principalId: "a", roles: ["not-superadmin"],
+      }).isSuperadmin).toBe(false);
     });
   });
 

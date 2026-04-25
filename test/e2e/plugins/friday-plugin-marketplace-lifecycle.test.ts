@@ -116,6 +116,7 @@ interface TestStack {
 function buildStack(opts: {
   marketplaceClient: FridayPluginMarketplaceClient;
   verifyEd25519?: (publicKeyPem: string, sigValue: Buffer, payload: Buffer) => boolean;
+  publicKeys?: Record<string, string>;
 }): TestStack {
   const sqlite = createTestDb();
   const pluginRepo = createFridayPluginRepository();
@@ -145,6 +146,7 @@ function buildStack(opts: {
     loader,
     marketplace: opts.marketplaceClient,
     signatureVerifier,
+    resolveMarketplacePublicKeyPem: (keyId) => opts.publicKeys?.[keyId] ?? "test-public-key",
     nowIso: () => NOW,
     idGenerator: () => crypto.randomUUID(),
   });
@@ -220,7 +222,7 @@ describe("Plugin marketplace lifecycle (mocked network)", () => {
     const manifest = makeMarketplaceManifest({
       signature: {
         algorithm: "ed25519",
-        keyId: publicKeyPem, // verifyMarketplacePackage passes keyId as publicKeyPem
+        keyId: "test-key-001",
         value: sigBase64,
       },
     });
@@ -250,7 +252,7 @@ describe("Plugin marketplace lifecycle (mocked network)", () => {
     };
 
     // Use real Ed25519 verification (no override — default uses node:crypto verify)
-    const stack = buildStack({ marketplaceClient: mockClient });
+    const stack = buildStack({ marketplaceClient: mockClient, publicKeys: { "test-key-001": publicKeyPem } });
     sqlite = stack.sqlite;
 
     const entity = await stack.pluginService.installFromMarketplace("test.marketplace.weather");
@@ -261,7 +263,7 @@ describe("Plugin marketplace lifecycle (mocked network)", () => {
     expect(entity.status).toBe("installed");
     expect(entity.trustMode).toBe("signed");
     expect(entity.signatureVerified).toBe(true);
-    expect(entity.signatureKeyId).toBe(publicKeyPem);
+    expect(entity.signatureKeyId).toBe("test-key-001");
   });
 
   it("checksum_mismatch_rejected", async () => {

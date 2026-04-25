@@ -155,6 +155,26 @@ describe("FridayWorkflowBuilderTestRunnerService", () => {
     expect(result.passed).toBe(true);
   });
 
+  it("fails matches assertions with unsafe regex patterns without executing them", () => {
+    const service = createService();
+    const spec = createTestSpec({
+      tests: [
+        {
+          name: "unsafe regex test",
+          inputs: {},
+          mocks: { "step-1": { output: { code: "aaaaaaaaaaaaaaaa!" } } },
+          assertions: [
+            { path: "steps.step-1.output.code", operator: "matches", expected: "^(a+)+$" },
+          ],
+        },
+      ],
+    });
+
+    const result = service.runTests({ spec });
+    expect(result.passed).toBe(false);
+    expect(result.caseResults[0]!.assertionResults[0]!.passed).toBe(false);
+  });
+
   it("unmocked steps return empty output", () => {
     const service = createService();
     const spec = createTestSpec({

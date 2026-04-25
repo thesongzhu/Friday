@@ -9,7 +9,7 @@
  * @module packaging/engine/package-validator
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createPublicKey, verify } from "node:crypto";
 import type {
   FridayPackageEngineConfig,
   FridayPackageManifest,
@@ -223,11 +223,44 @@ function decodeBase64Bytes(value: string): Buffer | null {
   return normalizedDecoded === normalizedInput ? decoded : null;
 }
 
+function buildSignaturePayload(archiveDigest: string, manifestDigest: string): Buffer {
+  return Buffer.from(JSON.stringify({ digest: archiveDigest, manifestDigest }), "utf8");
+}
+
+function createEd25519PublicKey(publicKeyBytes: Buffer): ReturnType<typeof createPublicKey> | null {
+  try {
+    return createPublicKey(publicKeyBytes.toString("utf8"));
+  } catch {
+    // Try DER encodings below.
+  }
+
+  try {
+    return createPublicKey({ key: publicKeyBytes, format: "der", type: "spki" });
+  } catch {
+    // Try raw Ed25519 public key bytes below.
+  }
+
+  if (publicKeyBytes.length === 32) {
+    const ed25519SpkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+    try {
+      return createPublicKey({
+        key: Buffer.concat([ed25519SpkiPrefix, publicKeyBytes]),
+        format: "der",
+        type: "spki",
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Verify a package signature against the trust store.
  *
- * This verifies both trust metadata and a cryptographic HMAC-SHA256
- * signature over the computed archive digest.
+ * This verifies both trust metadata and a cryptographic Ed25519 signature
+ * over the canonical package digest payload.
  *
  * @param signature - The package signature to verify
  * @param manifestDigest - The computed manifest digest
@@ -320,14 +353,17 @@ export function verifySignatureLogical(
     return buildResult(false, "signature_invalid", "Signature is not valid base64-encoded bytes");
   }
 
-  const expectedSignature = createHmac("sha256", trustedKeyBytes)
-    .update(archiveDigest, "utf8")
-    .digest();
+  const trustedPublicKey = createEd25519PublicKey(trustedKeyBytes);
+  if (!trustedPublicKey) {
+    return buildResult(
+      false,
+      "signature_invalid",
+      `Trusted key "${signature.keyId}" is not valid Ed25519 public key material`,
+    );
+  }
 
-  if (
-    signatureBytes.length !== expectedSignature.length
-    || !timingSafeEqual(signatureBytes, expectedSignature)
-  ) {
+  const payload = buildSignaturePayload(archiveDigest, manifestDigest);
+  if (!verify(null, payload, trustedPublicKey, signatureBytes)) {
     return buildResult(false, "signature_invalid", "Cryptographic signature verification failed");
   }
 

@@ -546,6 +546,9 @@ export interface FridayAutonomousGoalListFilters {
  * Following the same pattern as CreateFridayAgentRuntimeDeps.
  */
 export interface CreateFridayAutonomousEngineDeps {
+  /** Root directory autonomous file-state inspection is allowed to read from. */
+  readonly workspaceRoot?: string;
+
   /** Agent runtime for executing tool calls. */
   readonly agentRuntime: {
     executeRun(params: {

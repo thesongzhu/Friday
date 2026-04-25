@@ -170,6 +170,30 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
+  it("streams bounded provider error bodies before surfacing failures", async () => {
+    const mockProvider = createMockProvider({});
+    const response = new Response("x".repeat(5000), { status: 500 });
+    const textSpy = vi.spyOn(response, "text");
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue(response);
+
+    try {
+      const client = createFridayProviderInferenceClient({
+        providerService: mockProvider,
+      });
+
+      await expect(
+        client.infer({
+          prompt: { system: "test", user: "test" },
+        }),
+      ).rejects.toThrow("returned 500");
+      expect(textSpy).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("applies task-profile temperature overrides to provider requests", async () => {
     const mockProvider = createMockProvider({});
 

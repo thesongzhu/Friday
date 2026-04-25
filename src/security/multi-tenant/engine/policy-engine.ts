@@ -34,6 +34,7 @@ import type { FridayCreatePolicyRuleInput } from "../api/friday-multi-tenant-sec
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
+import { precompileRegexPattern } from "../../../rules/engine/condition-evaluator.js";
 
 // ─── Input Types ───
 
@@ -100,18 +101,21 @@ export class PolicyEngine {
       );
     }
 
-    const rules: FridayPolicyRule[] = input.rules.map((r) => ({
-      id: generateId(),
-      name: r.name,
-      description: r.description,
-      enabled: r.enabled ?? true,
-      resource: r.resource,
-      action: r.action,
-      conditions: structuredClone(r.conditions),
-      effect: r.effect,
-      message: r.message,
-      priority: r.priority ?? 100,
-    }));
+    const rules: FridayPolicyRule[] = input.rules.map((r) => {
+      this.validateConditionGroupRegex(r.conditions);
+      return {
+        id: generateId(),
+        name: r.name,
+        description: r.description,
+        enabled: r.enabled ?? true,
+        resource: r.resource,
+        action: r.action,
+        conditions: structuredClone(r.conditions),
+        effect: r.effect,
+        message: r.message,
+        priority: r.priority ?? 100,
+      };
+    });
 
     const timestamp = now();
     const policy: FridaySecurityPolicy = {
@@ -202,18 +206,21 @@ export class PolicyEngine {
     }
 
     const rules: readonly FridayPolicyRule[] = input.rules
-      ? input.rules.map((r) => ({
-          id: generateId(),
-          name: r.name,
-          description: r.description,
-          enabled: r.enabled ?? true,
-          resource: r.resource,
-          action: r.action,
-          conditions: structuredClone(r.conditions),
-          effect: r.effect,
-          message: r.message,
-          priority: r.priority ?? 100,
-        }))
+      ? input.rules.map((r) => {
+          this.validateConditionGroupRegex(r.conditions);
+          return {
+            id: generateId(),
+            name: r.name,
+            description: r.description,
+            enabled: r.enabled ?? true,
+            resource: r.resource,
+            action: r.action,
+            conditions: structuredClone(r.conditions),
+            effect: r.effect,
+            message: r.message,
+            priority: r.priority ?? 100,
+          };
+        })
       : existing.rules;
 
     const updated: FridaySecurityPolicy = {
@@ -512,6 +519,31 @@ export class PolicyEngine {
     return map;
   }
 
+  /** Validate and precompile policy regex conditions before they enter storage. */
+  private validateConditionGroupRegex(group: FridayPolicyConditionGroup): void {
+    for (const conditions of [group.all, group.any, group.none]) {
+      if (!conditions) continue;
+      for (const condition of conditions) {
+        if (condition.operator !== "matches") continue;
+        if (typeof condition.value !== "string") {
+          throw new SecurityEngineError(
+            FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES.VALIDATION_FAILED,
+            `Policy regex condition '${condition.field}' requires a string pattern.`,
+          );
+        }
+        try {
+          precompileRegexPattern(condition.value);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new SecurityEngineError(
+            FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES.VALIDATION_FAILED,
+            `Invalid policy regex condition '${condition.field}': ${message}`,
+          );
+        }
+      }
+    }
+  }
+
   /**
    * Evaluate a single condition against the context.
    *
@@ -558,7 +590,7 @@ export class PolicyEngine {
       case "matches":
         if (typeof fieldValue === "string" && typeof condValue === "string") {
           try {
-            return new RegExp(condValue).test(fieldValue);
+            return precompileRegexPattern(condValue).test(fieldValue);
           } catch (err) {
             console.warn("[friday][policy-engine] regex match failed:", err instanceof Error ? err.message : String(err));
             return false;
