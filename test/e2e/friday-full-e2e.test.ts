@@ -1946,6 +1946,10 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
     // Node.js 22+ has built-in WebSocket
     const hasWebSocket = typeof globalThis.WebSocket === "function";
 
+    // CI runners are slower than local; the inner 10s WebSocket budget races
+    // vitest's default 10s testTimeout, so vitest occasionally aborts before the
+    // socket has a chance to either succeed or hit its own timeout-resolve path.
+    // Give the test 30s of vitest budget so the inner timeout always fires first.
     it("T1: WebSocket connect + auth handshake", async () => {
       if (!hasWebSocket) {
         console.log("Skipping T1: WebSocket not available in this runtime");
@@ -2000,7 +2004,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
           resolve();
         }
       });
-    });
+    }, 30_000);
 
     it("T2: WebSocket subscribe + receive ack", async () => {
       if (!hasWebSocket) {
@@ -2062,6 +2066,6 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
           resolve();
         }
       });
-    });
+    }, 30_000);
   });
 });
