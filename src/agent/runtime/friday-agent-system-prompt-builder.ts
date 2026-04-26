@@ -10,6 +10,7 @@ import {
   FRIDAY_PROMPT_SECTION_CAPABILITIES,
   type FridayPromptSection,
 } from "./friday-agent-prompt-section.js";
+import { FRIDAY_AGENT_EXECUTION_VOICE_PROMPT } from "./friday-agent-execution-voice.js";
 
 export interface BuildFridayAgentSystemPromptParams {
   /** Names of all currently registered tools. */
@@ -253,6 +254,8 @@ export function buildFridayAgentSystemPrompt(
     "- CRITICAL: Your response content must be human-readable text, not JSON. Do not output {\"name\":..., \"arguments\":...} or similar structured formats in your response text.\n" +
     "- Give ONE clear, complete answer. Never repeat or rephrase the same answer. If you already answered, do not restate it.\n" +
     "- Keep responses concise. Answer the question directly without unnecessary preamble or repetition.\n" +
+    "\n" +
+    FRIDAY_AGENT_EXECUTION_VOICE_PROMPT +
     "\n" +
     "Error handling & self-recovery (CRITICAL — do not skip):\n" +
     "- MANDATORY: When a tool call fails, you MUST NOT immediately report the failure to the user. Instead follow this sequence:\n" +

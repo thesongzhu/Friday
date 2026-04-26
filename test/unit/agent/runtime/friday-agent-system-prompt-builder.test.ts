@@ -239,6 +239,55 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("A read-only run still may use the current conversation history");
   });
 
+  it("documents the configured execution communication style", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["capabilities", "setup_assistant", "web_search", "skill_generate"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("Execution communication style:");
+    expect(prompt).toContain("Default to Chinese when the language is ambiguous");
+    expect(prompt).toContain("patient private execution assistant");
+    expect(prompt).toContain("Use first person for normal work updates");
+    expect(prompt).toContain("Use \"Friday\" when explaining product capability boundaries");
+    expect(prompt).toContain("Progress updates use smart frequency");
+    expect(prompt).toContain("state the immediate check and why it matters");
+  });
+
+  it("locks failure, missing-capability, and completion replies to closed-loop wording", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["capabilities", "setup", "setup_assistant", "provider"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("give evidence first, then the conclusion");
+    expect(prompt).toContain("include the failed step, the evidence or error, and the concrete next step");
+    expect(prompt).toContain("describe the AGI-like loop");
+    expect(prompt).toContain("search for options, generate or install tools/skills, sandbox-test them, register verified capabilities");
+    expect(prompt).toContain("third-party accounts, API keys, OAuth, payment, CAPTCHA");
+    expect(prompt).toContain("what changed, what was verified, and what risk or out-of-scope item remains");
+  });
+
+  it("guards against stock ChatGPT-style task wording", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["exec"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("Avoid stock acknowledgements");
+    expect(prompt).toContain("当然可以");
+    expect(prompt).toContain("没问题");
+    expect(prompt).toContain("Avoid ChatGPT-template summaries");
+    expect(prompt).toContain("customer-service tone");
+    expect(prompt).toContain("marketing tone");
+    expect(prompt).toContain("excessive apologies");
+    expect(prompt).toContain("false certainty");
+    expect(prompt).toContain("habitual closing offers");
+  });
+
   it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["cron", "spawn_subagent", "feedback"],
