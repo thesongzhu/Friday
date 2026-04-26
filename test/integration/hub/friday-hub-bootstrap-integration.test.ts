@@ -320,6 +320,8 @@ describe("FridayHub Bootstrap Integration", () => {
           {
             kind: "webchat",
             enabled: true,
+            controlConfirmed: true,
+            controlConfirmedAt: now,
             config: {
               wsPath: "/ws/friday",
               authMode: "none",

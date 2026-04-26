@@ -27,6 +27,7 @@ export interface SaveNetworkInput {
 }
 
 export interface SaveChannelsInput {
+  controlConfirmed?: boolean;
   channels: Array<{
     kind: ChannelKind;
     enabled: boolean;

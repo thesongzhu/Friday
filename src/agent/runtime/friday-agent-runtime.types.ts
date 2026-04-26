@@ -36,6 +36,10 @@ export interface FridayAgentExecutionContext {
   interactive?: boolean;
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
   packId?: string;
+  /** Channel kind when the run enters through a connected chat channel. */
+  channelKind?: string;
+  /** Explicit route marker for channel runs that enter the full agent/orchestration path. */
+  channelControlRoute?: "full_agent";
   /** Per-channel persona/role instruction injected by the channel entry adapter. */
   channelPersona?: string;
 }
