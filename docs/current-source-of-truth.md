@@ -2,6 +2,15 @@
 
 This document is the current architecture reference for steady-state Friday runtime behavior.
 
+## Human-facing product boundary
+
+- Friday's public positioning is a local-first personal AI and automation runtime, not an unbounded autonomous system.
+- User-facing docs and UI copy must avoid promising universal automation or fully automatic behavior across arbitrary external systems.
+- The core product loop is: user goal -> capability check -> gap closure -> execution -> verification -> learning.
+- Friday may acquire or generate missing capabilities only through policy-governed discovery, sandbox/test, approval where required, registration, and doctor verification.
+- API keys, OAuth, payment, CAPTCHA, account creation, sensitive OS permissions, and production-impacting actions are human blockers.
+- Self-improvement means auditable updates to memory, routing preferences, setup recipes, skills/workflows, evals, and failure lessons. It does not mean hidden model-weight training by default.
+
 ## Route contract
 
 - HTTP paths remain stable unless an explicit contract migration says otherwise.
@@ -62,6 +71,7 @@ This document is the current architecture reference for steady-state Friday runt
 - `npm run release:verify` is reserved for the real proof pack (`ops:real-green-gate` + no-mock leak scan + truth audit).
 - `/v1/packages*` and `/v1/security/tenants*` are code-present but env-gated. They are only active on runtimes started with `FRIDAY_PACKAGING_ENABLED=true` or `FRIDAY_MULTI_TENANT_ENABLED=true`.
 - Media-understanding primitives exist in the repo, but the current hub runtime does not expose a real provider-registration path for that surface yet. `FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true` must not be treated as proof of a live end-user capability on its own.
+- Missing external provider credentials, OAuth, billing, CAPTCHA, or account permissions must be presented as human blockers, not skipped success.
 - When those gates are off, docs, UI copy, and release notes must describe them as unavailable on the current runtime rather than "implemented" or "ready by default".
 
 ## Self-healing and beginner product surfaces
@@ -85,8 +95,19 @@ This document is the current architecture reference for steady-state Friday runt
 - CLI / external-session providers are valid runtime lanes for read-only text tasks, but they are not proof of native-tool capability. If the active fallback lane is CLI-only, tool-required proof scenarios must stay explicitly bounded instead of being counted as a full provider pass.
 - Provider template truth is tiered as `official`, `verified`, `community`, or `experimental`; setup UI may highlight official and verified templates first but must not hide the rest of the catalog.
 - Provider templates may recommend default and fallback models plus required secret-reference shapes, but they must not silently override the operator's final provider configuration choice.
+- Provider display names must describe the actual configured provider kind and route. Setup and provider truth UI must not preserve stale provider names when the detected kind/base URL/model changes.
 - Canonical secret-ref inputs for provider credentials are `env:NAME`, legacy `$NAME`, `file:/absolute/path`, `secret://...`, and operator-gated `command:...`. Raw inline secrets remain compatibility input only and should be converted into managed secret refs when persisted.
 - Friday's provider reliability plane is Friday-owned. It may normalize supported provider request/response contracts, expose provider health, and drive fallback/circuit state, but it is not a general-purpose reverse proxy for unrelated external AI CLIs or consumer OAuth products.
+
+## Capability acquisition and standing goals
+
+- Capability acquisition is a steady-state product loop: `candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available`.
+- Unverified generated, downloaded, imported, or discovered capability must not be routed as available.
+- Source ranking should prefer installed/trusted local capability before open internet discovery.
+- Open internet discovery is allowed only inside autonomy policy, budget, sandbox, and approval constraints.
+- Standing goals require user authorization with scope, triggers, budget, risk policy, success criteria, and pause/delete controls.
+- Agenda runs must record plan, capability check, execution evidence, verification result, cost where available, failure/rollback notes, and learning updates.
+- Friday must not create unrelated long-term goals for itself.
 
 ## Channel secret and supervisor truth
 
@@ -194,23 +215,23 @@ This document is the current architecture reference for steady-state Friday runt
 - "Self-solving" currently means: detect incidents, diagnose likely causes, propose fixes, auto-execute low-risk fixes, verify outcomes, roll back when verification fails, and pause after repeated failures.
 - In expert mode, "self-solving" also includes bounded context inference, minimal decisive questioning, safe probes, and cross-surface orchestration when those steps stay inside policy.
 - "Self-solving" does **not** currently mean: unrestricted long-horizon autonomous troubleshooting, arbitrary cross-system recovery without policy gates, or full human-level adaptive judgment in ambiguous environments.
-- OpenClaw comparison must stay scope-accurate: Friday matches OpenClaw on the explicitly tracked overlap surfaces in the bridge matrix, but that does not imply full behavioral identity outside that overlap scope.
 - Fleet/distributed execution is intentionally bounded to a single-hub trust domain with static peers, registered satellites, and the trust-scored fleet directory as the active discovery baseline.
 - Offline execution is intentionally limited to continuation and recovery of already-dispatched work; richer offline plan generation or offline trigger creation remains deferred.
 - Full multi-hub federation, cross-hub placement, mDNS/relay/Tailscale-native discovery, and richer mesh coordination remain deferred.
 - ML-heavy anomaly detection, natural-language rule authoring, and marketplace-style expansion for acceptance or rules remain deferred.
 
-## Communication persona and adaptive learning
+## Communication style and adaptive learning
 
-- The MBTI communication persona system is a steady-state product surface, not a deferred feature.
-- `/v1/uix/persona` is the canonical endpoint for reading the resolved persona for the current user.
+- Communication style is a runtime preference and learning surface, not a first-run setup blocker.
+- Setup must not ask users to choose an MBTI-style communication grid before reaching Home.
+- `/v1/uix/persona` remains the canonical endpoint for reading the resolved communication style for the current user.
 - `/v1/uix/preferences` is the canonical CRUD surface for user communication preferences (category: "communication").
-- The persona resolution priority cascade is: explicit preferences > learned preferences > MBTI template defaults > system defaults.
-- The persona prompt fragment is injected into the agent's effective system prompt at runtime (`agent-runtime.ts:1043`). Persona enrichment failure is non-fatal and must not kill the agent run.
-- The `communicationPromptBuilder` callback is constructed in `hub-bootstrap.ts:2266` and reads both explicit preferences (from `uix_user_preferences` table) and learned preferences (from the self-learning context builder).
-- Learned preference facts use a Bayesian-inspired confidence model with 30-day half-life exponential decay, conflict penalty (0.30), and evidence boost (logarithmic diminishing returns).
-- The self-learning context enrichment service is wired through hub bootstrap (`_learningContextRef`) and becomes available after self-learning runtime creation.
-- Persona settings affect wording, guidance, and clarification style only. They must not weaken approval gates, rollback rules, or destructive-action safeguards.
+- The communication style resolution priority cascade is: explicit preferences > learned preferences > system defaults.
+- The communication prompt fragment is injected into the agent's effective system prompt at runtime. Enrichment failure is non-fatal and must not kill the agent run.
+- The communication prompt builder reads both explicit preferences and learned preferences from the self-learning context builder.
+- Learned preference facts use a Bayesian-inspired confidence model with decay, conflict penalty, and evidence boost.
+- The self-learning context enrichment service is wired through hub bootstrap and becomes available after self-learning runtime creation.
+- Communication style affects wording, progress updates, failure phrasing, and clarification style only. It must not weaken approval gates, rollback rules, or destructive-action safeguards.
 - Guided wizard contexts in `/assistant` are persisted in SQLite (`uix_guided_contexts`) and can be resumed after service restart. Onboarding session progress is also persisted in SQLite (`uix_onboarding_sessions`) and restored on boot.
 - Learned preference facts are now user-visible through `/v1/uix/learned-facts` and the current Home/Settings UI surfaces. Direct editing of learned preference facts is not yet part of the current UI surface.
 

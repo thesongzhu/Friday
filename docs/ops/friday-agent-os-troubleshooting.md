@@ -1,8 +1,8 @@
-# Friday Agent OS Troubleshooting
+# Friday Local Runtime Troubleshooting
 
-Use this guide when the macOS Agent OS beta path does not behave as expected.
+Use this guide when the macOS local runtime, companion, auto-start, or channel wake path does not behave as expected.
 
-## Release preflight fails
+## Release Preflight Fails
 
 Symptoms:
 
@@ -11,8 +11,10 @@ Symptoms:
 
 Checks:
 
-1. `security find-identity -v -p codesigning`
-2. `xcrun notarytool history --keychain-profile "$FRIDAY_MACOS_NOTARY_PROFILE"`
+```bash
+security find-identity -v -p codesigning
+xcrun notarytool history --keychain-profile "$FRIDAY_MACOS_NOTARY_PROFILE"
+```
 
 Likely causes:
 
@@ -20,7 +22,7 @@ Likely causes:
 - requested signing identity does not match an installed identity
 - missing or inaccessible `notarytool` keychain profile
 
-## Packaged app is missing
+## Packaged App Is Missing
 
 Symptoms:
 
@@ -29,8 +31,10 @@ Symptoms:
 
 Checks:
 
-1. `bash scripts/ops/release-friday-companion-app.sh`
-2. `bash scripts/ops/build-friday-companion-app.sh`
+```bash
+bash scripts/ops/release-friday-companion-app.sh
+bash scripts/ops/build-friday-companion-app.sh
+```
 
 Expected artifacts:
 
@@ -38,7 +42,7 @@ Expected artifacts:
 - `dist/macos/FridayCompanion.release.json`
 - `dist/macos/FridayCompanion.release.md`
 
-## Companion socket or auth token is missing
+## Companion Socket Or Auth Token Is Missing
 
 Symptoms:
 
@@ -47,95 +51,121 @@ Symptoms:
 
 Checks:
 
-1. `bash scripts/ops/friday-launchagent-status.sh`
-2. `ls .friday/run/`
-3. `tail -n 100 ~/.friday/launchd/friday-companion.stderr.log`
+```bash
+bash scripts/ops/friday-launchagent-status.sh
+ls .friday/run/
+tail -n 100 ~/.friday/launchd/friday-companion.stderr.log
+```
 
 Expected runtime files:
 
 - `.friday/run/system-companion.sock`
 - `.friday/run/system-companion.auth.token`
 
-## Native companion is not selected
+Do not print token contents in shared logs.
+
+## Native Companion Is Not Selected
 
 Symptoms:
 
-- Operator Console reports a fallback runtime
-- companion actions look stale or limited
+- UI reports a fallback companion runtime
+- desktop actions look stale or limited
 
 Checks:
 
-1. `bash scripts/ops/friday-launchagent-status.sh`
-2. Confirm `dist/macos/FridayCompanion.app/Contents/MacOS/FridayCompanion` exists
-3. Restart the companion:
+```bash
+bash scripts/ops/friday-launchagent-status.sh
+test -x dist/macos/FridayCompanion.app/Contents/MacOS/FridayCompanion
+launchctl kickstart -k "gui/${UID}/com.friday.companion"
+```
+
+The Node daemon is a development fallback only.
+
+## macOS Permissions Are Missing
+
+Symptoms:
+
+- companion health is degraded
+- desktop or browser-adjacent actions fail
+- safe mode appears immediately
+
+Check these macOS permissions:
+
+1. Accessibility
+2. Screen Recording
+3. Input Monitoring, if requested
+
+After changing permissions:
 
 ```bash
 launchctl kickstart -k "gui/${UID}/com.friday.companion"
 ```
 
-Note:
-
-The Node daemon is a development fallback only. External beta use should prefer the packaged native app.
-
-## macOS permissions are missing
-
-Symptoms:
-
-- system health is degraded
-- UI actions fail or safe mode appears immediately
+## UI Does Not Open After Login
 
 Checks:
 
-1. Accessibility permission
-2. Screen Recording permission
-3. Input Monitoring permission if requested
+```bash
+curl -sS http://127.0.0.1:3141/v1/health
+bash scripts/ops/friday-launchagent-status.sh
+tail -n 100 ~/.friday/launchd/friday.stderr.log
+tail -n 100 ~/.friday/launchd/friday.stdout.log
+```
 
-After changing permissions, restart the companion:
+Expected behavior:
+
+- hub listens on loopback
+- `/v1/health` returns ok
+- browser opens the local Friday UI once per login/boot session
+- setup-complete users land on Home
+
+## Channel Cannot Wake Or Control Friday
+
+Channel wake means "Friday is already running and can receive the channel event." It does not mean "the channel can wake a sleeping computer."
+
+Check:
+
+- hub health
+- channel credentials
+- channel supervisor state
+- sender allowlist/identity
+- action risk level
+- approval requirement
+
+Sensitive actions requested through a channel must still go through confirmation.
+
+## Provider Or Capability Looks Wrong After Restart
+
+Run:
+
+```bash
+curl -sS http://127.0.0.1:3141/v1/providers/health
+curl -sS http://127.0.0.1:3141/v1/model-routing
+curl -sS http://127.0.0.1:3141/v1/providers/routing/explain
+```
+
+If the configured provider name, route, or model does not match setup, re-save the provider from setup/settings and re-run doctor verification.
+
+## Safe Mode Does Not Clear
+
+Symptoms:
+
+- recovery returns but health remains degraded
+- active control lease is not released
+
+Recovery:
 
 ```bash
 launchctl kickstart -k "gui/${UID}/com.friday.companion"
 ```
 
-## Passkey enrollment or assertion fails
+Then refresh the UI and inspect system state.
 
-Symptoms:
+## What Remains External
 
-- remote session open is rejected
-- device exists but shows no verified passkey
+These cannot be proven by the local repo alone:
 
-Checks:
-
-1. Re-open the Operator Console and inspect the device entry
-2. Confirm the device is active
-3. Confirm the request originates from a private-network address
-
-Recovery path:
-
-1. Clear the device passkey in the Operator Console
-2. Re-enroll the device
-3. Re-run the assertion flow before opening a remote session
-
-## Recovery does not clear safe mode
-
-Symptoms:
-
-- `recover_ui` returns but health remains degraded
-- the active control lease is not released
-
-Checks:
-
-1. Restart the companion:
-
-```bash
-launchctl kickstart -k "gui/${UID}/com.friday.companion"
-```
-
-2. Refresh the Operator Console and inspect `/v1/system/state`
-3. Confirm the companion permissions are still granted
-
-## What is still external
-
-These steps cannot be proven by the local repo alone:
-
-- a real signed and notarized production artifact with Apple credentials
-- a clean-machine beta smoke run executed on the packaged native companion
+- Apple signing/notarization without valid Apple credentials
+- clean-machine beta smoke runs
+- third-party provider account state
+- OAuth, payment, CAPTCHA, or external platform approval

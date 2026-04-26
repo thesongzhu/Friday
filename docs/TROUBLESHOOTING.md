@@ -1,10 +1,8 @@
-# Friday Troubleshooting & Self-Recovery
+# Friday Troubleshooting
 
-This guide is for fast local recovery when Friday fails to start or run.
+Use this guide when Friday fails to start, setup gets stuck, a provider looks wrong, or a capability does not close the loop.
 
-## 1) Collect Basic Signals
-
-Run these first:
+## First Checks
 
 ```bash
 node --version
@@ -13,196 +11,222 @@ friday --help
 curl -sS http://127.0.0.1:3141/v1/health
 ```
 
-If `friday` command is missing, use source mode:
+If the `friday` command is missing in source mode:
 
 ```bash
+npm run build
 node dist/cli/friday-cli.js --help
 ```
 
-## 2) Where Logs and State Live
+## Logs And State
 
 Friday stores runtime state under `FRIDAY_STATE_DIR`.
 
-If `FRIDAY_STATE_DIR` is unset, default state path is OS-specific:
+Default state paths:
 
 - macOS: `~/Library/Application Support/Friday/state`
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/friday`
 - Windows: `%LOCALAPPDATA%/Friday/state`
 - Legacy fallback: `~/.friday/state`
 
-Key files:
+Important files:
 
 - SQLite DB: `<stateDir>/friday.db`
 - Config: `<stateDir>/config.json5`
-- Audit log (JSONL): `<stateDir>/.friday/audit.jsonl`
+- Audit log: `<stateDir>/.friday/audit.jsonl`
 
-## 3) Turn On Debug-Friendly Output
+## Local Runtime Doctor
 
-Friday currently exposes request-level debug logging via `FRIDAY_LOG_REQUESTS`.
-
-```bash
-NODE_ENV=development FRIDAY_LOG_REQUESTS=true friday start --host 127.0.0.1 --port 3141
-```
-
-For isolated repro runs:
-
-```bash
-FRIDAY_STATE_DIR=.friday/debug-state NODE_ENV=development FRIDAY_LOG_REQUESTS=true friday start
-```
-
-### Local UI/API doctor
-
-Friday now includes a local runtime doctor that classifies common port and assembly mistakes:
+Run the doctor before guessing:
 
 ```bash
 npm run ops:doctor:runtime
-npm run ops:doctor:runtime -- --port 3141 --port 5173
-npm run ops:doctor:runtime -- --url http://127.0.0.1:50576 --url http://127.0.0.1:19487
+npm run ops:doctor:runtime -- --port 3141 --port 5173 --port 4173
 ```
 
-It checks:
+It checks whether:
 
-- whether `/` returns the UI shell or an API-only 404
-- whether `/v1/health` is reachable on the same origin
-- whether local bypass login is available
-- whether `/v1/setup/status` works with and without auth
+- `/` returns the UI shell
+- `/v1/health` works on the same origin
+- local bootstrap/login is available
+- `/v1/setup/status` works after auth
 
-Use it first when the browser shows **Setup status unavailable** or a raw JSON `No route matches GET /` page.
+## Friday Opens A Recovery Or Auth Page
 
-## 4) FAQ / Common Failures
+Possible causes:
 
-### Q: `friday: command not found`
+- setup is incomplete
+- local session expired
+- local bootstrap passphrase is missing
+- auth policy changed
+- the UI opened before the hub finished starting
 
-Cause: CLI not linked or package not installed globally.
+Recovery:
+
+```bash
+curl -sS http://127.0.0.1:3141/v1/health
+npm run ops:doctor:runtime -- --port 3141
+```
+
+Then reload the UI. If setup is complete, Friday should route to Home.
+
+## Setup Shows The Wrong Provider Name
+
+The provider card should show the current live route, not stale setup text.
+
+Check provider state:
+
+```bash
+curl -sS http://127.0.0.1:3141/v1/providers/health
+curl -sS http://127.0.0.1:3141/v1/model-routing
+curl -sS http://127.0.0.1:3141/v1/providers/routing/explain
+```
+
+If you configured OpenAI but see another provider name, verify:
+
+- provider kind
+- base URL
+- default model
+- routing default provider ID
+- setup provider list
+
+Friday should repair known stale display-name cases on startup, but a provider should still be re-saved from setup if route truth and UI truth disagree.
+
+## A Capability Is Missing
+
+Friday should not say a missing lane is working. Ask:
+
+```text
+What capabilities are available, what is missing, and what exact setup step is blocked by me?
+```
+
+Expected answer shape:
+
+- capability name
+- status
+- missing provider/API/account/permission
+- configuration location
+- verification step
+
+Human blockers include API keys, OAuth, paid plans, CAPTCHA, logins, sensitive permissions, and production-impacting actions.
+
+## Provider Key Fails
+
+Common causes:
+
+- invalid or expired key
+- provider account not enabled for the requested model
+- wrong base URL
+- wrong API family
+- quota or billing issue
+- network block
 
 Fix:
 
-```bash
-npm run build
-npm link
-friday --help
-```
+1. Re-enter the provider in setup/settings.
+2. Run provider doctor.
+3. Execute a small representative task.
+4. Confirm Friday marks the lane available only after verification.
 
-### Q: `Cannot find dist/cli/friday-cli.js`
+Do not commit keys to the repo or paste them into public issues.
 
-Cause: project not built yet.
+## Channel Receives Messages But Cannot Control Friday
 
-Fix:
+Check:
 
-```bash
-npm run build
-npm start
-```
+- hub is running
+- channel credentials are valid
+- channel supervisor is healthy
+- sender identity is allowed
+- requested action is within policy
+- high-risk action has a confirmation path
 
-### Q: Port `3141` already in use
+For macOS login startup, see [macOS Auto-Start](ops/friday-autostart-macos.md).
 
-Fix by picking another port:
+Channel wake means Friday can respond while the machine is awake and the runtime is running. It does not mean the channel can wake a sleeping computer from the network.
+
+## Generated Skill Fails Verification
+
+A generated skill should not become routable until verification passes.
+
+Check:
+
+- manifest validity
+- package integrity
+- runtime dependencies
+- permission request
+- dry-run output
+- sandbox verdict
+- audit evidence
+
+Recovery:
+
+1. Keep the failed skill disabled.
+2. Inspect verification evidence.
+3. Patch or regenerate.
+4. Re-run sandbox/test.
+5. Approve only after verification passes.
+
+## Port Already In Use
 
 ```bash
 friday start --port 32141
 curl http://127.0.0.1:32141/v1/health
 ```
 
-### Q: Browser shows `No route matches GET /`
+Or set:
 
-Cause: you reached an API-only port, or Friday was started without a mounted UI bundle.
+```bash
+export FRIDAY_PORT=32141
+```
 
-Fix:
+## Browser Shows `No route matches GET /`
+
+Cause: you reached an API-only port or Friday started without a mounted UI bundle.
+
+Fix from source:
 
 ```bash
 npm run build
 FRIDAY_UI_DIST_DIR=/Users/you/Projects/Friday/dist/ui NODE_ENV=development friday start --host 127.0.0.1 --port 3141
 ```
 
-Then open:
+Open:
 
-```bash
+```text
 http://127.0.0.1:3141/
 ```
 
-### Q: Browser shows `Setup status unavailable`
+## Setup Status Unavailable
 
-Cause: the frontend shell loaded, but the same origin could not successfully complete `GET /v1/setup/status`.
+Cause: the UI shell loaded, but `GET /v1/setup/status` failed.
 
 Common reasons:
 
-- the current origin is not proxying `/v1/*` to the Friday API
-- the session is unauthenticated or missing setup-read permission
-- local no-sign-in mode is disabled by auth policy
+- current origin is not proxying `/v1/*` to the Friday API
+- session is unauthenticated
+- setup-read permission is missing
+- local bootstrap is disabled
 
-Fix:
+Run:
 
 ```bash
 npm run ops:doctor:runtime -- --port 3141 --port 5173 --port 4173
 ```
 
-Prefer the target where:
+Use the target where `/`, `/v1/health`, and `/v1/setup/status` work together.
 
-- `GET /` returns HTML
-- `GET /v1/health` returns `200`
-- `GET /v1/setup/status` returns `200` after login
+## Escalation Bundle
 
-### Q: Local login (`{"local":true}`) fails
-
-Cause: passwordless local login is disabled when `FRIDAY_TOKEN_SECRET` is set in non-dev mode.
-
-Fix:
-
-```bash
-unset FRIDAY_TOKEN_SECRET
-NODE_ENV=development friday start
-```
-
-For production, keep `FRIDAY_TOKEN_SECRET` set and use normal credential/token flow.
-
-### Q: Demo script fails before run starts
-
-Run with full context output:
-
-```bash
-npm run demo
-```
-
-The demo script prints:
-
-- state directory
-- DB path
-- audit log path
-- server stdout/stderr tails
-
-Use those paths first; do not guess.
-
-### Q: Workflow run stays non-terminal
-
-Check run status and timeline:
-
-```bash
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:3141/v1/workflow-runs/<runId>
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:3141/v1/workflow-runs/<runId>/timeline
-```
-
-Then inspect audit entries:
-
-```bash
-tail -n 200 "<stateDir>/.friday/audit.jsonl"
-```
-
-## 5) Fast Recovery Checklist
-
-1. `npm run build`
-2. `npm test` (or targeted failing suite)
-3. Run with isolated state dir (`FRIDAY_STATE_DIR=.friday/debug-state`)
-4. Verify `/v1/health`
-5. Re-run the exact failing command
-6. Capture stdout/stderr + audit log tail + run ID
-
-## 6) Escalation Artifact Bundle (for issue/PR)
-
-Include:
+When filing an issue, include:
 
 - command used
 - exact error output
 - `node --version` and `npm --version`
+- OS and install method
 - state directory path
-- failing `runId` / `workflowId` if available
-- relevant audit log excerpt
+- relevant run ID, workflow ID, or provider ID
+- sanitized audit/log excerpt
+- what you expected Friday to do
+
+Do not include API keys, channel tokens, screenshots with secrets, private documents, or personal credentials.

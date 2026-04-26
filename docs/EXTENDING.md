@@ -1,10 +1,19 @@
-# Extending Friday: Skills, Plugins, and Workflows
+# Extending Friday
 
-This guide defines directory conventions, templates, and a minimal contributor flow.
+Friday can be extended with skills, workflows, providers, channels, MCP servers, and setup recipes. Extension work should make Friday more capable without making it less inspectable or less safe.
 
-## 1) Recommended Directory Layout
+## Extension Principles
 
-Use this structure in your repo/workspace:
+1. A new capability is not available until it is verified.
+2. Permissions must be explicit and understandable.
+3. Untrusted code must pass review, sandbox checks, and policy gates.
+4. Setup must explain missing credentials, accounts, or permissions.
+5. Failures must leave evidence and a recovery path.
+6. High-risk actions must stop for approval.
+
+## Directory Layout
+
+Recommended workspace structure:
 
 ```text
 .
@@ -24,42 +33,93 @@ Use this structure in your repo/workspace:
    └─ workflows/
 ```
 
-## 1.5) Workspace Context vs Skills
+## Skills
 
-Friday supports a thin workspace-context layer alongside executable extensions.
+Skills are reusable execution capabilities. A skill should include:
 
-- `AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, and `memory/YYYY-MM-DD.md` shape repo-local prompt context.
-- `skills/` hold reusable execution capability with manifests, permissions, and structured inputs and outputs.
-- agent automations and workflows orchestrate repeated or scheduled tasks.
+- stable ID and version
+- clear description
+- structured inputs and outputs
+- runtime requirements
+- permission declaration
+- dry-run or test path
+- docs or examples
+- trust and review guidance
 
-Keep `AGENTS.md` short and policy-focused. If a behavior needs validation, reuse, installability, or permissions, it belongs in a skill instead of prose.
+Skill IDs should be stable, lowercase, and kebab-case.
 
-See [Workspace Context Files](workspace-context.md) for the recommended split.
+## Workflows
 
-## 2) Naming Conventions
+Workflows connect capabilities into repeatable multi-step tasks. A workflow should define:
 
-- Skill directory: kebab-case (`hello-skill`)
-- Skill ID: stable, lowercase, no spaces (`hello-skill` or team prefix)
-- Plugin ID: reverse-domain style (`com.example.channel.demo`)
-- Workflow slug: lowercase + hyphen (`daily-sync`)
+- trigger
+- inputs
+- steps
+- approvals
+- retries
+- verification
+- failure behavior
+- evidence output
 
-## 3) Templates You Can Copy
+Production-impacting workflow steps should include rollback or a clear operator handoff.
 
-Available templates in this repository:
+## Providers
 
-- `examples/templates/skills/hello-skill/`
-- `examples/templates/plugins/sample-channel-plugin/`
-- `examples/templates/workflows/minimal-template.workflow.json`
+Provider integrations must support setup truth:
 
-Copy and customize:
+- provider kind
+- supported capabilities
+- auth mode
+- credential shape
+- base URL
+- default and supported models
+- doctor verification
+- representative task
+- failure classification
 
-```bash
-cp -R examples/templates/skills/hello-skill skills/my-skill
-cp -R examples/templates/plugins/sample-channel-plugin plugins/com.example.channel.demo
-cp examples/templates/workflows/minimal-template.workflow.json workflows/my-flow.workflow.json
+Do not mark a provider lane healthy because a form field exists. Health must come from route checks or representative tasks.
+
+## Channels
+
+Channel integrations can let users talk to and control Friday from outside the web UI.
+
+Channel extensions should define:
+
+- inbound message shape
+- outbound delivery
+- credential storage
+- allowlist or identity model
+- wake/control semantics
+- audit behavior
+- confirmation path for high-risk actions
+
+Channels may control Friday, but they must not bypass the same approval gates used in the web UI.
+
+## MCP Servers
+
+MCP server integration should expose:
+
+- server name
+- connection state
+- authenticated state
+- tools/resources available
+- required credentials or setup blockers
+- risk class for tools
+- verification result
+
+If an MCP requirement is not connected or authenticated, Friday should fail closed with a structured blocker.
+
+## Capability Acquisition
+
+Generated or discovered capability should follow:
+
+```text
+candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available
 ```
 
-## 4) Minimal Local Dev Loop
+Trusted installed sources should rank above open internet sources. Open internet discovery can be useful, but installation and execution remain governed by policy, sandboxing, budget, and approval.
+
+## Local Dev Loop
 
 ```bash
 npm run build
@@ -73,34 +133,7 @@ friday list --skills-dir skills
 friday run <skill-id> --input key=value --skills-dir skills
 ```
 
-For workflow extension validation, you can use the one-command local run:
-
-```bash
-npm run demo
-```
-
-## 5) Plugin Manifest Baseline
-
-A plugin must include:
-
-- `schemaVersion: "1.0"`
-- valid `id`, `version`, `name`, `description`
-- `kinds` and matching `entrypoints`
-- `permissions` (`grants` + `promptOn`)
-- `compatibility` (`minHubVersion`, `apiVersion`)
-
-Reference implementation in this repo:
-
-- `src/plugins/manifest/friday-plugin-manifest.schema.ts`
-
-## 6) Contribution Rules for Extensibility Changes
-
-When adding or changing extension points:
-
-1. Keep manifest compatibility explicit (no silent behavior changes).
-2. Add or update tests in related `test/unit/*` suites.
-3. Update docs and templates in the same PR.
-4. Run local quality gates before opening PR:
+Quality gates:
 
 ```bash
 npm run typecheck
@@ -108,3 +141,19 @@ npm run lint
 npm run build
 npm test
 ```
+
+Security-sensitive extensions should also run:
+
+```bash
+npm run check:security-doctor
+npm run check:audit-integrity
+```
+
+## Documentation Requirement
+
+Any extension that changes setup, capabilities, provider behavior, channel behavior, permissions, or user-facing errors must update relevant docs:
+
+- [Getting Started](getting-started.md)
+- [Capability Matrix](ops/friday-capability-matrix.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Security](../.github/SECURITY.md)
