@@ -77,7 +77,10 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
         console.log(`   Open ${url} in your browser to get started.`);
 
         // Auto-open browser for local mode (not when binding to all interfaces for remote access).
-        if (listenHost === "127.0.0.1" || listenHost === "localhost") {
+        if (
+          process.env.FRIDAY_AUTO_OPEN_UI !== "false" &&
+          (listenHost === "127.0.0.1" || listenHost === "localhost")
+        ) {
           const { command, args } = buildOpenBrowserUrlCommand(url);
           execFile(command, args, { windowsHide: true }, () => {
             // Best-effort — ignore errors (e.g., headless server, no display).

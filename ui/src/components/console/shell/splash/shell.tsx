@@ -25,6 +25,7 @@ export interface SplashShellProps {
   pills?: SplashPill[];
   steps?: SplashStep[];
   actions?: SplashAction[];
+  children?: ReactNode;
   visual?: ReactNode;
   accentColor?: string;
 }
@@ -43,7 +44,7 @@ const STEP_DOT: Record<NonNullable<SplashStep["status"]>, string> = {
 };
 
 export function SplashShell(props: SplashShellProps) {
-  const { eyebrow, title, body, pills, steps, actions, visual, accentColor } = props;
+  const { eyebrow, title, body, pills, steps, actions, children, visual, accentColor } = props;
 
   return (
     <div
@@ -106,6 +107,8 @@ export function SplashShell(props: SplashShellProps) {
             ))}
           </ol>
         ) : null}
+
+        {children ? <div className="mt-6">{children}</div> : null}
 
         {actions && actions.length > 0 ? (
           <div className="mt-6 flex flex-wrap justify-center gap-3">

@@ -180,7 +180,7 @@ export function ProviderTruthCard(props: {
   const primaryAlert = truth?.alerts[0];
   const current = truth?.current;
   const cardCopy = {
-    eyebrow: localize(locale, "真 Provider / 真路由", "Live provider / live route"),
+    eyebrow: localize(locale, "当前实际路由", "Current live route"),
     title: current?.providerName
       ?? (loading
         ? localize(locale, "正在读取当前 provider", "Reading current provider")
@@ -193,8 +193,8 @@ export function ProviderTruthCard(props: {
     ),
     source: localize(
       locale,
-      "数据来自真实 /v1/providers/health、/v1/model-routing、/v1/providers/routing/explain。",
-      "Data comes from live /v1/providers/health, /v1/model-routing, and /v1/providers/routing/explain.",
+      "这不是 setup 输入回显；这是 Friday 当前执行任务会实际使用的路由。数据来自 /v1/providers/health、/v1/model-routing、/v1/providers/routing/explain。",
+      "This is not a setup form echo; it is the route Friday will actually use for work. Data comes from /v1/providers/health, /v1/model-routing, and /v1/providers/routing/explain.",
     ),
   };
 
@@ -297,12 +297,12 @@ export function ProviderTruthCard(props: {
         </p>
       )}
 
-      {truth?.usingAdjustedRoute && truth.configured ? (
+      {truth?.configured ? (
         <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            `默认配置: ${truth.configured.providerName} / ${truth.configured.model}`,
-            `Configured default: ${truth.configured.providerName} / ${truth.configured.model}`,
+            `Setup / 默认配置: ${truth.configured.providerName} / ${truth.configured.model}`,
+            `Setup / configured default: ${truth.configured.providerName} / ${truth.configured.model}`,
           )}
         </p>
       ) : null}

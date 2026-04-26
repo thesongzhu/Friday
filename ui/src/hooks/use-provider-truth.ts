@@ -92,6 +92,13 @@ function resolveProviderName(
   providerId: string,
   providerKind?: FridayProviderKind,
 ): string {
+  if (
+    profile?.kind === "openai" &&
+    /(?:moonshot|kimi|月之暗面)/i.test(profile.name) &&
+    /api\.openai\.com/i.test(profile.baseUrl)
+  ) {
+    return "OpenAI Provider";
+  }
   return profile?.name ?? providerKind ?? providerId;
 }
 
