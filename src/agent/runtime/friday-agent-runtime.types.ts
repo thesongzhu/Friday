@@ -30,6 +30,10 @@ import type {
 import type { FridayAgentStarterSkillRoutingConfig } from "./friday-agent-starter-skill-routing.js";
 import type { FridayAgentCompactionBridge } from "./friday-agent-compaction-bridge.js";
 import type { FridayCompactionMemorySink } from "./friday-agent-compaction-memory-sink.js";
+import type {
+  FridayAgentPromptProfile,
+  FridayAgentToolRoutingDecision,
+} from "./friday-agent-tool-routing.js";
 
 export interface FridayAgentExecutionContext {
   surface?: string;
@@ -131,10 +135,15 @@ export interface FridayAgentSystemPromptContext {
   task?: string;
   executionContext?: FridayAgentExecutionContext;
   conversationContext?: FridayAgentConversationContext;
+  promptProfile?: FridayAgentPromptProfile;
+  contextPolicy?: {
+    workspaceContext?: "auto" | "skip";
+  };
+  toolRouting?: FridayAgentToolRoutingDecision;
 }
 
 export interface FridayAgentContextCostComponent {
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents" | "tool_routing";
   estimatedChars: number;
   count?: number;
   metadata?: Record<string, unknown>;

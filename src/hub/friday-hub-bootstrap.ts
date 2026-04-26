@@ -2983,28 +2983,45 @@ export async function createFridayHub(
     conversationContext?: {
       selectedBlocks?: FridayConversationBlock[];
     };
+    promptProfile?: "standard" | "minimal";
+    contextPolicy?: {
+      workspaceContext?: "auto" | "skip";
+    };
+    toolRouting?: {
+      profile: string;
+      promptProfile: string;
+      workspaceContextPolicy: string;
+      selectedToolNames: string[];
+      deferredToolNames: string[];
+      selectedToolPacks: string[];
+      reason: string;
+    };
   }) => {
     let workspaceContext: string | undefined;
     let workspaceContextSummary:
       | Awaited<ReturnType<typeof loadFridayWorkspaceContext>>["summary"]
       | undefined;
-    try {
-      const ctx = await resolveFridayContextEnginePromptFragment(agentContextEngine, {
-        task: input.task,
-        conversationContext: input.conversationContext,
-      });
-      if (ctx.promptFragment) {
-        workspaceContext = ctx.promptFragment;
+    const skipWorkspaceContext = input.promptProfile === "minimal"
+      || input.contextPolicy?.workspaceContext === "skip";
+    if (!skipWorkspaceContext) {
+      try {
+        const ctx = await resolveFridayContextEnginePromptFragment(agentContextEngine, {
+          task: input.task,
+          conversationContext: input.conversationContext,
+        });
+        if (ctx.promptFragment) {
+          workspaceContext = ctx.promptFragment;
+        }
+        workspaceContextSummary = ctx.workspaceContext?.summary;
+      } catch (err) {
+        warnHubBootstrapOperationFailureOnce(err);
+        // Non-fatal: workspace context loading failure should not block agent runs.
       }
-      workspaceContextSummary = ctx.workspaceContext?.summary;
-    } catch (err) {
-      warnHubBootstrapOperationFailureOnce(err);
-      // Non-fatal: workspace context loading failure should not block agent runs.
     }
 
     // ── World model context injection (C4) ──
     // Load recent interactions so the agent has access to learned knowledge.
-    if (input.userId) {
+    if (input.userId && !skipWorkspaceContext) {
       try {
         const recentInteractionsRequested = typeof input.task === "string"
           && /\brecent(?:[-\s])interactions\b/i.test(input.task);
@@ -3121,7 +3138,9 @@ export async function createFridayHub(
         // Non-fatal: custom-pack context loading failure should not block agent runs.
       }
     }
-    const starterSkills = listInstalledStarterSkills().slice(0, 8);
+    const starterSkills = input.promptProfile === "minimal"
+      ? []
+      : listInstalledStarterSkills().slice(0, 8);
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: input.toolNames,
       modelIdentity: agentModelIdentity,
@@ -3130,6 +3149,7 @@ export async function createFridayHub(
       starterSkills,
       enforceStarterSkillRouting: starterSkillRoutingEnforced,
       subagentForkModeEnabled,
+      promptProfile: input.promptProfile,
       currentTime: {
         nowIso: input.nowIso,
         timezone: input.timezone,
@@ -3203,6 +3223,20 @@ export async function createFridayHub(
             estimatedChars: 96,
             count: 1,
             metadata: { enabled: true },
+          }
+        : null,
+      input.toolRouting
+        ? {
+            kind: "tool_routing" as const,
+            estimatedChars: input.toolNames.join(",").length,
+            count: input.toolNames.length,
+            metadata: {
+              profile: input.toolRouting.profile,
+              selectedToolPacks: input.toolRouting.selectedToolPacks,
+              deferredToolCount: input.toolRouting.deferredToolNames.length,
+              workspaceContextPolicy: input.toolRouting.workspaceContextPolicy,
+              reason: input.toolRouting.reason,
+            },
           }
         : null,
     ].filter((component): component is NonNullable<typeof component> => component !== null);

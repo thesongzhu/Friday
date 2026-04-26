@@ -91,7 +91,11 @@ import { summarizeToolCall } from "../services/friday-tool-call-summary.js";
 import { assessDegradation, getDegradationSystemPrompt } from "./friday-agent-degradation-handler.js";
 import { filterToolsByMode, FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./friday-agent-operational-mode.js";
 import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
-import { partitionFridayAgentTools } from "../tools/friday-agent-tool-registry.js";
+import {
+  createFridayAgentToolPackRequestTool,
+  resolveFridayAgentToolNamesForPacks,
+  resolveFridayAgentToolRouting,
+} from "./friday-agent-tool-routing.js";
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
 const TERMINAL_CONTEXT_ENGINE_STATUSES: ReadonlySet<FridayAgentRunStatus> = new Set([
@@ -752,6 +756,57 @@ export function createFridayAgentRuntime(
         params.timezone,
         readPreferredTimezone(learnedPreferences),
       );
+      const baseRunTools = [...toolMap.values()];
+      const runToolMap = new Map(toolMap);
+      const toolRouting = resolveFridayAgentToolRouting({
+        task: params.task,
+        tools: baseRunTools,
+        disabledToolNames,
+        images: params.images,
+        conversationContext,
+        executionContext,
+      });
+      const requestedToolPacks = new Set<string>();
+      const toolPackRequestTool = toolRouting.profile !== "trivial" && toolRouting.deferredToolNames.length > 0
+        ? createFridayAgentToolPackRequestTool({
+            availableTools: baseRunTools,
+            disabledToolNames,
+            onRequest: (request) => {
+              requestedToolPacks.add(request.pack);
+              handleTrackedEvent("agent.run.tool_pack_requested", {
+                runId,
+                pack: request.pack,
+                loadedToolNames: request.loadedToolNames,
+                reason: request.reason,
+              });
+            },
+          })
+        : undefined;
+      if (toolPackRequestTool) {
+        runToolMap.set(toolPackRequestTool.name, toolPackRequestTool);
+      }
+      const buildVisibleToolNames = (): string[] => {
+        const visible = new Set(toolRouting.selectedToolNames);
+        for (const toolName of resolveFridayAgentToolNamesForPacks(
+          requestedToolPacks,
+          baseRunTools,
+          disabledToolNames,
+        )) {
+          visible.add(toolName);
+        }
+        if (toolPackRequestTool) {
+          visible.add(toolPackRequestTool.name);
+        }
+        return [...visible].filter((toolName) => runToolMap.has(toolName));
+      };
+      const buildVisibleLlmTools = (): FridayAgentToolDefinition[] => {
+        const visibleNames = new Set(buildVisibleToolNames());
+        const visibleTools = tools.filter((tool) => visibleNames.has(tool.name));
+        if (toolPackRequestTool && visibleNames.has(toolPackRequestTool.name)) {
+          visibleTools.push(toolPackRequestTool);
+        }
+        return visibleTools;
+      };
       const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
       let toolErrorRecoveryCount = 0;
@@ -1384,16 +1439,22 @@ export function createFridayAgentRuntime(
         );
 
         // ─── Build system prompt dynamically from current tool set ───
+        const initialPromptToolNames = buildVisibleToolNames();
         const promptBuildResult = systemPromptBuilder
           ? await Promise.resolve(systemPromptBuilder({
             userId: principalId,
-            toolNames: [...toolMap.keys()],
+            toolNames: initialPromptToolNames,
             nowIso: runTimeContext.nowIso,
             timezone: runTimeContext.timezone,
             localDate: runTimeContext.localDate,
             task: params.task,
             executionContext,
             conversationContext,
+            promptProfile: toolRouting.promptProfile,
+            contextPolicy: {
+              workspaceContext: toolRouting.workspaceContextPolicy,
+            },
+            toolRouting,
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
         const baseSystemPrompt = typeof promptBuildResult === "string"
@@ -1404,7 +1465,8 @@ export function createFridayAgentRuntime(
           : promptBuildResult.contextCostSummary;
 
         let effectiveSystemPrompt = baseSystemPrompt;
-        if (deps.compactionContextBuilder && params.sessionKey) {
+        const skipSupplementalContext = toolRouting.promptProfile === "minimal";
+        if (!skipSupplementalContext && deps.compactionContextBuilder && params.sessionKey) {
           try {
             const fragment = await deps.compactionContextBuilder({
               userId: principalId,
@@ -1434,7 +1496,7 @@ export function createFridayAgentRuntime(
         }
 
         // ── Inject learned lessons (GAP 5) ──
-        if (deps.learnedLessons) {
+        if (!skipSupplementalContext && deps.learnedLessons) {
           try {
             const lessons = deps.learnedLessons();
             if (lessons.length > 0) {
@@ -1463,8 +1525,9 @@ export function createFridayAgentRuntime(
         // ─── Degradation assessment ───
         // Only assess degradation when tools were configured but some are unavailable.
         // Skip when no tools were registered at all (e.g. minimal/test configurations).
-        const activeToolValues = [...toolMap.values()];
-        const degradationLevel = depsTools.length > 0 ? assessDegradation(activeToolValues) : "nominal" as const;
+        const degradationLevel = toolRouting.promptProfile === "minimal"
+          ? "nominal" as const
+          : depsTools.length > 0 ? assessDegradation(baseRunTools) : "nominal" as const;
         // Track which configured tools are actually unavailable at runtime.
         const unavailableToolNames = degradationLevel !== "nominal"
           ? depsTools.filter((t) => !toolMap.has(t.name)).map((t) => t.name)
@@ -1511,16 +1574,11 @@ export function createFridayAgentRuntime(
           }
         }
 
-        // ─── Deferred tool hints ───
-        if (depsTools.length > 0) {
-          const partitioned = partitionFridayAgentTools(activeToolValues);
-          if (partitioned.deferred.length > 0) {
-            const hints = partitioned.deferred.map((t) => `- ${t.name}: ${t.description}`).join("\n");
-            effectiveSystemPrompt +=
-              "\n\nAdditional tools available on demand (not loaded in this prompt):\n" +
-              hints +
-              "\nIf you need one of these tools, inform the user which tool you require.";
-          }
+        // ─── Compact deferred tool-pack hint ───
+        if (toolPackRequestTool && toolRouting.deferredToolNames.length > 0) {
+          effectiveSystemPrompt +=
+            "\n\nAdditional Friday tool packs can be loaded on demand with request_tool_pack. " +
+            "Use it before telling the user a browser, desktop, provider/setup, workflow, skill, memory, media, or autonomy capability is missing.";
         }
 
         let iterations = 0;
@@ -1702,14 +1760,15 @@ export function createFridayAgentRuntime(
             repairOrphanedToolUseBlocks(messages);
 
             // Filter tools based on operational mode so the LLM only sees allowed tools
+            const routedTools = buildVisibleLlmTools();
             const llmTools = shouldHideToolsFromLlm({
               executionContext,
               operationalMode: runOperationalMode,
             })
               ? []
               : runOperationalMode && runOperationalMode !== "execute"
-                ? filterToolsByMode(tools, runOperationalMode)
-                : tools;
+                ? filterToolsByMode(routedTools, runOperationalMode)
+                : routedTools;
 
             try {
               streamResult = await streamLlmResponse({
@@ -1757,7 +1816,7 @@ export function createFridayAgentRuntime(
                 handleTrackedEvent("agent.run.degraded", {
                   runId,
                   level: "conversational",
-                  unavailableTools: activeToolValues.map((t) => t.name),
+                  unavailableTools: baseRunTools.map((t) => t.name),
                   message: `LLM provider temporarily unavailable: ${llmErrorMsg}`,
                 });
 
@@ -2095,7 +2154,7 @@ export function createFridayAgentRuntime(
                       limit: 1,
                     },
                   },
-                  toolMap,
+                  toolMap: runToolMap,
                   signal: runAbortController.signal,
                   runId,
                   sessionKey,
@@ -2233,7 +2292,7 @@ export function createFridayAgentRuntime(
           const toolCallRecordsByIndex = new Map<number, FridayAgentToolCallRecord>();
           const executableToolUses: Array<{ index: number; toolUse: FridayAgentToolUseBlock }> = [];
           let autoStartedSkillGenerationThisTurn = false;
-          const hasSkillGenerateTool = activeToolValues.some((tool) => tool.name === "skill_generate");
+          const hasSkillGenerateTool = baseRunTools.some((tool) => tool.name === "skill_generate");
           const skillGenerationTask = isSkillGenerationTask(params.task);
           const explicitAutonomousTask = shouldEnforceExplicitAutonomousTaskRouting(
             params.task,
@@ -2244,7 +2303,7 @@ export function createFridayAgentRuntime(
             console.warn("[friday][agent-runtime] skill-generation-toolset", {
               runId,
               hasSkillGenerateTool,
-              activeSkillTools: activeToolValues
+              activeSkillTools: baseRunTools
                 .map((tool) => tool.name)
                 .filter((name) => name.includes("skill")),
               disabledToolNames: [...disabledToolNames].filter((name) => name.includes("skill")),
@@ -2566,7 +2625,7 @@ export function createFridayAgentRuntime(
               async (toolUse) =>
                 executeToolCall({
                   toolUse: toolUse as FridayAgentToolUseBlock,
-                  toolMap,
+                  toolMap: runToolMap,
                   signal: runAbortController.signal,
                   runId,
                   sessionKey,
@@ -2654,7 +2713,7 @@ export function createFridayAgentRuntime(
               };
               const autoSkillGenerateRecord = await executeToolCall({
                 toolUse: autoSkillGenerateUse,
-                toolMap,
+                toolMap: runToolMap,
                 signal: runAbortController.signal,
                 runId,
                 sessionKey,

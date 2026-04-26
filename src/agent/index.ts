@@ -102,6 +102,7 @@ export type {
   FridayAgentDelegationResult,
   FridayAgentContextCostComponent,
   FridayAgentContextCostSummary,
+  FridayAgentSystemPromptContext,
   FridayAgentSystemPromptBuildResult,
   FridayAgentResumeRunParams,
   FridayAgentExecutionContext,
@@ -145,6 +146,18 @@ export { createFridayAgentPlanningGateService } from "./runtime/friday-agent-pla
 
 export type { BuildFridayAgentSystemPromptParams } from "./runtime/friday-agent-system-prompt-builder.js";
 export { buildFridayAgentSystemPrompt } from "./runtime/friday-agent-system-prompt-builder.js";
+export {
+  createFridayAgentToolPackRequestTool,
+  getFridayAgentToolPackNames,
+  resolveFridayAgentToolNamesForPacks,
+  resolveFridayAgentToolRouting,
+} from "./runtime/friday-agent-tool-routing.js";
+export type {
+  FridayAgentPromptProfile,
+  FridayAgentToolPackRequest,
+  FridayAgentToolRoutingDecision,
+  FridayAgentToolRoutingProfile,
+} from "./runtime/friday-agent-tool-routing.js";
 export {
   evaluateFridayExecutionVoiceResponse,
   FRIDAY_EXECUTION_VOICE_SAMPLE_SCENARIOS,
