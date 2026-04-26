@@ -952,4 +952,55 @@ describe("FridayHub Bootstrap Integration", () => {
       db.close();
     }
   });
+
+  // ─── DeepSeek auto-detect from env ───
+
+  it("auto-registers DeepSeek provider with V4 defaults when DEEPSEEK_API_KEY is set", async () => {
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const providers = await hub.providerService.listProviders();
+    const deepseek = providers.find((p) => p.kind === "deepseek");
+
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.defaultModel).toBe("deepseek-v4-pro");
+    expect(deepseek!.config.supportedModels).toEqual(
+      expect.arrayContaining(["deepseek-v4-pro", "deepseek-v4-flash"]),
+    );
+    expect(deepseek!.baseUrl).toBe("https://api.deepseek.com");
+    expect(deepseek!.config.api).toBe("openai-completions");
+    expect(deepseek!.config.keySource).toMatchObject({
+      kind: "env-ref",
+      envVar: "DEEPSEEK_API_KEY",
+    });
+
+    const routing = await hub.providerService.getRoutingConfig();
+    expect(routing.defaultProviderId).toBe(deepseek!.id);
+    expect(routing.defaultModel).toBe("deepseek-v4-pro");
+  });
+
+  it("auto-registers DeepSeek provider when only FRIDAY_DEEPSEEK_API_KEY is set", async () => {
+    process.env.FRIDAY_DEEPSEEK_API_KEY = "test-friday-deepseek-key"; // pragma: allowlist secret
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const providers = await hub.providerService.listProviders();
+    const deepseek = providers.find((p) => p.kind === "deepseek");
+
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.defaultModel).toBe("deepseek-v4-pro");
+    expect(deepseek!.config.keySource).toMatchObject({
+      kind: "env-ref",
+      envVar: "FRIDAY_DEEPSEEK_API_KEY",
+    });
+  });
+
+  it("does not register DeepSeek when no DeepSeek env var is present", async () => {
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const providers = await hub.providerService.listProviders();
+    expect(providers.find((p) => p.kind === "deepseek")).toBeUndefined();
+  });
 });

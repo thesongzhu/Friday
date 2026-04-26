@@ -100,15 +100,18 @@ export async function api(path, opts = {}) {
 }
 
 export async function login() {
-  const status = await api("/v1/auth/bootstrap/status");
-  if (status.body?.data?.bootstrapRequired || status.body?.bootstrapRequired) {
-    const bootstrap = await api("/v1/auth/bootstrap/local-passphrase", {
-      method: "POST",
-      body: JSON.stringify({ passphrase: LOCAL_PASSPHRASE }),
-    });
-    if (!bootstrap.body?.ok && bootstrap.status >= 400) {
-      throw new Error("bootstrap failed: " + JSON.stringify(bootstrap.body));
-    }
+  // In dev mode (allowPasswordless=true) bootstrapRequired returns false even when the
+  // local user has no password_hash, so we always attempt to bootstrap and treat 409
+  // (AUTH_BOOTSTRAP_ALREADY_DONE) as a benign no-op. This makes login work after a fresh
+  // state-dir reset.
+  const bootstrap = await api("/v1/auth/bootstrap/local-passphrase", {
+    method: "POST",
+    body: JSON.stringify({ passphrase: LOCAL_PASSPHRASE }),
+  });
+  const bootstrapOk = bootstrap.body?.ok || bootstrap.status === 409
+    || bootstrap.body?.error?.code === "AUTH_BOOTSTRAP_ALREADY_DONE";
+  if (!bootstrapOk && bootstrap.status >= 400) {
+    throw new Error("bootstrap failed: " + JSON.stringify(bootstrap.body));
   }
   const r = await api("/v1/auth/login", {
     method: "POST",
@@ -136,6 +139,67 @@ export async function authedApi(ctx, path, opts = {}) {
   if (r.status !== 401 || opts.allowExpired === true) return r;
   ctx.tokens = await refreshTokens(ctx.tokens);
   return api(path, { ...opts, token: ctx.tokens?.accessToken });
+}
+
+/**
+ * Validate every registered provider that is not yet "ok", then run the capability
+ * doctor so each model has explicit `runtimeCapabilities` entries (text, vision, …).
+ * Auto-detected providers from env are persisted with validation.status="never" AND
+ * empty runtimeCapabilities; without both steps downstream phases SKIP because the
+ * "text" capability filter rejects every candidate.
+ */
+export async function verifyAutoDetectedProviders(ctx) {
+  const list = await authedApi(ctx, "/v1/providers");
+  if (!list.body?.ok) {
+    log(`[verify] failed to list providers: status=${list.status} body=${JSON.stringify(list.body)}`);
+    return { verified: [], failed: [], skipped: [], capabilities: { ran: false } };
+  }
+  const providers = list.body?.data?.items ?? [];
+  const verified = [];
+  const failed = [];
+  const skipped = [];
+  for (const p of providers) {
+    const status = p?.config?.validation?.status ?? "never";
+    if (status === "ok") {
+      skipped.push({ id: p.id, kind: p.kind, reason: "already-verified" });
+      continue;
+    }
+    const r = await authedApi(ctx, `/v1/providers/${p.id}/validate`, { method: "POST" });
+    const v = r.body?.data?.validation;
+    if (v?.status === "ok") {
+      verified.push({ id: p.id, kind: p.kind });
+      log(`[verify] OK kind=${p.kind} id=${p.id}`);
+    } else {
+      failed.push({
+        id: p.id,
+        kind: p.kind,
+        error: v?.errorMessage ?? r.body?.error?.message ?? `status=${r.status}`,
+      });
+      log(`[verify] FAIL kind=${p.kind} id=${p.id} err=${v?.errorMessage ?? JSON.stringify(r.body).slice(0, 240)}`);
+    }
+  }
+  // Auth-level validation only sets validation.status="ok"; the capability filter
+  // (filterFridayProviderRoutesByRequiredCapabilities) requires explicit
+  // runtimeCapabilities entries with status="verified" per (capability, model).
+  // /v1/capabilities/doctor probes each provider's text/vision/etc. endpoints and
+  // persists the results so the chat path no longer SKIPs with
+  // "no provider/model route satisfies required capabilities: text".
+  let capabilityReport = { ran: false };
+  if (verified.length > 0) {
+    const dr = await authedApi(ctx, "/v1/capabilities/doctor", { method: "POST" });
+    if (dr.body?.ok) {
+      const report = dr.body?.data?.report ?? dr.body?.data ?? {};
+      const verifiedKinds = (report.capabilityResults ?? [])
+        .filter((cr) => cr?.outcome === "verified" || cr?.status === "verified")
+        .map((cr) => `${cr.providerKind}:${cr.capability}`);
+      log(`[verify] capability doctor ran probes=${(report.capabilityResults ?? []).length} verified=${verifiedKinds.join(",") || "none"}`);
+      capabilityReport = { ran: true, probes: (report.capabilityResults ?? []).length, verifiedTuples: verifiedKinds };
+    } else {
+      log(`[verify] capability doctor failed status=${dr.status} body=${JSON.stringify(dr.body).slice(0, 240)}`);
+      capabilityReport = { ran: false, error: dr.body?.error?.message ?? `status=${dr.status}` };
+    }
+  }
+  return { verified, failed, skipped, capabilities: capabilityReport };
 }
 
 export function isProviderPreconditionFailure(value) {

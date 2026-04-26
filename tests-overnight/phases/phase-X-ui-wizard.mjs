@@ -35,13 +35,13 @@ export async function runPhaseX(ctx) {
     browser = await playwright.chromium.launch({ headless: true });
     const ctxBrowser = await browser.newContext();
     const page = await ctxBrowser.newPage();
-    const bootstrapStatus = await apiUi("/v1/auth/bootstrap/status");
-    if (bootstrapStatus.body?.data?.bootstrapRequired || bootstrapStatus.body?.bootstrapRequired) {
-      await apiUi("/v1/auth/bootstrap/local-passphrase", {
-        method: "POST",
-        body: JSON.stringify({ passphrase: LOCAL_PASSPHRASE }),
-      });
-    }
+    // Always bootstrap; in dev mode bootstrapRequired returns false even when no
+    // password_hash exists, so the prior bootstrapStatus-gated path silently skipped
+    // and login then 401'd with NO_PASSWORD_CONFIGURED on a fresh state dir.
+    await apiUi("/v1/auth/bootstrap/local-passphrase", {
+      method: "POST",
+      body: JSON.stringify({ passphrase: LOCAL_PASSPHRASE }),
+    });
     const login = await apiUi("/v1/auth/login", { method: "POST", body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }) });
     const accessToken = login.body?.data?.accessToken;
     p.addEvidence("login.json", { status: login.status, ok: login.body?.ok });

@@ -57,4 +57,26 @@ describe("friday-provider-templates", () => {
       status: "experimental",
     });
   });
+
+  it("exposes DeepSeek V4 model defaults and OpenAI-compatible base URL", () => {
+    const deepseek = getFridayProviderTemplate("deepseek");
+
+    expect(deepseek).toMatchObject({
+      id: "deepseek",
+      providerKind: "deepseek",
+      tier: "verified",
+      status: "ready",
+      // DeepSeek only ships /v1/chat/completions, not /v1/responses; using
+      // openai-responses here would 404 at runtime even though /v1/models validates ok.
+      api: "openai-completions",
+    });
+    expect(deepseek?.baseUrlHints).toContain("https://api.deepseek.com");
+    expect(deepseek?.modelDefaults.recommended).toBe("deepseek-v4-pro");
+    expect(deepseek?.modelDefaults.fallback).toBe("deepseek-v4-flash");
+    expect(deepseek?.modelDefaults.examples).toEqual(
+      expect.arrayContaining(["deepseek-v4-pro", "deepseek-v4-flash"]),
+    );
+    expect(deepseek?.authModes).toContain("api-key");
+    expect(deepseek?.requiredSecrets.some((req) => req.key === "apiKey")).toBe(true);
+  });
 });

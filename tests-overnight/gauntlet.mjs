@@ -1,7 +1,7 @@
 // Top-level orchestrator. Boots Friday, starts monitors, runs phases per timetable, finalises report.
 import { writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ROOT, log, login, api, MARKER_DIR } from "./lib/util.mjs";
+import { ROOT, log, login, api, MARKER_DIR, STATE_DIR, verifyAutoDetectedProviders } from "./lib/util.mjs";
 import { bootFriday, killFriday } from "./lib/friday-process.mjs";
 import { startProcessMonitor, startDbMonitor, startWsEventMonitor } from "./lib/monitors.mjs";
 import { ensureAllFixtures } from "./lib/fixtures.mjs";
@@ -49,6 +49,11 @@ async function safe(label, fn) {
   // Reset markers from any prior run
   rmSync(MARKER_DIR, { recursive: true, force: true });
   mkdirSync(MARKER_DIR, { recursive: true });
+  // Reset state so auto-detect observes the current env, not providers persisted from a prior run.
+  // Without this, stale OpenAI/Anthropic providers survive in friday.db and DeepSeek becomes the only
+  // unverified route; phases then SKIP because no verified text route exists.
+  rmSync(STATE_DIR, { recursive: true, force: true });
+  mkdirSync(STATE_DIR, { recursive: true });
   // Generate fixtures
   ensureAllFixtures();
   // Boot Friday
@@ -56,6 +61,11 @@ async function safe(label, fn) {
   const ctx = { fridayPid: fr.pid };
   const tokens = await login();
   ctx.tokens = tokens;
+  // Validate auto-detected providers so phases that need a verified text route do not SKIP.
+  // Auto-detect persists providers with validation.status="never"; we now drive each one through
+  // the standard /v1/providers/:id/validate path so the first chat phase has a real route.
+  const verifyResult = await verifyAutoDetectedProviders(ctx);
+  log(`[orch] provider verification: verified=[${verifyResult.verified.map(p=>p.kind).join(",")}] failed=[${verifyResult.failed.map(p=>`${p.kind}:${p.error}`).join("; ") || "none"}] skipped=[${verifyResult.skipped.map(p=>p.kind).join(",") || "none"}]`);
   // Start monitors
   const ac = new AbortController();
   startProcessMonitor({ pid: fr.pid, signal: ac.signal });
