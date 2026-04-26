@@ -3,6 +3,36 @@ import { describe, expect, it } from "vitest";
 import { buildFridayAgentSystemPrompt } from "#agent";
 
 describe("buildFridayAgentSystemPrompt", () => {
+  it("builds a compact minimal prompt without tool strategy or workspace sections", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["web_search", "browser", "desktop"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      promptProfile: "minimal",
+      workspaceContext: "SHOULD_NOT_APPEAR",
+      starterSkills: [
+        {
+          skillId: "heavy-skill",
+          purpose: "A verbose skill that should not be listed",
+          triggerPhrases: ["heavy"],
+        },
+      ],
+      currentTime: {
+        nowIso: "2026-02-19T10:00:00.000Z",
+        timezone: "America/Los_Angeles",
+        localDate: "2026-02-19",
+      },
+    });
+
+    expect(prompt).toContain("lightweight simple-chat route");
+    expect(prompt).toContain("Current date: 2026-02-19 (America/Los_Angeles).");
+    expect(prompt).not.toContain("Tool selection strategy");
+    expect(prompt).not.toContain("Behavior rules");
+    expect(prompt).not.toContain("SHOULD_NOT_APPEAR");
+    expect(prompt).not.toContain("heavy-skill");
+    expect(prompt.length).toBeLessThan(1200);
+  });
+
   it("describes desktop capability truthfully based on registered tools", () => {
     const withDesktop = buildFridayAgentSystemPrompt({
       toolNames: ["exec", "read", "desktop"],

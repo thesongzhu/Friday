@@ -17,6 +17,7 @@ import type {
   FridayAgentLlmClient,
   FridayAgentMessage,
   FridayAgentLlmStreamEvent,
+  FridayAgentSystemPromptContext,
   FridayAgentToolDefinition,
 } from "#agent";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
@@ -63,6 +64,22 @@ describe("FridayAgentRuntime", () => {
       async execute(args) {
         const msg = typeof args.message === "string" ? args.message : "no message";
         return { content: `Echo: ${msg}` };
+      },
+    };
+  }
+
+  function createNamedTool(name: string, description = `${name} test tool`): FridayAgentToolDefinition {
+    return {
+      name,
+      description,
+      parameters: {
+        type: "object",
+        properties: {
+          value: { type: "string" },
+        },
+      },
+      async execute() {
+        return { content: `${name} executed` };
       },
     };
   }
@@ -628,6 +645,167 @@ describe("FridayAgentRuntime", () => {
       providerId,
       model,
     }));
+  });
+
+  it("routes trivial simple chat through minimal prompt with zero tools and skipped workspace context", async () => {
+    let capturedTools: FridayAgentToolDefinition[] | undefined;
+    let capturedSystemPrompt = "";
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedTools = params.tools;
+        capturedSystemPrompt = params.systemPrompt;
+        yield { type: "text_delta", text: "4" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 120, outputTokens: 1 };
+      },
+    };
+    const systemPromptBuilder = vi.fn((context: FridayAgentSystemPromptContext) => {
+      capturedPromptContext = context;
+      return context.promptProfile === "minimal"
+        ? "MINIMAL_PROMPT"
+        : "STANDARD_PROMPT";
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder,
+      tools: [createSuccessfulWebSearchTool(), createMemorySearchTool(), createNamedTool("browser")],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      contextEngine: {
+        assemble: vi.fn().mockReturnValue({
+          promptFragment: "SHOULD_NOT_BE_LOADED",
+        }),
+      },
+    });
+
+    const result = await runtime.executeRun({ task: "What is 2+2?" });
+
+    expect(result.status).toBe("completed");
+    expect(capturedSystemPrompt).toBe("MINIMAL_PROMPT");
+    expect(capturedTools).toEqual([]);
+    expect(capturedPromptContext).toEqual(expect.objectContaining({
+      promptProfile: "minimal",
+      toolNames: [],
+      contextPolicy: { workspaceContext: "skip" },
+    }));
+    expect(capturedPromptContext?.toolRouting?.profile).toBe("trivial");
+  });
+
+  it("routes code tasks to the file and shell pack without browser or provider schemas", async () => {
+    let capturedToolNames: string[] = [];
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolNames = params.tools.map((tool) => tool.name).sort();
+        yield { type: "text_delta", text: "I will inspect the repo first." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 200, outputTokens: 8 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "STANDARD_PROMPT";
+      },
+      tools: [
+        createNamedTool("read"),
+        createNamedTool("write"),
+        createNamedTool("edit"),
+        createExecTool(),
+        createSuccessfulWebSearchTool(),
+        createSuccessfulWebFetchTool(),
+        createNamedTool("browser"),
+        createNamedTool("provider"),
+        createNamedTool("desktop"),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Fix the failing TypeScript tests in this repo" });
+
+    expect(result.status).toBe("completed");
+    expect(capturedPromptContext?.toolRouting?.profile).toBe("code");
+    expect(capturedToolNames).toEqual(expect.arrayContaining([
+      "edit",
+      "exec",
+      "read",
+      "request_tool_pack",
+      "web_fetch",
+      "web_search",
+      "write",
+    ]));
+    expect(capturedToolNames).not.toContain("browser");
+    expect(capturedToolNames).not.toContain("provider");
+    expect(capturedToolNames).not.toContain("desktop");
+  });
+
+  it("loads a deferred tool pack on a second LLM turn when request_tool_pack is called", async () => {
+    const capturedToolsByCall: string[][] = [];
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolsByCall.push(params.tools.map((tool) => tool.name).sort());
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "load-browser-pack",
+            name: "request_tool_pack",
+            input: { pack: "browser", reason: "Need an interactive page snapshot." },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 180, outputTokens: 12 };
+          return;
+        }
+        yield { type: "text_delta", text: "Browser pack is loaded." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 220, outputTokens: 6 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [
+        createSuccessfulWebSearchTool(),
+        createSuccessfulWebFetchTool(),
+        createNamedTool("browser"),
+        createNamedTool("provider"),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Research the documentation for example.com" });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(capturedToolsByCall[0]).toEqual(expect.arrayContaining([
+      "request_tool_pack",
+      "web_fetch",
+      "web_search",
+    ]));
+    expect(capturedToolsByCall[0]).not.toContain("browser");
+    expect(capturedToolsByCall[1]).toEqual(expect.arrayContaining([
+      "browser",
+      "request_tool_pack",
+      "web_fetch",
+      "web_search",
+    ]));
+    expect(capturedToolsByCall[1]).not.toContain("provider");
   });
 
   it("prepends provided history messages before the new task", async () => {

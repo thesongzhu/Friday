@@ -11,6 +11,7 @@ import {
   type FridayPromptSection,
 } from "./friday-agent-prompt-section.js";
 import { FRIDAY_AGENT_EXECUTION_VOICE_PROMPT } from "./friday-agent-execution-voice.js";
+import type { FridayAgentPromptProfile } from "./friday-agent-tool-routing.js";
 
 export interface BuildFridayAgentSystemPromptParams {
   /** Names of all currently registered tools. */
@@ -50,6 +51,8 @@ export interface BuildFridayAgentSystemPromptParams {
   operationalModeSuffix?: string;
   /** Deferred tool descriptions (name + purpose) for tools not loaded in the initial prompt. */
   deferredToolHints?: Array<{ name: string; description: string }>;
+  /** Compact prompt profile for low-risk simple chat turns. */
+  promptProfile?: FridayAgentPromptProfile;
 }
 
 export function buildFridayAgentSystemPrompt(
@@ -67,7 +70,17 @@ export function buildFridayAgentSystemPrompt(
     currentTime,
     operationalModeSuffix,
     deferredToolHints,
+    promptProfile,
   } = params;
+  if (promptProfile === "minimal") {
+    return buildMinimalFridayAgentSystemPrompt({
+      modelIdentity,
+      version,
+      currentTime,
+      operationalModeSuffix,
+    });
+  }
+
   const toolList = toolNames.join(", ");
   const toolSet = new Set(toolNames);
   const hasTool = (name: string) => toolSet.has(name);
@@ -291,4 +304,23 @@ export function buildFridayAgentSystemPrompt(
     // ─── Operational mode suffix ───
     (operationalModeSuffix ? `\n\n[Operational Mode] ${operationalModeSuffix}` : "")
   );
+}
+
+function buildMinimalFridayAgentSystemPrompt(params: {
+  modelIdentity: string;
+  version: string;
+  currentTime?: BuildFridayAgentSystemPromptParams["currentTime"];
+  operationalModeSuffix?: string;
+}): string {
+  const dateLine = params.currentTime
+    ? `Current date: ${params.currentTime.localDate} (${params.currentTime.timezone}).`
+    : "Use the current run date when interpreting relative dates.";
+  return [
+    `You are Friday v${params.version}, an AI assistant running on ${params.modelIdentity}.`,
+    dateLine,
+    "This is a lightweight simple-chat route: no tools, workspace files, memory, browser, desktop, or live web context are available in this request.",
+    "Answer directly and concisely in the user's language. Do not claim you inspected files, memory, devices, or current external sources.",
+    "If the task requires current information, local workspace context, remembered facts, setup, automation, or device/browser actions, say it needs the full Friday tool route.",
+    params.operationalModeSuffix ? `[Operational Mode] ${params.operationalModeSuffix}` : "",
+  ].filter((line) => line.length > 0).join("\n");
 }
