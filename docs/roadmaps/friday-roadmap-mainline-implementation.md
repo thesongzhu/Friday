@@ -1,77 +1,77 @@
-# Friday Roadmap Mainline Implementation Tracker
+# Friday Roadmap Tracker
 
-Last updated: 2026-03-25
-Worktree: `/path/to/friday-worktree`
-Branch: `codex/friday-roadmap-mainline`
-Base commit: `4d20ee0`
+This roadmap tracks the active product direction for Friday.
 
-## Batch 0
+The core direction is a local-first personal AI that can execute user goals, acquire missing capabilities safely, verify its work, and improve through auditable memory and reusable artifacts.
 
-- Status: completed
-- Goal: isolate roadmap implementation from the dirty primary worktree.
-- Completed:
-  - Created isolated worktree and branch from committed `HEAD`.
-  - Verified the new worktree does not inherit uncommitted primary-tree changes.
-- Validation:
-  - `git -C /path/to/friday-worktree status --short --branch`
-  - `git -C /path/to/friday-worktree rev-parse --short HEAD`
-- Rollback:
-  - Remove worktree with `git worktree remove /path/to/friday-worktree`
-  - Delete branch `codex/friday-roadmap-mainline` if the isolation branch is abandoned.
+## Now
 
-## Batch 1
+- Make setup land cleanly on Home after completion.
+- Keep provider truth aligned with the actual live route.
+- Keep capability status visible: available, missing, human blocker, needs review, or deferred.
+- Keep generated/imported skills unroutable until verification passes.
+- Keep multi-channel control under the same approval and audit model as the web UI.
+- Keep user-facing speech direct, human, and non-generic.
 
-- Status: completed
-- Goal: land the P0 backbone.
-- Scope:
-  - CLI-first starter skill pack and lifecycle metadata for skills.
-  - Built-in subagent profiles.
-  - Unified task-profile scaffolding across agent/generator/extraction paths.
-- Interface changes:
-  - Skill lifecycle summaries expose `originType` and `maturity`.
-  - Subagent spawn inputs may specify `profile`.
-  - Agent runtime accepts resolved task-profile hints.
-- Validation commands:
-  - `npm run typecheck`
-  - `npx vitest run test/unit/agent/tools/friday-agent-subagent-tools.test.ts test/unit/skills/marketplace/friday-skill-lifecycle-service.test.ts test/unit/skills/generator/llm/friday-provider-inference-client.test.ts test/unit/agent/tools/friday-agent-skills-list-tool.test.ts`
-- Resolved blockers:
-  - Main agent loop now carries temperature/task-profile hints end to end.
-  - Repo and ops starter skills now expose CLI-first catalog tags (`starter.cli`, `cli-backed`, `skill.stabilized`).
-- Rollback points:
-  - Revert task-profile plumbing without removing new public types.
-  - Keep subagent profiles read-only by default if broader write policies regress tests.
+## Near Term
 
-## Batch 2
+1. **Capability acquisition closure**
+   - goal-to-capability detection
+   - candidate discovery
+   - sandbox verification
+   - approval gates
+   - install/register
+   - doctor verification
 
-- Status: completed
-- Goal: land P1 context governance.
-- Scope:
-  - Path-scoped workspace rules.
-  - Context cost summary surface.
-  - MCP server discovery state and lazy search.
-- Validation commands:
-  - `npm run typecheck`
-  - `npx vitest run test/unit/agent/runtime/friday-agent-workspace-context.test.ts test/unit/agent/mcp/friday-mcp-adapter-runtime.test.ts test/unit/agent/tools/friday-agent-mcp-tool.test.ts`
-- Rollback points:
-  - Keep rule files discoverable but non-injected if path matching proves noisy.
-  - Fall back to legacy `list_servers` behavior if MCP state metadata breaks consumers.
+2. **Standing goals and agenda**
+   - user-authorized long-term goals
+   - agenda generation
+   - low-risk execution
+   - high-risk approval
+   - run evidence
+   - pause/delete controls
 
-## Batch 3
+3. **Visible memory and self-improvement**
+   - learned facts
+   - provider routing lessons
+   - setup recipes
+   - failure lessons
+   - eval cases
+   - generated skill quality signals
 
-- Status: completed
-- Goal: land P2 stabilization skeletons.
-- Scope:
-  - Preprocessor/hook registry.
-  - MCP-vs-CLI recommendation primitives.
-  - Stable workflow template catalog.
-- Validation commands:
-  - `npm run typecheck`
-  - `npx vitest run test/unit/agent/runtime/friday-agent-preprocessors.test.ts test/unit/agent/mcp/friday-mcp-cli-recommendation.test.ts test/unit/workflows/friday-stable-workflow-templates.test.ts`
-- Rollback points:
-  - Keep template registry internal-only if public APIs drift.
-  - Leave preprocessors opt-in and disabled by default until evidence flow is fully covered.
+4. **Provider and channel reliability**
+   - OpenAI and China-provider setup paths
+   - web search provider verification
+   - OCR/vision/PDF/TTS capability checks
+   - Discord and other channel control verification
 
-## Notes
+## Later
 
-- This worktree intentionally ignores uncommitted files in `/path/to/friday`.
-- The roadmap landed as a backend-first slice in this worktree. Public UI exposure can follow after additional product wiring.
+- Richer cross-device control.
+- More provider recipes.
+- More channel setup wizards.
+- More visual evidence for browser/desktop tasks.
+- Better workflow editing and approval UX.
+- Wider marketplace/catalog trust model.
+- Stronger rollback and dependency isolation for generated capabilities.
+
+## Non-Goals
+
+- No promise of universal automation.
+- No hidden model-weight training by default.
+- No bypass of login, CAPTCHA, payment, provider limits, or platform rules.
+- No high-risk action without approval.
+- No treating missing credentials as a successful capability.
+
+## Completion Signal
+
+Friday reaches the target experience when it can answer and close the loop for:
+
+```text
+Do I have the capability?
+If not, what is missing?
+Where does the user configure it?
+Can Friday verify it after configuration?
+Can Friday execute the original goal?
+What evidence and learning did the run produce?
+```

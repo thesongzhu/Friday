@@ -1,86 +1,94 @@
 # Friday Capability Matrix
 
-This document is the user-facing capability contract for **today's Friday**. It is intentionally narrower than long-horizon architecture and roadmap docs.
+This is the user-facing capability contract for the current Friday runtime.
 
-If this file conflicts with older design material, use this file together with [current-source-of-truth.md](../current-source-of-truth.md) as the active boundary.
+Friday should never treat "a tool exists somewhere" as proof that a task can run. A capability is available only when the provider/tool/skill is configured, policy allows it, and a doctor or representative task verifies it.
 
 ## Status Vocabulary
 
-- `Validated and keep`: active, tested, and part of the steady-state product contract
-- `Validated but temporary`: works today, but is intentionally transitional or bounded
-- `Deferred`: intentionally outside today's delivery boundary
+| Status | Meaning |
+| --- | --- |
+| Available | Configured, policy-allowed, and verified |
+| Provider-configured | Requires an external provider/account/API key and must be verified |
+| Human blocker | Needs a user action such as login, OAuth, payment, CAPTCHA, API key, or permission |
+| Needs review | Candidate exists but install/permission/sandbox approval is required |
+| Deferred | Not part of the current supported runtime contract |
 
-## What Friday Can Do Today
+## Capability Matrix
 
-| Area | What Friday can do now | Supervision / boundary | Status |
+| Capability | What Friday should do | Verification | Boundary |
 | --- | --- | --- | --- |
-| Agent OS system control | Operate the Agent OS control plane through `/v1/system/*`, the Operator Console, `/assistant`, `/workflows`, `/skills`, `/fleet`, and `/observability` | High-risk actions remain policy-gated; platform rollout is still separate | `Validated and keep` |
-| Beginner assistant | Accept plain-language goals, show issue inbox, resolve intents, run guided wizards, deploy workflows, and surface fix approvals through `/assistant` | It is beginner-first, not a replacement for unrestricted autonomous reasoning | `Validated and keep` |
-| Expert autonomy mode | Use opt-in bounded autonomy to infer context, ask minimal decisive questions, run safe probes, and carry richer troubleshooting evidence across `/assistant`, self-healing, workflows, skills, fleet, and observability | Destructive or sensitive operations still stop at final approval, and all probes must stay observable | `Validated and keep` |
-| Self-healing | Detect incidents, produce diagnoses, propose fixes, auto-execute low-risk repairs, verify, roll back, and pause after repeated failures | Supervised autonomy only; high-risk actions require approval | `Validated and keep` |
-| Workflows | Generate, deploy, export, run, visualize, and recover workflows across `/assistant` and `/workflows` | Does not promise unconstrained builderless orchestration for every edge case | `Validated and keep` |
-| Skills lifecycle | Generate, validate, self-test, install, update, delete, verify, and manage marketplace sources through `/v1/skills/*`, `/v1/marketplace/sources*`, and `/skills` | This is the primary marketplace backbone; future workflow and agent assets should extend the same trust/install/enable path rather than replace it | `Validated and keep` |
-| Marketplace assets catalog | Browse unified public marketplace asset catalog and detail views for declarative `skill`, `workflow`, and `agent` assets through `/v1/marketplace/assets*` | Discovery is unified, skills remain the canonical install/verify/enable backbone, and legacy executable packages are hidden from the ordinary public catalog by default | `Validated but temporary` |
-| Creator support and request board | Support creators directly through asset support events, creator profiles, and multi-signal reputation summaries, then route unmet needs into the personal request board | Free-first and 0%-commission by design; ratings alone do not determine trust or ranking | `Validated and keep` |
-| Request board | Post and respond to personal `skill`, `workflow`, and `agent` requests through `/v1/marketplace/requests*` | Connector-only surface: no guarantees, no escrow, no arbitration, and no after-sales support | `Validated but temporary` |
-| Plugin distribution | Browse, inspect, install, enable, disable, uninstall, and version plugins through `/v1/plugins*` and `/v1/marketplace/plugins*` | Distinct from the skills lifecycle and not the primary beginner story | `Validated and keep` |
-| Plugin marketplace and commerce | Support publisher, listing, pricing, entitlement, purchase, install, refund, and payout flows when the marketplace runtime is configured | Bounded operator/admin capability; distinct from the skills-first marketplace backbone and not the primary public ecosystem story. Legacy executable assets remain in this bounded surface, not the default public marketplace, and public creator support remains the primary user-facing reward path | `Validated but temporary` |
+| Text model | Route chat, planning, summarization, extraction, and generation to a configured model provider | provider doctor + representative text task | missing/invalid key is a human blocker |
+| Vision / image understanding | Route image tasks to a configured multimodal provider | representative image task | depends on model/provider support |
+| OCR | Use configured OCR provider or verified OCR skill | OCR sample task | account/API/permission setup may be external |
+| Embeddings / memory search | Use embedding lane for semantic memory and retrieval where configured | embedding request + retrieval smoke | fallback search may be weaker and should be labeled |
+| Web search | Use configured search provider such as Tavily, Serper, or custom skill | live search query | paid plan/quota/key issues are human blockers |
+| PDF parsing | Parse local PDFs through built-in or verified parser | sample PDF extraction | scanned PDFs may require OCR |
+| File read/write | Read/write local files when policy and scope allow | scoped file operation | sensitive paths and destructive writes require approval |
+| Browser control | Open pages, inspect, click, type, screenshot, and gather evidence | local browser smoke | login/CAPTCHA/payment remain human blockers |
+| Desktop control | Use OS companion for app/window/URL/notification actions | companion health + permission check | Accessibility/Screen Recording permissions require user |
+| Skills | Generate, import, validate, install, run, update, delete, and verify skills | manifest + sandbox/dry-run + evidence | untrusted code needs review and policy approval |
+| Workflows | Create, deploy, run, observe, recover, and roll back workflows | workflow run + evidence | production-impacting steps need approval |
+| MCP servers | Discover tools/resources from configured MCP servers | connected/authenticated state + tool smoke | unauthenticated server is a structured blocker |
+| Channels | Receive commands and send replies through configured channels | inbound/outbound channel smoke | channels cannot bypass approval gates |
+| TTS / voice | Use configured TTS provider or local voice skill | representative speech task | provider account/key may be required |
+| Memory | Store preferences, lessons, facts, routing signals, and run evidence | memory write/read smoke | user should be able to inspect and correct |
+| Self-healing | Diagnose failures, propose fixes, auto-run low-risk repairs, verify, roll back, and pause on repeats | incident -> fix -> verification evidence | higher-risk repairs require approval |
+| Capability acquisition | Find/generate/install/register missing capability candidates | acquisition run reaches verified state | install/download/shell/network actions are policy-gated |
+| Standing goals | Run user-authorized agendas with evidence and learning updates | agenda run + result evidence | Friday does not invent unrelated long-term goals |
 
-Marketplace creator-ecosystem closeout evidence: [latest.md](./docs/reports/closeout/marketplace-creator-ecosystem/latest.md)
-| Observability and alerts | Show traces, audit logs, alerts, SLOs, alert destinations, health summaries, and time-series through `/v1/observability/*` and `/observability` | Operator-facing surface; beginner views only get summarized issue state | `Validated and keep` |
-| Fleet and satellites | Register satellites, pair them, sync them, place workflow nodes on hub or satellites, surface offline blocking, and operate them from `/fleet` | Discovery is intentionally bounded; no full mesh or federation today | `Validated and keep` |
-| Acceptance / retry / rules | Run sandboxed acceptance checks, keep version history, enforce provider circuit breakers, replay retries, and explain rules decisions | Advanced ML-style anomaly systems and natural-language rule authoring are deferred | `Validated and keep` |
+## Capability Acquisition Contract
 
-## What Friday Usually Does Only Under Supervision
+New capability must move through:
 
-- Friday can propose and sometimes auto-apply **low-risk** fixes.
-- Friday must stop for approval on **higher-risk** actions.
-- Friday should not auto-execute a fix when any of these are missing:
-  - rollback plan
-  - acceptance verification
-  - evidence sink
-- Friday can pause itself after repeated failures instead of retrying forever.
-- Friday can use expert mode to infer bounded defaults and try safe probes before asking, but it must still surface assumptions and stop at final approval for destructive or sensitive actions.
+```text
+candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available
+```
 
-## Why Friday Can Still Feel Limited
+Until doctor verification passes, the capability must not be routed as available.
 
-Friday is not supposed to behave like an unrestricted autonomous employee in every situation. It is intentionally bounded by:
+Preferred source ranking:
 
-- supervised autonomy defaults
-- approval gates for higher-risk actions
-- bounded fleet and distributed execution scope
-- bounded plugin marketplace/commerce scope
-- explicit deferral of richer federation, mesh discovery, and unrestricted autonomy
+1. already installed and trusted local capability
+2. built-in catalog or verified marketplace/source
+3. configured MCP server
+4. local workspace skill/workflow
+5. OpenAPI spec or package registry candidate
+6. open web/GitHub discovery, if policy allows
 
-That means the current product is good at:
+## Human Blockers
 
-- structured issue detection
-- bounded remediation
-- operator-visible evidence and recovery
+Friday should stop and ask the user for:
 
-## What Friday does **not** reliably claim today
+- API keys and provider account setup
+- OAuth and account login
+- payment or billing enablement
+- CAPTCHA or platform verification
+- sensitive OS permissions
+- production writes
+- high-risk shell/file/browser/desktop actions
+- untrusted package install approval
 
-Friday is not yet meant to guarantee:
+## What Friday Should Say When Blocked
 
-- long-horizon autonomous troubleshooting without policy gates
-- arbitrary cross-system self-directed recovery
-- full human-level adaptive judgment in ambiguous environments
+A blocked capability should include:
 
-## Deferred By Design
+- capability name
+- exact blocker
+- why Friday cannot do it alone
+- where the user configures it
+- what Friday will run to verify it afterward
 
-These are intentionally outside the current non-platform closure boundary:
+Example:
 
-- unrestricted autonomous loop beyond supervised self-healing
-- richer offline plan generation beyond recovery of already-dispatched work
-- richer discovery such as mDNS, relay mesh, and Tailscale-native discovery
-- full multi-hub federation and cross-hub placement
-- ML-heavy anomaly detection
-- natural-language rule authoring
-- marketplace-style expansion for acceptance or rules
+```text
+I do not have OCR yet. I need either an OCR-capable provider key or a verified OCR skill.
+Configure it in Setup -> Capabilities -> OCR. After that I will run a sample image-to-text task and mark OCR available only if it passes.
+```
 
 ## Related References
 
 - [Current Source Of Truth](../current-source-of-truth.md)
-- [Friday Vision](../VISION.md)
-- [Friday vs OpenClaw](./friday-vs-openclaw.md)
-- [Non-Platform Final Closeout Evidence](../reports/closeout/final-non-platform/latest.md)
+- [Vision](../VISION.md)
+- [Getting Started](../getting-started.md)
+- [Troubleshooting](../TROUBLESHOOTING.md)

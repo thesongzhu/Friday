@@ -1,245 +1,140 @@
-# Friday 全景功能地图 & UX 路线规划
+# Friday 功能地图与体验路线
+
+这份文档描述 Friday 当前应该向用户呈现的能力地图。它不是承诺“万能”或“完全自动”，而是说明 Friday 如何把用户目标变成可执行、可验证、可复用的闭环。
 
 ## 一、核心认知
 
-Friday 不是一个"功能不够"的产品。它有 **172 个功能**，覆盖 agent 执行、技能生态、工作流引擎、自学习/自修复、多通道、分布式执行、市场/创作者经济、可观测性等完整栈。
+Friday 的目标不是把所有功能堆给用户看，而是让用户相信三件事：
 
-**真正的问题是**：这些能力绝大多数藏在后端或高级页面里，用户感知不到。用户打开 Friday，看到的是一个"聊天框 + 几个卡片"，不知道背后有一整个操作系统在运行。
+1. **我知道 Friday 现在能做什么。**
+2. **我知道 Friday 缺什么、去哪配、配完怎么验证。**
+3. **我知道哪些事情 Friday 会自己做，哪些事情必须问我。**
 
----
+用户不应该被迫理解文本模型、视觉模型、OCR、embedding、web search、PDF parser、MCP、workflow、skill、渠道、桌面权限这些内部概念。Friday 应该自己检查、路由、补齐能力，并在需要人类时说清楚。
 
-## 二、四层架构
+## 二、四层能力地图
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: 用户感知层 (What users see & feel)                  │
-│                                                             │
-│  23 个页面 · 4 主入口 · 12 高级页 · 7 特殊路由                │
-│  Home / Chat / Packs / Assistant                            │
-│  + Skills / Workflows / Automations / Memory / MCP / ...    │
-├─────────────────────────────────────────────────────────────┤
-│ Layer 2: 交互编排层 (How intent becomes action)              │
-│                                                             │
-│  Agent Runtime · Guided Flows · Playbooks · Workflows       │
-│  Sub-agent delegation · Approval gates · Plan review        │
-│  → 用户说"我要..."，系统自动编排执行路径                      │
-├─────────────────────────────────────────────────────────────┤
-│ Layer 3: 智能层 (How Friday learns & adapts)                 │
-│                                                             │
-│  Learning pipeline · Preference extraction · Persona        │
-│  Memory (semantic + FTS) · Pattern recognition              │
-│  Lessons · Diagnosis · Auto-fix · Utility calculator        │
-│  → 用得越多越懂你，错误自动诊断修复                           │
-├─────────────────────────────────────────────────────────────┤
-│ Layer 4: 基础设施层 (What keeps it running)                   │
-│                                                             │
-│  SQLite · 10+ Channels · Auth/RBAC · Observability          │
-│  Retry/Circuit breaker · Fleet/Satellites · Providers       │
-│  Rules engine · Acceptance testing · Realtime (WS/SSE)      │
-│  → 用户不需要知道这些存在，但它们保证可靠性                    │
-└─────────────────────────────────────────────────────────────┘
+```text
+用户目标
+  |
+  v
+感知层: Home / Chat / Setup / Assistant / Settings / Channels
+  |
+  v
+编排层: capability check / planning / approval / workflow / skill routing
+  |
+  v
+能力层: models / web / OCR / PDF / files / browser / desktop / MCP / channels
+  |
+  v
+成长层: memory / recipes / routing lessons / evals / failure lessons / rollback
 ```
 
----
+## 三、用户能直接感受到的能力
 
-## 三、功能分类与暴露状态
+| 能力 | 用户应该看到什么 | 体验要求 |
+| --- | --- | --- |
+| 对话与执行 | Friday 能回答、执行、汇报进展、失败时说明原因 | 语气直接、有人味、不像模板机器人 |
+| Setup | 配 provider、渠道、权限、能力矩阵 | setup 完成后直接进 Home |
+| Provider truth | 当前实际路由、模型、状态、备用 provider | 不显示误导性的旧 provider 名 |
+| 能力检查 | 文本、视觉、OCR、web、PDF、file、browser、skills、workflow 等状态 | 缺什么说清楚 |
+| 渠道控制 | Discord/Telegram/飞书等渠道可以给 Friday 发任务 | 高风险动作仍要确认 |
+| 记忆 | Friday 记住偏好、规则、失败教训 | 用户能看到、纠正、暂停 |
+| 自我修复 | 失败后诊断、提出修复、验证、回滚 | 不隐藏失败，不无限重试 |
+| 能力自获取 | 缺能力时找候选、生成 skill、沙箱验证、注册 | 未验证前不能标 available |
+| 长期目标 | 用户授权 standing goal 后生成 agenda 并执行低风险步骤 | 可暂停、可删除、可审计 |
 
-### A. 用户直接感知的核心功能 (Core User Surface)
+## 四、关键闭环
 
-| 功能 | 当前 UI | 问题 |
-|------|---------|------|
-| 聊天/对话 | ✅ Chat page | 缺少文件上传、语音输入 |
-| 任务首页 | ✅ Home page | 好，但与 agent 执行断裂 |
-| 行业包 | ✅ Packs page | 好，缺搜索/过滤 |
-| 助手收件箱 | ✅ Assistant page | 好，缺 inline 审批按钮 |
-| 引导流程 | ✅ Guided flow | 好，但入口不明显 |
-| Onboarding | ✅ 4步引导 | 好 |
-| 人格设置 | ✅ Settings page | 好，但用户不知道"学到的偏好"在哪 |
+### 1. 目标闭环
 
-### B. 高级用户可发现的功能 (Power User Surface)
-
-| 功能 | 当前 UI | 问题 |
-|------|---------|------|
-| 技能管理 | ✅ Skills page | 只读为主，缺 inline 编辑 |
-| 技能生成器 | ✅ Generator page | 好 |
-| 工作流编辑器 | ✅ Builder page | 好，但与主列表割裂 |
-| 自动化任务 | ✅ Automations page | 缺编辑已有任务 |
-| 记忆管理 | ⚠️ Memory page | 基础 CRUD，缺知识图谱 |
-| 会话历史 | ⚠️ Sessions page | 无本地化，缺日期过滤 |
-| MCP 服务器 | ⚠️ MCP page | 只读状态，缺添加/配置 |
-| 用量仪表盘 | ⚠️ Usage page | 只读，缺历史趋势图 |
-| 可观测性 | ⚠️ Observability page | 内容多但不直觉 |
-| 设备集群 | ⚠️ Fleet page | 状态查看，缺控制操作 |
-| 市场 | ⚠️ Marketplace page | 浏览 ≠ 创建不对称 |
-| 操作控制台 | ⚠️ Agent page | 面向高级运维 |
-
-### C. 后端有但用户完全看不到的能力 (Hidden Capabilities)
-
-| 能力 | 用户价值 | 缺失的 UI |
-|------|---------|-----------|
-| **Playbook 学习引擎** | Friday 在学你的操作模式 | 无法看到/管理学到的 pattern |
-| **规则/策略引擎** | 定义 agent 行为约束 | 无可视化规则编辑器 |
-| **10+ 通道适配器** | 连接 Discord/Slack/微信/飞书 | 无一键连接向导 |
-| **桌面自动化** | 录制回放桌面操作 | 无独立入口 |
-| **浏览器自动化** | 自动填表、截图、抓取 | 无独立操作面 |
-| **重试/熔断器** | 自动重试失败操作 | 无可视化重试策略 |
-| **验收测试框架** | 测试 agent 输出质量 | 无测试定义 UI |
-| **SLO/错误预算** | 服务质量承诺 | 未集成到主仪表盘 |
-| **创作者分润** | 技能/工作流变现 | 无创作者工作台 |
-| **PII 检测** | 自动脱敏 | 用户不知道已保护 |
-| **心跳系统** | 后台定时维护 | 无状态面板 |
-| **能力授权链** | 精细权限管理 | 无授权管理 UI |
-| **Deep Link 协议** | 一键导入配置 | 入口隐蔽 |
-| **语义搜索** | 跨记忆智能搜索 | 搜索能力未突出 |
-
----
-
-## 四、功能互联地图 (Cross-Layer Connections)
-
-### 系统连接拓扑
-
-```
-用户说"我要..."
-    │
-    ▼
-┌─Chat/Guided Flow─┐
-│  意图理解         │──→ Pack 匹配 ──→ 快捷操作
-│  上下文加载       │──→ Memory 语义搜索 (BM25 + Vector)
-│  Persona 注入     │◄── 偏好系统 ◄── 学习管道
-└────────┬──────────┘
-         │
-         ▼
-┌──Agent Runtime──┐
-│  Planning       │──→ Playbook 模式匹配 (用户看不到)
-│  Tool Selection │──→ Skills / Browser / Desktop / MCP
-│  Sub-agent      │──→ 分发到 Satellite (用户看不到)
-│  Streaming      │──→ WebSocket → Chat UI
-└────────┬────────┘
-         │
-    成功? ──→ Lesson 提取 ──→ 下次更快更准
-    失败? ──→ 诊断 ──→ 自动修复提案 ──→ 审批 ──→ 执行
-         │
-         ▼
-┌──Observability──┐
-│  Trace/Span     │──→ 可视化执行路径 (用户看不到全貌)
-│  Audit Log      │──→ 不可篡改记录
-│  Alerts         │──→ Runbook 自动执行 ──→ 通知 (Toast only)
-└─────────────────┘
+```text
+用户说目标 -> Friday 拆能力 -> 找工具/skill/workflow -> 执行 -> 验证 -> 汇报
 ```
 
-### 12 条关键互联
+### 2. 缺能力闭环
 
-| # | 连接 | 方向 | 数据流 | UI 可见? |
-|---|------|------|--------|---------|
-| 1 | Learning ↔ Agent | 双向 | 偏好/模式注入 agent；agent 事件回流 learning | ❌ 隐形 |
-| 2 | Skills → Workflows | 单向 | Workflow 节点调用 Skills 执行器 | ✅ 工作流编辑器 |
-| 3 | Heartbeat → Agent | 单向 | 定时任务触发 agent 执行 | ❌ 隐形 |
-| 4 | Memory ↔ Agent ↔ Learning | 三角 | Agent 结果→记忆；记忆→agent 上下文；学习→记忆 | ⚠️ 部分 |
-| 5 | Observability → Self-healing | 单向 | 告警升级→Runbook→自动修复管道 | ❌ 隐形 |
-| 6 | Persona → Chat | 单向 | 9维人格注入响应生成 | ⚠️ 设置可见，注入不可见 |
-| 7 | Playbook → Agent | 单向 | 模式匹配→执行策略选择→参数模板 | ❌ 完全隐形 |
-| 8 | Rules ↔ Auto-fix | 双向 | 策略约束修复决策；结果更新策略 | ❌ 隐形 |
-| 9 | Channels → Agent → Channels | 双向 | 10+ 平台消息入站→agent→回复 | ⚠️ 配置可见 |
-| 10 | Fleet → Agent | 单向 | Satellite 分布式执行 agent 任务 | ⚠️ 状态可见 |
-| 11 | Marketplace → Skills | 单向 | 市场资产安装为本地 Skills | ✅ 可见 |
-| 12 | Grants → Tools | 单向 | 能力授权→工具执行权限 | ❌ 隐形 |
+```text
+缺口 -> 候选来源 -> 沙箱/测试 -> 审批 -> 安装/注册 -> doctor 验证 -> 可用
+```
 
-### 关键断裂点
+### 3. 失败修复闭环
 
-1. **学习是隐形的** — Friday 在学习（偏好提取、模式识别、教训积累），但用户不知道它学了什么、怎么学的、学的对不对
-2. **自修复是隐形的** — 错误→诊断→自动修复→回滚→教训提取，全自动但用户看不到过程
-3. **Playbook 完全隐形** — 最智能的功能（从成功执行中学习操作模式）没有任何 UI
-4. **通道连接是配置级的** — 10+ 通道适配器需要环境变量配置，无一键连接向导
-5. **执行路径是黑盒** — agent 为什么选这个工具、这个方案、这个 Playbook，用户不知道
-6. **记忆是被动的** — 用户不能主动"教" Friday，只能靠系统被动提取
-7. **规则是隐藏的** — 策略引擎定义 agent 行为约束，但用户无法可视化管理
-8. **能力授权是隐藏的** — 精细权限链（issue→use→expire→revoke）用户完全看不到
+```text
+失败 -> 诊断 -> 修复计划 -> 低风险执行或审批 -> 验证 -> 回滚/沉淀教训
+```
 
----
+### 4. 成长闭环
 
-## 五、UX 路线图
+```text
+成功/失败 -> memory -> routing/recipe/skill/eval 更新 -> 下次更稳
+```
 
-### Phase 0: 当下必须修的 (Already Done ✅)
-- [x] API 错误状态 (MCP/Sessions/Usage)
-- [x] 路由本地化 (12 条)
-- [x] 安全加固 (WebSocket Origin, 输入边界)
+## 五、必须清楚展示的边界
 
-### Phase 1: "让用户感受到智能" (Intelligence Visibility)
-**目标**: 让用户看到 Friday 在学习、在思考、在变聪明
+Friday 必须停下来问用户的情况：
 
-| 改动 | 用户感受 | 复杂度 |
-|------|---------|--------|
-| 学习状态仪表盘 | "它知道我喜欢简洁" | 中 |
-| 执行推理可视化 | "它选了这个方案因为..." | 中 |
-| Playbook 透明面板 | "它记住了我上次怎么做" | 中 |
-| 自修复通知 | "它自动修好了一个错误" | 低 |
-| 偏好面板 | "我可以直接告诉它我想要什么" | 低 |
+- API key
+- OAuth / 登录
+- 付款 / 账单
+- 验证码
+- 外部账号开通
+- macOS 权限
+- 敏感文件或桌面权限
+- 生产写操作
+- 不可信代码安装
+- 高风险 shell / browser / desktop 动作
 
-### Phase 2: "让操作更顺滑" (Interaction Flow)
-**目标**: 减少页面跳转，让核心操作在 1-2 步内完成
+Friday 不能把这些算作“已完成”。它应该说：
 
-| 改动 | 用户感受 | 复杂度 |
-|------|---------|--------|
-| 通道一键连接向导 | "3 步连上 Slack" | 中 |
-| Inline 技能编辑 | 不用跳页面 | 低 |
-| 自动化任务编辑 | 现在只能新建不能改 | 低 |
-| 命令面板增强 | Cmd+K 搜索一切 | 中 |
-| 全局搜索 | 跨记忆/技能/工作流搜索 | 高 |
-| 拖拽排序 + 批量操作 | 记忆/技能/自动化 | 中 |
+```text
+我缺 X。原因是 Y。你需要去 Z 配置。配完我会跑 A 来验证。
+```
 
-### Phase 3: "让它变漂亮" (Visual Polish)
-**目标**: 从"能用"到"想用"
+## 六、当前体验优先级
 
-| 改动 | 效果 | 复杂度 |
-|------|------|--------|
-| Skeleton loading screens | 不再显示"Loading..." | 低 |
-| 动画过渡 | 页面切换、卡片展开 | 中 |
-| 知识图谱可视化 | 记忆变成可探索的图 | 高 |
-| 工作流执行动画 | DAG 节点逐个亮起 | 中 |
-| 深色模式完善 | 目前有变量但不完整 | 中 |
-| 移动端精调 | 手势、小屏适配 | 中 |
+### Phase 1: 让 setup 不挡路
 
-### Phase 4: "让它超越时代" (Next-Gen UX)
-**目标**: 没有人见过的交互方式
+- setup 完成后直接进 Home
+- 本地 session 失败给出可恢复页面
+- Provider truth 显示真实路由
+- 沟通风格不再作为 first-run 阻塞步骤
 
-| 概念 | 描述 |
-|------|------|
-| 意图感知首页 | 根据时间/上下文自动显示最可能需要的操作 |
-| 自然语言万物控制 | 在任何页面打字 → 自动路由到对应功能 |
-| 执行时间线 | 类 Git graph 的 agent 决策树可视化 |
-| 协作记忆 | 用户和 Friday 共同维护的知识库 |
-| 自适应 UI | 根据用户习惯自动调整布局和快捷方式 |
-| 离线就绪 | PWA + 离线 cache，网络断了还能用 |
+### Phase 2: 让能力可见
 
----
+- 能力矩阵清楚展示 available / missing / human blocker / needs review
+- 每个缺能力项都有配置入口和验证动作
+- provider/channel/skill/workflow 都有 doctor 或代表性任务
 
-## 六、本地化状态
+### Phase 3: 让执行透明
 
-| 区域 | 中文覆盖 |
-|------|---------|
-| 核心4页 (Home/Chat/Packs/Assistant) | ✅ 95%+ |
-| Onboarding/Settings | ✅ 90%+ |
-| Workflows/Automations | ✅ 85%+ |
-| Router loading messages | ✅ 100% (刚修) |
-| Skills/Fleet/Guided Flow | ⚠️ 60-80% |
-| Sessions/Usage/MCP/Memory | ❌ 0-20% |
-| Observability | ❌ 10-30% |
+- 进展汇报短、直接、有人味
+- 失败话术说原因，不甩锅
+- 工具调用和 workflow 结果有 evidence
+- 高风险审批理由可读
 
----
+### Phase 4: 让成长可控
 
-## 七、设计语言现状
+- 用户能看到 learned facts
+- 用户能改偏好和记忆
+- 失败沉淀成 eval 或 recipe
+- 自我修复有回滚和审计
+- standing goals 可以暂停和删除
 
-| 组件 | 状态 |
-|------|------|
-| ShellCard (页面卡片) | ✅ 统一 |
-| StatusPill (状态徽章) | ✅ 统一 |
-| ActionButton (操作按钮) | ✅ 统一 |
-| FieldLabel (表单标签) | ✅ 统一 |
-| LiveIndicator (实时指示) | ✅ 统一 |
-| CSS Variables (主题变量) | ✅ 15+ 变量 |
-| Skeleton Loading | ❌ 不存在 |
-| 动画系统 | ❌ 仅 bounce dots |
-| Toast 通知 | ✅ Sonner |
-| 持久通知中心 | ❌ 不存在 |
-| 键盘快捷键 | ❌ 不存在 |
-| ARIA 无障碍 | ❌ 仅 2 处 |
+## 七、设计原则
+
+- 首屏展示真实产品，不做空泛宣传页。
+- 普通用户不需要懂内部术语。
+- 技术用户可以看到真实证据。
+- 不用“万能”“完全自动”这类承诺。
+- 不把缺 key、缺账号、缺权限的任务伪装成成功。
+- 渠道可以控制 Friday，但不能绕过系统安全边界。
+- 记忆和自我成长必须用户可见、可审计、可撤销。
+
+## 八、相关文档
+
+- [README 中文版](../README.zh-CN.md)
+- [能力矩阵](ops/friday-capability-matrix.md)
+- [闭环蓝图](BLUEPRINT-CLOSED-LOOP.md)
+- [愿景](VISION.md)
+- [故障排查](TROUBLESHOOTING.md)

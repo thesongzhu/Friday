@@ -5,9 +5,9 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>陪你一起成长的 AI。</strong><br>
-  既是永远在线的<b>个人 AI 助手</b>，也是会自我修复、能把重复工作沉淀成 skill 的<b>自动化员工</b>。<br>
-  自部署 · 自带模型 · 先审批再行动
+  <strong>一个跑在你身边、会记住工作方式、会生成技能、但关键动作先问你的个人 AI。</strong><br>
+  你给目标，它检查能力、补齐缺口、执行任务、验证结果，把重复工作沉淀成可复用 workflow。<br>
+  本地优先 · 自带 Key · 先审批再行动 · 用户掌控
 </p>
 
 <p align="center">
@@ -21,56 +21,37 @@
 
 ## Friday 是什么？
 
-Friday 是一个自部署 Agent OS，一份代码同时给你两个产品：
+Friday 是一个自部署的个人 AI 和自动化执行系统。
 
-- **个人 AI** —— 对话、技能、记忆、多通道收件箱、桌面控制。永远在线，跑在你自己的硬件上。
-- **自动化员工** —— 工作流、自我修复、审批门禁、技能自动生成。有边界的 operator，把重复工作沉淀成可复用产物。
+它不应该像一个空白聊天框，而应该像一个私人的执行搭档：你给它目标，它先检查自己有什么能力，缺什么就尝试寻找或生成候选能力，遇到必须人类处理的地方就明确停下来问你，然后执行、验证、记录经验。
 
-你用自己的模型/API Key。Friday 默认跑在本机，敏感凭证放在环境变量或托管 secret 引用里。高风险动作必走显式审批。
+Friday 不是万能自动机。它不会替你注册账号、绕过验证码、付款、偷偷拿权限、或在没有凭证的情况下调用外部服务。它的目标是：能自己做的尽量自己做；必须你介入的地方说清楚；做完留下证据和可回滚路径。
 
-## 它长什么样？
+## 核心闭环
 
-四个 30 秒快照：既是个人 AI，也是自动化员工，看完就知道 Friday 怎么挣自己的工资。
+1. **你给目标。** 例如：“读这些 PDF，结合最新网页搜索，整理一份短总结发到 Discord。”
+2. **Friday 检查能力。** 它会看文本、视觉、OCR、网页搜索、PDF、文件、浏览器、渠道、模型、记忆、workflow 是否可用。
+3. **Friday 补能力。** 它可以从已安装 skills、可信 catalog、MCP server、本地文件、包仓库、OpenAPI 文档和网页中找候选。
+4. **需要人类时明确停下。** API key、OAuth、付费、验证码、登录、敏感权限、高风险动作都要用户确认。
+5. **Friday 执行并验证。** 通过 skills、tools、workflow、浏览器/桌面控制或渠道适配器执行，然后检查结果。
+6. **Friday 安全地成长。** 它可以更新 memory、provider 路由偏好、setup recipe、生成的 skill、eval 用例和失败教训。默认不训练模型权重。
 
-### 1. 自我进化，也自我修复
+## Friday 现在能做什么
 
-你说一次：*"以后周报别罗列细节，只要 3 个洞察。"* Friday 写进 memory。下周周报 skill 自动改写。再下一周 skill 跑挂了——Friday 自己 diagnose 原因、改 skill、跑 self-test，通过后再 ping 你确认才复用。
+| 领域 | Friday 的目标能力 | 边界 |
+| --- | --- | --- |
+| 对话与任务执行 | 回答、规划、调用工具执行、汇报进展、失败恢复 | 取决于已配置 provider 和已授权工具 |
+| 文本、视觉、OCR、PDF、文件 | 按能力路由到 provider 或内置解析器；缺能力时说明缺什么 | 视觉/OCR/TTS 依赖 provider 和凭证 |
+| 网页与浏览器 | 使用配置好的网页搜索 provider、本地浏览器控制和 workflow | 登录、付款、验证码、敏感账号需要用户 |
+| Skills 和 workflows | 生成、导入、验证、安装、运行、更新、回滚可复用能力 | 不可信代码必须经过审查、沙箱验证和策略门禁 |
+| 记忆与自我改进 | 沉淀偏好、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；不做隐藏模型训练 |
+| 自我修复 | 发现失败、诊断、提出修复、低风险自动执行、验证、回滚、重复失败后暂停 | 高风险修复需要审批 |
+| 多渠道控制 | 接入 Discord、Telegram、飞书/Lark、Slack 类 webhook、Signal、WhatsApp、QQ 等可配置渠道 | 渠道可以控制 Friday，但敏感动作仍要确认 |
+| 长期目标 | 对用户授权的 standing goals 生成 agenda、执行低风险事项、汇报证据 | Friday 接收用户目标，不主动发明无关长期议程 |
 
-### 2. 凌晨 3 点 Incident，它先动手你后批
+## 安装与启动
 
-Slack `#alerts` 弹 5xx 突增。workflow 触发，Friday diagnose 出 OOM，写好调高内存的 PR，推到 Slack 等你点 approve。你点一下，merge，跑 verify workflow，回执 ✓。每一步修复都要你点头。
-
-### 3. 半小时的重复活，看一次就变 skill
-
-每周一你花 30 分钟看 GitHub PR 队列、拉 metrics、写总结。Friday 看你跑一次 → 问 4 个澄清问题 → 生成 skill → self-test 通过 → 你审一遍存进 registry。下周一自动跑，你只读输出。
-
-### 4. 偏好不靠反复说
-
-你说一次：*"我用 pnpm，部署只走 GitHub Actions。"* Friday 写进 `memory/preferences.md`，带置信度和时间戳。三个月后开新项目，它自动用 pnpm + 写 GHA workflow。哪天你换 bun？打开那个 markdown 改一行，不需要"重新训练"。
-
-## 为什么是现在？
-
-最近中文和英文社区围绕长期记忆、可复用技能、自我修复循环和工具安全边界的讨论，反复集中在几个问题上：
-
-- 记忆不能只是更长上下文，必须有结构、检索和人类可见性。
-- 技能让 Agent 变强，但不可信技能也是供应链和本地执行风险。
-- 自我进化只有在能沉淀成可复用产物、测试、证据和回滚路径时才有意义。
-- 自我修复必须对破坏性、凭证相关、生产敏感动作保持有监督。
-- 上下文压缩和模糊指令可能丢掉关键边界，所以审批和审计轨迹非常重要。
-
-Friday 的方向很实际：把记忆、技能、工作流、可观测性和审批门禁做成产品能力，而不是把一切赌在一条无限对话里。
-
-## Friday 不是什么？
-
-- 它不是不受限制的自主黑客或系统管理员。
-- 它不会安全地无审查运行任意第三方技能。
-- 它不保证每个 GitHub 仓库、文档或模糊想法都能自动变成可运行技能。
-- 它不会绕过模型能力限制。小模型或弱工具调用模型的 Agent 行为会受限。
-- 它不会替你承担主机安全、API Key 管理、网络暴露和扩展安装风险。
-
-## 快速开始
-
-**方式一 - npm 包**
+### 方式一 - npm 包
 
 ```bash
 npm install -g @thesongzhu/friday
@@ -78,7 +59,7 @@ friday start
 # 打开 http://localhost:3141
 ```
 
-**方式二 - 源码安装**
+### 方式二 - 源码启动
 
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
@@ -89,14 +70,82 @@ npm start
 # 打开 http://localhost:3141
 ```
 
-**方式三 - Docker 源码构建**
+### 方式三 - Docker 源码构建
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 # 打开 http://localhost:3141
 ```
 
-第一次运行的具体路径取决于你的 provider key、本机权限，以及启用了哪些可选能力。
+第一次启动会进入 setup：配置 provider、渠道、本机权限和可选能力。setup 完成后，再打开 Friday 应直接进入 Home。
+
+## Provider 和 API Key
+
+Friday 是 BYOK：你使用自己的模型、搜索和第三方 API 凭证。
+
+每项能力都应该能回答四个问题：
+
+- **我有没有这项能力？**
+- **如果没有，缺的是什么？**
+- **去哪里配置？**
+- **配置完后能不能用真实任务验证？**
+
+常见 provider 路径包括 OpenAI、豆包/火山方舟、Moonshot、Anthropic、Google、OpenRouter、Tavily、Serper、本地浏览器/PDF/文件工具、MCP server 和自定义 skill。缺 key 或缺账号不能算成功，必须显示成人类阻塞项，并告诉你下一步去哪配。
+
+## 能力自获取
+
+当 Friday 缺少完成目标所需的能力时，它会走这个闭环：
+
+```text
+目标 -> 能力缺口 -> 候选来源 -> 沙箱/测试 -> 必要时审批 -> 安装/注册 -> doctor 验证 -> 执行任务
+```
+
+默认低风险步骤包括搜索、分析、生成草案和沙箱验证。下载代码、安装包、写配置、注册工具、shell、本地文件写入、外部网络调用都受 autonomy policy 控制。OAuth、付款、验证码、API key、敏感权限、生产写操作必须由用户介入。
+
+## 记忆、自我成长和自我修复
+
+Friday 的自我改进不是神秘黑盒，而是可检查的状态和产物：
+
+- **记忆事实：** 偏好、项目规则、反复出现的上下文、用户纠正。
+- **路由偏好：** 哪个 provider 更适合哪类任务。
+- **Setup recipes：** 成功的配置、恢复和验证步骤。
+- **Skills / workflows：** 生成或改进后的可复用能力，带测试和证据。
+- **Eval 用例：** 修过的问题以后要继续通过。
+- **失败教训：** 什么坏了、怎么修、什么时候该停止重试。
+
+这些不会默认训练模型权重。它们应该可见、可审计、可编辑、可暂停、可删除。
+
+## 安全模型
+
+Friday 的原则很简单：重复、低风险、可验证的事情尽量自动化；不可逆、敏感、高风险的事情留给用户确认。
+
+- 默认本地优先运行，本地保存状态。
+- 自带 key，凭证应放在环境变量、托管 secret 引用或系统密钥管理里。
+- 能力授权要有范围、理由、证据和过期时间。
+- 高风险动作必须显式审批。
+- 工具调用、workflow、自修复、渠道动作都要留下审计证据。
+- 安装失败或生成能力失败时要支持回滚。
+- 暴露到公网前必须明确配置认证、CORS、TLS/代理和最小权限。
+
+## Friday 不是什么
+
+- 它不是万能自动化系统。
+- 它不是任何任务都能完全不问人的全自动系统。
+- 它不会绕过登录、验证码、付款、平台规则或 provider 限制。
+- 它不会无审查安全运行任意第三方代码。
+- 它不会替你承担主机、API key、账号和渠道接入的安全责任。
+
+## 文档
+
+- [快速开始](docs/getting-started.md)
+- [文档中心](docs/README.md)
+- [Roadmap](ROADMAP.md)
+- [愿景](docs/VISION.md)
+- [能力矩阵](docs/ops/friday-capability-matrix.md)
+- [扩展 Friday](docs/EXTENDING.md)
+- [故障排查](docs/TROUBLESHOOTING.md)
+- [参与贡献](.github/CONTRIBUTING.md)
+- [安全策略](.github/SECURITY.md)
 
 ## 下载与分发
 
@@ -108,49 +157,15 @@ docker compose -f docker/docker-compose.yml up --build
 
 官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
 
-## 技能生命周期
-
-```bash
-friday list
-friday import ./my-skill.friday.tgz
-friday import ./path/to/SKILL.md
-friday import https://github.com/example/skill-repo.git
-```
-
-支持的导入路径是有边界的。Friday 可以识别、转换、验证和安装支持的技能类来源，但不清楚的来源应该先澄清或人工审核，再执行。
-
-## 安全姿态
-
-- 凭证使用环境变量或 `secret://...` 引用。
-- 安装第三方技能前先审查。
-- 除非已经配置认证、CORS、TLS/代理和最小权限访问，否则不要把 Friday 暴露到公网。
-- 桌面、Shell、浏览器、文件、渠道和网络工具都是强能力，需要明确策略约束。
-- 发布或部署前运行检查：`npm run release:verify:repo` 用于仓库健康，`npm run release:verify` 用于真实运行态证明。
-- 漏洞报告见 [安全策略](.github/SECURITY.md)。
-
 ## 社区
 
-- **Discord** —— 加入 [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u) 聊问题、共享技能、讨论 roadmap。
-- **Issues** —— bug 和功能反馈走 [GitHub Issues](https://github.com/thesongzhu/Friday/issues)。
-- **安全** —— 漏洞报告见 [安全策略](.github/SECURITY.md)。
+- **Discord** - [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u)
+- **Issues** - [GitHub Issues](https://github.com/thesongzhu/Friday/issues)
+- **安全** - [SECURITY](.github/SECURITY.md)
 
-## 开源发布状态
+## 许可证
 
-Friday 是开源软件，许可证以 [LICENSE](LICENSE) 为准。公开发布源码快照前请先看 [开源发布审查](docs/open-source-release-review.md)。
-
----
-
-<p align="center">
-  <a href="docs/README.md">文档中心</a> ·
-  <a href="CHANGELOG.md">更新日志</a> ·
-  <a href=".github/CONTRIBUTING.md">参与贡献</a> ·
-  <a href=".github/SECURITY.md">安全策略</a> ·
-  <a href="LICENSE">GPL-3.0-only 许可</a>
-</p>
-
-<p align="center">
-  <sub>持续成长，但不丢边界。</sub>
-</p>
+Friday 使用 [GPL-3.0-only](LICENSE) 开源许可证。
 
 ## 第三方声明
 

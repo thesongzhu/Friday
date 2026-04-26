@@ -1,83 +1,153 @@
 # Friday Blueprint: Closed-Loop Usability
 
-This blueprint makes Friday usable end-to-end with no missing operator step.
+This blueprint defines the product loop Friday should close for ordinary users.
 
-## Closed Loop Definition
+The target is not "fully automatic everything." The target is:
 
-A new user should be able to complete this loop:
-
-1. Install Friday
-2. Run one command demo
-3. Diagnose and self-recover from common failures
-4. Extend with skill/plugin/workflow templates
-5. Ship a release with traceable notes and rollback path
-
-## Loop 1: Install -> Run
-
-Commands:
-
-```bash
-npm install
-npm run build
-npm run demo
+```text
+user goal -> capability check -> gap closure -> execution -> verification -> learning -> clear next step
 ```
 
-Exit criteria:
+When a human is required, Friday should say exactly why and what to do next.
 
-- demo prints `✅ Friday one-command demo completed`
-- output includes valid `workflowId` and `runId`
+## Loop 1: Install -> Open Home
 
-## Loop 2: Fail -> Recover
+Expected path:
 
-Use:
-
-- `docs/TROUBLESHOOTING.md`
-
-Exit criteria:
-
-- operator can locate `stateDir`, `friday.db`, and `audit.jsonl`
-- operator can re-run with `FRIDAY_LOG_REQUESTS=true` and reproduce
-
-## Loop 3: Extend -> Verify
-
-Use:
-
-- `docs/EXTENDING.md`
-- `examples/templates/*`
+1. Install Friday.
+2. Start the local runtime.
+3. Open `http://localhost:3141`.
+4. Complete setup.
+5. Reopen Friday and land on Home.
 
 Exit criteria:
 
-- custom skill/plugin/workflow can be scaffolded from templates
-- `friday list` and local run paths validate basic loading/execution
+- `/v1/health` returns ok.
+- setup status is available.
+- completed setup users do not see the recovery/auth/setup gate unnecessarily.
+- provider truth reflects the actual live route.
 
-## Loop 4: Release -> Rollback
+## Loop 2: Goal -> Capability Check
 
-Use:
+When the user asks for a task, Friday should identify required capabilities:
 
-- `docs/RELEASING.md`
-- `docs/RELEASE_NOTES_TEMPLATE.md`
-- `CHANGELOG.md`
-- `.github/SECURITY.md`
+- text model
+- vision / image understanding
+- OCR
+- embeddings / memory search
+- web search
+- PDF parsing
+- file read/write
+- browser or desktop control
+- skills/workflows
+- MCP tools
+- channels
+- TTS / voice
 
 Exit criteria:
 
-- `npm run release:verify:repo` passes
-- `npm run release:verify` passes
-- release tag matches package version
-- release notes generated from template
-- rollback path documented (patch-forward)
+- Friday can answer "Do I have this capability?"
+- Friday can answer "What is missing?"
+- Friday can answer "Where do I configure it?"
+- Friday can answer "How will I verify it?"
 
-## Definition of Done (Project-Level)
+## Loop 3: Missing Capability -> Acquisition
 
-Friday is "release-usable" when all are true:
+When capability is missing, Friday should run:
 
-- one-command demo exists and passes locally
-- troubleshooting guide covers common startup/auth/run failures
-- extension conventions + templates are available in-repo
-- release process includes version/changelog/release notes/CI/license/security
+```text
+candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available
+```
 
-## Ownership and Cadence
+Allowed low-risk actions:
 
-- Owner: Release Manager
-- Trigger: every release cut and every UX-breaking change
-- Artifact refresh required: `README.md`, `CHANGELOG.md`, release docs, templates
+- search existing local capabilities
+- inspect trusted catalogs
+- generate a draft skill/workflow
+- run sandbox verification
+- produce a setup plan
+
+Human-gated actions:
+
+- API key entry
+- OAuth/login
+- payment/billing
+- CAPTCHA
+- sensitive OS permissions
+- external account access
+- production writes
+- untrusted installs
+
+Exit criteria:
+
+- unverified capability is not routed as available
+- failed acquisition leaves evidence and rollback
+- human blocker is explicit
+
+## Loop 4: Execute -> Verify -> Report
+
+Friday should execute only after capability and policy are satisfied.
+
+Exit criteria:
+
+- task plan is visible
+- progress updates are concise
+- tool/workflow evidence is recorded
+- result is verified against the task goal
+- failure includes cause, blocker, and next step
+
+## Loop 5: Learn -> Improve
+
+Friday should improve through auditable state, not hidden model training.
+
+Allowed learning outputs:
+
+- memory facts
+- provider routing preferences
+- setup recipes
+- generated skill/workflow quality signals
+- eval cases
+- failure lessons
+- capability source ranking
+
+Exit criteria:
+
+- user can inspect or correct meaningful learned facts
+- safety policy is not weakened by learning
+- failures become regression cases when practical
+
+## Loop 6: Standing Goals -> Agenda
+
+For user-authorized long-term goals:
+
+1. Create standing goal with scope, trigger, risk policy, budget, and success criteria.
+2. Generate agenda items.
+3. Check capability and policy.
+4. Execute low-risk work automatically if authorized.
+5. Pause for high-risk or human-only steps.
+6. Report evidence, cost, verification, and learning update.
+
+Exit criteria:
+
+- no standing goal runs without user authorization
+- user can pause/delete goals
+- agenda runs include evidence and rollback/failure notes
+
+## Project Definition Of Done
+
+Friday is closed-loop usable when it can reliably answer and act on:
+
+- what it can do
+- what it cannot do yet
+- what is missing
+- where the user configures it
+- how it verifies configuration
+- whether the task actually completed
+- what it learned or changed afterward
+
+## Related Docs
+
+- [Getting Started](getting-started.md)
+- [Capability Matrix](ops/friday-capability-matrix.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Vision](VISION.md)

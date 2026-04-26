@@ -1,524 +1,196 @@
-# Getting Started with Friday
+# Getting Started With Friday
 
-This guide walks you through installing Friday, creating your first skill, running it via the CLI, starting the API server, and making API calls.
+This guide gets Friday running locally, completes setup, and explains what to do when a capability is missing.
 
----
+Friday is local-first and BYOK. You can start it without every provider configured, but real tasks that need models, search, OCR, TTS, channels, or third-party accounts require valid credentials and verification.
 
 ## Prerequisites
 
-- **Node.js ≥ 22** — [nodejs.org](https://nodejs.org/)
-- **npm** (bundled with Node.js)
-- **bash** + **jq** (for the echo skill example)
+- Node.js 22+
+- npm 10+
+- Git
+- A modern browser
+- Optional: model/search provider keys, such as OpenAI, Doubao/Volcengine, Tavily, Serper, or other supported providers
 
-Verify your setup:
+Check your local runtime:
 
 ```bash
-node --version   # v22.x.x or higher
-npm --version    # 10.x or higher
+node --version
+npm --version
 ```
 
----
+## Install And Start
 
-## 1. Install Friday
+### Option A - npm package
 
-### Option A: From source (recommended)
+```bash
+npm install -g @thesongzhu/friday
+friday start
+```
+
+Open:
+
+```text
+http://localhost:3141
+```
+
+### Option B - source checkout
 
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
 cd Friday
 npm install
 npm run build
-
-# Run via node directly
-node dist/cli/friday-cli.js --help
-
-# Or link globally
-npm link
-friday --help
+npm start
 ```
 
-### Option B: npm global install (when published)
+Open:
+
+```text
+http://localhost:3141
+```
+
+### Option C - Docker from source
 
 ```bash
-npm install -g @thesongzhu/friday
-friday --help
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-### Option C: Docker
+Open:
+
+```text
+http://localhost:3141
+```
+
+## First-Run Setup
+
+Setup should guide you through:
+
+1. **Local session:** Friday establishes a local browser session for this machine.
+2. **Provider:** choose or auto-detect a model provider, enter credentials, and verify the lane.
+3. **Capabilities:** review text, vision, OCR, embedding, web search, PDF, browser, files, skills, workflows, memory, TTS, and channel support.
+4. **Channels:** connect optional chat/control channels such as Discord, Telegram, Feishu/Lark, Signal, WhatsApp, QQ, or webhooks.
+5. **Home:** after setup completes, opening Friday should go directly to Home.
+
+If setup cannot verify a capability, it should say what is missing, where to configure it, and how to test it after configuration.
+
+## Provider Keys
+
+Friday does not include model or paid search credentials. Bring your own keys.
+
+Common setup paths:
+
+| Need | Typical provider path | What Friday should show if missing |
+| --- | --- | --- |
+| Text model | OpenAI, Doubao/Volcengine, Moonshot, Anthropic, Google, OpenRouter | missing provider key or invalid route |
+| Vision / multimodal | provider with image input support | missing vision-capable model or API key |
+| OCR | provider OCR API or installed OCR skill | missing OCR provider, account, or skill |
+| Web search | Tavily, Serper, or custom search skill | missing search key or disabled provider |
+| Embedding / memory search | embedding-capable provider or local embedding lane | missing embedding provider |
+| TTS | provider TTS lane or local speech skill | missing TTS provider |
+
+Missing external accounts, OAuth, payment, CAPTCHA, API keys, and sensitive permissions are human blockers. Friday should not mark those tasks as complete until real verification passes.
+
+## Your First Goal
+
+After setup, try a small task that exercises the closure loop:
+
+```text
+Summarize what capabilities are configured, list what is missing, and tell me the next setup step.
+```
+
+Friday should answer with:
+
+- available capabilities
+- missing capabilities
+- exact human blockers
+- configuration path
+- verification step
+
+## Auto-Start On macOS
+
+To keep Friday available after login:
 
 ```bash
-cp .env.example .env
-# Edit .env — set FRIDAY_TOKEN_SECRET
-
-docker compose up -d
-curl http://localhost:3141/v1/health
+bash scripts/ops/install-friday-launchagent.sh
 ```
 
-Skip to [Step 4](#4-start-the-api-server) if using Docker — the server starts automatically.
-
----
-
-## 2. Create Your First Skill
-
-Skills are directories with a `skill.manifest.json` and an entrypoint script.
-
-Create the echo skill:
+Check status:
 
 ```bash
-mkdir -p skills/echo
+bash scripts/ops/friday-launchagent-status.sh
 ```
 
-### skills/echo/skill.manifest.json
+See [macOS Auto-Start](ops/friday-autostart-macos.md) for logs, uninstall steps, and channel wake behavior.
 
-```json
-{
-  "schemaVersion": "2.0",
-  "id": "echo",
-  "name": "Echo",
-  "description": "Echoes back the input message.",
-  "version": "1.0.0",
-  "kind": "utility",
-  "category": "utility",
-  "author": { "name": "You" },
-  "tags": ["example"],
+## Development Workflow
 
-  "runtime": {
-    "kind": "shell",
-    "entrypoint": "run.sh",
-    "minHubVersion": "0.1.0",
-    "apiVersion": "1",
-    "timeoutMsDefault": 10000
-  },
-
-  "triggers": {
-    "intents": ["echo"],
-    "phrases": ["echo this"],
-    "channels": ["*"]
-  },
-
-  "invocation": {
-    "userInvocable": true,
-    "modelInvocable": true,
-    "priority": 50,
-    "modes": ["intent"]
-  },
-
-  "requirements": {
-    "bins": ["bash", "jq"],
-    "env": [],
-    "config": []
-  },
-
-  "input": {
-    "schema": {
-      "type": "object",
-      "properties": {
-        "message": { "type": "string", "description": "Message to echo" }
-      },
-      "required": ["message"]
-    }
-  },
-
-  "output": {
-    "schema": {
-      "type": "object",
-      "properties": {
-        "echo": { "type": "string" }
-      }
-    }
-  },
-
-  "steps": [
-    {
-      "id": "echo",
-      "type": "act",
-      "completion": {},
-      "transitions": { "onSuccess": null, "onFailure": null }
-    }
-  ],
-
-  "security": {
-    "sandbox": false,
-    "network": false,
-    "filesystem": "none",
-    "permissionPolicy": { "default": "allow", "rules": [] }
-  },
-
-  "documentation": {
-    "summary": "Echoes the input message.",
-    "examples": [
-      { "input": { "message": "Hello!" }, "output": { "echo": "Hello!" } }
-    ]
-  }
-}
-```
-
-### skills/echo/run.sh
+From source:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-INPUT=$(cat)
-MESSAGE=$(echo "$INPUT" | jq -r '.message // "No message"')
-
-echo "{\"echo\": \"$MESSAGE\"}"
+npm run typecheck
+npm run lint
+npm run build
+npm test
 ```
 
-Make it executable:
+Useful targeted checks:
 
 ```bash
-chmod +x skills/echo/run.sh
+npm run ops:doctor:runtime
+npm run check:security-doctor
+npm run check:audit-integrity
+npm run check:provider-reliability
 ```
 
----
+## Skills And Workflows
 
-## 3. Run via CLI
+Friday can turn repeated work into reusable skills and workflows, but executable capability must stay reviewable.
 
-### List skills
+Common commands:
 
 ```bash
-friday list --skills-dir skills
+friday list
+friday import ./my-skill.friday.tgz
+friday import ./path/to/SKILL.md
+friday import https://github.com/example/skill-repo.git
 ```
 
-Output:
+Every generated or imported capability should move through:
 
-```
-Found 1 skill(s):
-
-ID                            NAME                          KIND            RUNTIME
---------------------------------------------------------------------------------------
-echo                          Echo                          utility         shell
+```text
+candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available
 ```
 
-### Run a skill
+See [Extending Friday](EXTENDING.md) for authoring guidance.
 
-```bash
-friday run echo --input message="Hello, Friday!" --skills-dir skills
-```
-
-Output:
-
-```
-Run <run-id> — success (42ms)
-
---- output ---
-{
-  "echo": "Hello, Friday!"
-}
-```
-
----
-
-## 4. Start the API Server
-
-```bash
-friday start --skills-dir skills --port 3141
-```
-
-You'll see:
-
-```
-🚀 Friday hub running — 1 skill(s) loaded
-🚀 Friday API server listening on http://0.0.0.0:3141
-```
-
-The server keeps running. Press `Ctrl+C` for graceful shutdown.
-
----
-
-## 5. Make API Calls
-
-### Health check
+## API Health Check
 
 ```bash
 curl http://localhost:3141/v1/health
 ```
+
+Expected shape:
 
 ```json
 {
   "ok": true,
   "data": {
     "status": "ok",
-    "version": "1.0.0",
-    "uptime": 5
-  },
-  "requestId": "abc-123"
+    "version": "1.0.0"
+  }
 }
 ```
 
-### Authenticate
-
-```bash
-curl -X POST http://localhost:3141/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-Save the `accessToken` from the response:
-
-```bash
-export TOKEN="<your-access-token>"
-```
-
-### List providers
-
-```bash
-curl http://localhost:3141/v1/providers \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### Register a provider (BYOK)
-
-```bash
-curl -X POST http://localhost:3141/v1/providers \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "kind": "openai",
-    "label": "My OpenAI",
-    "apiId": "openai-completions",
-    "authMode": "api-key",
-    "credential": "sk-..."
-  }'
-```
-
-### Create a workflow
-
-```bash
-curl -X POST http://localhost:3141/v1/workflows \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "slug": "hello-workflow",
-    "name": "Hello Workflow",
-    "graph": {
-      "schemaVersion": "2.0",
-      "workflowId": "placeholder",
-      "workflowVersionId": "placeholder",
-      "sourceSpecSchemaVersion": "1.0",
-      "graph": {
-        "nodes": [
-          { "id": "trigger", "type": "trigger", "label": "Start", "config": {} },
-          { "id": "echo", "type": "action", "label": "Echo", "config": { "skillId": "echo" } }
-        ],
-        "edges": [
-          { "id": "e1", "sourceNodeId": "trigger", "targetNodeId": "echo" }
-        ]
-      },
-      "failurePolicy": { "onFailure": "fail_fast", "notifyUser": false },
-      "tests": [],
-      "checksum": "placeholder"
-    }
-  }'
-```
-
----
-
-## 6. Import an External Skill
-
-Friday can auto-detect and convert skills from multiple formats:
-
-```bash
-# Import a native Friday skill package
-friday import ./path/to/my-skill.friday.tgz
-
-# Import from a Clawdbot SKILL.md
-friday import ./some-dir/SKILL.md --from clawdbot-skill-md
-
-# Import an OpenAI GPT Action (OpenAPI spec)
-friday import ./openapi.json --from openai-gpt-action
-
-# Preview without installing
-friday import ./openapi.json --from openai-gpt-action --dry-run
-
-# List available converters
-friday converters
-```
-
-### Supported source formats
-
-| Format | Description |
-|---|---|
-| `friday-package` | Native Friday `.friday.tgz` archive |
-| `clawdbot-skill-md` | Clawdbot `SKILL.md` files |
-| `n8n-node` | n8n community node packages |
-| `openai-gpt-action` | OpenAI GPT Action (OpenAPI 3.x spec) |
-
----
-
-## 7. Create a Workflow
-
-Workflows connect skills into multi-step automations with triggers, approvals, and branching.
-
-### Via API
-
-See Step 5 above for the API call.
-
-### Workflow concepts
-
-- **Versions** — Each edit creates a new version. Publish a version to make it active.
-- **Triggers** — Start workflows via API call, webhook, schedule (cron), or event.
-- **Approval nodes** — Pause execution until a human approves or rejects.
-- **Retry policies** — Configure retry counts and backoff per node.
-
-```bash
-# Start a workflow run
-curl -X POST http://localhost:3141/v1/workflow-runs \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflowId": "<workflow-id>",
-    "triggerType": "manual",
-    "triggerPayload": { "message": "Hello from workflow!" }
-  }'
-
-# Check run status
-curl http://localhost:3141/v1/workflow-runs/<run-id> \
-  -H "Authorization: Bearer $TOKEN"
-```
-
----
-
-## 8. Use Agent Runs and Scheduled Automations
-
-Friday also exposes a chat-style agent runtime and reusable automations.
-
-### Start an agent run
-
-```bash
-curl -X POST http://localhost:3141/v1/agent/runs \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Analyze this repo and propose a fix plan",
-    "constraints": { "readOnly": true }
-  }'
-```
-
-### Create a scheduled automation (cron)
-
-```bash
-curl -X POST http://localhost:3141/v1/agent/automations \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Weekday Health Check",
-    "taskTemplate": "Run Friday health checks and summarize critical issues",
-    "schedule": {
-      "type": "cron",
-      "cron": "0 9 * * 1-5",
-      "timezone": "America/New_York"
-    },
-    "enabled": true
-  }'
-```
-
-### Update or clear automation schedule
-
-```bash
-# Update schedule
-curl -X PATCH http://localhost:3141/v1/agent/automations/<automation-id> \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "schedule": {
-      "type": "cron",
-      "cron": "*/30 * * * *",
-      "timezone": "UTC"
-    }
-  }'
-
-# Clear schedule (manual runs only)
-curl -X PATCH http://localhost:3141/v1/agent/automations/<automation-id> \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"schedule": null}'
-```
-
-### Execute an automation immediately
-
-```bash
-curl -X POST http://localhost:3141/v1/agent/automations/<automation-id>/run \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
----
-
-## 9. Local Web UI Setup (No Sign-In Mode)
-
-If you run Friday locally, you can use the setup wizard and agent workspace in browser.
-
-### Start server and open UI
-
-```bash
-friday start --skills-dir skills --port 3141
-open http://localhost:3141
-```
-
-### Complete setup wizard
-
-1. Configure at least one model provider in **Providers**.
-2. Select channels in **Connect Your Channels**.
-3. Click **Open Friday** after setup status is marked complete.
-
-### Agent workspace highlights
-
-- **Conversation-first UI**: chat with Friday directly.
-- **Command buttons**: one-click run for task/workflow/skill/health actions.
-- **Task Controls**: set schedule/data/workflow context before runs.
-- **Live Run Monitor**: view progress, tool usage, sub-agents, and trace/audit summary.
-- **Save as Automation**: persist successful runs and optionally assign cron schedule.
-
----
-
-## Next Steps
-
-- **Environment variables** — See [.env.example](../.env.example) for all `FRIDAY_*` configuration.
-- **Docker** — See [docker-compose.yml](../docker/docker-compose.yml) for containerized deployment.
-- **Style guide** — See [friday-style-guide.md](friday-style-guide.md) for contribution conventions.
-- **Recent changes** — See [CHANGELOG.md](../CHANGELOG.md) for latest updates.
-- **Production** — See [README.md](../README.md) for hardening tips.
-
----
-
 ## Troubleshooting
 
-### "No skills found"
+Use [Troubleshooting](TROUBLESHOOTING.md) when:
 
-Make sure `--skills-dir` points to a directory containing subdirectories with `skill.manifest.json` files.
+- Friday opens a recovery/auth page instead of Home.
+- setup status is unavailable.
+- a provider shows the wrong name or route.
+- a capability says it is available but the representative task fails.
+- a channel receives messages but cannot control Friday.
+- a generated skill installs but cannot pass verification.
 
-```bash
-ls skills/echo/skill.manifest.json  # Should exist
-friday list --skills-dir skills
-```
-
-### Port already in use
-
-```bash
-friday start --port 4000  # Use a different port
-# Or set FRIDAY_PORT=4000 in .env
-```
-
-### Token secret warning
-
-```
-⚠️  Using default token secret. Set FRIDAY_TOKEN_SECRET for production.
-```
-
-Set the environment variable:
-
-```bash
-export FRIDAY_TOKEN_SECRET=$(openssl rand -hex 32)
-friday start
-```
-
-### Type errors during development
-
-```bash
-npx tsc --noEmit  # Should show 0 errors
-```
-
-The project uses strict TypeScript with zero `as any` — all types are explicit.
+For security-sensitive problems, follow [SECURITY.md](../.github/SECURITY.md).
