@@ -160,6 +160,10 @@ describe("FridaySelfHealingApiService", () => {
     expect(result.incidentsCreated[0]!.runId).toBe("run-42");
     expect(result.incidentsCreated[0]!.nodeId).toBe("node-a");
     expect(result.diagnosisCreated[0]!.nodeId).toBe("node-a");
+
+    const overview = service.getLearningOverview({ userId: "test-user", limit: 10 });
+    expect(overview.coverage.incidents).toBeGreaterThan(0);
+    expect(overview.coverage.diagnoses).toBeGreaterThan(0);
   });
 
   it("manualResolveIncident normalizes recursive lesson titles before persisting them", () => {

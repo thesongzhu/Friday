@@ -80,7 +80,11 @@ const SETUP_TARGET_ALIASES: ReadonlyArray<readonly [string, readonly RegExp[]]> 
   ["qq", [/\bqq\b/i]],
   ["lark", [/\blark\b/i, /飞书国际版/u]],
   ["feishu", [/\bfeishu\b/i, /飞书/u]],
-  ["line", [/\bline\b/i]],
+  ["line", [
+    /\bline\s+(?:bot|channel|messaging|login|official|notify|integration)\b/i,
+    /\b(?:bind|connect|configure|set\s*up|setup|enable|register|add|link|onboard|install)\s+(?:the\s+)?line\b/i,
+    /\bLINE\b/,
+  ]],
   ["signal", [/\bsignal\b/i]],
   ["irc", [/\birc\b/i]],
   ["openai", [/\bopenai\b/i]],

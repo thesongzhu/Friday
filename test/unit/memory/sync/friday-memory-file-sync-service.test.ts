@@ -414,6 +414,48 @@ describe("FridayMemoryFileSyncService", () => {
     expect(dirtyCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("F3: deferred session rows do not starve newer memory namespace exports", async () => {
+    const repo = createFridayMemoryFileSyncRepository({ db });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+    });
+
+    for (let i = 0; i < 60; i++) {
+      insertSessionMessage(`msg-starve-${i}-1`, `sess-starve-${i}`, `test:sess:starve:${i}`, "user", "Hello", 1);
+    }
+
+    await service.syncNow({ force: true });
+    await service.syncNow({ force: true });
+    expect(repo.dirtyCount()).toBe(0);
+
+    for (let i = 0; i < 60; i++) {
+      insertSessionMessage(`msg-starve-${i}-2`, `sess-starve-${i}`, `test:sess:starve:${i}`, "assistant", "Hi", 2);
+    }
+    db.withWriteTransaction((conn) => {
+      conn
+        .prepare(
+          `UPDATE memory_file_sync_dirty
+           SET first_dirty_at = '2025-01-01 00:00:00',
+               last_dirty_at = '2025-01-01 00:00:00'
+           WHERE entity_type = 'session_key'`,
+        )
+        .run();
+    });
+    insertMemoryItem("item-starve", "starve-ns", "key1", '{"hello":"world"}');
+
+    const r1 = await service.syncNow();
+    expect(r1.filesDeferred).toBe(50);
+
+    const r2 = await service.syncNow();
+    expect(r2.filesWritten).toBeGreaterThanOrEqual(1);
+
+    const filePath = memoryNamespaceExportPath(tmpDir, "starve-ns");
+    const content = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(content);
+    expect(parsed.namespace).toBe("starve-ns");
+  });
+
   it("F3: force=true bypasses defer and removes dirty row", async () => {
     insertSessionMessage("msg-1", "sess-1", "test:sess:force", "user", "Hello", 1);
 

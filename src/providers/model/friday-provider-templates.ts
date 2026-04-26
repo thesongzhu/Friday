@@ -164,11 +164,11 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
     status: "ready",
     baseUrlHints: ["https://api.deepseek.com"],
     modelDefaults: {
-      recommended: "deepseek-chat",
-      fallback: "deepseek-reasoner",
-      examples: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"],
+      recommended: "deepseek-v4-pro",
+      fallback: "deepseek-v4-flash",
+      examples: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
     },
-    reasoningHints: ["DeepSeek supports chain-of-thought reasoning via deepseek-reasoner."],
+    reasoningHints: ["DeepSeek V4 supports thinking and non-thinking modes via the API."],
   },
   moonshot: {
     displayName: "\u6708\u4E4B\u6697\u9762 (Moonshot)",

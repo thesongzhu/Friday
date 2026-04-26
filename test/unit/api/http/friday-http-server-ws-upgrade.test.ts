@@ -128,9 +128,11 @@ describe("FridayHttpServer WS upgrade routing", () => {
 
     const realtimeResponse = await sendUpgradeRequest(port, "/v1/realtime/ws");
     expect(realtimeResponse.startsWith("HTTP/1.1 101 Switching Protocols")).toBe(true);
+    expect(realtimeResponse).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
 
     const compatibilityResponse = await sendUpgradeRequest(port, "/v1/ws");
     expect(compatibilityResponse.startsWith("HTTP/1.1 101 Switching Protocols")).toBe(true);
+    expect(compatibilityResponse).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
 
     const invalidResponse = await sendUpgradeRequest(port, "/v1/realtime/other");
     expect(invalidResponse.startsWith("HTTP/1.1 404 Not Found")).toBe(true);
@@ -152,6 +154,7 @@ describe("FridayHttpServer WS upgrade routing", () => {
 
     const response = await sendUpgradeRequest(port, "/ws/chat");
     expect(response.startsWith("HTTP/1.1 101 Switching Protocols")).toBe(true);
+    expect(response).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
 
     await webchatWsService.stop();
   });

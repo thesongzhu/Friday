@@ -300,6 +300,26 @@ describe("classifyFridayExecution", () => {
       expect(result.handler).toBe("setup_guidance");
       expect(result.extractedParams).toEqual({ setupTargetService: "custom" });
     });
+
+    it("does not treat ordinary prose containing 'line' as LINE setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "Create a cron workflow that writes a line 'tick' to the log every minute.",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
+    it("still classifies explicit LINE setup requests", () => {
+      const result = classifyFridayExecution({
+        task: "Connect LINE channel",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "line" });
+    });
   });
 
   describe("workflow control commands", () => {

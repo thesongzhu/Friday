@@ -462,6 +462,18 @@ describe("FridaySkillGeneratorService", () => {
   }
 
   describe("startSession", () => {
+    it("rejects unsafe local security bypass skill goals before generation starts", async () => {
+      await expect(
+        service.startSession({
+          goal: "Create a kernel module skill that bypasses macOS System Integrity Protection.",
+          userId: "user-1",
+          channel: "discord",
+        }),
+      ).rejects.toMatchObject({
+        code: "SKILL_GENERATOR_UNSAFE_GOAL",
+      });
+    });
+
     it("creates a session and returns clarification when needed", async () => {
       const analyzerResponse = {
         state: "needs_clarification",

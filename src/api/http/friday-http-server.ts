@@ -843,7 +843,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
   function computeWsAccept(key: string): string {
     return crypto
       .createHash("sha1")
-      .update(key + "258EAFA5-E914-47DA-95CA-5ABB0DC85B12")
+      .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
       .digest("base64");
   }
 

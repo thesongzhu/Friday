@@ -375,9 +375,8 @@ function warnHubBootstrapOperationFailureOnce(error: unknown): void {
   );
 }
 
-function isExpectedVitestProviderNoRouting(error: unknown): boolean {
-  return Boolean(process.env.VITEST)
-    && error instanceof FridayDomainError
+function isExpectedProviderNoRouting(error: unknown): boolean {
+  return error instanceof FridayDomainError
     && error.code === "PROVIDER_NO_ROUTING";
 }
 
@@ -432,6 +431,8 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   { envVar: "FRIDAY_ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
   { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o-mini", supportedModels: ["gpt-4o-mini", "gpt-4o"] },
+  { envVar: "DEEPSEEK_API_KEY", kind: "deepseek", defaultModel: "deepseek-v4-pro", supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash"] },
+  { envVar: "FRIDAY_DEEPSEEK_API_KEY", kind: "deepseek", defaultModel: "deepseek-v4-pro", supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash"] },
   { envVar: "GOOGLE_API_KEY", kind: "google", defaultModel: "gemini-2.0-flash" },
   { envVar: "OPENROUTER_API_KEY", kind: "openrouter", defaultModel: "anthropic/claude-sonnet-4" },
   { envVar: "GROQ_API_KEY", kind: "groq", defaultModel: "llama-3.3-70b-versatile" },
@@ -2832,9 +2833,9 @@ export async function createFridayHub(
     const modelName = defaultRoute.model;            // e.g. "claude-opus-4-5-20251101"
     agentModelIdentity = `${modelName} (provider: ${providerKind})`;
   } catch (err) {
-      if (!isExpectedVitestProviderNoRouting(err)) {
+    if (!isExpectedProviderNoRouting(err)) {
       warnHubBootstrapOperationFailureOnce(err);
-      }
+    }
     // No provider configured yet — use generic identity.
   }
   try {
@@ -2865,9 +2866,9 @@ export async function createFridayHub(
       }
     }
   } catch (err) {
-      if (!isExpectedVitestProviderNoRouting(err)) {
-        warnHubBootstrapOperationFailureOnce(err);
-      }
+    if (!isExpectedProviderNoRouting(err)) {
+      warnHubBootstrapOperationFailureOnce(err);
+    }
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
