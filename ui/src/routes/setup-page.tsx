@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FridayCommunicationMbti } from "@friday-operator-client";
-import { CheckCircle2, MessageCircleMore, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
+import { CheckCircle2, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
 import { setupApi } from "@/lib/api/setup";
-import { systemApi } from "@/lib/api/system";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
 import { scanMigrateApi } from "@/lib/api/scan-migrate";
@@ -19,6 +17,7 @@ import {
 } from "@/lib/assistant/starter-tasks";
 import type {
   AuthMode,
+  DetectProviderResponse,
   ProviderApi,
   ProviderKind,
   SetupStepId,
@@ -26,12 +25,6 @@ import type {
 import { ActionButton, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-import {
-  buildPersonaPreview,
-  COMMUNICATION_MBTI_OPTIONS,
-  getMbtiDefaults,
-  getMbtiDescription,
-} from "@/lib/persona/communication-persona";
 import { CHANNEL_META, CHANNEL_KINDS_ORDERED } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
 import {
@@ -49,6 +42,17 @@ type SetupProviderRecommendation = {
   why: string;
   boundary: string;
   operatorNote: string;
+};
+
+type ProviderSaveDraft = {
+  kind: ProviderKind;
+  name: string;
+  baseUrl: string;
+  authMode: AuthMode;
+  api: ProviderApi;
+  apiKey?: string;
+  supportedModels: string[];
+  defaultModel?: string;
 };
 
 export function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRecommendation {
@@ -132,12 +136,6 @@ function StepDots({ current, total }: { current: number; total: number }) {
   );
 }
 
-// ─── Popular MBTI subset for the card grid ───
-
-const POPULAR_MBTI: FridayCommunicationMbti[] = [
-  "INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "ENFP",
-];
-
 // ─── Main component ───
 
 export function SetupPage() {
@@ -148,7 +146,7 @@ export function SetupPage() {
   const setupDeepLinkApplied = useRef(false);
 
   // ── Step state machine ──
-  type SetupStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  type SetupStep = 0 | 1 | 2 | 3 | 4 | 5;
   const [currentStep, setCurrentStep] = useState<SetupStep>(0);
   const [providerRegion, setProviderRegion] = useState<"international" | "china">(
     locale === "zh" ? "china" : "international",
@@ -165,8 +163,6 @@ export function SetupPage() {
   const [providerApi, setProviderApi] = useState<ProviderApi>("openai-responses");
   const [providerAuthMode, setProviderAuthMode] = useState<AuthMode>("api-key");
   const [providerValidated, setProviderValidated] = useState(false);
-  const [communicationMbti, setCommunicationMbti] = useState<FridayCommunicationMbti | "">("");
-  const [communicationSaved, setCommunicationSaved] = useState(false);
   const hasSetupDeepLink = Boolean(
     searchParams.get("step")
       ?? searchParams.get("providerKind")
@@ -217,17 +213,11 @@ export function SetupPage() {
     staleTime: 30_000,
   });
 
-  const { data: persona } = useQuery({
-    queryKey: ["setup", "persona"],
-    queryFn: () => systemApi.getCommunicationPersona(),
-    retry: 0,
-  });
-
   // ── Redirects ──
 
   useEffect(() => {
     if (setupStatus && !setupStatus.needsSetup && !hasSetupDeepLink) {
-      navigate("/", { replace: true });
+      navigate("/home", { replace: true });
     }
   }, [hasSetupDeepLink, navigate, setupStatus]);
 
@@ -283,12 +273,6 @@ export function SetupPage() {
     setupDeepLinkApplied.current = true;
   }, [providerTemplates, searchParams]);
 
-  useEffect(() => {
-    if (!persona) return;
-    setCommunicationMbti(persona.mbti ?? "");
-    setCommunicationSaved(true);
-  }, [persona]);
-
   // ── Template applicator ──
 
   const selectedTemplate = useMemo(
@@ -303,7 +287,7 @@ export function SetupPage() {
       setProviderValidated(false);
       return;
     }
-    setProviderName((current) => current.trim().length > 0 ? current : `${template.displayName} Provider`);
+    setProviderName(`${template.displayName} Provider`);
     setProviderBaseUrl(template.baseUrlHints[0] ?? "");
     setProviderApi(template.api);
     setProviderAuthMode(template.authModes[0] ?? "api-key");
@@ -316,6 +300,82 @@ export function SetupPage() {
         ?? "",
     );
     setProviderValidated(false);
+  }
+
+  function providerDisplayName(kind: ProviderKind): string {
+    return providerTemplates.find((template) => template.providerKind === kind)?.displayName ?? titleCase(kind);
+  }
+
+  function buildCurrentProviderSaveDraft(): ProviderSaveDraft {
+    return {
+      kind: providerKind,
+      name: providerName.trim() || `${providerDisplayName(providerKind)} Provider`,
+      baseUrl: providerBaseUrl.trim(),
+      authMode: providerAuthMode,
+      api: providerApi,
+      apiKey: providerApiKey.trim() || undefined,
+      supportedModels: providerModels,
+      defaultModel: providerDefaultModel.trim() || undefined,
+    };
+  }
+
+  function buildProviderSaveDraftFromDetection(result: DetectProviderResponse): ProviderSaveDraft {
+    const detectedKind = result.kind as ProviderKind;
+    return {
+      kind: detectedKind,
+      name: `${providerDisplayName(detectedKind)} Provider`,
+      baseUrl: result.baseUrl,
+      authMode: result.authMode,
+      api: result.api,
+      apiKey: providerApiKey.trim() || undefined,
+      supportedModels: result.availableModels,
+      defaultModel: result.defaultModel ?? result.availableModels[0] ?? undefined,
+    };
+  }
+
+  function applyDetectedProvider(result: DetectProviderResponse): void {
+    const detectedKind = result.kind as ProviderKind;
+    setProviderKind(detectedKind);
+    const tpl = providerTemplates.find((t) => t.providerKind === detectedKind);
+    if (tpl?.regionTag === "china" && providerRegion !== "china") {
+      setProviderRegion("china");
+    } else if (tpl?.regionTag !== "china" && providerRegion !== "international") {
+      setProviderRegion("international");
+    }
+    setProviderName(`${providerDisplayName(detectedKind)} Provider`);
+    setProviderBaseUrl(result.baseUrl);
+    setProviderApi(result.api);
+    setProviderAuthMode(result.authMode);
+    setProviderModels(result.availableModels);
+    setProviderDefaultModel(result.defaultModel ?? result.availableModels[0] ?? "");
+    setProviderValidated(result.validated);
+  }
+
+  async function saveProviderDraft(draft: ProviderSaveDraft): Promise<void> {
+    const existingSameKind = existingProviders.find((provider) => provider.kind === draft.kind);
+    const commonPayload = {
+      name: draft.name,
+      baseUrl: draft.baseUrl,
+      authMode: draft.authMode,
+      api: draft.api,
+      apiKey: draft.apiKey,
+      supportedModels: draft.supportedModels,
+      defaultModel: draft.defaultModel,
+      enabled: true,
+    };
+
+    const provider = existingSameKind
+      ? (await providersApi.update(existingSameKind.id, commonPayload)).provider
+      : (await providersApi.create({
+        kind: draft.kind,
+        ...commonPayload,
+      })).provider;
+
+    await providersApi.setRouting({
+      defaultProviderId: provider.id,
+      defaultModel: draft.defaultModel,
+      fallbackProviderIds: [],
+    });
   }
 
   // ── Mutations (all kept intact) ──
@@ -332,25 +392,9 @@ export function SetupPage() {
       });
     },
     onSuccess: (result) => {
-      // Auto-detected kind may differ from user's current selection — update it
-      if (result.kind) {
-        setProviderKind(result.kind as ProviderKind);
-        // Switch region tab if needed
-        const tpl = providerTemplates.find((t) => t.providerKind === result.kind);
-        if (tpl?.regionTag === "china" && providerRegion !== "china") {
-          setProviderRegion("china");
-        } else if (tpl?.regionTag !== "china" && providerRegion !== "international") {
-          setProviderRegion("international");
-        }
-      }
-      setProviderBaseUrl(result.baseUrl);
-      setProviderApi(result.api);
-      setProviderAuthMode(result.authMode);
-      setProviderModels(result.availableModels);
-      setProviderDefaultModel(result.defaultModel ?? result.availableModels[0] ?? "");
-      setProviderValidated(result.validated);
+      applyDetectedProvider(result);
 
-      const detectedName = providerTemplates.find((t) => t.providerKind === result.kind)?.displayName ?? result.kind;
+      const detectedName = providerDisplayName(result.kind as ProviderKind);
       if (result.warnings.length > 0) {
         toast.warning(result.warnings.join(" · "));
       } else {
@@ -364,69 +408,34 @@ export function SetupPage() {
   });
 
   const saveProviderMutation = useMutation({
-    mutationFn: async () => {
-      const existing = existingProviders[0];
-      const commonPayload = {
-        name: providerName.trim() || `${titleCase(providerKind)} Provider`,
-        baseUrl: providerBaseUrl.trim(),
-        authMode: providerAuthMode,
-        api: providerApi,
-        apiKey: providerApiKey.trim() || undefined,
-        supportedModels: providerModels,
-        defaultModel: providerDefaultModel.trim() || undefined,
-        enabled: true,
-      };
-
-      const provider = existing
-        ? (await providersApi.update(existing.id, commonPayload)).provider
-        : (await providersApi.create({
-          kind: providerKind,
-          ...commonPayload,
-        })).provider;
-
-      await providersApi.setRouting({
-        defaultProviderId: provider.id,
-        defaultModel: providerDefaultModel.trim() || undefined,
-        fallbackProviderIds: [],
-      });
-    },
+    mutationFn: (draft?: ProviderSaveDraft) => saveProviderDraft(draft ?? buildCurrentProviderSaveDraft()),
     onSuccess: () => {
       toast.success(localize(locale, "提供方已保存", "Provider saved"));
       setProviderValidated(true);
       void queryClient.invalidateQueries({ queryKey: ["setup", "providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : localize(locale, "保存提供方失败", "Failed to save provider"));
     },
   });
 
-  const saveCommunicationMutation = useMutation({
-    mutationFn: () => {
-      const defaults = getMbtiDefaults(communicationMbti || null);
-      return systemApi.updateCommunicationPreferences([
-        { category: "communication", key: "persona.mbti", value: communicationMbti || null },
-        { category: "communication", key: "persona.tone", value: defaults.tone },
-        { category: "communication", key: "persona.verbosity", value: defaults.verbosity },
-        { category: "communication", key: "persona.structure", value: defaults.structure },
-        { category: "communication", key: "persona.question_style", value: defaults.questionStyle },
-        { category: "communication", key: "persona.directness", value: defaults.directness },
-        { category: "communication", key: "persona.emoji_style", value: defaults.emojiStyle },
-        { category: "communication", key: "persona.jargon_tolerance", value: defaults.jargonTolerance },
-        { category: "communication", key: "persona.assumption_style", value: defaults.assumptionStyle },
-        { category: "communication", key: "persona.confirmation_style", value: defaults.confirmationStyle },
-      ]);
-    },
-    onSuccess: async () => {
-      setCommunicationSaved(true);
-      toast.success(localize(locale, "沟通风格已保存", "Communication style saved"));
-      await queryClient.invalidateQueries({ queryKey: ["setup", "persona"] });
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : localize(locale, "保存沟通风格失败", "Failed to save communication style"));
-    },
-  });
-
   const saveChannelsMutation = useSaveChannelsMutation();
+
+  function detectProviderThenSave(options: { advance: boolean }): void {
+    if (!providerApiKey.trim()) {
+      toast.error(localize(locale, "请先输入 API 密钥", "Please enter an API key first"));
+      return;
+    }
+    detectProviderMutation.mutate(undefined, {
+      onSuccess: (result) => {
+        saveProviderMutation.mutate(
+          buildProviderSaveDraftFromDetection(result),
+          options.advance ? { onSuccess: goNext } : undefined,
+        );
+      },
+    });
+  }
 
   function handleSaveChannels() {
     const channelsPayload = Array.from(enabledChannels).map((kind) => ({
@@ -455,13 +464,12 @@ export function SetupPage() {
       const completedSteps: SetupStepId[] = [
         "welcome",
         "security",
-        ...(communicationSaved ? (["communication"] as const) : []),
         ...(providerValidated ? (["provider"] as const) : []),
         ...(channelsSaved ? (["channels"] as const) : []),
         "done",
       ];
       const skippedSteps: SetupStepId[] = [
-        ...(communicationSaved ? [] : (["communication"] as const)),
+        "communication",
         ...(providerValidated ? [] : (["provider"] as const)),
         ...(channelsSaved ? [] : (["channels"] as const)),
         "network",
@@ -597,7 +605,7 @@ export function SetupPage() {
   // ── Navigation helpers ──
 
   function goNext() {
-    if (currentStep < 6) setCurrentStep((currentStep + 1) as SetupStep);
+    if (currentStep < 5) setCurrentStep((currentStep + 1) as SetupStep);
   }
   function goBack() {
     if (currentStep > 0) setCurrentStep((currentStep - 1) as SetupStep);
@@ -634,7 +642,7 @@ export function SetupPage() {
   function Eyebrow({ step }: { step: number }) {
     return (
       <p className="agent-eyebrow mb-4">
-        {localize(locale, `步骤 ${step} / 6`, `Step ${step} of 6`)}
+        {localize(locale, `步骤 ${step} / 5`, `Step ${step} of 5`)}
       </p>
     );
   }
@@ -675,7 +683,7 @@ export function SetupPage() {
   function BottomDots() {
     return (
       <div className="fixed bottom-8 left-0 right-0">
-        <StepDots current={currentStep} total={7} />
+        <StepDots current={currentStep} total={6} />
       </div>
     );
   }
@@ -881,15 +889,8 @@ export function SetupPage() {
         <div className="mt-5 flex items-center justify-center gap-3">
           <ActionButton
             tone="secondary"
-            onClick={() => {
-              // Auto-detect: send key without explicit kind, let backend identify
-              if (providerApiKey.trim()) {
-                detectProviderMutation.mutate();
-              } else {
-                toast.error(localize(locale, "请先输入 API 密钥", "Please enter an API key first"));
-              }
-            }}
-            disabled={detectProviderMutation.isPending}
+            onClick={() => detectProviderThenSave({ advance: false })}
+            disabled={detectProviderMutation.isPending || saveProviderMutation.isPending}
           >
             <WandSparkles className="mr-2 h-4 w-4" />
             {localize(locale, "自动识别并保存", "Auto-detect & Save")}
@@ -922,12 +923,7 @@ export function SetupPage() {
         <ContinueButton
           onClick={() => {
             if (providerApiKey.trim() && !providerValidated) {
-              // Auto-detect then save then advance
-              detectProviderMutation.mutate(undefined, {
-                onSuccess: () => {
-                  saveProviderMutation.mutate(undefined, { onSuccess: goNext });
-                },
-              });
+              detectProviderThenSave({ advance: true });
             } else if (providerValidated) {
               saveProviderMutation.mutate(undefined, { onSuccess: goNext });
             } else {
@@ -939,6 +935,7 @@ export function SetupPage() {
               ? localize(locale, "检测并继续", "Detect & Continue")
               : localize(locale, "继续", "Continue")
           }
+          disabled={detectProviderMutation.isPending || saveProviderMutation.isPending}
         />
         <SkipLink onClick={goNext} />
         <BottomDots />
@@ -1358,84 +1355,9 @@ export function SetupPage() {
     );
   }
 
-  // ─── STEP 5 — Communication Style ───
+  // ─── STEP 5 — Completion ───
 
   function renderStep5() {
-    const preview = buildPersonaPreview(getMbtiDefaults(communicationMbti || null), locale, communicationMbti || null);
-
-    return (
-      <StepContainer>
-        <BackLink />
-        <Eyebrow step={5} />
-        <h1 className="text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)] sm:text-5xl">
-          {localize(locale, "选择沟通风格", "Choose Communication Style")}
-        </h1>
-        <p className="mt-4 max-w-lg text-lg text-[color:var(--color-text-secondary)]">
-          {localize(
-            locale,
-            "Friday 会根据你的偏好调整交流方式。",
-            "Friday adapts how it communicates based on your preference.",
-          )}
-        </p>
-
-        {/* All 16 MBTI types in a 4-column grid with descriptions */}
-        <div className="mt-8 grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
-          {COMMUNICATION_MBTI_OPTIONS.map((mbti) => {
-            const active = communicationMbti === mbti;
-            return (
-              <button
-                key={mbti}
-                type="button"
-                onClick={() => {
-                  setCommunicationMbti(mbti);
-                  setCommunicationSaved(false);
-                }}
-                className={`rounded-2xl border-2 px-3 py-3 text-left transition ${
-                  active
-                    ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]"
-                    : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] hover:border-[color:var(--color-border-strong)]"
-                }`}
-              >
-                <span className="text-sm font-bold text-[color:var(--color-text-primary)]">{mbti}</span>
-                <p className="mt-0.5 text-[11px] leading-tight text-[color:var(--color-text-secondary)]">
-                  {getMbtiDescription(mbti, locale)}
-                </p>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Preview */}
-        {communicationMbti && (
-          <div className="mt-6 w-full max-w-2xl rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 text-left">
-            <div className="flex items-center gap-2 text-[color:var(--color-text-primary)]">
-              <MessageCircleMore className="h-4 w-4" />
-              <span className="text-sm font-medium">{localize(locale, "预览 · Friday 会这样和你说话", "Preview · Friday will talk to you like this")}</span>
-            </div>
-            <p className="mt-3 text-sm text-[color:var(--color-text-primary)]">{preview.sampleClarifier}</p>
-            <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{preview.sampleBoundary}</p>
-          </div>
-        )}
-
-        <ContinueButton
-          onClick={() => {
-            if (communicationMbti) {
-              saveCommunicationMutation.mutate(undefined, { onSuccess: goNext });
-            } else {
-              goNext();
-            }
-          }}
-          label={communicationMbti ? localize(locale, "保存并继续", "Save & Continue") : localize(locale, "继续", "Continue")}
-        />
-        <SkipLink onClick={goNext} />
-        <BottomDots />
-      </StepContainer>
-    );
-  }
-
-  // ─── STEP 6 — Completion ───
-
-  function renderStep6() {
     // Build summary lines
     const summaryItems: string[] = [];
     if (providerValidated) {
@@ -1452,10 +1374,6 @@ export function SetupPage() {
         localize(locale, `${enabledChannels.size} 个渠道`, `${enabledChannels.size} channels`),
       );
     }
-    if (communicationSaved && communicationMbti) {
-      summaryItems.push(communicationMbti);
-    }
-
     return (
       <StepContainer>
         <BackLink />
@@ -1506,7 +1424,6 @@ export function SetupPage() {
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
         {currentStep === 5 && renderStep5()}
-        {currentStep === 6 && renderStep6()}
       </div>
     </div>
   );

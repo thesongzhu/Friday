@@ -1,5 +1,6 @@
-import { Suspense, lazy, type ReactNode } from "react";
+import { Suspense, lazy, useState, type FormEvent, type ReactNode } from "react";
 import { Navigate, Outlet, createBrowserRouter, useLocation, useRouteError } from "react-router-dom";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AuthErrorSplash,
   LoadingSplash,
@@ -12,11 +13,11 @@ import { AppShell } from "@/components/layout/app-shell";
 import { useAuth } from "@/hooks/use-auth";
 import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { bootstrapLocalPassphrase, getBootstrapStatus } from "@/lib/api/auth";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
 import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
-import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
+import { localize, localizedText, resolveLocalizedText, type AppLocale, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
-import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
 import { useAppLocale } from "@/providers/locale-provider";
 
 const AgentPage = lazy(async () => import("@/routes/agent-page").then((module) => ({ default: module.AgentPage })));
@@ -57,20 +58,18 @@ function LoadingMessage(props: { title: string | LocalizedText; detail: string |
 }
 
 /**
- * Setup-status failure splash. Picks the splash variant based on the error
- * kind surfaced by `describeSetupStatusFailure`:
+ * Setup-status failure splash. Picks the splash variant directly from the
+ * setup-status error kind:
  *
  *   - `AuthExpiredError` / `ApiError(401|403)` → AuthErrorSplash
  *   - `ApiError(NETWORK_ERROR | status 0)`   → NetworkErrorSplash (retry wired)
  *   - anything else (404 / 500 / invalid)    → SetupGateSplash
  *
- * Advice strings from the diagnostic are rendered as `steps`, preserving the
- * old FullscreenMessage list shape with the new splash layout.
+ * Internal backend messages stay hidden here because this screen is a recovery
+ * path for normal users, not a diagnostic console.
  */
-function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: () => void }) {
+function SetupFailureMessage(props: { error: unknown; onRetry: () => void }) {
   const { locale } = useAppLocale();
-  const diagnostics = describeSetupStatusFailure(props.error, props.origin);
-  const steps: SplashStep[] = diagnostics.actions.map((advice) => ({ label: advice, status: "todo" }));
 
   const retry: SplashAction = {
     label: localize(locale, "重试", "Retry"),
@@ -94,9 +93,22 @@ function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: (
     return (
       <AuthErrorSplash
         eyebrow="Friday"
-        title={diagnostics.title}
-        body={diagnostics.detail}
-        steps={steps}
+        title={localize(locale, "需要重新解锁本地 Friday", "Unlock local Friday again")}
+        body={localize(
+          locale,
+          "Friday 已打开，但本地会话没有通过。刷新后会重新进入解锁或首次设置流程。",
+          "Friday is open, but the local session was not accepted. Reload to return to unlock or first-time setup.",
+        )}
+        steps={[
+          {
+            label: localize(locale, "不会显示后端原始错误。", "Internal backend errors stay hidden."),
+            status: "done",
+          },
+          {
+            label: localize(locale, "刷新后继续到 setup 或首页。", "Reload, then continue to setup or home."),
+            status: "active",
+          },
+        ]}
         actions={[reload]}
       />
     );
@@ -105,9 +117,22 @@ function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: (
     return (
       <NetworkErrorSplash
         eyebrow="Friday"
-        title={diagnostics.title}
-        body={diagnostics.detail}
-        steps={steps}
+        title={localize(locale, "Friday 后台还没连上", "Friday backend is not connected yet")}
+        body={localize(
+          locale,
+          "前台已经打开，但本地服务还没有响应。等几秒重试；如果还不行，确认 Friday 进程正在运行。",
+          "The UI is open, but the local service is not responding yet. Wait a few seconds and retry; if it still fails, confirm Friday is running.",
+        )}
+        steps={[
+          {
+            label: localize(locale, "确认本地服务正在启动。", "Confirm the local service is starting."),
+            status: "active",
+          },
+          {
+            label: localize(locale, "继续失败时重新打开 Friday。", "If it keeps failing, reopen Friday."),
+            status: "todo",
+          },
+        ]}
         actions={[retry, reload]}
       />
     );
@@ -115,17 +140,273 @@ function SetupFailureMessage(props: { error: unknown; origin: string; onRetry: (
   return (
     <SetupGateSplash
       eyebrow="Friday"
-      title={diagnostics.title}
-      body={diagnostics.detail}
-      steps={steps}
-      actions={[retry]}
+      title={localize(locale, "设置状态暂时不可用", "Setup status is temporarily unavailable")}
+      body={localize(
+        locale,
+        "Friday 没能确认这台机器是否完成 setup。先重试；如果还不行，重新打开本地入口。",
+        "Friday could not confirm whether this machine has completed setup. Retry first; if it still fails, reopen the local entrypoint.",
+      )}
+      steps={[
+        {
+          label: localize(locale, "重试读取设置状态。", "Retry reading setup status."),
+          status: "active",
+        },
+        {
+          label: localize(locale, "重新打开本地 Friday。", "Reopen local Friday."),
+          status: "todo",
+        },
+      ]}
+      actions={[retry, reload]}
     />
   );
 }
 
-function RequireAuth({ children }: { children: ReactNode }) {
+function formatLocalAuthFormError(
+  locale: AppLocale,
+  error: unknown,
+  fallbackZh: string,
+  fallbackEn: string,
+): string {
+  if (error instanceof ApiError) {
+    if (error.code === "NETWORK_ERROR" || error.statusCode === 0) {
+      return localize(
+        locale,
+        "Friday 后台还没连上。等几秒再试，或者重新打开 Friday。",
+        "Friday backend is not connected yet. Wait a few seconds, then try again or reopen Friday.",
+      );
+    }
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      return localize(
+        locale,
+        "本地口令没有通过。再试一次；如果不确定，刷新后重新进入解锁流程。",
+        "The local passphrase was not accepted. Try again; if unsure, reload and unlock again.",
+      );
+    }
+    return localize(locale, fallbackZh, fallbackEn);
+  }
+  if (error instanceof AuthExpiredError) {
+    return localize(
+      locale,
+      "本地会话过期了。刷新后 Friday 会重新进入解锁流程。",
+      "The local session expired. Reload and Friday will return to unlock.",
+    );
+  }
+  return error instanceof Error ? error.message : localize(locale, fallbackZh, fallbackEn);
+}
+
+function LocalUnlockGate(props: {
+  onRetry: () => void;
+  onAuthenticated: (localPassphrase: string) => Promise<void>;
+}) {
   const { locale } = useAppLocale();
-  const { isAuthenticated, isLoading, authError, retryLocalSession } = useAuth();
+  const [passphrase, setPassphrase] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const reload: SplashAction = {
+    label: localize(locale, "刷新页面", "Reload page"),
+    onClick: () => {
+      if (typeof window !== "undefined") window.location.reload();
+    },
+    tone: "secondary",
+  };
+  const retry: SplashAction = {
+    label: localize(locale, "重试连接", "Retry connection"),
+    onClick: props.onRetry,
+    tone: "primary",
+  };
+
+  const unlockMutation = useMutation({
+    mutationFn: async () => {
+      const trimmed = passphrase.trim();
+      if (!trimmed) {
+        throw new Error(localize(locale, "请输入本地口令。", "Enter the local passphrase."));
+      }
+      await props.onAuthenticated(trimmed);
+    },
+    onError(error) {
+      setFormError(formatLocalAuthFormError(
+        locale,
+        error,
+        "本地解锁没完成。再试一次；如果还不行，刷新后重新进入解锁流程。",
+        "Local unlock did not finish. Try again; if it still fails, reload and unlock again.",
+      ));
+    },
+  });
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    unlockMutation.mutate();
+  }
+
+  return (
+    <AuthErrorSplash
+      eyebrow="Friday"
+      title={localize(locale, "需要解锁本地 Friday", "Unlock local Friday")}
+      body={localize(
+        locale,
+        "输入这台机器的本地口令。解锁后，Friday 会继续进入 setup 或首页。",
+        "Enter this machine's local passphrase. After unlock, Friday continues to setup or home.",
+      )}
+      steps={[
+        {
+          label: localize(locale, "不会显示后端原始错误。", "Internal backend errors stay hidden."),
+          status: "done",
+        },
+        {
+          label: localize(locale, "会话恢复后自动继续到 setup 或首页。", "After the session is restored, Friday continues to setup or home."),
+          status: "active",
+        },
+      ]}
+      actions={[reload]}
+    >
+      <form className="mx-auto flex max-w-sm flex-col gap-3 text-left" onSubmit={handleSubmit}>
+        <label className="text-xs font-medium" style={{ color: "var(--ink-700)" }}>
+          {localize(locale, "本地口令", "Local passphrase")}
+          <input
+            autoComplete="current-password"
+            className="mt-1 h-11 w-full rounded-[var(--radius-md)] border px-3 text-sm outline-none"
+            onChange={(event) => setPassphrase(event.target.value)}
+            placeholder={localize(locale, "输入本地口令", "Enter local passphrase")}
+            style={{ borderColor: "rgba(122, 106, 88, 0.22)", background: "var(--surface-2)", color: "var(--ink-900)" }}
+            type="password"
+            value={passphrase}
+          />
+        </label>
+        {formError ? (
+          <p className="rounded-[var(--radius-md)] px-3 py-2 text-sm" style={{ background: "rgba(176, 80, 58, 0.12)", color: "var(--rust-500)" }}>
+            {formError}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-3">
+          <button
+            className="inline-flex min-h-[42px] flex-1 items-center justify-center rounded-[var(--radius-md)] px-4 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-60"
+            disabled={unlockMutation.isPending}
+            style={{ background: "var(--rust-500)", color: "var(--surface-2)" }}
+            type="submit"
+          >
+            {unlockMutation.isPending
+              ? localize(locale, "正在解锁", "Unlocking")
+              : localize(locale, "解锁并继续", "Unlock and continue")}
+          </button>
+          <button
+            className="inline-flex min-h-[42px] items-center justify-center rounded-[var(--radius-md)] border px-4 text-sm font-medium transition-opacity hover:opacity-90"
+            onClick={retry.onClick}
+            style={{ borderColor: "rgba(122, 106, 88, 0.22)", color: "var(--ink-700)" }}
+            type="button"
+          >
+            {retry.label}
+          </button>
+        </div>
+      </form>
+    </AuthErrorSplash>
+  );
+}
+
+function LocalBootstrapGate(props: { onAuthenticated: (localPassphrase: string) => Promise<void> }) {
+  const { locale } = useAppLocale();
+  const [passphrase, setPassphrase] = useState("");
+  const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const bootstrapMutation = useMutation({
+    mutationFn: async () => {
+      const trimmed = passphrase.trim();
+      if (trimmed.length < 12) {
+        throw new Error(localize(locale, "本地口令至少需要 12 个字符。", "Use at least 12 characters for the local passphrase."));
+      }
+      if (trimmed !== confirmPassphrase.trim()) {
+        throw new Error(localize(locale, "两次输入的口令不一致。", "The two passphrases do not match."));
+      }
+      await bootstrapLocalPassphrase(trimmed);
+      await props.onAuthenticated(trimmed);
+    },
+    onError(error) {
+      setFormError(formatLocalAuthFormError(
+        locale,
+        error,
+        "本地安全设置没完成。刷新后重新进入首次设置；如果已经设置过，会进入解锁。",
+        "Local security setup did not finish. Reload to start first-time setup again; if already configured, Friday will unlock instead.",
+      ));
+    },
+  });
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    bootstrapMutation.mutate();
+  }
+
+  return (
+    <SetupGateSplash
+      eyebrow="Friday"
+      title={localize(locale, "先设置本地安全口令", "Set a local security passphrase")}
+      body={localize(
+        locale,
+        "这是第一次打开这台 Friday。本地口令只用于解锁这台机器，设置后会直接进入初始配置。",
+        "This is the first time this Friday instance is opened. The passphrase unlocks this machine, then setup continues.",
+      )}
+      steps={[
+        { label: localize(locale, "设置本地口令。", "Set a local passphrase."), status: "active" },
+        { label: localize(locale, "自动建立本地会话。", "Create the local session automatically."), status: "todo" },
+        { label: localize(locale, "继续完成模型、网络和渠道设置。", "Continue model, network, and channel setup."), status: "todo" },
+      ]}
+    >
+      <form className="mx-auto flex max-w-sm flex-col gap-3 text-left" onSubmit={handleSubmit}>
+        <label className="text-xs font-medium" style={{ color: "var(--ink-700)" }}>
+          {localize(locale, "本地口令", "Local passphrase")}
+          <input
+            autoComplete="new-password"
+            className="mt-1 h-11 w-full rounded-[var(--radius-md)] border px-3 text-sm outline-none"
+            minLength={12}
+            onChange={(event) => setPassphrase(event.target.value)}
+            placeholder={localize(locale, "至少 12 个字符", "At least 12 characters")}
+            style={{ borderColor: "rgba(122, 106, 88, 0.22)", background: "var(--surface-2)", color: "var(--ink-900)" }}
+            type="password"
+            value={passphrase}
+          />
+        </label>
+        <label className="text-xs font-medium" style={{ color: "var(--ink-700)" }}>
+          {localize(locale, "再输入一次", "Repeat passphrase")}
+          <input
+            autoComplete="new-password"
+            className="mt-1 h-11 w-full rounded-[var(--radius-md)] border px-3 text-sm outline-none"
+            minLength={12}
+            onChange={(event) => setConfirmPassphrase(event.target.value)}
+            placeholder={localize(locale, "确认本地口令", "Confirm passphrase")}
+            style={{ borderColor: "rgba(122, 106, 88, 0.22)", background: "var(--surface-2)", color: "var(--ink-900)" }}
+            type="password"
+            value={confirmPassphrase}
+          />
+        </label>
+        {formError ? (
+          <p className="rounded-[var(--radius-md)] px-3 py-2 text-sm" style={{ background: "rgba(176, 80, 58, 0.12)", color: "var(--rust-500)" }}>
+            {formError}
+          </p>
+        ) : null}
+        <button
+          className="mt-1 inline-flex min-h-[42px] items-center justify-center rounded-[var(--radius-md)] px-4 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-60"
+          disabled={bootstrapMutation.isPending}
+          style={{ background: "var(--amber-600)", color: "var(--surface-2)" }}
+          type="submit"
+        >
+          {bootstrapMutation.isPending
+            ? localize(locale, "正在设置", "Setting up")
+            : localize(locale, "设置并继续", "Set and continue")}
+        </button>
+      </form>
+    </SetupGateSplash>
+  );
+}
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isLoading, login, retryLocalSession } = useAuth();
+  const bootstrapStatusQuery = useQuery({
+    queryKey: ["auth", "bootstrap", "status"],
+    queryFn: getBootstrapStatus,
+    enabled: !isAuthenticated && !isLoading,
+    staleTime: 5_000,
+    retry: 1,
+  });
 
   if (isLoading) {
     return (
@@ -137,44 +418,33 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    const retry: SplashAction = {
-      label: localize(locale, "重试本地会话", "Retry local session"),
-      onClick: () => {
-        void retryLocalSession();
-      },
-      tone: "primary",
-    };
-    const reload: SplashAction = {
-      label: localize(locale, "刷新页面", "Reload page"),
-      onClick: () => {
-        if (typeof window !== "undefined") window.location.reload();
-      },
-      tone: "secondary",
-    };
-    const authDetail = authError?.message?.trim();
+    if (bootstrapStatusQuery.isLoading) {
+      return (
+        <LoadingMessage
+          title={localizedText("检查本地安全设置", "Checking local security")}
+          detail={localizedText("Friday 正在确认这台机器是否需要首次设置。", "Friday is checking whether this machine needs first-time setup.")}
+        />
+      );
+    }
+    if (bootstrapStatusQuery.isError) {
+      return (
+        <SetupFailureMessage
+          error={bootstrapStatusQuery.error}
+          onRetry={() => {
+            void bootstrapStatusQuery.refetch();
+          }}
+        />
+      );
+    }
+    if (bootstrapStatusQuery.data?.bootstrapRequired) {
+      return <LocalBootstrapGate onAuthenticated={(localPassphrase) => login({ localPassphrase })} />;
+    }
     return (
-      <SetupGateSplash
-        eyebrow="Friday"
-        title={localize(locale, "本地会话未连接", "Local session not connected")}
-        body={localize(
-          locale,
-          "Friday 启动时没有拿到本地会话，因此没有进入首页。我保留了恢复入口，但不再显示旧登录页。",
-          "Friday could not attach a local session on launch, so it did not enter home. The recovery path stays here, but the old login surface is no longer shown.",
-        )}
-        steps={[
-          { label: localize(locale, "重试建立本地会话。", "Retry creating the local session."), status: "active" },
-          {
-            label: authDetail
-              ? localize(locale, `后端返回：${authDetail}`, `Backend said: ${authDetail}`)
-              : localize(
-                  locale,
-                  "如果仍失败，检查本地 Friday 进程是否刚重启，或 setup 是否已完成。",
-                  "If it still fails, check whether the local Friday process just restarted or setup is still incomplete.",
-                ),
-            status: "todo",
-          },
-        ]}
-        actions={[retry, reload]}
+      <LocalUnlockGate
+        onAuthenticated={(localPassphrase) => login({ localPassphrase })}
+        onRetry={() => {
+          void retryLocalSession();
+        }}
       />
     );
   }
@@ -205,11 +475,9 @@ function SetupGate() {
   }
 
   if (isError) {
-    const origin = typeof window !== "undefined" ? window.location.origin : "this origin";
     return (
       <SetupFailureMessage
         error={error}
-        origin={origin}
         onRetry={() => {
           void refetch();
         }}
@@ -231,19 +499,26 @@ function LegacyRedirectPage() {
 }
 
 function RouteErrorBoundary() {
-  const error = useRouteError();
+  useRouteError();
+  const { locale } = useAppLocale();
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", gap: "16px", fontFamily: "system-ui, sans-serif" }}>
-      <h2 style={{ margin: 0, fontSize: "20px" }}>Something went wrong</h2>
+      <h2 style={{ margin: 0, fontSize: "20px" }}>
+        {localize(locale, "Friday 暂时卡住了", "Friday hit a snag")}
+      </h2>
       <p style={{ margin: 0, color: "#666", maxWidth: "400px", textAlign: "center" }}>
-        {error instanceof Error ? error.message : "An unexpected error occurred while loading this page."}
+        {localize(
+          locale,
+          "页面加载时遇到意外问题。刷新后 Friday 会重新进入 setup、解锁或首页。",
+          "The page hit an unexpected problem. Reload and Friday will return to setup, unlock, or home.",
+        )}
       </p>
       <button
         type="button"
         onClick={() => window.location.reload()}
         style={{ padding: "8px 20px", borderRadius: "6px", border: "1px solid #ccc", cursor: "pointer", background: "#fff" }}
       >
-        Reload Page
+        {localize(locale, "刷新页面", "Reload page")}
       </button>
     </div>
   );

@@ -40,7 +40,7 @@ import {
   findFridayCustomPackById,
 } from "../packs/custom/friday-custom-pack-context.js";
 import { FridayDomainError } from "#errors";
-import { isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
+import { buildOpenBrowserUrlCommand, isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
@@ -443,6 +443,8 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
 const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
 const STABLE_OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const STABLE_OPENAI_SUPPORTED_MODELS = [STABLE_OPENAI_DEFAULT_MODEL, "gpt-4o"] as const;
+const OPENAI_PROVIDER_NAME = "OpenAI Provider";
+const MISNAMED_OPENAI_PROVIDER_PATTERN = /(?:moonshot|kimi|月之暗面)/i;
 
 function isLegacyAutoDetectedOpenAiProvider(provider: FridayProviderProfile): boolean {
   if (provider.kind !== "openai") {
@@ -490,6 +492,32 @@ async function repairLegacyAutoDetectedOpenAiProviders(
       ...routing,
       defaultModel: STABLE_OPENAI_DEFAULT_MODEL,
     });
+  }
+
+  return repairedProviderIds;
+}
+
+async function repairMisnamedOpenAiSetupProviders(
+  providerService: FridayProviderService,
+): Promise<string[]> {
+  const providers = await providerService.listProviders();
+  const misnamedProviders = providers.filter((provider) =>
+    provider.kind === "openai" &&
+    MISNAMED_OPENAI_PROVIDER_PATTERN.test(provider.name) &&
+    /api\.openai\.com/i.test(provider.baseUrl),
+  );
+
+  if (misnamedProviders.length === 0) {
+    return [];
+  }
+
+  const repairedProviderIds: string[] = [];
+  for (const provider of misnamedProviders) {
+    await providerService.updateProvider(provider.id, {
+      name: OPENAI_PROVIDER_NAME,
+      validateOnSave: false,
+    });
+    repairedProviderIds.push(provider.id);
   }
 
   return repairedProviderIds;
@@ -6398,6 +6426,12 @@ export async function createFridayHub(
             `[friday] Repaired ${String(repairedLegacyProviders.length)} legacy auto-detected OpenAI provider(s) to ${STABLE_OPENAI_DEFAULT_MODEL}.`,
           );
         }
+        const repairedMisnamedOpenAiProviders = await repairMisnamedOpenAiSetupProviders(providerService);
+        if (repairedMisnamedOpenAiProviders.length > 0) {
+          console.log(
+            `[friday] Repaired ${String(repairedMisnamedOpenAiProviders.length)} misnamed OpenAI provider(s).`,
+          );
+        }
       }
 
       // 3. API runtime is ready (created synchronously above)
@@ -6474,6 +6508,54 @@ export async function createFridayHub(
         },
       });
       if (channelsConfig.enabled && channelRegistry.list().length > 0) {
+        let lastChannelUiWakeAt = 0;
+        const channelUiWakeCooldownMs = Math.max(
+          0,
+          Number.parseInt(process.env.FRIDAY_CHANNEL_WAKE_UI_COOLDOWN_MS ?? "300000", 10) || 0,
+        );
+        const resolveLocalUiWakeBaseUrl = (): string | undefined => {
+          const publicBase = process.env.FRIDAY_PUBLIC_APP_BASE_URL?.trim();
+          if (publicBase) return publicBase;
+          const configuredHost = config.host ?? process.env.FRIDAY_HOST ?? "127.0.0.1";
+          const host = configuredHost === "0.0.0.0" ? "localhost" : configuredHost;
+          const parsedPort = Number.parseInt(process.env.FRIDAY_PORT ?? "3141", 10);
+          const port = config.port ?? (Number.isFinite(parsedPort) ? parsedPort : 3141);
+          const hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+          return `http://${hostname}:${String(port)}`;
+        };
+        const wakeUiForChannelMessage = (
+          msg: FridayChannelMessage,
+          runId: string,
+        ): void => {
+          if (process.env.FRIDAY_CHANNEL_WAKE_UI === "false") return;
+          const nowMs = Date.now();
+          if (
+            channelUiWakeCooldownMs > 0 &&
+            lastChannelUiWakeAt > 0 &&
+            nowMs - lastChannelUiWakeAt < channelUiWakeCooldownMs
+          ) {
+            return;
+          }
+          lastChannelUiWakeAt = nowMs;
+
+          try {
+            const baseUrl = resolveLocalUiWakeBaseUrl();
+            if (!baseUrl) return;
+            const url = new URL("/channels", baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+            url.searchParams.set("channel", msg.channelKind);
+            url.searchParams.set("chatId", msg.chatId);
+            url.searchParams.set("runId", runId);
+            const { command, args } = buildOpenBrowserUrlCommand(url.toString());
+            execFileCb(command, args, { windowsHide: true }, (err) => {
+              if (err) {
+                warnHubBootstrapOnce(`[friday] channel-ui-wake: ${err.message}`);
+              }
+            });
+          } catch (err) {
+            warnHubBootstrapOnce(`[friday] channel-ui-wake: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        };
+
         const channelMessageHandler = (msg: FridayChannelMessage) => {
           const text = sanitizeChannelInput(msg.text);
           const sessionKey = resolveFridayChannelSessionKey(msg, {
@@ -6569,6 +6651,7 @@ export async function createFridayHub(
 
           void (async () => {
             const runId = idGenerator();
+            wakeUiForChannelMessage(msg, runId);
             const channelEntryAdapter = createFridayChannelEntryAdapter({
               engine: channelOrchestrationEngine,
               idGenerator: () => runId,
