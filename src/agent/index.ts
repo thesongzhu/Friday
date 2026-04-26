@@ -145,6 +145,16 @@ export { createFridayAgentPlanningGateService } from "./runtime/friday-agent-pla
 
 export type { BuildFridayAgentSystemPromptParams } from "./runtime/friday-agent-system-prompt-builder.js";
 export { buildFridayAgentSystemPrompt } from "./runtime/friday-agent-system-prompt-builder.js";
+export {
+  evaluateFridayExecutionVoiceResponse,
+  FRIDAY_EXECUTION_VOICE_SAMPLE_SCENARIOS,
+} from "./runtime/friday-agent-execution-voice-eval.js";
+export type {
+  FridayExecutionVoiceEvalFailure,
+  FridayExecutionVoiceEvalResult,
+  FridayExecutionVoiceScenario,
+  FridayExecutionVoiceScenarioId,
+} from "./runtime/friday-agent-execution-voice-eval.js";
 export type { FridayWorkspaceContext, FridayWorkspaceContextFile } from "./runtime/friday-agent-workspace-context.js";
 export { loadFridayWorkspaceContext } from "./runtime/friday-agent-workspace-context.js";
 export type { FridayAgentAutomationSessionTarget } from "./services/friday-agent-automation-service.types.js";
