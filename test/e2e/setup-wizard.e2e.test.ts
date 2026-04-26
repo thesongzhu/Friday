@@ -408,10 +408,26 @@ describe("Setup Wizard E2E", () => {
     });
 
     it("A8: save channels config should persist", async () => {
+      const unconfirmedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
+        method: "POST",
+        headers: authHeaders(accessToken),
+        body: JSON.stringify({
+          channels: [
+            {
+              kind: "discord",
+              enabled: true,
+              config: { token: "fake-discord-token" },
+            },
+          ],
+        }),
+      });
+      expect(unconfirmedRes.status).toBe(400);
+
       const res = await fetch(`${baseUrl}/v1/setup/channels`, {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({
+          controlConfirmed: true,
           channels: [
             {
               kind: "discord",
@@ -440,9 +456,13 @@ describe("Setup Wizard E2E", () => {
 
         const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
           kind: string;
+          controlConfirmed?: boolean;
+          controlConfirmedAt?: string;
           config?: Record<string, unknown>;
         }>;
         const discordEntry = storedChannels.find((entry) => entry.kind === "discord");
+        expect(discordEntry?.controlConfirmed).toBe(true);
+        expect(typeof discordEntry?.controlConfirmedAt).toBe("string");
         expect(typeof discordEntry?.config?.token).toBe("string");
         expect(String(discordEntry?.config?.token ?? "")).toMatch(/^secret:\/\/channel\//);
 
@@ -628,6 +648,7 @@ describe("Setup Wizard E2E", () => {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({
+          controlConfirmed: true,
           channels: [
             { kind: "discord", enabled: true, config: { token: "test-token" } },
           ],

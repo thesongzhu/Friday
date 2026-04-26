@@ -51,12 +51,17 @@ export interface FridayChannelEntryAdapterDeps {
   idGenerator: () => string;
   /** Resolve a session key from channel + chat identifiers. */
   resolveSessionKey: (message: FridayChannelInboundMessage) => string;
+  /** Optional channel policy hook. Defaults to no channel-specific tool restrictions. */
+  resolveDisabledToolNames?: (channelKind: string) => string[];
   /** Optional: resolve a persona/system-prompt override for this channel kind. */
   resolveChannelPersona?: (channelKind: string) => { persona?: string; systemPrompt?: string } | undefined;
 }
 
+export const FRIDAY_CHANNEL_AGENT_SCOPE = "agent.run";
+export const FRIDAY_CHANNEL_CONTROL_ROUTE = "full_agent";
+
 export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterDeps) {
-  const { engine, idGenerator, resolveSessionKey, resolveChannelPersona } = deps;
+  const { engine, idGenerator, resolveSessionKey, resolveDisabledToolNames, resolveChannelPersona } = deps;
 
   async function handleMessage(msg: FridayChannelInboundMessage): Promise<FridayEngineRunResult> {
     const task = msg.text.trim();
@@ -85,11 +90,15 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       replyToMessageId: msg.replyToMessageId,
       timezone: msg.timezone,
       principalId: msg.senderId,
+      scopes: [FRIDAY_CHANNEL_AGENT_SCOPE],
+      disabledToolNames: resolveDisabledToolNames?.(msg.channelKind) ?? [],
       images: msg.images,
       taskAlreadyInHistory: true,
       executionContext: {
         surface: "channel",
         interactive: true,
+        channelKind: msg.channelKind,
+        channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
         channelPersona,
       },
       tenantContext: {

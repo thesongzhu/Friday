@@ -338,6 +338,7 @@ import {
   resolveBrowserHostConfigFromEnv,
   resolveBrowserPresentationModeFromEnv,
   resolveChannelInitConfigWithSecretPolicy,
+  resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveFridayChannelTerminalText,
   resolveTokenSecret,
@@ -6572,6 +6573,7 @@ export async function createFridayHub(
               engine: channelOrchestrationEngine,
               idGenerator: () => runId,
               resolveChannelPersona: (channelKind) => getChannelPersona(channelKind),
+              resolveDisabledToolNames: (channelKind) => resolveFridayChannelDisabledToolNames(channelKind),
               resolveSessionKey: (inboundMessage) => resolveFridayChannelSessionKey({
                 channelKind: inboundMessage.channelKind,
                 chatId: inboundMessage.chatId,

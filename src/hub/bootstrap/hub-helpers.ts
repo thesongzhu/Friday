@@ -399,6 +399,7 @@ interface SetupChannelPersistedEntry {
   kind?: unknown;
   enabled?: unknown;
   config?: unknown;
+  controlConfirmed?: unknown;
 }
 
 export function loadChannelsConfigFromSetupState(
@@ -426,6 +427,7 @@ export function loadChannelsConfigFromSetupState(
     const entry = item as SetupChannelPersistedEntry;
     const kind = typeof entry.kind === "string" ? entry.kind.trim() : "";
     if (!kind || !supportedKinds.has(kind)) continue;
+    if (entry.enabled === true && entry.controlConfirmed === false) continue;
 
     const baseConfig = entry.config;
     const config =

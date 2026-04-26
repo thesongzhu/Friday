@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FridayCommunicationMbti } from "@friday-operator-client";
-import { CheckCircle2, MessageCircleMore, Search, WandSparkles } from "lucide-react";
+import { CheckCircle2, MessageCircleMore, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
@@ -34,6 +34,11 @@ import {
 } from "@/lib/persona/communication-persona";
 import { CHANNEL_META, CHANNEL_KINDS_ORDERED } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
+import {
+  SETUP_CHANNEL_CONTROL_CONFIRMATION,
+  SETUP_CHANNEL_CONTROL_GUARDS,
+  SETUP_CHANNEL_CONTROL_ROUTE_STEPS,
+} from "@/lib/setup/channel-control-route";
 import { useSaveChannelsMutation } from "@/hooks/use-setup";
 
 // ─── Provider recommendation helper (unchanged) ───
@@ -173,6 +178,7 @@ export function SetupPage() {
   const [channelConfigs, setChannelConfigs] = useState<Record<string, Record<string, string>>>({});
   const [channelsSaved, setChannelsSaved] = useState(false);
   const [expandedChannel, setExpandedChannel] = useState<ChannelKind | null>(null);
+  const [channelControlConfirmed, setChannelControlConfirmed] = useState(false);
 
   // ── Discovery state (new) ──
   const [discoveryScanned, setDiscoveryScanned] = useState(false);
@@ -429,7 +435,7 @@ export function SetupPage() {
       config: channelConfigs[kind] ?? {},
     }));
     saveChannelsMutation.mutate(
-      { channels: channelsPayload },
+      { channels: channelsPayload, controlConfirmed: enabledChannels.size > 0 ? channelControlConfirmed : undefined },
       {
         onSuccess: () => {
           setChannelsSaved(true);
@@ -1170,6 +1176,7 @@ export function SetupPage() {
   // ─── STEP 4 — Connect Channels ───
 
   function toggleChannel(kind: ChannelKind) {
+    setChannelControlConfirmed(false);
     setEnabledChannels((prev) => {
       const next = new Set(prev);
       if (next.has(kind)) {
@@ -1201,10 +1208,37 @@ export function SetupPage() {
         <p className="mt-4 max-w-lg text-lg text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            "Friday 可以在这些平台上自动回复消息。选择要连接的渠道，稍后也可以在设置中更改。",
-            "Friday can auto-reply on these platforms. Choose channels to connect — you can change this later in Settings.",
+            "选择渠道后，用户可以直接从这些对话里让 Friday 做事。稍后也可以在设置中更改。",
+            "After you choose channels, users can ask Friday to act directly from those conversations. You can change this later in Settings.",
           )}
         </p>
+
+        <div className="mt-6 w-full max-w-2xl rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4 text-left">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--color-text-primary)]">
+            <Route className="h-4 w-4" />
+            {localize(locale, "打通路线", "Control Route")}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {SETUP_CHANNEL_CONTROL_ROUTE_STEPS.map((step, index) => (
+              <div key={step.en} className="flex items-center gap-2">
+                <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-secondary)]">
+                  {localize(locale, step.zh, step.en)}
+                </span>
+                {index < SETUP_CHANNEL_CONTROL_ROUTE_STEPS.length - 1 && (
+                  <span className="text-xs text-[color:var(--color-text-tertiary)]">→</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex items-start gap-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+            <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-[color:var(--color-accent)]" />
+            <div>
+              {SETUP_CHANNEL_CONTROL_GUARDS.map((guard) => (
+                <p key={guard.en}>{localize(locale, guard.zh, guard.en)}</p>
+              ))}
+            </div>
+          </div>
+        </div>
 
         <div className="mt-8 w-full max-w-2xl space-y-2 text-left">
           {CHANNEL_KINDS_ORDERED.map((kind) => {
@@ -1285,12 +1319,23 @@ export function SetupPage() {
         </div>
 
         {enabledChannels.size > 0 && (
-          <div className="mt-4 text-sm text-[color:var(--color-text-secondary)]">
-            {localize(
-              locale,
-              `已选择 ${enabledChannels.size} 个渠道`,
-              `${enabledChannels.size} channel${enabledChannels.size > 1 ? "s" : ""} selected`,
-            )}
+          <div className="mt-4 w-full max-w-2xl space-y-3 text-left">
+            <div className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                `已选择 ${enabledChannels.size} 个渠道`,
+                `${enabledChannels.size} channel${enabledChannels.size > 1 ? "s" : ""} selected`,
+              )}
+            </div>
+            <label className="flex items-start gap-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4 text-sm text-[color:var(--color-text-primary)]">
+              <input
+                type="checkbox"
+                checked={channelControlConfirmed}
+                onChange={(event) => setChannelControlConfirmed(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-[color:var(--color-accent)]"
+              />
+              <span>{localize(locale, SETUP_CHANNEL_CONTROL_CONFIRMATION.zh, SETUP_CHANNEL_CONTROL_CONFIRMATION.en)}</span>
+            </label>
           </div>
         )}
 
@@ -1305,7 +1350,7 @@ export function SetupPage() {
           label={enabledChannels.size > 0
             ? localize(locale, "保存并继续", "Save & Continue")
             : localize(locale, "继续", "Continue")}
-          disabled={saveChannelsMutation.isPending}
+          disabled={saveChannelsMutation.isPending || (enabledChannels.size > 0 && !channelControlConfirmed)}
         />
         <SkipLink onClick={goNext} />
         <BottomDots />

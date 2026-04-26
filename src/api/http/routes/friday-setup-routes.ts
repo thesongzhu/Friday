@@ -93,11 +93,20 @@ interface SetupCompleteResponse {
 }
 
 interface SetupChannelsRequest {
+  controlConfirmed?: boolean;
   channels: Array<{
     kind: FridaySupportedChannelKind;
     enabled: boolean;
     config: Record<string, unknown>;
   }>;
+}
+
+interface SetupChannelPersistedConfig {
+  kind: FridaySupportedChannelKind;
+  enabled: boolean;
+  config: Record<string, unknown>;
+  controlConfirmed?: boolean;
+  controlConfirmedAt?: string;
 }
 
 interface SetupChannelsResponse {
@@ -419,11 +428,11 @@ export function createFridaySetupRoutes(
           try {
             const parsed = JSON.parse(state.channels_json);
             if (!Array.isArray(parsed)) return 0;
-            return parsed.filter((entry) =>
-              typeof entry === "object" &&
-              entry !== null &&
-              (entry as { enabled?: unknown }).enabled === true,
-            ).length;
+            return parsed.filter((entry) => {
+              if (typeof entry !== "object" || entry === null) return false;
+              const persisted = entry as { enabled?: unknown; controlConfirmed?: unknown };
+              return persisted.enabled === true && persisted.controlConfirmed !== false;
+            }).length;
           } catch (err) {
             console.warn("[friday][setup-routes] operation failed:", err instanceof Error ? err.message : String(err));
             return 0;
@@ -752,7 +761,8 @@ export function createFridaySetupRoutes(
         };
 
         const secretWrites: Array<{ refKey: string; plaintext: string }> = [];
-        const persistedChannels: SetupChannelsRequest["channels"] = [];
+        const persistedChannels: SetupChannelPersistedConfig[] = [];
+        const now = deps.nowIso();
 
         // Validate and normalize each channel entry
         const enabledInstances: Array<Record<string, unknown>> = [];
@@ -808,6 +818,7 @@ export function createFridaySetupRoutes(
             kind,
             enabled: ch.enabled,
             config,
+            ...(ch.enabled ? { controlConfirmed: true, controlConfirmedAt: now } : {}),
           });
 
           if (ch.enabled) {
@@ -817,6 +828,14 @@ export function createFridaySetupRoutes(
               ...config,
             });
           }
+        }
+
+        if (enabledInstances.length > 0 && body.controlConfirmed !== true) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "controlConfirmed must be true before enabled channels can control Friday.",
+            { httpStatus: 400 },
+          );
         }
 
         if (enabledInstances.length > 0) {
@@ -837,7 +856,6 @@ export function createFridaySetupRoutes(
 
         if (secretWrites.length > 0) {
           const masterKey = getMasterKey();
-          const now = deps.nowIso();
           deps.db.withWriteTransaction((db) => {
             for (const write of secretWrites) {
               const envelope = encryptSecret(write.plaintext, masterKey);
@@ -853,7 +871,6 @@ export function createFridaySetupRoutes(
           });
         }
 
-        const now = deps.nowIso();
         const channelsJson = JSON.stringify(persistedChannels);
 
         deps.db.withWriteTransaction((db) => {

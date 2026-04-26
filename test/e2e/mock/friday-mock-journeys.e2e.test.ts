@@ -79,6 +79,7 @@ describe("Friday Mock Journeys E2E — Setup Wizard", () => {
       ok: boolean;
       data: { savedKinds: string[] };
     }>(env.baseUrl, env.accessToken, "POST", "/v1/setup/channels", {
+      controlConfirmed: true,
       channels: [
         { kind: "discord", enabled: true, config: { token: "fake-mock-token" } },
       ],
