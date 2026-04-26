@@ -213,6 +213,16 @@ async function installProvider(
     defaultModel: entry.model,
     enabled: true,
     validateOnSave: false,
+    runtimeCapabilities: [
+      {
+        capability: "text",
+        model: entry.model,
+        status: "verified",
+        verified: true,
+        verifiedAt: new Date(0).toISOString(),
+        notes: "Mock provider route is backed by deterministic test fetch.",
+      },
+    ],
     // For api-key providers, provide a mock key
     ...(entry.authMode === "api-key"
       ? { apiKey: "mock-key-for-testing" } // pragma: allowlist secret

@@ -112,7 +112,7 @@ describe("FridayAutoFixPlanService", () => {
     });
   });
 
-  it("does not emit marker-only plans for config incidents", () => {
+  it("maps config category to a rollback-backed config patch plan", () => {
     const configIncident = { ...baseIncident, category: "config" as const };
     const plans = service.buildPlans({
       incident: configIncident,
@@ -121,7 +121,14 @@ describe("FridayAutoFixPlanService", () => {
       recurrenceCount: 1,
     });
 
-    expect(plans).toHaveLength(0);
+    expect(plans).toHaveLength(1);
+    expect(plans[0]!.steps[0]!.kind).toBe("apply_config_patch");
+    expect(plans[0]!.rollbackPlan).toBeDefined();
+    expect(plans[0]!.rollbackPlan!.steps[0]!).toMatchObject({
+      kind: "apply_config_patch",
+      target: "config",
+      payload: { revert: true },
+    });
   });
 
   it("maps routing category to trim_payload", () => {

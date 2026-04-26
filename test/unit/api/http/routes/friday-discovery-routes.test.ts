@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createFridayDiscoveryRoutes } from "#api";
+import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "#api";
 
 describe("createFridayDiscoveryRoutes", () => {
   function makeRoutes() {
@@ -64,6 +64,39 @@ describe("createFridayDiscoveryRoutes", () => {
       public: false,
       anyOfScopes: ["desktop.write"],
       anyOfRoles: ["admin"],
+    });
+  });
+});
+
+describe("createFridayDiscoveryDisabledRoutes", () => {
+  it("keeps discovery status stable when the capability is disabled", async () => {
+    const routes = createFridayDiscoveryDisabledRoutes();
+    const statusRoute = routes.find((route) => route.operationId === "discovery.status");
+
+    expect(statusRoute?.auth).toMatchObject({
+      public: false,
+      anyOfScopes: ["desktop.read"],
+    });
+
+    const result = await statusRoute?.handler({} as never) as any;
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      enabled: false,
+      hasCatalog: false,
+      catalogId: null,
+      lastScanAt: null,
+      programCount: 0,
+    });
+    expect(result.body.unavailableReason).toContain("FRIDAY_DISCOVERY_ENABLED");
+  });
+
+  it("returns an explicit disabled error for actions that require discovery", async () => {
+    const routes = createFridayDiscoveryDisabledRoutes();
+    const scanRoute = routes.find((route) => route.operationId === "discovery.scan");
+
+    await expect(scanRoute?.handler({} as never)).rejects.toMatchObject({
+      code: "CAPABILITY_DISABLED",
+      httpStatus: 501,
     });
   });
 });

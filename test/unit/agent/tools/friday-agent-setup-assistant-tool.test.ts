@@ -24,6 +24,7 @@ function createMockAssistant(overrides?: Partial<FridaySetupAssistant>): FridayS
       totalRecipes: 1,
       completedRecipes: 1,
       failedRecipes: 0,
+      pausedRecipes: 0,
       skippedRecipes: 0,
       results: [
         {
@@ -40,6 +41,7 @@ function createMockAssistant(overrides?: Partial<FridaySetupAssistant>): FridayS
       totalRecipes: 0,
       completedRecipes: 0,
       failedRecipes: 0,
+      pausedRecipes: 0,
       currentRecipeId: null,
       currentRecipeName: null,
       percentComplete: 0,

@@ -23,9 +23,7 @@ export interface CreateAutoFixPlanServiceDeps {
 const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAutoFixStepKind | undefined> = {
   tool: "retry_node",
   model: "switch_model_fallback",
-  // Config patches require a product-specific config writer. Until a real
-  // executor is injected, fail closed rather than emitting a marker-only fix.
-  config: undefined,
+  config: "apply_config_patch",
   routing: "trim_payload",
   workflow: "retry_node",
 };

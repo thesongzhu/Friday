@@ -10,6 +10,7 @@ import type {
   FridayProviderCliConfig,
   FridayProviderRoutingDecisionTrace,
   FridayProviderTenantContext,
+  FridayRuntimeCapabilityId,
 } from "#providers";
 
 // ─── Streaming event types ───
@@ -83,6 +84,7 @@ export interface FridayAgentLlmStreamParams {
     localOnly?: boolean;
     noEgress?: boolean;
     satelliteAvailable?: boolean;
+    requiredCapabilities?: FridayRuntimeCapabilityId[];
   };
   signal: AbortSignal;
 }

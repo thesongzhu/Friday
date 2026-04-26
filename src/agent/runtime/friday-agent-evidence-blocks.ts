@@ -75,12 +75,16 @@ function formatCapabilitiesSummary(snapshot: FridayAgentCapabilitiesSnapshot): s
   const companionSummary = snapshot.companion.connected
     ? "desktop companion connected"
     : "desktop companion disconnected";
+  const runtimeSummary = snapshot.runtime
+    ? `runtime capabilities ${String(snapshot.runtime.summary.available)} available, ${String(snapshot.runtime.summary.needsVerification)} need verification, ${String(snapshot.runtime.summary.needsUserAction)} need user configuration`
+    : "runtime capability matrix unavailable";
   return normalizeText(
     [
       messagingSummary,
       mcpSummary,
       providerSummary,
       browserSummary,
+      runtimeSummary,
       snapshot.system.enabled ? "system enabled" : "system disabled",
       desktopSummary,
       companionSummary,

@@ -143,7 +143,7 @@ export interface CreateFridayEngineRunExecutorDeps {
 
   // Dispatch functions injected for testability
   dispatchDeterministic: (
-    input: { classification: FridayExecutionClassification; sessionKey?: string; runId?: string; actorId?: string },
+    input: { classification: FridayExecutionClassification; task?: string; sessionKey?: string; runId?: string; actorId?: string },
     deps: Record<string, unknown>,
   ) => Promise<FridayEngineDeterministicDispatchResult>;
   dispatchManagedAsync: (
@@ -315,6 +315,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       const result = await dispatchDeterministic(
         {
           classification: prepared.executionClassification,
+          task,
           sessionKey: input.sessionKey,
           runId: input.runId,
           actorId: input.principalId,

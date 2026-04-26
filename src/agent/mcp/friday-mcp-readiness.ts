@@ -28,6 +28,10 @@ const AUTH_HEADER_KEYS = [
   "token",
 ];
 
+function isVerifiedMcpState(state: FridayMcpServerState["state"] | undefined): boolean {
+  return state === "loaded";
+}
+
 function hasConfiguredAuthHeaders(headers: Record<string, string> | undefined): boolean {
   if (!headers) {
     return false;
@@ -60,7 +64,7 @@ export function listFridayMcpServerReadiness(input: {
 
     return {
       name: server.id,
-      connected: true,
+      connected: isVerifiedMcpState(state?.state),
       authenticated,
       transport,
       state: state?.state,
@@ -91,8 +95,12 @@ export function evaluateFridaySkillMcpReadiness(input: {
 
   for (const requirement of requirements) {
     const server = serverByName.get(requirement.name.trim().toLowerCase());
-    if (!server?.connected) {
+    if (!server) {
       blockers.push(`Required MCP server "${requirement.name}" is not configured for this deployment.`);
+      continue;
+    }
+    if (!server.connected) {
+      blockers.push(`Required MCP server "${requirement.name}" is configured but has not passed MCP discovery yet.`);
       continue;
     }
     if (requirement.auth === "authenticated" && !server.authenticated) {

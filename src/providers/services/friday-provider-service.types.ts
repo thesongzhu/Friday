@@ -9,6 +9,7 @@ import type {
   FridayProviderAttempt,
   FridayProviderAuthMode,
   FridayProviderBackendKind,
+  FridayProviderCapabilityDoctorReport,
   FridayProviderCliConfig,
   FridayProviderDeploymentKind,
   FridayProviderDoctorReport,
@@ -16,8 +17,10 @@ import type {
   FridayProviderProfile,
   FridayProviderRegionTag,
   FridayProviderRoutingExplainReport,
+  FridayProviderRuntimeCapabilityDeclaration,
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
+  FridayRuntimeCapabilityId,
 } from "../model/friday-provider.types.js";
 
 import type {
@@ -38,6 +41,7 @@ export interface FridayProviderService {
   listAuthProfiles(providerId: string): Promise<FridayAuthProfile[]>;
   activateAuthProfile(providerId: string, profileKey: string): Promise<FridayAuthProfile>;
   doctorProvider(providerId: string): Promise<FridayProviderDoctorReport>;
+  runCapabilityDoctor(): Promise<FridayProviderCapabilityDoctorReport>;
   explainRouting(input: {
     requestedModel?: string;
     requestedProviderId?: string;
@@ -57,6 +61,7 @@ export interface FridayProviderService {
       dataSensitivity?: "public" | "internal" | "confidential" | "secret";
       latencyBudgetMs?: number;
       satelliteAvailable?: boolean;
+      requiredCapabilities?: FridayRuntimeCapabilityId[];
     };
   }): Promise<FridayProviderRoutingExplainReport>;
   pinRoute(input: {
@@ -87,6 +92,7 @@ export interface FridayProviderService {
     defaultModel?: string;
     headers?: Record<string, string>;
     cliConfig?: FridayProviderCliConfig;
+    runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
     deploymentKind?: FridayProviderDeploymentKind;
     regionTag?: FridayProviderRegionTag;
     enabled?: boolean;
@@ -106,6 +112,7 @@ export interface FridayProviderService {
       defaultModel?: string;
       headers?: Record<string, string>;
       cliConfig?: FridayProviderCliConfig;
+      runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
       deploymentKind?: FridayProviderDeploymentKind;
       regionTag?: FridayProviderRegionTag;
       enabled?: boolean;
@@ -146,6 +153,7 @@ export interface FridayProviderService {
       dataSensitivity?: "public" | "internal" | "confidential" | "secret";
       latencyBudgetMs?: number;
       satelliteAvailable?: boolean;
+      requiredCapabilities?: FridayRuntimeCapabilityId[];
     };
     run: (
       route: FridayResolvedProviderRoute,

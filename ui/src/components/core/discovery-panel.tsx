@@ -194,6 +194,25 @@ export function DiscoveryPanel() {
   const programs = programsQuery.data?.programs ?? [];
   const grouped = groupByCategory(programs);
   const recommendations = recsQuery.data?.recommendations ?? [];
+  const discoveryDisabled = statusQuery.data && !statusQuery.data.enabled;
+
+  if (discoveryDisabled) {
+    return (
+      <ShellCard
+        eyebrow={localize(locale, "程序发现", "Program Discovery")}
+        title={localize(locale, "发现功能未启用", "Discovery Disabled")}
+      >
+        <p className="text-sm text-[color:var(--color-text-secondary)]">
+          {statusQuery.data.unavailableReason
+            ?? localize(
+              locale,
+              "本机程序发现当前未启用。启用后可扫描本机程序并生成集成建议。",
+              "Local program discovery is currently disabled. Enable it to scan local programs and generate integration suggestions.",
+            )}
+        </p>
+      </ShellCard>
+    );
+  }
 
   return (
     <div className="space-y-4">

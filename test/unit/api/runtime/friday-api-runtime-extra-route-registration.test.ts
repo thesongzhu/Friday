@@ -152,7 +152,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("channels.webhooks.lark");
     expect(operationIds.some((id) => id.startsWith("channels.") && !id.startsWith("channels.webhooks."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("system."))).toBe(false);
-    expect(operationIds.some((id) => id.startsWith("discovery."))).toBe(false);
+    expect(operationIds).toContain("discovery.status");
     expect(operationIds).toContain("mcp.server.rpc");
     expect(operationIds).toContain("packaging.packages.list");
     expect(operationIds.some((id) => id.startsWith("marketplace."))).toBe(false);

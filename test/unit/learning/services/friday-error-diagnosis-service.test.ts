@@ -221,7 +221,7 @@ describe("FridayErrorDiagnosisService", () => {
     expect(result.autoFixEligible).toBe(true);
   });
 
-  it("does not emit marker-only config candidate plans from matched lessons", () => {
+  it("emits rollback-backed config candidate plans from matched lessons", () => {
     const lessonRepo = createFridayLearnedLessonRepository();
     const configIncident: FridayErrorIncidentEntity = {
       ...baseIncident,
@@ -244,7 +244,9 @@ describe("FridayErrorDiagnosisService", () => {
 
     expect(result.autoFixEligible).toBe(true);
     expect(result.matchedLessons).toHaveLength(1);
-    expect(result.candidatePlans).toHaveLength(0);
+    expect(result.candidatePlans).toHaveLength(1);
+    expect(result.candidatePlans[0]!.steps[0]!.kind).toBe("apply_config_patch");
+    expect(result.candidatePlans[0]!.rollbackPlan).toBeDefined();
   });
 
   it("boosts structured workflow runtime failures with run and node evidence", () => {

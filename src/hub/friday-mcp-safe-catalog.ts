@@ -20,6 +20,7 @@ export const FRIDAY_MCP_SAFE_CATALOG = new Set([
   "web_search",      // information retrieval
   "web_fetch",       // URL fetching
   "read",            // file reading (read-only)
+  "pdf_parse",       // PDF text extraction inside workspace
   "memory_search",   // memory recall (read-only)
 ]);
 

@@ -1,6 +1,7 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import { jsonResult } from "./friday-agent-tool-helpers.js";
+import type { FridayRuntimeCapabilityMatrix } from "#providers";
 
 export interface FridayAgentCapabilitiesSnapshot {
   readOnly: boolean;
@@ -35,6 +36,7 @@ export interface FridayAgentCapabilitiesSnapshot {
   companion: {
     connected: boolean;
   };
+  runtime?: FridayRuntimeCapabilityMatrix;
 }
 
 export interface CreateFridayAgentCapabilitiesToolOptions {

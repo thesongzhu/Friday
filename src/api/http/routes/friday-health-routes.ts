@@ -6,6 +6,7 @@
  */
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayRuntimeCapabilityMatrix } from "#providers";
 
 // ─── Types ───
 
@@ -44,6 +45,7 @@ export interface FridayHealthCapabilities {
     latestness: "provider_backed" | "unverified";
     warning?: string;
   };
+  runtime?: FridayRuntimeCapabilityMatrix;
   system: {
     enabled: boolean;
     remoteMode: "trusted_private_network" | "disabled" | "unavailable";

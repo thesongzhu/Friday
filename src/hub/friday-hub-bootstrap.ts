@@ -18,6 +18,7 @@ import { createFridayAutonomousEngine } from "../agent/autonomous/friday-autonom
 import { createFridayAutonomousRepository } from "../agent/autonomous/friday-autonomous-repository.js";
 import type { FridayAutonomousEngine } from "../agent/autonomous/friday-autonomous.types.js";
 import { createFridayAgentAutonomousTool } from "../agent/tools/friday-agent-autonomous-tool.js";
+import { createFridayAgentControlledAutonomyTool } from "../agent/tools/friday-agent-controlled-autonomy-tool.js";
 import { createFridayAgentSetupAssistantTool } from "../agent/tools/friday-agent-setup-assistant-tool.js";
 import { createFridayAgentSetupTool } from "../agent/tools/friday-agent-setup-tool.js";
 import {
@@ -27,6 +28,7 @@ import {
   createFridaySetupCoordinator,
   createFridaySetupRecipeExecutor,
   createFridaySetupRecipeRegistry,
+  FRIDAY_BUILTIN_RECIPES,
 } from "../setup/index.js";
 import { createOnboardingEngine } from "../uix/engine/index.js";
 import {
@@ -43,6 +45,7 @@ import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
 import {
+  buildFridayRuntimeCapabilityMatrix,
   createFridayProviderCostCalculator,
   createFridayProviderPricingCatalog,
   createFridayProviderService,
@@ -315,6 +318,7 @@ import { FridayMarketplaceRequestBoardService } from "../marketplace/services/fr
 import { assertListingExecutionReady } from "../marketplace/engine/index.js";
 import type { MarketplaceAuditEventSink } from "../marketplace/engine/index.js";
 import type { FridayMarketplaceAssetType } from "../marketplace/model/index.js";
+import { createFridayProviderBackedTtsService } from "../media/friday-provider-backed-tts-service.js";
 
 // ─── Extracted helpers, types, and stubs ───
 
@@ -598,6 +602,37 @@ async function autoDetectProvidersFromEnv(
   }
 
   return detected;
+}
+
+function fridayMessagesContainImageContent(messages: readonly FridayAgentMessage[]): boolean {
+  return messages.some((message) =>
+    Array.isArray(message.content)
+    && message.content.some((block) => block.type === "image"),
+  );
+}
+
+function fridayMessagesContainOcrIntent(messages: readonly FridayAgentMessage[]): boolean {
+  const text = messages
+    .map((message) => {
+      if (typeof message.content === "string") {
+        return message.content;
+      }
+      return message.content
+        .map((block) => {
+          if (block.type === "text") {
+            return block.text;
+          }
+          if (block.type === "tool_result") {
+            return block.content;
+          }
+          return "";
+        })
+        .join(" ");
+    })
+    .join(" ")
+    .toLowerCase();
+  return /\b(ocr|read\s+text|extract\s+text|text\s+from\s+(?:image|screenshot|photo|scan)|scan(?:ned)?\s+document)\b/.test(text)
+    || /(识别文字|提取文字|图片文字|截图文字|扫描件文字|读图中文字)/u.test(text);
 }
 
 // ─── Resolved Hub Config ───
@@ -1297,6 +1332,12 @@ export async function createFridayHub(
   // IMPL-7: Artifact writer
   const workspaceRoot = config.stateDir ?? ".";
   const agentArtifactWriter = createFridayAgentArtifactWriter(workspaceRoot);
+  const ttsService = createFridayProviderBackedTtsService({
+    providerService,
+    artifactDir: path.join(workspaceRoot, ".friday", "artifacts", "tts"),
+    defaultModel: process.env.FRIDAY_TTS_MODEL,
+    defaultVoice: process.env.FRIDAY_TTS_VOICE,
+  });
 
   // Cost calculator for enriching message_end events
   const pricingCatalog = createFridayProviderPricingCatalog();
@@ -1313,11 +1354,27 @@ export async function createFridayHub(
       const resolvedModel = params.model === FRIDAY_AGENT_ROUTE_DEFAULT_MODEL
         ? undefined
         : params.model;
+      const requiredCapabilities = new Set(params.routingContext?.requiredCapabilities ?? []);
+      requiredCapabilities.add("text");
+      if (fridayMessagesContainImageContent(params.messages)) {
+        requiredCapabilities.add("vision");
+        if (fridayMessagesContainOcrIntent(params.messages)) {
+          requiredCapabilities.add("ocr");
+        }
+      }
+      const routingContext = requiredCapabilities.size > 0
+        ? {
+            estimatedInputTokens: params.routingContext?.estimatedInputTokens ?? 0,
+            complexity: params.routingContext?.complexity ?? "medium" as const,
+            ...params.routingContext,
+            requiredCapabilities: [...requiredCapabilities],
+          }
+        : params.routingContext;
       const { result: events, route, attempts, routingDecision } = await providerService.runWithFallback({
         requestedModel: resolvedModel,
         requestedProviderId: params.providerId,
         tenantContext: params.tenantContext,
-        routingContext: params.routingContext,
+        routingContext,
         run: async (_route, credential) => {
           const innerClient = createFridayAgentLlmClient({
             baseUrl: _route.provider.baseUrl,
@@ -1802,10 +1859,21 @@ export async function createFridayHub(
   if (mcpAdapter) {
     console.log(`[friday] MCP adapter enabled with ${String(mcpServers.length)} server(s)`);
   }
-  const configuredSearchProvider = process.env.FRIDAY_SEARCH_PROVIDER?.trim().toLowerCase();
-  const hasConfiguredSearchKey = Boolean(
-    process.env.FRIDAY_SERPER_API_KEY?.trim() || process.env.FRIDAY_TAVILY_API_KEY?.trim(),
-  );
+  const explicitSearchProvider = process.env.FRIDAY_SEARCH_PROVIDER?.trim().toLowerCase();
+  const inferredSearchProvider = explicitSearchProvider && explicitSearchProvider !== "auto"
+    ? explicitSearchProvider
+    : process.env.FRIDAY_SERPER_API_KEY?.trim()
+      ? "serper"
+      : process.env.FRIDAY_TAVILY_API_KEY?.trim()
+        ? "tavily"
+        : explicitSearchProvider;
+  const configuredSearchProvider = inferredSearchProvider;
+  const configuredSearchApiKey = configuredSearchProvider === "serper"
+    ? process.env.FRIDAY_SERPER_API_KEY
+    : configuredSearchProvider === "tavily"
+      ? process.env.FRIDAY_TAVILY_API_KEY
+      : undefined;
+  const hasConfiguredSearchKey = Boolean(configuredSearchApiKey?.trim());
   const publicSearchProvider = !configuredSearchProvider || configuredSearchProvider === "auto"
     ? "google_news_rss+duckduckgo_html"
     : configuredSearchProvider === "duckduckgo"
@@ -1817,6 +1885,8 @@ export async function createFridayHub(
       ? 'Configured search provider "tavily" is missing FRIDAY_TAVILY_API_KEY; time-sensitive news lookup is unverified.'
       : configuredSearchProvider === "duckduckgo"
         ? 'Configured search provider "duckduckgo" does not verify publication dates for time-sensitive news lookup.'
+    : (!configuredSearchProvider || configuredSearchProvider === "auto")
+      ? "Default search uses Google News RSS plus DuckDuckGo HTML; general-result recency is unverified without Serper or Tavily."
         : !hasConfiguredSearchKey && (configuredSearchProvider === "serper" || configuredSearchProvider === "tavily")
           ? `Search provider "${configuredSearchProvider}" has no API key configured; time-sensitive news lookup is unverified.`
           : undefined;
@@ -1825,6 +1895,70 @@ export async function createFridayHub(
       console.warn(`[friday] ${searchWarning}`);
     }
   }
+  type WebSearchHealth = {
+    provider: string;
+    latestness: "provider_backed" | "unverified";
+    warning?: string;
+  };
+  const WEB_SEARCH_HEALTH_CACHE_MS = 5 * 60 * 1000;
+  let webSearchHealthCache: { checkedAtMs: number; value: WebSearchHealth } | undefined;
+  const staticWebSearchHealth = (warning?: string): WebSearchHealth => ({
+    provider: publicSearchProvider,
+    latestness: warning ? "unverified" as const : "provider_backed" as const,
+    ...(warning ? { warning } : {}),
+  });
+  const probeConfiguredWebSearchProvider = async (): Promise<WebSearchHealth> => {
+    if (searchWarning || (configuredSearchProvider !== "serper" && configuredSearchProvider !== "tavily")) {
+      return staticWebSearchHealth(searchWarning);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const key = configuredSearchApiKey?.trim();
+      if (!key) {
+        return staticWebSearchHealth(`Search provider "${configuredSearchProvider}" has no API key configured.`);
+      }
+      const response = configuredSearchProvider === "serper"
+        ? await fetch("https://google.serper.dev/search", {
+            method: "POST",
+            headers: {
+              "X-API-KEY": key,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ q: "Friday capability probe", num: 1 }),
+            signal: controller.signal,
+          })
+        : await fetch("https://api.tavily.com/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              api_key: key,
+              query: "Friday capability probe",
+              max_results: 1,
+              search_depth: "basic",
+            }),
+            signal: controller.signal,
+          });
+      return response.ok
+        ? staticWebSearchHealth()
+        : staticWebSearchHealth(`Search provider "${configuredSearchProvider}" failed live verification with HTTP ${String(response.status)}.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return staticWebSearchHealth(`Search provider "${configuredSearchProvider}" failed live verification: ${message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const resolveWebSearchHealth = async (): Promise<WebSearchHealth> => {
+    const nowMs = Date.now();
+    if (webSearchHealthCache && nowMs - webSearchHealthCache.checkedAtMs < WEB_SEARCH_HEALTH_CACHE_MS) {
+      return webSearchHealthCache.value;
+    }
+    const value = await probeConfiguredWebSearchProvider();
+    webSearchHealthCache = { checkedAtMs: nowMs, value };
+    return value;
+  };
   const starterSkillRoutingEnforced = process.env.FRIDAY_AGENT_ENFORCE_STARTER_SKILL_ROUTING === "true";
   const subagentForkModeEnabled = process.env.FRIDAY_SUBAGENT_FORK_MODE_ENABLED === "true";
 
@@ -1867,9 +2001,10 @@ export async function createFridayHub(
       servers: mcpAdapter?.listServers() ?? [],
       serverStates: mcpAdapter?.listServerStates() ?? [],
     });
-    const providerCount = await providerService.listProviders()
-      .then((providers) => providers.length)
-      .catch(() => 0);
+    const verifiedMcpServerCount = mcpServers.filter((server) => server.connected).length;
+    const providers = await providerService.listProviders()
+      .catch(() => []);
+    const providerCount = providers.length;
     const browserDiagnostics = browserManager?.getDiagnostics();
     // Keep deterministic capability responses fast. A full system snapshot can
     // fan out into companion status and desktop probes that are appropriate for
@@ -1893,7 +2028,7 @@ export async function createFridayHub(
         })),
       },
       provider: {
-        available: true,
+        available: providerCount > 0,
         configuredCount: providerCount,
         mutationBlockedByReadOnly: input.readOnly,
       },
@@ -1910,6 +2045,22 @@ export async function createFridayHub(
       companion: {
         connected: companionConnected,
       },
+      runtime: buildFridayRuntimeCapabilityMatrix({
+        nowIso: nowIso(),
+        readOnly: input.readOnly,
+        providers,
+        webSearch: await resolveWebSearchHealth(),
+        pdfParseEnabled: true,
+        browserEnabled: Boolean(browserManager),
+        browserVerified: Boolean(browserDiagnostics?.sessionId),
+        browserDetail: browserDiagnostics?.sessionId
+          ? undefined
+          : "Browser runtime is configured; run a browser open/status action to verify Playwright or host Chrome launches on this machine.",
+        mcpServerCount: mcpServers.length,
+        mcpVerifiedServerCount: verifiedMcpServerCount,
+        skillCount: registry.list().filter((skill) => skill.status === "installed").length,
+        ttsEnabled: false,
+      }),
     };
   };
 
@@ -2202,8 +2353,9 @@ export async function createFridayHub(
     agentRuntimeGetter,
     mcpAdapter,
     providerService,
-    webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
-    webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
+    ttsService,
+    webSearchProvider: configuredSearchProvider,
+    webSearchApiKey: configuredSearchApiKey,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
     subagentForkModeEnabled,
@@ -3038,6 +3190,7 @@ export async function createFridayHub(
   const hubAutoFixSupport = createFridayHubAutoFixExecutionSupport({
     registry,
     memoryState,
+    configManager,
     providerService,
     workflowRuntime,
     nowIso,
@@ -3561,8 +3714,9 @@ export async function createFridayHub(
         mcpAdapter,
         extractionService: sessionExtractionService,
         providerService,
-        webSearchProvider: process.env.FRIDAY_SEARCH_PROVIDER,
-        webSearchApiKey: process.env.FRIDAY_SERPER_API_KEY ?? process.env.FRIDAY_TAVILY_API_KEY,
+        ttsService,
+        webSearchProvider: configuredSearchProvider,
+        webSearchApiKey: configuredSearchApiKey,
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
         taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
         subagentForkModeEnabled,
@@ -4979,11 +5133,7 @@ export async function createFridayHub(
     crossBorderPack: {
       service: crossBorderPackService,
     },
-    searchHealth: {
-      provider: publicSearchProvider,
-      latestness: searchWarning ? "unverified" : "provider_backed",
-      ...(searchWarning ? { warning: searchWarning } : {}),
-    },
+    searchHealth: resolveWebSearchHealth,
     systemHealth: getPublicSystemHealth,
     discovery,
     mcpServer,
@@ -5834,6 +5984,11 @@ export async function createFridayHub(
       requestedProviderId: request.providerId,
       requestedModel,
       tenantContext: request.tenantContext,
+      routingContext: {
+        estimatedInputTokens: 0,
+        complexity: "medium",
+        requiredCapabilities: ["vision"],
+      },
       run: async (_route, credential) => {
         const innerClient = createFridayAgentLlmClient({
           baseUrl: _route.provider.baseUrl,
@@ -5903,6 +6058,7 @@ export async function createFridayHub(
   }
 
   let autonomousEngine!: FridayAutonomousEngine;
+  let setupRecipeRegistry: ReturnType<typeof createFridaySetupRecipeRegistry> | undefined;
   // 3. autonomous + setup — late-bind after runtime construction to avoid
   // circular dependency on agentRuntime during initial tool registry creation.
   {
@@ -6057,7 +6213,10 @@ export async function createFridayHub(
       },
     });
     const environmentScanner = createFridayEnvironmentScanner();
-    const setupRecipeRegistry = createFridaySetupRecipeRegistry();
+    setupRecipeRegistry = createFridaySetupRecipeRegistry();
+    for (const recipe of FRIDAY_BUILTIN_RECIPES) {
+      setupRecipeRegistry.register(recipe);
+    }
     const setupRecipeExecutor = createFridaySetupRecipeExecutor({
       registry: setupRecipeRegistry,
       autonomousEngine,
@@ -6114,6 +6273,12 @@ export async function createFridayHub(
 
     for (const tool of [
       createFridayAgentAutonomousTool({ autonomousEngine, goalRunIdMap: autonomousGoalRunIdMap }),
+      createFridayAgentControlledAutonomyTool({
+        policyService: apiRuntime.autonomyPolicyService,
+        acquisitionService: apiRuntime.capabilityAcquisitionService,
+        standingAgendaService: apiRuntime.standingAgendaService,
+        defaultUserId: learningDefaultUserId,
+      }),
       createFridayAgentSetupTool({
         recipeRegistry: setupRecipeRegistry,
         recipeExecutor: setupRecipeExecutor,
@@ -6249,6 +6414,7 @@ export async function createFridayHub(
           : undefined,
         approvalService: workflowRuntime.approval,
         workflowExecutionService: workflowRuntime.execution,
+        setupRecipeRegistry,
       };
       const managedAsyncDispatchDeps: FridayManagedAsyncDispatchDeps = {
         workflowExecutionService: workflowRuntime.execution,

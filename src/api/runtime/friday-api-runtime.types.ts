@@ -15,6 +15,11 @@ import type { FridayFleetDashboardService } from "../fleet/friday-fleet-dashboar
 import type { FridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.types.js";
 import type { FridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
 import type { FridayWorkflowBuilderDraftService, FridayWorkflowCrudService, FridayWorkflowExecutionService, FridayWorkflowRuntime } from "#workflows";
+import type {
+  FridayAutonomyPolicyService,
+  FridayCapabilityAcquisitionService,
+  FridayStandingAgendaService,
+} from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
@@ -71,6 +76,9 @@ export interface FridayApiRuntime {
   fleet: FridayFleetDashboardService;
   conflicts: FridayWorkflowConflictService;
   routes: FridayHttpRouteRegistry;
+  autonomyPolicyService: FridayAutonomyPolicyService;
+  capabilityAcquisitionService: FridayCapabilityAcquisitionService;
+  standingAgendaService: FridayStandingAgendaService;
   workflowCrud: FridayWorkflowCrudService;
   workflowExecution: FridayWorkflowExecutionService;
   draftService: FridayWorkflowBuilderDraftService;
@@ -222,7 +230,11 @@ export interface CreateFridayApiRuntimeDeps {
     provider: string;
     latestness: "provider_backed" | "unverified";
     warning?: string;
-  });
+  } | Promise<{
+    provider: string;
+    latestness: "provider_backed" | "unverified";
+    warning?: string;
+  }>);
   /** Optional: system health metadata surfaced by /v1/health. */
   systemHealth?: {
     enabled: boolean;

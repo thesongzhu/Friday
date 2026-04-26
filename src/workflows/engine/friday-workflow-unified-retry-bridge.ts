@@ -41,6 +41,23 @@ export function classifyWorkflowError(
     return "rate_limit";
   }
 
+  // Provider credential failures are human-action blockers, not transient
+  // runtime failures. Keep this before the generic "INVALID" logic branch so
+  // invalid_api_key-style upstream messages do not get misclassified.
+  if (
+    code.includes("AUTH")
+    || code.includes("UNAUTHORIZED")
+    || code.includes("FORBIDDEN")
+    || msg.includes("401")
+    || msg.includes("403")
+    || msg.includes("UNAUTHORIZED")
+    || msg.includes("FORBIDDEN")
+    || msg.includes("INVALID API KEY")
+    || msg.includes("INVALID_API_KEY")
+  ) {
+    return "auth";
+  }
+
   // Schema / validation / parse errors → logic (non-retryable)
   if (code.includes("SCHEMA") || code.includes("VALIDATION") || code.includes("PARSE") || code.includes("INVALID_JSON")) {
     return "logic";

@@ -163,4 +163,48 @@ describe("createFridaySetupRecipeExecutor", () => {
     expect(execution.failureReason).toContain('domain "api" is not supported');
     expect(autonomousEngine.executeGoal).not.toHaveBeenCalled();
   });
+
+  it("pauses manual or approval-gated steps instead of reporting them as failed", async () => {
+    const recipe: FridaySetupRecipe = {
+      id: "recipe-manual",
+      name: "Manual setup",
+      description: "Needs user action",
+      category: "integration",
+      version: "1.0.0",
+      targetService: "service",
+      prerequisites: [],
+      steps: [
+        {
+          id: "step-1",
+          index: 0,
+          domain: "manual",
+          risk: "high",
+          instruction: "Paste the API key into Friday settings",
+          guidance: "The user must create and paste the key.",
+          requiresApproval: true,
+          maxRetries: 1,
+        },
+      ],
+      outputs: [],
+    };
+    const autonomousEngine = createEngine();
+    const executor = createFridaySetupRecipeExecutor({
+      registry: createRegistry(recipe),
+      autonomousEngine,
+      environmentScanner: createScanner(),
+      idGenerator: idGeneratorFactory(),
+      nowIso,
+    });
+
+    const execution = await executor.execute({
+      recipeId: recipe.id,
+      skipPrerequisites: true,
+    });
+
+    expect(execution.status).toBe("paused_for_approval");
+    expect(execution.failureReason).toContain("Manual setup step requires user action");
+    expect(execution.stepResults[0]?.status).toBe("paused_for_approval");
+    expect(execution.stepResults[0]?.approvalInstruction).toBe("Paste the API key into Friday settings");
+    expect(autonomousEngine.executeGoal).not.toHaveBeenCalled();
+  });
 });

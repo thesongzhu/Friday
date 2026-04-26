@@ -8,6 +8,7 @@
  */
 
 import { FridayDomainError } from "#errors";
+import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayDiscoveryFilterOptions,
@@ -199,6 +200,90 @@ export function createFridayDiscoveryRoutes(
           },
         };
       },
+    },
+  ];
+}
+
+export function createFridayDiscoveryDisabledRoutes(): Route[] {
+  const unavailableMessage = "Program discovery is disabled. Enable FRIDAY_DISCOVERY_ENABLED=true to scan local programs.";
+
+  const throwDisabled = (surface: string): never => throwFridayCapabilityDisabled({
+    capability: "program_discovery",
+    surface,
+    message: unavailableMessage,
+  });
+
+  return [
+    {
+      operationId: "discovery.scan",
+      method: "POST",
+      path: "/v1/discovery/scan",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      handler: async () => throwDisabled("scan"),
+    },
+    {
+      operationId: "discovery.catalog.get",
+      method: "GET",
+      path: "/v1/discovery/catalog",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      handler: async () => throwDisabled("catalog"),
+    },
+    {
+      operationId: "discovery.programs.list",
+      method: "GET",
+      path: "/v1/discovery/programs",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      handler: async () => throwDisabled("programs"),
+    },
+    {
+      operationId: "discovery.recommend",
+      method: "GET",
+      path: "/v1/discovery/recommendations",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      handler: async () => throwDisabled("recommendations"),
+    },
+    {
+      operationId: "discovery.policy.get",
+      method: "GET",
+      path: "/v1/discovery/policy",
+      auth: { public: false, anyOfScopes: ["desktop.read"], anyOfRoles: ["admin", "operator"] },
+      handler: async () => ({
+        status: 200,
+        body: {
+          policy: {
+            enabled: false,
+            scheduledRefreshEnabled: false,
+            refreshIntervalMs: 86_400_000,
+            excludedPaths: [],
+            excludedProgramIds: [],
+            redactSensitiveDetails: true,
+          },
+        },
+      }),
+    },
+    {
+      operationId: "discovery.policy.update",
+      method: "PATCH",
+      path: "/v1/discovery/policy",
+      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin"] },
+      handler: async () => throwDisabled("policy"),
+    },
+    {
+      operationId: "discovery.status",
+      method: "GET",
+      path: "/v1/discovery/status",
+      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      handler: async () => ({
+        status: 200,
+        body: {
+          enabled: false,
+          hasCatalog: false,
+          catalogId: null,
+          lastScanAt: null,
+          programCount: 0,
+          unavailableReason: unavailableMessage,
+        },
+      }),
     },
   ];
 }

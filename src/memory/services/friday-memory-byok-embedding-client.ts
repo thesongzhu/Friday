@@ -70,7 +70,12 @@ export function createFridayMemoryByokEmbeddingClient(
   return {
     async embed(text) {
       const outcome = await deps.providerService.runWithFallback<unknown>({
-        requestedModel: deps.embeddingModel,
+        requestedModel: deps.embeddingModel ?? FRIDAY_MEMORY_DEFAULT_EMBEDDING_MODEL,
+        routingContext: {
+          estimatedInputTokens: text.length,
+          complexity: "simple",
+          requiredCapabilities: ["embedding"],
+        },
         run: async (
           route: FridayResolvedProviderRoute,
           credential: string | null,

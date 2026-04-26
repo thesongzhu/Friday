@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FridayCommunicationMbti } from "@friday-operator-client";
 import { CheckCircle2, MessageCircleMore, Search, WandSparkles } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
@@ -137,12 +137,17 @@ const POPULAR_MBTI: FridayCommunicationMbti[] = [
 
 export function SetupPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { locale, setLocale } = useAppLocale();
+  const setupDeepLinkApplied = useRef(false);
 
   // ── Step state machine ──
   type SetupStep = 0 | 1 | 2 | 3 | 4 | 5 | 6;
   const [currentStep, setCurrentStep] = useState<SetupStep>(0);
+  const [providerRegion, setProviderRegion] = useState<"international" | "china">(
+    locale === "zh" ? "china" : "international",
+  );
 
   // ── Existing state (kept intact) ──
   const [acknowledgedSecurity, setAcknowledgedSecurity] = useState(false);
@@ -157,6 +162,11 @@ export function SetupPage() {
   const [providerValidated, setProviderValidated] = useState(false);
   const [communicationMbti, setCommunicationMbti] = useState<FridayCommunicationMbti | "">("");
   const [communicationSaved, setCommunicationSaved] = useState(false);
+  const hasSetupDeepLink = Boolean(
+    searchParams.get("step")
+      ?? searchParams.get("providerKind")
+      ?? searchParams.get("recipeId"),
+  );
 
   // ── Channel state ──
   const [enabledChannels, setEnabledChannels] = useState<Set<ChannelKind>>(new Set());
@@ -210,10 +220,10 @@ export function SetupPage() {
   // ── Redirects ──
 
   useEffect(() => {
-    if (setupStatus && !setupStatus.needsSetup) {
+    if (setupStatus && !setupStatus.needsSetup && !hasSetupDeepLink) {
       navigate("/", { replace: true });
     }
-  }, [navigate, setupStatus]);
+  }, [hasSetupDeepLink, navigate, setupStatus]);
 
   // Note: during first-run setup we intentionally do NOT pre-fill from existingProviders.
   // The user should configure from scratch. Existing provider data is only relevant
@@ -222,8 +232,50 @@ export function SetupPage() {
   // Auto-apply template when provider kind changes or templates load
   useEffect(() => {
     if (providerTemplates.length === 0) return;
+    if (hasSetupDeepLink && !setupDeepLinkApplied.current) return;
     applyProviderTemplate(providerKind);
-  }, [providerKind, providerTemplates.length]);
+  }, [hasSetupDeepLink, providerKind, providerTemplates.length]);
+
+  useEffect(() => {
+    if (setupDeepLinkApplied.current) return;
+
+    const step = searchParams.get("step");
+    const requestedChannel = searchParams.get("channel");
+    const channelKind = CHANNEL_KINDS_ORDERED.find((kind) => kind === requestedChannel);
+
+    if (step !== "channels" && !channelKind) return;
+
+    setCurrentStep(4);
+    if (channelKind) {
+      setEnabledChannels((prev) => new Set([...prev, channelKind]));
+      setExpandedChannel(channelKind);
+    }
+    setupDeepLinkApplied.current = true;
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (setupDeepLinkApplied.current || providerTemplates.length === 0) return;
+
+    const step = searchParams.get("step");
+    const recipeId = searchParams.get("recipeId");
+    const providerKindParam = searchParams.get("providerKind");
+    const recipeProviderKind = recipeId?.startsWith("provider-")
+      ? recipeId.slice("provider-".length)
+      : undefined;
+    const requestedProviderKind = providerKindParam ?? recipeProviderKind;
+
+    if (step !== "provider" && !requestedProviderKind) return;
+
+    const template = providerTemplates.find((candidate) =>
+      candidate.providerKind === requestedProviderKind,
+    );
+    if (template) {
+      setProviderRegion(template.regionTag === "china" ? "china" : "international");
+      applyProviderTemplate(template.providerKind);
+    }
+    setCurrentStep(2);
+    setupDeepLinkApplied.current = true;
+  }, [providerTemplates, searchParams]);
 
   useEffect(() => {
     if (!persona) return;
@@ -709,10 +761,6 @@ export function SetupPage() {
   }
 
   // ─── STEP 2 — Provider ───
-
-  const [providerRegion, setProviderRegion] = useState<"international" | "china">(
-    locale === "zh" ? "china" : "international",
-  );
 
   function renderStep2() {
     const internationalKinds: ProviderKind[] = providerTemplates.length > 0
