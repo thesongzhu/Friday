@@ -37,6 +37,39 @@ describe("FridayProviderService", () => {
     );
   }
 
+  function installCapabilityDoctorFetchMock() {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.endsWith("/v1/models")) {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (href.endsWith("/v1/embeddings")) {
+        return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 });
+      }
+      if (href.endsWith("/v1/audio/speech")) {
+        return new Response(Buffer.from("fake-audio"), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg" },
+        });
+      }
+      const body = typeof init?.body === "string" ? init.body : "";
+      const output = body.includes("Read the text in this image") ? "FRIDAY" : "OK";
+      if (href.endsWith("/v1/chat/completions")) {
+        return new Response(JSON.stringify({ choices: [{ message: { content: output } }] }), { status: 200 });
+      }
+      if (href.endsWith("/v1/responses")) {
+        return new Response(JSON.stringify({ output_text: output }), { status: 200 });
+      }
+      if (href.endsWith("/v1/messages")) {
+        return new Response(JSON.stringify({ content: [{ type: "text", text: output }] }), { status: 200 });
+      }
+      if (href.endsWith("/api/generate")) {
+        return new Response(JSON.stringify({ response: output }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+  }
+
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
@@ -1394,6 +1427,51 @@ describe("FridayProviderService", () => {
       }
     });
 
+    it("runs capability doctor and retries routing when a required capability is unverified", async () => {
+      process.env.TEST_KEY = "test-env-key";
+      installCapabilityDoctorFetchMock();
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$TEST_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: [],
+        });
+
+        const { result, route } = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 10,
+            complexity: "simple",
+            requiredCapabilities: ["text"],
+          },
+          run: async () => "ok",
+        });
+        const updated = await service.getProvider("test-id-0001");
+
+        expect(result).toBe("ok");
+        expect(route.model).toBe("gpt-4o");
+        expect(updated?.config.runtimeCapabilities).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+          }),
+        ]));
+      } finally {
+        delete process.env.TEST_KEY;
+      }
+    });
+
     it("prefers the active auth profile over provider config when resolving credentials", async () => {
       process.env.AUTH_PROFILE_ENV = "profile-secret";
       try {
@@ -2445,6 +2523,144 @@ describe("FridayProviderService", () => {
 
       const state = await service.validateProvider("test-id-0001");
       expect(state.status).toBe("ok");
+    });
+  });
+
+  describe("runCapabilityDoctor", () => {
+    it("runs live capability probes and persists verified runtime capabilities", async () => {
+      process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
+      installCapabilityDoctorFetchMock();
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          runtimeCapabilities: [
+            { capability: "vision", model: "gpt-4o", status: "declared" },
+            { capability: "tts", model: "gpt-4o", status: "declared" },
+          ],
+          validateOnSave: false,
+        });
+
+        const report = await service.runCapabilityDoctor();
+        const updated = await service.getProvider("test-id-0001");
+
+        expect(report.checkedAt).toBe(NOW);
+        expect(report.providerValidations[0]?.validation.status).toBe("ok");
+        expect(report.capabilityResults).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            providerId: "test-id-0001",
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+          }),
+          expect.objectContaining({
+            providerId: "test-id-0001",
+            capability: "vision",
+            model: "gpt-4o",
+            status: "verified",
+          }),
+          expect.objectContaining({
+            providerId: "test-id-0001",
+            capability: "ocr",
+            model: "gpt-4o",
+            status: "verified",
+          }),
+          expect.objectContaining({
+            providerId: "test-id-0001",
+            capability: "tts",
+            model: "gpt-4o",
+            status: "verified",
+          }),
+        ]));
+        expect(updated?.config.runtimeCapabilities).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          }),
+          expect.objectContaining({
+            capability: "vision",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          }),
+          expect.objectContaining({
+            capability: "ocr",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          }),
+          expect.objectContaining({
+            capability: "tts",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          }),
+        ]));
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
+    });
+
+    it("persists failed capability probes instead of treating provider validation as enough", async () => {
+      process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
+      const fetchMock = vi.fn(async (url: string | URL | Request) => {
+        const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+        if (href.endsWith("/v1/models")) {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response("model cannot generate", { status: 404 });
+      }) as typeof fetch;
+      globalThis.fetch = fetchMock;
+
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        const report = await service.runCapabilityDoctor();
+        const updated = await service.getProvider("test-id-0001");
+
+        expect(report.providerValidations[0]?.validation.status).toBe("ok");
+        expect(report.capabilityResults).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o",
+            status: "failed",
+            errorCode: "PROVIDER_MODEL_UNAVAILABLE",
+            httpStatus: 404,
+          }),
+        ]));
+        expect(updated?.config.runtimeCapabilities).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o",
+            status: "failed",
+            verified: false,
+          }),
+        ]));
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
     });
   });
 });

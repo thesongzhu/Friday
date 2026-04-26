@@ -194,6 +194,7 @@ export function createFridayAgentSetupTool(
         Object.entries(execution.outputs).map(([k, v]) => [k, v.length > 8 ? `${v.slice(0, 4)}...${v.slice(-4)}` : v]),
       ),
       failureReason: execution.failureReason,
+      approvalInstruction: execution.stepResults.find((step) => step.status === "paused_for_approval")?.approvalInstruction,
     });
   }
 
@@ -214,6 +215,7 @@ export function createFridayAgentSetupTool(
         status: s.status,
         approachIndex: s.approachIndex,
         failureReason: s.failureReason,
+        approvalInstruction: s.approvalInstruction,
       })),
       failureReason: execution.failureReason,
       createdAt: execution.createdAt,

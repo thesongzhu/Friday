@@ -20,6 +20,7 @@ import type {
   FridayListProvidersResponse,
   FridayListProviderTemplatesResponse,
   FridayPinProviderRouteResponse,
+  FridayRunCapabilityDoctorResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
   FridayUpdateProviderRequest,
@@ -32,6 +33,7 @@ import {
   FRIDAY_PROVIDER_APIS,
   FRIDAY_PROVIDER_BACKEND_KINDS,
   FRIDAY_PROVIDER_KINDS,
+  FRIDAY_RUNTIME_CAPABILITY_IDS,
   getFridayProviderTemplate,
   listFridayProviderTemplates,
 } from "#providers";
@@ -49,6 +51,7 @@ const VALID_BACKEND_KINDS = new Set<string>(FRIDAY_PROVIDER_BACKEND_KINDS);
 const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "external-session", "none"]);
 const VALID_DEPLOYMENT_KINDS = new Set(["hosted", "local", "self-hosted", "consumer-cli"]);
 const VALID_REGION_TAGS = new Set(["global", "us", "china", "local", "custom"]);
+const VALID_RUNTIME_CAPABILITIES = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
 
 const PROVIDER_CREATE_ACCEPTED_FIELDS = [
   "kind",
@@ -62,6 +65,7 @@ const PROVIDER_CREATE_ACCEPTED_FIELDS = [
   "defaultModel",
   "headers",
   "cliConfig",
+  "runtimeCapabilities",
   "deploymentKind",
   "regionTag",
   "enabled",
@@ -140,6 +144,39 @@ function validateCliConfig(value: unknown, errors: string[]): void {
   }
 }
 
+function validateRuntimeCapabilities(value: unknown, errors: string[]): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push("runtimeCapabilities must be an array when provided");
+    return;
+  }
+  value.forEach((entry, index) => {
+    if (entry == null || typeof entry !== "object" || Array.isArray(entry)) {
+      errors.push(`runtimeCapabilities[${String(index)}] must be an object`);
+      return;
+    }
+    const item = entry as Record<string, unknown>;
+    if (typeof item.capability !== "string" || !VALID_RUNTIME_CAPABILITIES.has(item.capability)) {
+      errors.push(`runtimeCapabilities[${String(index)}].capability must be one of: ${[...VALID_RUNTIME_CAPABILITIES].join(", ")}`);
+    }
+    if (item.model !== undefined && typeof item.model !== "string") {
+      errors.push(`runtimeCapabilities[${String(index)}].model must be a string when provided`);
+    }
+    if (item.verified !== undefined && typeof item.verified !== "boolean") {
+      errors.push(`runtimeCapabilities[${String(index)}].verified must be a boolean when provided`);
+    }
+    if (item.status !== undefined && item.status !== "declared" && item.status !== "verified" && item.status !== "failed") {
+      errors.push(`runtimeCapabilities[${String(index)}].status must be declared, verified, or failed when provided`);
+    }
+    if (item.verifiedAt !== undefined && typeof item.verifiedAt !== "string") {
+      errors.push(`runtimeCapabilities[${String(index)}].verifiedAt must be a string when provided`);
+    }
+    if (item.notes !== undefined && typeof item.notes !== "string") {
+      errors.push(`runtimeCapabilities[${String(index)}].notes must be a string when provided`);
+    }
+  });
+}
+
 function validateCreateBody(body: unknown): asserts body is FridayCreateProviderRequest {
   if (body == null || typeof body !== "object") {
     throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
@@ -195,6 +232,7 @@ function validateCreateBody(body: unknown): asserts body is FridayCreateProvider
     errors.push(`regionTag must be one of: ${[...VALID_REGION_TAGS].join(", ")}`);
   }
   validateCliConfig(b.cliConfig, errors);
+  validateRuntimeCapabilities(b.runtimeCapabilities, errors);
 
   if (errors.length > 0) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid provider create request: ${errors.join("; ")}`, {
@@ -251,6 +289,7 @@ function validateUpdateBody(body: unknown): asserts body is FridayUpdateProvider
     errors.push("headers must be an object when provided");
   }
   validateCliConfig(b.cliConfig, errors);
+  validateRuntimeCapabilities(b.runtimeCapabilities, errors);
 
   if (errors.length > 0) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid request body: ${errors.join("; ")}`, { httpStatus: 400 });
@@ -410,6 +449,17 @@ export function createFridayProviderRoutes(
       },
     },
 
+    {
+      operationId: "capabilities.doctor",
+      method: "POST",
+      path: "/v1/capabilities/doctor",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.validate",
+      async handler(): Promise<FridayRunCapabilityDoctorResponse> {
+        return deps.providerService.runCapabilityDoctor();
+      },
+    },
+
     // ─── Get provider ───
     {
       operationId: "providers.get",
@@ -443,7 +493,7 @@ export function createFridayProviderRoutes(
         const raw = ctx.body as Record<string, unknown> | null;
         if (raw && typeof raw === "object" && raw.config && typeof raw.config === "object") {
           const config = raw.config as Record<string, unknown>;
-          const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers", "backendKind", "cliConfig", "deploymentKind", "regionTag"] as const;
+          const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers", "backendKind", "cliConfig", "runtimeCapabilities", "deploymentKind", "regionTag"] as const;
           for (const field of liftFields) {
             if (config[field] !== undefined && raw[field] === undefined) {
               raw[field] = config[field];

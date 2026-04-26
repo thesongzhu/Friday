@@ -65,6 +65,7 @@ export interface FridaySetupAssistantProgress {
   readonly totalRecipes: number;
   readonly completedRecipes: number;
   readonly failedRecipes: number;
+  readonly pausedRecipes: number;
   readonly currentRecipeId: string | null;
   readonly currentRecipeName: string | null;
   readonly percentComplete: number;
@@ -80,6 +81,7 @@ export interface FridaySetupAssistantResult {
   readonly totalRecipes: number;
   readonly completedRecipes: number;
   readonly failedRecipes: number;
+  readonly pausedRecipes: number;
   readonly skippedRecipes: number;
   readonly results: readonly FridaySetupAssistantRecipeResult[];
   readonly durationMs: number;
@@ -88,7 +90,7 @@ export interface FridaySetupAssistantResult {
 export interface FridaySetupAssistantRecipeResult {
   readonly recipeId: string;
   readonly recipeName: string;
-  readonly status: "completed" | "failed" | "skipped";
+  readonly status: "completed" | "failed" | "skipped" | "paused_for_approval";
   readonly outputs: Readonly<Record<string, string>>;
   readonly failureReason?: string;
 }
@@ -218,6 +220,7 @@ export function createFridaySetupAssistant(
   let currentRecipeName: string | null = null;
   let completedRecipes = 0;
   let failedRecipes = 0;
+  let pausedRecipes = 0;
   let totalRecipes = 0;
   let onboardingSessionId: string | null = null;
   let abortController: AbortController | null = null;
@@ -327,6 +330,7 @@ export function createFridaySetupAssistant(
       recipeResults.length = 0;
       completedRecipes = 0;
       failedRecipes = 0;
+      pausedRecipes = 0;
 
       // Link external signal to internal controller
       signal.addEventListener("abort", () => abortController?.abort(), { once: true });
@@ -377,6 +381,7 @@ export function createFridaySetupAssistant(
             totalRecipes,
             completedRecipes: 0,
             failedRecipes: 0,
+            pausedRecipes: 0,
             skippedRecipes: totalRecipes,
             results: [],
             durationMs: Date.now() - startTime,
@@ -485,6 +490,16 @@ export function createFridaySetupAssistant(
                 executionId: execution.id,
                 status: "completed",
               });
+            } else if (execution.status === "paused_for_approval") {
+              pausedRecipes++;
+              recipeResults.push({
+                recipeId: recipe.id,
+                recipeName: recipe.name,
+                status: "paused_for_approval",
+                outputs: execution.outputs,
+                failureReason: execution.failureReason,
+              });
+              onboardingEngine.skipStep(session.id, `recipe-${recipe.id}`);
             } else {
               failedRecipes++;
               recipeResults.push({
@@ -536,7 +551,7 @@ export function createFridaySetupAssistant(
         coordinator.closeSession(coordSession.id);
 
         // ─── Done ───
-        const skippedRecipes = totalRecipes - completedRecipes - failedRecipes;
+        const skippedRecipes = totalRecipes - completedRecipes - failedRecipes - pausedRecipes;
         currentPhase = failedRecipes === totalRecipes ? "failed" : "completed";
         currentRecipeId = null;
         currentRecipeName = null;
@@ -545,6 +560,7 @@ export function createFridaySetupAssistant(
           phase: currentPhase,
           completedRecipes,
           failedRecipes,
+          pausedRecipes,
           skippedRecipes,
         });
 
@@ -557,6 +573,7 @@ export function createFridaySetupAssistant(
           totalRecipes,
           completedRecipes,
           failedRecipes,
+          pausedRecipes,
           skippedRecipes,
           results: recipeResults,
           durationMs: Date.now() - startTime,
@@ -575,7 +592,8 @@ export function createFridaySetupAssistant(
           totalRecipes,
           completedRecipes,
           failedRecipes,
-          skippedRecipes: totalRecipes - completedRecipes - failedRecipes,
+          pausedRecipes,
+          skippedRecipes: totalRecipes - completedRecipes - failedRecipes - pausedRecipes,
           results: recipeResults,
           durationMs: Date.now() - startTime,
         };
@@ -592,7 +610,7 @@ export function createFridaySetupAssistant(
       }
 
       const percent = totalRecipes > 0
-        ? Math.round(((completedRecipes + failedRecipes) / totalRecipes) * 100)
+        ? Math.round(((completedRecipes + failedRecipes + pausedRecipes) / totalRecipes) * 100)
         : 0;
 
       return {
@@ -600,6 +618,7 @@ export function createFridaySetupAssistant(
         totalRecipes,
         completedRecipes,
         failedRecipes,
+        pausedRecipes,
         currentRecipeId,
         currentRecipeName,
         percentComplete: percent,

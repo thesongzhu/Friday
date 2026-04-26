@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridayProviderService } from "#providers";
 import type { FridayWorkflowRuntime } from "#workflows";
+import type { FridayHubConfigManagerService } from "../../../../src/hub/services/friday-hub-config-manager.types.js";
 import { initializeFridayState } from "#state";
 import {
   createFridayHubAutoFixExecutionSupport,
@@ -166,6 +167,37 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     };
   }
 
+  function makeConfigManager(): FridayHubConfigManagerService {
+    let revision = 7;
+    let revertedToRevision: number | undefined;
+    return {
+      getCurrentConfig: async () => ({}) as never,
+      getConfig: async () => ({ revision, settings: {} }),
+      validatePatch: async () => ({ valid: true, errors: [] }),
+      applyPatch: async ({ expectedRevision }) => {
+        expect(expectedRevision).toBe(revision);
+        revision += 1;
+        return { revision, changedKeys: ["provider.defaultModel"] };
+      },
+      listRevisions: async () => ({ items: [] }),
+      revertToRevision: async (toRevision) => {
+        revertedToRevision = toRevision;
+        revision += 1;
+        return { revision, changedKeys: ["provider.defaultModel"], revertedFrom: toRevision + 1 };
+      },
+      getSkillRegistrySettings: async () => ({
+        workspaceDir: ".",
+        bundledSkillsDir: "skills",
+        managedSkillsDir: "managed-skills",
+        extraSkillDirs: [],
+        watchEnabled: false,
+        watchDebounceMs: 300,
+      }),
+      getSkillSecurityProfile: async () => ({}),
+      _getRevertedToRevision: () => revertedToRevision,
+    } as FridayHubConfigManagerService & { _getRevertedToRevision(): number | undefined };
+  }
+
   it("disables a skill and verifies the disabled state", async () => {
     const memoryState = createStubMemoryState();
     const support = createFridayHubAutoFixExecutionSupport({
@@ -209,6 +241,67 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
 
     const statuses = await memoryState.listSkillStatuses();
     expect(statuses["skill-x"]).toBe("installed");
+  });
+
+  it("applies and verifies diagnostic config patch markers", async () => {
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistry(true),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+    });
+    const step = {
+      stepId: "config-step-001",
+      kind: "apply_config_patch" as const,
+      target: "config",
+      payload: { incidentId: "inc-config" },
+      verify: { method: "config_reload_valid" as const, timeoutMs: 5000 },
+    };
+    const rollbackStep = {
+      stepId: "config-rb-001",
+      kind: "apply_config_patch" as const,
+      target: "config",
+      payload: { incidentId: "inc-config", revert: true },
+    };
+
+    await expect(support.stepExecutors.apply_config_patch?.(step)).resolves.toBe(true);
+    await expect(support.stepVerifiers.apply_config_patch?.(step)).resolves.toBe(true);
+    await expect(support.stepExecutors.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
+    await expect(support.stepVerifiers.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
+  });
+
+  it("uses the config manager when a concrete config patch is present", async () => {
+    const configManager = makeConfigManager();
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistry(true),
+      memoryState: createStubMemoryState(),
+      configManager,
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+    });
+    const step = {
+      stepId: "config-step-002",
+      kind: "apply_config_patch" as const,
+      target: "config",
+      payload: { patch: { provider: { defaultModel: "gpt-5.4" } } },
+      verify: { method: "config_reload_valid" as const, timeoutMs: 5000 },
+    };
+
+    await expect(support.stepExecutors.apply_config_patch?.(step)).resolves.toBe(true);
+    await expect(support.stepVerifiers.apply_config_patch?.(step)).resolves.toBe(true);
+    expect(step.payload).toMatchObject({
+      _configPatchApplied: true,
+      _configPatchPreviousRevision: 7,
+      _configPatchRevision: 8,
+    });
+
+    const rollbackStep = {
+      stepId: "config-rb-002",
+      kind: "apply_config_patch" as const,
+      target: "config",
+      payload: { revert: true, toRevision: 7 },
+    };
+    await expect(support.stepExecutors.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
+    await expect(support.stepVerifiers.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
+    expect((configManager as FridayHubConfigManagerService & { _getRevertedToRevision(): number | undefined })._getRevertedToRevision()).toBe(7);
   });
 
   it("retries a workflow node and verifies a new attempt exists", async () => {

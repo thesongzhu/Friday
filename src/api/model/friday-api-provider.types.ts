@@ -8,6 +8,7 @@ import type {
   FridayProviderApi,
   FridayProviderAuthMode,
   FridayProviderBackendKind,
+  FridayProviderCapabilityDoctorReport,
   FridayProviderCliConfig,
   FridayProviderDeploymentKind,
   FridayProviderDoctorReport,
@@ -16,6 +17,7 @@ import type {
   FridayProviderProfile,
   FridayProviderRegionTag,
   FridayProviderRoutingExplainReport,
+  FridayProviderRuntimeCapabilityDeclaration,
   FridayProviderTemplate,
   FridayProviderUsageSummary,
   FridayProviderValidationState,
@@ -35,6 +37,7 @@ export interface FridayCreateProviderRequest {
   defaultModel?: string;
   headers?: Record<string, string>;
   cliConfig?: FridayProviderCliConfig;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   deploymentKind?: FridayProviderDeploymentKind;
   regionTag?: FridayProviderRegionTag;
   enabled?: boolean;
@@ -52,6 +55,7 @@ export interface FridayUpdateProviderRequest {
   defaultModel?: string;
   headers?: Record<string, string>;
   cliConfig?: FridayProviderCliConfig;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   deploymentKind?: FridayProviderDeploymentKind;
   regionTag?: FridayProviderRegionTag;
   enabled?: boolean;
@@ -90,6 +94,8 @@ export interface FridayGetProviderResponse {
 export interface FridayGetProviderHealthSnapshotResponse {
   items: FridayProviderHealthSnapshotItem[];
 }
+
+export type FridayRunCapabilityDoctorResponse = FridayProviderCapabilityDoctorReport;
 
 export interface FridayCreateProviderResponse {
   provider: FridayProviderProfile;

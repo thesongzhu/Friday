@@ -17,6 +17,7 @@ import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
+import type { FridayRuntimeCapabilityState } from "@/lib/api/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -80,6 +81,26 @@ function toneForCredentialStatus(value: "unknown" | "configured" | "missing" | "
   if (value === "missing") return "warning";
   if (value === "invalid") return "danger";
   return "neutral";
+}
+
+function toneForCapabilityState(value: FridayRuntimeCapabilityState): "neutral" | "success" | "warning" | "danger" {
+  if (value === "available") return "success";
+  if (value === "configured_but_unverified" || value === "installable_with_approval" || value === "buildable_with_approval") return "warning";
+  if (value === "failed_verification" || value === "needs_user_auth") return "danger";
+  return "neutral";
+}
+
+function labelForCapabilityState(locale: AppLocale, value: FridayRuntimeCapabilityState): string {
+  const labels: Record<FridayRuntimeCapabilityState, string> = {
+    available: localize(locale, "可用", "available"),
+    configured_but_unverified: localize(locale, "待验证", "unverified"),
+    needs_user_auth: localize(locale, "需配置", "needs setup"),
+    installable_with_approval: localize(locale, "可安装", "installable"),
+    buildable_with_approval: localize(locale, "可生成", "buildable"),
+    unsupported: localize(locale, "不支持", "unsupported"),
+    failed_verification: localize(locale, "验证失败", "failed"),
+  };
+  return labels[value];
 }
 
 function resolveMacPermissionSettingsUrl(permission: string): string {
@@ -277,6 +298,25 @@ export function SettingsPage() {
     },
   });
 
+  const capabilityDoctorMutation = useMutation({
+    mutationFn: () => providersApi.runCapabilityDoctor(),
+    onSuccess: async (result) => {
+      toast.success(localize(
+        locale,
+        `能力检查完成：${result.providerValidations.length} 个提供方、${result.capabilityResults.length} 项能力已检查`,
+        `Capability doctor completed: ${result.providerValidations.length} provider(s), ${result.capabilityResults.length} capability probe(s) checked`,
+      ));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "health"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "provider-health"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "能力检查失败", "Capability doctor failed"));
+    },
+  });
+
   const lessonToggleMutation = useMutation({
     mutationFn: (input: { lessonId: string; enabled: boolean }) =>
       learningApi.setLessonEnabled({
@@ -381,6 +421,7 @@ export function SettingsPage() {
     || channel.health.credentialStatus === "invalid"
     || Boolean(channel.health.blockedReason),
   ).length;
+  const runtimeMatrix = health?.capabilities?.runtime;
 
   return (
     <div className="space-y-6">
@@ -1070,9 +1111,90 @@ export function SettingsPage() {
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow={localize(locale, "能力", "Capabilities")} title={localize(locale, "工具可用性", "Tool Availability")}>
+        <ShellCard eyebrow={localize(locale, "能力", "Capabilities")} title={localize(locale, "能力矩阵", "Capability Matrix")}>
           {health ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
+              {runtimeMatrix ? (
+                <div className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-5">
+                    <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label={localize(locale, "可用", "Available")} value={String(runtimeMatrix.summary.available)} />
+                    <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label={localize(locale, "需验证", "Needs Verification")} value={String(runtimeMatrix.summary.needsVerification)} />
+                    <DiagnosticTile icon={<AlertTriangle className="h-4 w-4" />} label={localize(locale, "需配置", "Needs Setup")} value={String(runtimeMatrix.summary.needsUserAction)} />
+                    <DiagnosticTile icon={<Wrench className="h-4 w-4" />} label={localize(locale, "可补齐", "Installable")} value={String(runtimeMatrix.summary.installable)} />
+                    <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "不支持", "Unsupported")} value={String(runtimeMatrix.summary.unsupported)} />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                      {localize(locale, "能力状态来自实际 runtime、提供方验证和保守模型能力推断。", "Capability state comes from runtime wiring, provider validation, and conservative model capability inference.")}
+                    </p>
+                    <ActionButton
+                      tone="secondary"
+                      disabled={capabilityDoctorMutation.isPending}
+                      onClick={() => capabilityDoctorMutation.mutate()}
+                    >
+                      {capabilityDoctorMutation.isPending
+                        ? localize(locale, "检查中", "Checking")
+                        : localize(locale, "重新检查", "Run Doctor")}
+                    </ActionButton>
+                  </div>
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {runtimeMatrix.items.map((item) => {
+                      const primarySource = item.sources[0];
+                      const primaryRepair = item.repairOptions[0];
+                      return (
+                        <div key={item.capability} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-[color:var(--color-text-primary)]">{item.label}</p>
+                              <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">{item.description}</p>
+                            </div>
+                            <StatusPill tone={toneForCapabilityState(item.state)}>
+                              {labelForCapabilityState(locale, item.state)}
+                            </StatusPill>
+                          </div>
+                          <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                            {primarySource
+                              ? `${primarySource.label} · ${primarySource.status}`
+                              : item.blockers[0] ?? localize(locale, "暂无来源", "No source")}
+                          </p>
+                          {item.lastVerifiedAt ? (
+                            <p className="mt-1 text-xs text-[color:var(--color-text-faint)]">
+                              {localize(locale, "上次验证：", "Last verified: ")}{formatTimestamp(item.lastVerifiedAt)}
+                            </p>
+                          ) : null}
+                          {primaryRepair ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {primaryRepair.setupHref ? (
+                                <a
+                                  className="inline-flex min-h-[44px] items-center justify-center rounded-2xl border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] transition hover:bg-[color:var(--color-bg-surface-strong)]"
+                                  href={primaryRepair.setupHref}
+                                >
+                                  {localize(locale, "进入配置", "Configure")}
+                                </a>
+                              ) : null}
+                              {primaryRepair.href ? (
+                                <a
+                                  className="inline-flex min-h-[44px] items-center justify-center rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-secondary)] transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]"
+                                  href={primaryRepair.href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {primaryRepair.setupHref ? localize(locale, "查看文档", "Docs") : primaryRepair.label}
+                                </a>
+                              ) : (
+                                primaryRepair.setupHref ? null : <StatusPill tone="warning">{primaryRepair.label}</StatusPill>
+                              )}
+                              {primaryRepair.requiresApproval ? (
+                                <StatusPill tone="warning">{localize(locale, "需要确认", "approval required")}</StatusPill>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               {[
                 { name: localize(locale, "插件", "Plugins"), enabled: health.capabilities?.plugins?.runtimeMode === "full" },
                 { name: localize(locale, "系统编排", "System orchestration"), enabled: health.capabilities?.system?.enabled === true },

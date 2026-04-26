@@ -167,6 +167,7 @@ export function createFridayAgentSetupAssistantTool(
       totalRecipes: result.totalRecipes,
       completedRecipes: result.completedRecipes,
       failedRecipes: result.failedRecipes,
+      pausedRecipes: result.pausedRecipes,
       skippedRecipes: result.skippedRecipes,
       durationMs: result.durationMs,
       results: result.results.map((r) => ({
@@ -193,6 +194,7 @@ export function createFridayAgentSetupAssistantTool(
       totalRecipes: progress.totalRecipes,
       completedRecipes: progress.completedRecipes,
       failedRecipes: progress.failedRecipes,
+      pausedRecipes: progress.pausedRecipes,
       currentRecipeId: progress.currentRecipeId,
       currentRecipeName: progress.currentRecipeName,
       percentComplete: progress.percentComplete,

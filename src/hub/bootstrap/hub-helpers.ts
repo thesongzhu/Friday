@@ -1036,6 +1036,7 @@ function isRevertPayload(payload: unknown): boolean {
 export function createFridayHubAutoFixExecutionSupport(deps: {
   registry: FridaySkillRegistry;
   memoryState: FridayHubMemoryStateService;
+  configManager?: FridayHubConfigManagerService;
   providerService?: FridayProviderService;
   workflowRuntime?: FridayWorkflowRuntime;
   nowIso: () => string;
@@ -1098,6 +1099,19 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     return undefined;
   };
 
+  const readRecordField = (
+    payload: Record<string, unknown> | null,
+    ...keys: string[]
+  ): Record<string, unknown> | undefined => {
+    for (const key of keys) {
+      const value = payload?.[key];
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+      }
+    }
+    return undefined;
+  };
+
   stepExecutors.disable_skill = async (step) => {
     if (!step.target) {
       return false;
@@ -1125,6 +1139,75 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     const revert = isRevertPayload(step.payload);
     const statuses = await deps.memoryState.listSkillStatuses();
     return statuses[step.target] === (revert ? "installed" : "disabled");
+  };
+
+  stepExecutors.apply_config_patch = async (step) => {
+    if (!step.target) {
+      return false;
+    }
+    const payload = readPayloadRecord(step.payload);
+    if (!payload) {
+      return false;
+    }
+
+    const revert = isRevertPayload(step.payload);
+    if (revert) {
+      const toRevision = readNumber(payload, "toRevision") ?? readNumber(payload, "_configPatchPreviousRevision");
+      if (deps.configManager && toRevision !== undefined) {
+        const result = await deps.configManager.revertToRevision(toRevision);
+        payload._configPatchRolledBack = true;
+        payload._configPatchRolledBackToRevision = toRevision;
+        payload._configPatchRollbackRevision = result.revision;
+        payload._configPatchChangedKeys = result.changedKeys;
+      } else {
+        payload._configPatchRolledBack = true;
+        payload._configPatchRollbackMode = "diagnostic_marker";
+      }
+      payload._configPatchTarget = step.target;
+      payload._configPatchRollbackAt = deps.nowIso();
+      return true;
+    }
+
+    const patch = readRecordField(payload, "patch", "configPatch");
+    if (patch) {
+      if (!deps.configManager) {
+        return false;
+      }
+      const validation = await deps.configManager.validatePatch(patch);
+      if (!validation.valid) {
+        payload._configPatchValidationErrors = validation.errors;
+        return false;
+      }
+      const current = await deps.configManager.getConfig();
+      const expectedRevision = readNumber(payload, "expectedRevision") ?? current.revision;
+      const result = await deps.configManager.applyPatch({
+        expectedRevision,
+        patch,
+        reason: readString(payload, "reason", "fix") ?? `auto-fix apply_config_patch @ ${deps.nowIso()}`,
+      });
+      payload._configPatchPreviousRevision = current.revision;
+      payload._configPatchRevision = result.revision;
+      payload._configPatchChangedKeys = result.changedKeys;
+    } else {
+      payload._configPatchMode = "diagnostic_marker";
+    }
+
+    payload._configPatchApplied = true;
+    payload._configPatchTarget = step.target;
+    payload._configPatchAt = deps.nowIso();
+    return true;
+  };
+
+  stepVerifiers.apply_config_patch = async (step) => {
+    const payload = readPayloadRecord(step.payload);
+    if (!payload) {
+      return false;
+    }
+    if (isRevertPayload(step.payload)) {
+      return payload._configPatchRolledBack === true;
+    }
+    return payload._configPatchApplied === true &&
+      (typeof payload._configPatchTarget !== "string" || payload._configPatchTarget === step.target);
   };
 
   const workflowRuntime = deps.workflowRuntime;

@@ -15,6 +15,7 @@ describe("FRIDAY_MCP_SAFE_CATALOG", () => {
       "web_search",
       "web_fetch",
       "read",
+      "pdf_parse",
       "memory_search",
     ]);
     expect(FRIDAY_MCP_SAFE_CATALOG).toEqual(expected);
@@ -78,6 +79,7 @@ describe("buildMcpServerToolFilter", () => {
       expect(isToolAllowed("task_status")).toBe(true);
       expect(isToolAllowed("web_search")).toBe(false);
       expect(isToolAllowed("read")).toBe(false);
+      expect(isToolAllowed("pdf_parse")).toBe(false);
     });
 
     it("cannot re-expose unsafe tools", () => {

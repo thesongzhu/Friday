@@ -231,6 +231,77 @@ describe("classifyFridayExecution", () => {
     });
   });
 
+  describe("setup guidance", () => {
+    it("classifies explicit Discord binding requests as setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "需要绑定discord",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "discord" });
+    });
+
+    it("classifies setup info requests as setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "告诉我流程，我需要提供什么可以绑定discord",
+        turnKind: "follow_up",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "discord" });
+    });
+
+    it("uses the current focus to resolve short direct-operation follow-ups", () => {
+      const result = classifyFridayExecution({
+        task: "你直接去操作",
+        turnKind: "follow_up",
+        focusState: makeFocus({
+          currentTopicSummary: "User wants to bind Discord as a Friday channel.",
+          assistantAnchorSummary: "Discord is not registered yet.",
+        }),
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "discord" });
+    });
+
+    it("classifies OCR setup requests as capability setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "帮我配置OCR",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "ocr" });
+    });
+
+    it("classifies vision setup requests as capability setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "我想开启看图功能",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "vision" });
+    });
+
+    it("classifies custom capability setup requests as setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "配置自定义能力",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "custom" });
+    });
+  });
+
   describe("workflow control commands", () => {
     it("classifies cancel with run id as managed_async workflow control", () => {
       const result = classifyFridayExecution({

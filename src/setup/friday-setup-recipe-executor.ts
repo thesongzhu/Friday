@@ -168,6 +168,21 @@ export function createFridaySetupRecipeExecutor(
     const startedAt = nowIso();
     let approachIndex = 0;
 
+    if (step.requiresApproval || step.domain === "manual") {
+      return {
+        stepId: step.id,
+        status: "paused_for_approval",
+        outputs: {},
+        startedAt,
+        completedAt: nowIso(),
+        approachIndex,
+        approvalInstruction: step.instruction,
+        failureReason: step.domain === "manual"
+          ? `Manual setup step requires user action: ${step.instruction}`
+          : `Approval required before executing setup step: ${step.instruction}`,
+      };
+    }
+
     // Try primary approach
     const goalDescription = buildStepGoalDescription(recipe, step, inputs, previousOutputs);
     const primaryDomain = mapSetupDomainToAutonomousDomain(step.domain);
@@ -352,6 +367,12 @@ export function createFridaySetupRecipeExecutor(
             // Accumulate outputs
             Object.assign(accumulatedOutputs, stepResult.outputs);
             updateExecution(executionId, { outputs: { ...accumulatedOutputs } });
+          } else if (stepResult.status === "paused_for_approval") {
+            return updateExecution(executionId, {
+              status: "paused_for_approval",
+              completedAt: nowIso(),
+              failureReason: stepResult.failureReason,
+            });
           } else {
             // Step failed — fail the execution
             return updateExecution(executionId, {

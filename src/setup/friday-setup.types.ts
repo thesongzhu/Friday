@@ -253,11 +253,18 @@ export interface FridaySetupExecution {
  */
 export interface FridaySetupStepResult {
   readonly stepId: string;
-  readonly status: "pending" | "executing" | "completed" | "failed" | "skipped";
+  readonly status:
+    | "pending"
+    | "executing"
+    | "completed"
+    | "failed"
+    | "skipped"
+    | "paused_for_approval";
   readonly outputs: Readonly<Record<string, string>>;
   readonly startedAt?: ISODateTime;
   readonly completedAt?: ISODateTime;
   readonly failureReason?: string;
+  readonly approvalInstruction?: string;
   /** Which approach was used (0 = primary, 1+ = alternative). */
   readonly approachIndex: number;
 }

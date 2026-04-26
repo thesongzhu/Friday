@@ -8,6 +8,7 @@ export interface DiscoveryStatus {
   catalogId: string | null;
   lastScanAt: string | null;
   programCount: number;
+  unavailableReason?: string;
 }
 
 export interface DiscoveryScanCatalog {

@@ -18,6 +18,7 @@ import { createFridayAgentBrowserTool } from "./friday-agent-browser-tool.js";
 import { createFridayAgentXhsTool } from "./friday-agent-xhs-tool.js";
 import { createFridayAgentImageAnalysisTool } from "./friday-agent-image-analysis-tool.js";
 import { createFridayAgentTtsTool } from "./friday-agent-tts-tool.js";
+import { createFridayAgentPdfParseTool } from "./friday-agent-pdf-parse-tool.js";
 import { createFridayAgentCanvasTool } from "./friday-agent-canvas-tool.js";
 import { createFridayAgentNodesTool } from "./friday-agent-nodes-tool.js";
 import { createFridayAgentGatewayTool } from "./friday-agent-gateway-tool.js";
@@ -148,6 +149,7 @@ export function createFridayAgentToolRegistry(
       provider: options?.webSearchProvider,
       apiKey: options?.webSearchApiKey,
     }),
+    createFridayAgentPdfParseTool({ workspaceRoot: workdir }),
   ];
 
   if (options?.skillExecutor) {
@@ -350,6 +352,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   "memory_search",
   "memory_store",
   "autonomous",
+  "controlled_autonomy",
   "capabilities",
   "task_status",
 ]);

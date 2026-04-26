@@ -285,6 +285,11 @@ export { createFridayAgentImageAnalysisTool } from "./tools/friday-agent-image-a
 export type { CreateFridayAgentTtsToolOptions } from "./tools/friday-agent-tts-tool.js";
 export { createFridayAgentTtsTool } from "./tools/friday-agent-tts-tool.js";
 
+// ─── PDF parsing tool ───
+
+export type { CreateFridayAgentPdfParseToolOptions } from "./tools/friday-agent-pdf-parse-tool.js";
+export { createFridayAgentPdfParseTool } from "./tools/friday-agent-pdf-parse-tool.js";
+
 // ─── Canvas tool ───
 
 export type { CreateFridayAgentCanvasToolOptions } from "./tools/friday-agent-canvas-tool.js";
@@ -342,6 +347,11 @@ export type {
   FridayAgentCapabilitiesSnapshot,
 } from "./tools/friday-agent-capabilities-tool.js";
 export { createFridayAgentCapabilitiesTool } from "./tools/friday-agent-capabilities-tool.js";
+
+// ─── Controlled autonomy tool ───
+
+export type { CreateFridayAgentControlledAutonomyToolDeps } from "./tools/friday-agent-controlled-autonomy-tool.js";
+export { createFridayAgentControlledAutonomyTool } from "./tools/friday-agent-controlled-autonomy-tool.js";
 
 // ─── Task status tool ───
 

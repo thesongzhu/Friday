@@ -88,7 +88,7 @@ import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
-import { createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
+import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
 import { createFridayMarketplaceCommerceRoutes } from "../http/routes/friday-marketplace-commerce-routes.js";
 import { createFridayMarketplaceAssetRoutes } from "../http/routes/friday-marketplace-asset-routes.js";
@@ -145,6 +145,11 @@ import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/servic
 import { createFridayAutonomySubjectUpgradeStateRepository } from "../../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import { createFridayMcpServerUpgradeLifecycleService } from "../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
 import { createFridayChannelAdapterUpgradeLifecycleService } from "../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
+import {
+  createFridayAutonomyPolicyService,
+  createFridayCapabilityAcquisitionService,
+  createFridayStandingAgendaService,
+} from "../../autonomy/index.js";
 import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -756,6 +761,24 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         nowIso: deps.nowIso,
       })
     : undefined;
+  const autonomyPolicyService = createFridayAutonomyPolicyService({
+    db: deps.db,
+    nowIso: deps.nowIso,
+  });
+  const capabilityAcquisitionService = createFridayCapabilityAcquisitionService({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+    policyService: autonomyPolicyService,
+    capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
+  });
+  const standingAgendaService = createFridayStandingAgendaService({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+    policyService: autonomyPolicyService,
+    acquisitionService: capabilityAcquisitionService,
+  });
 
   // Route registry
   const routes = createFridayHttpRouteRegistry();
@@ -778,6 +801,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const enabledChannelKinds = typeof deps.enabledChannelKinds === "function"
         ? await Promise.resolve(deps.enabledChannelKinds())
         : deps.enabledChannelKinds;
+
+      let runtimeSnapshot: Awaited<ReturnType<NonNullable<typeof deps.capabilitySnapshotGetter>>> | undefined;
+      if (deps.capabilitySnapshotGetter) {
+        try {
+          runtimeSnapshot = await Promise.resolve(deps.capabilitySnapshotGetter({ readOnly: false }));
+        } catch {
+          runtimeSnapshot = undefined;
+        }
+      }
 
       return {
         schemaVersion: "1.0" as const,
@@ -813,6 +845,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           provider: "duckduckgo_html",
           latestness: "unverified" as const,
         },
+        ...(runtimeSnapshot?.runtime ? { runtime: runtimeSnapshot.runtime } : {}),
         system: systemHealth ?? {
           enabled: false,
           remoteMode: "unavailable" as const,
@@ -886,6 +919,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     listUpgradeStatus: (query) => ({
       items: autonomyUpgradeStatus.list(query),
     }),
+    policyService: autonomyPolicyService,
+    acquisitionService: capabilityAcquisitionService,
+    standingAgendaService,
     workflowActions: {
       registerShadow: (input) =>
         workflowUpgradeLifecycle.registerShadowVersion({
@@ -1939,10 +1975,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register local discovery routes (optional)
-  if (deps.discovery) {
-    for (const route of createFridayDiscoveryRoutes(deps.discovery)) {
-      routes.register(route as unknown as Parameters<typeof routes.register>[0]);
-    }
+  for (const route of deps.discovery
+    ? createFridayDiscoveryRoutes(deps.discovery)
+    : createFridayDiscoveryDisabledRoutes()) {
+    routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
 
   // Register MCP server route surface with stable disabled semantics when absent.
@@ -2799,6 +2835,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     fleet,
     conflicts,
     routes,
+    autonomyPolicyService,
+    capabilityAcquisitionService,
+    standingAgendaService,
     workflowCrud: workflowRuntime.crud,
     workflowExecution: workflowRuntime.execution,
     draftService: builderRuntime.drafts,

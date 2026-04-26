@@ -190,6 +190,7 @@ export function buildFridayAgentSystemPrompt(
     `- For time-sensitive requests (latest/current/today/news/最新/今天/最近): ${timelinessReference} Use recency-filtered search when available, verify publication dates, and include absolute dates plus source URLs in the answer. If verifiable dates are unavailable, explicitly say the latestness is unverified.\n` +
     "- Local computer orchestration: use system first for snapshots, app/project handoff, approvals, and control leases; fall back to desktop only when system intent resolution is insufficient\n" +
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
+    "- Service/channel setup (bind/connect/configure Discord, Slack, Telegram, providers, or other integrations): use setup or setup_assistant first. Do not try message before the channel is registered and running; if setup cannot proceed, explain the exact credential/approval needed and link to the setup page.\n" +
     "- Questions about user preferences, past decisions, stored knowledge, or facts the user previously shared: use memory_search first before answering from general reasoning\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
     (enforceStarterSkillRouting

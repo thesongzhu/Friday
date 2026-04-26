@@ -181,6 +181,7 @@ export interface CreateWorkflowExecutionServiceDeps {
     attempt: number;
     status: "completed" | "failed";
     errorCode?: string;
+    errorMessage?: string;
   }) => Promise<void> | void;
   onRunCompleted?: (input: {
     runId: UUID;
@@ -353,6 +354,7 @@ export function createFridayWorkflowExecutionService(
     attempt: number;
     status: "completed" | "failed";
     errorCode?: string;
+    errorMessage?: string;
   }): Promise<void> {
     if (!deps.onNodeAttemptResult) {
       return;
@@ -367,6 +369,7 @@ export function createFridayWorkflowExecutionService(
         attempt: input.attempt,
         status: input.status,
         errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
         error: callbackError instanceof Error ? callbackError.message : String(callbackError),
       });
     }
@@ -441,11 +444,18 @@ export function createFridayWorkflowExecutionService(
       details?: JsonValue;
     };
   }): Promise<"retrying" | "failed"> {
-    const baseRetryDecision = deps.retryManager.evaluateRetry(
-      input.attempt,
-      input.node.retryPolicy,
-      input.error.code,
-    );
+    const baseRetryDecision = input.error.retryable
+      ? deps.retryManager.evaluateRetry(
+          input.attempt,
+          input.node.retryPolicy,
+          input.error.code,
+        )
+      : {
+          shouldRetry: false,
+          nextAttemptNumber: input.attempt.attempt + 1,
+          delayMs: 0,
+          reason: "non-retryable error",
+        };
 
     let effectiveRetryDecision: WorkflowRetryDecisionSnapshot = {
       shouldRetry: baseRetryDecision.shouldRetry,
@@ -485,6 +495,14 @@ export function createFridayWorkflowExecutionService(
       }
     }
 
+    if (!input.error.retryable && effectiveRetryDecision.shouldRetry) {
+      effectiveRetryDecision = {
+        shouldRetry: false,
+        delayMs: 0,
+        reason: "non-retryable error",
+      };
+    }
+
     await notifyNodeAttemptResultSafe({
       runId: input.runId,
       workflowId: input.workflowId,
@@ -492,6 +510,7 @@ export function createFridayWorkflowExecutionService(
       attempt: input.attempt.attempt,
       status: "failed",
       errorCode: input.error.code,
+      errorMessage: input.error.message,
     });
 
     deps.db.withWriteTransaction((db) => {

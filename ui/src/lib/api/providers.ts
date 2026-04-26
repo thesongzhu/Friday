@@ -12,8 +12,10 @@ import type {
   FridayProviderCliConfig,
   FridayProviderDoctorReport,
   FridayProviderHealthSnapshotItem,
+  FridayProviderRuntimeCapabilityDeclaration,
   FridayProviderRoutingExplainReport,
   FridayProviderTemplate,
+  FridayRuntimeCapabilityId,
 } from "./types";
 
 // ─── Request types ───
@@ -32,6 +34,7 @@ export interface CreateProviderInput {
   supportedModels: string[];
   defaultModel?: string;
   headers?: Record<string, string>;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   enabled?: boolean;
   validateOnSave?: boolean;
 }
@@ -49,6 +52,7 @@ export interface UpdateProviderInput {
   supportedModels?: string[];
   defaultModel?: string;
   headers?: Record<string, string>;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   enabled?: boolean;
   validateOnSave?: boolean;
 }
@@ -80,6 +84,32 @@ interface GetProviderResponse {
 
 interface GetProviderHealthSnapshotResponse {
   items: FridayProviderHealthSnapshotItem[];
+}
+
+interface RunCapabilityDoctorResponse {
+  checkedAt: string;
+  providerValidations: Array<{
+    providerId: string;
+    providerKind: FridayProviderKind;
+    validation: FridayProviderValidationState;
+  }>;
+  capabilityResults: Array<{
+    providerId: string;
+    providerKind: FridayProviderKind;
+    capability: FridayRuntimeCapabilityId;
+    model?: string;
+    status: "verified" | "declared" | "failed" | "unsupported";
+    checkedAt: string;
+    message: string;
+    errorCode?: string;
+    httpStatus?: number;
+    evidence?: {
+      probe: string;
+      standardized: boolean;
+      endpoint?: string;
+      responseStatus?: number;
+    };
+  }>;
 }
 
 interface CreateProviderResponse {
@@ -191,6 +221,13 @@ export const providersApi = {
   async listHealth(): Promise<FridayProviderHealthSnapshotItem[]> {
     const data = await apiClient.get<GetProviderHealthSnapshotResponse>("/v1/providers/health");
     return data.items;
+  },
+
+  async runCapabilityDoctor(): Promise<RunCapabilityDoctorResponse> {
+    return apiClient.post<Record<string, never>, RunCapabilityDoctorResponse>(
+      "/v1/capabilities/doctor",
+      {},
+    );
   },
 
   async create(input: CreateProviderInput): Promise<CreateProviderResponse> {

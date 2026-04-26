@@ -10,11 +10,33 @@ export {
   FRIDAY_PROVIDER_APIS,
   FRIDAY_PROVIDER_BACKEND_KINDS,
   FRIDAY_PROVIDER_CLI_BACKEND_IDS,
+  FRIDAY_RUNTIME_CAPABILITY_IDS,
   isFridayAnthropicBearerAuthMode,
   normalizeFridayProviderSupportedModels,
   normalizeFridayModelRoutingConfig,
   resolveFridayProviderPreferredModel,
 } from "./model/friday-provider.types.js";
+export type {
+  FridayRuntimeCapabilityId,
+} from "./model/friday-provider.types.js";
+export type {
+  BuildFridayRuntimeCapabilityMatrixInput,
+  FridayRuntimeCapabilityItem,
+  FridayRuntimeCapabilityMatrix,
+  FridayRuntimeCapabilityRepairOption,
+  FridayRuntimeCapabilityRisk,
+  FridayRuntimeCapabilitySource,
+  FridayRuntimeCapabilitySourceKind,
+  FridayRuntimeCapabilitySourceStatus,
+  FridayRuntimeCapabilityState,
+} from "./model/friday-runtime-capabilities.js";
+export {
+  buildFridayRuntimeCapabilityMatrix,
+  filterFridayProviderRoutesByRequiredCapabilities,
+  fridayProviderRouteSupportsCapability,
+  inferFridayModelSupportsEmbedding,
+  inferFridayModelSupportsVision,
+} from "./model/friday-runtime-capabilities.js";
 export {
   defaultFridayProviderUpgradeFields,
   mergeFridayProviderUpgradeFields,

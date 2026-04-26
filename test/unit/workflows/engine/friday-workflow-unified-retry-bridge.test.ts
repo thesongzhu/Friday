@@ -46,6 +46,17 @@ describe("A-005 classifyWorkflowError", () => {
     )).toBe("rate_limit");
   });
 
+  it("classifies provider credential failures as auth blockers", () => {
+    expect(classifyWorkflowError(
+      "EXECUTOR_PROVIDER_ERROR",
+      "Provider returned 401",
+    )).toBe("auth");
+    expect(classifyWorkflowError(
+      "NODE_EXECUTION_FAILED",
+      "All providers failed: invalid_api_key",
+    )).toBe("auth");
+  });
+
   it("classifies timeout errors as timeout", () => {
     expect(classifyWorkflowError("TIMEOUT")).toBe("timeout");
     expect(classifyWorkflowError("REQUEST_TIMEOUT")).toBe("timeout");
@@ -115,6 +126,18 @@ describe("A-005 WorkflowUnifiedRetryBridge", () => {
 
       expect(decision.shouldRetry).toBe(true);
       expect(decision.category).toBe("transient");
+    });
+
+    it("does not retry provider credential failures", () => {
+      const bridge = makeBridge();
+      const decision = bridge.evaluateRetry({
+        runId: "r-1", nodeId: "n-1", attempt: 1,
+        errorCode: "EXECUTOR_PROVIDER_ERROR", errorMessage: "Provider returned 401",
+      });
+
+      expect(decision.shouldRetry).toBe(false);
+      expect(decision.category).toBe("auth");
+      expect(decision.reason).toBe("auth errors are not retryable");
     });
 
     it("applies exponential backoff", () => {

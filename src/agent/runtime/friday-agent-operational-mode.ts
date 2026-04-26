@@ -62,6 +62,7 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   capabilities: "read",
   task_status: "read",
   image_analysis: "read",
+  pdf_parse: "read",
   // write
   write: "write",
   edit: "write",
@@ -95,6 +96,7 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   provider: "system",
   sessions: "system",
   autonomous: "exec",
+  controlled_autonomy: "system",
   setup: "system",
   setup_assistant: "system",
   feedback: "read",

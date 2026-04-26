@@ -138,6 +138,32 @@ describe("FridayProviderRoutes", () => {
         reasons: [],
         activeProfileKey: "default",
       })),
+      runCapabilityDoctor: vi.fn(async () => ({
+        checkedAt: NOW,
+        providerValidations: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai" as const,
+            validation: { status: "ok" as const, checkedAt: NOW },
+          },
+          {
+            providerId: "anth-001",
+            providerKind: "anthropic" as const,
+            validation: { status: "ok" as const, checkedAt: NOW },
+          },
+        ],
+        capabilityResults: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai" as const,
+            capability: "text" as const,
+            model: "gpt-4o",
+            status: "verified" as const,
+            checkedAt: NOW,
+            message: "Capability passed a live standardized probe.",
+          },
+        ],
+      })),
       explainRouting: vi.fn(async () => ({
         requestedProviderId: "prov-001",
         requestedModel: "gpt-4o",
@@ -251,11 +277,11 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 19 route definitions", () => {
+  it("creates 20 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(19);
+    expect(routes).toHaveLength(20);
   });
 
   it("has correct operation ids", () => {
@@ -270,6 +296,7 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.delete");
     expect(operationIds).toContain("providers.validate");
     expect(operationIds).toContain("providers.doctor");
+    expect(operationIds).toContain("capabilities.doctor");
     expect(operationIds).toContain("providers.routing.explain");
     expect(operationIds).toContain("providers.routing.pin");
     expect(operationIds).toContain("providers.routing.penalty.clear");
@@ -451,6 +478,47 @@ describe("FridayProviderRoutes", () => {
           backendKind: "http",
           activeProfileKey: "default",
         },
+      });
+    });
+
+    it("capabilities.doctor runs the service capability doctor", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const doctorRoute = routes.find(
+        (r) => r.operationId === "capabilities.doctor",
+      )!;
+
+      const result = await doctorRoute.handler(makeCtx());
+
+      expect(mockService.runCapabilityDoctor).toHaveBeenCalledTimes(1);
+      expect(mockService.validateProvider).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        checkedAt: NOW,
+        providerValidations: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai",
+            validation: { status: "ok", checkedAt: NOW },
+          },
+          {
+            providerId: "anth-001",
+            providerKind: "anthropic",
+            validation: { status: "ok", checkedAt: NOW },
+          },
+        ],
+        capabilityResults: [
+          {
+            providerId: "prov-001",
+            providerKind: "openai",
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            checkedAt: NOW,
+            message: "Capability passed a live standardized probe.",
+          },
+        ],
       });
     });
 

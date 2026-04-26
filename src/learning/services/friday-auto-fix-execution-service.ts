@@ -139,7 +139,56 @@ export function createFridayAutoFixExecutionService(
   ): void {
     deps.db.withWriteTransaction((db) => {
       deps.actionRepo.setPlan(db, actionId, plan, nowIso);
+      if (plan.rollbackPlan) {
+        deps.actionRepo.setRollbackPlan(db, actionId, plan.rollbackPlan, nowIso);
+      }
     });
+  }
+
+  function readPayloadRecord(payload: unknown): Record<string, unknown> | null {
+    return typeof payload === "object" && payload !== null && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : null;
+  }
+
+  function syncRollbackEvidenceFromForwardSteps(plan: FridayAutoFixPlan): void {
+    const rollbackSteps = plan.rollbackPlan?.steps;
+    if (!rollbackSteps || rollbackSteps.length === 0) {
+      return;
+    }
+
+    for (const forwardStep of plan.steps) {
+      if (forwardStep.kind !== "apply_config_patch") {
+        continue;
+      }
+      const forwardPayload = readPayloadRecord(forwardStep.payload);
+      const previousRevision = forwardPayload?._configPatchPreviousRevision;
+      if (typeof previousRevision !== "number" || !Number.isFinite(previousRevision)) {
+        continue;
+      }
+      const incidentId = typeof forwardPayload?.incidentId === "string"
+        ? forwardPayload.incidentId
+        : undefined;
+
+      for (const rollbackStep of rollbackSteps) {
+        if (rollbackStep.kind !== "apply_config_patch") {
+          continue;
+        }
+        const rollbackPayload = readPayloadRecord(rollbackStep.payload);
+        if (!rollbackPayload || rollbackPayload.revert !== true || rollbackPayload.toRevision !== undefined) {
+          continue;
+        }
+        const rollbackIncidentId = typeof rollbackPayload.incidentId === "string"
+          ? rollbackPayload.incidentId
+          : undefined;
+        const sameTarget = rollbackStep.target === forwardStep.target;
+        const sameIncident = incidentId !== undefined && incidentId === rollbackIncidentId;
+        if (sameTarget || sameIncident) {
+          rollbackPayload.toRevision = previousRevision;
+          rollbackPayload._configPatchPreviousRevision = previousRevision;
+        }
+      }
+    }
   }
 
   async function finalizeFailedAction(
@@ -259,6 +308,7 @@ export function createFridayAutoFixExecutionService(
       }
 
       if (!executionSucceeded) {
+        syncRollbackEvidenceFromForwardSteps(action.plan);
         persistPlanEvidence(actionId, action.plan, nowIso);
 
         // Execution failed — attempt rollback
@@ -294,6 +344,7 @@ export function createFridayAutoFixExecutionService(
         return failedResult;
       }
 
+      syncRollbackEvidenceFromForwardSteps(action.plan);
       persistPlanEvidence(actionId, action.plan, nowIso);
 
       // Run verification per step kind

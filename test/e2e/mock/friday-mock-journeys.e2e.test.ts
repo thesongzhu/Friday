@@ -392,6 +392,16 @@ describe("Friday Mock Journeys E2E — Provider Failover", () => {
       defaultModel: "mock-bad",
       enabled: true,
       validateOnSave: false,
+      runtimeCapabilities: [
+        {
+          capability: "text",
+          model: "mock-bad",
+          status: "verified",
+          verified: true,
+          verifiedAt: new Date(0).toISOString(),
+          notes: "Mock failover provider is backed by deterministic test fetch.",
+        },
+      ],
     });
     expect(badProviderRes.status).toBe(200);
     const badProviderId = badProviderRes.json.data.provider.id;

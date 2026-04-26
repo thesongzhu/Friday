@@ -10,6 +10,18 @@ import type {
   FridayAutonomyPromotionChannel,
 } from "../../autonomy/model/friday-autonomy-upgrade.types.js";
 import type { FridayUpgradeImpactFinding } from "../../autonomy/model/friday-autonomy-impact.types.js";
+import type {
+  FridayAgendaItem,
+  FridayAgendaRun,
+  FridayAutonomyBudgetPolicy,
+  FridayAutonomyMode,
+  FridayAutonomyPolicy,
+  FridayAutonomyRiskCategory,
+  FridayCapabilityAcquisitionRun,
+  FridayCreateStandingGoalInput,
+  FridayStandingGoal,
+  FridayUpdateStandingGoalInput,
+} from "../../autonomy/model/friday-controlled-autonomy.types.js";
 
 export interface FridayAutonomyUpgradeStatusItem {
   kind: FridayAutonomySubjectKind;
@@ -250,4 +262,65 @@ export interface FridayChannelAdapterUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+}
+
+export interface FridayCapabilityAcquisitionPlanRequest {
+  goal: string;
+  userId?: string;
+  requiredCapabilities?: string[];
+  readOnly?: boolean;
+}
+
+export interface FridayCapabilityAcquisitionPlanResponse {
+  run: FridayCapabilityAcquisitionRun;
+}
+
+export interface FridayCapabilityAcquisitionRunRequest {
+  goal: string;
+  userId?: string;
+  requiredCapabilities?: string[];
+  readOnly?: boolean;
+}
+
+export interface FridayCapabilityAcquisitionRunResponse {
+  run: FridayCapabilityAcquisitionRun;
+}
+
+export interface FridayAutonomyPolicyResponse {
+  policy: FridayAutonomyPolicy;
+}
+
+export interface FridayPatchAutonomyPolicyRequest {
+  mode?: FridayAutonomyMode;
+  paused?: boolean;
+  riskSwitches?: Partial<Record<FridayAutonomyRiskCategory, boolean>>;
+  budget?: FridayAutonomyBudgetPolicy;
+  evidenceRetentionDays?: number;
+}
+
+export interface FridayListStandingGoalsResponse {
+  items: FridayStandingGoal[];
+}
+
+export interface FridayCreateStandingGoalRequest extends Omit<FridayCreateStandingGoalInput, "userId"> {
+  userId?: string;
+}
+
+export interface FridayStandingGoalResponse {
+  goal: FridayStandingGoal;
+  agendaItem?: FridayAgendaItem;
+}
+
+export interface FridayPatchStandingGoalRequest extends FridayUpdateStandingGoalInput {}
+
+export interface FridayListAgendaResponse {
+  items: FridayAgendaItem[];
+}
+
+export interface FridayAgendaItemResponse {
+  item: FridayAgendaItem;
+}
+
+export interface FridayAgendaRunResponse {
+  run: FridayAgendaRun;
 }

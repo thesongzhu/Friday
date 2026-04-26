@@ -790,6 +790,126 @@ describe("FridayAutoFixExecutionService", () => {
       expect(result.action.status).toBe("rolled_back");
     });
 
+    it("copies applied config revision evidence into the rollback step before rollback", async () => {
+      const actionRepo = createFridayAutoFixActionRepository();
+      const incidentRepo = createFridayErrorIncidentRepository();
+      const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+      incidentRepo.insert(db.writer, {
+        incidentId: "inc-config-sync",
+        userId: "test-user",
+        ts: NOW,
+        category: "config",
+        severity: "medium",
+        signature: "sig-config-sync",
+        context: {},
+        autoFixEligible: true,
+        status: "open",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      diagnosisRepo.insert(db.writer, {
+        id: "diag-config-sync",
+        incidentId: "inc-config-sync",
+        errorFingerprint: "sig-config-sync",
+        confidence: 0.8,
+        diagnosis: { summary: "config patch" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const plan: FridayAutoFixPlan = {
+        title: "Auto-fix: config patch",
+        summary: "Apply config patch",
+        steps: [
+          {
+            stepId: "step-config-sync",
+            kind: "apply_config_patch",
+            target: "config",
+            payload: { incidentId: "inc-config-sync" },
+            verify: { method: "config_reload_valid", timeoutMs: 5000 },
+          },
+        ],
+        rollbackPlan: {
+          summary: "Revert config patch",
+          steps: [
+            {
+              stepId: "rb-config-sync",
+              kind: "apply_config_patch",
+              target: "config",
+              payload: { revert: true, incidentId: "inc-config-sync" },
+            },
+          ],
+        },
+        evidence: {
+          fingerprint: "sig-config-sync",
+          matchedLessonIds: [],
+          diagnosisId: "diag-config-sync",
+          recurrenceCount: 1,
+        },
+      };
+
+      actionRepo.insert(db.writer, {
+        actionId: "action-config-sync",
+        incidentId: "inc-config-sync",
+        userId: "test-user",
+        riskTier: 1,
+        plan,
+        rollbackPlan: plan.rollbackPlan,
+        status: "planned",
+        outcome: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const configExecutor: StepExecutor = async (step) => {
+        const payload = step.payload as Record<string, unknown>;
+        if (payload.revert === true) {
+          expect(payload.toRevision).toBe(3);
+          payload._configPatchRolledBack = true;
+          return true;
+        }
+        payload._configPatchApplied = true;
+        payload._configPatchPreviousRevision = 3;
+        return true;
+      };
+
+      const executionService = createFridayAutoFixExecutionService({
+        db,
+        actionRepo,
+        incidentRepo,
+        diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+          stepExecutors: {
+            apply_config_patch: configExecutor,
+          },
+          stepVerifiers: {
+            apply_config_patch: async () => true,
+          },
+        }),
+        nowIso: () => NOW,
+        stepExecutors: {
+          apply_config_patch: configExecutor,
+        },
+        stepVerifiers: {
+          apply_config_patch: async () => false,
+        },
+      });
+
+      const result = await executionService.execute("action-config-sync");
+
+      expect(result.rollbackAttempted).toBe(true);
+      expect(result.rollbackSucceeded).toBe(true);
+      expect(result.action.rollbackPlan?.steps[0]?.payload).toMatchObject({
+        toRevision: 3,
+        _configPatchRolledBack: true,
+      });
+    });
+
     it("marks failed when verification fails and no rollback plan", async () => {
       const actionRepo = createFridayAutoFixActionRepository();
       const incidentRepo = createFridayErrorIncidentRepository();

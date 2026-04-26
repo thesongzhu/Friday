@@ -27,13 +27,18 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 const ALL_MODES = process.argv.includes("--all");
 const LOCAL_ONLY = process.argv.includes("--local-only");
 const CLOUD_ONLY = process.argv.includes("--cloud-only");
+const CLOUD_CLOSURE_ENABLED = process.env.FRIDAY_E2E_CLOUD_ENABLED === "1";
 const SKIP_INSTALL = process.argv.includes("--skip-install") || process.env.FRIDAY_CLOSURE_SKIP_INSTALL === "1";
 const SKIP_BACKSTOP = process.argv.includes("--skip-backstop") || process.env.FRIDAY_CLOSURE_SKIP_BACKSTOP === "1";
-const CLOSURE_MODE = CLOUD_ONLY
+if (CLOUD_ONLY && !CLOUD_CLOSURE_ENABLED) {
+  console.log("Cloud closure is disabled for this local-first Friday build. Set FRIDAY_E2E_CLOUD_ENABLED=1 to run the legacy cloud closure gate.");
+  process.exit(0);
+}
+const CLOSURE_MODE = CLOUD_ONLY && CLOUD_CLOSURE_ENABLED
   ? "cloud"
-  : ALL_MODES
+  : ALL_MODES && CLOUD_CLOSURE_ENABLED
     ? "all"
-    : LOCAL_ONLY
+    : LOCAL_ONLY || ALL_MODES || CLOUD_ONLY
       ? "local"
       : "local";
 

@@ -167,6 +167,7 @@
     "eventsource-parser": "^3.0.6",
     "json5": "^2.2.3",
     "linkedom": "^0.18.12",
+    "pdfjs-dist": "^5.6.205",
     "playwright": "^1.58.2",
     "semver": "^7.7.4",
     "yaml": "^2.8.2",

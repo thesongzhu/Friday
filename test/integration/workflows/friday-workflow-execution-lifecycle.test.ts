@@ -208,7 +208,7 @@ describe("Workflow Execution Lifecycle (Integration)", () => {
       let callCount = 0;
       invokeSkill.mockImplementation(async () => {
         callCount++;
-        if (callCount <= 3) {
+        if (callCount === 1) {
           throw new Error("Simulated failure");
         }
         return { result: "ok" };

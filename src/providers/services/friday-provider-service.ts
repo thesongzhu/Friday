@@ -5,6 +5,8 @@ import type {
   FridayOAuthLoginResult,
   FridayProviderAttempt,
   FridayProviderBackendKind,
+  FridayProviderCapabilityDoctorProbeResult,
+  FridayProviderCapabilityDoctorReport,
   FridayProviderCliConfig,
   FridayProviderConfigJson,
   FridayProviderDoctorReport,
@@ -17,10 +19,14 @@ import type {
   FridayProviderRoutingExplainReport,
   FridayProviderRoutingReasonCode,
   FridayProviderRoutingSelection,
+  FridayProviderRuntimeCapabilityDeclaration,
+  FridayProviderValidationErrorCode,
   FridayProviderValidationState,
   FridayResolvedProviderRoute,
+  FridayRuntimeCapabilityId,
 } from "../model/friday-provider.types.js";
 import {
+  isFridayAnthropicBearerAuthMode,
   normalizeFridayModelRoutingConfig,
   normalizeFridayProviderSupportedModels,
 } from "../model/friday-provider.types.js";
@@ -44,6 +50,7 @@ import { createFridaySecretRepository } from "../persistence/friday-secret-repos
 import { createFridayProviderUsageRepository } from "../persistence/friday-provider-usage-repository.js";
 import {
   probeFridayCliSession,
+  runFridayCliBackendTextCompletion,
 } from "../cli/friday-provider-cli-backend.js";
 import {
   decryptSecret,
@@ -69,6 +76,11 @@ import {
 import { FridayDomainError } from "#errors";
 import { getFridayProviderPreset } from "../model/friday-provider-catalog.js";
 import { parseFridaySecretInput, resolveFridaySecretInput } from "../../security/friday-secret-ref.js";
+import {
+  filterFridayProviderRoutesByRequiredCapabilities,
+  inferFridayModelSupportsEmbedding,
+  inferFridayModelSupportsVision,
+} from "../model/friday-runtime-capabilities.js";
 
 import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.js";
 
@@ -76,6 +88,24 @@ import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.j
 
 const ROUTING_SETTINGS_KEY = "llm.routing.v1";
 const SECRET_SCOPE = "provider";
+const CAPABILITY_DOCTOR_TIMEOUT_MS = 15_000;
+const CAPABILITY_DOCTOR_TINY_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l3sY5wAAAABJRU5ErkJggg==";
+const CAPABILITY_DOCTOR_TINY_PNG_DATA_URL =
+  `data:image/png;base64,${CAPABILITY_DOCTOR_TINY_PNG_BASE64}`;
+const CAPABILITY_DOCTOR_OCR_EXPECTED_TEXT = "FRIDAY";
+const CAPABILITY_DOCTOR_OCR_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAARwAAABMCAYAAAC/DQijAAAESUlEQVR4nO2UwY7FMAgD3///9O6NM0oDttsZqTeEJyTl9wcAsMRPLQAA34GFAwBrsHAAYA0WDgCswcIBgDVYOACwBgsHANZg4QDAGiwcAFijvXB+v5/15+7/FLVf+vzU55v2m+ZWPgvHxE/tr86fnp/6fNN+09zKZ+GY+Kn91fnT81Ofb9pvmlv5LBwTP7W/On96furzTftNcyufhWPip/ZX50/PT32+ab9pbuWzcEz81P7q/On5qc837TfNrXwWjomf2l+dPz0/9fmm/aa5lc/CMfFT+6vzp+enPt+03zS38q8tHHfU/ukPMn1++Gv9q892oAq1f/pCSJ8f/lr/6rMdqELtn74Q0ueHv9a/+mwHqlD7py+E9Pnhr/WvPtuBKtT+6QshfX74a/2rz3agCrV/+kJInx/+Wv/qsx2oQu2fvhDS54e/1r/6bAeqUPunL4T0+eGv9a8+24Eq1P7pCyF9fun+0/235sPC4cFZ9J/OT/ef7s/CuYza3/3BqftP56f7T/dn4VxG7e/+4NT9p/PT/af7s3Auo/Z3f3Dq/tP56f7T/Vk4l1H7uz84df/p/HT/6f4snMuo/d0fnLr/dH66/3R/Fs5l1P7uD07dfzo/3X+6f9zCmf4eHzTc/+n53PtP56vvP31+1zzaheEXku7/9Hzu/afz1fefPr9rHu3C8AtJ9396Pvf+0/nq+0+f3zWPdmH4haT7Pz2fe//pfPX9p8/vmke7MPxC0v2fns+9/3S++v7T53fNo10YfiHp/k/P595/Ol99/+nzu+bRLgy/kHT/p+dz7z+dr77/9Pld82gXhl9Iuv/T87n3n85X33/6/K55tAtNhE+ZfrBqWDjv9k/PL492oYnwKekPVu2nPn/6/X09vzzahSbCp6Q/WLWf+vzp9/f1/PJoF5oIn5L+YNV+6vOn39/X88ujXWgifEr6g1X7qc+ffn9fzy+PdqGJ8CnpD1btpz5/+v19Pb882oUmwqekP1i1n/r86ff39fzyaBeaCJ+S/mDVfurzp9/f1/PLo11oInwKP6R3/+n8dP/0/PJoF5oIn8IP6d1/Oj/dPz2/PNqFJsKn8EN695/OT/dPzy+PdqGJ8Cn8kN79p/PT/dPzy6NdaCJ8Cj+kd//p/HT/9PzyaBeaCJ/CD+ndfzo/3T89vzzahSbCp/BDevefzk/3T88vj3ahifAp/JDe/afz0/3T88ujXWgifIraf/qHefqp81mY784vj3ahifApan/3H16dz8J5d355tAtNhE9R+7v/8Op8Fs6788ujXWgifIra3/2HV+ezcN6dXx7tQhPhU9T+7j+8Op+F8+788mgXmgifovZ3/+HV+Sycd+eXR7vQRPgUtb/7D6/OZ+G8O7882oUmwqeo/d1/eHU+C+fd+eWxlgQAn4eFAwBrsHAAYA0WDgCswcIBgDVYOACwBgsHANZg4QDAGiwcAFiDhQMAa/wDOAeBRGCalboAAAAASUVORK5CYII=";
+const CAPABILITY_DOCTOR_OCR_PNG_DATA_URL =
+  `data:image/png;base64,${CAPABILITY_DOCTOR_OCR_PNG_BASE64}`;
+const PROVIDER_CAPABILITY_DOCTOR_CAPABILITIES = new Set<FridayRuntimeCapabilityId>([
+  "text",
+  "vision",
+  "embedding",
+  "ocr",
+  "tts",
+  "custom",
+]);
 
 function secretRefKey(providerId: string): string {
   return `provider:${providerId}:apiKey`;
@@ -94,6 +124,136 @@ function describeRoutingReference(
     return `${label} "${providerId}" is disabled`;
   }
   return `${label} "${providerId}" is enabled but was not selected`;
+}
+
+function isImageCapabilityProbe(capability: FridayRuntimeCapabilityId): boolean {
+  return capability === "vision" || capability === "ocr";
+}
+
+function capabilityProbePrompt(capability: FridayRuntimeCapabilityId): string {
+  if (capability === "ocr") {
+    return "Read the text in this image. Reply with the text only.";
+  }
+  if (capability === "vision") {
+    return "Reply with OK if you can process this image.";
+  }
+  return "Reply with OK only.";
+}
+
+function capabilityProbeImageBase64(capability: FridayRuntimeCapabilityId): string {
+  return capability === "ocr"
+    ? CAPABILITY_DOCTOR_OCR_PNG_BASE64
+    : CAPABILITY_DOCTOR_TINY_PNG_BASE64;
+}
+
+function capabilityProbeImageDataUrl(capability: FridayRuntimeCapabilityId): string {
+  return capability === "ocr"
+    ? CAPABILITY_DOCTOR_OCR_PNG_DATA_URL
+    : CAPABILITY_DOCTOR_TINY_PNG_DATA_URL;
+}
+
+async function readCapabilityProbeJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return undefined;
+  }
+}
+
+function readRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === "object" ? input as Record<string, unknown> : {};
+}
+
+function extractOpenAiChatProbeText(json: unknown): string {
+  const root = readRecord(json);
+  const choices = Array.isArray(root.choices) ? root.choices : [];
+  const first = readRecord(choices[0]);
+  const message = readRecord(first.message);
+  const content = message.content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        const record = readRecord(part);
+        return typeof record.text === "string" ? record.text : "";
+      })
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+function extractOpenAiResponsesProbeText(json: unknown): string {
+  const root = readRecord(json);
+  if (typeof root.output_text === "string") {
+    return root.output_text.trim();
+  }
+  const output = Array.isArray(root.output) ? root.output : [];
+  const chunks: string[] = [];
+  for (const item of output) {
+    const content = readRecord(item).content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const part of content) {
+      const record = readRecord(part);
+      if (typeof record.text === "string") {
+        chunks.push(record.text);
+      }
+    }
+  }
+  return chunks.join("").trim();
+}
+
+function extractAnthropicProbeText(json: unknown): string {
+  const content = readRecord(json).content;
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) => {
+      const record = readRecord(part);
+      return typeof record.text === "string" ? record.text : "";
+    })
+    .join("")
+    .trim();
+}
+
+function extractOllamaProbeText(json: unknown): string {
+  const response = readRecord(json).response;
+  return typeof response === "string" ? response.trim() : "";
+}
+
+function embeddingProbeHasVector(json: unknown): boolean {
+  const data = readRecord(json).data;
+  if (!Array.isArray(data)) {
+    return false;
+  }
+  const embedding = readRecord(data[0]).embedding;
+  return Array.isArray(embedding) && embedding.length > 0;
+}
+
+function validateGenerationProbeOutput(
+  capability: FridayRuntimeCapabilityId,
+  output: string,
+): { ok: boolean; message?: string } {
+  const normalized = output.trim().toUpperCase();
+  if (capability === "ocr") {
+    return normalized.includes(CAPABILITY_DOCTOR_OCR_EXPECTED_TEXT)
+      ? { ok: true }
+      : {
+          ok: false,
+          message: `OCR probe did not return expected text "${CAPABILITY_DOCTOR_OCR_EXPECTED_TEXT}".`,
+        };
+  }
+  if (capability === "text" || capability === "vision") {
+    return normalized.includes("OK")
+      ? { ok: true }
+      : { ok: false, message: `Capability probe returned unexpected output: ${output.slice(0, 80)}` };
+  }
+  return { ok: output.trim().length > 0 };
 }
 
 function assertRequestedProviderAvailable(
@@ -707,6 +867,7 @@ export function createFridayProviderService(
     routingContext?: {
       estimatedInputTokens?: number;
       requiresNativeTools?: boolean;
+      requiredCapabilities?: FridayRuntimeCapabilityId[];
       preferredRegion?: FridayProviderRegionTag;
       allowedRegions?: FridayProviderRegionTag[];
       localOnly?: boolean;
@@ -961,6 +1122,9 @@ export function createFridayProviderService(
       trace: {
         ...(input.taskProfileId ? { taskProfileId: input.taskProfileId } : {}),
         requiresNativeTools: input.routingContext?.requiresNativeTools === true,
+        ...(input.routingContext?.requiredCapabilities?.length
+          ? { requiredCapabilities: [...input.routingContext.requiredCapabilities] }
+          : {}),
         learningAdjusted,
         learningSignalsPresent,
         orderingAdjusted: eligibleOrderChanged,
@@ -1161,6 +1325,616 @@ export function createFridayProviderService(
       activeProfileKey: activeProfile?.profileKey,
       cliSession,
     };
+  }
+
+  function listProviderModels(profile: FridayProviderProfile): string[] {
+    const models = normalizeFridayProviderSupportedModels(profile.config.supportedModels);
+    if (models.length > 0) {
+      return models;
+    }
+    return profile.defaultModel && profile.defaultModel.trim().length > 0
+      ? [profile.defaultModel.trim()]
+      : [];
+  }
+
+  function declarationMatchesModel(
+    declaration: FridayProviderRuntimeCapabilityDeclaration,
+    model: string,
+  ): boolean {
+    return !declaration.model || declaration.model === model;
+  }
+
+  function hasRuntimeCapabilityDeclaration(
+    profile: FridayProviderProfile,
+    capability: FridayRuntimeCapabilityId,
+    model: string,
+  ): boolean {
+    return (profile.config.runtimeCapabilities ?? []).some((declaration) =>
+      declaration.capability === capability && declarationMatchesModel(declaration, model),
+    );
+  }
+
+  function listCapabilityDoctorTargets(
+    profile: FridayProviderProfile,
+  ): Array<{ capability: FridayRuntimeCapabilityId; model: string }> {
+    const targets: Array<{ capability: FridayRuntimeCapabilityId; model: string }> = [];
+    const seen = new Set<string>();
+    const models = new Set(listProviderModels(profile));
+
+    const addTarget = (capability: FridayRuntimeCapabilityId, model: string | undefined) => {
+      if (!model || model.trim().length === 0 || !PROVIDER_CAPABILITY_DOCTOR_CAPABILITIES.has(capability)) {
+        return;
+      }
+      const normalizedModel = model.trim();
+      const key = `${capability}::${normalizedModel}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      targets.push({ capability, model: normalizedModel });
+    };
+
+    for (const model of models) {
+      addTarget("text", model);
+      if (inferFridayModelSupportsVision(profile.kind, model) || hasRuntimeCapabilityDeclaration(profile, "vision", model)) {
+        addTarget("vision", model);
+        addTarget("ocr", model);
+      }
+      if (inferFridayModelSupportsEmbedding(model) || hasRuntimeCapabilityDeclaration(profile, "embedding", model)) {
+        addTarget("embedding", model);
+      }
+      for (const capability of ["ocr", "tts", "custom"] as const) {
+        if (hasRuntimeCapabilityDeclaration(profile, capability, model)) {
+          addTarget(capability, model);
+        }
+      }
+    }
+
+    for (const declaration of profile.config.runtimeCapabilities ?? []) {
+      if (!PROVIDER_CAPABILITY_DOCTOR_CAPABILITIES.has(declaration.capability)) {
+        continue;
+      }
+      if (declaration.model) {
+        addTarget(declaration.capability, declaration.model);
+        continue;
+      }
+      for (const model of models) {
+        addTarget(declaration.capability, model);
+      }
+    }
+
+    return targets;
+  }
+
+  function capabilityDoctorResult(input: {
+    profile: FridayProviderProfile;
+    capability: FridayRuntimeCapabilityId;
+    model: string;
+    status: FridayProviderCapabilityDoctorProbeResult["status"];
+    checkedAt: string;
+    message: string;
+    errorCode?: FridayProviderValidationErrorCode;
+    httpStatus?: number;
+    evidence?: FridayProviderCapabilityDoctorProbeResult["evidence"];
+  }): FridayProviderCapabilityDoctorProbeResult {
+    return {
+      providerId: input.profile.id,
+      providerKind: input.profile.kind,
+      capability: input.capability,
+      model: input.model,
+      status: input.status,
+      checkedAt: input.checkedAt,
+      message: input.message,
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...(input.httpStatus ? { httpStatus: input.httpStatus } : {}),
+      ...(input.evidence ? { evidence: input.evidence } : {}),
+    };
+  }
+
+  function toValidationErrorCode(value: string | undefined): FridayProviderValidationErrorCode | undefined {
+    switch (value) {
+      case "PROVIDER_ENV_VAR_MISSING":
+      case "PROVIDER_AUTH_INVALID":
+      case "PROVIDER_PAYMENT_REQUIRED":
+      case "PROVIDER_UNREACHABLE":
+      case "PROVIDER_MODEL_UNAVAILABLE":
+      case "PROVIDER_UNKNOWN_ERROR":
+        return value;
+      default:
+        return undefined;
+    }
+  }
+
+  async function fetchCapabilityProbe(
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CAPABILITY_DOCTOR_TIMEOUT_MS);
+    try {
+      const fetchImpl = deps.fetchImpl ?? fetch;
+      return await fetchImpl(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function readProbeError(response: Response): Promise<string> {
+    const text = await response.text().catch(() => "");
+    const compact = text.replace(/\s+/g, " ").trim();
+    return compact.length > 240 ? `${compact.slice(0, 240)}...` : compact;
+  }
+
+  function providerBaseUrl(profile: FridayProviderProfile): string {
+    return profile.baseUrl.replace(/\/+$/, "");
+  }
+
+  function openAiHeaders(profile: FridayProviderProfile, credential: string | null): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      ...(profile.config.headers ?? {}),
+      ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
+    };
+  }
+
+  function anthropicHeaders(profile: FridayProviderProfile, credential: string | null): Record<string, string> {
+    const isBearerAuth = isFridayAnthropicBearerAuthMode(profile.config.authMode);
+    return {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      ...(profile.config.headers ?? {}),
+      ...(credential
+        ? isBearerAuth
+          ? { Authorization: `Bearer ${credential}` }
+          : { "x-api-key": credential }
+        : {}),
+    };
+  }
+
+  async function runHttpCapabilityProbe(input: {
+    profile: FridayProviderProfile;
+    capability: FridayRuntimeCapabilityId;
+    model: string;
+    credential: string | null;
+  }): Promise<{
+    ok: boolean;
+    endpoint?: string;
+    status?: number;
+    message?: string;
+    standardized: boolean;
+    probe: string;
+  }> {
+    const { profile, capability, model, credential } = input;
+    const base = providerBaseUrl(profile);
+
+    if (
+      capability === "tts" &&
+      (profile.config.api === "openai-completions" || profile.config.api === "openai-responses")
+    ) {
+      const endpoint = `${base}/v1/audio/speech`;
+      const response = await fetchCapabilityProbe(endpoint, {
+        method: "POST",
+        headers: openAiHeaders(profile, credential),
+        body: JSON.stringify({
+          model,
+          input: "Friday capability probe.",
+          voice: "alloy",
+          response_format: "mp3",
+          speed: 1,
+        }),
+      });
+      if (!response.ok) {
+        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      const audio = Buffer.from(await response.arrayBuffer());
+      return audio.byteLength > 0
+        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: "TTS probe returned empty audio." };
+    }
+
+    if (capability === "embedding" && profile.config.api !== "openai-completions" && profile.config.api !== "openai-responses") {
+      return {
+        ok: false,
+        standardized: false,
+        probe: "embedding",
+        message: `Friday's production embedding client only has a standardized OpenAI-compatible /v1/embeddings path for this capability.`,
+      };
+    }
+
+    if (profile.config.api === "openai-completions") {
+      const endpoint = capability === "embedding" ? `${base}/v1/embeddings` : `${base}/v1/chat/completions`;
+      const body = capability === "embedding"
+        ? { model, input: "friday capability probe" }
+        : {
+            model,
+            messages: [
+              {
+                role: "user",
+                content: isImageCapabilityProbe(capability)
+                  ? [
+                      { type: "text", text: capabilityProbePrompt(capability) },
+                      { type: "image_url", image_url: { url: capabilityProbeImageDataUrl(capability) } },
+                    ]
+                  : capabilityProbePrompt(capability),
+              },
+            ],
+            max_tokens: 16,
+            temperature: 0,
+          };
+      const response = await fetchCapabilityProbe(endpoint, {
+        method: "POST",
+        headers: openAiHeaders(profile, credential),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      const json = await readCapabilityProbeJson(response);
+      if (capability === "embedding") {
+        return embeddingProbeHasVector(json)
+          ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+          : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: "Embedding probe did not return a vector." };
+      }
+      const validation = validateGenerationProbeOutput(capability, extractOpenAiChatProbeText(json));
+      return validation.ok
+        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
+    }
+
+    if (profile.config.api === "openai-responses") {
+      const endpoint = capability === "embedding" ? `${base}/v1/embeddings` : `${base}/v1/responses`;
+      const body = capability === "embedding"
+        ? { model, input: "friday capability probe" }
+        : {
+            model,
+            input: isImageCapabilityProbe(capability)
+              ? [
+                  {
+                    role: "user",
+                    content: [
+                      { type: "input_text", text: capabilityProbePrompt(capability) },
+                      { type: "input_image", image_url: capabilityProbeImageDataUrl(capability) },
+                    ],
+                  },
+                ]
+              : capabilityProbePrompt(capability),
+            max_output_tokens: 32,
+            temperature: 0,
+          };
+      const response = await fetchCapabilityProbe(endpoint, {
+        method: "POST",
+        headers: openAiHeaders(profile, credential),
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      const json = await readCapabilityProbeJson(response);
+      if (capability === "embedding") {
+        return embeddingProbeHasVector(json)
+          ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+          : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: "Embedding probe did not return a vector." };
+      }
+      const validation = validateGenerationProbeOutput(capability, extractOpenAiResponsesProbeText(json));
+      return validation.ok
+        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
+    }
+
+    if (profile.config.api === "anthropic-messages") {
+      if (capability === "embedding") {
+        return {
+          ok: false,
+          standardized: false,
+          probe: "embedding",
+          message: "Anthropic Messages is not a Friday embedding runtime path.",
+        };
+      }
+      const endpoint = `${base}/v1/messages`;
+      const response = await fetchCapabilityProbe(endpoint, {
+        method: "POST",
+        headers: anthropicHeaders(profile, credential),
+        body: JSON.stringify({
+          model,
+          max_tokens: 16,
+          messages: [
+            {
+              role: "user",
+              content: isImageCapabilityProbe(capability)
+                ? [
+                    { type: "text", text: capabilityProbePrompt(capability) },
+                    {
+                      type: "image",
+                      source: {
+                        type: "base64",
+                        media_type: "image/png",
+                        data: capabilityProbeImageBase64(capability),
+                      },
+                    },
+                  ]
+                : capabilityProbePrompt(capability),
+            },
+          ],
+        }),
+      });
+      if (!response.ok) {
+        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      const validation = validateGenerationProbeOutput(capability, extractAnthropicProbeText(await readCapabilityProbeJson(response)));
+      return validation.ok
+        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
+    }
+
+    if (profile.config.api === "ollama") {
+      if (capability === "embedding") {
+        return {
+          ok: false,
+          standardized: false,
+          probe: "embedding",
+          message: "Ollama embeddings are not wired into Friday's production BYOK embedding client yet.",
+        };
+      }
+      const endpoint = `${base}/api/generate`;
+      const response = await fetchCapabilityProbe(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(profile.config.headers ?? {}) },
+        body: JSON.stringify({
+          model,
+          prompt: capabilityProbePrompt(capability),
+          stream: false,
+          ...(isImageCapabilityProbe(capability) ? { images: [capabilityProbeImageBase64(capability)] } : {}),
+          options: { num_predict: 16, temperature: 0 },
+        }),
+      });
+      if (!response.ok) {
+        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      const validation = validateGenerationProbeOutput(capability, extractOllamaProbeText(await readCapabilityProbeJson(response)));
+      return validation.ok
+        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
+    }
+
+    if (profile.config.api === "google-generative-ai") {
+      return {
+        ok: false,
+        standardized: false,
+        probe: capability,
+        message: "Google Generative AI validation exists, but Friday's production LLM runtime does not yet execute this provider API.",
+      };
+    }
+
+    return {
+      ok: false,
+      standardized: false,
+      probe: capability,
+      message: `No standardized Friday runtime probe exists for provider API ${profile.config.api}.`,
+    };
+  }
+
+  async function probeProviderCapability(input: {
+    profile: FridayProviderProfile;
+    target: { capability: FridayRuntimeCapabilityId; model: string };
+    validation: FridayProviderValidationState;
+    checkedAt: string;
+  }): Promise<FridayProviderCapabilityDoctorProbeResult> {
+    const { profile, target, validation, checkedAt } = input;
+    if (!profile.enabled) {
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "failed",
+        checkedAt,
+        errorCode: "PROVIDER_UNKNOWN_ERROR",
+        message: "Provider is disabled; enable it before this capability can be used.",
+      });
+    }
+
+    if (validation.status !== "ok") {
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "failed",
+        checkedAt,
+        errorCode: toValidationErrorCode(validation.errorCode) ?? "PROVIDER_UNKNOWN_ERROR",
+        httpStatus: validation.httpStatus,
+        message: validation.errorMessage ?? "Provider validation did not pass.",
+      });
+    }
+
+    if (target.capability === "custom") {
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "declared",
+        checkedAt,
+        message: `${target.capability} is declared, but Friday does not have a standardized provider probe for this capability yet.`,
+        evidence: {
+          probe: target.capability,
+          standardized: false,
+        },
+      });
+    }
+
+    if ((profile.config.backendKind ?? "http") === "cli") {
+      if (target.capability === "text" && profile.config.cliConfig) {
+        try {
+          const output = await runFridayCliBackendTextCompletion({
+            cliConfig: profile.config.cliConfig,
+            systemPrompt: "You are a capability probe. Reply with OK only.",
+            conversation: "USER: Reply with OK only.",
+            model: target.model,
+          });
+          return capabilityDoctorResult({
+            profile,
+            ...target,
+            status: output.trim().length > 0 ? "verified" : "failed",
+            checkedAt,
+            message: output.trim().length > 0
+              ? "CLI text capability passed a live generation probe."
+              : "CLI text capability returned an empty response.",
+            ...(output.trim().length > 0
+              ? {
+                  evidence: {
+                    probe: "text",
+                    standardized: true,
+                  },
+                }
+              : { errorCode: "PROVIDER_UNREACHABLE" as const }),
+          });
+        } catch (err) {
+          return capabilityDoctorResult({
+            profile,
+            ...target,
+            status: "failed",
+            checkedAt,
+            errorCode: "PROVIDER_UNREACHABLE",
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "declared",
+        checkedAt,
+        message: "CLI session validation passed, but the capability doctor does not run a standardized CLI generation probe yet.",
+        evidence: {
+          probe: target.capability,
+          standardized: false,
+        },
+      });
+    }
+
+    let credential: string | null = null;
+    try {
+      credential = await resolveCredential(profile);
+    } catch (err) {
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "failed",
+        checkedAt,
+        errorCode: err instanceof FridayDomainError
+          ? toValidationErrorCode(err.code) ?? "PROVIDER_AUTH_INVALID"
+          : "PROVIDER_UNKNOWN_ERROR",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    try {
+      const probe = await runHttpCapabilityProbe({
+        profile,
+        capability: target.capability,
+        model: target.model,
+        credential,
+      });
+
+      if (!probe.standardized) {
+        return capabilityDoctorResult({
+          profile,
+          ...target,
+          status: "declared",
+          checkedAt,
+          message: probe.message ?? "Capability is configured, but no standardized Friday probe exists for it yet.",
+          evidence: {
+            probe: probe.probe,
+            standardized: false,
+            ...(probe.endpoint ? { endpoint: probe.endpoint } : {}),
+            ...(probe.status ? { responseStatus: probe.status } : {}),
+          },
+        });
+      }
+
+      if (!probe.ok) {
+        return capabilityDoctorResult({
+          profile,
+          ...target,
+          status: "failed",
+          checkedAt,
+          errorCode: probe.status === 401 || probe.status === 403
+            ? "PROVIDER_AUTH_INVALID"
+            : probe.status === 402
+              ? "PROVIDER_PAYMENT_REQUIRED"
+              : probe.status === 404
+                ? "PROVIDER_MODEL_UNAVAILABLE"
+                : "PROVIDER_UNREACHABLE",
+          httpStatus: probe.status,
+          message: probe.message
+            ? `Capability probe failed: ${probe.message}`
+            : `Capability probe failed with HTTP ${String(probe.status ?? "unknown")}.`,
+          evidence: {
+            probe: probe.probe,
+            standardized: true,
+            ...(probe.endpoint ? { endpoint: probe.endpoint } : {}),
+            ...(probe.status ? { responseStatus: probe.status } : {}),
+          },
+        });
+      }
+
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "verified",
+        checkedAt,
+        message: "Capability passed a live standardized probe.",
+        evidence: {
+          probe: probe.probe,
+          standardized: true,
+          ...(probe.endpoint ? { endpoint: probe.endpoint } : {}),
+          ...(probe.status ? { responseStatus: probe.status } : {}),
+        },
+      });
+    } catch (err) {
+      return capabilityDoctorResult({
+        profile,
+        ...target,
+        status: "failed",
+        checkedAt,
+        errorCode: "PROVIDER_UNREACHABLE",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  function mergeCapabilityDoctorResults(
+    existing: readonly FridayProviderRuntimeCapabilityDeclaration[] | undefined,
+    results: readonly FridayProviderCapabilityDoctorProbeResult[],
+  ): FridayProviderRuntimeCapabilityDeclaration[] {
+    const byKey = new Map<string, FridayProviderRuntimeCapabilityDeclaration>();
+    const keyFor = (capability: FridayRuntimeCapabilityId, model?: string) =>
+      `${capability}::${model ?? "*"}`;
+
+    for (const declaration of existing ?? []) {
+      byKey.set(keyFor(declaration.capability, declaration.model), { ...declaration });
+    }
+
+    for (const result of results) {
+      if (!PROVIDER_CAPABILITY_DOCTOR_CAPABILITIES.has(result.capability)) {
+        continue;
+      }
+      if (result.status === "unsupported") {
+        continue;
+      }
+      const status = result.status === "verified"
+        ? "verified"
+        : result.status === "failed"
+          ? "failed"
+          : "declared";
+      byKey.set(keyFor(result.capability, result.model), {
+        capability: result.capability,
+        ...(result.model ? { model: result.model } : {}),
+        status,
+        verified: status === "verified",
+        ...(status === "verified" ? { verifiedAt: result.checkedAt } : {}),
+        notes: result.message,
+      });
+    }
+
+    return [...byKey.values()].sort((a, b) =>
+      keyFor(a.capability, a.model).localeCompare(keyFor(b.capability, b.model)),
+    );
   }
 
   async function resolveRawApiKeyAsync(rawApiKey: string | undefined): Promise<string | null> {
@@ -1392,6 +2166,44 @@ export function createFridayProviderService(
       : "No enabled providers available for routing";
   }
 
+  function normalizeRequiredCapabilitiesForRouting(
+    capabilities?: FridayRuntimeCapabilityId[],
+  ): FridayRuntimeCapabilityId[] {
+    if (!Array.isArray(capabilities)) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const normalized: FridayRuntimeCapabilityId[] = [];
+    for (const capability of capabilities) {
+      if (seen.has(capability)) {
+        continue;
+      }
+      seen.add(capability);
+      normalized.push(capability);
+    }
+    return normalized;
+  }
+
+  function applyRequiredCapabilityFilter(input: {
+    candidates: FridayResolvedProviderRoute[];
+    requiredCapabilities?: FridayRuntimeCapabilityId[];
+  }): FridayResolvedProviderRoute[] {
+    const required = normalizeRequiredCapabilitiesForRouting(input.requiredCapabilities);
+    if (required.length === 0) {
+      return input.candidates;
+    }
+    return filterFridayProviderRoutesByRequiredCapabilities(input.candidates, required);
+  }
+
+  function explainRequiredCapabilityNoCandidates(
+    requiredCapabilities?: FridayRuntimeCapabilityId[],
+  ): string {
+    const required = normalizeRequiredCapabilitiesForRouting(requiredCapabilities);
+    return required.length > 0
+      ? `No enabled provider/model route satisfies required capabilities: ${required.join(", ")}. Configure and verify a capable provider, then retry.`
+      : "No enabled provider/model route satisfies this task.";
+  }
+
   // ─── Service implementation ───
 
   const service: FridayProviderService = {
@@ -1462,6 +2274,75 @@ export function createFridayProviderService(
       return await buildDoctorReport(profile);
     },
 
+    async runCapabilityDoctor(): Promise<FridayProviderCapabilityDoctorReport> {
+      const checkedAt = deps.nowIso();
+      const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const providerValidations: FridayProviderCapabilityDoctorReport["providerValidations"] = [];
+      const capabilityResults: FridayProviderCapabilityDoctorProbeResult[] = [];
+
+      for (const provider of providers) {
+        let validation: FridayProviderValidationState;
+        try {
+          validation = await service.validateProvider(provider.id);
+        } catch (err) {
+          validation = {
+            status: "failed",
+            checkedAt,
+            errorCode: err instanceof FridayDomainError
+              ? err.code
+              : "PROVIDER_UNKNOWN_ERROR",
+            errorMessage: err instanceof Error ? err.message : String(err),
+          };
+        }
+
+        providerValidations.push({
+          providerId: provider.id,
+          providerKind: provider.kind,
+          validation,
+        });
+
+        const latestProvider = deps.db.withReadConnection((db) =>
+          profileRepo.getById(db, provider.id),
+        ) ?? provider;
+        const targets = listCapabilityDoctorTargets(latestProvider);
+        const providerCapabilityResults: FridayProviderCapabilityDoctorProbeResult[] = [];
+        for (const target of targets) {
+          const result = await probeProviderCapability({
+            profile: latestProvider,
+            target,
+            validation,
+            checkedAt,
+          });
+          providerCapabilityResults.push(result);
+          capabilityResults.push(result);
+        }
+
+        if (providerCapabilityResults.length > 0) {
+          const updated: FridayProviderProfile = normalizeProviderConfig({
+            ...latestProvider,
+            config: {
+              ...latestProvider.config,
+              runtimeCapabilities: mergeCapabilityDoctorResults(
+                latestProvider.config.runtimeCapabilities,
+                providerCapabilityResults,
+              ),
+            },
+            updatedAt: checkedAt,
+          });
+          deps.db.withWriteTransaction((db) => {
+            profileRepo.update(db, updated);
+            syncDefaultAuthProfile(db, updated);
+          });
+        }
+      }
+
+      return {
+        checkedAt,
+        providerValidations,
+        capabilityResults,
+      };
+    },
+
     async explainRouting(input): Promise<FridayProviderRoutingExplainReport> {
       const routing = loadRoutingConfig();
       if (!routing || !routing.defaultProviderId) {
@@ -1472,7 +2353,8 @@ export function createFridayProviderService(
         );
       }
       const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
-      const pinnedProvider = input.requestedProviderId
+      let currentProviders = providers;
+      let pinnedProvider = input.requestedProviderId
         ? assertRequestedProviderAvailable(providers, input.requestedProviderId)
         : undefined;
       let candidates = fallback.resolveCandidates({
@@ -1486,13 +2368,54 @@ export function createFridayProviderService(
         requestedModel: input.requestedModel,
       });
       candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+      const requiredCapabilities = input.routingContext?.requiredCapabilities;
+      let candidatesBeforeCapabilityFilter = candidates;
+      let candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
+        candidates,
+        requiredCapabilities,
+      });
+      let capabilityFilterRemovedAllCandidates =
+        candidatesBeforeCapabilityFilter.length > 0
+        && candidatesAfterCapabilityFilter.length === 0
+        && Boolean(requiredCapabilities?.length);
+
+      if (capabilityFilterRemovedAllCandidates) {
+        await service.runCapabilityDoctor();
+        currentProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
+        pinnedProvider = input.requestedProviderId
+          ? assertRequestedProviderAvailable(currentProviders, input.requestedProviderId)
+          : undefined;
+        candidates = fallback.resolveCandidates({
+          routing: pinnedProvider
+            ? {
+                defaultProviderId: pinnedProvider.id,
+                fallbackProviderIds: [],
+              }
+            : routing,
+          providers: currentProviders,
+          requestedModel: input.requestedModel,
+        });
+        candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+        candidatesBeforeCapabilityFilter = candidates;
+        candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
+          candidates,
+          requiredCapabilities,
+        });
+        capabilityFilterRemovedAllCandidates =
+          candidatesBeforeCapabilityFilter.length > 0
+          && candidatesAfterCapabilityFilter.length === 0
+          && Boolean(requiredCapabilities?.length);
+      }
+      candidates = candidatesAfterCapabilityFilter;
       const requiresNativeTools = input.routingContext?.requiresNativeTools === true;
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
-          pinnedProvider
+          capabilityFilterRemovedAllCandidates
+            ? explainRequiredCapabilityNoCandidates(requiredCapabilities)
+            : pinnedProvider
             ? explainPinnedProviderNoCandidates(pinnedProvider, input.requestedModel)
-            : explainNoCandidates(routing, providers),
+            : explainNoCandidates(routing, currentProviders),
           { httpStatus: 400 },
         );
       }
@@ -1527,7 +2450,7 @@ export function createFridayProviderService(
             ? "No candidates remain because this task requires Friday native tools and the available CLI backends are text-only or policy-gated."
             : pinnedProvider
               ? explainPinnedProviderNoCandidates(pinnedProvider, input.requestedModel)
-              : explainNoCandidates(routing, providers),
+              : explainNoCandidates(routing, currentProviders),
           { httpStatus: 400 },
         );
       }
@@ -1617,6 +2540,7 @@ export function createFridayProviderService(
           : keySource,
         supportedModels: normalizeFridayProviderSupportedModels(input.supportedModels),
         headers: input.headers,
+        runtimeCapabilities: input.runtimeCapabilities,
         httpConfig: backendKind === "http" ? { headersPolicy: "custom" } : undefined,
         cliConfig: backendKind === "cli" ? input.cliConfig : undefined,
         validation: { status: "never" },
@@ -1773,6 +2697,7 @@ export function createFridayProviderService(
           patch.supportedModels ?? existing.config.supportedModels,
         ),
         headers: patch.headers ?? existing.config.headers,
+        runtimeCapabilities: patch.runtimeCapabilities ?? existing.config.runtimeCapabilities,
         httpConfig: nextBackendKind === "http"
           ? existing.config.httpConfig ?? { headersPolicy: "custom" }
           : undefined,
@@ -2064,6 +2989,7 @@ export function createFridayProviderService(
         dataSensitivity?: "public" | "internal" | "confidential" | "secret";
         latencyBudgetMs?: number;
         satelliteAvailable?: boolean;
+        requiredCapabilities?: FridayRuntimeCapabilityId[];
       };
       run: (
         route: FridayResolvedProviderRoute,
@@ -2086,7 +3012,8 @@ export function createFridayProviderService(
       const providers = deps.db.withReadConnection((db) =>
         profileRepo.list(db),
       );
-      const pinnedProvider = params.requestedProviderId
+      let currentProviders = providers;
+      let pinnedProvider = params.requestedProviderId
         ? assertRequestedProviderAvailable(providers, params.requestedProviderId)
         : undefined;
       const prefetchedCredentialHandles = new Map<string, string>();
@@ -2101,6 +3028,47 @@ export function createFridayProviderService(
         requestedModel: params.requestedModel,
       });
       candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+      const requiredCapabilities = params.routingContext?.requiredCapabilities;
+      let candidatesBeforeCapabilityFilter = candidates;
+      let candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
+        candidates,
+        requiredCapabilities,
+      });
+      let capabilityFilterRemovedAllCandidates =
+        candidatesBeforeCapabilityFilter.length > 0
+        && candidatesAfterCapabilityFilter.length === 0
+        && Boolean(requiredCapabilities?.length);
+
+      if (capabilityFilterRemovedAllCandidates) {
+        await service.runCapabilityDoctor();
+        currentProviders = deps.db.withReadConnection((db) =>
+          profileRepo.list(db),
+        );
+        pinnedProvider = params.requestedProviderId
+          ? assertRequestedProviderAvailable(currentProviders, params.requestedProviderId)
+          : undefined;
+        candidates = fallback.resolveCandidates({
+          routing: pinnedProvider
+            ? {
+                defaultProviderId: pinnedProvider.id,
+                fallbackProviderIds: [],
+              }
+            : routing,
+          providers: currentProviders,
+          requestedModel: params.requestedModel,
+        });
+        candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+        candidatesBeforeCapabilityFilter = candidates;
+        candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
+          candidates,
+          requiredCapabilities,
+        });
+        capabilityFilterRemovedAllCandidates =
+          candidatesBeforeCapabilityFilter.length > 0
+          && candidatesAfterCapabilityFilter.length === 0
+          && Boolean(requiredCapabilities?.length);
+      }
+      candidates = candidatesAfterCapabilityFilter;
       if (!pinnedProvider) {
         const routableCandidates = await Promise.all(
           candidates.map(async (candidate) => {
@@ -2128,9 +3096,11 @@ export function createFridayProviderService(
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
-          pinnedProvider
+          capabilityFilterRemovedAllCandidates
+            ? explainRequiredCapabilityNoCandidates(requiredCapabilities)
+            : pinnedProvider
             ? explainPinnedProviderNoCandidates(pinnedProvider, params.requestedModel)
-            : explainNoCandidates(routing, providers),
+            : explainNoCandidates(routing, currentProviders),
           { httpStatus: 400 },
         );
       }
@@ -2183,7 +3153,7 @@ export function createFridayProviderService(
             ? "No model providers can satisfy this task because the remaining candidates are text-only CLI backends or policy-gated for this run."
             : pinnedProvider
               ? explainPinnedProviderNoCandidates(pinnedProvider, params.requestedModel)
-              : explainNoCandidates(routing, providers),
+              : explainNoCandidates(routing, currentProviders),
           { httpStatus: 400 },
         );
       }

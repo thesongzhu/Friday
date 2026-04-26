@@ -56,6 +56,40 @@ function createMockDeps(overrides?: Partial<FridayDeterministicDispatchDeps>): F
       },
       provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
       browser: { activeMode: "puppeteer" },
+      runtime: {
+        schemaVersion: "1.0",
+        generatedAt: "2026-03-24T10:00:00.000Z",
+        summary: {
+          available: 1,
+          needsVerification: 0,
+          needsUserAction: 1,
+          installable: 0,
+          unsupported: 0,
+        },
+        items: [
+          {
+            capability: "vision",
+            label: "Image understanding",
+            description: "Send image inputs to a vision-capable model.",
+            state: "needs_user_auth",
+            sources: [],
+            blockers: ["No verified vision provider configured."],
+            repairOptions: [
+              {
+                id: "configure-qwen-vl",
+                label: "Configure Qwen-VL",
+                description: "Add a Qwen vision model and verify image understanding.",
+                kind: "configure_provider",
+                requiresApproval: true,
+                providerKind: "qwen",
+                setupHref: "/setup?step=provider&providerKind=qwen&recipeId=provider-qwen",
+                href: "https://help.aliyun.com/zh/model-studio/",
+                risks: ["auth", "paid_api"],
+              },
+            ],
+          },
+        ],
+      },
       system: { enabled: true },
       desktop: { connected: false },
       companion: { connected: false },
@@ -130,6 +164,8 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("Messaging: enabled (discord)");
       expect(result.response).toContain("MCP: enabled (2 server(s))");
       expect(result.response).toContain("filesystem (connected, authenticated)");
+      expect(result.response).toContain("vision: needs_user_auth");
+      expect(result.response).toContain("/setup?step=provider&providerKind=qwen&recipeId=provider-qwen");
     });
 
     it("returns handled:false when snapshot getter throws", async () => {
@@ -428,6 +464,111 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("Workflow run wf-run-42");
       expect(result.response).toContain("running");
       expect(deps.workflowExecutionService!.getRun).toHaveBeenCalledWith("wf-run-42");
+    });
+  });
+
+  describe("setup_guidance handler", () => {
+    it("returns concrete Chinese setup guidance for Discord binding", async () => {
+      const deps = createMockDeps();
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "setup_guidance",
+            extractedParams: { setupTargetService: "discord" },
+          },
+          task: "需要绑定discord",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("不能用 message 工具直接绑定");
+      expect(result.response).toContain("channel-discord-bot");
+      expect(result.response).toContain("Discord Bot Token");
+      expect(result.response).toContain("/setup?step=channels&channel=discord");
+      expect(result.response).toContain("<!--action:");
+    });
+
+    it("uses a registered recipe when available", async () => {
+      const deps = createMockDeps({
+        setupRecipeRegistry: {
+          getByTarget: vi.fn(() => ({
+            id: "channel-discord-custom",
+            name: "Custom Discord Setup",
+            description: "Configure Discord",
+            category: "channel",
+            version: "1.0.0",
+            targetService: "discord",
+            prerequisites: [],
+            steps: [],
+            outputs: [{ key: "botToken", label: "Bot Token", sensitive: true }],
+          })),
+        },
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "setup_guidance",
+            extractedParams: { setupTargetService: "discord" },
+          },
+          task: "connect discord",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(deps.setupRecipeRegistry!.getByTarget).toHaveBeenCalledWith("discord");
+      expect(result.response).toContain("channel-discord-custom");
+      expect(result.response).toContain("Custom Discord Setup");
+    });
+
+    it("returns capability setup guidance for OCR", async () => {
+      const deps = createMockDeps();
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "setup_guidance",
+            extractedParams: { setupTargetService: "ocr" },
+          },
+          task: "帮我配置OCR",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("能力闭环");
+      expect(result.response).toContain("capability-ocr");
+      expect(result.response).toContain("OCR provider/API key");
+      expect(result.response).toContain("/setup?recipeId=capability-ocr&targetService=ocr");
+      expect(result.response).toContain("运行 doctor 或代表性任务验证");
+    });
+
+    it("returns capability setup guidance for generated custom capabilities", async () => {
+      const deps = createMockDeps();
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "setup_guidance",
+            extractedParams: { setupTargetService: "custom" },
+          },
+          task: "配置自定义能力",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("capability-custom");
+      expect(result.response).toContain("生成本地工具");
+      expect(result.response).toContain("Representative test");
+      expect(result.response).toContain("/setup?recipeId=capability-custom&targetService=custom");
     });
   });
 

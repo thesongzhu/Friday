@@ -1346,7 +1346,7 @@ export function createFridayWorkflowRuntime(
         attempt: input.attempt,
         category: input.status === "completed"
           ? "transient"
-          : classifyWorkflowError(input.errorCode ?? "NODE_EXECUTION_FAILED"),
+          : classifyWorkflowError(input.errorCode ?? "NODE_EXECUTION_FAILED", input.errorMessage),
         success: input.status === "completed",
       });
       if (input.status !== "failed") {

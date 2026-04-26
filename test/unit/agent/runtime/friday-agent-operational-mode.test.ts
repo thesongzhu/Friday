@@ -97,6 +97,7 @@ describe("resolveToolCategory", () => {
 
   it("maps feedback to read", () => {
     expect(resolveToolCategory("feedback")).toBe("read");
+    expect(resolveToolCategory("pdf_parse")).toBe("read");
   });
 
   it("maps browser tools correctly", () => {
@@ -124,7 +125,7 @@ describe("resolveToolCategory", () => {
       // read
       "read", "file_read", "file_list", "web_fetch", "web_search",
       "memory_search", "memory_query", "memory_get", "skills_list",
-      "agents_list", "capabilities", "task_status", "image_analysis", "feedback",
+      "agents_list", "capabilities", "task_status", "image_analysis", "pdf_parse", "feedback",
       // write
       "write", "edit", "file_write", "file_delete",
       "memory_store", "memory_extract",

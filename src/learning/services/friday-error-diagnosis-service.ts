@@ -372,9 +372,7 @@ function mapCategoryToStepKind(
     case "model":
       return "switch_model_fallback";
     case "config":
-      // Config patches need a concrete config writer. Do not emit
-      // marker-only remediation plans from diagnosis.
-      return undefined;
+      return "apply_config_patch";
     case "routing":
       return "trim_payload";
     case "workflow":

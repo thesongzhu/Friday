@@ -2,10 +2,20 @@ import { FridayDomainError } from "#errors";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
+  FridayAgendaItemResponse,
+  FridayAgendaRunResponse,
+  FridayAutonomyPolicyResponse,
+  FridayCapabilityAcquisitionPlanResponse,
+  FridayCapabilityAcquisitionRunResponse,
   FridayChannelAdapterUpgradeActionResponse,
+  FridayCreateStandingGoalRequest,
   FridayGetAutonomyUpgradeStatusQuery,
   FridayGetAutonomyUpgradeStatusResponse,
+  FridayListAgendaResponse,
+  FridayListStandingGoalsResponse,
   FridayMcpServerUpgradeActionResponse,
+  FridayPatchAutonomyPolicyRequest,
+  FridayPatchStandingGoalRequest,
   FridayPluginUpgradeActionResponse,
   FridayPromoteChannelAdapterUpgradeRequest,
   FridayPromoteMcpServerUpgradeRequest,
@@ -33,13 +43,20 @@ import type {
   FridayRollbackSkillUpgradeRequest,
   FridayRollbackWorkflowUpgradeRequest,
   FridaySkillUpgradeActionResponse,
+  FridayStandingGoalResponse,
   FridayWorkflowUpgradeActionResponse,
 } from "../../model/friday-api-autonomy.types.js";
 import type { FridayAutonomySubjectKind } from "../../../autonomy/model/friday-autonomy-subject.types.js";
+import type {
+  FridayAutonomyPolicyService,
+  FridayCapabilityAcquisitionService,
+  FridayStandingAgendaService,
+} from "../../../autonomy/index.js";
 import type { FridayWorkflowEntity } from "../../model/friday-api-workflow.types.js";
 import type { FridaySkillLifecycleDetail } from "#skills";
 import type { FridayPluginEntity } from "../../../plugins/model/friday-plugin.types.js";
 import type { FridayProviderProfile } from "../../../providers/model/friday-provider.types.js";
+import { FRIDAY_RUNTIME_CAPABILITY_IDS, type FridayRuntimeCapabilityId } from "#providers";
 
 const AUTONOMY_SUBJECT_KINDS: ReadonlySet<FridayAutonomySubjectKind> = new Set([
   "skill",
@@ -50,10 +67,15 @@ const AUTONOMY_SUBJECT_KINDS: ReadonlySet<FridayAutonomySubjectKind> = new Set([
   "channel_adapter",
 ]);
 
+const RUNTIME_CAPABILITY_IDS = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
+
 export interface FridayAutonomyRoutesDeps {
   listUpgradeStatus: (
     query: FridayGetAutonomyUpgradeStatusQuery,
   ) => FridayGetAutonomyUpgradeStatusResponse | Promise<FridayGetAutonomyUpgradeStatusResponse>;
+  policyService?: FridayAutonomyPolicyService;
+  acquisitionService?: FridayCapabilityAcquisitionService;
+  standingAgendaService?: FridayStandingAgendaService;
   workflowActions?: {
     registerShadow: (
       input: { workflowId: string } & FridayRegisterWorkflowShadowRequest,
@@ -260,6 +282,56 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
+function requireUserId(principal: { userId?: string } | null, bodyOrQuery?: Record<string, unknown>): string {
+  const explicit = bodyOrQuery?.userId;
+  if (typeof explicit === "string" && explicit.trim().length > 0) {
+    return explicit.trim();
+  }
+  if (!principal?.userId) {
+    throw new FridayDomainError("UNAUTHORIZED", "A user-scoped autonomy principal is required", {
+      httpStatus: 401,
+    });
+  }
+  return principal.userId;
+}
+
+function readOptionalCapabilities(value: unknown): FridayRuntimeCapabilityId[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const capabilities = raw
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter((item): item is FridayRuntimeCapabilityId => RUNTIME_CAPABILITY_IDS.has(item));
+  return capabilities.length > 0 ? [...new Set(capabilities)] : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    if (value === "true") return true;
+    if (value === "false") return false;
+  }
+  return undefined;
+}
+
+function readLimit(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
 export function createFridayAutonomyRoutes(
   deps: FridayAutonomyRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -275,6 +347,207 @@ export function createFridayAutonomyRoutes(
           kind: readSubjectKind(query.kind),
           id: typeof query.id === "string" && query.id.trim().length > 0 ? query.id : undefined,
         });
+      },
+    },
+    {
+      operationId: "capabilities.acquisition.plan",
+      method: "GET",
+      path: "/v1/capabilities/acquisition/plan",
+      auth: { public: false, anyOfScopes: ["agent.read"] },
+      async handler(ctx): Promise<FridayCapabilityAcquisitionPlanResponse> {
+        if (!deps.acquisitionService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
+        }
+        const query = (ctx.query ?? {}) as Record<string, unknown>;
+        const goal = requireNonEmptyString(query.goal, "goal");
+        const userId = requireUserId(ctx.principal, query);
+        const run = await deps.acquisitionService.plan({
+          userId,
+          goal,
+          requiredCapabilities: readOptionalCapabilities(query.requiredCapabilities ?? query.capabilities),
+          readOnly: readBoolean(query.readOnly),
+        });
+        return { run };
+      },
+    },
+    {
+      operationId: "capabilities.acquisition.runs.create",
+      method: "POST",
+      path: "/v1/capabilities/acquisition/runs",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      rateLimitPolicyId: "agent.run",
+      async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
+        if (!deps.acquisitionService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
+        }
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        const goal = requireNonEmptyString(body.goal, "goal");
+        const userId = requireUserId(ctx.principal, body);
+        const run = await deps.acquisitionService.startRun({
+          userId,
+          goal,
+          requiredCapabilities: readOptionalCapabilities(body.requiredCapabilities),
+          readOnly: readBoolean(body.readOnly),
+        });
+        return { run };
+      },
+    },
+    {
+      operationId: "capabilities.acquisition.runs.approve",
+      method: "POST",
+      path: "/v1/capabilities/acquisition/runs/:id/approve",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      rateLimitPolicyId: "agent.run",
+      async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
+        if (!deps.acquisitionService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
+        }
+        requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        return { run: await deps.acquisitionService.approveRun(id) };
+      },
+    },
+    {
+      operationId: "capabilities.acquisition.runs.cancel",
+      method: "POST",
+      path: "/v1/capabilities/acquisition/runs/:id/cancel",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
+        if (!deps.acquisitionService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
+        }
+        requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        return { run: deps.acquisitionService.cancelRun(id) };
+      },
+    },
+    {
+      operationId: "autonomy.policy.get",
+      method: "GET",
+      path: "/v1/autonomy-policy",
+      auth: { public: false, anyOfScopes: ["agent.read"] },
+      async handler(): Promise<FridayAutonomyPolicyResponse> {
+        if (!deps.policyService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Autonomy policy service is not configured", { httpStatus: 501 });
+        }
+        return { policy: deps.policyService.getPolicy() };
+      },
+    },
+    {
+      operationId: "autonomy.policy.patch",
+      method: "PATCH",
+      path: "/v1/autonomy-policy",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      async handler(ctx): Promise<FridayAutonomyPolicyResponse> {
+        if (!deps.policyService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Autonomy policy service is not configured", { httpStatus: 501 });
+        }
+        requireUserId(ctx.principal);
+        const body = (ctx.body ?? {}) as FridayPatchAutonomyPolicyRequest;
+        return { policy: deps.policyService.updatePolicy(body) };
+      },
+    },
+    {
+      operationId: "standing.goals.list",
+      method: "GET",
+      path: "/v1/standing-goals",
+      auth: { public: false, anyOfScopes: ["agent.read"] },
+      async handler(ctx): Promise<FridayListStandingGoalsResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        const query = (ctx.query ?? {}) as Record<string, unknown>;
+        const userId = requireUserId(ctx.principal, query);
+        return {
+          items: deps.standingAgendaService.listStandingGoals({
+            userId,
+            includeArchived: readBoolean(query.includeArchived),
+          }),
+        };
+      },
+    },
+    {
+      operationId: "standing.goals.create",
+      method: "POST",
+      path: "/v1/standing-goals",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      rateLimitPolicyId: "agent.run",
+      async handler(ctx): Promise<FridayStandingGoalResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        const body = (ctx.body ?? {}) as FridayCreateStandingGoalRequest;
+        const userId = requireUserId(ctx.principal, body as unknown as Record<string, unknown>);
+        const result = await deps.standingAgendaService.createStandingGoal({
+          ...body,
+          userId,
+          objective: requireNonEmptyString(body.objective, "objective"),
+        });
+        return { goal: result.goal, agendaItem: result.agendaItem };
+      },
+    },
+    {
+      operationId: "standing.goals.patch",
+      method: "PATCH",
+      path: "/v1/standing-goals/:id",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      async handler(ctx): Promise<FridayStandingGoalResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        const body = (ctx.body ?? {}) as FridayPatchStandingGoalRequest;
+        return { goal: deps.standingAgendaService.updateStandingGoal(id, body) };
+      },
+    },
+    {
+      operationId: "agenda.list",
+      method: "GET",
+      path: "/v1/agenda",
+      auth: { public: false, anyOfScopes: ["agent.read"] },
+      async handler(ctx): Promise<FridayListAgendaResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        const query = (ctx.query ?? {}) as Record<string, unknown>;
+        const userId = requireUserId(ctx.principal, query);
+        return {
+          items: deps.standingAgendaService.listAgenda({
+            userId,
+            status: typeof query.status === "string" && query.status.trim().length > 0 ? query.status : undefined,
+            limit: readLimit(query.limit),
+          }),
+        };
+      },
+    },
+    {
+      operationId: "agenda.approve",
+      method: "POST",
+      path: "/v1/agenda/:id/approve",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      async handler(ctx): Promise<FridayAgendaItemResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        const userId = requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        return { item: deps.standingAgendaService.approveAgendaItem({ agendaItemId: id, userId }) };
+      },
+    },
+    {
+      operationId: "agenda.run",
+      method: "POST",
+      path: "/v1/agenda/:id/run",
+      auth: { public: false, anyOfScopes: ["agent.write"] },
+      rateLimitPolicyId: "agent.run",
+      async handler(ctx): Promise<FridayAgendaRunResponse> {
+        if (!deps.standingAgendaService) {
+          throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
+        }
+        const userId = requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        return { run: await deps.standingAgendaService.runAgendaItem({ agendaItemId: id, userId }) };
       },
     },
   ];

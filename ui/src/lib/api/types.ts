@@ -1828,6 +1828,31 @@ export interface FridayProviderValidationState {
   httpStatus?: number;
 }
 
+export type FridayRuntimeCapabilityId =
+  | "text"
+  | "vision"
+  | "ocr"
+  | "embedding"
+  | "web_search"
+  | "web_fetch"
+  | "pdf_parse"
+  | "file_read"
+  | "file_write"
+  | "tts"
+  | "browser"
+  | "mcp"
+  | "skills"
+  | "custom";
+
+export interface FridayProviderRuntimeCapabilityDeclaration {
+  capability: FridayRuntimeCapabilityId;
+  model?: string;
+  status?: "declared" | "verified" | "failed";
+  verified?: boolean;
+  verifiedAt?: string;
+  notes?: string;
+}
+
 export interface FridayProviderConfigJson {
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
@@ -1839,6 +1864,7 @@ export interface FridayProviderConfigJson {
   supportedModels: string[];
   headers?: Record<string, string>;
   cliConfig?: FridayProviderCliConfig;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   validation?: FridayProviderValidationState;
 }
 
@@ -2016,6 +2042,63 @@ export interface FridayProviderRoutingExplainReport {
   reasonText: string;
   historyWindow: {
     sampleLimit: number;
+  };
+}
+
+export type FridayRuntimeCapabilityState =
+  | "available"
+  | "configured_but_unverified"
+  | "needs_user_auth"
+  | "installable_with_approval"
+  | "buildable_with_approval"
+  | "unsupported"
+  | "failed_verification";
+
+export interface FridayRuntimeCapabilitySource {
+  kind: "provider" | "tool" | "skill" | "mcp" | "builtin" | "custom";
+  id: string;
+  label: string;
+  status: "verified" | "declared" | "inferred" | "unverified" | "failed";
+  providerId?: string;
+  providerKind?: FridayProviderKind;
+  model?: string;
+  verifiedAt?: string;
+  detail?: string;
+}
+
+export interface FridayRuntimeCapabilityRepairOption {
+  id: string;
+  label: string;
+  description: string;
+  kind: "configure_provider" | "open_docs" | "enable_builtin" | "install_skill" | "install_mcp" | "generate_tool" | "custom";
+  requiresApproval: boolean;
+  providerKind?: FridayProviderKind;
+  setupHref?: string;
+  href?: string;
+  risks: string[];
+}
+
+export interface FridayRuntimeCapabilityItem {
+  capability: FridayRuntimeCapabilityId;
+  label: string;
+  description: string;
+  state: FridayRuntimeCapabilityState;
+  sources: FridayRuntimeCapabilitySource[];
+  blockers: string[];
+  repairOptions: FridayRuntimeCapabilityRepairOption[];
+  lastVerifiedAt?: string;
+}
+
+export interface FridayRuntimeCapabilityMatrix {
+  schemaVersion: "1.0";
+  generatedAt: string;
+  items: FridayRuntimeCapabilityItem[];
+  summary: {
+    available: number;
+    needsVerification: number;
+    needsUserAction: number;
+    installable: number;
+    unsupported: number;
   };
 }
 
@@ -2433,6 +2516,7 @@ export interface FridayHealthResponse {
       latestness?: "provider_backed" | "unverified";
       warning?: string;
     };
+    runtime?: FridayRuntimeCapabilityMatrix;
     system?: {
       enabled?: boolean;
       remoteMode?: "trusted_private_network" | "disabled" | "unavailable";

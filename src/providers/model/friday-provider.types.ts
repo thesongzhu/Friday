@@ -85,6 +85,26 @@ export type FridayProviderRegionTag =
   | "local"
   | "custom";
 
+export const FRIDAY_RUNTIME_CAPABILITY_IDS = [
+  "text",
+  "vision",
+  "ocr",
+  "embedding",
+  "web_search",
+  "web_fetch",
+  "pdf_parse",
+  "file_read",
+  "file_write",
+  "tts",
+  "browser",
+  "mcp",
+  "skills",
+  "custom",
+] as const;
+
+export type FridayRuntimeCapabilityId =
+  (typeof FRIDAY_RUNTIME_CAPABILITY_IDS)[number];
+
 export const FRIDAY_PROVIDER_CLI_BACKEND_IDS = [
   "codex-cli",
   "claude-cli",
@@ -258,6 +278,15 @@ export interface FridayProviderSdkConfig {
   runtimeHints?: Record<string, string | number | boolean>;
 }
 
+export interface FridayProviderRuntimeCapabilityDeclaration {
+  capability: FridayRuntimeCapabilityId;
+  model?: string;
+  verified?: boolean;
+  status?: "declared" | "verified" | "failed";
+  verifiedAt?: string;
+  notes?: string;
+}
+
 export interface FridayProviderConfigJson {
   api: FridayProviderApi;
   authMode: FridayProviderAuthMode;
@@ -271,6 +300,7 @@ export interface FridayProviderConfigJson {
   httpConfig?: FridayProviderHttpConfig;
   cliConfig?: FridayProviderCliConfig;
   sdkConfig?: FridayProviderSdkConfig;
+  runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   validation?: FridayProviderValidationState;
 }
 
@@ -429,6 +459,42 @@ export interface FridayProviderDoctorReport {
   cliSession?: FridayCliSessionStatus;
 }
 
+export type FridayProviderCapabilityDoctorProbeStatus =
+  | "verified"
+  | "declared"
+  | "failed"
+  | "unsupported";
+
+export interface FridayProviderCapabilityDoctorEvidence {
+  probe: string;
+  standardized: boolean;
+  endpoint?: string;
+  responseStatus?: number;
+}
+
+export interface FridayProviderCapabilityDoctorProbeResult {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  capability: FridayRuntimeCapabilityId;
+  model?: string;
+  status: FridayProviderCapabilityDoctorProbeStatus;
+  checkedAt: string;
+  message: string;
+  errorCode?: FridayProviderValidationErrorCode;
+  httpStatus?: number;
+  evidence?: FridayProviderCapabilityDoctorEvidence;
+}
+
+export interface FridayProviderCapabilityDoctorReport {
+  checkedAt: string;
+  providerValidations: Array<{
+    providerId: string;
+    providerKind: FridayProviderKind;
+    validation: FridayProviderValidationState;
+  }>;
+  capabilityResults: FridayProviderCapabilityDoctorProbeResult[];
+}
+
 export type FridayProviderLane =
   | "primary"
   | "fallback"
@@ -514,6 +580,7 @@ export interface FridayProviderRoutingHistoryWindow {
 export interface FridayProviderRoutingDecisionTrace {
   taskProfileId?: string;
   requiresNativeTools: boolean;
+  requiredCapabilities?: FridayRuntimeCapabilityId[];
   learningAdjusted: boolean;
   learningSignalsPresent: boolean;
   orderingAdjusted: boolean;

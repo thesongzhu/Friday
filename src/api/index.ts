@@ -22,6 +22,7 @@ export type * from "./model/friday-api-self-healing.types.js";
 export type * from "./model/friday-api-uix-surface.types.js";
 export type * from "./model/friday-api-cross-border-pack.types.js";
 export type * from "./model/friday-api-runtime-admin.types.js";
+export type * from "./model/friday-api-autonomy.types.js";
 
 // Deep link types
 export type {
@@ -117,6 +118,8 @@ export type { FridayHealthRoutesDeps } from "./http/routes/friday-health-routes.
 // Runtime admin routes
 export { createFridayRuntimeAdminRoutes } from "./http/routes/friday-runtime-admin-routes.js";
 export type { FridayRuntimeAdminRoutesDeps } from "./http/routes/friday-runtime-admin-routes.js";
+export { createFridayAutonomyRoutes } from "./http/routes/friday-autonomy-routes.js";
+export type { FridayAutonomyRoutesDeps } from "./http/routes/friday-autonomy-routes.js";
 
 // Secret routes
 export { createFridaySecretRoutes } from "./http/routes/friday-secret-routes.js";
@@ -206,7 +209,7 @@ export { createFridayCrossBorderPackRoutes } from "./http/routes/friday-cross-bo
 export type { FridayCrossBorderPackRoutesDeps } from "./http/routes/friday-cross-border-pack-routes.js";
 
 // Discovery routes (C-005)
-export { createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";
+export { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";
 export type { FridayDiscoveryRoutesDeps } from "./http/routes/friday-discovery-routes.js";
 export type {
   FridayAgentRunExecutionResponse,
