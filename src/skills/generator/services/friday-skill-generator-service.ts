@@ -76,6 +76,22 @@ const MAX_REPAIR_ATTEMPTS = 2;
 const DRAFT_NAMESPACE = "skill-generator-draft";
 const FRIDAY_HUB_COMPAT_VERSION = "1.0.0";
 const SUPPORTED_API_VERSIONS = ["1"];
+const UNSAFE_SKILL_GENERATION_GOAL_PATTERNS: readonly RegExp[] = [
+  /\b(?:build|create|generate|write|develop|make|install|load)\b[\s\S]{0,160}\b(?:kernel\s+(?:module|extension)|kext)\b[\s\S]{0,160}\b(?:bypass(?:es|ing)?|disabl(?:e|es|ing)|circumvent(?:s|ing)?|evad(?:e|es|ing))\b[\s\S]{0,80}\b(?:system\s+integrity\s+protection|sip|security)\b/i,
+  /\b(?:bypass(?:es|ing)?|disabl(?:e|es|ing)|circumvent(?:s|ing)?|evad(?:e|es|ing))\b[\s\S]{0,80}\b(?:system\s+integrity\s+protection|sip)\b[\s\S]{0,160}\b(?:kernel\s+(?:module|extension)|kext|skill|tool)\b/i,
+  /\b(?:build|create|generate|write|develop|make)\b[\s\S]{0,120}\b(?:rootkit|keylogger|credential\s+(?:theft|harvest(?:er|ing)?)|steal(?:s|ing)?\s+(?:tokens|credentials|passwords|secrets)|exfiltrat(?:e|es|ing|ion)\s+(?:tokens|credentials|passwords|secrets)|privilege\s+escalation|disabl(?:e|es|ing)\s+(?:antivirus|edr|security))\b/i,
+];
+
+function assertSafeSkillGenerationGoal(goal: string): void {
+  if (!UNSAFE_SKILL_GENERATION_GOAL_PATTERNS.some((pattern) => pattern.test(goal))) {
+    return;
+  }
+  throw new FridayDomainError(
+    "SKILL_GENERATOR_UNSAFE_GOAL",
+    "Skill generation goal requests unsafe local execution or security bypass behavior.",
+    { httpStatus: 400 },
+  );
+}
 
 type FridaySatelliteType = SkillManifestV2["executionTargets"]["allowedSatelliteTypes"][number];
 type FridayOs = SkillManifestV2["requirements"]["os"][number];
@@ -1582,6 +1598,7 @@ export function createFridaySkillGeneratorService(
     async startSession(
       input: FridayStartSkillGenerationRequest,
     ): Promise<FridaySkillGenerationTurnResponse> {
+      assertSafeSkillGenerationGoal(input.goal);
       const now = deps.nowIso();
       const sessionId = deps.idGenerator();
 
@@ -1706,6 +1723,7 @@ export function createFridaySkillGeneratorService(
       input: FridaySkillGenerationTurnRequest,
     ): Promise<FridaySkillGenerationTurnResponse> {
       const session = requireSession(sessionId);
+      assertSafeSkillGenerationGoal(`${session.goal}\n${input.message}`);
 
       if (
         session.status === "approved" ||
@@ -1848,6 +1866,7 @@ export function createFridaySkillGeneratorService(
       requestedModel?: string,
     ): Promise<FridayGeneratedSkillDraft> {
       const session = requireSession(sessionId);
+      assertSafeSkillGenerationGoal(`${session.goal}\n${session.specSummary}`);
 
       if (
         session.status === "approved" ||

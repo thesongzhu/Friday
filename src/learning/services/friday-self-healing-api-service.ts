@@ -917,23 +917,23 @@ export function createFridaySelfHealingApiService(
     const incidentCount = deps.db.withReadConnection((db) =>
       countRowsIfTableExists(
         db,
-        "friday_error_incidents",
-        `SELECT COUNT(*) AS count FROM friday_error_incidents WHERE user_id = ?`,
+        "error_incidents",
+        `SELECT COUNT(*) AS count FROM error_incidents WHERE user_id = ?`,
         input.userId,
       ),
     );
     const diagnosisCount = deps.db.withReadConnection((db) =>
       countRowsIfTableExists(
         db,
-        "friday_diagnosis_records",
-        `SELECT COUNT(*) AS count FROM friday_diagnosis_records`,
+        "diagnosis_records",
+        `SELECT COUNT(*) AS count FROM diagnosis_records`,
       ),
     );
     const actionCount = deps.db.withReadConnection((db) =>
       countRowsIfTableExists(
         db,
-        "friday_auto_fix_actions",
-        `SELECT COUNT(*) AS count FROM friday_auto_fix_actions WHERE user_id = ?`,
+        "auto_fix_actions",
+        `SELECT COUNT(*) AS count FROM auto_fix_actions WHERE user_id = ?`,
         input.userId,
       ),
     );

@@ -61,6 +61,9 @@ export interface FridayMemoryFileSyncRepository {
   /** Remove a dirty entry after it has been synced. */
   removeDirty(entityType: FridayMemorySyncEntityType, entityKey: string): void;
 
+  /** Move a deferred dirty entry to the back of the queue. */
+  deferDirty(entityType: FridayMemorySyncEntityType, entityKey: string): void;
+
   /** Get the sync state for a given entity. */
   getState(entityType: FridayMemorySyncEntityType, entityKey: string): FridayMemoryFileSyncStateRow | null;
 
@@ -129,6 +132,14 @@ export function createFridayMemoryFileSyncRepository(deps: {
     removeDirty(entityType: FridayMemorySyncEntityType, entityKey: string): void {
       db.withWriteTransaction((conn) => {
         conn.prepare("DELETE FROM memory_file_sync_dirty WHERE entity_type = ? AND entity_key = ?").run(entityType, entityKey);
+      });
+    },
+
+    deferDirty(entityType: FridayMemorySyncEntityType, entityKey: string): void {
+      db.withWriteTransaction((conn) => {
+        conn
+          .prepare("UPDATE memory_file_sync_dirty SET last_dirty_at = datetime('now', '+1 second') WHERE entity_type = ? AND entity_key = ?")
+          .run(entityType, entityKey);
       });
     },
 

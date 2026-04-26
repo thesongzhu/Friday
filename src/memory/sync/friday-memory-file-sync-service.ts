@@ -124,6 +124,7 @@ export function createFridayMemoryFileSyncService(
           if (outcome === "ack") {
             repository.removeDirty(dirty.entityType, dirty.entityKey);
           } else {
+            repository.deferDirty(dirty.entityType, dirty.entityKey);
             result.filesDeferred++;
           }
         } catch (err) {
