@@ -18,7 +18,7 @@ export async function runPhaseP(ctx) {
       baseUrl,
       api: real?.config?.api ?? "openai-responses",
       authMode: real?.config?.authMode ?? "bearer-token",
-      apiKey: "sk-fake-deliberately-invalid-key-xyz123",
+      apiKey: "sk-fake-deliberately-invalid-key-xyz123", // pragma: allowlist secret
       supportedModels,
       defaultModel,
       validateOnSave: false,
