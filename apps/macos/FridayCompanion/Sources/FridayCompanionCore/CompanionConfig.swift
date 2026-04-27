@@ -7,6 +7,7 @@ public struct CompanionConfig: Sendable {
   public let workspaceRoot: String
   public let runtimeKind: String
   public let launchAtLoginEnabled: Bool
+  public let controlPageURL: String
   public let overlayHotkey: CompanionHotkey
   public let panicHotkey: CompanionHotkey
   public let heartbeatIntervalMs: Int
@@ -20,6 +21,7 @@ public struct CompanionConfig: Sendable {
     workspaceRoot: String,
     runtimeKind: String,
     launchAtLoginEnabled: Bool,
+    controlPageURL: String,
     overlayHotkey: CompanionHotkey,
     panicHotkey: CompanionHotkey,
     heartbeatIntervalMs: Int,
@@ -32,6 +34,7 @@ public struct CompanionConfig: Sendable {
     self.workspaceRoot = workspaceRoot
     self.runtimeKind = runtimeKind
     self.launchAtLoginEnabled = launchAtLoginEnabled
+    self.controlPageURL = controlPageURL
     self.overlayHotkey = overlayHotkey
     self.panicHotkey = panicHotkey
     self.heartbeatIntervalMs = heartbeatIntervalMs
@@ -52,6 +55,7 @@ public struct CompanionConfig: Sendable {
     let socketPath = nonEmpty(env["FRIDAY_SYSTEM_COMPANION_SOCKET_PATH"]) ?? "\(workspaceRoot)/.friday/run/system-companion.sock"
     let runtimeKind = resolveRuntimeKind(env["FRIDAY_SYSTEM_COMPANION_RUNTIME_KIND"])
     let launchAtLoginEnabled = env["FRIDAY_SYSTEM_LAUNCH_AT_LOGIN"] != "false"
+    let controlPageURL = resolveControlPageURL(env)
     let overlayHotkey = try CompanionHotkey(rawValue: env["FRIDAY_SYSTEM_OVERLAY_HOTKEY"] ?? "cmd+shift+space")
     let panicHotkey = try CompanionHotkey(rawValue: env["FRIDAY_SYSTEM_PANIC_HOTKEY"] ?? "cmd+shift+escape")
     let heartbeatIntervalMs = Int(env["FRIDAY_SYSTEM_COMPANION_HEARTBEAT_MS"] ?? "") ?? 5_000
@@ -66,6 +70,7 @@ public struct CompanionConfig: Sendable {
       workspaceRoot: workspaceRoot,
       runtimeKind: runtimeKind,
       launchAtLoginEnabled: launchAtLoginEnabled,
+      controlPageURL: controlPageURL,
       overlayHotkey: overlayHotkey,
       panicHotkey: panicHotkey,
       heartbeatIntervalMs: max(1_000, heartbeatIntervalMs),
@@ -73,6 +78,50 @@ public struct CompanionConfig: Sendable {
       notificationLimit: max(1, notificationLimit)
     )
   }
+}
+
+private func resolveControlPageURL(_ env: [String: String]) -> String {
+  if let explicitURL = nonEmpty(env["FRIDAY_CONTROL_PAGE_URL"]) {
+    return explicitURL
+  }
+
+  let baseURL = nonEmpty(env["FRIDAY_PUBLIC_APP_BASE_URL"]) ?? defaultPublicAppBaseURL(env)
+  return appendPath("command-center", to: baseURL)
+}
+
+private func defaultPublicAppBaseURL(_ env: [String: String]) -> String {
+  let rawHost = nonEmpty(env["FRIDAY_HOST"]) ?? "127.0.0.1"
+  let host = rawHost == "0.0.0.0" ? "localhost" : rawHost
+  let hostname = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+  let port = max(1, Int(env["FRIDAY_PORT"] ?? "") ?? 3_141)
+  return "http://\(hostname):\(port)"
+}
+
+private func appendPath(_ path: String, to baseURL: String) -> String {
+  let suffix = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+  guard !suffix.isEmpty else {
+    return baseURL
+  }
+
+  if let url = URL(string: baseURL), var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+    let currentPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    if currentPath.isEmpty {
+      components.path = "/\(suffix)"
+    } else if currentPath != suffix && !currentPath.hasSuffix("/\(suffix)") {
+      components.path = "/\(currentPath)/\(suffix)"
+    }
+    return components.url?.absoluteString ?? appendPathString(suffix, to: baseURL)
+  }
+
+  return appendPathString(suffix, to: baseURL)
+}
+
+private func appendPathString(_ path: String, to baseURL: String) -> String {
+  var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+  while base.hasSuffix("/") {
+    base.removeLast()
+  }
+  return "\(base)/\(path)"
 }
 
 private func nonEmpty(_ value: String?) -> String? {

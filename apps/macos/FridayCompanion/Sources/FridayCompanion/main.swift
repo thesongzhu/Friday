@@ -27,6 +27,7 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
   private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let menu = NSMenu()
   private let titleMenuItem = NSMenuItem()
+  private let controlPageMenuItem = NSMenuItem()
   private let updateMenuItem = NSMenuItem()
   private let overlayMenuItem = NSMenuItem()
   private let safeModeMenuItem = NSMenuItem()
@@ -115,6 +116,12 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
     titleMenuItem.title = "Friday Companion"
     titleMenuItem.isEnabled = false
     menu.addItem(titleMenuItem)
+
+    controlPageMenuItem.title = "Open Operator Console"
+    controlPageMenuItem.action = #selector(openControlPageFromMenu)
+    controlPageMenuItem.target = self
+    controlPageMenuItem.keyEquivalent = "o"
+    menu.addItem(controlPageMenuItem)
 
     updateMenuItem.title = "Check for Updates..."
     updateMenuItem.action = #selector(checkForUpdatesFromMenu)
@@ -246,6 +253,10 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
 
   @objc private func checkForUpdatesFromMenu() {
     updater.checkForUpdates(nil)
+  }
+
+  @objc private func openControlPageFromMenu() {
+    _ = openURL(config.controlPageURL)
   }
 
   @objc private func toggleSafeModeFromMenu() {

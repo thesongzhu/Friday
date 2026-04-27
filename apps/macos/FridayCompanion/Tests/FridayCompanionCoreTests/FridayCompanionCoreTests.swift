@@ -25,11 +25,32 @@ func configParsesExpectedEnvironment() throws {
   #expect(config.socketPath == "/tmp/friday.sock")
   #expect(config.workspaceRoot == "/tmp/friday")
   #expect(config.runtimeKind == "swift_app")
+  #expect(config.controlPageURL == "http://127.0.0.1:3141/command-center")
   #expect(config.overlayHotkey.displayString == "cmd+shift+space")
   #expect(config.panicHotkey.displayString == "cmd+shift+escape")
   #expect(config.heartbeatIntervalMs == 9000)
   #expect(config.notificationDatabasePath == "/tmp/friday-usernoted.db")
   #expect(config.notificationLimit == 8)
+}
+
+@Test
+func configBuildsControlPageUrlFromPublicBaseUrl() throws {
+  let config = try CompanionConfig.fromEnvironment([
+    "FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN": "secret-token",
+    "FRIDAY_PUBLIC_APP_BASE_URL": "https://friday.example/app/",
+  ])
+
+  #expect(config.controlPageURL == "https://friday.example/app/command-center")
+}
+
+@Test
+func configUsesExplicitControlPageUrl() throws {
+  let config = try CompanionConfig.fromEnvironment([
+    "FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN": "secret-token",
+    "FRIDAY_CONTROL_PAGE_URL": "https://friday.example/operator",
+  ])
+
+  #expect(config.controlPageURL == "https://friday.example/operator")
 }
 
 @Test
