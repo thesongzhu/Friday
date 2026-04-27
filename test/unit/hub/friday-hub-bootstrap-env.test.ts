@@ -164,14 +164,14 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.allowLocalBypassLogin).toBe(true);
   });
 
-  it("inherits allowLocalBypassLogin from passwordless local in dev mode", () => {
+  it("enables allowLocalBypassLogin by default in dev mode", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
     expect(resolved.allowLocalBypassLogin).toBe(true);
   });
 
-  it("disables allowLocalBypassLogin in production", () => {
+  it("enables allowLocalBypassLogin by default in production", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), { NODE_ENV: "production" });
-    expect(resolved.allowLocalBypassLogin).toBe(false);
+    expect(resolved.allowLocalBypassLogin).toBe(true);
   });
 
   it("defaults allowPrivateNetwork=false in dev mode", () => {

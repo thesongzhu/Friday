@@ -2,19 +2,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("local bootstrap auth gate", () => {
-  it("routes first-run auth failures into passphrase setup instead of exposing backend errors", () => {
+  it("routes first-run auth failures into local session recovery instead of passphrase setup", () => {
     const routerSource = readFileSync("ui/src/router.tsx", "utf8");
 
     expect(routerSource).toContain("getBootstrapStatus");
-    expect(routerSource).toContain("bootstrapLocalPassphrase");
-    expect(routerSource).toContain("LocalBootstrapGate");
-    expect(routerSource).toContain("LocalUnlockGate");
-    expect(routerSource).toContain("formatLocalAuthFormError");
+    expect(routerSource).toContain("LocalSessionUnavailableGate");
     expect(routerSource).toContain("bootstrapStatusQuery.isError");
-    expect(routerSource).toContain("先设置本地安全口令");
-    expect(routerSource).toContain("解锁并继续");
-    expect(routerSource).toContain("需要重新解锁本地 Friday");
+    expect(routerSource).toContain("正在恢复本地会话");
     expect(routerSource).toContain("Friday 后台还没连上");
+    expect(routerSource).not.toContain("bootstrapLocalPassphrase");
+    expect(routerSource).not.toContain("LocalBootstrapGate");
+    expect(routerSource).not.toContain("LocalUnlockGate");
+    expect(routerSource).not.toContain("先设置本地安全口令");
+    expect(routerSource).not.toContain("Set a local security passphrase");
+    expect(routerSource).not.toContain("解锁并继续");
     expect(routerSource).not.toContain("后端返回：");
     expect(routerSource).not.toContain("Backend said:");
     expect(routerSource).not.toContain("Local session not connected");

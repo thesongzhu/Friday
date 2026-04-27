@@ -1,7 +1,6 @@
 import { apiClient } from "./client";
 import { authStorage } from "@/lib/storage/auth-storage";
 import type {
-  AuthBootstrapResponse,
   AuthBootstrapStatusResponse,
   LoginResponse,
   MeResponse,
@@ -32,13 +31,6 @@ export async function fetchMe(): Promise<MeResponse> {
 
 export async function getBootstrapStatus(): Promise<AuthBootstrapStatusResponse> {
   return apiClient.get<AuthBootstrapStatusResponse>("/v1/auth/bootstrap/status");
-}
-
-export async function bootstrapLocalPassphrase(passphrase: string): Promise<AuthBootstrapResponse> {
-  return apiClient.post<{ passphrase: string }, AuthBootstrapResponse>(
-    "/v1/auth/bootstrap/local-passphrase",
-    { passphrase },
-  );
 }
 
 export async function logout(): Promise<void> {

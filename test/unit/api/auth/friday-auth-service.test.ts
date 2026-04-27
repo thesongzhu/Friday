@@ -86,6 +86,25 @@ describe("FridayAuthService", () => {
     expect(status.allowLocalBypassLogin).toBe(false);
   });
 
+  it("does not require bootstrap when localhost bypass is enabled", () => {
+    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
+    const bypassService = createFridayAuthService({
+      db,
+      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
+      nowIso: () => NOW,
+      tokenSecret: TOKEN_SECRET,
+      accessTokenTtlSec: 900,
+      refreshTokenTtlSec: 604800,
+      allowLocalBypassLogin: true,
+    });
+
+    const status = bypassService.getBootstrapStatus();
+    expect(status.bootstrapRequired).toBe(false);
+    expect(status.allowPasswordlessLocalLogin).toBe(false);
+    expect(status.allowLocalBypassLogin).toBe(true);
+    expect(bypassService.login({ local: true }, "127.0.0.1").user.id).toBe("test-user");
+  });
+
   it("bootstraps local passphrase from localhost exactly once", () => {
     db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
 

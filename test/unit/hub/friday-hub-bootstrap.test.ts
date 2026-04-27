@@ -208,7 +208,7 @@ describe("createFridayHub", () => {
     expect(result.stderr).toContain("not found");
   }, 20_000);
 
-  it("does not allow local bypass login from remote IP (allowLocalBypassLogin defaults to false)", async () => {
+  it("does not allow local bypass login from remote IP", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       hub = await createIsolatedHub();

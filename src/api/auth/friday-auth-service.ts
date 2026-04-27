@@ -391,7 +391,8 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       const bootstrapRequired = Boolean(
         localUser &&
         !localUser.password_hash &&
-        !allowPasswordless,
+        !allowPasswordless &&
+        !allowLocalBypassLogin,
       );
       return {
         bootstrapRequired,

@@ -670,6 +670,13 @@ function fridayMessagesContainOcrIntent(messages: readonly FridayAgentMessage[])
 /**
  * Resolves hub configuration with precedence: explicit config > env var > default.
  */
+function resolveFridayAllowLocalBypassLogin(env: NodeJS.ProcessEnv): boolean {
+  const explicit = (env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
+  return explicit
+    ? ["1", "true", "yes", "on"].includes(explicit)
+    : true;
+}
+
 export function resolveFridayHubConfig(
   input: FridayHubConfig,
   env: NodeJS.ProcessEnv = process.env,
@@ -696,10 +703,7 @@ export function resolveFridayHubConfig(
   const isProduction = env.NODE_ENV === "production";
   const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
   const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
-  const localBypassExplicit = (env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
-  const allowLocalBypassLogin = localBypassExplicit
-    ? ["1", "true", "yes", "on"].includes(localBypassExplicit)
-    : allowPasswordlessLocalLogin;
+  const allowLocalBypassLogin = resolveFridayAllowLocalBypassLogin(env);
 
   const serverVersion = input.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION;
 
@@ -845,7 +849,7 @@ export async function createFridayHub(
       });
       // Always warn when creating passwordless admin (password_hash = NULL)
       console.warn(
-        "[friday][SECURITY] Created default admin user (admin@friday.dev) with NO password — set a passphrase via POST /v1/auth/bootstrap/local-passphrase or the setup wizard before exposing this instance to a network.",
+        "[friday][SECURITY] Created default admin user (admin@friday.dev) with localhost-only local sign-in enabled; do not expose this instance without network or upstream auth controls.",
       );
     }
   }
@@ -904,10 +908,7 @@ export async function createFridayHub(
   const isProduction = process.env.NODE_ENV === "production";
   const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
   const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
-  const localBypassExplicit2 = (process.env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
-  const allowLocalBypassLogin = localBypassExplicit2
-    ? ["1", "true", "yes", "on"].includes(localBypassExplicit2)
-    : allowPasswordlessLocalLogin;
+  const allowLocalBypassLogin = resolveFridayAllowLocalBypassLogin(process.env);
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";
