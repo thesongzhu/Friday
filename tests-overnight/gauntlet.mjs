@@ -31,9 +31,28 @@ import { runPhaseU } from "./phases/phase-U-grant-audit.mjs";
 import { runPhaseV } from "./phases/phase-V-ssrf.mjs";
 import { runPhaseW } from "./phases/phase-W-token-expiry.mjs";
 import { runPhaseX } from "./phases/phase-X-ui-wizard.mjs";
+import { runPhaseY } from "./phases/phase-Y-skill-auto-acquisition.mjs";
+import { runPhaseZ } from "./phases/phase-Z-adjust-fidelity.mjs";
+import { runPhaseAA } from "./phases/phase-AA-self-upgrade.mjs";
+import { runPhaseBB } from "./phases/phase-BB-memory-long.mjs";
+import { runPhaseCC } from "./phases/phase-CC-self-heal-long.mjs";
+import { runPhaseDD } from "./phases/phase-DD-workflow-long.mjs";
+import { runPhaseEE } from "./phases/phase-EE-context-compression.mjs";
+import { runPhaseFF } from "./phases/phase-FF-cost-accuracy.mjs";
+import { runPhaseGG } from "./phases/phase-GG-cron-precision.mjs";
+import { runPhaseHH } from "./phases/phase-HH-multi-tenant.mjs";
+import { runPhaseII } from "./phases/phase-II-cross-channel.mjs";
+import { runPhaseJJ } from "./phases/phase-JJ-voice-loop.mjs";
+import { runPhaseKK } from "./phases/phase-KK-mcp-restart.mjs";
+import { runPhaseLL } from "./phases/phase-LL-backup-restore.mjs";
+import { runPhaseMM } from "./phases/phase-MM-provider-failover.mjs";
+import { runPhaseNN } from "./phases/phase-NN-permission-propagation.mjs";
 
 function expectedPhases() {
-  const all = ["A","B","C1","C2","D1","D2","D3","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X"];
+  const all = [
+    "A","B","C1","C2","D1","D2","D3","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X",
+    "Y","Z","AA","BB","CC","DD","EE","FF","GG","HH","II","JJ","KK","LL","MM","NN",
+  ];
   if (process.env.FAST_MODE === "1") return all.filter(x => x !== "J");
   return all;
 }
@@ -127,6 +146,13 @@ async function safe(label, fn) {
     await safe("M", () => runPhaseM(ctx));
     await safe("N", () => runPhaseN(ctx));
     await safe("O", () => runPhaseO(ctx));
+    // New phases that piggy-back on the parallel cluster (per
+    // .friday/health/new-phases-spec.md §3). These don't need quiet windows
+    // and are independent of D-restart timing, so they run alongside B.
+    // Wave 1 ships these as stubs that SKIP fast; Wave 2 (P0) wires real impl.
+    await safe("Y", () => runPhaseY(ctx));
+    await safe("Z", () => runPhaseZ(ctx));
+    await safe("AA", () => runPhaseAA(ctx));
   })();
 
   // Wait for B + parallel cluster to finish before next quiet-window restart
@@ -149,6 +175,19 @@ async function safe(label, fn) {
   // V SSRF
   await safe("V", () => runPhaseV(ctx));
 
+  // Post-V parallel block (per spec §3): each new phase pokes a distinct
+  // subsystem so they don't interfere; running them in parallel cuts wall
+  // clock significantly. Wave 1 stubs SKIP fast.
+  await Promise.all([
+    safe("BB", () => runPhaseBB(ctx)),
+    safe("CC", () => runPhaseCC(ctx)),
+    safe("DD", () => runPhaseDD(ctx)),
+    safe("EE", () => runPhaseEE(ctx)),
+    safe("FF", () => runPhaseFF(ctx)),
+    safe("HH", () => runPhaseHH(ctx)),
+  ]);
+  log(`[orch] elapsed=${elapsed().toFixed(0)}s — BB/CC/DD/EE/FF/HH parallel block done`);
+
   // C2 (second concurrent burst)
   await safe("C2", () => runPhaseC(ctx, "C2"));
 
@@ -158,10 +197,22 @@ async function safe(label, fn) {
   // D3 — quiet-window restart after W
   await safe("D3", () => runPhaseD(ctx, "D3"));
 
-  // R rate-limit at T+7:30, after everything else
+  // Serial post-D3 block (per spec §3): GG runs concurrent load that would
+  // skew C2 percentiles if interleaved; II/JJ/KK/LL/MM/NN touch transport
+  // (channels, voice, MCP, restart, swap, permissions) and want clean
+  // isolation per phase. Wave 1 stubs SKIP fast.
+  await safe("GG", () => runPhaseGG(ctx));
+  await safe("II", () => runPhaseII(ctx));
+  await safe("JJ", () => runPhaseJJ(ctx));
+  await safe("KK", () => runPhaseKK(ctx));
+  await safe("LL", () => runPhaseLL(ctx));
+  await safe("MM", () => runPhaseMM(ctx));
+  await safe("NN", () => runPhaseNN(ctx));
+
+  // R rate-limit at the end so its bursts don't perturb earlier latency probes
   await safe("R", () => runPhaseR(ctx));
 
-  // X UI wizard at T+7:30 — runs against a separate Friday on PORT_UI
+  // X UI wizard last — runs against a separate Friday on PORT_UI
   await safe("X", () => runPhaseX(ctx));
 
   // Stop monitors
