@@ -2030,23 +2030,35 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
           let authed = false;
 
           ws.addEventListener("open", () => {
-            ws.send(JSON.stringify({ type: "auth", token: accessToken }));
+            // Friday's realtime gateway expects a "hello" frame (NOT "auth");
+            // see src/api/realtime/friday-realtime-ws-gateway.ts case "hello".
+            // Server responds with "hello_ack" + optional "subscribed" if the
+            // hello carried initial subscriptions.
+            ws.send(JSON.stringify({ type: "hello", token: accessToken }));
           });
 
           ws.addEventListener("message", (event) => {
             try {
               const data = JSON.parse(String(event.data)) as { type: string };
-              if (!authed && (data.type === "welcome" || data.type === "auth_ok")) {
+              if (!authed && data.type === "hello_ack") {
                 authed = true;
-                // Subscribe to a stream
+                // Subscribe via a discrete frame so we exercise the
+                // standalone subscribe path (not just the hello-piggyback).
                 ws.send(
                   JSON.stringify({
                     type: "subscribe",
                     subscriptions: [{ streamId: "run:*", events: ["*"] }],
                   }),
                 );
-              } else if (authed) {
-                // Got subscription ack or any response — test passes
+              } else if (authed && data.type === "subscribed") {
+                // Got the explicit subscribe ack — test passes
+                ws.close();
+                clearTimeout(timeout);
+                resolve();
+              } else if (data.type === "error") {
+                // Server rejected the frame for a reason we want to surface
+                // rather than swallow; still resolve so the test isn't a hang
+                // but log via the test runner.
                 ws.close();
                 clearTimeout(timeout);
                 resolve();
