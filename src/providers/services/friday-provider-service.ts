@@ -1560,7 +1560,11 @@ export function createFridayProviderService(
                   : capabilityProbePrompt(capability),
               },
             ],
-            max_tokens: 16,
+            // Reasoning-first models (e.g. deepseek-v4-pro) burn budget on
+            // reasoning_content before producing the user-visible content; a
+            // 16-token cap leaves them with finish_reason="length" and an empty
+            // content string, failing every probe regardless of capability.
+            max_tokens: 256,
             temperature: 0,
           };
       const response = await fetchCapabilityProbe(endpoint, {
@@ -1600,7 +1604,9 @@ export function createFridayProviderService(
                   },
                 ]
               : capabilityProbePrompt(capability),
-            max_output_tokens: 32,
+            // Match the openai-completions probe budget so reasoning-first
+            // models can finish reasoning + emit the expected short answer.
+            max_output_tokens: 256,
             temperature: 0,
           };
       const response = await fetchCapabilityProbe(endpoint, {

@@ -109,7 +109,7 @@ export const FRIDAY_PROVIDER_PRESETS: Record<FridayProviderKind, FridayProviderP
   xiaomi: hostedPreset("xiaomi", "openai-responses", "bearer-token", "", "china"),
   zai: hostedPreset("zai", "openai-responses", "bearer-token", "https://api.z.ai", "china"),
   glm: hostedPreset("glm", "openai-responses", "bearer-token", "https://open.bigmodel.cn/api/paas/v4", "china"),
-  deepseek: hostedPreset("deepseek", "openai-responses", "bearer-token", "https://api.deepseek.com", "china"),
+  deepseek: hostedPreset("deepseek", "openai-completions", "bearer-token", "https://api.deepseek.com", "china"),
   bedrock: hostedPreset("bedrock", "openai-responses", "bearer-token", ""),
   "cloudflare-ai-gateway": hostedPreset("cloudflare-ai-gateway", "openai-responses", "bearer-token", ""),
   "openai-compatible": selfHostedPreset("openai-compatible", "openai-responses", "bearer-token", "", "custom"),
