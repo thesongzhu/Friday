@@ -1,16 +1,16 @@
 # Friday Overnight Stability Gauntlet
 
-Single long-running test that exercises every README-claimed capability of Friday and saves a detailed report. Cannot be marked complete until the report is written **and** the completion gate passes.
+Single long-running test harness for Friday stability and release-hardening coverage. The current orchestrator tracks 43 phase markers: the original 27 phases (A..X, including split C/D markers) plus 16 Wave 1 expansion markers (Y/Z/AA/BB/CC/DD/EE/FF/GG/HH/II/JJ/KK/LL/MM/NN). Several expansion phases are intentional stubs until their real Wave 2-5 implementations land, so a complete marker set is not the same thing as full behavioral coverage.
 
 ## Run
 
-Full gauntlet (~7.5 hours):
+Full gauntlet (~7.5 hours for the original long waits; longer once all expansion phases are real):
 
 ```bash
 OPENAI_API_KEY=sk-... node tests-overnight/gauntlet.mjs
 ```
 
-Fast smoke (~10 minutes — verifies all phase scripts wire up; does NOT fulfil the user's "real long-running" requirement):
+Fast smoke (~10 minutes — verifies phase scripts wire up; does NOT fulfil the real long-running stability requirement):
 
 ```bash
 FAST_MODE=1 OPENAI_API_KEY=sk-... node tests-overnight/gauntlet.mjs
@@ -61,10 +61,12 @@ to read or write `/tmp` fixture paths.
 
 The orchestrator only prints `STABILITY GAUNTLET: COMPLETE` when:
 
-1. All 27 expected phase markers (A,B,C1,C2,D1,D2,D3,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X) are present.
+1. All 43 expected phase markers are present in full mode: A,B,C1,C2,D1,D2,D3,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,BB,CC,DD,EE,FF,GG,HH,II,JJ,KK,LL,MM,NN. Fast mode omits J and expects 42 markers.
 2. Every marker's `finishedAt > startedAt`.
 3. Both Layer-1 monitor CSVs have ≥1 sample row.
 4. The evidence sha256 (over the sorted concat of every phase's evidence-file hashes) is present in the report's last line as `<!-- gauntlet-evidence-sha256: ... -->`.
+
+Stub expansion phases currently finish as `SKIP` with an explicit "not yet implemented" marker. Before claiming full stress coverage, replace those stubs with real checks and run a non-FAST gauntlet.
 
 If any of those fail the orchestrator exits code 2 and the report header gets `# INCOMPLETE — see infrastructure-failure list`.
 

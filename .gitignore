@@ -30,6 +30,7 @@ pnpm-debug.log*
 .friday/
 managed-skills/**/conversion.report.json
 managed-skills/e2e-date-skill-*/
+managed-skills/stab-skill/
 reports/enablement/artifacts/*
 !reports/enablement/artifacts/.gitkeep
 artifacts/
