@@ -780,7 +780,7 @@ describe("Setup Wizard E2E", () => {
           if (action === "poll") {
             return new Response(JSON.stringify({
               client_id: "cli_feishu_qr_test",
-              client_secret: "generated-feishu-secret",
+              client_secret: "generated-feishu-secret", // pragma: allowlist secret
               user_info: { open_id: "ou_owner" },
             }), {
               status: 200,
@@ -923,7 +923,7 @@ describe("Setup Wizard E2E", () => {
           if (action === "poll") {
             return new Response(JSON.stringify({
               client_id: "cli_feishu_dm_fail",
-              client_secret: "generated-feishu-secret-dm-fail",
+              client_secret: "generated-feishu-secret-dm-fail", // pragma: allowlist secret
               user_info: { open_id: "ou_owner_dm_fail" },
             }), {
               status: 200,
