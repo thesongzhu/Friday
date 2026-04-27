@@ -15,6 +15,8 @@
  *   - https://open.larksuite.com/document/server-docs/overview
  */
 
+import * as Lark from "@larksuiteoapi/node-sdk";
+import type { WSClient as LarkWsClient } from "@larksuiteoapi/node-sdk";
 import { FridayDomainError } from "#errors";
 import type {
   FridayChannelMessage,
@@ -38,11 +40,9 @@ const LARK_API_BASE = "https://open.larksuite.com";
 
 const TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal";
 const SEND_MESSAGE_PATH = "/open-apis/im/v1/messages";
-const WS_ENDPOINT_PATH = "/open-apis/callback/ws/endpoint";
 
 const TOKEN_REFRESH_BUFFER_MS = 60_000;
-const WS_RECONNECT_DELAY_MS = 5_000;
-const WS_PING_INTERVAL_MS = 30_000;
+const WS_READY_TIMEOUT_MS = 15_000;
 
 // ─── Internal Types ───
 
@@ -71,9 +71,9 @@ export interface LarkChannelDeps {
 export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChannelPlugin {
   let config: LarkConfig | null = null;
   let token: LarkAccessToken | null = null;
-  let ws: WebSocket | null = null;
-  let pingTimer: ReturnType<typeof setInterval> | null = null;
-  let onMessage: ((msg: FridayChannelMessage) => void) | null = null;
+  let wsClient: LarkWsClient | null = null;
+  let connectionStatus: FridayChannelStatus = "disconnected";
+  let lastConnectionError: string | undefined;
   let stopped = false;
   const webhookRelay = deps.webhookRelay;
 
@@ -120,8 +120,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
   }
 
   function parseMessageEvent(event: Record<string, unknown>): FridayChannelMessage | null {
-    const eventData = event.event as Record<string, unknown> | undefined;
-    if (!eventData) return null;
+    const eventData = (event.event as Record<string, unknown> | undefined) ?? event;
 
     const message = eventData.message as Record<string, unknown> | undefined;
     const sender = eventData.sender as Record<string, unknown> | undefined;
@@ -175,117 +174,79 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     };
   }
 
-  async function fetchWsEndpoint(): Promise<string> {
-    const accessToken = await ensureToken();
-    const response = await fetch(`${apiBase()}${WS_ENDPOINT_PATH}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
+  async function connectWebSocketWithSdk(eventHandler: (rawEvent: unknown) => void): Promise<void> {
+    if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Lark channel not initialized", { httpStatus: 503 });
+    const larkConfig = config;
 
-    if (!response.ok) {
-      throw new FridayDomainError("INTERNAL_ERROR", `Lark WS endpoint fetch failed: ${response.status}`, { httpStatus: 500 });
-    }
+    connectionStatus = "connecting";
+    lastConnectionError = undefined;
 
-    const data = (await response.json()) as {
-      code: number;
-      data?: { URL?: string; url?: string };
-    };
+    const readyTimeoutMs = Math.max(
+      1_000,
+      Number.parseInt(process.env.FRIDAY_LARK_WS_READY_TIMEOUT_MS ?? String(WS_READY_TIMEOUT_MS), 10) || WS_READY_TIMEOUT_MS,
+    );
 
-    const wsUrl = data.data?.URL ?? data.data?.url;
-    if (!wsUrl) {
-      throw new FridayDomainError("INTERNAL_ERROR", "Lark WS endpoint returned no URL", { httpStatus: 500 });
-    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        callback();
+      };
+      const fail = (message: string): void => {
+        connectionStatus = "error";
+        lastConnectionError = message;
+        wsClient?.close({ force: true });
+        wsClient = null;
+        settle(() => reject(new FridayDomainError("INTERNAL_ERROR", message, { httpStatus: 500 })));
+      };
+      const timer = setTimeout(() => {
+        fail(
+          "Lark SDK WebSocket did not become ready. Check that the Feishu app uses long-connection event subscription and has im.message.receive_v1 enabled.",
+        );
+      }, readyTimeoutMs);
 
-    return wsUrl;
-  }
+      const client = new Lark.WSClient({
+        appId: larkConfig.appId,
+        appSecret: larkConfig.appSecret,
+        domain: larkConfig.useFeishu ? Lark.Domain.Feishu : Lark.Domain.Lark,
+        loggerLevel: Lark.LoggerLevel.warn,
+        source: "friday",
+        autoReconnect: true,
+        onReady: () => {
+          connectionStatus = "connected";
+          lastConnectionError = undefined;
+          settle(resolve);
+        },
+        onReconnecting: () => {
+          connectionStatus = "connecting";
+        },
+        onReconnected: () => {
+          connectionStatus = "connected";
+          lastConnectionError = undefined;
+        },
+        onError: (error) => {
+          fail(`Lark SDK WebSocket failed: ${error.message}`);
+        },
+      });
 
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      wsClient = client;
 
-  function scheduleReconnect(delayMs = WS_RECONNECT_DELAY_MS): void {
-    if (stopped || reconnectTimer) return;
+      const eventDispatcher = new Lark.EventDispatcher({
+        verificationToken: larkConfig.verificationToken,
+        encryptKey: larkConfig.encryptKey,
+        loggerLevel: Lark.LoggerLevel.warn,
+      }).register({
+        "im.message.receive_v1": async (data: unknown) => {
+          eventHandler({ event: data });
+        },
+      });
 
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      if (stopped) return;
-
-      fetchWsEndpoint()
-        .then((url) => {
-          if (stopped) return;
-          connectWebSocket(url);
-        })
-        .catch(() => {
-          if (!stopped) {
-            scheduleReconnect(WS_RECONNECT_DELAY_MS * 2);
-          }
-        });
-    }, delayMs);
-  }
-
-  function connectWebSocket(wsUrl: string): void {
-    if (stopped) return;
-
-    const socket = new WebSocket(wsUrl);
-    ws = socket;
-
-    socket.addEventListener("message", (event) => {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(String(event.data)) as Record<string, unknown>;
-      } catch (err) {
-      console.warn("[friday][lark-channel] operation failed:", err instanceof Error ? err.message : String(err));
-        return;
-      }
-
-      const type = data.type as string | undefined;
-
-      if (type === "pong") {
-        // Ping-pong keepalive response
-        return;
-      }
-
-      // Event envelope
-      const header = data.header as Record<string, unknown> | undefined;
-      const eventType = header?.event_type as string | undefined;
-
-      if (eventType === "im.message.receive_v1") {
-        const msg = parseMessageEvent(data);
-        if (msg && onMessage) {
-          onMessage(msg);
-        }
-      }
-    });
-
-    socket.addEventListener("open", () => {
-      // Start ping timer
-      if (pingTimer) clearInterval(pingTimer);
-      pingTimer = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" }));
-        }
-      }, WS_PING_INTERVAL_MS);
-    });
-
-    socket.addEventListener("close", () => {
-      // Ignore stale socket close events
-      if (ws !== socket) return;
-      ws = null;
-
-      if (pingTimer) {
-        clearInterval(pingTimer);
-        pingTimer = null;
-      }
-
-      if (!stopped) {
-        scheduleReconnect();
-      }
-    });
-
-    socket.addEventListener("error", () => {
-      // Will trigger close event, which handles reconnection
+      void client.start({ eventDispatcher }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        fail(`Lark SDK WebSocket failed: ${message}`);
+      });
     });
   }
 
@@ -311,9 +272,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
         return webhookRelay?.isListening() ? "connected" : "disconnected";
       }
       if (stopped) return "disconnected";
-      if (ws && ws.readyState === WebSocket.OPEN) return "connected";
-      if (ws) return "connecting";
-      return "disconnected";
+      return connectionStatus;
     },
     diagnostics() {
       return {
@@ -321,6 +280,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
         useFeishu: config?.useFeishu ?? false,
         receiveMode: config?.receiveMode ?? "websocket",
         webhookListening: webhookRelay?.isListening() ?? false,
+        sdkWebSocket: config?.receiveMode !== "webhook",
+        lastConnectionError,
       };
     },
   };
@@ -330,15 +291,15 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
   const lifecycleAdapter: FridayChannelLifecycleAdapter = {
     async connect(eventHandler: (rawEvent: unknown) => void) {
       if (!config) throw new FridayDomainError("NOT_INITIALIZED", "Lark channel not initialized", { httpStatus: 503 });
-      onMessage = null; // will be set by start() caller
       stopped = false;
+      connectionStatus = "connecting";
+      lastConnectionError = undefined;
 
       try {
         await refreshToken();
 
         if (config.receiveMode === "websocket") {
-          const wsUrl = await fetchWsEndpoint();
-          connectWebSocket(wsUrl);
+          await connectWebSocketWithSdk(eventHandler);
         } else {
           if (!webhookRelay) {
             throw new FridayDomainError("VALIDATION_ERROR", "Lark webhook mode requires webhookRelay dependency", { httpStatus: 400 });
@@ -348,12 +309,13 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
           await webhookRelay.start((event) => {
             eventHandler(event);
           });
+          connectionStatus = "connected";
         }
       } catch (error) {
         stopped = true;
-        if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
-        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-        if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
+        connectionStatus = "error";
+        lastConnectionError = error instanceof Error ? error.message : String(error);
+        if (wsClient) { try { wsClient.close({ force: true }); } catch { /* ignore */ } wsClient = null; }
         if (webhookRelay?.isListening()) {
           await webhookRelay.stop().catch(() => { /* ignore cleanup error */ });
         }
@@ -362,11 +324,10 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     },
     async disconnect() {
       stopped = true;
-      onMessage = null;
+      connectionStatus = "disconnected";
+      lastConnectionError = undefined;
 
-      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
-      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-      if (ws) { ws.close(); ws = null; }
+      if (wsClient) { wsClient.close({ force: true }); wsClient = null; }
       if (webhookRelay?.isListening()) {
         await webhookRelay.stop();
       }
@@ -418,7 +379,6 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
         const msg = inboundAdapter.normalize(event);
         if (msg) handler(msg);
       });
-      onMessage = handler;
     },
 
     async stop() {

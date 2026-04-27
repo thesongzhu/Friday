@@ -1,10 +1,11 @@
 import { authStorage } from "@/lib/storage/auth-storage";
 import { recordClientApiError, recordClientApiEvent } from "@/lib/diagnostics/client-stability";
-import { ApiError, AuthExpiredError, type ApiEnvelope, type RefreshResponse } from "./types";
+import { ApiError, AuthExpiredError, type ApiEnvelope, type LoginResponse, type MeResponse, type RefreshResponse } from "./types";
 
 // ─── Single-flight refresh guard ───
 
 let refreshPromise: Promise<void> | null = null;
+let localLoginPromise: Promise<void> | null = null;
 
 function buildInvalidResponseError(path: string, res: Response, body: string): ApiError {
   const contentType = res.headers.get("content-type") ?? "unknown content-type";
@@ -64,6 +65,47 @@ async function doRefresh(): Promise<void> {
   authStorage.setTokens(envelope.data.accessToken, envelope.data.refreshToken);
 }
 
+async function establishLocalIdentity(): Promise<boolean> {
+  const res = await fetch("/v1/auth/me");
+  if (!res.ok) {
+    return false;
+  }
+
+  const envelope = await readEnvelope<MeResponse>("/v1/auth/me", res);
+  if (!envelope.ok) {
+    return false;
+  }
+
+  authStorage.setUser(envelope.data.user);
+  return true;
+}
+
+async function doLocalLogin(): Promise<void> {
+  if (await establishLocalIdentity()) {
+    return;
+  }
+
+  const res = await fetch("/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ local: true }),
+  });
+
+  if (!res.ok) {
+    authStorage.clear();
+    throw new AuthExpiredError();
+  }
+
+  const envelope = await readEnvelope<LoginResponse>("/v1/auth/login", res);
+  if (!envelope.ok) {
+    authStorage.clear();
+    throw new AuthExpiredError();
+  }
+
+  authStorage.setTokens(envelope.data.accessToken, envelope.data.refreshToken);
+  authStorage.setUser(envelope.data.user);
+}
+
 async function refreshSession(): Promise<void> {
   if (!refreshPromise) {
     refreshPromise = doRefresh().finally(() => {
@@ -71,6 +113,19 @@ async function refreshSession(): Promise<void> {
     });
   }
   return refreshPromise;
+}
+
+async function establishLocalSession(): Promise<void> {
+  if (!localLoginPromise) {
+    localLoginPromise = doLocalLogin().finally(() => {
+      localLoginPromise = null;
+    });
+  }
+  return localLoginPromise;
+}
+
+function canRecoverWithLocalSession(path: string): boolean {
+  return !path.startsWith("/v1/auth/");
 }
 
 // ─── Core fetch wrapper ───
@@ -108,10 +163,20 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, retry = true): 
     );
   }
 
-  // Handle 401 with retry
-  if (res.status === 401 && token && retry) {
+  // Handle 401 with retry. Local Friday should not surface login as a setup step:
+  // if a restart invalidates in-memory credentials, silently re-establish the
+  // localhost session and replay the original API call.
+  if (res.status === 401 && retry && canRecoverWithLocalSession(path)) {
     try {
-      await refreshSession();
+      if (token) {
+        try {
+          await refreshSession();
+        } catch {
+          await establishLocalSession();
+        }
+      } else {
+        await establishLocalSession();
+      }
     } catch {
       throw new AuthExpiredError();
     }

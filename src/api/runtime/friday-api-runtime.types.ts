@@ -141,6 +141,20 @@ export interface CreateFridayApiRuntimeDeps {
   supportedChannelKinds?: string[];
   /** Channel kinds currently enabled in runtime config or currently running in runtime state. */
   enabledChannelKinds?: string[] | (() => string[]);
+  /** Optional hot-activation hook used by setup after saving channel config. */
+  activateSavedChannels?: () =>
+    | Promise<{
+      startedKinds: string[];
+      failed: Array<{ kind: string; message: string }>;
+      restartRequired: boolean;
+      warnings: string[];
+    }>
+    | {
+      startedKinds: string[];
+      failed: Array<{ kind: string; message: string }>;
+      restartRequired: boolean;
+      warnings: string[];
+    };
   serverVersion?: string;
   /** The host the HTTP server is bound to, used to detect if a restart is needed. */
   serverHost?: string;

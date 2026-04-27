@@ -26,11 +26,11 @@ export function describeSetupStatusFailure(
 
   if (error instanceof AuthExpiredError) {
     return {
-      title: "Friday session expired before setup completed",
-      detail: `The UI at ${currentOrigin} reached the setup route, but the local session expired before setup status could be loaded.`,
+      title: "Friday local connection reset before setup completed",
+      detail: `The UI at ${currentOrigin} reached the setup route, but the local Friday connection reset before setup status could be loaded.`,
       actions: [
-        "Reload the page and let Friday restore the local session again.",
-        "If you expect no-sign-in local mode, restart Friday with `NODE_ENV=development` and without `FRIDAY_TOKEN_SECRET`.",
+        "Reload the page and let Friday reconnect to the local service.",
+        "If this keeps happening, confirm this page is opened from the local Friday entrypoint and `FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN` is not set to false.",
       ],
     };
   }
@@ -38,11 +38,11 @@ export function describeSetupStatusFailure(
   if (error instanceof ApiError) {
     if (error.statusCode === 401) {
       return {
-        title: "Setup status requires a valid local session",
+        title: "Setup status requires the local Friday connection",
         detail: `The UI at ${currentOrigin} reached \`/v1/setup/status\`, but the Friday API rejected the request as unauthorized.`,
         actions: [
-          "Reload this origin so Friday can restore the local session, or reopen the canonical local entrypoint on the API port.",
-          "If you expect no-sign-in local mode, restart Friday with `NODE_ENV=development` and no explicit `FRIDAY_TOKEN_SECRET`.",
+          "Reload this origin so Friday can reconnect locally, or reopen the canonical local entrypoint on the API port.",
+          "If you expect no-sign-in local mode, confirm `FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN` is not set to false.",
         ],
       };
     }
@@ -50,10 +50,10 @@ export function describeSetupStatusFailure(
     if (error.statusCode === 403) {
       return {
         title: "Setup status is authenticated but forbidden",
-        detail: `The UI at ${currentOrigin} reached \`/v1/setup/status\`, but the current session does not have permission to read setup state.`,
+        detail: `The UI at ${currentOrigin} reached \`/v1/setup/status\`, but the current local identity does not have permission to read setup state.`,
         actions: [
-          "Use an admin-capable local session for setup and onboarding.",
-          "If this is an embedded or wrapper UI, verify it is forwarding the same authenticated session to the Friday API.",
+          "Use an admin-capable local Friday identity for setup and onboarding.",
+          "If this is an embedded or wrapper UI, verify it is opening the same local Friday API origin.",
         ],
       };
     }

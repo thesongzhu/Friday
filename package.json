@@ -163,6 +163,7 @@
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/noto-serif-sc": "^5.2.9",
+    "@larksuiteoapi/node-sdk": "^1.62.0",
     "@mozilla/readability": "^0.6.0",
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.3",

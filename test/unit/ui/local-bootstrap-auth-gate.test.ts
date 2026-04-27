@@ -8,7 +8,7 @@ describe("local bootstrap auth gate", () => {
     expect(routerSource).toContain("getBootstrapStatus");
     expect(routerSource).toContain("LocalSessionUnavailableGate");
     expect(routerSource).toContain("bootstrapStatusQuery.isError");
-    expect(routerSource).toContain("正在恢复本地会话");
+    expect(routerSource).toContain("正在连接本机 Friday");
     expect(routerSource).toContain("Friday 后台还没连上");
     expect(routerSource).not.toContain("bootstrapLocalPassphrase");
     expect(routerSource).not.toContain("LocalBootstrapGate");
@@ -20,6 +20,17 @@ describe("local bootstrap auth gate", () => {
     expect(routerSource).not.toContain("Backend said:");
     expect(routerSource).not.toContain("Local session not connected");
     expect(routerSource).not.toContain("No authentication method provided");
+  });
+
+  it("uses localhost identity before falling back to token login", () => {
+    const authProviderSource = readFileSync("ui/src/providers/auth-provider.tsx", "utf8");
+    const firstIdentityRead = authProviderSource.indexOf("const me = await fetchMe()");
+    const firstLocalLogin = authProviderSource.indexOf("const response = await loginRequest({ local: true })");
+
+    expect(firstIdentityRead).toBeGreaterThanOrEqual(0);
+    expect(firstLocalLogin).toBeGreaterThanOrEqual(0);
+    expect(firstIdentityRead).toBeLessThan(firstLocalLogin);
+    expect(authProviderSource).toContain("Fall back to legacy local login");
   });
 
   it("allows splash screens to embed the first-run setup form", () => {

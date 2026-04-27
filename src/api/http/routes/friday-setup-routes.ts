@@ -112,6 +112,14 @@ interface SetupChannelPersistedConfig {
 
 interface SetupChannelsResponse {
   savedKinds: string[];
+  activation?: SetupChannelsActivationResponse;
+}
+
+interface SetupChannelsActivationResponse {
+  startedKinds: string[];
+  failed: Array<{ kind: string; message: string }>;
+  restartRequired: boolean;
+  warnings: string[];
 }
 
 interface SetupChannelTestRequest {
@@ -1306,7 +1314,7 @@ async function sendFeishuSetupWelcomeMessage(input: {
         receive_id: input.ownerOpenId,
         msg_type: "text",
         content: JSON.stringify({
-          text: "Friday 已连接飞书。你现在可以在这个对话里给 Friday 发消息；敏感操作会在这里请求确认。",
+          text: "Friday 飞书应用已创建。请回到 Friday setup 点击“保存并启动”；启动后你就可以在这个对话里给 Friday 发消息，敏感操作会在这里请求确认。",
         }),
       }),
       signal: controller.signal,
@@ -1754,6 +1762,9 @@ export interface FridaySetupRoutesDeps {
   /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
   allowPrivateNetwork?: boolean;
   getLiveChannelCount?: () => number;
+  activateSavedChannels?: () =>
+    | Promise<SetupChannelsActivationResponse>
+    | SetupChannelsActivationResponse;
 }
 
 // ─── Factory ───
@@ -2385,7 +2396,25 @@ export function createFridaySetupRoutes(
           .filter((ch) => ch.enabled)
           .map((ch) => ch.kind);
 
-        return { savedKinds };
+        let activation: SetupChannelsActivationResponse | undefined;
+        if (deps.activateSavedChannels) {
+          try {
+            activation = await deps.activateSavedChannels();
+          } catch (error) {
+            activation = {
+              startedKinds: [],
+              failed: [],
+              restartRequired: true,
+              warnings: [
+                `Channels were saved, but Friday could not start them without a restart: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              ],
+            };
+          }
+        }
+
+        return { savedKinds, ...(activation ? { activation } : {}) };
       },
     },
 

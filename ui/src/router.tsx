@@ -92,11 +92,11 @@ function SetupFailureMessage(props: { error: unknown; onRetry: () => void }) {
     return (
       <AuthErrorSplash
         eyebrow="Friday"
-        title={localize(locale, "需要重新建立本地会话", "Restore the local session")}
+        title={localize(locale, "需要重新连接本机 Friday", "Reconnect local Friday")}
         body={localize(
           locale,
-          "Friday 已打开，但本地会话没有通过。刷新后会重新建立会话，并继续进入 setup 或首页。",
-          "Friday is open, but the local session was not accepted. Reload to restore the session and continue to setup or home.",
+          "Friday 已打开，但本机服务连接没有通过。刷新后会重新连接，并继续进入 setup 或首页。",
+          "Friday is open, but the local service connection was not accepted. Reload to reconnect and continue to setup or home.",
         )}
         steps={[
           {
@@ -182,14 +182,14 @@ function LocalSessionUnavailableGate(props: { error?: unknown; onRetry: () => vo
       eyebrow="Friday"
       title={isNetwork
         ? localize(locale, "Friday 后台还没连上", "Friday backend is not connected yet")
-        : localize(locale, "正在恢复本地会话", "Restoring the local session")}
+        : localize(locale, "正在连接本机 Friday", "Connecting to local Friday")}
       body={localize(
         locale,
-        "Friday 没能自动建立本机浏览器会话。重试或刷新后会继续进入 setup 或首页。",
-        "Friday could not establish the local browser session automatically. Retry or reload to continue to setup or home.",
+        "Friday 没能自动连接本机服务。重试或刷新后会继续进入 setup 或首页。",
+        "Friday could not connect to the local service automatically. Retry or reload to continue to setup or home.",
       )}
       steps={[
-        { label: localize(locale, "重新建立本地会话。", "Restore the local session."), status: "active" },
+        { label: localize(locale, "重新连接本机服务。", "Reconnect the local service."), status: "active" },
         { label: localize(locale, "继续完成模型、网络和渠道设置。", "Continue model, network, and channel setup."), status: "todo" },
       ]}
       actions={[retry, reload]}
@@ -211,7 +211,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
     return (
       <LoadingMessage
         title={localizedText("启动 Friday", "Starting Friday")}
-        detail={localizedText("Friday 正在准备你的本地会话。", "Friday is preparing your local session.")}
+        detail={localizedText("Friday 正在连接本机服务。", "Friday is connecting to the local service.")}
       />
     );
   }
@@ -220,8 +220,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
     if (bootstrapStatusQuery.isLoading) {
       return (
         <LoadingMessage
-          title={localizedText("准备本地会话", "Preparing local session")}
-          detail={localizedText("Friday 正在确认本机浏览器会话。", "Friday is checking the local browser session.")}
+          title={localizedText("连接本机 Friday", "Connecting to local Friday")}
+          detail={localizedText("Friday 正在确认本机服务可用。", "Friday is checking the local service.")}
         />
       );
     }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ExternalLink, QrCode, RefreshCw, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, QrCode, RefreshCw, Route, Search, ShieldCheck } from "lucide-react";
 import QRCode from "qrcode";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -56,6 +56,14 @@ type ProviderSaveDraft = {
   apiKey?: string;
   supportedModels: string[];
   defaultModel?: string;
+};
+
+type ProviderSetupFeedback = {
+  status: "idle" | "checking" | "saved" | "error";
+  kind?: ProviderKind;
+  defaultModel?: string;
+  message?: string;
+  warnings: string[];
 };
 
 type ChannelTestState = {
@@ -173,6 +181,14 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
+function isDiscoveryDisabledError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("discovery is disabled")
+    || message.includes("friday_discovery_enabled")
+    || message.includes("program discovery is disabled");
+}
+
 // ─── Step indicator dots ───
 
 function StepDots({ current, total }: { current: number; total: number }) {
@@ -221,6 +237,10 @@ export function SetupPage() {
   const [providerApi, setProviderApi] = useState<ProviderApi>("openai-responses");
   const [providerAuthMode, setProviderAuthMode] = useState<AuthMode>("api-key");
   const [providerValidated, setProviderValidated] = useState(false);
+  const [providerFeedback, setProviderFeedback] = useState<ProviderSetupFeedback>({
+    status: "idle",
+    warnings: [],
+  });
   const hasSetupDeepLink = Boolean(
     searchParams.get("step")
       ?? searchParams.get("providerKind")
@@ -367,6 +387,7 @@ export function SetupPage() {
   function applyProviderTemplate(templateId: ProviderKind): void {
     const template = providerTemplates.find((item) => item.providerKind === templateId);
     setProviderKind(templateId);
+    setProviderFeedback({ status: "idle", warnings: [] });
     if (!template) {
       setProviderValidated(false);
       return;
@@ -466,13 +487,20 @@ export function SetupPage() {
 
   const detectProviderMutation = useMutation({
     mutationFn: () => {
-      // If user has typed an API key, send without explicit kind to enable auto-detection.
-      // If no API key, send the currently selected kind for base-URL probing.
-      const hasKey = providerApiKey.trim().length > 0;
+      // Validate the provider the user selected. This avoids surprising switches
+      // between OpenAI-compatible providers that share similar key prefixes.
       return setupApi.detectProvider({
-        kind: hasKey ? undefined : providerKind,
+        kind: providerKind,
         apiKey: providerApiKey.trim() || undefined,
         baseUrl: providerBaseUrl.trim() || undefined,
+        authMode: providerAuthMode,
+      });
+    },
+    onMutate: () => {
+      setProviderFeedback({
+        status: "checking",
+        kind: providerKind,
+        warnings: [],
       });
     },
     onSuccess: (result) => {
@@ -482,12 +510,19 @@ export function SetupPage() {
       if (result.warnings.length > 0) {
         toast.warning(result.warnings.join(" · "));
       } else {
-        toast.success(localize(locale, `已识别：${detectedName}`, `Detected: ${detectedName}`));
+        toast.success(localize(locale, `${detectedName} 已验证`, `${detectedName} validated`));
       }
     },
     onError: (error) => {
       setProviderValidated(false);
-      toast.error(error instanceof Error ? error.message : localize(locale, "提供方检测失败", "Provider detection failed"));
+      const message = error instanceof Error ? error.message : localize(locale, "提供方检测失败", "Provider detection failed");
+      setProviderFeedback({
+        status: "error",
+        kind: providerKind,
+        message,
+        warnings: [],
+      });
+      toast.error(message);
     },
   });
 
@@ -868,7 +903,19 @@ export function SetupPage() {
       onSuccess: (result) => {
         saveProviderMutation.mutate(
           buildProviderSaveDraftFromDetection(result),
-          options.advance ? { onSuccess: goNext } : undefined,
+          {
+            onSuccess: () => {
+              setProviderFeedback({
+                status: "saved",
+                kind: result.kind as ProviderKind,
+                defaultModel: result.defaultModel ?? result.availableModels[0],
+                warnings: result.warnings,
+              });
+              if (options.advance) {
+                goNext();
+              }
+            },
+          },
         );
       },
     });
@@ -895,9 +942,33 @@ export function SetupPage() {
     saveChannelsMutation.mutate(
       { channels: channelsPayload, controlConfirmed: enabledChannels.size > 0 ? channelControlConfirmed : undefined },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
+          const activation = result.activation;
+          if (activation?.failed.length) {
+            toast.error(
+              localize(
+                locale,
+                `渠道已保存，但 ${activation.failed[0]!.kind} 未能启动：${activation.failed[0]!.message}`,
+                `Channels saved, but ${activation.failed[0]!.kind} did not start: ${activation.failed[0]!.message}`,
+              ),
+            );
+            setChannelsSaved(true);
+            return;
+          }
+          if (activation?.restartRequired) {
+            toast.warning(
+              activation.warnings[0]
+                ?? localize(locale, "渠道已保存，重启 Friday 后生效。", "Channels saved. Restart Friday to activate them."),
+            );
+            setChannelsSaved(true);
+            return;
+          }
           setChannelsSaved(true);
-          toast.success(localize(locale, "渠道已保存", "Channels saved"));
+          toast.success(
+            activation?.startedKinds.length
+              ? localize(locale, "渠道已保存并启动，可以回到聊天应用验证。", "Channels saved and started. You can verify in the chat app.")
+              : localize(locale, "渠道已保存", "Channels saved"),
+          );
           goNext();
         },
         onError: (error) => {
@@ -1008,28 +1079,40 @@ export function SetupPage() {
 
     try {
       try {
-        const scanResult = await discoveryApi.scan();
-        setDiscoveryProgramCount(scanResult.catalog.programCount);
-        try {
-          const programsResult = await discoveryApi.getPrograms();
-          setDiscoveredPrograms(programsResult.programs.slice(0, 5));
-        } catch {
+        const status = await discoveryApi.getStatus();
+        if (!status.enabled) {
+          setDiscoveryScanned(false);
+          setDiscoveryProgramCount(0);
           setDiscoveredPrograms([]);
+          setDiscoveryRecommendations([]);
+        } else {
+          const scanResult = await discoveryApi.scan();
+          setDiscoveryProgramCount(scanResult.catalog.programCount);
+          try {
+            const programsResult = await discoveryApi.getPrograms();
+            setDiscoveredPrograms(programsResult.programs.slice(0, 5));
+          } catch {
+            setDiscoveredPrograms([]);
+          }
+          try {
+            const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
+            setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
+          } catch {
+            // recommendations are optional
+          }
+          setDiscoveryScanned(true);
         }
-        try {
-          const recsResult = await discoveryApi.getRecommendations({ minConfidence: 0.5 });
-          setDiscoveryRecommendations(recsResult.recommendations.slice(0, 5));
-        } catch {
-          // recommendations are optional
-        }
-        setDiscoveryScanned(true);
       } catch (error) {
         setDiscoveryScanned(false);
-        setDiscoveryError(
-          error instanceof Error
-            ? error.message
-            : localize(locale, "程序扫描当前不可用。", "Program discovery is unavailable right now."),
-        );
+        setDiscoveredPrograms([]);
+        setDiscoveryRecommendations([]);
+        if (!isDiscoveryDisabledError(error)) {
+          setDiscoveryError(
+            error instanceof Error
+              ? error.message
+              : localize(locale, "程序扫描当前不可用。", "Program discovery is unavailable right now."),
+          );
+        }
       } finally {
         setDiscoveryScanning(false);
       }
@@ -1291,6 +1374,15 @@ export function SetupPage() {
       : ["deepseek", "moonshot", "qwen", "glm", "minimax"];
 
     const providerKinds = providerRegion === "china" ? chinaKinds : internationalKinds;
+    const selectedProviderName = providerDisplayName(providerKind);
+    const providerBusy = detectProviderMutation.isPending || saveProviderMutation.isPending;
+    const providerPrimaryLabel = providerBusy
+      ? (detectProviderMutation.isPending
+        ? localize(locale, "正在验证", "Validating")
+        : localize(locale, "正在保存", "Saving"))
+      : providerApiKey.trim() && !providerValidated
+        ? localize(locale, "验证并保存", "Validate & Save")
+        : localize(locale, "继续下一步", "Continue");
 
     return (
       <StepContainer>
@@ -1370,34 +1462,78 @@ export function SetupPage() {
             onChange={(e) => {
               setProviderApiKey(e.target.value);
               setProviderValidated(false);
+              setProviderFeedback({ status: "idle", warnings: [] });
             }}
             type="password"
             className="agent-input w-full text-center"
-            placeholder={localize(locale, "粘贴任意 API 密钥，Friday 自动识别厂商", "Paste any API key — Friday auto-detects the provider")}
+            placeholder={localize(locale, `粘贴 ${selectedProviderName} API 密钥`, `Paste ${selectedProviderName} API key`)}
           />
         </div>
 
-        {/* Auto-detect + Save */}
-        <div className="mt-5 flex items-center justify-center gap-3">
-          <ActionButton
-            tone="secondary"
-            onClick={() => detectProviderThenSave({ advance: false })}
-            disabled={detectProviderMutation.isPending || saveProviderMutation.isPending}
+        {providerFeedback.status !== "idle" && (
+          <div className={`mt-5 w-full max-w-md rounded-2xl border px-4 py-3 text-left shadow-sm ${
+            providerFeedback.status === "error"
+              ? "border-red-200 bg-red-50"
+              : providerFeedback.status === "saved"
+                ? "border-green-200 bg-green-50"
+                : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]"
+          }`}
           >
-            <WandSparkles className="mr-2 h-4 w-4" />
-            {localize(locale, "自动识别并保存", "Auto-detect & Save")}
-          </ActionButton>
-          {providerValidated && (
-            <StatusPill tone="success">
-              {localize(locale, "已验证", "Validated")}
-            </StatusPill>
-          )}
-        </div>
+            <div className="flex items-start gap-3">
+              {providerFeedback.status === "checking" ? (
+                <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-[color:var(--color-accent)]" />
+              ) : providerFeedback.status === "saved" ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-700" />
+              ) : (
+                <AlertCircle className="mt-0.5 h-4 w-4 text-red-700" />
+              )}
+              <div className="min-w-0">
+                <p className={`text-sm font-semibold ${
+                  providerFeedback.status === "error"
+                    ? "text-red-900"
+                    : providerFeedback.status === "saved"
+                      ? "text-green-900"
+                      : "text-[color:var(--color-text-primary)]"
+                }`}
+                >
+                  {providerFeedback.status === "checking"
+                    ? localize(locale, `正在验证 ${selectedProviderName}`, `Validating ${selectedProviderName}`)
+                    : providerFeedback.status === "saved"
+                      ? localize(locale, `${providerDisplayName(providerFeedback.kind ?? providerKind)} 已验证并保存`, `${providerDisplayName(providerFeedback.kind ?? providerKind)} validated and saved`)
+                      : localize(locale, `${selectedProviderName} 验证失败`, `${selectedProviderName} validation failed`)}
+                </p>
+                <p className={`mt-1 text-xs leading-5 ${
+                  providerFeedback.status === "error"
+                    ? "text-red-800"
+                    : providerFeedback.status === "saved"
+                      ? "text-green-800"
+                      : "text-[color:var(--color-text-secondary)]"
+                }`}
+                >
+                  {providerFeedback.status === "saved"
+                    ? localize(
+                      locale,
+                      `默认模型：${(providerFeedback.defaultModel ?? providerDefaultModel) || "未指定"}。点击继续进入下一步。`,
+                      `Default model: ${(providerFeedback.defaultModel ?? providerDefaultModel) || "not set"}. Continue to the next step.`,
+                    )
+                    : providerFeedback.status === "error"
+                      ? providerFeedback.message
+                      : localize(locale, "正在检查密钥、模型列表和默认路由。", "Checking the key, model list, and default route.")}
+                </p>
+                {providerFeedback.warnings.length > 0 && (
+                  <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-tertiary)]">
+                    {providerFeedback.warnings[0]}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         <p className="mt-2 max-w-md text-center text-xs text-[color:var(--color-text-faint)]">
           {localize(
             locale,
-            "支持 OpenAI、Anthropic、DeepSeek、智谱、月之暗面、Google 等主流厂商的 API 密钥自动识别",
-            "Auto-detects API keys from OpenAI, Anthropic, DeepSeek, Zhipu, Moonshot, Google, and more",
+            "Friday 会按当前选择的提供方验证密钥，不会自动跳到其它提供方。",
+            "Friday validates the selected provider and will not switch to another provider automatically.",
           )}
         </p>
 
@@ -1415,19 +1551,15 @@ export function SetupPage() {
         <ContinueButton
           onClick={() => {
             if (providerApiKey.trim() && !providerValidated) {
-              detectProviderThenSave({ advance: true });
+              detectProviderThenSave({ advance: false });
             } else if (providerValidated) {
-              saveProviderMutation.mutate(undefined, { onSuccess: goNext });
+              goNext();
             } else {
               goNext();
             }
           }}
-          label={
-            providerApiKey.trim()
-              ? localize(locale, "检测并继续", "Detect & Continue")
-              : localize(locale, "继续", "Continue")
-          }
-          disabled={detectProviderMutation.isPending || saveProviderMutation.isPending}
+          label={providerPrimaryLabel}
+          disabled={providerBusy}
         />
         <SkipLink onClick={goNext} />
         <BottomDots />
@@ -1928,8 +2060,8 @@ export function SetupPage() {
                                 <p className="text-xs leading-5 text-[color:var(--color-text-success)]">
                                   {localize(
                                     locale,
-                                    "Friday 已向你的飞书私聊发送验证消息。看到这条消息后，就可以直接在飞书里跟 Friday 沟通。",
-                                    "Friday sent a verification message to your Feishu DM. Once you see it, you can chat with Friday there.",
+                                    "Friday 已向你的飞书私聊发送验证消息。点击“保存并启动”后，就可以直接在飞书里跟 Friday 沟通。",
+                                    "Friday sent a verification message to your Feishu DM. After Save & Start, you can chat with Friday there.",
                                   )}
                                 </p>
                               )}
@@ -2232,7 +2364,7 @@ export function SetupPage() {
             }
           }}
           label={enabledChannels.size > 0
-            ? localize(locale, "保存并继续", "Save & Continue")
+            ? localize(locale, "保存并启动", "Save & Start")
             : localize(locale, "继续", "Continue")}
           disabled={saveChannelsMutation.isPending || (enabledChannels.size > 0 && !channelControlConfirmed)}
         />

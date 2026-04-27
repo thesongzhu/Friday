@@ -31,6 +31,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = React.useState<Error | null>(null);
 
   const establishLocalSession = React.useCallback(async () => {
+    try {
+      const me = await fetchMe();
+      setUser(me.user);
+      authStorage.setUser(me.user);
+      setAuthError(null);
+      return;
+    } catch {
+      // Fall back to legacy local login for older backends or remote deployments
+      // that have not enabled no-sign-in localhost identity.
+    }
+
     const response = await loginRequest({ local: true });
     setUser(response.user);
     authStorage.setUser(response.user);
@@ -77,11 +88,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
         }
 
-        const response = await loginRequest({ local: true });
-        if (cancelled) return;
-        setUser(response.user);
-        authStorage.setUser(response.user);
-        setAuthError(null);
+        try {
+          const me = await fetchMe();
+          if (cancelled) return;
+          setUser(me.user);
+          authStorage.setUser(me.user);
+          setAuthError(null);
+        } catch {
+          const response = await loginRequest({ local: true });
+          if (cancelled) return;
+          setUser(response.user);
+          authStorage.setUser(response.user);
+          setAuthError(null);
+        }
       } catch (error) {
         if (cancelled) return;
         authStorage.clear();

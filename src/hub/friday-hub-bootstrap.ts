@@ -234,7 +234,12 @@ import {
   parseFridayChannelsConfig,
   resolveFridayChannelSecretPolicy,
 } from "#channels";
-import type { FridayChannelMessage, FridayChannelRegistry, FridaySupportedChannelKind } from "#channels";
+import type {
+  FridayChannelMessage,
+  FridayChannelMessageHandler,
+  FridayChannelRegistry,
+  FridaySupportedChannelKind,
+} from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
 import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
 import { resolveFridayPublicRunUrl } from "../agent/runtime/friday-public-run-url.js";
@@ -3294,6 +3299,158 @@ export async function createFridayHub(
     };
   }>>();
 
+  type FridayChannelApprovalRoute = {
+    channelKind: string;
+    chatId: string;
+    senderId: string;
+    messageId: string;
+  };
+  type FridayChannelToolApprovalCommand = {
+    approved: boolean;
+    shortId?: string;
+    reason?: string;
+  };
+  type FridayPendingChannelToolApproval = {
+    runId: string;
+    sessionKey: string;
+    grantId: string;
+    toolCallId: string;
+    toolName: string;
+    shortId: string;
+    reason: string;
+    expiresAt: string;
+    params: Record<string, unknown>;
+    route: FridayChannelApprovalRoute;
+  };
+  const channelApprovalRoutesBySession = new Map<string, FridayChannelApprovalRoute>();
+  const channelToolApprovalSessions = new Map<string, FridayPendingChannelToolApproval>();
+  const sensitiveApprovalParamKeyPattern =
+    /(api[-_ ]?key|authorization|cookie|credential|password|secret|token)/i;
+
+  const normalizeChannelToolApprovalShortId = (shortId: string | undefined): string | undefined => {
+    const normalized = shortId?.replace(/[^a-z0-9]/gi, "").toUpperCase();
+    return normalized && normalized.length > 0 ? normalized : undefined;
+  };
+
+  const channelToolApprovalKey = (sessionKey: string, shortId: string): string =>
+    `${sessionKey}:${shortId.toLowerCase()}`;
+
+  const createChannelToolApprovalShortId = (runId: string, toolCallId: string): string => {
+    const source = `${runId}:${toolCallId}`.replace(/[^a-z0-9]/gi, "");
+    return (source.slice(-6) || "ACTION").toUpperCase();
+  };
+
+  const parseChannelToolApprovalCommand = (text: string): FridayChannelToolApprovalCommand | null => {
+    const trimmed = text.trim();
+    const approveMatch = /^(?:approve|approved|yes|y|批准|同意|确认|通过)(?:\s+([a-z0-9_-]{2,32}))?\s*$/i.exec(trimmed);
+    if (approveMatch) {
+      const shortId = normalizeChannelToolApprovalShortId(approveMatch[1]);
+      return {
+        approved: true,
+        ...(shortId ? { shortId } : {}),
+      };
+    }
+    const rejectMatch = /^(?:reject|rejected|deny|denied|no|n|cancel|stop|拒绝|不同意|驳回|取消|停止)(?:\s+([a-z0-9_-]{2,32}))?(?:\s+(.+))?\s*$/i.exec(trimmed);
+    if (!rejectMatch) return null;
+    const shortId = normalizeChannelToolApprovalShortId(rejectMatch[1]);
+    const reason = rejectMatch[2]?.trim();
+    return {
+      approved: false,
+      ...(shortId ? { shortId } : {}),
+      ...(reason ? { reason } : {}),
+    };
+  };
+
+  const listPendingChannelToolApprovalsForSession = (
+    sessionKey: string,
+  ): FridayPendingChannelToolApproval[] =>
+    [...channelToolApprovalSessions.values()].filter((pending) => pending.sessionKey === sessionKey);
+
+  const deleteChannelToolApprovalSessionsForRun = (runId: string, toolCallId?: string): void => {
+    for (const [key, pending] of channelToolApprovalSessions) {
+      if (pending.runId === runId && (!toolCallId || pending.toolCallId === toolCallId)) {
+        channelToolApprovalSessions.delete(key);
+      }
+    }
+  };
+
+  const stringifyChannelToolApprovalParam = (paramName: string, value: unknown): string => {
+    if (sensitiveApprovalParamKeyPattern.test(paramName)) return "[redacted]";
+    try {
+      const rawSerialized = typeof value === "string"
+        ? value
+        : JSON.stringify(value, (key, nestedValue) => (
+          sensitiveApprovalParamKeyPattern.test(key) ? "[redacted]" : nestedValue
+        ));
+      const serialized = rawSerialized ?? String(value);
+      return serialized.length > 240 ? `${serialized.slice(0, 240)}...` : serialized;
+    } catch {
+      const fallback = String(value);
+      return fallback.length > 240 ? `${fallback.slice(0, 240)}...` : fallback;
+    }
+  };
+
+  const buildChannelToolApprovalParamsPreview = (params: Record<string, unknown>): string | undefined => {
+    const entries = Object.entries(params);
+    if (entries.length === 0) return undefined;
+    const preview = entries
+      .slice(0, 5)
+      .map(([key, value]) => `${key}: ${stringifyChannelToolApprovalParam(key, value)}`);
+    if (entries.length > preview.length) {
+      preview.push(`... ${String(entries.length - preview.length)} more parameter(s)`);
+    }
+    return preview.join("\n");
+  };
+
+  const buildChannelToolApprovalPrompt = (pending: FridayPendingChannelToolApproval): string => {
+    const paramsPreview = buildChannelToolApprovalParamsPreview(pending.params);
+    return [
+      `需要确认敏感操作 ${pending.shortId}`,
+      `工具: ${pending.toolName}`,
+      `原因: ${pending.reason}`,
+      paramsPreview ? `参数:\n${paramsPreview}` : undefined,
+      `回复「批准 ${pending.shortId}」继续，或「拒绝 ${pending.shortId}」停止。`,
+      `过期时间: ${pending.expiresAt}`,
+    ].filter((line): line is string => typeof line === "string" && line.length > 0).join("\n");
+  };
+
+  const notifyChannelToolApprovalRequest = (prompt: {
+    runId: string;
+    sessionKey?: string;
+    grantId: string;
+    expiresAt: string;
+    toolName: string;
+    toolCallId: string;
+    params: Record<string, unknown>;
+    reason: string;
+    surface?: string;
+  }): void => {
+    if (prompt.surface !== "channel" || !prompt.sessionKey) return;
+    const route = channelApprovalRoutesBySession.get(prompt.sessionKey);
+    if (!route) return;
+    const shortId = createChannelToolApprovalShortId(prompt.runId, prompt.toolCallId);
+    const pending: FridayPendingChannelToolApproval = {
+      runId: prompt.runId,
+      sessionKey: prompt.sessionKey,
+      grantId: prompt.grantId,
+      toolCallId: prompt.toolCallId,
+      toolName: prompt.toolName,
+      shortId,
+      reason: prompt.reason,
+      expiresAt: prompt.expiresAt,
+      params: prompt.params,
+      route,
+    };
+    channelToolApprovalSessions.set(channelToolApprovalKey(prompt.sessionKey, shortId), pending);
+    channelRegistry.send(route.channelKind, {
+      chatId: route.chatId,
+      text: buildChannelToolApprovalPrompt(pending),
+      replyTo: route.messageId,
+    }).catch((err) => {
+      warnHubBootstrapOnce(`[friday] channel-tool-approval-notify: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
   const appendAgentRunEventOutsideRuntime = (
     runId: string,
     eventName: "agent.run.capability_grant_issued" | "agent.run.capability_grant_denied",
@@ -3398,6 +3555,7 @@ export async function createFridayHub(
           ...(prompt.surface ? { surface: prompt.surface } : {}),
         },
       });
+      notifyChannelToolApprovalRequest(prompt);
     });
   };
 
@@ -3445,6 +3603,7 @@ export async function createFridayHub(
     }
     gate.resolve({ approved, reason });
     runMap.delete(toolCallId);
+    deleteChannelToolApprovalSessionsForRun(runId, toolCallId);
     if (runMap.size === 0) toolApprovalGates.delete(runId);
     return {
       resolved: true,
@@ -3664,6 +3823,7 @@ export async function createFridayHub(
       }
       toolApprovalGates.delete(runId);
     }
+    deleteChannelToolApprovalSessionsForRun(runId);
   };
   agentEventEmitter.on("agent.run.completed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
@@ -3969,7 +4129,6 @@ export async function createFridayHub(
   // Parse channel config and register channel plugins via loader.
   // Precedence: explicit config (CLI/env) > setup wizard persisted state.
   const channelsInput = config.channels ?? loadChannelsConfigFromSetupState(stateRuntime.sqlite);
-  const channelsConfig = parseFridayChannelsConfig(channelsInput);
   const channelSecretPolicy = resolveFridayChannelSecretPolicy(
     process.env.FRIDAY_CHANNEL_SECRET_POLICY,
   );
@@ -4027,9 +4186,50 @@ export async function createFridayHub(
     },
   });
 
-  if (channelsConfig.enabled) {
-    for (const instance of channelsConfig.instances) {
+  type RuntimeChannelActivationResult = {
+    startedKinds: string[];
+    failed: Array<{ kind: string; message: string }>;
+    restartRequired: boolean;
+    warnings: string[];
+  };
+
+  let liveChannelMessageHandler: FridayChannelMessageHandler | null = null;
+
+  const registerChannelsFromConfig = async (
+    input: unknown,
+    options: { replaceExisting: boolean },
+  ): Promise<{ registeredKinds: string[]; warnings: string[] }> => {
+    const parsedChannelsConfig = parseFridayChannelsConfig(input);
+    const registeredKinds: string[] = [];
+    const warnings: string[] = [];
+    const desiredKinds = new Set<string>();
+
+    if (parsedChannelsConfig.enabled) {
+      for (const instance of parsedChannelsConfig.instances) {
+        if (instance.enabled) {
+          desiredKinds.add(instance.kind);
+        }
+      }
+    }
+
+    if (options.replaceExisting) {
+      for (const kind of channelRegistry.list()) {
+        if (!desiredKinds.has(kind)) {
+          await channelRegistry.unregister(kind);
+        }
+      }
+    }
+
+    if (!parsedChannelsConfig.enabled) {
+      return { registeredKinds, warnings };
+    }
+
+    for (const instance of parsedChannelsConfig.instances) {
       if (!instance.enabled) continue;
+
+      if (options.replaceExisting && channelRegistry.get(instance.kind)) {
+        await channelRegistry.unregister(instance.kind);
+      }
 
       const resolvedConfig = resolveChannelInitConfigWithSecretPolicy({
         instance,
@@ -4038,11 +4238,17 @@ export async function createFridayHub(
         resolveSecretRef: resolveChannelSecretRef,
       });
       if (resolvedConfig.warnings.length > 0) {
+        warnings.push(
+          `Channel ${instance.kind} secret policy warnings: ${resolvedConfig.warnings.join("; ")}`,
+        );
         console.warn(
           `[friday] Channel ${instance.kind} secret policy warnings: ${resolvedConfig.warnings.join("; ")}`,
         );
       }
       if (resolvedConfig.errors.length > 0) {
+        warnings.push(
+          `Channel ${instance.kind} disabled by policy: ${resolvedConfig.errors.join("; ")}`,
+        );
         console.warn(
           `[friday] Channel ${instance.kind} disabled by policy: ${resolvedConfig.errors.join("; ")}`,
         );
@@ -4071,8 +4277,80 @@ export async function createFridayHub(
       }
 
       channelRegistry.register(plugin, allowlistConfig);
+      registeredKinds.push(plugin.kind);
     }
-  }
+
+    return { registeredKinds, warnings };
+  };
+
+  const initialChannelsInput = channelsInput;
+  await registerChannelsFromConfig(initialChannelsInput, { replaceExisting: false });
+
+  const activateSavedChannelsFromSetupState = async (): Promise<RuntimeChannelActivationResult> => {
+    if (config.channels) {
+      return {
+        startedKinds: [],
+        failed: [],
+        restartRequired: true,
+        warnings: [
+          "Friday is using an explicit channels config from startup; restart with setup-managed channels to apply saved setup changes.",
+        ],
+      };
+    }
+
+    const setupChannelsInput = loadChannelsConfigFromSetupState(stateRuntime.sqlite);
+    const registration = await registerChannelsFromConfig(setupChannelsInput, {
+      replaceExisting: true,
+    });
+
+    if (!liveChannelMessageHandler) {
+      return {
+        startedKinds: [],
+        failed: [],
+        restartRequired: true,
+        warnings: [
+          ...registration.warnings,
+          "Friday saved the channel, but the channel runtime is not ready yet. Restart Friday to activate it.",
+        ],
+      };
+    }
+
+    const activationTimeoutMs = Math.max(
+      1_000,
+      Number.parseInt(process.env.FRIDAY_SETUP_CHANNEL_ACTIVATION_TIMEOUT_MS ?? "15000", 10) || 15_000,
+    );
+    let activationTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const activationTimeout = new Promise<RuntimeChannelActivationResult>((resolve) => {
+      activationTimeoutHandle = setTimeout(() => {
+        resolve({
+          startedKinds: [],
+          failed: registration.registeredKinds.map((kind) => ({
+            kind,
+            message: `Timed out after ${String(activationTimeoutMs)}ms while starting channel.`,
+          })),
+          restartRequired: false,
+          warnings: registration.warnings,
+        });
+      }, activationTimeoutMs);
+    });
+    const startSummary = await Promise.race([
+      channelRegistry.startAllBestEffort(liveChannelMessageHandler),
+      activationTimeout,
+    ]).finally(() => {
+      if (activationTimeoutHandle) {
+        clearTimeout(activationTimeoutHandle);
+      }
+    });
+    if ("restartRequired" in startSummary) {
+      return startSummary;
+    }
+    return {
+      startedKinds: startSummary.startedKinds,
+      failed: startSummary.failed,
+      restartRequired: false,
+      warnings: registration.warnings,
+    };
+  };
 
   // Wire message tool now that channelRegistry is available.
   // Register in both the array (for LLM schema) AND runtime toolMap (for execution).
@@ -5120,6 +5398,7 @@ export async function createFridayHub(
     pluginMarketplaceAvailable,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
     enabledChannelKinds: getEnabledChannelKinds,
+    activateSavedChannels: activateSavedChannelsFromSetupState,
     learningEventWriter,
     learningUserId: learningDefaultUserId,
     sessionService: hubSessionService,
@@ -6543,7 +6822,7 @@ export async function createFridayHub(
           resolveIdempotencyKey: resolveAgentMirrorIdempotencyKey,
         },
       });
-      if (channelsConfig.enabled && channelRegistry.list().length > 0) {
+      {
         let lastChannelUiWakeAt = 0;
         const channelUiWakeCooldownMs = Math.max(
           0,
@@ -6647,6 +6926,12 @@ export async function createFridayHub(
             }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
           };
           if (text.length === 0) return;
+          channelApprovalRoutesBySession.set(sessionKey, {
+            channelKind: msg.channelKind,
+            chatId: msg.chatId,
+            senderId: msg.senderId,
+            messageId: msg.id,
+          });
 
           if (text.length > FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH) {
             channelRegistry
@@ -6664,6 +6949,96 @@ export async function createFridayHub(
                 });
               });
             return;
+          }
+
+          const approvalCommand = parseChannelToolApprovalCommand(text);
+          if (approvalCommand) {
+            const pendingApprovals = listPendingChannelToolApprovalsForSession(sessionKey);
+            const pendingApproval = approvalCommand.shortId
+              ? pendingApprovals.find((pending) => pending.shortId === approvalCommand.shortId)
+              : pendingApprovals.length === 1
+                ? pendingApprovals[0]
+                : undefined;
+            const shouldHandleApprovalCommand = Boolean(
+              pendingApproval || approvalCommand.shortId || pendingApprovals.length > 1,
+            );
+            if (shouldHandleApprovalCommand) {
+              void (async () => {
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "user",
+                  content: text,
+                  contentText: text,
+                  idempotencyKey: inboundIdempotencyKey,
+                  metadata: {
+                    sourceMessageId: msg.id,
+                    channelKind: msg.channelKind,
+                    toolApprovalCommand: true,
+                  },
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.tool_approval_command",
+                    error: err,
+                  });
+                });
+
+                let ackText: string;
+                if (pendingApproval) {
+                  const resolution = resolveToolApproval(
+                    pendingApproval.runId,
+                    pendingApproval.toolCallId,
+                    approvalCommand.approved,
+                    approvalCommand.reason,
+                  );
+                  if (resolution.resolved) {
+                    ackText = approvalCommand.approved
+                      ? `已批准 ${pendingApproval.shortId}，Friday 会继续执行。`
+                      : `已拒绝 ${pendingApproval.shortId}，Friday 不会执行该敏感操作。`;
+                  } else {
+                    ackText = `审批 ${pendingApproval.shortId} 已经结束，不需要重复处理。`;
+                  }
+                } else if (pendingApprovals.length > 1 && !approvalCommand.shortId) {
+                  const ids = pendingApprovals.map((pending) => pending.shortId).join(", ");
+                  ackText = `当前有多个待审批操作：${ids}。请回复「批准 <编号>」或「拒绝 <编号>」。`;
+                } else {
+                  ackText = `没有找到待审批操作 ${approvalCommand.shortId ?? ""}。`;
+                }
+
+                const delivery = await channelRegistry.send(msg.channelKind, {
+                  chatId: msg.chatId,
+                  text: ackText,
+                  replyTo: msg.id,
+                });
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: ackText,
+                  contentText: ackText,
+                  idempotencyKey: `channel:${msg.channelKind}:${msg.chatId}:${msg.id}:tool-approval-ack`,
+                  metadata: {
+                    sourceMessageId: delivery.messageId,
+                    replyToMessageId: msg.id,
+                    channelKind: msg.channelKind,
+                    toolApprovalAck: true,
+                  },
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.tool_approval_ack",
+                    error: err,
+                  });
+                });
+              })().catch((err) => {
+                logChannelIssue({
+                  level: "error",
+                  code: "E-CH-OUTBOUND-001",
+                  routeId: "hub.channel.delivery.tool_approval_ack",
+                  error: err,
+                });
+              });
+              return;
+            }
           }
 
           // Route inbound channel messages to agent runtime
@@ -6910,24 +7285,27 @@ export async function createFridayHub(
           windowMs: channelDebounceMs,
         });
         const debouncedHandler = (msg: FridayChannelMessage) => channelDebouncer.submit(msg);
+        liveChannelMessageHandler = debouncedHandler;
 
-        const channelStartSummary = await channelRegistry.startAllBestEffort(debouncedHandler);
-        if (channelStartSummary.startedKinds.length > 0) {
-          console.log(
-            `[friday] Started ${String(channelStartSummary.startedKinds.length)} channel(s): ` +
-              channelStartSummary.startedKinds.join(", "),
-          );
-          if (channelDebounceMs > 0) {
-            console.log(`[friday] Channel inbound debounce: ${String(channelDebounceMs)}ms`);
+        if (channelRegistry.list().length > 0) {
+          const channelStartSummary = await channelRegistry.startAllBestEffort(debouncedHandler);
+          if (channelStartSummary.startedKinds.length > 0) {
+            console.log(
+              `[friday] Started ${String(channelStartSummary.startedKinds.length)} channel(s): ` +
+                channelStartSummary.startedKinds.join(", "),
+            );
+            if (channelDebounceMs > 0) {
+              console.log(`[friday] Channel inbound debounce: ${String(channelDebounceMs)}ms`);
+            }
           }
-        }
-        if (channelStartSummary.failed.length > 0) {
-          console.error(
-            `[friday] Failed to start ${String(channelStartSummary.failed.length)} channel(s): ` +
-              channelStartSummary.failed
-                .map((failure) => `${failure.kind}: ${failure.message}`)
-                .join("; "),
-          );
+          if (channelStartSummary.failed.length > 0) {
+            console.error(
+              `[friday] Failed to start ${String(channelStartSummary.failed.length)} channel(s): ` +
+                channelStartSummary.failed
+                  .map((failure) => `${failure.kind}: ${failure.message}`)
+                  .join("; "),
+            );
+          }
         }
         channelRegistry.startHealthMonitor(debouncedHandler);
       }

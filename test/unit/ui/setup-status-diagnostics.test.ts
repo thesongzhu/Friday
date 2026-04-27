@@ -5,15 +5,15 @@ import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics
 describe("describeSetupStatusFailure", () => {
   const origin = "http://127.0.0.1:50576";
 
-  it("classifies unauthorized setup status failures as auth issues", () => {
+  it("classifies unauthorized setup status failures as local connection issues", () => {
     const result = describeSetupStatusFailure(
       new ApiError("UNAUTHORIZED", "Authentication required", 401),
       origin,
     );
 
-    expect(result.title).toContain("valid local session");
+    expect(result.title).toContain("local Friday connection");
     expect(result.detail).toContain(origin);
-    expect(result.actions.join(" ")).toContain("NODE_ENV=development");
+    expect(result.actions.join(" ")).toContain("FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN");
   });
 
   it("classifies not found setup status failures as origin assembly problems", () => {
@@ -54,10 +54,10 @@ describe("describeSetupStatusFailure", () => {
     expect(result.detail).toContain("/v1/setup/status");
   });
 
-  it("classifies expired sessions explicitly", () => {
+  it("classifies reset local connections explicitly", () => {
     const result = describeSetupStatusFailure(new AuthExpiredError(), origin);
 
-    expect(result.title).toContain("session expired");
+    expect(result.title).toContain("local connection reset");
     expect(result.actions.join(" ")).toContain("Reload the page");
   });
 });

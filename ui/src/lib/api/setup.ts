@@ -37,6 +37,12 @@ export interface SaveChannelsInput {
 
 export interface SaveChannelsResponse {
   savedKinds: string[];
+  activation?: {
+    startedKinds: string[];
+    failed: Array<{ kind: string; message: string }>;
+    restartRequired: boolean;
+    warnings: string[];
+  };
 }
 
 export interface TestChannelInput {
