@@ -10,6 +10,7 @@ import { createFridayHub, type FridayHub } from "#hub";
 
 const RUN_LIVE_DISCORD = process.env.FRIDAY_E2E_LIVE_DISCORD === "1";
 const DISCORD_BOT_TOKEN = process.env.FRIDAY_DISCORD_BOT_TOKEN?.trim() ?? "";
+const DISCORD_SETUP_USER_ID = process.env.FRIDAY_DISCORD_SETUP_USER_ID?.trim() ?? "";
 
 function authHeaders(accessToken: string): Record<string, string> {
   return {
@@ -49,7 +50,7 @@ async function discordGet(pathname: string): Promise<{ ok: boolean; status: numb
   return { ok: res.ok, status: res.status, json };
 }
 
-describe.skipIf(!RUN_LIVE_DISCORD)("Friday live Discord channel closure", () => {
+describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discord channel closure", () => {
   let stateDir = "";
   let hub: FridayHub | undefined;
   let restartedHub: FridayHub | undefined;
@@ -57,6 +58,7 @@ describe.skipIf(!RUN_LIVE_DISCORD)("Friday live Discord channel closure", () => 
 
   beforeAll(() => {
     expect(DISCORD_BOT_TOKEN.length).toBeGreaterThan(0);
+    expect(DISCORD_SETUP_USER_ID.length).toBeGreaterThan(0);
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-discord-channel-live-"));
   });
 
@@ -113,11 +115,42 @@ describe.skipIf(!RUN_LIVE_DISCORD)("Friday live Discord channel closure", () => 
       botUserId: meJson?.id,
     };
 
+    const verificationBeginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
+      method: "POST",
+      headers: authHeaders(accessToken!),
+      body: JSON.stringify({ token: DISCORD_BOT_TOKEN }),
+    });
+    const verificationBeginJson = await verificationBeginRes.json() as { ok: boolean; data?: { verificationId?: string } };
+    expect(verificationBeginRes.status).toBe(200);
+    expect(verificationBeginJson.ok).toBe(true);
+    const setupVerificationId = verificationBeginJson.data?.verificationId;
+    expect(typeof setupVerificationId).toBe("string");
+
+    const verificationCompleteRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/complete`, {
+      method: "POST",
+      headers: authHeaders(accessToken!),
+      body: JSON.stringify({
+        verificationId: setupVerificationId,
+        userId: DISCORD_SETUP_USER_ID,
+      }),
+    });
+    const verificationCompleteJson = await verificationCompleteRes.json() as { ok: boolean; data?: { status?: string; dmVerified?: boolean } };
+    expect(verificationCompleteRes.status).toBe(200);
+    expect(verificationCompleteJson.ok).toBe(true);
+    expect(verificationCompleteJson.data?.status).toBe("success");
+    expect(verificationCompleteJson.data?.dmVerified).toBe(true);
+
+    const verifiedDiscordConfig = {
+      ...discordConfig,
+      setupVerificationId,
+      setupUserId: DISCORD_SETUP_USER_ID,
+    };
+
     const unconfirmedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
       method: "POST",
       headers: authHeaders(accessToken!),
       body: JSON.stringify({
-        channels: [{ kind: "discord", enabled: true, config: discordConfig }],
+        channels: [{ kind: "discord", enabled: true, config: verifiedDiscordConfig }],
       }),
     });
     expect(unconfirmedRes.status).toBe(400);
@@ -127,7 +160,7 @@ describe.skipIf(!RUN_LIVE_DISCORD)("Friday live Discord channel closure", () => 
       headers: authHeaders(accessToken!),
       body: JSON.stringify({
         controlConfirmed: true,
-        channels: [{ kind: "discord", enabled: true, config: discordConfig }],
+        channels: [{ kind: "discord", enabled: true, config: verifiedDiscordConfig }],
       }),
     });
     const confirmedJson = await confirmedRes.json() as { ok: boolean; data?: { savedKinds?: string[] } };

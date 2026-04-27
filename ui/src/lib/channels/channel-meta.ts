@@ -11,6 +11,7 @@ export interface ChannelFieldDescriptor {
   placeholderZh: string;
   secret?: boolean;
   required?: boolean;
+  advanced?: boolean;
 }
 
 export interface ChannelMeta {
@@ -40,7 +41,8 @@ export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
     color: "#5865F2",
     fields: [
       { key: "token", label: "Bot Token", labelZh: "机器人 Token", placeholder: "paste your bot token", placeholderZh: "粘贴你的机器人 Token", secret: true, required: true },
-      { key: "guildId", label: "Guild ID (optional)", labelZh: "服务器 ID（可选）", placeholder: "e.g. 123456789", placeholderZh: "例如 123456789" },
+      { key: "setupUserId", label: "Your Discord User ID", labelZh: "你的 Discord 用户 ID", placeholder: "used only for verification DM", placeholderZh: "仅用于发送验证私信", required: true },
+      { key: "guildId", label: "Server ID (optional)", labelZh: "服务器 ID（可选）", placeholder: "verify bot is in this server", placeholderZh: "验证机器人已加入此服务器" },
     ],
     capabilities: { directMessages: true, groupMessages: true, typing: true },
   },
@@ -125,6 +127,11 @@ export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
     fields: [
       { key: "appId", label: "App ID", labelZh: "应用 ID", placeholder: "cli_xxx", placeholderZh: "cli_xxx", required: true },
       { key: "appSecret", label: "App Secret", labelZh: "应用密钥", placeholder: "paste app secret", placeholderZh: "粘贴应用密钥", secret: true, required: true },
+      { key: "receiveMode", label: "Receive Mode", labelZh: "接收模式", placeholder: "websocket", placeholderZh: "websocket", advanced: true },
+      { key: "verificationToken", label: "Verification Token", labelZh: "事件订阅 Verification Token", placeholder: "required for webhook mode", placeholderZh: "webhook 模式必填", secret: true, advanced: true },
+      { key: "encryptKey", label: "Encrypt Key", labelZh: "事件订阅 Encrypt Key", placeholder: "optional", placeholderZh: "可选", secret: true, advanced: true },
+      { key: "allowedUsers", label: "Allowed Users", labelZh: "允许审批用户 ID（逗号分隔）", placeholder: "ou_xxx,ou_yyy", placeholderZh: "ou_xxx,ou_yyy", advanced: true },
+      { key: "allowedChats", label: "Allowed Chats", labelZh: "允许会话 ID（逗号分隔）", placeholder: "oc_xxx,oc_yyy", placeholderZh: "oc_xxx,oc_yyy", advanced: true },
     ],
     capabilities: { directMessages: true, groupMessages: true, typing: false },
   },
@@ -137,8 +144,8 @@ export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
     emoji: "🕊️",
     color: "#00D6B9",
     fields: [
-      { key: "appId", label: "App ID", labelZh: "应用 ID", placeholder: "cli_xxx", placeholderZh: "cli_xxx", required: true },
-      { key: "appSecret", label: "App Secret", labelZh: "应用密钥", placeholder: "paste app secret", placeholderZh: "粘贴应用密钥", secret: true, required: true },
+      { key: "allowedUsers", label: "Allowed Users", labelZh: "允许审批用户 ID（逗号分隔）", placeholder: "自动使用扫码账号", placeholderZh: "自动使用扫码账号", advanced: true },
+      { key: "allowedChats", label: "Allowed Chats", labelZh: "允许会话 ID（逗号分隔）", placeholder: "oc_xxx,oc_yyy", placeholderZh: "oc_xxx,oc_yyy", advanced: true },
     ],
     capabilities: { directMessages: true, groupMessages: true, typing: false },
   },

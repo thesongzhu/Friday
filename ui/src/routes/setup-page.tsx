@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
+import { CheckCircle2, ExternalLink, QrCode, RefreshCw, Route, Search, ShieldCheck, WandSparkles } from "lucide-react";
+import QRCode from "qrcode";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
@@ -25,7 +26,7 @@ import type {
 import { ActionButton, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-import { CHANNEL_META, CHANNEL_KINDS_ORDERED } from "@/lib/channels/channel-meta";
+import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
 import {
   SETUP_CHANNEL_CONTROL_CONFIRMATION,
@@ -33,6 +34,8 @@ import {
   SETUP_CHANNEL_CONTROL_ROUTE_STEPS,
 } from "@/lib/setup/channel-control-route";
 import { useSaveChannelsMutation } from "@/hooks/use-setup";
+
+const SETUP_CHANNEL_KINDS_ORDERED: ChannelKind[] = ["telegram", "discord", "feishu"];
 
 // ─── Provider recommendation helper (unchanged) ───
 
@@ -53,6 +56,61 @@ type ProviderSaveDraft = {
   apiKey?: string;
   supportedModels: string[];
   defaultModel?: string;
+};
+
+type ChannelTestState = {
+  validated: boolean;
+  message: string;
+  warnings: string[];
+};
+
+type FeishuRegistrationState = {
+  status: "idle" | "starting" | "pending" | "success" | "failed";
+  registrationId?: string;
+  qrUrl?: string;
+  qrDataUrl?: string;
+  userCode?: string;
+  appId?: string;
+  ownerOpenId?: string;
+  dmVerified?: boolean;
+  welcomeMessageId?: string;
+  intervalSeconds?: number;
+  expiresAt?: string;
+  message?: string;
+  warnings: string[];
+};
+
+type TelegramVerificationState = {
+  status: "idle" | "starting" | "pending" | "success" | "failed";
+  verificationId?: string;
+  botUserId?: string;
+  botUsername?: string;
+  botName?: string;
+  startCode?: string;
+  startUrl?: string;
+  chatId?: string;
+  userId?: string;
+  welcomeMessageId?: string;
+  expiresAt?: string;
+  message?: string;
+  warnings: string[];
+};
+
+type DiscordVerificationState = {
+  status: "idle" | "starting" | "ready" | "success" | "failed";
+  verificationId?: string;
+  applicationId?: string;
+  botUserId?: string;
+  botUsername?: string;
+  inviteUrl?: string;
+  guildId?: string;
+  guildVerified?: boolean;
+  userId?: string;
+  dmVerified?: boolean;
+  welcomeMessageId?: string;
+  expiresAt?: string;
+  message?: string;
+  warnings: string[];
 };
 
 export function getProviderBootstrapRecommendation(kind: ProviderKind): SetupProviderRecommendation {
@@ -174,7 +232,24 @@ export function SetupPage() {
   const [channelConfigs, setChannelConfigs] = useState<Record<string, Record<string, string>>>({});
   const [channelsSaved, setChannelsSaved] = useState(false);
   const [expandedChannel, setExpandedChannel] = useState<ChannelKind | null>(null);
+  const [advancedChannelConfig, setAdvancedChannelConfig] = useState<Set<ChannelKind>>(new Set());
   const [channelControlConfirmed, setChannelControlConfirmed] = useState(false);
+  const [testingChannel, setTestingChannel] = useState<ChannelKind | null>(null);
+  const [channelTestStatus, setChannelTestStatus] = useState<Record<string, ChannelTestState>>({});
+  const [feishuRegistration, setFeishuRegistration] = useState<FeishuRegistrationState>({
+    status: "idle",
+    warnings: [],
+  });
+  const feishuRegistrationPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [telegramVerification, setTelegramVerification] = useState<TelegramVerificationState>({
+    status: "idle",
+    warnings: [],
+  });
+  const telegramVerificationPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [discordVerification, setDiscordVerification] = useState<DiscordVerificationState>({
+    status: "idle",
+    warnings: [],
+  });
 
   // ── Discovery state (new) ──
   const [discoveryScanned, setDiscoveryScanned] = useState(false);
@@ -221,6 +296,15 @@ export function SetupPage() {
     }
   }, [hasSetupDeepLink, navigate, setupStatus]);
 
+  useEffect(() => () => {
+    if (feishuRegistrationPollTimer.current) {
+      clearTimeout(feishuRegistrationPollTimer.current);
+    }
+    if (telegramVerificationPollTimer.current) {
+      clearTimeout(telegramVerificationPollTimer.current);
+    }
+  }, []);
+
   // Note: during first-run setup we intentionally do NOT pre-fill from existingProviders.
   // The user should configure from scratch. Existing provider data is only relevant
   // when re-visiting setup, which is handled by the template applicator below.
@@ -237,7 +321,7 @@ export function SetupPage() {
 
     const step = searchParams.get("step");
     const requestedChannel = searchParams.get("channel");
-    const channelKind = CHANNEL_KINDS_ORDERED.find((kind) => kind === requestedChannel);
+    const channelKind = SETUP_CHANNEL_KINDS_ORDERED.find((kind) => kind === requestedChannel);
 
     if (step !== "channels" && !channelKind) return;
 
@@ -422,6 +506,359 @@ export function SetupPage() {
 
   const saveChannelsMutation = useSaveChannelsMutation();
 
+  function isLarkLikeChannel(kind: ChannelKind): boolean {
+    return kind === "lark" || kind === "feishu";
+  }
+
+  function isFeishuQrChannel(kind: ChannelKind): boolean {
+    return kind === "feishu";
+  }
+
+  function buildChannelConfigForSave(kind: ChannelKind): Record<string, string> {
+    const config = { ...(channelConfigs[kind] ?? {}) };
+    if (kind === "feishu") {
+      config.useFeishu = "true";
+      config.receiveMode = "websocket";
+    } else if (kind === "telegram" && telegramVerification.status === "success" && telegramVerification.verificationId) {
+      config.setupVerificationId = telegramVerification.verificationId;
+    } else if (kind === "discord" && discordVerification.status === "success" && discordVerification.verificationId) {
+      config.setupVerificationId = discordVerification.verificationId;
+    } else if (isLarkLikeChannel(kind) && !config.receiveMode) {
+      config.receiveMode = "websocket";
+    }
+    return config;
+  }
+
+  function clearFeishuRegistrationPoll(): void {
+    if (feishuRegistrationPollTimer.current) {
+      clearTimeout(feishuRegistrationPollTimer.current);
+      feishuRegistrationPollTimer.current = null;
+    }
+  }
+
+  function clearTelegramVerificationPoll(): void {
+    if (telegramVerificationPollTimer.current) {
+      clearTimeout(telegramVerificationPollTimer.current);
+      telegramVerificationPollTimer.current = null;
+    }
+  }
+
+  function updateFeishuRegistrationConfig(input: {
+    registrationId: string;
+    appId?: string;
+    ownerOpenId?: string;
+  }): void {
+    setChannelConfigs((prev) => {
+      const existing = prev.feishu ?? {};
+      return {
+        ...prev,
+        feishu: {
+          ...existing,
+          registrationId: input.registrationId,
+          ...(input.appId ? { appId: input.appId } : {}),
+          ...(input.ownerOpenId && !existing.allowedUsers ? { allowedUsers: input.ownerOpenId } : {}),
+          receiveMode: "websocket",
+          useFeishu: "true",
+        },
+      };
+    });
+  }
+
+  function scheduleFeishuRegistrationPoll(registrationId: string, delaySeconds: number): void {
+    clearFeishuRegistrationPoll();
+    feishuRegistrationPollTimer.current = setTimeout(() => {
+      void pollFeishuRegistration(registrationId);
+    }, Math.max(delaySeconds, 2) * 1000);
+  }
+
+  async function startFeishuRegistration(): Promise<void> {
+    clearFeishuRegistrationPoll();
+    setFeishuRegistration({ status: "starting", warnings: [] });
+    try {
+      const result = await setupApi.beginFeishuRegistration();
+      const qrDataUrl = await QRCode.toDataURL(result.qrUrl, {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 220,
+      });
+      updateFeishuRegistrationConfig({ registrationId: result.registrationId });
+      setFeishuRegistration({
+        status: "pending",
+        registrationId: result.registrationId,
+        qrUrl: result.qrUrl,
+        qrDataUrl,
+        userCode: result.userCode,
+        intervalSeconds: result.intervalSeconds,
+        expiresAt: result.expiresAt,
+        warnings: result.warnings,
+      });
+      scheduleFeishuRegistrationPoll(result.registrationId, result.intervalSeconds);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "无法创建飞书扫码流程", "Could not start Feishu QR setup");
+      setFeishuRegistration({ status: "failed", message, warnings: [] });
+      toast.error(message);
+    }
+  }
+
+  async function pollFeishuRegistration(registrationId: string): Promise<void> {
+    try {
+      const result = await setupApi.pollFeishuRegistration({ registrationId });
+      if (result.status === "success") {
+        clearFeishuRegistrationPoll();
+        updateFeishuRegistrationConfig({
+          registrationId: result.registrationId,
+          appId: result.appId,
+          ownerOpenId: result.ownerOpenId ?? result.suggestedAllowedUsers?.[0],
+        });
+        setFeishuRegistration((prev) => ({
+          ...prev,
+          status: "success",
+          registrationId: result.registrationId,
+          appId: result.appId,
+          ownerOpenId: result.ownerOpenId ?? result.suggestedAllowedUsers?.[0],
+          dmVerified: result.dmVerified === true,
+          welcomeMessageId: result.welcomeMessageId,
+          expiresAt: result.expiresAt ?? prev.expiresAt,
+          warnings: result.warnings,
+        }));
+        toast.success(localize(locale, "飞书私聊已验证", "Feishu private chat verified"));
+        return;
+      }
+
+      if (result.status === "pending" || result.status === "slow_down") {
+        setFeishuRegistration((prev) => ({
+          ...prev,
+          status: "pending",
+          intervalSeconds: result.intervalSeconds ?? prev.intervalSeconds,
+          expiresAt: result.expiresAt ?? prev.expiresAt,
+          warnings: result.warnings,
+        }));
+        scheduleFeishuRegistrationPoll(registrationId, result.intervalSeconds ?? feishuRegistration.intervalSeconds ?? 5);
+        return;
+      }
+
+      clearFeishuRegistrationPoll();
+      const message = result.status === "dm_failed"
+        ? (result.message ?? localize(locale, "Friday 已创建飞书应用，但无法发送欢迎私聊", "Friday created the Feishu app but could not send a welcome private message"))
+        : result.status === "access_denied"
+        ? localize(locale, "飞书扫码已取消", "Feishu QR authorization was denied")
+        : result.status === "expired"
+          ? localize(locale, "飞书二维码已过期，请重新生成", "Feishu QR code expired. Start again.")
+          : (result.message ?? localize(locale, "飞书扫码创建失败", "Feishu QR setup failed"));
+      setFeishuRegistration((prev) => ({
+        ...prev,
+        status: "failed",
+        message,
+        warnings: result.warnings,
+      }));
+      toast.error(message);
+    } catch (error) {
+      clearFeishuRegistrationPoll();
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "飞书扫码状态检查失败", "Feishu QR status check failed");
+      setFeishuRegistration((prev) => ({ ...prev, status: "failed", message, warnings: [] }));
+      toast.error(message);
+    }
+  }
+
+  function scheduleTelegramVerificationPoll(verificationId: string, delaySeconds = 2): void {
+    clearTelegramVerificationPoll();
+    telegramVerificationPollTimer.current = setTimeout(() => {
+      void pollTelegramVerification(verificationId);
+    }, Math.max(delaySeconds, 2) * 1000);
+  }
+
+  async function startTelegramVerification(): Promise<void> {
+    const botToken = (channelConfigs.telegram?.botToken ?? "").trim();
+    if (!botToken) {
+      toast.error(localize(locale, "请先填写 Telegram Bot Token", "Enter the Telegram Bot Token first"));
+      return;
+    }
+    clearTelegramVerificationPoll();
+    setTelegramVerification({ status: "starting", warnings: [] });
+    try {
+      const result = await setupApi.beginTelegramVerification({ botToken });
+      setTelegramVerification({
+        status: "pending",
+        verificationId: result.verificationId,
+        botUserId: result.botUserId,
+        botUsername: result.botUsername,
+        botName: result.botName,
+        startCode: result.startCode,
+        startUrl: result.startUrl,
+        expiresAt: result.expiresAt,
+        warnings: result.warnings,
+      });
+      scheduleTelegramVerificationPoll(result.verificationId);
+      toast.success(localize(locale, "Telegram token 已验证，请打开机器人发送验证码", "Telegram token verified. Open the bot and send the setup code."));
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "Telegram 验证启动失败", "Telegram verification could not start");
+      setTelegramVerification({ status: "failed", message, warnings: [] });
+      toast.error(message);
+    }
+  }
+
+  async function pollTelegramVerification(verificationId: string): Promise<void> {
+    try {
+      const result = await setupApi.pollTelegramVerification({ verificationId });
+      if (result.status === "success") {
+        clearTelegramVerificationPoll();
+        setTelegramVerification((prev) => ({
+          ...prev,
+          status: "success",
+          verificationId: result.verificationId,
+          botUserId: result.botUserId ?? prev.botUserId,
+          botUsername: result.botUsername ?? prev.botUsername,
+          chatId: result.chatId,
+          userId: result.userId,
+          welcomeMessageId: result.welcomeMessageId,
+          expiresAt: result.expiresAt ?? prev.expiresAt,
+          warnings: result.warnings,
+        }));
+        toast.success(localize(locale, "Telegram 私聊已验证", "Telegram private chat verified"));
+        return;
+      }
+
+      if (result.status === "pending") {
+        setTelegramVerification((prev) => ({
+          ...prev,
+          status: "pending",
+          botUserId: result.botUserId ?? prev.botUserId,
+          botUsername: result.botUsername ?? prev.botUsername,
+          expiresAt: result.expiresAt ?? prev.expiresAt,
+          warnings: result.warnings,
+        }));
+        scheduleTelegramVerificationPoll(verificationId);
+        return;
+      }
+
+      clearTelegramVerificationPoll();
+      const message = result.message
+        ?? (result.status === "expired"
+          ? localize(locale, "Telegram 验证已过期，请重新开始", "Telegram verification expired. Start again.")
+          : localize(locale, "Telegram 验证失败", "Telegram verification failed"));
+      setTelegramVerification((prev) => ({
+        ...prev,
+        status: "failed",
+        message,
+        warnings: result.warnings,
+      }));
+      toast.error(message);
+    } catch (error) {
+      clearTelegramVerificationPoll();
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "Telegram 验证状态检查失败", "Telegram verification check failed");
+      setTelegramVerification((prev) => ({ ...prev, status: "failed", message, warnings: [] }));
+      toast.error(message);
+    }
+  }
+
+  async function startDiscordVerification(): Promise<void> {
+    const token = (channelConfigs.discord?.token ?? "").trim();
+    if (!token) {
+      toast.error(localize(locale, "请先填写 Discord Bot Token", "Enter the Discord Bot Token first"));
+      return;
+    }
+    setDiscordVerification({ status: "starting", warnings: [] });
+    try {
+      const result = await setupApi.beginDiscordVerification({
+        token,
+        guildId: channelConfigs.discord?.guildId?.trim() || undefined,
+      });
+      setDiscordVerification({
+        status: "ready",
+        verificationId: result.verificationId,
+        applicationId: result.applicationId,
+        botUserId: result.botUserId,
+        botUsername: result.botUsername,
+        inviteUrl: result.inviteUrl,
+        guildId: result.guildId,
+        guildVerified: result.guildVerified,
+        expiresAt: result.expiresAt,
+        warnings: result.warnings,
+      });
+      toast.success(localize(locale, "Discord token 已验证", "Discord token verified"));
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "Discord 验证启动失败", "Discord verification could not start");
+      setDiscordVerification({ status: "failed", message, warnings: [] });
+      toast.error(message);
+    }
+  }
+
+  async function completeDiscordVerification(): Promise<void> {
+    const verificationId = discordVerification.verificationId;
+    const userId = (channelConfigs.discord?.setupUserId ?? "").trim();
+    if (!verificationId) {
+      toast.error(localize(locale, "请先验证 Discord token", "Verify the Discord token first"));
+      return;
+    }
+    if (!userId) {
+      toast.error(localize(locale, "请填写你的 Discord 用户 ID", "Enter your Discord user ID"));
+      return;
+    }
+    setDiscordVerification((prev) => ({ ...prev, status: "starting", message: undefined }));
+    try {
+      const result = await setupApi.completeDiscordVerification({
+        verificationId,
+        userId,
+        guildId: channelConfigs.discord?.guildId?.trim() || undefined,
+      });
+      if (result.status === "success") {
+        setDiscordVerification((prev) => ({
+          ...prev,
+          status: "success",
+          verificationId: result.verificationId,
+          applicationId: result.applicationId ?? prev.applicationId,
+          botUserId: result.botUserId ?? prev.botUserId,
+          botUsername: result.botUsername ?? prev.botUsername,
+          guildId: result.guildId ?? prev.guildId,
+          guildVerified: result.guildVerified ?? prev.guildVerified,
+          userId: result.userId,
+          dmVerified: result.dmVerified,
+          welcomeMessageId: result.welcomeMessageId,
+          warnings: result.warnings,
+        }));
+        toast.success(localize(locale, "Discord 私聊已验证", "Discord private DM verified"));
+        return;
+      }
+      const message = result.message
+        ?? (result.status === "expired"
+          ? localize(locale, "Discord 验证已过期，请重新开始", "Discord verification expired. Start again.")
+          : localize(locale, "Discord 私聊验证失败", "Discord DM verification failed"));
+      setDiscordVerification((prev) => ({
+        ...prev,
+        status: "failed",
+        guildId: result.guildId ?? prev.guildId,
+        guildVerified: result.guildVerified ?? prev.guildVerified,
+        userId: result.userId ?? userId,
+        dmVerified: result.dmVerified,
+        message,
+        warnings: result.warnings,
+      }));
+      toast.error(message);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "Discord 私聊验证失败", "Discord DM verification failed");
+      setDiscordVerification((prev) => ({ ...prev, status: "failed", message, warnings: [] }));
+      toast.error(message);
+    }
+  }
+
+  useEffect(() => {
+    if (enabledChannels.has("feishu") && expandedChannel === "feishu" && feishuRegistration.status === "idle") {
+      void startFeishuRegistration();
+    }
+  }, [enabledChannels, expandedChannel, feishuRegistration.status]);
+
   function detectProviderThenSave(options: { advance: boolean }): void {
     if (!providerApiKey.trim()) {
       toast.error(localize(locale, "请先输入 API 密钥", "Please enter an API key first"));
@@ -438,10 +875,22 @@ export function SetupPage() {
   }
 
   function handleSaveChannels() {
+    if (enabledChannels.has("feishu") && feishuRegistration.status !== "success") {
+      toast.error(localize(locale, "请先完成飞书扫码创建", "Finish Feishu QR setup first"));
+      return;
+    }
+    if (enabledChannels.has("telegram") && telegramVerification.status !== "success") {
+      toast.error(localize(locale, "请先完成 Telegram 私聊验证", "Finish Telegram private chat verification first"));
+      return;
+    }
+    if (enabledChannels.has("discord") && discordVerification.status !== "success") {
+      toast.error(localize(locale, "请先完成 Discord 私聊验证", "Finish Discord private DM verification first"));
+      return;
+    }
     const channelsPayload = Array.from(enabledChannels).map((kind) => ({
       kind,
       enabled: true,
-      config: channelConfigs[kind] ?? {},
+      config: buildChannelConfigForSave(kind),
     }));
     saveChannelsMutation.mutate(
       { channels: channelsPayload, controlConfirmed: enabledChannels.size > 0 ? channelControlConfirmed : undefined },
@@ -456,6 +905,49 @@ export function SetupPage() {
         },
       },
     );
+  }
+
+  async function handleTestChannel(kind: ChannelKind): Promise<void> {
+    const config = buildChannelConfigForSave(kind);
+    const appId = config.appId?.trim() ?? "";
+    const appSecret = config.appSecret?.trim() ?? "";
+    if (kind === "lark" && (!appId || !appSecret)) {
+      toast.error(localize(locale, "请先填写 App ID 和 App Secret", "Enter App ID and App Secret first"));
+      return;
+    }
+
+    setTestingChannel(kind);
+    setChannelTestStatus((prev) => {
+      const next = { ...prev };
+      delete next[kind];
+      return next;
+    });
+    try {
+      const result = await setupApi.testChannel({ kind, config });
+      setChannelTestStatus((prev) => ({
+        ...prev,
+        [kind]: {
+          validated: result.validated,
+          message: localize(locale, "凭证可用", "Credentials validated"),
+          warnings: result.warnings,
+        },
+      }));
+      toast.success(localize(locale, "飞书连接测试通过", "Feishu/Lark connection test passed"));
+      if (result.warnings.length > 0) {
+        toast.warning(result.warnings[0]);
+      }
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : localize(locale, "连接测试失败", "Connection test failed");
+      setChannelTestStatus((prev) => ({
+        ...prev,
+        [kind]: { validated: false, message, warnings: [] },
+      }));
+      toast.error(message);
+    } finally {
+      setTestingChannel(null);
+    }
   }
 
   const completeSetupMutation = useMutation({
@@ -1179,9 +1671,32 @@ export function SetupPage() {
       if (next.has(kind)) {
         next.delete(kind);
         if (expandedChannel === kind) setExpandedChannel(null);
+        if (kind === "feishu") {
+          clearFeishuRegistrationPoll();
+          setFeishuRegistration({ status: "idle", warnings: [] });
+        }
+        if (kind === "telegram") {
+          clearTelegramVerificationPoll();
+          setTelegramVerification({ status: "idle", warnings: [] });
+        }
+        if (kind === "discord") {
+          setDiscordVerification({ status: "idle", warnings: [] });
+        }
       } else {
         next.add(kind);
         setExpandedChannel(kind);
+      }
+      return next;
+    });
+  }
+
+  function toggleAdvancedChannelConfig(kind: ChannelKind) {
+    setAdvancedChannelConfig((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) {
+        next.delete(kind);
+      } else {
+        next.add(kind);
       }
       return next;
     });
@@ -1192,6 +1707,19 @@ export function SetupPage() {
       ...prev,
       [kind]: { ...prev[kind], [key]: value },
     }));
+    if (kind === "telegram" && key === "botToken") {
+      clearTelegramVerificationPoll();
+      setTelegramVerification({ status: "idle", warnings: [] });
+    }
+    if (kind === "discord" && (key === "token" || key === "guildId")) {
+      setDiscordVerification({ status: "idle", warnings: [] });
+    }
+    setChannelTestStatus((prev) => {
+      if (!prev[kind]) return prev;
+      const next = { ...prev };
+      delete next[kind];
+      return next;
+    });
   }
 
   function renderStep4() {
@@ -1238,11 +1766,18 @@ export function SetupPage() {
         </div>
 
         <div className="mt-8 w-full max-w-2xl space-y-2 text-left">
-          {CHANNEL_KINDS_ORDERED.map((kind) => {
+          {SETUP_CHANNEL_KINDS_ORDERED.map((kind) => {
             const meta = CHANNEL_META[kind];
             const enabled = enabledChannels.has(kind);
             const expanded = expandedChannel === kind && enabled;
             const config = channelConfigs[kind] ?? {};
+            const simpleFields = meta.fields.filter((field) => !field.advanced);
+            const advancedFields = meta.fields.filter((field) => field.advanced);
+            const advancedExpanded = advancedChannelConfig.has(kind);
+            const larkLike = isLarkLikeChannel(kind);
+            const feishuQr = isFeishuQrChannel(kind);
+            const hasConfigSurface = meta.fields.length > 0 || feishuQr;
+            const testStatus = channelTestStatus[kind];
 
             return (
               <div
@@ -1280,10 +1815,144 @@ export function SetupPage() {
                   </div>
                 </button>
 
-                {expanded && meta.fields.length > 0 && (
+                {expanded && hasConfigSurface && (
                   <div className="border-t border-[color:var(--color-border-soft)] px-4 pb-4 pt-3">
                     <div className="space-y-3">
-                      {meta.fields.map((field) => (
+                      {kind === "lark" && (
+                        <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                          <p className="font-medium text-[color:var(--color-text-primary)]">
+                            {localize(locale, "飞书准备", "Feishu setup")}
+                          </p>
+                          <p className="mt-1">
+                            {localize(
+                              locale,
+                              "使用 Lark workspace 自建应用。Friday 默认使用长连接，不需要公网回调地址。",
+                              "Use a Lark workspace custom app. Friday defaults to WebSocket mode, so a public callback URL is not required.",
+                            )}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span>{localize(locale, "开发者后台 → 创建企业自建应用 → 凭证与基础信息 → 复制 App ID / App Secret", "Developer Console → Create custom app → Credentials & Basic Info → copy App ID / App Secret")}</span>
+                            <a
+                              href="https://open.larksuite.com/app"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 font-medium text-[color:var(--color-accent)]"
+                            >
+                              {localize(locale, "打开", "Open")}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {feishuQr && (
+                        <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                            <div className="flex min-h-[232px] w-full max-w-[232px] items-center justify-center rounded-lg border border-[color:var(--color-border-soft)] bg-white p-2">
+                              {feishuRegistration.qrDataUrl ? (
+                                <img
+                                  src={feishuRegistration.qrDataUrl}
+                                  alt={localize(locale, "飞书扫码创建 Friday 应用", "Scan to create the Friday Feishu app")}
+                                  className="h-[220px] w-[220px]"
+                                />
+                              ) : (
+                                <QrCode className="h-12 w-12 text-[color:var(--color-text-faint)]" />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-3">
+                              <div>
+                                <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                                  {localize(locale, "扫码自动创建 Friday 飞书应用", "Create the Friday Feishu app by QR")}
+                                </p>
+                                <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                                  {localize(
+                                    locale,
+                                    "用飞书手机 App 扫码确认后，Friday 会自动拿到并加密保存应用凭证，默认使用长连接，不需要公网回调地址。",
+                                    "Scan with the Feishu mobile app. Friday will receive and encrypt the app credentials automatically, using WebSocket mode without a public callback URL.",
+                                  )}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <ActionButton
+                                  tone="secondary"
+                                  onClick={() => void startFeishuRegistration()}
+                                  disabled={feishuRegistration.status === "starting"}
+                                  className="gap-2"
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  {feishuRegistration.status === "starting"
+                                    ? localize(locale, "生成中...", "Starting...")
+                                    : feishuRegistration.status === "success"
+                                      ? localize(locale, "重新验证", "Verify again")
+                                      : localize(locale, "生成二维码", "Generate QR")}
+                                </ActionButton>
+                                {feishuRegistration.status === "pending" && (
+                                  <StatusPill tone="warning">
+                                    {localize(locale, "等待扫码", "Waiting for scan")}
+                                  </StatusPill>
+                                )}
+                                {feishuRegistration.status === "success" && (
+                                  <StatusPill tone="success">
+                                    {localize(locale, "私聊已验证", "DM verified")}
+                                  </StatusPill>
+                                )}
+                                {feishuRegistration.status === "failed" && (
+                                  <StatusPill tone="danger">
+                                    {localize(locale, "失败", "Failed")}
+                                  </StatusPill>
+                                )}
+                              </div>
+                              {feishuRegistration.userCode && feishuRegistration.status === "pending" && (
+                                <p className="text-xs text-[color:var(--color-text-tertiary)]">
+                                  {localize(locale, "验证码", "Code")}: <span className="font-mono text-[color:var(--color-text-secondary)]">{feishuRegistration.userCode}</span>
+                                </p>
+                              )}
+                              {feishuRegistration.appId && (
+                                <p className="truncate text-xs text-[color:var(--color-text-tertiary)]">
+                                  App ID: <span className="font-mono text-[color:var(--color-text-secondary)]">{feishuRegistration.appId}</span>
+                                </p>
+                              )}
+                              {feishuRegistration.ownerOpenId && (
+                                <p className="truncate text-xs text-[color:var(--color-text-tertiary)]">
+                                  {localize(locale, "审批 allowlist", "Approval allowlist")}:{" "}
+                                  <span className="font-mono text-[color:var(--color-text-secondary)]">{feishuRegistration.ownerOpenId}</span>
+                                </p>
+                              )}
+                              {feishuRegistration.welcomeMessageId && (
+                                <p className="truncate text-xs text-[color:var(--color-text-tertiary)]">
+                                  {localize(locale, "欢迎私聊", "Welcome DM")}:{" "}
+                                  <span className="font-mono text-[color:var(--color-text-secondary)]">{feishuRegistration.welcomeMessageId}</span>
+                                </p>
+                              )}
+                              {feishuRegistration.dmVerified && (
+                                <p className="text-xs leading-5 text-[color:var(--color-text-success)]">
+                                  {localize(
+                                    locale,
+                                    "Friday 已向你的飞书私聊发送验证消息。看到这条消息后，就可以直接在飞书里跟 Friday 沟通。",
+                                    "Friday sent a verification message to your Feishu DM. Once you see it, you can chat with Friday there.",
+                                  )}
+                                </p>
+                              )}
+                              {feishuRegistration.message && (
+                                <p className="text-xs leading-5 text-[color:var(--color-danger)]">{feishuRegistration.message}</p>
+                              )}
+                              {feishuRegistration.qrUrl && (
+                                <a
+                                  href={feishuRegistration.qrUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-accent)]"
+                                >
+                                  {localize(locale, "无法扫码时打开确认页", "Open confirmation page")}
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {simpleFields.map((field) => (
                         <div key={field.key}>
                           <label className="mb-1 block text-xs font-medium text-[color:var(--color-text-tertiary)]">
                             {localize(locale, field.labelZh, field.label)}
@@ -1299,6 +1968,224 @@ export function SetupPage() {
                           />
                         </div>
                       ))}
+
+                      {kind === "telegram" && (
+                        <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <ActionButton
+                              tone="secondary"
+                              onClick={() => void startTelegramVerification()}
+                              disabled={telegramVerification.status === "starting"}
+                              className="gap-2"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              {telegramVerification.status === "starting"
+                                ? localize(locale, "验证中...", "Verifying...")
+                                : telegramVerification.status === "success"
+                                  ? localize(locale, "重新验证", "Verify again")
+                                  : localize(locale, "验证 Telegram", "Verify Telegram")}
+                            </ActionButton>
+                            {telegramVerification.status === "pending" && (
+                              <StatusPill tone="warning">{localize(locale, "等待私聊", "Waiting for DM")}</StatusPill>
+                            )}
+                            {telegramVerification.status === "success" && (
+                              <StatusPill tone="success">{localize(locale, "私聊已验证", "DM verified")}</StatusPill>
+                            )}
+                            {telegramVerification.status === "failed" && (
+                              <StatusPill tone="danger">{localize(locale, "失败", "Failed")}</StatusPill>
+                            )}
+                          </div>
+                          {telegramVerification.botUsername && (
+                            <p className="mt-2 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              Bot: <span className="font-mono text-[color:var(--color-text-secondary)]">@{telegramVerification.botUsername}</span>
+                            </p>
+                          )}
+                          {telegramVerification.startCode && telegramVerification.status === "pending" && (
+                            <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                              {localize(locale, "打开机器人并发送验证码", "Open the bot and send this setup code")}:{" "}
+                              <span className="font-mono">{telegramVerification.startCode}</span>
+                            </p>
+                          )}
+                          {telegramVerification.startUrl && telegramVerification.status === "pending" && (
+                            <a
+                              href={telegramVerification.startUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-accent)]"
+                            >
+                              {localize(locale, "打开 Telegram 机器人", "Open Telegram bot")}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                          {telegramVerification.welcomeMessageId && (
+                            <p className="mt-2 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              {localize(locale, "验证消息", "Verification message")}:{" "}
+                              <span className="font-mono text-[color:var(--color-text-secondary)]">{telegramVerification.welcomeMessageId}</span>
+                            </p>
+                          )}
+                          {telegramVerification.status === "success" && (
+                            <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-success)]">
+                              {localize(
+                                locale,
+                                "Friday 已收到你的 Telegram 私聊并发送验证回复。保存后即可在 Telegram 里跟 Friday 沟通。",
+                                "Friday received your Telegram DM and sent a verification reply. After saving, you can chat with Friday in Telegram.",
+                              )}
+                            </p>
+                          )}
+                          {telegramVerification.message && (
+                            <p className="mt-2 text-xs leading-5 text-[color:var(--color-danger)]">{telegramVerification.message}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {kind === "discord" && (
+                        <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <ActionButton
+                              tone="secondary"
+                              onClick={() => void startDiscordVerification()}
+                              disabled={discordVerification.status === "starting"}
+                              className="gap-2"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                              {discordVerification.status === "starting"
+                                ? localize(locale, "验证中...", "Verifying...")
+                                : discordVerification.status === "success"
+                                  ? localize(locale, "重新验证", "Verify again")
+                                  : localize(locale, "验证 Token", "Verify Token")}
+                            </ActionButton>
+                            <ActionButton
+                              tone="secondary"
+                              onClick={() => void completeDiscordVerification()}
+                              disabled={!discordVerification.verificationId || discordVerification.status === "starting"}
+                              className="gap-2"
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                              {localize(locale, "发送验证私聊", "Send Verification DM")}
+                            </ActionButton>
+                            {discordVerification.status === "ready" && (
+                              <StatusPill tone="warning">{localize(locale, "等待私聊验证", "Waiting for DM check")}</StatusPill>
+                            )}
+                            {discordVerification.status === "success" && (
+                              <StatusPill tone="success">{localize(locale, "私聊已验证", "DM verified")}</StatusPill>
+                            )}
+                            {discordVerification.status === "failed" && (
+                              <StatusPill tone="danger">{localize(locale, "失败", "Failed")}</StatusPill>
+                            )}
+                          </div>
+                          {discordVerification.botUsername && (
+                            <p className="mt-2 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              Bot: <span className="font-mono text-[color:var(--color-text-secondary)]">{discordVerification.botUsername}</span>
+                            </p>
+                          )}
+                          {discordVerification.inviteUrl && (
+                            <a
+                              href={discordVerification.inviteUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-accent)]"
+                            >
+                              {localize(locale, "邀请机器人到 Discord 服务器", "Invite bot to Discord server")}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                          {discordVerification.guildId && (
+                            <p className="mt-2 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              {localize(locale, "服务器验证", "Server check")}:{" "}
+                              <span className={discordVerification.guildVerified ? "text-[color:var(--color-text-success)]" : "text-[color:var(--color-text-tertiary)]"}>
+                                {discordVerification.guildVerified
+                                  ? localize(locale, "已加入", "joined")
+                                  : localize(locale, "待邀请后重试", "invite then retry")}
+                              </span>
+                            </p>
+                          )}
+                          {discordVerification.welcomeMessageId && (
+                            <p className="mt-2 truncate text-xs text-[color:var(--color-text-tertiary)]">
+                              {localize(locale, "验证私聊", "Verification DM")}:{" "}
+                              <span className="font-mono text-[color:var(--color-text-secondary)]">{discordVerification.welcomeMessageId}</span>
+                            </p>
+                          )}
+                          {discordVerification.status === "success" && (
+                            <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-success)]">
+                              {localize(
+                                locale,
+                                "Friday 已向你的 Discord 私信发送验证消息。保存后即可在 Discord 里跟 Friday 沟通。",
+                                "Friday sent a verification DM to you. After saving, you can chat with Friday in Discord.",
+                              )}
+                            </p>
+                          )}
+                          {discordVerification.message && (
+                            <p className="mt-2 text-xs leading-5 text-[color:var(--color-danger)]">{discordVerification.message}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {kind === "lark" && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ActionButton
+                            tone="secondary"
+                            onClick={() => void handleTestChannel(kind)}
+                            disabled={testingChannel === kind}
+                          >
+                            {testingChannel === kind
+                              ? localize(locale, "测试中...", "Testing...")
+                              : localize(locale, "测试连接", "Test Connection")}
+                          </ActionButton>
+                          {testStatus && (
+                            <StatusPill tone={testStatus.validated ? "success" : "danger"}>
+                              {testStatus.validated
+                                ? localize(locale, "已验证", "Validated")
+                                : localize(locale, "未通过", "Failed")}
+                            </StatusPill>
+                          )}
+                          {testStatus?.message && (
+                            <span className="text-xs text-[color:var(--color-text-tertiary)]">{testStatus.message}</span>
+                          )}
+                        </div>
+                      )}
+
+                      {advancedFields.length > 0 && (
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleAdvancedChannelConfig(kind)}
+                            className="text-xs font-medium text-[color:var(--color-accent)] transition hover:opacity-80"
+                          >
+                            {advancedExpanded
+                              ? localize(locale, "隐藏高级设置", "Hide advanced settings")
+                              : localize(locale, "高级设置", "Advanced settings")}
+                          </button>
+                          {advancedExpanded && (
+                            <div className="mt-3 space-y-3 rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                              {larkLike && (
+                                <p className="text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                                  {localize(
+                                    locale,
+                                    "允许审批用户用于限制哪些飞书用户可以触发和批准敏感操作。此配置只能由 Friday 本地管理员在设置里修改。",
+                                    "Allowed approver users restrict who can trigger and approve sensitive actions. Only the local Friday admin can edit this setting.",
+                                  )}
+                                </p>
+                              )}
+                              {advancedFields.map((field) => (
+                                <div key={field.key}>
+                                  <label className="mb-1 block text-xs font-medium text-[color:var(--color-text-tertiary)]">
+                                    {localize(locale, field.labelZh, field.label)}
+                                    {field.required && <span className="ml-1 text-[color:var(--color-danger)]">*</span>}
+                                  </label>
+                                  <input
+                                    type={field.secret ? "password" : "text"}
+                                    placeholder={localize(locale, field.placeholderZh, field.placeholder)}
+                                    value={config[field.key] ?? ""}
+                                    onChange={(e) => updateChannelConfig(kind, field.key, e.target.value)}
+                                    className="agent-input px-3 py-2 text-sm"
+                                    autoComplete="off"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

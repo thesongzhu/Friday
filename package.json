@@ -175,6 +175,7 @@
     "linkedom": "^0.18.12",
     "pdfjs-dist": "^5.6.205",
     "playwright": "^1.58.2",
+    "qrcode": "^1.5.4",
     "semver": "^7.7.4",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
@@ -190,6 +191,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/dagre": "^0.7.54",
     "@types/node": "^25.2.3",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",

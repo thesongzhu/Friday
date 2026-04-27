@@ -74,14 +74,77 @@ describe("Friday Mock Journeys E2E — Setup Wizard", () => {
     expect(networkRes.json.ok).toBe(true);
     expect(networkRes.json.data.mode).toBe("local");
 
-    // 3. Save channels config
+    // 3. Verify and save channels config
+    const fetchBeforeDiscordMock = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://discord.com/api/v10/users/@me") {
+        return new Response(JSON.stringify({ id: "bot-mock", username: "FridayBot", bot: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://discord.com/api/v10/oauth2/applications/@me") {
+        return new Response(JSON.stringify({ id: "app-mock", bot: { id: "bot-mock", username: "FridayBot" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://discord.com/api/v10/users/@me/channels") {
+        return new Response(JSON.stringify({ id: "dm-mock" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://discord.com/api/v10/channels/dm-mock/messages") {
+        return new Response(JSON.stringify({ id: "msg-mock" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return fetchBeforeDiscordMock(input, init);
+    }) as typeof fetch;
+
+    let discordVerificationId = "";
+    try {
+      const beginDiscord = await apiFetch<{
+        ok: boolean;
+        data: { verificationId: string };
+      }>(env.baseUrl, env.accessToken, "POST", "/v1/setup/channels/discord/verification/begin", {
+        token: "fake-mock-token",
+      });
+      expect(beginDiscord.status).toBe(200);
+      discordVerificationId = beginDiscord.json.data.verificationId;
+
+      const completeDiscord = await apiFetch<{
+        ok: boolean;
+        data: { status: string; dmVerified?: boolean };
+      }>(env.baseUrl, env.accessToken, "POST", "/v1/setup/channels/discord/verification/complete", {
+        verificationId: discordVerificationId,
+        userId: "10001",
+      });
+      expect(completeDiscord.status).toBe(200);
+      expect(completeDiscord.json.data.status).toBe("success");
+      expect(completeDiscord.json.data.dmVerified).toBe(true);
+    } finally {
+      globalThis.fetch = fetchBeforeDiscordMock;
+    }
+
     const channelsRes = await apiFetch<{
       ok: boolean;
       data: { savedKinds: string[] };
     }>(env.baseUrl, env.accessToken, "POST", "/v1/setup/channels", {
       controlConfirmed: true,
       channels: [
-        { kind: "discord", enabled: true, config: { token: "fake-mock-token" } },
+        {
+          kind: "discord",
+          enabled: true,
+          config: {
+            token: "fake-mock-token",
+            setupVerificationId: discordVerificationId,
+            setupUserId: "10001",
+          },
+        },
       ],
     });
     expect(channelsRes.status).toBe(200);

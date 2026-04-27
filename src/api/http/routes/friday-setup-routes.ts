@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import { randomUUID } from "node:crypto";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridaySqliteLayer } from "#state";
 import {
@@ -113,6 +114,127 @@ interface SetupChannelsResponse {
   savedKinds: string[];
 }
 
+interface SetupChannelTestRequest {
+  kind: FridaySupportedChannelKind;
+  config: Record<string, unknown>;
+}
+
+interface SetupChannelTestResponse {
+  kind: FridaySupportedChannelKind;
+  validated: boolean;
+  useFeishu?: boolean;
+  receiveMode?: "websocket" | "webhook";
+  tokenExpiresInSeconds?: number;
+  warnings: string[];
+}
+
+interface SetupFeishuRegistrationBeginResponse {
+  registrationId: string;
+  kind: "feishu";
+  domain: "feishu";
+  qrUrl: string;
+  userCode: string;
+  intervalSeconds: number;
+  expireInSeconds: number;
+  expiresAt: string;
+  warnings: string[];
+}
+
+interface SetupFeishuRegistrationPollRequest {
+  registrationId: string;
+}
+
+interface SetupFeishuRegistrationPollResponse {
+  registrationId: string;
+  kind: "feishu";
+  status: "pending" | "slow_down" | "success" | "dm_failed" | "access_denied" | "expired" | "error";
+  appId?: string;
+  ownerOpenId?: string;
+  suggestedAllowedUsers?: string[];
+  dmVerified?: boolean;
+  welcomeMessageId?: string;
+  intervalSeconds?: number;
+  expiresAt?: string;
+  message?: string;
+  warnings: string[];
+}
+
+interface SetupTelegramVerificationBeginRequest {
+  botToken?: string;
+}
+
+interface SetupTelegramVerificationBeginResponse {
+  verificationId: string;
+  kind: "telegram";
+  status: "pending";
+  botUserId: string;
+  botUsername?: string;
+  botName: string;
+  startCode: string;
+  startUrl?: string;
+  expiresAt: string;
+  warnings: string[];
+}
+
+interface SetupTelegramVerificationPollRequest {
+  verificationId: string;
+}
+
+interface SetupTelegramVerificationPollResponse {
+  verificationId: string;
+  kind: "telegram";
+  status: "pending" | "success" | "expired" | "error";
+  botUserId?: string;
+  botUsername?: string;
+  chatId?: string;
+  userId?: string;
+  welcomeMessageId?: string;
+  expiresAt?: string;
+  message?: string;
+  warnings: string[];
+}
+
+interface SetupDiscordVerificationBeginRequest {
+  token?: string;
+  guildId?: string;
+}
+
+interface SetupDiscordVerificationBeginResponse {
+  verificationId: string;
+  kind: "discord";
+  status: "ready";
+  applicationId: string;
+  botUserId: string;
+  botUsername: string;
+  inviteUrl: string;
+  guildId?: string;
+  guildVerified?: boolean;
+  expiresAt: string;
+  warnings: string[];
+}
+
+interface SetupDiscordVerificationCompleteRequest {
+  verificationId: string;
+  userId?: string;
+  guildId?: string;
+}
+
+interface SetupDiscordVerificationCompleteResponse {
+  verificationId: string;
+  kind: "discord";
+  status: "success" | "dm_failed" | "expired" | "error";
+  applicationId?: string;
+  botUserId?: string;
+  botUsername?: string;
+  guildId?: string;
+  guildVerified?: boolean;
+  userId?: string;
+  dmVerified?: boolean;
+  welcomeMessageId?: string;
+  message?: string;
+  warnings: string[];
+}
+
 // ─── DB row type ───
 
 interface SetupStateRow {
@@ -137,6 +259,1256 @@ const VALID_CHANNEL_KINDS = new Set<string>(FRIDAY_SUPPORTED_CHANNEL_KINDS);
 const VALID_STEP_IDS = new Set<string>(["welcome", "security", "communication", "provider", "network", "channels", "skills", "done"]);
 
 const channelSecretRepository = createFridaySecretRepository();
+const FEISHU_API_BASE = "https://open.feishu.cn";
+const LARK_API_BASE = "https://open.larksuite.com";
+const FEISHU_ACCOUNTS_BASE = "https://accounts.feishu.cn";
+const FEISHU_APP_REGISTRATION_PATH = "/oauth/v1/app/registration";
+const LARK_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal";
+const LARK_SEND_MESSAGE_PATH = "/open-apis/im/v1/messages";
+const TELEGRAM_API_BASE = "https://api.telegram.org";
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+const DISCORD_BOT_INVITE_PERMISSIONS = "274878024768";
+const CHANNEL_TEST_TIMEOUT_MS = 8_000;
+const FEISHU_REGISTRATION_TIMEOUT_MS = 10_000;
+const FEISHU_REGISTRATION_SESSION_TTL_MS = 15 * 60 * 1000;
+const CHANNEL_SETUP_VERIFICATION_SESSION_TTL_MS = 15 * 60 * 1000;
+
+interface FeishuAppRegistrationResult {
+  appId: string;
+  appSecret: string;
+  ownerOpenId?: string;
+  dmVerified: boolean;
+  welcomeMessageId?: string;
+  dmError?: string;
+}
+
+interface FeishuAppRegistrationSession {
+  registrationId: string;
+  deviceCode: string;
+  qrUrl: string;
+  userCode: string;
+  intervalSeconds: number;
+  expireInSeconds: number;
+  expiresAtMs: number;
+  result?: FeishuAppRegistrationResult;
+}
+
+interface TelegramSetupVerificationResult {
+  chatId: string;
+  userId: string;
+  welcomeMessageId: string;
+}
+
+interface TelegramSetupVerificationSession {
+  verificationId: string;
+  botToken: string;
+  botUserId: string;
+  botUsername?: string;
+  botName: string;
+  startCode: string;
+  updateOffset?: number;
+  expiresAtMs: number;
+  result?: TelegramSetupVerificationResult;
+}
+
+interface DiscordSetupVerificationResult {
+  userId: string;
+  dmVerified: boolean;
+  welcomeMessageId?: string;
+  guildId?: string;
+  guildVerified?: boolean;
+  error?: string;
+}
+
+interface DiscordSetupVerificationSession {
+  verificationId: string;
+  token: string;
+  applicationId: string;
+  botUserId: string;
+  botUsername: string;
+  guildId?: string;
+  guildVerified?: boolean;
+  inviteUrl: string;
+  expiresAtMs: number;
+  result?: DiscordSetupVerificationResult;
+}
+
+function normalizeStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+function normalizeBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "0", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function normalizeStringField(config: Record<string, unknown>, field: string): void {
+  const value = config[field];
+  if (typeof value !== "string") {
+    return;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    delete config[field];
+    return;
+  }
+  config[field] = trimmed;
+}
+
+function normalizeSetupChannelConfig(
+  kind: FridaySupportedChannelKind,
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized = { ...config };
+
+  for (const field of Object.keys(normalized)) {
+    normalizeStringField(normalized, field);
+  }
+
+  for (const field of ["allowedUsers", "allowedChats", "allowedChannels", "allowedGroups", "channels"]) {
+    const list = normalizeStringList(normalized[field]);
+    if (list) {
+      normalized[field] = list;
+    } else if (typeof normalized[field] === "string" || Array.isArray(normalized[field])) {
+      delete normalized[field];
+    }
+  }
+
+  if (kind === "lark" || kind === "feishu") {
+    normalized.useFeishu = kind === "feishu" ? true : normalizeBoolean(normalized.useFeishu) ?? false;
+    if (typeof normalized.receiveMode === "string") {
+      normalized.receiveMode = normalized.receiveMode.trim().toLowerCase();
+    }
+  }
+
+  return normalized;
+}
+
+function requireTrimmedChannelString(
+  config: Record<string, unknown>,
+  field: string,
+  kind: FridaySupportedChannelKind,
+): string {
+  const value = config[field];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} is required for channel ${kind}`,
+      { httpStatus: 400 },
+    );
+  }
+  return value.trim();
+}
+
+async function testLarkLikeChannelConnection(
+  kind: FridaySupportedChannelKind,
+  config: Record<string, unknown>,
+): Promise<SetupChannelTestResponse> {
+  const appId = requireTrimmedChannelString(config, "appId", kind);
+  const appSecret = requireTrimmedChannelString(config, "appSecret", kind);
+  const useFeishu = kind === "feishu" || normalizeBoolean(config.useFeishu) === true;
+  const receiveMode = config.receiveMode === "webhook" ? "webhook" : "websocket";
+  const apiBase = useFeishu ? FEISHU_API_BASE : LARK_API_BASE;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHANNEL_TEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}${LARK_TOKEN_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        app_id: appId,
+        app_secret: appSecret,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    throw new FridayDomainError(
+      "CHANNEL_CONNECTION_FAILED",
+      aborted
+        ? "Timed out while testing the Lark/Feishu app credentials."
+        : `Could not reach the Lark/Feishu token endpoint: ${error instanceof Error ? error.message : String(error)}`,
+      { httpStatus: 502 },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const responseText = await response.text();
+  let data: {
+    code?: number;
+    msg?: string;
+    tenant_access_token?: string;
+    expire?: number;
+  };
+  try {
+    data = JSON.parse(responseText) as typeof data;
+  } catch {
+    throw new FridayDomainError(
+      "CHANNEL_CONNECTION_FAILED",
+      `Lark/Feishu token endpoint returned non-JSON response (${response.status}).`,
+      { httpStatus: 502 },
+    );
+  }
+
+  if (!response.ok || data.code !== 0 || !data.tenant_access_token) {
+    throw new FridayDomainError(
+      "CHANNEL_CREDENTIAL_INVALID",
+      `Lark/Feishu credential test failed: ${data.code ?? response.status} ${data.msg ?? response.statusText}`,
+      { httpStatus: 400 },
+    );
+  }
+
+  return {
+    kind,
+    validated: true,
+    useFeishu,
+    receiveMode,
+    tokenExpiresInSeconds: typeof data.expire === "number" ? data.expire : undefined,
+    warnings: [
+      "Credential validation only confirms App ID/App Secret. Message receiving still requires bot permissions and event subscription in the Feishu/Lark developer console.",
+    ],
+  };
+}
+
+const telegramVerificationSessions = new Map<string, TelegramSetupVerificationSession>();
+const discordVerificationSessions = new Map<string, DiscordSetupVerificationSession>();
+
+function pruneChannelSetupVerificationSessions(nowMs = Date.now()): void {
+  for (const [verificationId, session] of telegramVerificationSessions.entries()) {
+    if (session.expiresAtMs <= nowMs) {
+      telegramVerificationSessions.delete(verificationId);
+    }
+  }
+  for (const [verificationId, session] of discordVerificationSessions.entries()) {
+    if (session.expiresAtMs <= nowMs) {
+      discordVerificationSessions.delete(verificationId);
+    }
+  }
+}
+
+async function readJsonResponse<T>(response: Response, errorCode: string, label: string): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new FridayDomainError(
+      errorCode,
+      `${label} returned non-JSON response (${response.status}).`,
+      { httpStatus: 502 },
+    );
+  }
+}
+
+function telegramBotApiUrl(botToken: string, method: string): string {
+  return `${TELEGRAM_API_BASE}/bot${botToken}/${method}`;
+}
+
+async function postTelegramBotApi<T extends { ok?: boolean; description?: string }>(
+  botToken: string,
+  method: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(telegramBotApiUrl(botToken, method), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    throw new FridayDomainError(
+      "TELEGRAM_CONNECTION_FAILED",
+      aborted
+        ? `Timed out while calling Telegram ${method}.`
+        : `Could not reach Telegram ${method}: ${error instanceof Error ? error.message : String(error)}`,
+      { httpStatus: 502 },
+    );
+  }
+
+  const data = await readJsonResponse<T>(response, "TELEGRAM_CONNECTION_FAILED", `Telegram ${method}`);
+  if (!response.ok || data.ok === false) {
+    const invalidCredential = response.status === 401 || /token/i.test(data.description ?? "");
+    throw new FridayDomainError(
+      invalidCredential ? "TELEGRAM_CREDENTIAL_INVALID" : "TELEGRAM_CONNECTION_FAILED",
+      `Telegram ${method} failed: ${data.description ?? response.statusText}`,
+      { httpStatus: invalidCredential ? 400 : 502 },
+    );
+  }
+  return data;
+}
+
+async function beginTelegramVerification(
+  input: SetupTelegramVerificationBeginRequest | null,
+): Promise<SetupTelegramVerificationBeginResponse> {
+  const botToken = typeof input?.botToken === "string" ? input.botToken.trim() : "";
+  if (!botToken) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "botToken is required for Telegram verification.",
+      { httpStatus: 400 },
+    );
+  }
+
+  const me = await postTelegramBotApi<{
+    ok: boolean;
+    result?: {
+      id?: number;
+      is_bot?: boolean;
+      first_name?: string;
+      username?: string;
+    };
+    description?: string;
+  }>(botToken, "getMe", {});
+  const bot = me.result;
+  if (!bot?.id || !bot.first_name) {
+    throw new FridayDomainError(
+      "TELEGRAM_CREDENTIAL_INVALID",
+      "Telegram getMe did not return a bot identity.",
+      { httpStatus: 400 },
+    );
+  }
+
+  let updateOffset: number | undefined;
+  try {
+    const drained = await postTelegramBotApi<{
+      ok: boolean;
+      result?: Array<{ update_id?: number }>;
+      description?: string;
+    }>(botToken, "getUpdates", {
+      timeout: 0,
+      limit: 100,
+      allowed_updates: ["message"],
+    });
+    const latestUpdateId = (drained.result ?? [])
+      .map((update) => update.update_id)
+      .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+      .reduce<number | undefined>((latest, id) => latest === undefined ? id : Math.max(latest, id), undefined);
+    updateOffset = latestUpdateId === undefined ? undefined : latestUpdateId + 1;
+  } catch (error) {
+    if (error instanceof FridayDomainError) {
+      throw new FridayDomainError(
+        "TELEGRAM_VERIFICATION_UNAVAILABLE",
+        "Telegram verification needs getUpdates access. Delete any existing webhook for this bot, or use a fresh BotFather bot token.",
+        { httpStatus: 400 },
+      );
+    }
+    throw error;
+  }
+
+  pruneChannelSetupVerificationSessions();
+  const verificationId = randomUUID();
+  const startCode = `friday_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  const expiresAtMs = Date.now() + CHANNEL_SETUP_VERIFICATION_SESSION_TTL_MS;
+  const startUrl = bot.username ? `https://t.me/${bot.username}?start=${startCode}` : undefined;
+
+  telegramVerificationSessions.set(verificationId, {
+    verificationId,
+    botToken,
+    botUserId: String(bot.id),
+    ...(bot.username ? { botUsername: bot.username } : {}),
+    botName: bot.first_name,
+    startCode,
+    ...(updateOffset !== undefined ? { updateOffset } : {}),
+    expiresAtMs,
+  });
+
+  return {
+    verificationId,
+    kind: "telegram",
+    status: "pending",
+    botUserId: String(bot.id),
+    botUsername: bot.username,
+    botName: bot.first_name,
+    startCode,
+    startUrl,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    warnings: [
+      "Open the Telegram bot and send the setup code. Friday will only allow saving after it receives that private message and sends a verification reply.",
+    ],
+  };
+}
+
+async function pollTelegramVerification(
+  verificationId: string,
+): Promise<SetupTelegramVerificationPollResponse> {
+  pruneChannelSetupVerificationSessions();
+  const session = telegramVerificationSessions.get(verificationId);
+  if (!session) {
+    return {
+      verificationId,
+      kind: "telegram",
+      status: "expired",
+      message: "Telegram verification session was not found or has expired.",
+      warnings: [],
+    };
+  }
+
+  if (session.result) {
+    return {
+      verificationId,
+      kind: "telegram",
+      status: "success",
+      botUserId: session.botUserId,
+      botUsername: session.botUsername,
+      chatId: session.result.chatId,
+      userId: session.result.userId,
+      welcomeMessageId: session.result.welcomeMessageId,
+      expiresAt: new Date(session.expiresAtMs).toISOString(),
+      warnings: [],
+    };
+  }
+
+  const updates = await postTelegramBotApi<{
+    ok: boolean;
+    result?: Array<{
+      update_id?: number;
+      message?: {
+        message_id?: number;
+        text?: string;
+        chat?: { id?: number | string; type?: string };
+        from?: { id?: number | string; is_bot?: boolean };
+      };
+    }>;
+    description?: string;
+  }>(session.botToken, "getUpdates", {
+    ...(session.updateOffset !== undefined ? { offset: session.updateOffset } : {}),
+    timeout: 0,
+    limit: 100,
+    allowed_updates: ["message"],
+  });
+
+  for (const update of updates.result ?? []) {
+    if (typeof update.update_id === "number") {
+      session.updateOffset = Math.max(session.updateOffset ?? 0, update.update_id + 1);
+    }
+    const message = update.message;
+    const text = message?.text?.trim() ?? "";
+    const chatId = message?.chat?.id;
+    const userId = message?.from?.id;
+    if (
+      text.includes(session.startCode)
+      && message?.chat?.type === "private"
+      && chatId !== undefined
+      && userId !== undefined
+      && message.from?.is_bot !== true
+    ) {
+      const welcome = await postTelegramBotApi<{
+        ok: boolean;
+        result?: { message_id?: number };
+        description?: string;
+      }>(session.botToken, "sendMessage", {
+        chat_id: chatId,
+        text: "Friday 已连接 Telegram。你现在可以在这个对话里给 Friday 发消息；敏感操作会在这里请求确认。",
+      });
+      const welcomeMessageId = String(welcome.result?.message_id ?? "");
+      if (!welcomeMessageId) {
+        return {
+          verificationId,
+          kind: "telegram",
+          status: "error",
+          message: "Telegram verification reply did not return a message id.",
+          warnings: [],
+        };
+      }
+      session.result = {
+        chatId: String(chatId),
+        userId: String(userId),
+        welcomeMessageId,
+      };
+      return {
+        verificationId,
+        kind: "telegram",
+        status: "success",
+        botUserId: session.botUserId,
+        botUsername: session.botUsername,
+        chatId: session.result.chatId,
+        userId: session.result.userId,
+        welcomeMessageId: session.result.welcomeMessageId,
+        expiresAt: new Date(session.expiresAtMs).toISOString(),
+        warnings: [],
+      };
+    }
+  }
+
+  return {
+    verificationId,
+    kind: "telegram",
+    status: "pending",
+    botUserId: session.botUserId,
+    botUsername: session.botUsername,
+    expiresAt: new Date(session.expiresAtMs).toISOString(),
+    warnings: [],
+  };
+}
+
+async function discordApi<T>(
+  token: string,
+  path: string,
+  init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${DISCORD_API_BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bot ${token}`,
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    throw new FridayDomainError(
+      "DISCORD_CONNECTION_FAILED",
+      aborted
+        ? `Timed out while calling Discord ${path}.`
+        : `Could not reach Discord ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { httpStatus: 502 },
+    );
+  }
+
+  const data = await readJsonResponse<T & { message?: string; code?: number }>(
+    response,
+    "DISCORD_CONNECTION_FAILED",
+    `Discord ${path}`,
+  );
+  if (!response.ok) {
+    const invalidCredential = response.status === 401 || response.status === 403;
+    throw new FridayDomainError(
+      invalidCredential ? "DISCORD_CREDENTIAL_INVALID" : "DISCORD_CONNECTION_FAILED",
+      `Discord ${path} failed: ${data.message ?? response.statusText}`,
+      { httpStatus: invalidCredential ? 400 : 502 },
+    );
+  }
+  return data;
+}
+
+async function tryVerifyDiscordGuild(token: string, guildId: string): Promise<boolean> {
+  try {
+    const guild = await discordApi<{ id?: string }>(token, `/guilds/${encodeURIComponent(guildId)}`);
+    return guild.id === guildId;
+  } catch {
+    return false;
+  }
+}
+
+function buildDiscordInviteUrl(applicationId: string): string {
+  const params = new URLSearchParams({
+    client_id: applicationId,
+    permissions: DISCORD_BOT_INVITE_PERMISSIONS,
+    scope: "bot applications.commands",
+  });
+  return `https://discord.com/oauth2/authorize?${params.toString()}`;
+}
+
+async function beginDiscordVerification(
+  input: SetupDiscordVerificationBeginRequest | null,
+): Promise<SetupDiscordVerificationBeginResponse> {
+  const token = typeof input?.token === "string" ? input.token.trim().replace(/^Bot\s+/i, "") : "";
+  if (!token) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "token is required for Discord verification.",
+      { httpStatus: 400 },
+    );
+  }
+  const guildId = typeof input?.guildId === "string" && input.guildId.trim()
+    ? input.guildId.trim()
+    : undefined;
+
+  const user = await discordApi<{
+    id?: string;
+    username?: string;
+    discriminator?: string;
+    bot?: boolean;
+  }>(token, "/users/@me");
+  if (!user.id || !user.username) {
+    throw new FridayDomainError(
+      "DISCORD_CREDENTIAL_INVALID",
+      "Discord token did not return a bot identity.",
+      { httpStatus: 400 },
+    );
+  }
+
+  const app = await discordApi<{
+    id?: string;
+    name?: string;
+    bot?: { id?: string; username?: string };
+  }>(token, "/oauth2/applications/@me");
+  const applicationId = app.id ?? user.id;
+  const botUserId = app.bot?.id ?? user.id;
+  const botUsername = app.bot?.username ?? user.username;
+  const inviteUrl = buildDiscordInviteUrl(applicationId);
+  const guildVerified = guildId ? await tryVerifyDiscordGuild(token, guildId) : undefined;
+
+  pruneChannelSetupVerificationSessions();
+  const verificationId = randomUUID();
+  const expiresAtMs = Date.now() + CHANNEL_SETUP_VERIFICATION_SESSION_TTL_MS;
+  discordVerificationSessions.set(verificationId, {
+    verificationId,
+    token,
+    applicationId,
+    botUserId,
+    botUsername,
+    inviteUrl,
+    ...(guildId ? { guildId } : {}),
+    ...(guildVerified !== undefined ? { guildVerified } : {}),
+    expiresAtMs,
+  });
+
+  return {
+    verificationId,
+    kind: "discord",
+    status: "ready",
+    applicationId,
+    botUserId,
+    botUsername,
+    inviteUrl,
+    ...(guildId ? { guildId } : {}),
+    ...(guildVerified !== undefined ? { guildVerified } : {}),
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    warnings: [
+      guildId && guildVerified === false
+        ? "The bot token is valid, but Friday cannot see that server yet. Open the invite URL, add the bot, then send the verification DM."
+        : "Open the invite URL if the bot is not already in your server, then send a Discord verification DM.",
+    ],
+  };
+}
+
+async function completeDiscordVerification(
+  input: SetupDiscordVerificationCompleteRequest | null,
+): Promise<SetupDiscordVerificationCompleteResponse> {
+  const verificationId = typeof input?.verificationId === "string" ? input.verificationId.trim() : "";
+  const userId = typeof input?.userId === "string" ? input.userId.trim() : "";
+  if (!verificationId) {
+    throw new FridayDomainError("VALIDATION_ERROR", "verificationId is required.", { httpStatus: 400 });
+  }
+  if (!/^\d{5,30}$/.test(userId)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "Discord userId is required and must be a numeric Discord user ID.",
+      { httpStatus: 400 },
+    );
+  }
+
+  pruneChannelSetupVerificationSessions();
+  const session = discordVerificationSessions.get(verificationId);
+  if (!session) {
+    return {
+      verificationId,
+      kind: "discord",
+      status: "expired",
+      message: "Discord verification session was not found or has expired.",
+      warnings: [],
+    };
+  }
+
+  const guildId = typeof input?.guildId === "string" && input.guildId.trim()
+    ? input.guildId.trim()
+    : session.guildId;
+  const guildVerified = guildId ? await tryVerifyDiscordGuild(session.token, guildId) : undefined;
+  if (guildId && guildVerified !== true) {
+    session.result = {
+      userId,
+      dmVerified: false,
+      guildId,
+      guildVerified: false,
+      error: "Friday cannot verify that the Discord bot is in the selected server. Use the invite URL first, then try again.",
+    };
+    return {
+      verificationId,
+      kind: "discord",
+      status: "dm_failed",
+      applicationId: session.applicationId,
+      botUserId: session.botUserId,
+      botUsername: session.botUsername,
+      guildId,
+      guildVerified: false,
+      userId,
+      dmVerified: false,
+      message: session.result.error,
+      warnings: [],
+    };
+  }
+
+  try {
+    const dmChannel = await discordApi<{ id?: string }>(session.token, "/users/@me/channels", {
+      method: "POST",
+      body: JSON.stringify({ recipient_id: userId }),
+    });
+    if (!dmChannel.id) {
+      throw new Error("Discord did not return a DM channel id.");
+    }
+    const message = await discordApi<{ id?: string }>(session.token, `/channels/${encodeURIComponent(dmChannel.id)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Friday 已连接 Discord。你现在可以在这个私信里给 Friday 发消息；敏感操作会在这里请求确认。",
+      }),
+    });
+    if (!message.id) {
+      throw new Error("Discord did not return a verification message id.");
+    }
+    session.result = {
+      userId,
+      dmVerified: true,
+      welcomeMessageId: message.id,
+      ...(guildId ? { guildId } : {}),
+      ...(guildVerified !== undefined ? { guildVerified } : {}),
+    };
+    return {
+      verificationId,
+      kind: "discord",
+      status: "success",
+      applicationId: session.applicationId,
+      botUserId: session.botUserId,
+      botUsername: session.botUsername,
+      ...(guildId ? { guildId } : {}),
+      ...(guildVerified !== undefined ? { guildVerified } : {}),
+      userId,
+      dmVerified: true,
+      welcomeMessageId: message.id,
+      warnings: [],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    session.result = {
+      userId,
+      dmVerified: false,
+      ...(guildId ? { guildId } : {}),
+      ...(guildVerified !== undefined ? { guildVerified } : {}),
+      error: message,
+    };
+    return {
+      verificationId,
+      kind: "discord",
+      status: "dm_failed",
+      applicationId: session.applicationId,
+      botUserId: session.botUserId,
+      botUsername: session.botUsername,
+      ...(guildId ? { guildId } : {}),
+      ...(guildVerified !== undefined ? { guildVerified } : {}),
+      userId,
+      dmVerified: false,
+      message,
+      warnings: [
+        "Discord DM verification failed. Make sure the bot is invited to a server you share and that your server privacy settings allow DMs from server members.",
+      ],
+    };
+  }
+}
+
+function applyTelegramVerificationToConfig(config: Record<string, unknown>, enabled: boolean): void {
+  const verificationId = typeof config.setupVerificationId === "string" ? config.setupVerificationId.trim() : "";
+  if (!verificationId) {
+    if (enabled) {
+      throw new FridayDomainError(
+        "TELEGRAM_VERIFICATION_REQUIRED",
+        "Telegram setup requires a verified private message before saving.",
+        { httpStatus: 400 },
+      );
+    }
+    return;
+  }
+
+  pruneChannelSetupVerificationSessions();
+  const session = telegramVerificationSessions.get(verificationId);
+  if (!session?.result) {
+    throw new FridayDomainError(
+      "TELEGRAM_VERIFICATION_NOT_READY",
+      "Telegram verification has not completed yet.",
+      { httpStatus: 400 },
+    );
+  }
+  const botToken = typeof config.botToken === "string" ? config.botToken.trim() : "";
+  if (botToken !== session.botToken) {
+    throw new FridayDomainError(
+      "TELEGRAM_VERIFICATION_TOKEN_MISMATCH",
+      "Telegram token changed after verification. Verify this bot again before saving.",
+      { httpStatus: 400 },
+    );
+  }
+
+  delete config.setupVerificationId;
+}
+
+function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabled: boolean): void {
+  const verificationId = typeof config.setupVerificationId === "string" ? config.setupVerificationId.trim() : "";
+  if (!verificationId) {
+    if (enabled) {
+      throw new FridayDomainError(
+        "DISCORD_VERIFICATION_REQUIRED",
+        "Discord setup requires a verified private message before saving.",
+        { httpStatus: 400 },
+      );
+    }
+    return;
+  }
+
+  pruneChannelSetupVerificationSessions();
+  const session = discordVerificationSessions.get(verificationId);
+  if (!session?.result?.dmVerified) {
+    throw new FridayDomainError(
+      "DISCORD_VERIFICATION_NOT_READY",
+      "Discord verification has not completed yet.",
+      { httpStatus: 400 },
+    );
+  }
+  const token = typeof config.token === "string" ? config.token.trim().replace(/^Bot\s+/i, "") : "";
+  if (token !== session.token) {
+    throw new FridayDomainError(
+      "DISCORD_VERIFICATION_TOKEN_MISMATCH",
+      "Discord token changed after verification. Verify this bot again before saving.",
+      { httpStatus: 400 },
+    );
+  }
+
+  config.token = token;
+  config.botUserId = session.botUserId;
+  delete config.setupVerificationId;
+  delete config.setupUserId;
+  delete config.guildId;
+}
+
+const feishuRegistrationSessions = new Map<string, FeishuAppRegistrationSession>();
+
+function pruneFeishuRegistrationSessions(nowMs = Date.now()): void {
+  for (const [registrationId, session] of feishuRegistrationSessions.entries()) {
+    if (session.expiresAtMs <= nowMs) {
+      feishuRegistrationSessions.delete(registrationId);
+    }
+  }
+}
+
+async function postFeishuAppRegistration<T extends object>(
+  body: Record<string, string>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FEISHU_REGISTRATION_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${FEISHU_ACCOUNTS_BASE}${FEISHU_APP_REGISTRATION_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body).toString(),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_FAILED",
+      aborted
+        ? "Timed out while contacting Feishu app registration."
+        : `Could not reach Feishu app registration: ${error instanceof Error ? error.message : String(error)}`,
+      { httpStatus: 502 },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const responseText = await response.text();
+  try {
+    return JSON.parse(responseText) as T;
+  } catch {
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_FAILED",
+      `Feishu app registration returned non-JSON response (${response.status}).`,
+      { httpStatus: 502 },
+    );
+  }
+}
+
+async function fetchFeishuTenantAccessToken(appId: string, appSecret: string): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHANNEL_TEST_TIMEOUT_MS);
+  try {
+    const tokenResponse = await fetch(`${FEISHU_API_BASE}${LARK_TOKEN_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      signal: controller.signal,
+    });
+    if (!tokenResponse.ok) return undefined;
+    const tokenData = (await tokenResponse.json()) as {
+      code?: number;
+      tenant_access_token?: string;
+    };
+    if (tokenData.code !== 0) return undefined;
+    return tokenData.tenant_access_token;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function beginFeishuAppRegistration(): Promise<SetupFeishuRegistrationBeginResponse> {
+  const init = await postFeishuAppRegistration<{
+    nonce?: string;
+    supported_auth_methods?: string[];
+    error?: string;
+    error_description?: string;
+  }>({ action: "init" });
+
+  if (!init.supported_auth_methods?.includes("client_secret")) {
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_UNSUPPORTED",
+      "Current Feishu registration environment does not support client_secret app creation.",
+      { httpStatus: 502 },
+    );
+  }
+
+  const started = await postFeishuAppRegistration<{
+    device_code?: string;
+    verification_uri_complete?: string;
+    verification_uri?: string;
+    user_code?: string;
+    interval?: number;
+    expire_in?: number;
+    error?: string;
+    error_description?: string;
+  }>({
+    action: "begin",
+    archetype: "PersonalAgent",
+    auth_method: "client_secret",
+    request_user_info: "open_id",
+  });
+
+  if (!started.device_code || !started.user_code || !(started.verification_uri_complete ?? started.verification_uri)) {
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_FAILED",
+      `Feishu app registration begin failed: ${started.error ?? "missing_device_code"} ${started.error_description ?? ""}`.trim(),
+      { httpStatus: 502 },
+    );
+  }
+
+  const qrUrl = new URL(started.verification_uri_complete ?? started.verification_uri!);
+  qrUrl.searchParams.set("from", "friday_onboard");
+  qrUrl.searchParams.set("tp", "ob_cli_app");
+
+  pruneFeishuRegistrationSessions();
+  const registrationId = randomUUID();
+  const intervalSeconds = typeof started.interval === "number" && started.interval > 0 ? started.interval : 5;
+  const expireInSeconds = typeof started.expire_in === "number" && started.expire_in > 0 ? started.expire_in : 600;
+  const expiresAtMs = Date.now() + Math.min(expireInSeconds * 1000, FEISHU_REGISTRATION_SESSION_TTL_MS);
+
+  feishuRegistrationSessions.set(registrationId, {
+    registrationId,
+    deviceCode: started.device_code,
+    qrUrl: qrUrl.toString(),
+    userCode: started.user_code,
+    intervalSeconds,
+    expireInSeconds,
+    expiresAtMs,
+  });
+
+  return {
+    registrationId,
+    kind: "feishu",
+    domain: "feishu",
+    qrUrl: qrUrl.toString(),
+    userCode: started.user_code,
+    intervalSeconds,
+    expireInSeconds,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    warnings: [
+      "Scan with the Feishu mobile app. If approval succeeds, Friday will store the generated app secret locally and encrypted when this channel is saved.",
+    ],
+  };
+}
+
+async function fetchFeishuAppOwnerOpenId(appId: string, appSecret: string): Promise<string | undefined> {
+  try {
+    const tenantAccessToken = await fetchFeishuTenantAccessToken(appId, appSecret);
+    if (!tenantAccessToken) return undefined;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CHANNEL_TEST_TIMEOUT_MS);
+    try {
+      const appResponse = await fetch(`${FEISHU_API_BASE}/open-apis/application/v6/applications/${encodeURIComponent(appId)}?user_id_type=open_id`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${tenantAccessToken}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+      });
+      const appData = (await appResponse.json()) as {
+        code?: number;
+        data?: {
+          app?: {
+            owner?: { owner_id?: string; owner_type?: number; type?: number };
+            creator_id?: string;
+          };
+        };
+      };
+      if (appData.code !== 0) return undefined;
+      const app = appData.data?.app;
+      const owner = app?.owner;
+      const ownerType = owner?.owner_type ?? owner?.type;
+      return ownerType === 2 && owner?.owner_id ? owner.owner_id : (app?.creator_id ?? owner?.owner_id);
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+async function sendFeishuSetupWelcomeMessage(input: {
+  appId: string;
+  appSecret: string;
+  ownerOpenId: string;
+}): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  const tenantAccessToken = await fetchFeishuTenantAccessToken(input.appId, input.appSecret);
+  if (!tenantAccessToken) {
+    return { ok: false, error: "Could not obtain a Feishu tenant access token for the generated app." };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHANNEL_TEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${FEISHU_API_BASE}${LARK_SEND_MESSAGE_PATH}?receive_id_type=open_id`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tenantAccessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        receive_id: input.ownerOpenId,
+        msg_type: "text",
+        content: JSON.stringify({
+          text: "Friday 已连接飞书。你现在可以在这个对话里给 Friday 发消息；敏感操作会在这里请求确认。",
+        }),
+      }),
+      signal: controller.signal,
+    });
+
+    const text = await response.text();
+    let data: {
+      code?: number;
+      msg?: string;
+      data?: { message_id?: string };
+    };
+    try {
+      data = JSON.parse(text) as typeof data;
+    } catch {
+      return {
+        ok: false,
+        error: `Feishu welcome message returned non-JSON response (${response.status}).`,
+      };
+    }
+
+    if (!response.ok || data.code !== 0) {
+      return {
+        ok: false,
+        error: `Feishu welcome message failed: ${data.code ?? response.status} ${data.msg ?? response.statusText}`,
+      };
+    }
+
+    return { ok: true, messageId: data.data?.message_id };
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === "AbortError";
+    return {
+      ok: false,
+      error: aborted
+        ? "Timed out while sending the Feishu welcome message."
+        : `Could not send the Feishu welcome message: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function pollFeishuAppRegistration(
+  registrationId: string,
+): Promise<SetupFeishuRegistrationPollResponse> {
+  pruneFeishuRegistrationSessions();
+  const session = feishuRegistrationSessions.get(registrationId);
+  if (!session) {
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_NOT_FOUND",
+      "Feishu app registration session was not found or has expired.",
+      { httpStatus: 404 },
+    );
+  }
+
+  if (session.result) {
+    const status = session.result.dmVerified ? "success" : "dm_failed";
+    return {
+      registrationId,
+      kind: "feishu",
+      status,
+      appId: session.result.appId,
+      ownerOpenId: session.result.ownerOpenId,
+      suggestedAllowedUsers: session.result.ownerOpenId ? [session.result.ownerOpenId] : undefined,
+      dmVerified: session.result.dmVerified,
+      welcomeMessageId: session.result.welcomeMessageId,
+      expiresAt: new Date(session.expiresAtMs).toISOString(),
+      message: session.result.dmError,
+      warnings: session.result.dmVerified
+        ? []
+        : ["Friday created the Feishu app, but the setup is not complete until a private welcome message can be delivered."],
+    };
+  }
+
+  const polled = await postFeishuAppRegistration<{
+    client_id?: string;
+    client_secret?: string;
+    user_info?: { open_id?: string; tenant_brand?: string };
+    error?: string;
+    error_description?: string;
+  }>({
+    action: "poll",
+    device_code: session.deviceCode,
+    tp: "ob_app",
+  });
+
+  if (polled.client_id && polled.client_secret) {
+    const ownerOpenId = polled.user_info?.open_id
+      ?? await fetchFeishuAppOwnerOpenId(polled.client_id, polled.client_secret);
+    const welcome = ownerOpenId
+      ? await sendFeishuSetupWelcomeMessage({
+        appId: polled.client_id,
+        appSecret: polled.client_secret,
+        ownerOpenId,
+      })
+      : { ok: false as const, error: "Friday could not resolve the Feishu owner open_id from the QR authorization." };
+    session.result = {
+      appId: polled.client_id,
+      appSecret: polled.client_secret,
+      ...(ownerOpenId ? { ownerOpenId } : {}),
+      dmVerified: welcome.ok,
+      ...(welcome.ok && welcome.messageId ? { welcomeMessageId: welcome.messageId } : {}),
+      ...(!welcome.ok ? { dmError: welcome.error } : {}),
+    };
+    const status = session.result.dmVerified ? "success" : "dm_failed";
+    return {
+      registrationId,
+      kind: "feishu",
+      status,
+      appId: session.result.appId,
+      ownerOpenId,
+      suggestedAllowedUsers: ownerOpenId ? [ownerOpenId] : undefined,
+      dmVerified: session.result.dmVerified,
+      welcomeMessageId: session.result.welcomeMessageId,
+      expiresAt: new Date(session.expiresAtMs).toISOString(),
+      message: session.result.dmError,
+      warnings: session.result.dmVerified
+        ? ["Friday sent a welcome message to the approving Feishu user. The private chat is reachable."]
+        : ["Friday created the Feishu app, but could not deliver the welcome private message. Check bot permissions, app availability, and whether the bot can message this user."],
+    };
+  }
+
+  if (polled.error === "authorization_pending" || !polled.error) {
+    return {
+      registrationId,
+      kind: "feishu",
+      status: "pending",
+      intervalSeconds: session.intervalSeconds,
+      expiresAt: new Date(session.expiresAtMs).toISOString(),
+      warnings: [],
+    };
+  }
+
+  if (polled.error === "slow_down") {
+    session.intervalSeconds += 5;
+    return {
+      registrationId,
+      kind: "feishu",
+      status: "slow_down",
+      intervalSeconds: session.intervalSeconds,
+      expiresAt: new Date(session.expiresAtMs).toISOString(),
+      warnings: [],
+    };
+  }
+
+  if (polled.error === "access_denied") {
+    return { registrationId, kind: "feishu", status: "access_denied", warnings: [] };
+  }
+
+  if (polled.error === "expired_token") {
+    feishuRegistrationSessions.delete(registrationId);
+    return { registrationId, kind: "feishu", status: "expired", warnings: [] };
+  }
+
+  return {
+    registrationId,
+    kind: "feishu",
+    status: "error",
+    message: `${polled.error ?? "unknown"}: ${polled.error_description ?? "unknown"}`,
+    warnings: [],
+  };
+}
+
+function applyFeishuRegistrationToConfig(config: Record<string, unknown>, enabled: boolean): void {
+  const registrationId = typeof config.registrationId === "string" ? config.registrationId.trim() : "";
+  if (!registrationId) {
+    if (enabled) {
+      throw new FridayDomainError(
+        "FEISHU_APP_REGISTRATION_REQUIRED",
+        "Feishu setup requires QR app registration.",
+        { httpStatus: 400 },
+      );
+    }
+    return;
+  }
+
+  pruneFeishuRegistrationSessions();
+  const session = feishuRegistrationSessions.get(registrationId);
+  if (!session?.result) {
+    throw new FridayDomainError(
+      "FEISHU_APP_REGISTRATION_NOT_READY",
+      "Feishu app registration has not completed yet.",
+      { httpStatus: 400 },
+    );
+  }
+  if (!session.result.dmVerified) {
+    throw new FridayDomainError(
+      "FEISHU_DM_VERIFICATION_REQUIRED",
+      "Feishu setup requires a verified private welcome message before saving.",
+      { httpStatus: 400 },
+    );
+  }
+
+  config.appId = session.result.appId;
+  config.appSecret = session.result.appSecret;
+  config.useFeishu = true;
+  config.receiveMode = "websocket";
+  delete config.registrationId;
+
+  if (!normalizeStringList(config.allowedUsers) && session.result.ownerOpenId) {
+    config.allowedUsers = [session.result.ownerOpenId];
+  }
+}
 
 function parseStepIds(raw: string): string[] {
   try {
@@ -740,6 +2112,123 @@ export function createFridaySetupRoutes(
       },
     },
 
+    // ─── POST /v1/setup/channels/feishu/registration/begin ───
+    {
+      operationId: "setup.channels.feishu.registration.begin",
+      method: "POST",
+      path: "/v1/setup/channels/feishu/registration/begin",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(): Promise<SetupFeishuRegistrationBeginResponse> {
+        return beginFeishuAppRegistration();
+      },
+    },
+
+    // ─── POST /v1/setup/channels/feishu/registration/poll ───
+    {
+      operationId: "setup.channels.feishu.registration.poll",
+      method: "POST",
+      path: "/v1/setup/channels/feishu/registration/poll",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupFeishuRegistrationPollResponse> {
+        const body = ctx.body as SetupFeishuRegistrationPollRequest | null;
+        const registrationId = typeof body?.registrationId === "string" ? body.registrationId.trim() : "";
+        if (!registrationId) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "registrationId is required.",
+            { httpStatus: 400 },
+          );
+        }
+        return pollFeishuAppRegistration(registrationId);
+      },
+    },
+
+    // ─── POST /v1/setup/channels/telegram/verification/begin ───
+    {
+      operationId: "setup.channels.telegram.verification.begin",
+      method: "POST",
+      path: "/v1/setup/channels/telegram/verification/begin",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupTelegramVerificationBeginResponse> {
+        return beginTelegramVerification(ctx.body as SetupTelegramVerificationBeginRequest | null);
+      },
+    },
+
+    // ─── POST /v1/setup/channels/telegram/verification/poll ───
+    {
+      operationId: "setup.channels.telegram.verification.poll",
+      method: "POST",
+      path: "/v1/setup/channels/telegram/verification/poll",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupTelegramVerificationPollResponse> {
+        const body = ctx.body as SetupTelegramVerificationPollRequest | null;
+        const verificationId = typeof body?.verificationId === "string" ? body.verificationId.trim() : "";
+        if (!verificationId) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "verificationId is required.",
+            { httpStatus: 400 },
+          );
+        }
+        return pollTelegramVerification(verificationId);
+      },
+    },
+
+    // ─── POST /v1/setup/channels/discord/verification/begin ───
+    {
+      operationId: "setup.channels.discord.verification.begin",
+      method: "POST",
+      path: "/v1/setup/channels/discord/verification/begin",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupDiscordVerificationBeginResponse> {
+        return beginDiscordVerification(ctx.body as SetupDiscordVerificationBeginRequest | null);
+      },
+    },
+
+    // ─── POST /v1/setup/channels/discord/verification/complete ───
+    {
+      operationId: "setup.channels.discord.verification.complete",
+      method: "POST",
+      path: "/v1/setup/channels/discord/verification/complete",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupDiscordVerificationCompleteResponse> {
+        return completeDiscordVerification(ctx.body as SetupDiscordVerificationCompleteRequest | null);
+      },
+    },
+
+    // ─── POST /v1/setup/channels/test ───
+    {
+      operationId: "setup.channels.test",
+      method: "POST",
+      path: "/v1/setup/channels/test",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      async handler(ctx): Promise<SetupChannelTestResponse> {
+        const body = ctx.body as SetupChannelTestRequest | null;
+        if (!body || typeof body !== "object" || typeof body.kind !== "string") {
+          throw new FridayDomainError("VALIDATION_ERROR", "Request body must contain a channel kind", { httpStatus: 400 });
+        }
+        if (!VALID_CHANNEL_KINDS.has(body.kind)) {
+          throw new FridayDomainError("VALIDATION_ERROR", `Invalid channel kind: ${String(body.kind)}`, { httpStatus: 400 });
+        }
+        if (body.config !== null && body.config !== undefined && (typeof body.config !== "object" || Array.isArray(body.config))) {
+          throw new FridayDomainError("VALIDATION_ERROR", `config must be an object for channel ${body.kind}`, { httpStatus: 400 });
+        }
+
+        const kind = body.kind as FridaySupportedChannelKind;
+        const config = normalizeSetupChannelConfig(kind, { ...(body.config ?? {}) } as Record<string, unknown>);
+
+        if (kind === "lark" || kind === "feishu") {
+          return testLarkLikeChannelConnection(kind, config);
+        }
+
+        return {
+          kind,
+          validated: true,
+          warnings: ["This channel does not have a dedicated setup credential test yet."],
+        };
+      },
+    },
+
     // ─── POST /v1/setup/channels ───
     {
       operationId: "setup.channels.save",
@@ -782,7 +2271,16 @@ export function createFridaySetupRoutes(
 
           const kind = ch.kind as FridaySupportedChannelKind;
           const slot = nextChannelSlot(kind);
-          const config = { ...(ch.config ?? {}) } as Record<string, unknown>;
+          const config = normalizeSetupChannelConfig(kind, { ...(ch.config ?? {}) } as Record<string, unknown>);
+          if (kind === "telegram") {
+            applyTelegramVerificationToConfig(config, ch.enabled);
+          }
+          if (kind === "discord") {
+            applyDiscordVerificationToConfig(config, ch.enabled);
+          }
+          if (kind === "feishu") {
+            applyFeishuRegistrationToConfig(config, ch.enabled);
+          }
           const secretFields = getFridayChannelSecretFieldDescriptors(kind, config);
 
           for (const field of secretFields) {

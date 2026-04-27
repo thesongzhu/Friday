@@ -407,72 +407,584 @@ describe("Setup Wizard E2E", () => {
       expect(json.data.host).toBe("127.0.0.1");
     });
 
-    it("A8: save channels config should persist", async () => {
-      const unconfirmedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
-        method: "POST",
-        headers: authHeaders(accessToken),
-        body: JSON.stringify({
-          channels: [
-            {
-              kind: "discord",
-              enabled: true,
-              config: { token: "fake-discord-token" },
-            },
-          ],
-        }),
-      });
-      expect(unconfirmedRes.status).toBe(400);
+    it("A8: save channels config should require Discord DM verification and persist encrypted token", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://discord.com/api/v10/users/@me") {
+          return new Response(JSON.stringify({ id: "bot-1", username: "FridayBot", bot: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/oauth2/applications/@me") {
+          return new Response(JSON.stringify({ id: "app-1", bot: { id: "bot-1", username: "FridayBot" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/guilds/guild-1") {
+          return new Response(JSON.stringify({ id: "guild-1", name: "Friday Test" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/users/@me/channels") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { recipient_id?: string };
+          expect(body.recipient_id).toBe("10001");
+          return new Response(JSON.stringify({ id: "dm-1" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/channels/dm-1/messages") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { content?: string };
+          expect(body.content).toContain("Friday");
+          return new Response(JSON.stringify({ id: "discord-welcome-1" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
 
-      const res = await fetch(`${baseUrl}/v1/setup/channels`, {
-        method: "POST",
-        headers: authHeaders(accessToken),
-        body: JSON.stringify({
-          controlConfirmed: true,
-          channels: [
-            {
-              kind: "discord",
-              enabled: true,
-              config: { token: "fake-discord-token" },
-            },
-          ],
-        }),
-      });
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as {
-        ok: boolean;
-        data: { savedKinds: string[] };
-      };
-      expect(json.ok).toBe(true);
-      expect(json.data.savedKinds).toContain("discord");
-
-      const dbPath = path.join(stateDir, "friday.db");
-      const db = new Database(dbPath, { readonly: true, fileMustExist: true });
       try {
-        const setupRow = db
-          .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
-          .get() as { channels_json: string } | undefined;
-        expect(setupRow).toBeDefined();
-        expect(setupRow!.channels_json).not.toContain("fake-discord-token");
+        const unverifiedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "discord",
+                enabled: true,
+                config: { token: "fake-discord-token" },
+              },
+            ],
+          }),
+        });
+        expect(unverifiedRes.status).toBe(400);
 
-        const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
-          kind: string;
-          controlConfirmed?: boolean;
-          controlConfirmedAt?: string;
-          config?: Record<string, unknown>;
-        }>;
-        const discordEntry = storedChannels.find((entry) => entry.kind === "discord");
-        expect(discordEntry?.controlConfirmed).toBe(true);
-        expect(typeof discordEntry?.controlConfirmedAt).toBe("string");
-        expect(typeof discordEntry?.config?.token).toBe("string");
-        expect(String(discordEntry?.config?.token ?? "")).toMatch(/^secret:\/\/channel\//);
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ token: "fake-discord-token", guildId: "guild-1" }),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as {
+          ok: boolean;
+          data: { verificationId: string; inviteUrl: string; guildVerified?: boolean };
+        };
+        expect(beginJson.ok).toBe(true);
+        expect(beginJson.data.inviteUrl).toContain("client_id=app-1");
+        expect(beginJson.data.guildVerified).toBe(true);
 
-        const secretRow = db
-          .prepare("SELECT scope, ref_key FROM secrets WHERE scope = 'channel' LIMIT 1")
-          .get() as { scope: string; ref_key: string } | undefined;
-        expect(secretRow).toBeDefined();
-        expect(secretRow?.scope).toBe("channel");
+        const completeRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/complete`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            verificationId: beginJson.data.verificationId,
+            userId: "10001",
+            guildId: "guild-1",
+          }),
+        });
+        expect(completeRes.status).toBe(200);
+        const completeJson = (await completeRes.json()) as {
+          ok: boolean;
+          data: { status: string; welcomeMessageId?: string; dmVerified?: boolean };
+        };
+        expect(completeJson.ok).toBe(true);
+        expect(completeJson.data.status).toBe("success");
+        expect(completeJson.data.dmVerified).toBe(true);
+        expect(completeJson.data.welcomeMessageId).toBe("discord-welcome-1");
+
+        const unconfirmedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            channels: [
+              {
+                kind: "discord",
+                enabled: true,
+                config: {
+                  token: "fake-discord-token",
+                  setupVerificationId: beginJson.data.verificationId,
+                  setupUserId: "10001",
+                  guildId: "guild-1",
+                },
+              },
+            ],
+          }),
+        });
+        expect(unconfirmedRes.status).toBe(400);
+
+        const res = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "discord",
+                enabled: true,
+                config: {
+                  token: "fake-discord-token",
+                  setupVerificationId: beginJson.data.verificationId,
+                  setupUserId: "10001",
+                  guildId: "guild-1",
+                },
+              },
+            ],
+          }),
+        });
+        expect(res.status).toBe(200);
+        const json = (await res.json()) as {
+          ok: boolean;
+          data: { savedKinds: string[] };
+        };
+        expect(json.ok).toBe(true);
+        expect(json.data.savedKinds).toContain("discord");
+
+        const dbPath = path.join(stateDir, "friday.db");
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        try {
+          const setupRow = db
+            .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+            .get() as { channels_json: string } | undefined;
+          expect(setupRow).toBeDefined();
+          expect(setupRow!.channels_json).not.toContain("fake-discord-token");
+          expect(setupRow!.channels_json).not.toContain(beginJson.data.verificationId);
+          expect(setupRow!.channels_json).not.toContain("10001");
+          expect(setupRow!.channels_json).not.toContain("guild-1");
+
+          const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
+            kind: string;
+            controlConfirmed?: boolean;
+            controlConfirmedAt?: string;
+            config?: Record<string, unknown>;
+          }>;
+          const discordEntry = storedChannels.find((entry) => entry.kind === "discord");
+          expect(discordEntry?.controlConfirmed).toBe(true);
+          expect(typeof discordEntry?.controlConfirmedAt).toBe("string");
+          expect(discordEntry?.config?.botUserId).toBe("bot-1");
+          expect(typeof discordEntry?.config?.token).toBe("string");
+          expect(String(discordEntry?.config?.token ?? "")).toMatch(/^secret:\/\/channel\//);
+
+          const secretRow = db
+            .prepare("SELECT scope, ref_key FROM secrets WHERE scope = 'channel' LIMIT 1")
+            .get() as { scope: string; ref_key: string } | undefined;
+          expect(secretRow).toBeDefined();
+          expect(secretRow?.scope).toBe("channel");
+        } finally {
+          db.close();
+        }
       } finally {
-        db.close();
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("A8a: save Telegram channel should require private DM verification without writing allowlist", async () => {
+      const originalFetch = globalThis.fetch;
+      let getUpdatesCallCount = 0;
+      let setupCode = "";
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://api.telegram.org/bot123:abc/getMe") {
+          return new Response(JSON.stringify({
+            ok: true,
+            result: { id: 111, is_bot: true, first_name: "Friday", username: "FridayTestBot" },
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://api.telegram.org/bot123:abc/getUpdates") {
+          getUpdatesCallCount += 1;
+          const body = JSON.parse(String(init?.body ?? "{}")) as { offset?: number };
+          if (getUpdatesCallCount === 1) {
+            expect(body.offset).toBeUndefined();
+            return new Response(JSON.stringify({ ok: true, result: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({
+            ok: true,
+            result: [
+              {
+                update_id: 10,
+                message: {
+                  message_id: 5,
+                  text: `/start ${setupCode}`,
+                  chat: { id: 2002, type: "private" },
+                  from: { id: 2002, is_bot: false },
+                },
+              },
+            ],
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://api.telegram.org/bot123:abc/sendMessage") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { chat_id?: number; text?: string };
+          expect(body.chat_id).toBe(2002);
+          expect(body.text).toContain("Friday");
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 6 } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const unverifiedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "telegram",
+                enabled: true,
+                config: { botToken: "123:abc" },
+              },
+            ],
+          }),
+        });
+        expect(unverifiedRes.status).toBe(400);
+
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/telegram/verification/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ botToken: "123:abc" }),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as {
+          ok: boolean;
+          data: { verificationId: string; startCode: string; startUrl?: string };
+        };
+        expect(beginJson.ok).toBe(true);
+        expect(beginJson.data.startUrl).toContain("https://t.me/FridayTestBot");
+        setupCode = beginJson.data.startCode;
+
+        const pollRes = await fetch(`${baseUrl}/v1/setup/channels/telegram/verification/poll`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ verificationId: beginJson.data.verificationId }),
+        });
+        expect(pollRes.status).toBe(200);
+        const pollJson = (await pollRes.json()) as {
+          ok: boolean;
+          data: { status: string; chatId?: string; userId?: string; welcomeMessageId?: string };
+        };
+        expect(pollJson.ok).toBe(true);
+        expect(pollJson.data.status).toBe("success");
+        expect(pollJson.data.chatId).toBe("2002");
+        expect(pollJson.data.userId).toBe("2002");
+        expect(pollJson.data.welcomeMessageId).toBe("6");
+
+        const res = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "telegram",
+                enabled: true,
+                config: {
+                  botToken: "123:abc",
+                  setupVerificationId: beginJson.data.verificationId,
+                },
+              },
+            ],
+          }),
+        });
+        expect(res.status).toBe(200);
+
+        const dbPath = path.join(stateDir, "friday.db");
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        try {
+          const setupRow = db
+            .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+            .get() as { channels_json: string } | undefined;
+          expect(setupRow).toBeDefined();
+          expect(setupRow!.channels_json).not.toContain("123:abc");
+          expect(setupRow!.channels_json).not.toContain(beginJson.data.verificationId);
+
+          const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
+            kind: string;
+            config?: Record<string, unknown>;
+          }>;
+          const telegramEntry = storedChannels.find((entry) => entry.kind === "telegram");
+          expect(telegramEntry?.config?.allowedUsers).toBeUndefined();
+          expect(String(telegramEntry?.config?.botToken ?? "")).toMatch(/^secret:\/\/channel\//);
+        } finally {
+          db.close();
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("A8b: save Feishu channel should use QR app registration and encrypt the generated secret", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal") {
+          return new Response(JSON.stringify({
+            code: 0,
+            tenant_access_token: "tenant-token",
+            expire: 7200,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { receive_id?: string; msg_type?: string };
+          expect(body.receive_id).toBe("ou_owner");
+          expect(body.msg_type).toBe("text");
+          return new Response(JSON.stringify({
+            code: 0,
+            data: { message_id: "om_welcome" },
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://accounts.feishu.cn/oauth/v1/app/registration") {
+          const body = new URLSearchParams(String(init?.body ?? ""));
+          const action = body.get("action");
+          if (action === "init") {
+            return new Response(JSON.stringify({ nonce: "nonce-1", supported_auth_methods: ["client_secret"] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (action === "begin") {
+            return new Response(JSON.stringify({
+              device_code: "device-1",
+              verification_uri: "https://accounts.feishu.cn/device",
+              verification_uri_complete: "https://accounts.feishu.cn/device?user_code=FRIDAY",
+              user_code: "FRIDAY",
+              interval: 1,
+              expire_in: 600,
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (action === "poll") {
+            return new Response(JSON.stringify({
+              client_id: "cli_feishu_qr_test",
+              client_secret: "generated-feishu-secret",
+              user_info: { open_id: "ou_owner" },
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/feishu/registration/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({}),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as {
+          ok: boolean;
+          data: { registrationId: string; qrUrl: string; userCode: string };
+        };
+        expect(beginJson.ok).toBe(true);
+        expect(beginJson.data.qrUrl).toContain("tp=ob_cli_app");
+
+        const pollRes = await fetch(`${baseUrl}/v1/setup/channels/feishu/registration/poll`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ registrationId: beginJson.data.registrationId }),
+        });
+        expect(pollRes.status).toBe(200);
+        const pollJson = (await pollRes.json()) as {
+          ok: boolean;
+          data: { status: string; appId?: string; ownerOpenId?: string; dmVerified?: boolean; welcomeMessageId?: string };
+        };
+        expect(pollJson.ok).toBe(true);
+        expect(pollJson.data.status).toBe("success");
+        expect(pollJson.data.appId).toBe("cli_feishu_qr_test");
+        expect(pollJson.data.ownerOpenId).toBe("ou_owner");
+        expect(pollJson.data.dmVerified).toBe(true);
+        expect(pollJson.data.welcomeMessageId).toBe("om_welcome");
+
+        const res = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "feishu",
+                enabled: true,
+                config: {
+                  registrationId: beginJson.data.registrationId,
+                  allowedChats: "oc_1,oc_2",
+                },
+              },
+            ],
+          }),
+        });
+        expect(res.status).toBe(200);
+        const json = (await res.json()) as {
+          ok: boolean;
+          data: { savedKinds: string[] };
+        };
+        expect(json.ok).toBe(true);
+        expect(json.data.savedKinds).toContain("feishu");
+
+        const dbPath = path.join(stateDir, "friday.db");
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        try {
+          const setupRow = db
+            .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+            .get() as { channels_json: string } | undefined;
+          expect(setupRow).toBeDefined();
+          expect(setupRow!.channels_json).not.toContain("generated-feishu-secret");
+          expect(setupRow!.channels_json).not.toContain(beginJson.data.registrationId);
+
+          const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
+            kind: string;
+            config?: Record<string, unknown>;
+          }>;
+          const feishuEntry = storedChannels.find((entry) => entry.kind === "feishu");
+          expect(feishuEntry?.config?.appId).toBe("cli_feishu_qr_test");
+          expect(feishuEntry?.config?.useFeishu).toBe(true);
+          expect(feishuEntry?.config?.receiveMode).toBe("websocket");
+          expect(feishuEntry?.config?.allowedUsers).toEqual(["ou_owner"]);
+          expect(feishuEntry?.config?.allowedChats).toEqual(["oc_1", "oc_2"]);
+          expect(String(feishuEntry?.config?.appSecret ?? "")).toMatch(/^secret:\/\/channel\//);
+        } finally {
+          db.close();
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("A8c: Feishu channel save should require verified private DM delivery", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal") {
+          return new Response(JSON.stringify({
+            code: 0,
+            tenant_access_token: "tenant-token",
+            expire: 7200,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id") {
+          return new Response(JSON.stringify({
+            code: 230020,
+            msg: "bot cannot access user",
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://accounts.feishu.cn/oauth/v1/app/registration") {
+          const body = new URLSearchParams(String(init?.body ?? ""));
+          const action = body.get("action");
+          if (action === "init") {
+            return new Response(JSON.stringify({ supported_auth_methods: ["client_secret"] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (action === "begin") {
+            return new Response(JSON.stringify({
+              device_code: "device-dm-fail",
+              verification_uri_complete: "https://accounts.feishu.cn/device?user_code=FAIL",
+              user_code: "FAIL",
+              interval: 1,
+              expire_in: 600,
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (action === "poll") {
+            return new Response(JSON.stringify({
+              client_id: "cli_feishu_dm_fail",
+              client_secret: "generated-feishu-secret-dm-fail",
+              user_info: { open_id: "ou_owner_dm_fail" },
+            }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/feishu/registration/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({}),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as {
+          ok: boolean;
+          data: { registrationId: string };
+        };
+        expect(beginJson.ok).toBe(true);
+
+        const pollRes = await fetch(`${baseUrl}/v1/setup/channels/feishu/registration/poll`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ registrationId: beginJson.data.registrationId }),
+        });
+        expect(pollRes.status).toBe(200);
+        const pollJson = (await pollRes.json()) as {
+          ok: boolean;
+          data: { status: string; dmVerified?: boolean; message?: string };
+        };
+        expect(pollJson.ok).toBe(true);
+        expect(pollJson.data.status).toBe("dm_failed");
+        expect(pollJson.data.dmVerified).toBe(false);
+        expect(pollJson.data.message).toContain("230020");
+
+        const res = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "feishu",
+                enabled: true,
+                config: { registrationId: beginJson.data.registrationId },
+              },
+            ],
+          }),
+        });
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as {
+          ok: boolean;
+          error: { code: string; message: string };
+        };
+        expect(json.ok).toBe(false);
+        expect(json.error.code).toBe("FEISHU_DM_VERIFICATION_REQUIRED");
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
 
@@ -644,13 +1156,72 @@ describe("Setup Wizard E2E", () => {
       expect(networkRes.status).toBe(200);
 
       // 4. Channels
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://discord.com/api/v10/users/@me") {
+          return new Response(JSON.stringify({ id: "bot-a13", username: "FridayBot", bot: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/oauth2/applications/@me") {
+          return new Response(JSON.stringify({ id: "app-a13", bot: { id: "bot-a13", username: "FridayBot" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/users/@me/channels") {
+          return new Response(JSON.stringify({ id: "dm-a13" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/channels/dm-a13/messages") {
+          return new Response(JSON.stringify({ id: "msg-a13" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
+
+      let setupVerificationId = "";
+      try {
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ token: "test-token" }),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as { ok: boolean; data: { verificationId: string } };
+        setupVerificationId = beginJson.data.verificationId;
+
+        const completeRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/complete`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ verificationId: setupVerificationId, userId: "10002" }),
+        });
+        expect(completeRes.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
       const channelsRes = await fetch(`${baseUrl}/v1/setup/channels`, {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({
           controlConfirmed: true,
           channels: [
-            { kind: "discord", enabled: true, config: { token: "test-token" } },
+            {
+              kind: "discord",
+              enabled: true,
+              config: {
+                token: "test-token",
+                setupVerificationId,
+                setupUserId: "10002",
+              },
+            },
           ],
         }),
       });
