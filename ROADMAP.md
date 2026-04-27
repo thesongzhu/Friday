@@ -1,9 +1,9 @@
 # Friday Roadmap
 
-Friday's roadmap is organized around one product promise:
+Friday's roadmap is organized around one product direction:
 
 ```text
-You give a goal. Friday checks capability, closes gaps where allowed, executes, verifies, and learns.
+You give a goal. Friday checks capability, uses configured tools, executes, verifies, and learns.
 ```
 
 It should feel capable and proactive, but not uncontrolled. Friday does not promise universal automation or fully automatic behavior across every external system.
@@ -22,13 +22,15 @@ It should feel capable and proactive, but not uncontrolled. Friday does not prom
 
 ### Capability Self-Acquisition
 
-Friday should move missing capabilities through:
+Capability self-acquisition is a WIP hardening track, not a current blanket guarantee. Friday should eventually move missing capabilities through:
 
 ```text
 goal -> gap -> candidates -> sandbox/test -> approval -> install/register -> doctor verify -> execute
 ```
 
 Human-only blockers remain API keys, OAuth, payment, CAPTCHA, account setup, sensitive permissions, and production-impacting actions.
+
+Before treating this as release-grade, Friday still needs stress coverage for generated skill import, self-upgrade, adjustment fidelity, rollback, audit evidence, and restart survival.
 
 ### Standing Goals And Agenda
 

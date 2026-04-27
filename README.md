@@ -5,8 +5,8 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>A local personal AI that learns your work, builds skills, and acts with approval.</strong><br>
-  Chat with it, give it goals, connect your tools, and let repeated work become verified workflows.<br>
+  <strong>A local personal AI that learns your work, uses skills, and acts with approval.</strong><br>
+  Chat with it, give it goals, connect your tools, and let repeated work become auditable workflows.<br>
   Local-first · BYOK · Approval-first · Human-controlled
 </p>
 
@@ -23,7 +23,7 @@
 
 Friday is a self-hosted personal AI and automation runtime.
 
-It is meant to feel less like a blank chatbot and more like a private execution partner: you give a goal, Friday checks what it can do, finds or builds missing capabilities when policy allows, asks for the human-only pieces, executes, verifies the result, and records what it learned.
+It is meant to feel less like a blank chatbot and more like a private execution partner: you give a goal, Friday checks what it can do, uses configured capabilities, asks for the human-only pieces, executes, verifies the result, and records what it learned. Capability acquisition and self-upgrade flows are active work and should be treated as review-gated WIP rather than a fully autonomous promise.
 
 Friday is not a magic fully autonomous system. It will not create accounts for you, bypass CAPTCHA, pay for services, take production-changing actions, or use credentials you have not provided. Its job is to do the work it can safely do, stop clearly when it needs you, and leave evidence behind.
 
@@ -31,7 +31,7 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 
 1. **You give a goal.** Example: "Read these PDFs, compare them with the latest web results, and send a short summary to Discord."
 2. **Friday checks capabilities.** It looks for text, vision, OCR, web search, PDF, file, browser, channel, model, memory, and workflow support.
-3. **Friday closes gaps.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills.
+3. **Friday reports or drafts gap closure.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills, but install/update paths remain policy-gated and under active hardening.
 4. **Friday asks when humans are required.** API keys, OAuth, paid plans, CAPTCHA, logins, sensitive permissions, and high-risk actions go through a human gate.
 5. **Friday runs and verifies.** It executes through skills, tools, workflows, browser/desktop control, or channel adapters, then checks the result.
 6. **Friday learns safely.** It can update memory, routing preferences, setup recipes, generated skills, eval cases, and failure lessons. It does not train model weights by default.
@@ -43,7 +43,7 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 | Chat and task execution | Answer, plan, execute tool-backed work, show progress, and recover from failures | Depends on configured providers and granted tools |
 | Text, vision, OCR, PDF, files | Route work to configured providers or built-in parsers, then report what is missing when a lane is unavailable | Vision/OCR/TTS depend on provider support and credentials |
 | Web and browser work | Use configured web search providers, local browser control, and workflow steps | Login, payment, CAPTCHA, and sensitive accounts require the user |
-| Skills and workflows | Generate, import, validate, install, run, verify, update, and roll back reusable skills/workflows | Untrusted code must pass review, sandbox checks, and policy gates |
+| Skills and workflows | Import, validate, install, run, verify, update, and roll back reusable skills/workflows; generated/self-upgraded flows are WIP | Untrusted code must pass review, sandbox checks, and policy gates |
 | Memory and self-improvement | Store preferences, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; no hidden model training |
 | Self-healing | Detect failures, propose fixes, run low-risk repairs, verify, roll back, and pause after repeated failures | High-risk changes require approval |
 | Multi-channel control | Connect channels such as Discord, Telegram, Feishu/Lark, Slack-style webhooks, Signal, WhatsApp, and QQ where configured | Channels can control Friday, but sensitive actions still require confirmation |
@@ -92,15 +92,15 @@ The setup flow should answer four questions for every capability:
 
 Typical provider lanes include OpenAI, Doubao/Volcengine, Moonshot, Anthropic, Google, OpenRouter, Tavily, Serper, local browser/PDF/file tooling, MCP servers, and custom skills. A missing key or account is not treated as success; Friday should show it as a human blocker with the next configuration step.
 
-## Capability Self-Acquisition
+## Capability Self-Acquisition (WIP)
 
-When Friday does not have a capability for a goal, it can create an acquisition run:
+When Friday does not have a capability for a goal, the target closed loop is:
 
 ```text
 goal -> capability gap -> candidates -> sandbox/test -> approval if required -> install/register -> doctor verify -> execute
 ```
 
-Allowed automatic steps depend on policy. Searching, analysis, draft generation, and sandbox verification are low-risk by default. Downloading code, installing packages, writing config, registering tools, shell access, and external network calls are governed by the autonomy policy. OAuth, payment, CAPTCHA, API keys, sensitive permissions, and production writes always require the user.
+This loop is not yet a blanket production guarantee. Current builds can report gaps and exercise parts of the workflow, while generated skills, self-upgrades, and adjustment-fidelity paths remain review-gated and covered by ongoing stress tests. Allowed automatic steps depend on policy. Searching, analysis, draft generation, and sandbox verification are low-risk by default. Downloading code, installing packages, writing config, registering tools, shell access, and external network calls are governed by the autonomy policy. OAuth, payment, CAPTCHA, API keys, sensitive permissions, and production writes always require the user.
 
 ## Memory, Growth, And Repair
 

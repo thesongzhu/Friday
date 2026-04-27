@@ -223,6 +223,9 @@ jobs:
             --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)|(^|/)package-lock\.json$|(^|/)pnpm-lock\.yaml$|\.snap$|(^|/)managed-skills/[^/]+/conversion\.report\.json$|(^|/)docs/reports/ops/.*\.csv$|(^|/)docs/reports/ops/real-green-gate/.*\.json$|(^|/)docs/reports/repo/FRIDAY_.*\.json$|(^|/)audit-fix/[^/]+\.(csv|json)$|(^|/)audit-fix/fix-phase-status/.*\.(csv|json)$|(^|/)audit-fix/post-fix-evidence/.*\.(json|csv|txt|png)$|(^|/)audit-fix/runtime/.*\.(json|jsonl|txt|png|csv)$|(^|/)screenshots/.*\.(json|png|pdf|txt|html)$|(^|/)polish-report\.html$|(^|/)friday-static\.prod\.html$|(^|/)friday-static\.html$'
           echo "✅ No new secrets detected"
 
+      - name: Enforce provider key pattern denylist
+        run: node scripts/quality/check-provider-key-patterns.mjs
+
       - name: Remediation guidance
         if: failure()
         run: |
