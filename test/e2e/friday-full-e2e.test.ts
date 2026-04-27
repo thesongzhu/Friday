@@ -1959,9 +1959,12 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       const wsUrl = baseUrl.replace("http://", "ws://") + "/v1/realtime/ws";
 
       await new Promise<void>((resolve, reject) => {
+        // CI runners need more headroom than the previous 10 s budget; the
+        // outer it() timeout is 30 s (set in PR #162) so 25 s here keeps a
+        // 5 s margin before vitest aborts.
         const timeout = setTimeout(() => {
           reject(new Error("WebSocket test timed out"));
-        }, 10_000);
+        }, 25_000);
 
         try {
           const ws = new WebSocket(wsUrl);
@@ -2015,9 +2018,12 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       const wsUrl = baseUrl.replace("http://", "ws://") + "/v1/realtime/ws";
 
       await new Promise<void>((resolve, reject) => {
+        // CI runners need more headroom than the previous 10 s budget; the
+        // outer it() timeout is 30 s (set in PR #162) so 25 s here keeps a
+        // 5 s margin before vitest aborts.
         const timeout = setTimeout(() => {
           reject(new Error("WebSocket test timed out"));
-        }, 10_000);
+        }, 25_000);
 
         try {
           const ws = new WebSocket(wsUrl);
