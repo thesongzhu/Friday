@@ -20,6 +20,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridaySignalChannelConfig,
   FridaySignalChannelConfigSchema,
@@ -106,7 +107,7 @@ export function createFridaySignalChannel(deps: SignalChannelDeps = {}): FridayC
 
       const result = await rpc.sendMessage(config.baseUrl, config.account, {
         recipients: [options.chatId],
-        message: options.text,
+        message: formatFridayChannelOutboundText("signal", options.text),
         quote_timestamp: options.replyTo ? parseInt(options.replyTo, 10) : undefined,
       });
 

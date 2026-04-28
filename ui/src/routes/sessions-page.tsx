@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
 import { toast } from "sonner";
+import { MarkdownContent } from "@/components/chat/chat-message";
 import { SkeletonList } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -187,7 +188,9 @@ export function SessionsPage() {
                           <span className="font-medium">{msg.role}</span>
                           <span>{formatDate(msg.createdAt)}</span>
                         </div>
-                        <p className="mt-1 whitespace-pre-wrap text-sm text-[color:var(--color-text-primary)]">{msg.content}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm text-[color:var(--color-text-primary)]">
+                          <MarkdownContent text={msg.content} />
+                        </p>
                       </div>
                     ))}
                   </div>

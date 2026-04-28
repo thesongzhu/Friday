@@ -26,6 +26,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 
 // ─── Constants ───
 
@@ -423,7 +424,8 @@ export function createFridayQqChannel(): FridayChannelPlugin {
 
     async send(options: FridayChannelSendOptions) {
       const accessToken = await ensureToken();
-      const { chatId, text, replyTo, chatType } = options;
+      const { chatId, replyTo, chatType } = options;
+      const text = formatFridayChannelOutboundText("qq", options.text);
 
       // Determine if group or direct based on chatType from the inbound message
       const isDirect = chatType === "direct";

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { useLocation } from "react-router-dom";
+import { MarkdownContent } from "@/components/chat/chat-message";
 import { ProviderTruthCard } from "@/components/console/shell/provider-truth";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { useProviderTruthQuery } from "@/hooks/use-provider-truth";
@@ -97,7 +98,9 @@ function RailMessage(props: {
             <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" style={{ animationDelay: "240ms" }} />
           </div>
         ) : (
-          <div className="whitespace-pre-wrap break-words">{props.content}</div>
+          <div className="whitespace-pre-wrap break-words">
+            <MarkdownContent text={props.content} />
+          </div>
         )}
       </div>
     </div>

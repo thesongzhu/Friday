@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Radio, Send, Settings2, Wifi, WifiOff, MessageSquare, ChevronRight, X, Zap, Paperclip, Image as ImageIcon, FileAudio, FileVideo, File } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { MarkdownContent } from "@/components/chat/chat-message";
 import { ActionButton, StatusPill } from "@/components/core/primitives";
 import { useAppNavigate } from "@/hooks/use-app-navigate";
 import { localize } from "@/lib/i18n/localized-text";
@@ -633,7 +634,9 @@ export function ChannelsPage() {
                             Friday
                             <span className="ml-2 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-accent)]" />
                           </p>
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed">{redactSecretLikeText(runEvents.outputText)}</p>
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                            <MarkdownContent text={redactSecretLikeText(runEvents.outputText)} />
+                          </p>
                         </div>
                       </div>
                     )}
@@ -881,7 +884,9 @@ function MessageBubble({ message, locale }: { message: FridaySessionMessageRecor
             Friday
           </p>
         )}
-        <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed">
+          <MarkdownContent text={text} />
+        </p>
         {attachments.length > 0 && (
           <div className={`mt-2 space-y-1.5 rounded-xl border px-2.5 py-2 text-xs ${
             isAssistant

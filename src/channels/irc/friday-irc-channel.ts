@@ -20,6 +20,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridayIrcChannelConfig,
   FridayIrcChannelConfigSchema,
@@ -91,7 +92,7 @@ export function createFridayIrcChannel(deps: IrcChannelDeps = {}): FridayChannel
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
       if (!config) throw new FridayDomainError("NOT_INITIALIZED", "IRC channel not initialized", { httpStatus: 503 });
 
-      await connection.sendMessage(options.chatId, options.text);
+      await connection.sendMessage(options.chatId, formatFridayChannelOutboundText("irc", options.text));
 
       // IRC doesn't have message IDs; generate a synthetic one
       return { messageId: `irc-${Date.now()}` };

@@ -22,6 +22,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridayTelegramChannelConfig,
   FridayTelegramChannelConfigSchema,
@@ -116,7 +117,7 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
 
       const result = await api.sendMessage(config.botToken, {
         chat_id: options.chatId,
-        text: options.text,
+        text: formatFridayChannelOutboundText("telegram", options.text),
         reply_to_message_id: options.replyTo ? parseInt(options.replyTo, 10) : undefined,
       });
 

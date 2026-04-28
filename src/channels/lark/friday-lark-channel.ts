@@ -37,6 +37,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import type { LarkWebhookRelayService } from "./lark-webhook-relay.js";
 
 // ─── Constants ───
@@ -940,7 +941,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
 
     async send(options: FridayChannelSendOptions) {
       const accessToken = await ensureToken();
-      const { chatId, text, replyTo, approval } = options;
+      const { chatId, replyTo, approval } = options;
+      const text = formatFridayChannelOutboundText("lark", options.text);
 
       const body: Record<string, unknown> = {
         receive_id: chatId,
@@ -988,7 +990,8 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     options: FridayChannelSendOptions,
   ): Promise<{ messageId: string }> {
     const accessToken = await ensureToken();
-    const { text, approval } = options;
+    const { approval } = options;
+    const text = formatFridayChannelOutboundText("lark", options.text);
     const body: Record<string, unknown> = {
       msg_type: approval ? "interactive" : "text",
       content: approval

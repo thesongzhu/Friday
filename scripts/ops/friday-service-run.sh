@@ -57,4 +57,6 @@ if [[ -n "${BUILD_REASON}" ]]; then
   npm run build >&2
 fi
 
+export FRIDAY_SYSTEM_ENABLED="${FRIDAY_SYSTEM_ENABLED:-true}"
+
 exec "${NODE_BIN}" "${DIST_ENTRY}" start

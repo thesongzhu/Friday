@@ -17,6 +17,7 @@ import type {
   FridayChannelPlugin,
   FridayChannelSendOptions,
 } from "./friday-channel.types.js";
+import { formatFridayChannelOutboundSendOptions } from "./friday-channel-outbound-formatting.js";
 
 // ─── Types ───
 
@@ -508,11 +509,13 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
         throw new FridayDomainError("NOT_INITIALIZED", `Channel kind "${kind}" is not running`, { httpStatus: 503 });
       }
 
+      const formattedOptions = formatFridayChannelOutboundSendOptions(kind, options);
+
       // Use outbound adapter if available, otherwise legacy send
       if (entry.plugin.adapters?.outbound) {
-        return entry.plugin.adapters.outbound.send(options);
+        return entry.plugin.adapters.outbound.send(formattedOptions);
       }
-      return entry.plugin.send(options);
+      return entry.plugin.send(formattedOptions);
     },
 
     async update(kind, messageId, options) {
@@ -528,7 +531,7 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       if (!update) {
         throw new FridayDomainError("NOT_IMPLEMENTED", `Channel kind "${kind}" does not support updating sent messages`, { httpStatus: 501 });
       }
-      return update(messageId, options);
+      return update(messageId, formatFridayChannelOutboundSendOptions(kind, options));
     },
 
     async signalTyping(kind, chatId) {

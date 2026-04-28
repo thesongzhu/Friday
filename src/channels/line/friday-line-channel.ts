@@ -20,6 +20,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridayLineChannelConfig,
   FridayLineChannelConfigSchema,
@@ -121,7 +122,7 @@ export function createFridayLineChannel(deps: LineChannelDeps = {}): FridayChann
 
       await api.pushMessage(config.channelAccessToken, {
         to: options.chatId,
-        messages: [{ type: "text", text: options.text }],
+        messages: [{ type: "text", text: formatFridayChannelOutboundText("line", options.text) }],
       });
 
       // LINE push API doesn't return a message ID

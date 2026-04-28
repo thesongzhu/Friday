@@ -21,6 +21,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridayWhatsappChannelConfig,
   FridayWhatsappChannelConfigSchema,
@@ -136,7 +137,7 @@ export function createFridayWhatsappChannel(deps: WhatsappChannelDeps = {}): Fri
           messaging_product: "whatsapp",
           to: options.chatId,
           type: "text",
-          text: { body: options.text },
+          text: { body: formatFridayChannelOutboundText("whatsapp", options.text) },
           context: options.replyTo ? { message_id: options.replyTo } : undefined,
         });
 

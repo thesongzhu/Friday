@@ -167,7 +167,7 @@ function CodeBlock({ content }: { content: string }) {
  * Lightweight markdown renderer — handles bold, inline code, code blocks,
  * headers, lists, links, and action feedback badges without an external dependency.
  */
-function MarkdownContent({ text }: { text: string }) {
+export function MarkdownContent({ text }: { text: string }) {
   const parts: React.ReactNode[] = [];
   let key = 0;
 
@@ -231,7 +231,7 @@ function renderInline(text: string, baseKey: number): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let k = baseKey * 1000;
   // Match bold, inline code, and links
-  const regex = /(\*\*(.*?)\*\*)|(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))/g;
+  const regex = /(\*\*([^\s*](?:[\s\S]*?[^\s*])?)\*\*)|(__([^\s_](?:[\s\S]*?[^\s_])?)__)|(`([^`]+)`)|(\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -239,14 +239,14 @@ function renderInline(text: string, baseKey: number): React.ReactNode[] {
     if (match.index > lastIndex) {
       nodes.push(text.slice(lastIndex, match.index));
     }
-    if (match[2] !== undefined) {
+    if (match[2] !== undefined || match[4] !== undefined) {
       // Bold
-      nodes.push(<strong key={k++} className="font-semibold text-[color:var(--color-text-primary)]">{match[2]}</strong>);
-    } else if (match[4] !== undefined) {
+      nodes.push(<strong key={k++} className="font-semibold text-[color:var(--color-text-primary)]">{match[2] ?? match[4]}</strong>);
+    } else if (match[6] !== undefined) {
       // Inline code
-      nodes.push(<code key={k++} className="rounded bg-[color:var(--color-bg-contrast)] px-1 py-0.5 text-[color:var(--color-text-primary)]">{match[4]}</code>);
-    } else if (match[6] !== undefined && match[7] !== undefined) {
-      const safeHref = toSafeHref(match[7], { allowRelative: false });
+      nodes.push(<code key={k++} className="rounded bg-[color:var(--color-bg-contrast)] px-1 py-0.5 text-[color:var(--color-text-primary)]">{match[6]}</code>);
+    } else if (match[8] !== undefined && match[9] !== undefined) {
+      const safeHref = toSafeHref(match[9], { allowRelative: false });
       if (safeHref) {
         nodes.push(
           <a
@@ -256,11 +256,11 @@ function renderInline(text: string, baseKey: number): React.ReactNode[] {
             rel="noopener noreferrer"
             className="underline text-[color:var(--color-text-primary)] hover:text-[color:var(--color-accent)] transition-colors"
           >
-            {match[6]}
+            {match[8]}
           </a>,
         );
       } else {
-        nodes.push(<span key={k++}>{match[6]}</span>);
+        nodes.push(<span key={k++}>{match[8]}</span>);
       }
     }
     lastIndex = match.index + match[0].length;

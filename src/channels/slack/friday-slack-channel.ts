@@ -20,6 +20,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridaySlackChannelConfig,
   FridaySlackChannelConfigSchema,
@@ -110,7 +111,7 @@ export function createFridaySlackChannel(deps: SlackChannelDeps = {}): FridayCha
 
       const result = await webApi.sendMessage(config.botToken, {
         channel: options.chatId,
-        text: options.text,
+        text: formatFridayChannelOutboundText("slack", options.text),
         thread_ts: options.replyTo,
       });
 

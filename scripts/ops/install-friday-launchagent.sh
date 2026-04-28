@@ -142,6 +142,8 @@ $(write_common_env)
     <string>false</string>
     <key>FRIDAY_CHANNEL_WAKE_UI</key>
     <string>false</string>
+    <key>FRIDAY_SYSTEM_ENABLED</key>
+    <string>true</string>
     <key>FRIDAY_SYSTEM_COMPANION_SERVER_MODE</key>
     <string>external</string>
     <key>FRIDAY_SYSTEM_NATIVE_COMPANION_MODE</key>

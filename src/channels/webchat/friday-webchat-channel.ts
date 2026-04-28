@@ -20,6 +20,7 @@ import type {
   FridayChannelStatus,
   FridayChannelStatusAdapter,
 } from "../friday-channel-adapters.types.js";
+import { formatFridayChannelOutboundText } from "../friday-channel-outbound-formatting.js";
 import {
   type FridayWebchatChannelConfig,
   FridayWebchatChannelConfigSchema,
@@ -87,7 +88,7 @@ export function createFridayWebchatChannel(deps: WebchatChannelDeps = {}): Frida
       await wsService.sendToClient(options.chatId, {
         type: "message",
         id: messageId,
-        text: options.text,
+        text: formatFridayChannelOutboundText("webchat", options.text),
         images: options.images,
         replyTo: options.replyTo,
         timestamp: Date.now(),

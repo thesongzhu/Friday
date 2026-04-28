@@ -614,6 +614,22 @@ describe("FridayChannelRegistry", () => {
       expect(result.messageId).toBe("sent-1");
     });
 
+    it("formats outbound text for plain-text external channels", async () => {
+      const plugin = createMockPlugin("lark");
+      registry.register(plugin);
+      await registry.startAll(() => {});
+
+      await registry.send("lark", {
+        chatId: "chat-1",
+        text: "**已就绪**\n`**code**`",
+      });
+
+      expect(plugin.send).toHaveBeenCalledWith({
+        chatId: "chat-1",
+        text: "已就绪\n`**code**`",
+      });
+    });
+
     it("throws for unregistered kind", async () => {
       await expect(
         registry.send("nonexistent", { chatId: "c", text: "t" }),
@@ -650,6 +666,33 @@ describe("FridayChannelRegistry", () => {
       await expect(
         registry.update("feishu", "om_progress_1", { chatId: "chat-1", text: "done" }),
       ).resolves.toEqual({ messageId: "edited-1" });
+
+      expect(update).toHaveBeenCalledWith("om_progress_1", { chatId: "chat-1", text: "done" });
+    });
+
+    it("formats outbound text before updating external channel messages", async () => {
+      const update = vi.fn(async () => ({ messageId: "edited-1" }));
+      const plugin: FridayChannelPlugin = {
+        kind: "feishu",
+        init: vi.fn(async () => {}),
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+        send: vi.fn(async () => ({ messageId: "sent-1" })),
+        adapters: {
+          outbound: {
+            send: vi.fn(async () => ({ messageId: "sent-1" })),
+            update,
+          },
+        },
+      };
+
+      registry.register(plugin);
+      await registry.startAll(() => {});
+
+      await registry.update("feishu", "om_progress_1", {
+        chatId: "chat-1",
+        text: "**done**",
+      });
 
       expect(update).toHaveBeenCalledWith("om_progress_1", { chatId: "chat-1", text: "done" });
     });
