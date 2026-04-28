@@ -5,6 +5,7 @@ import type {
   FridayAutoFixActionStatus,
   FridayAutoFixOutcome,
   FridayAutoFixRiskTier,
+  FridaySelfHealingRunReadySkipReason,
 } from "#learning";
 import type {
   FridayBlockedRouteRecord,
@@ -152,6 +153,27 @@ export interface FridayAutoFixExecutionResponse {
     rollbackSucceeded: boolean;
     errorMessage?: string;
   };
+}
+
+export interface FridayAutoFixRunReadyResponse {
+  summary: {
+    inspected: number;
+    executed: number;
+    succeeded: number;
+    failed: number;
+    requiresApproval: number;
+    blockedByPolicy: number;
+    notReady: number;
+    dataProtected: true;
+    maxRiskTier: 0 | 1;
+    limit: number;
+  };
+  executed: FridayAutoFixExecutionResponse[];
+  skipped: Array<{
+    action: FridayFixPlanRecord;
+    reason: FridaySelfHealingRunReadySkipReason;
+    reasonText: string;
+  }>;
 }
 
 export interface FridayAutoFixMetricsResponse {

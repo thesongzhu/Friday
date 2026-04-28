@@ -5,11 +5,48 @@ import type { FridayApprovalRequestRepository } from "../persistence/friday-appr
 import type { FridayErrorIncidentRepository } from "../persistence/friday-error-incident-repository.js";
 import type { FridayAutoFixExecutionService } from "./friday-auto-fix-execution-service.js";
 import type { UUID } from "../model/friday-learning.types.js";
-import type { FridayAutoFixExecutionResult } from "../model/friday-auto-fix.types.js";
+import type {
+  FridayAutoFixActionEntity,
+  FridayAutoFixExecutionResult,
+  FridayAutoFixStepKind,
+} from "../model/friday-auto-fix.types.js";
 import type { FridayAutoFixRiskAssessmentService } from "./friday-auto-fix-risk-assessment-service.js";
+
+const DATA_PRESERVING_AUTO_FIX_STEPS: ReadonlySet<FridayAutoFixStepKind> = new Set([
+  "retry_node",
+  "switch_model_fallback",
+  "trim_payload",
+  "apply_config_patch",
+  "grant_permission",
+]);
+
+const ROLLBACK_REQUIRED_STEPS: ReadonlySet<FridayAutoFixStepKind> = new Set([
+  "switch_model_fallback",
+  "apply_config_patch",
+  "grant_permission",
+]);
+
+export function isFridayAutoFixDataPreservingAction(
+  action: Pick<FridayAutoFixActionEntity, "plan" | "rollbackPlan">,
+): boolean {
+  const steps = action.plan.steps;
+  const rollbackSteps = action.rollbackPlan?.steps ?? action.plan.rollbackPlan?.steps ?? [];
+  const allSteps = [...steps, ...rollbackSteps];
+  if (allSteps.some((step) => !DATA_PRESERVING_AUTO_FIX_STEPS.has(step.kind))) {
+    return false;
+  }
+
+  const rollbackRequired = steps.some((step) => ROLLBACK_REQUIRED_STEPS.has(step.kind));
+  if (rollbackRequired && rollbackSteps.length === 0) {
+    return false;
+  }
+
+  return true;
+}
 
 export interface FridayAutoFixDispatcherService {
   runReadyActions(input?: {
+    userId?: UUID;
     incidentIds?: UUID[];
     maxRiskTier?: 0 | 1;
     limit?: number;
@@ -38,6 +75,7 @@ export function createFridayAutoFixDispatcherService(
 
       const planned = deps.db.withReadConnection((db) =>
         deps.actionRepo.listPlanned(db, {
+          userId: input?.userId,
           maxRiskTier,
           incidentIds: input?.incidentIds,
           limit,
@@ -58,6 +96,9 @@ export function createFridayAutoFixDispatcherService(
           nowIso: deps.nowIso(),
         });
         if (risk.requiresApproval || !risk.autoApplyAllowed) {
+          continue;
+        }
+        if (!isFridayAutoFixDataPreservingAction(action)) {
           continue;
         }
         const result = await deps.executionService.execute(action.actionId);

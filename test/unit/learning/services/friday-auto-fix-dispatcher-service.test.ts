@@ -182,6 +182,85 @@ describe("FridayAutoFixDispatcherService", () => {
     expect(results[0]!.action.incidentId).toBe("inc-001");
   });
 
+  it("filters ready actions by userId for homepage self-repair", async () => {
+    db.writer.prepare(
+      `INSERT INTO users (id, display_name, role, is_local_only, created_at, updated_at)
+       VALUES ('other-user', 'Other User', 'admin', 1, ?, ?)`,
+    ).run(NOW, NOW);
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-other",
+      userId: "other-user",
+      ts: NOW,
+      category: "tool",
+      severity: "medium",
+      signature: "sig-other",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    actionRepo.insert(db.writer, {
+      actionId: "action-other",
+      incidentId: "inc-other",
+      userId: "other-user",
+      riskTier: 0,
+      plan: {
+        ...basePlan,
+        evidence: { ...basePlan.evidence, fingerprint: "sig-other" },
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const results = await service.runReadyActions({ userId: "other-user", maxRiskTier: 0 });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.action.actionId).toBe("action-other");
+  });
+
+  it("skips mutating data-preserving actions when rollback evidence is missing", async () => {
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-no-rollback",
+      userId: "test-user",
+      ts: NOW,
+      category: "config",
+      severity: "medium",
+      signature: "sig-no-rollback",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    actionRepo.insert(db.writer, {
+      actionId: "action-no-rollback",
+      incidentId: "inc-no-rollback",
+      userId: "test-user",
+      riskTier: 1,
+      plan: {
+        ...basePlan,
+        steps: [
+          { stepId: "step-no-rollback", kind: "apply_config_patch", target: "config", payload: {} },
+        ],
+        evidence: { ...basePlan.evidence, fingerprint: "sig-no-rollback" },
+      },
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const results = await service.runReadyActions({
+      incidentIds: ["inc-no-rollback"],
+      maxRiskTier: 1,
+    });
+
+    expect(results).toHaveLength(0);
+  });
+
   it("returns empty when no planned actions exist", async () => {
     // Execute the only eligible one first
     await service.runReadyActions({ maxRiskTier: 0 });

@@ -5,6 +5,7 @@ import type {
   FridayAutoFixApprovalResponse,
   FridayAutoFixExecutionResponse,
   FridayAutoFixMetricsResponse,
+  FridayAutoFixRunReadyResponse,
   FridayFixPlanRecord,
   FridayGetAutoFixActionResponse,
   FridayListAutoFixActionsResponse,
@@ -60,6 +61,29 @@ function readReasonCode(body: unknown): string | undefined {
     : undefined;
 }
 
+function readMaxRiskTier(body: unknown): 0 | 1 | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const value = (body as Record<string, unknown>).maxRiskTier;
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number.parseInt(value, 10)
+      : Number.NaN;
+  if (parsed === 0 || parsed === 1) {
+    return parsed;
+  }
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "maxRiskTier must be 0 or 1 for homepage self-repair",
+    { httpStatus: 400 },
+  );
+}
+
 function isFeedbackReasonCode(value: string | undefined): value is FridayAutoFixFeedbackReasonCode {
   return value === "wrong_root_cause"
     || value === "too_risky"
@@ -76,6 +100,22 @@ function toActionRecord(
     details,
     deps.agentLoop?.findRunByActionId(details.action.actionId)?.loopRunId,
   );
+}
+
+function toExecutionResponse(
+  deps: FridayAutoFixRoutesDeps,
+  item: Awaited<ReturnType<FridaySelfHealingApiService["runReadyActions"]>>["executed"][number],
+): FridayAutoFixExecutionResponse {
+  return {
+    action: toActionRecord(deps, item.details),
+    result: {
+      success: item.result.success,
+      verificationPassed: item.result.verificationPassed,
+      rollbackAttempted: item.result.rollbackAttempted,
+      rollbackSucceeded: item.result.rollbackSucceeded,
+      ...(item.result.errorMessage ? { errorMessage: item.result.errorMessage } : {}),
+    },
+  };
 }
 
 export function createFridayAutoFixRoutes(
@@ -99,6 +139,31 @@ export function createFridayAutoFixRoutes(
         const limit = readPositiveInt(query.limit);
         return {
           items: deps.service.listActions({ userId, status, incidentId, limit }).map((item) => toActionRecord(deps, item)),
+        };
+      },
+    },
+    {
+      operationId: "autofix.actions.run.ready",
+      method: "POST",
+      path: "/v1/auto-fix/actions/run-ready",
+      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      rateLimitPolicyId: "generator.write",
+      async handler(ctx): Promise<FridayAutoFixRunReadyResponse> {
+        const userId = requireUserId(ctx.principal);
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        const run = await deps.service.runReadyActions({
+          userId,
+          maxRiskTier: readMaxRiskTier(body),
+          limit: readPositiveInt(body.limit) ?? 20,
+        });
+        return {
+          summary: run.summary,
+          executed: run.executed.map((item) => toExecutionResponse(deps, item)),
+          skipped: run.skipped.map((item) => ({
+            action: toActionRecord(deps, item.details),
+            reason: item.reason,
+            reasonText: item.reasonText,
+          })),
         };
       },
     },

@@ -37,6 +37,7 @@ import type {
   FridayProviderBackendKind,
   FridayProviderRoutingDecisionTrace,
 } from "#providers";
+import { isFridayAutoFixDataPreservingAction } from "./friday-auto-fix-dispatcher-service.js";
 import { normalizeAutoFixTitleBase } from "./friday-auto-fix-title-helpers.js";
 
 export interface FridaySelfHealingEventPublisher {
@@ -126,6 +127,35 @@ export interface FridayIncidentDiagnosisDetails {
 export interface FridaySelfHealingExecutionDetails {
   details: FridaySelfHealingActionDetails;
   result: FridayAutoFixExecutionResult;
+}
+
+export type FridaySelfHealingRunReadySkipReason =
+  | "approval_required"
+  | "outside_data_protection_policy"
+  | "auto_apply_blocked"
+  | "not_ready";
+
+export interface FridaySelfHealingRunReadySkippedAction {
+  details: FridaySelfHealingActionDetails;
+  reason: FridaySelfHealingRunReadySkipReason;
+  reasonText: string;
+}
+
+export interface FridaySelfHealingRunReadyResult {
+  summary: {
+    inspected: number;
+    executed: number;
+    succeeded: number;
+    failed: number;
+    requiresApproval: number;
+    blockedByPolicy: number;
+    notReady: number;
+    dataProtected: true;
+    maxRiskTier: 0 | 1;
+    limit: number;
+  };
+  executed: FridaySelfHealingExecutionDetails[];
+  skipped: FridaySelfHealingRunReadySkippedAction[];
 }
 
 export interface FridayLearningLessonRecord {
@@ -309,6 +339,11 @@ export interface FridaySelfHealingApiService {
   executeAction(input: {
     actionId: string;
   }): Promise<FridaySelfHealingExecutionDetails>;
+  runReadyActions(input: {
+    userId: string;
+    maxRiskTier?: 0 | 1;
+    limit?: number;
+  }): Promise<FridaySelfHealingRunReadyResult>;
   rollbackAction(input: {
     actionId: string;
     reason: string;
@@ -625,6 +660,33 @@ export function createFridaySelfHealingApiService(
       },
       correlationId,
     );
+  };
+
+  const classifyRunReadySkip = (
+    details: FridaySelfHealingActionDetails,
+  ): Pick<FridaySelfHealingRunReadySkippedAction, "reason" | "reasonText"> => {
+    if (!isFridayAutoFixDataPreservingAction(details.action)) {
+      return {
+        reason: "outside_data_protection_policy",
+        reasonText: "Skipped because the plan is outside Friday's data-preserving self-repair policy.",
+      };
+    }
+    if (details.risk.requiresApproval || details.risk.riskTier >= 2 || details.action.riskTier >= 2) {
+      return {
+        reason: "approval_required",
+        reasonText: "Skipped because this repair requires an explicit approval decision.",
+      };
+    }
+    if (!details.risk.autoApplyAllowed) {
+      return {
+        reason: "auto_apply_blocked",
+        reasonText: "Skipped because current risk, rollback, or learning policy does not allow automatic execution.",
+      };
+    }
+    return {
+      reason: "not_ready",
+      reasonText: "Skipped because the repair was no longer ready by the time self-repair ran.",
+    };
   };
 
   const emitLearningEvent = (
@@ -1290,6 +1352,72 @@ export function createFridaySelfHealingApiService(
       return {
         details,
         result,
+      };
+    },
+
+    async runReadyActions(input) {
+      const maxRiskTier = input.maxRiskTier ?? 1;
+      const limit = input.limit ?? 20;
+      const candidateActions = deps.db.withReadConnection((db) =>
+        deps.actionRepo.listPlanned(db, {
+          userId: input.userId,
+          maxRiskTier: 2,
+          limit,
+        }),
+      );
+      const candidateDetails = candidateActions.map(buildActionDetails);
+      const results = await deps.autoFixDispatcher.runReadyActions({
+        userId: input.userId,
+        maxRiskTier,
+        limit,
+      });
+
+      const executed: FridaySelfHealingExecutionDetails[] = [];
+      for (const result of results) {
+        const details = buildActionDetails(result.action);
+        emitActionEvent("autofix.action.executed", details, result.action.actionId);
+        await deps.observability?.recordAutoFixActionEvent({
+          event: "autofix.action.executed",
+          details,
+          actor: { type: "system", id: "self-healing", displayName: "Friday Self-Healing" },
+          description: `Executed auto-fix action ${details.action.actionId}`,
+        });
+        await deps.agentLoop?.syncAction({
+          actionId: details.action.actionId,
+          correlationId: details.action.actionId,
+        });
+        executed.push({ details, result });
+      }
+
+      const executedIds = new Set(executed.map((entry) => entry.details.action.actionId));
+      const skipped = candidateDetails
+        .filter((details) => !executedIds.has(details.action.actionId))
+        .map((details): FridaySelfHealingRunReadySkippedAction => ({
+          details,
+          ...classifyRunReadySkip(details),
+        }));
+
+      const requiresApproval = skipped.filter((entry) => entry.reason === "approval_required").length;
+      const blockedByPolicy = skipped.filter((entry) =>
+        entry.reason === "outside_data_protection_policy" || entry.reason === "auto_apply_blocked"
+      ).length;
+      const notReady = skipped.filter((entry) => entry.reason === "not_ready").length;
+
+      return {
+        summary: {
+          inspected: candidateDetails.length,
+          executed: executed.length,
+          succeeded: executed.filter((entry) => entry.result.success).length,
+          failed: executed.filter((entry) => !entry.result.success).length,
+          requiresApproval,
+          blockedByPolicy,
+          notReady,
+          dataProtected: true,
+          maxRiskTier,
+          limit,
+        },
+        executed,
+        skipped,
       };
     },
 

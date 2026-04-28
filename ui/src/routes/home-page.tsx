@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import {
   ArrowRight,
@@ -9,6 +9,7 @@ import {
   Pin,
   Sparkles,
   TriangleAlert,
+  Wrench,
 } from "lucide-react";
 import { ProviderTruthCard, ProviderTruthCompact } from "@/components/console/shell/provider-truth";
 import { PackCard } from "@/components/packs/pack-card";
@@ -238,6 +239,7 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
 
 export function HomePage() {
   const navigate = useAppNavigate();
+  const queryClient = useQueryClient();
   const location = useLocation();
   const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
@@ -248,6 +250,11 @@ export function HomePage() {
   const systemHealthQuery = useSystemHealthQuery();
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
+  const [selfRepairNotice, setSelfRepairNotice] = useState<{
+    tone: "success" | "warning" | "danger";
+    title: string;
+    detail: string;
+  } | null>(null);
   const [showSetupReadiness, setShowSetupReadiness] = useState(() => {
     const state = location.state as { starterSource?: string } | null;
     return state?.starterSource === "setup" || window.sessionStorage.getItem(FRIDAY_SETUP_READINESS_SESSION_KEY) === "1";
@@ -290,6 +297,50 @@ export function HomePage() {
     queryFn: () => healthApi.getCapabilityHealth(),
     refetchInterval: showSetupReadiness ? 30_000 : false,
     staleTime: 10_000,
+  });
+  const selfRepairMutation = useMutation({
+    mutationFn: () => learningApi.runReadyAutoFixActions({ maxRiskTier: 1, limit: 50 }),
+    onSuccess: (result) => {
+      const { summary } = result;
+      let title: string;
+      if (summary.failed > 0) {
+        title = localize(
+          locale,
+          `已运行 ${summary.executed} 项自我修复，${summary.failed} 项失败`,
+          `Ran ${summary.executed} self-repair action${summary.executed === 1 ? "" : "s"}; ${summary.failed} failed`,
+        );
+      } else if (summary.executed > 0) {
+        title = localize(
+          locale,
+          `已完成 ${summary.executed} 项自我修复`,
+          `Completed ${summary.executed} self-repair action${summary.executed === 1 ? "" : "s"}`,
+        );
+      } else {
+        title = localize(locale, "当前没有可自动执行的修复", "No automatic repair is ready right now");
+      }
+      const detail = localize(
+        locale,
+        `成功 ${summary.succeeded} 项，失败 ${summary.failed} 项；${summary.requiresApproval} 项需要审批，${summary.blockedByPolicy} 项被数据保护策略跳过。用户已有数据不会被清空或重置。`,
+        `${summary.succeeded} succeeded, ${summary.failed} failed; ${summary.requiresApproval} need approval, and ${summary.blockedByPolicy} were skipped by the data protection policy. Existing user data is not cleared or reset.`,
+      );
+      setSelfRepairNotice({
+        tone: summary.failed > 0 ? "warning" : "success",
+        title,
+        detail,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["learning"] });
+      void queryClient.invalidateQueries({ queryKey: ["home", "snapshot", "console-home"] });
+      void providerTruthQuery.refetch();
+      void systemHealthQuery.refetch();
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelfRepairNotice({
+        tone: "danger",
+        title: localize(locale, "自我修复没有启动", "Self-repair did not start"),
+        detail: message,
+      });
+    },
   });
 
   const recentRuns = snapshotQuery.data?.runs ?? [];
@@ -511,19 +562,49 @@ export function HomePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-              <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                {localize(locale, "开始新任务", "Start a new task")}
-              </ActionButton>
-              <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
-                <Bot className="mr-2 h-4 w-4" />
-                {localize(locale, "继续去 Assistant", "Continue to Assistant")}
-              </ActionButton>
-              <ActionButton tone="secondary" onClick={() => navigate("/observability")}>
-                <ArrowRight className="mr-2 h-4 w-4" />
-                {localize(locale, "打开 Observability", "Open Observability")}
-              </ActionButton>
+                <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  {localize(locale, "开始新任务", "Start a new task")}
+                </ActionButton>
+                <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
+                  <Bot className="mr-2 h-4 w-4" />
+                  {localize(locale, "继续去 Assistant", "Continue to Assistant")}
+                </ActionButton>
+                <ActionButton tone="secondary" onClick={() => navigate("/observability")}>
+                  <ArrowRight className="mr-2 h-4 w-4" />
+                  {localize(locale, "打开 Observability", "Open Observability")}
+                </ActionButton>
+                <ActionButton
+                  data-testid="home-self-repair"
+                  tone="secondary"
+                  disabled={selfRepairMutation.isPending}
+                  onClick={() => {
+                    setSelfRepairNotice(null);
+                    selfRepairMutation.mutate();
+                  }}
+                >
+                  <Wrench className="mr-2 h-4 w-4" />
+                  {selfRepairMutation.isPending
+                    ? localize(locale, "修复中", "Repairing")
+                    : localize(locale, "自我修复", "Self-repair")}
+                </ActionButton>
               </div>
+
+              {selfRepairNotice ? (
+                <div
+                  data-testid="home-self-repair-result"
+                  role="status"
+                  className={cn(
+                    "rounded-[var(--radius-md)] border px-4 py-3 text-sm",
+                    selfRepairNotice.tone === "success" && "border-[color:var(--color-border-success)] bg-[color:var(--color-bg-success-subtle)] text-[color:var(--color-text-success)]",
+                    selfRepairNotice.tone === "warning" && "border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] text-[color:var(--color-text-warning)]",
+                    selfRepairNotice.tone === "danger" && "border-[color:var(--color-border-danger)] bg-[color:var(--color-bg-danger-subtle)] text-[color:var(--color-text-danger)]",
+                  )}
+                >
+                  <p className="font-semibold">{selfRepairNotice.title}</p>
+                  <p className="mt-1 leading-6">{selfRepairNotice.detail}</p>
+                </div>
+              ) : null}
 
               <ProviderTruthCard
                 locale={locale}

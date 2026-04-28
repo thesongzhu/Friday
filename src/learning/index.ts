@@ -138,13 +138,20 @@ export type { FridayApprovalWorkflowService } from "./services/friday-approval-w
 export { createFridayAutoFixLessonExtractionService } from "./services/friday-auto-fix-lesson-extraction-service.js";
 export type { FridayAutoFixLessonExtractionService } from "./services/friday-auto-fix-lesson-extraction-service.js";
 
-export { createFridayAutoFixDispatcherService } from "./services/friday-auto-fix-dispatcher-service.js";
+export {
+  createFridayAutoFixDispatcherService,
+  isFridayAutoFixDataPreservingAction,
+} from "./services/friday-auto-fix-dispatcher-service.js";
 export type { FridayAutoFixDispatcherService } from "./services/friday-auto-fix-dispatcher-service.js";
 
 export { createFridaySelfHealingApiService } from "./services/friday-self-healing-api-service.js";
 export type {
   FridaySelfHealingApiService,
   FridaySelfHealingActionDetails,
+  FridaySelfHealingExecutionDetails,
+  FridaySelfHealingRunReadyResult,
+  FridaySelfHealingRunReadySkipReason,
+  FridaySelfHealingRunReadySkippedAction,
   FridayIncidentDiagnosisDetails,
   FridaySelfHealingIssueCard,
   FridaySelfHealingEventPublisher,

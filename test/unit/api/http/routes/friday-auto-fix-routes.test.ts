@@ -145,6 +145,50 @@ function makeService(): FridaySelfHealingApiService {
         rollbackSucceeded: false,
       },
     })),
+    runReadyActions: vi.fn(async () => ({
+      summary: {
+        inspected: 2,
+        executed: 1,
+        succeeded: 1,
+        failed: 0,
+        requiresApproval: 1,
+        blockedByPolicy: 0,
+        notReady: 0,
+        dataProtected: true,
+        maxRiskTier: 1,
+        limit: 4,
+      },
+      executed: [
+        {
+          details: {
+            ...record,
+            action: {
+              ...record.action,
+              status: "applied" as const,
+              outcome: "success" as const,
+            },
+          },
+          result: {
+            action: {
+              ...record.action,
+              status: "applied" as const,
+              outcome: "success" as const,
+            },
+            success: true,
+            verificationPassed: true,
+            rollbackAttempted: false,
+            rollbackSucceeded: false,
+          },
+        },
+      ],
+      skipped: [
+        {
+          details: record,
+          reason: "approval_required" as const,
+          reasonText: "Needs approval",
+        },
+      ],
+    })),
     rollbackAction: vi.fn(async () => ({
       details: {
         ...record,
@@ -184,9 +228,10 @@ function makeService(): FridaySelfHealingApiService {
 describe("FridayAutoFixRoutes", () => {
   it("creates auto-fix route definitions", () => {
     const routes = createFridayAutoFixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(7);
+    expect(routes).toHaveLength(8);
     expect(routes.map((route) => route.operationId)).toEqual([
       "autofix.actions.list",
+      "autofix.actions.run.ready",
       "autofix.actions.get",
       "autofix.actions.approve",
       "autofix.actions.deny",
@@ -218,6 +263,42 @@ describe("FridayAutoFixRoutes", () => {
     });
     expect(result.items[0]?.summary.actionId).toBe("action-1");
     expect(result.items[0]?.summary.loopRunId).toBe("loop-run-1");
+  });
+
+  it("runs ready self-repair actions through the user-scoped all endpoint", async () => {
+    const service = makeService();
+    const routes = createFridayAutoFixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "autofix.actions.run.ready")!;
+
+    const result = await route.handler(
+      makeCtx({ body: { maxRiskTier: 1, limit: "4" } }),
+    ) as {
+      summary: { dataProtected: true; executed: number; requiresApproval: number };
+      executed: Array<{ action: { summary: { actionId: string } }; result: { success: boolean } }>;
+      skipped: Array<{ reason: string }>;
+    };
+
+    expect(service.runReadyActions).toHaveBeenCalledWith({
+      userId: "user-1",
+      maxRiskTier: 1,
+      limit: 4,
+    });
+    expect(result.summary).toMatchObject({
+      dataProtected: true,
+      executed: 1,
+      requiresApproval: 1,
+    });
+    expect(result.executed[0]?.result.success).toBe(true);
+    expect(result.skipped[0]?.reason).toBe("approval_required");
+  });
+
+  it("rejects unsafe maxRiskTier values for homepage self-repair", async () => {
+    const routes = createFridayAutoFixRoutes({ service: makeService() });
+    const route = routes.find((entry) => entry.operationId === "autofix.actions.run.ready")!;
+
+    await expect(
+      route.handler(makeCtx({ body: { maxRiskTier: 2 } })),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("approves an action with the authenticated user", async () => {

@@ -2218,6 +2218,83 @@ export interface FridayLearningOverview {
   };
 }
 
+export type FridayAutoFixRiskTier = 0 | 1 | 2;
+export type FridayAutoFixActionStatus = "planned" | "applied" | "rolled_back" | "rejected";
+export type FridayAutoFixOutcome = "success" | "failed" | null;
+export type FridayAutoFixRunReadySkipReason =
+  | "approval_required"
+  | "outside_data_protection_policy"
+  | "auto_apply_blocked"
+  | "not_ready";
+
+export interface FridayFixPlanSummary {
+  actionId: string;
+  incidentId: string;
+  loopRunId?: string;
+  title: string;
+  summary: string;
+  riskTier: FridayAutoFixRiskTier;
+  status: FridayAutoFixActionStatus;
+  outcome: FridayAutoFixOutcome;
+  requiresApproval: boolean;
+  autoApplyAllowed: boolean;
+  rollbackPlanAvailable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayFixPlanRecord {
+  summary: FridayFixPlanSummary;
+  action: {
+    actionId: string;
+    incidentId: string;
+    userId: string;
+    riskTier: FridayAutoFixRiskTier;
+    status: FridayAutoFixActionStatus;
+    outcome: FridayAutoFixOutcome;
+    createdAt: string;
+    updatedAt: string;
+    appliedAt?: string;
+    rolledBackAt?: string;
+    plan?: unknown;
+    rollbackPlan?: unknown;
+  };
+  approval: unknown | null;
+  evidence: unknown;
+}
+
+export interface FridayAutoFixExecutionResponse {
+  action: FridayFixPlanRecord;
+  result: {
+    success: boolean;
+    verificationPassed: boolean;
+    rollbackAttempted: boolean;
+    rollbackSucceeded: boolean;
+    errorMessage?: string;
+  };
+}
+
+export interface FridayAutoFixRunReadyResponse {
+  summary: {
+    inspected: number;
+    executed: number;
+    succeeded: number;
+    failed: number;
+    requiresApproval: number;
+    blockedByPolicy: number;
+    notReady: number;
+    dataProtected: true;
+    maxRiskTier: 0 | 1;
+    limit: number;
+  };
+  executed: FridayAutoFixExecutionResponse[];
+  skipped: Array<{
+    action: FridayFixPlanRecord;
+    reason: FridayAutoFixRunReadySkipReason;
+    reasonText: string;
+  }>;
+}
+
 // ─── Provider usage types ───
 
 export interface FridayProviderUsageSummaryRow {

@@ -135,6 +135,14 @@ function formatUsd(value: number): string {
   }).format(value);
 }
 
+export function formatTokenSharePercent(value: number, total: number): string {
+  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0) {
+    return "0%";
+  }
+  const pct = Math.round((Math.max(0, value) / total) * 100);
+  return `${String(Math.max(0, Math.min(100, pct)))}%`;
+}
+
 function laneLabel(lane: ProviderHealthItem["lane"], locale: import("@/lib/i18n/localized-text").AppLocale): string {
   switch (lane) {
     case "primary":
@@ -369,14 +377,18 @@ export function UsagePage() {
                 <div className="flex-1">
                   <PercentBar value={estimatedInputTokens} max={estimatedTotalTokens} color="#6366f1" />
                 </div>
-                <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">35%</span>
+                <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">
+                  {formatTokenSharePercent(estimatedInputTokens, estimatedTotalTokens)}
+                </span>
               </div>
               <div className="flex items-center gap-3">
                 <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输出", "Output")}</span>
                 <div className="flex-1">
                   <PercentBar value={estimatedOutputTokens} max={estimatedTotalTokens} color="#8b5cf6" />
                 </div>
-                <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">65%</span>
+                <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">
+                  {formatTokenSharePercent(estimatedOutputTokens, estimatedTotalTokens)}
+                </span>
               </div>
             </div>
           </div>

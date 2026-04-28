@@ -231,6 +231,22 @@ const stubSelfHealingService = {
   approveAction: async () => ({} as any),
   denyAction: async () => ({} as any),
   executeAction: async () => ({} as any),
+  runReadyActions: async () => ({
+    summary: {
+      inspected: 0,
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      requiresApproval: 0,
+      blockedByPolicy: 0,
+      notReady: 0,
+      dataProtected: true,
+      maxRiskTier: 1,
+      limit: 20,
+    },
+    executed: [],
+    skipped: [],
+  }),
   rollbackAction: async () => ({} as any),
   getMetrics: () => ({
     day: FIXED_NOW.slice(0, 10),

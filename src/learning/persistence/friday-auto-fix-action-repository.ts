@@ -39,7 +39,7 @@ export interface FridayAutoFixActionRepository {
 
   listPlanned(
     db: Database.Database,
-    input?: { maxRiskTier?: 0 | 1 | 2; incidentIds?: string[]; limit?: number },
+    input?: { userId?: string; maxRiskTier?: 0 | 1 | 2; incidentIds?: string[]; limit?: number },
   ): FridayAutoFixActionEntity[];
 
   markApplied(
@@ -181,6 +181,11 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
     listPlanned(db, input) {
       let sql = "SELECT * FROM auto_fix_actions WHERE status = 'planned'";
       const params: unknown[] = [];
+
+      if (input?.userId) {
+        sql += " AND user_id = ?";
+        params.push(input.userId);
+      }
 
       if (input?.maxRiskTier !== undefined) {
         sql += " AND risk_tier <= ?";

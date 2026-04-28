@@ -50,4 +50,33 @@ describe("learningApi", () => {
       },
     );
   });
+
+  it("runs homepage self-repair through the backend all-ready route", async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      summary: {
+        inspected: 1,
+        executed: 1,
+        succeeded: 1,
+        failed: 0,
+        requiresApproval: 0,
+        blockedByPolicy: 0,
+        notReady: 0,
+        dataProtected: true,
+        maxRiskTier: 1,
+        limit: 50,
+      },
+      executed: [],
+      skipped: [],
+    });
+
+    await learningApi.runReadyAutoFixActions({ maxRiskTier: 1, limit: 50 });
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/v1/auto-fix/actions/run-ready",
+      {
+        maxRiskTier: 1,
+        limit: 50,
+      },
+    );
+  });
 });
