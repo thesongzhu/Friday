@@ -741,6 +741,7 @@ async function handleApprovalDecision(
     return { handled: false };
   }
 
+  const isChinese = containsChinese(input.task ?? "");
   const actorId = input.actorId ?? "system";
   const explicitApprovalId = input.classification.extractedParams?.approvalId;
 
@@ -750,19 +751,27 @@ async function handleApprovalDecision(
       decision,
       actorId,
       approvalService: deps.approvalService,
+      isChinese,
     });
   }
 
   const pending = deps.approvalService.listPending({});
   if (pending.length === 0) {
-    return { handled: true, response: "No pending approvals at this time." };
+    return {
+      handled: true,
+      response: isChinese
+        ? "当前没有待审批操作。"
+        : "No pending approvals at this time.",
+    };
   }
   if (pending.length > 1) {
-    const lines = [
-      `Multiple pending approvals require clarification before ${decision}:`,
-    ];
+    const lines = isChinese
+      ? [`当前有多个待审批操作，请先指定要${decision === "approve" ? "批准" : "拒绝"}哪一个：`]
+      : [`Multiple pending approvals require clarification before ${decision}:`];
     for (const approval of pending) {
-      lines.push(`  - ${approval.id} (run ${approval.runId}, node ${approval.nodeId})`);
+      lines.push(isChinese
+        ? `  - ${approval.id}（run ${approval.runId}，node ${approval.nodeId}）`
+        : `  - ${approval.id} (run ${approval.runId}, node ${approval.nodeId})`);
     }
     return { handled: true, response: lines.join("\n") };
   }
@@ -772,6 +781,7 @@ async function handleApprovalDecision(
     decision,
     actorId,
     approvalService: deps.approvalService,
+    isChinese,
   });
 }
 
@@ -780,6 +790,7 @@ async function executeApprovalDecision(input: {
   decision: "approve" | "reject";
   actorId: string;
   approvalService: FridayWorkflowApprovalService;
+  isChinese?: boolean;
 }): Promise<FridayDeterministicDispatchResult> {
   try {
     const result = input.decision === "approve"
@@ -793,6 +804,13 @@ async function executeApprovalDecision(input: {
           decidedByUserId: input.actorId,
           comment: undefined,
         });
+    if (input.isChinese) {
+      const action = input.decision === "approve" ? "已批准" : "已拒绝";
+      return {
+        handled: true,
+        response: `${action} ${result.approval.id}，workflow run ${result.approval.runId}。已恢复：${result.resumed ? "是" : "否"}。`,
+      };
+    }
     const action = input.decision === "approve" ? "Approved" : "Rejected";
     return {
       handled: true,
@@ -800,6 +818,13 @@ async function executeApprovalDecision(input: {
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (input.isChinese) {
+      const action = input.decision === "approve" ? "批准" : "拒绝";
+      return {
+        handled: true,
+        response: `无法${action}审批 ${input.approvalId}：${message}`,
+      };
+    }
     return {
       handled: true,
       response: `Unable to ${input.decision} approval ${input.approvalId}: ${message}`,

@@ -170,4 +170,87 @@ describe("FridayApiRuntime deterministic dispatch", () => {
     );
     expect(raw.end).toHaveBeenCalled();
   });
+
+  it("routes Feishu-context work consultations to the agent instead of setup guidance", async () => {
+    db = createTestDb();
+    const executeRun = vi.fn(async (input) => ({
+      runId: input.runId ?? "agent-run-1",
+      status: "completed" as const,
+      response: "可以。我会先确认项目入口、技术栈、期望产物和审计深度。",
+      toolCallCount: 3,
+      durationMs: 42,
+      usageInput: 100,
+      usageOutput: 60,
+    }));
+    const agentRuntime: FridayAgentRuntime = {
+      executeRun,
+      registerTool: vi.fn(),
+      resumeStaleRunsOnBoot: vi.fn(() => 0),
+    };
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: makeIdGenerator(),
+      nowIso: () => NOW,
+      providerService: makeProviderService(),
+      agentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
+      capabilitySnapshotGetter: () => ({
+        readOnly: false,
+        messaging: { enabled: true, kinds: ["feishu"] },
+        mcp: { enabled: false, serverCount: 0, servers: [] },
+        provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
+        browser: {},
+        system: { enabled: true },
+        desktop: { connected: false },
+        companion: { connected: true },
+      }),
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      allowLocalBypassLogin: true,
+      computeChecksum: (content: string) => `checksum-${content.length}`,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
+    expect(startRoute).toBeDefined();
+
+    const task = "在飞书里回复用户：Friday 能不能帮我把公司内部一个混乱项目审计清楚、列出问题、排优先级、必要时生成报告和自动化？我不知道从哪里开始。";
+    const result = await startRoute!.handler({
+      body: {
+        task,
+        executionContext: {
+          surface: "channel",
+          interactive: true,
+        },
+      },
+      principal: {
+        principalType: "user",
+        principalId: "feishu-user-1",
+        userId: "feishu-user-1",
+        scopes: ["agent.run"],
+        tokenId: "tok-feishu",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+    } as never);
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("可以");
+    expect(result.response).not.toContain("不是“已注册渠道”");
+    expect(result.response).not.toContain("/setup?step=channels&channel=feishu");
+    expect(executeRun).toHaveBeenCalledOnce();
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      task,
+      principalId: "feishu-user-1",
+      scopes: ["agent.run"],
+      executionContext: expect.objectContaining({
+        surface: "channel",
+        interactive: true,
+      }),
+      tenantContext: expect.objectContaining({
+        userId: "feishu-user-1",
+      }),
+    }));
+  });
 });

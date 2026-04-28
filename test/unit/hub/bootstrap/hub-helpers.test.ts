@@ -13,6 +13,11 @@ import {
   createStubConfigManager,
   createStubMemoryState,
 } from "../../../../src/hub/bootstrap/index.js";
+import {
+  buildFridayChannelDeliveryFailureText,
+  buildFridayChannelMessageTooLongText,
+  resolveFridayChannelTerminalText,
+} from "../../../../src/hub/bootstrap/hub-helpers.js";
 
 describe("createFridayHubAutoFixExecutionSupport", () => {
   function makeRegistry(hasSkill = true): FridaySkillRegistry {
@@ -438,5 +443,38 @@ describe("createStubConfigManager", () => {
       stateRuntime.close();
       fs.rmSync(stateDir, { force: true, recursive: true });
     }
+  });
+});
+
+describe("channel helper copy", () => {
+  it("localizes terminal fallback text for Chinese channel requests", () => {
+    expect(resolveFridayChannelTerminalText({
+      status: "completed",
+      response: "",
+      imageCount: 0,
+      sourceText: "帮我生成报告",
+    })).toBe("已完成。");
+
+    expect(resolveFridayChannelTerminalText({
+      status: "failed",
+      response: "",
+      imageCount: 0,
+      sourceText: "帮我生成报告",
+    })).toBe("请求失败，请重试。");
+  });
+
+  it("localizes delivery failure copy for Chinese channel requests", () => {
+    expect(buildFridayChannelDeliveryFailureText("run-1", "请发到飞书")).toBe(
+      "请求已完成，但消息发送失败（E-CH-OUTBOUND-001）。关联 ID：run-1。",
+    );
+  });
+
+  it("localizes message-too-long copy for Chinese channel requests", () => {
+    expect(buildFridayChannelMessageTooLongText(1000, "这条消息太长了")).toBe(
+      "消息太长（最多 1000 个字符）。",
+    );
+    expect(buildFridayChannelMessageTooLongText(1000, "This message is too long")).toBe(
+      "Message too long (max 1000 chars).",
+    );
   });
 });

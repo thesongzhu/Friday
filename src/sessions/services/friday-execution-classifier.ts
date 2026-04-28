@@ -78,11 +78,13 @@ const CHINESE_UNSAFE_AUTOMATION_EVASION_REQUEST =
   /(?:爬|抓取|采集|自动化|脚本|skill|技能)[\s\S]{0,100}(?:不被发现|不被检测|不被封|不会被\s*ban|防封|绕过|规避|反爬)|(?:不被发现|不被检测|不被封|不会被\s*ban|防封|绕过|规避|反爬)[\s\S]{0,100}(?:爬|抓取|采集|自动化|脚本|skill|技能)/iu;
 
 const SETUP_INTENT =
-  /\b(bind|connect|configure|set\s*up|setup|enable|register|add|link|onboard|install)\b/i;
+  /\b(bind|connect|configure|set\s*up|setup|enable|register|link|onboard|install)\b/i;
 const SETUP_INFO_INTENT =
   /\b(what\s+(?:do\s+)?(?:i|we)\s+need|what\s+should\s+(?:i|we)\s+provide|how\s+(?:do\s+)?(?:i|we)\s+(?:bind|connect|configure|set\s*up))\b/i;
 const CHINESE_SETUP_INTENT =
-  /(绑定|配置|接入|连接|启用|开启|注册|添加|设置|开通|安装|流程|需要提供|需要什么|要提供什么|怎么(?:绑定|配置|接入|连接)|帮我(?:绑定|配置|接入|连接)|直接(?:去)?操作|你(?:直接)?(?:去)?操作|开始(?:绑定|配置|接入|连接)?|执行(?:绑定|配置|接入|连接)?)/u;
+  /(绑定|配置|接入|连接|启用|开启|注册|添加|开通|安装|需要提供|需要什么|需要哪些|要提供什么|怎么(?:绑定|配置|接入|连接|启用|开启)|如何(?:绑定|配置|接入|连接|启用|开启)|帮我(?:绑定|配置|接入|连接|启用|开启)|开始(?:绑定|配置|接入|连接|启用|开启)|执行(?:绑定|配置|接入|连接|启用|开启)|(?:设置|设定).{0,12}(?:渠道|通道|集成|provider|提供方|模型|能力|机器人|bot))/u;
+const SETUP_FOLLOW_UP_INTENT =
+  /^\s*(?:直接(?:去)?操作|你(?:直接)?(?:去)?操作|开始(?:绑定|配置|接入|连接|启用|开启)?|执行(?:绑定|配置|接入|连接|启用|开启)?|告诉我流程|下一步|继续)\s*[。.!?]*\s*$/u;
 
 const SETUP_TARGET_ALIASES: ReadonlyArray<readonly [string, readonly RegExp[]]> = [
   ["discord", [/\bdiscord\b/i, /\bdc\b/i]],
@@ -147,6 +149,12 @@ function looksLikeSetupIntent(text: string): boolean {
   return SETUP_INTENT.test(text)
     || SETUP_INFO_INTENT.test(text)
     || CHINESE_SETUP_INTENT.test(text);
+}
+
+function looksLikeSetupFollowUpIntent(text: string): boolean {
+  return SETUP_INFO_INTENT.test(text)
+    || CHINESE_SETUP_INTENT.test(text)
+    || SETUP_FOLLOW_UP_INTENT.test(text);
 }
 
 function resolveSetupTargetFromFocus(
@@ -249,15 +257,24 @@ export function classifyFridayExecution(
   }
 
   // 9. Setup / binding / configuration intents
-  if (looksLikeSetupIntent(normalized)) {
-    const setupTargetService = extractSetupTargetService(normalized) ?? resolveSetupTargetFromFocus(focusState);
-    if (setupTargetService) {
-      return {
-        category: "sync_immediate",
-        handler: "setup_guidance",
-        extractedParams: { setupTargetService },
-      };
-    }
+  const setupTargetService = extractSetupTargetService(normalized);
+  if (setupTargetService && looksLikeSetupIntent(normalized)) {
+    return {
+      category: "sync_immediate",
+      handler: "setup_guidance",
+      extractedParams: { setupTargetService },
+    };
+  }
+
+  const focusedSetupTargetService = setupTargetService
+    ? undefined
+    : resolveSetupTargetFromFocus(focusState);
+  if (focusedSetupTargetService && looksLikeSetupFollowUpIntent(normalized)) {
+    return {
+      category: "sync_immediate",
+      handler: "setup_guidance",
+      extractedParams: { setupTargetService: focusedSetupTargetService },
+    };
   }
 
   // 10. Capability queries

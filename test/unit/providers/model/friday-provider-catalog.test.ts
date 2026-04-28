@@ -36,7 +36,14 @@ describe("friday-provider-catalog", () => {
     expect(detectFridayProviderKindFromApiKey("sk-ant-xxx").kind).toBe("anthropic");
     expect(detectFridayProviderKindFromApiKey("sk-or-v1-xxx").kind).toBe("openrouter");
     expect(detectFridayProviderKindFromApiKey("gsk_xxx").kind).toBe("groq");
+    expect(detectFridayProviderKindFromApiKey("sk-proj-example").kind).toBe("openai");
     expect(detectFridayProviderKindFromApiKey("sk-xxx").kind).toBe("openai");
+  });
+
+  it("detects DeepSeek-style hex keys before the generic OpenAI sk fallback", () => {
+    const fixtureKey = "sk-0123456789abcdef0123456789abcdef"; // fixture, not a real provider key
+
+    expect(detectFridayProviderKindFromApiKey(fixtureKey)).toEqual({ kind: "deepseek", confidence: "medium" });
   });
 
   it("validates provider kind strings", () => {
@@ -44,4 +51,3 @@ describe("friday-provider-catalog", () => {
     expect(isFridayProviderKind("not-a-provider")).toBe(false);
   });
 });
-

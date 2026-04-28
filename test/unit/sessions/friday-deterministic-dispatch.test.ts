@@ -192,6 +192,91 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("/setup?step=provider&providerKind=qwen&recipeId=provider-qwen");
     });
 
+    it("answers Chinese channel authority questions with verified/blocked capability boundaries", async () => {
+      const deps = createMockDeps({
+        capabilitySnapshotGetter: vi.fn().mockResolvedValue({
+          readOnly: false,
+          messaging: { enabled: true, kinds: ["feishu", "telegram"] },
+          mcp: { enabled: false, serverCount: 0, servers: [] },
+          provider: { available: true, configuredCount: 1, mutationBlockedByReadOnly: false },
+          browser: { activeMode: "headless", targetBrowser: "Playwright Chromium" },
+          runtime: {
+            schemaVersion: "1.0",
+            generatedAt: "2026-03-24T10:00:00.000Z",
+            summary: {
+              available: 4,
+              needsVerification: 2,
+              needsUserAction: 1,
+              installable: 1,
+              unsupported: 0,
+            },
+            items: [
+              {
+                capability: "text",
+                label: "Text generation",
+                description: "Route language tasks to a configured model.",
+                state: "available",
+                sources: [
+                  {
+                    kind: "provider",
+                    id: "provider-1:deepseek-v4-flash",
+                    label: "DeepSeek / deepseek-v4-flash",
+                    status: "verified",
+                    providerId: "provider-1",
+                    providerKind: "deepseek",
+                    model: "deepseek-v4-flash",
+                  },
+                ],
+                blockers: [],
+                repairOptions: [],
+              },
+              {
+                capability: "ocr",
+                label: "OCR",
+                description: "Extract text from images.",
+                state: "needs_user_auth",
+                sources: [],
+                blockers: ["No verified OCR provider configured."],
+                repairOptions: [
+                  {
+                    id: "capability-ocr",
+                    label: "Configure OCR",
+                    description: "Add and verify OCR.",
+                    kind: "configure_provider",
+                    requiresApproval: true,
+                    setupHref: "/setup?recipeId=capability-ocr&targetService=ocr",
+                    risks: ["auth"],
+                  },
+                ],
+              },
+            ],
+          },
+          system: { enabled: true },
+          desktop: { connected: false },
+          companion: { connected: true },
+        } satisfies FridayAgentCapabilitiesSnapshot),
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "capabilities" },
+          task: "飞书和其他渠道可以控制100%的 Friday 所有能力对吧？",
+          sessionKey: "test",
+          runId: "run-channel-authority",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("当前能力：");
+      expect(result.response).toContain("消息渠道：已启用（feishu、telegram）");
+      expect(result.response).toContain("已验证能力：4 个可用，2 个需要验证，1 个需要你配置，1 个可在批准后安装或生成。");
+      expect(result.response).toContain("text: available（DeepSeek / deepseek-v4-flash");
+      expect(result.response).toContain("ocr: needs_user_auth（No verified OCR provider configured.；修复：Configure OCR");
+      expect(result.response).not.toContain("100%");
+      expect(result.response).not.toContain("所有能力都可用");
+    });
+
     it("returns handled:false when snapshot getter throws", async () => {
       const deps = createMockDeps({
         capabilitySnapshotGetter: vi.fn().mockRejectedValue(new Error("fail")),
@@ -459,6 +544,26 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("No pending approvals");
     });
 
+    it("localizes no pending approval replies for Chinese Feishu users", async () => {
+      const deps = createMockDeps();
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "approval_decision",
+            extractedParams: { decision: "approve" },
+          },
+          task: "批准",
+          sessionKey: "channel:feishu:oc-test",
+          actorId: "user-1",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toBe("当前没有待审批操作。");
+    });
+
     it("auto-approves the single pending approval when no id is provided", async () => {
       const deps = createMockDeps({
         approvalService: {
@@ -495,6 +600,39 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("wf-run-7");
     });
 
+    it("localizes single pending approval decisions for Chinese Feishu users", async () => {
+      const deps = createMockDeps({
+        approvalService: {
+          requestForNode: vi.fn(),
+          listPending: vi.fn(() => [makeApproval({ id: "approval-7", runId: "wf-run-7" })]),
+          getById: vi.fn(() => makeApproval({ id: "approval-7", runId: "wf-run-7" })),
+          approve: vi.fn(async () => ({
+            approval: makeApproval({ id: "approval-7", runId: "wf-run-7", status: "approved" }),
+            resumed: true,
+          })),
+          reject: vi.fn(async () => ({ approval: makeApproval({ status: "rejected" }), resumed: false })),
+          expirePending: vi.fn(async () => 0),
+        } satisfies FridayWorkflowApprovalService,
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "approval_decision",
+            extractedParams: { decision: "approve" },
+          },
+          task: "批准这个审批",
+          sessionKey: "channel:feishu:oc-test",
+          actorId: "user-7",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toBe("已批准 approval-7，workflow run wf-run-7。已恢复：是。");
+    });
+
     it("returns deterministic clarification when multiple pending approvals exist", async () => {
       const deps = createMockDeps({
         approvalService: {
@@ -526,6 +664,42 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("Multiple pending approvals");
       expect(result.response).toContain("approval-1");
       expect(result.response).toContain("approval-2");
+      expect(deps.approvalService!.reject).not.toHaveBeenCalled();
+    });
+
+    it("localizes multiple pending approval clarification for Chinese Feishu users", async () => {
+      const deps = createMockDeps({
+        approvalService: {
+          requestForNode: vi.fn(),
+          listPending: vi.fn(() => [
+            makeApproval({ id: "approval-1", runId: "wf-run-1" }),
+            makeApproval({ id: "approval-2", runId: "wf-run-2" }),
+          ]),
+          getById: vi.fn(() => null),
+          approve: vi.fn(async () => ({ approval: makeApproval({ status: "approved" }), resumed: true })),
+          reject: vi.fn(async () => ({ approval: makeApproval({ status: "rejected" }), resumed: false })),
+          expirePending: vi.fn(async () => 0),
+        } satisfies FridayWorkflowApprovalService,
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "approval_decision",
+            extractedParams: { decision: "reject" },
+          },
+          task: "拒绝",
+          sessionKey: "channel:feishu:oc-test",
+          actorId: "user-1",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("当前有多个待审批操作");
+      expect(result.response).toContain("approval-1（run wf-run-1，node approval-node）");
+      expect(result.response).toContain("approval-2（run wf-run-2，node approval-node）");
       expect(deps.approvalService!.reject).not.toHaveBeenCalled();
     });
 

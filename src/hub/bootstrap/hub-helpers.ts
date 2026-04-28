@@ -234,6 +234,13 @@ export function buildFridayChannelDeliveryFailureText(runId: string, sourceText?
   );
 }
 
+export function buildFridayChannelMessageTooLongText(maxLength: number, sourceText?: string): string {
+  if (/[\u4e00-\u9fff]/u.test(sourceText ?? "")) {
+    return `消息太长（最多 ${String(maxLength)} 个字符）。`;
+  }
+  return `Message too long (max ${String(maxLength)} chars).`;
+}
+
 // ─── Browser config ───
 
 export function resolveBrowserHostConfigFromEnv(

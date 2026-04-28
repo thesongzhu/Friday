@@ -331,6 +331,7 @@ import { createFridayProviderBackedTtsService } from "../media/friday-provider-b
 
 import {
   buildFridayChannelDeliveryFailureText,
+  buildFridayChannelMessageTooLongText,
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
@@ -7124,7 +7125,7 @@ export async function createFridayHub(
             channelRegistry
               .send(msg.channelKind, {
                 chatId: msg.chatId,
-                text: `Message too long (max ${String(FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH)} chars).`,
+                text: buildFridayChannelMessageTooLongText(FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH, text),
                 replyTo: msg.id,
               })
               .catch((err) => {

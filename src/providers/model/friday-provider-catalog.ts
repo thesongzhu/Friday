@@ -168,17 +168,11 @@ export function detectFridayProviderKindFromApiKey(apiKey: string): {
   if (lower.startsWith("mistral-")) {
     return { kind: "mistral", confidence: "high" };
   }
-  if (key.startsWith("sk-")) {
-    return { kind: "openai", confidence: "high" };
-  }
-  if (/^AI[a-zA-Z]/.test(key)) {
-    return { kind: "google", confidence: "medium" };
-  }
-
   // ── Chinese providers ──
-  if (lower.startsWith("sk-") && key.length >= 40 && key.length <= 50) {
-    // DeepSeek keys are sk-xxx with 48 chars; OpenAI sk-proj-xxx is longer
-    // If not caught by OpenAI above, likely DeepSeek or Moonshot
+  if (/^sk-[a-f0-9]{32}$/i.test(key)) {
+    // DeepSeek commonly issues sk- plus 32 hex characters. Detect this
+    // before the generic OpenAI sk- fallback so first-run setup does not
+    // send DeepSeek credentials to OpenAI endpoints.
     return { kind: "deepseek", confidence: "medium" };
   }
   if (/^[a-f0-9]{32}$/.test(key)) {
@@ -188,6 +182,16 @@ export function detectFridayProviderKindFromApiKey(apiKey: string): {
   if (key.includes(".") && key.split(".").length === 3) {
     // JWT-like format (xxx.xxx.xxx) — common for Zhipu and some Chinese providers
     return { kind: "glm", confidence: "medium" };
+  }
+
+  if (key.startsWith("sk-proj-") || key.startsWith("sk-svcacct-")) {
+    return { kind: "openai", confidence: "high" };
+  }
+  if (key.startsWith("sk-")) {
+    return { kind: "openai", confidence: "medium" };
+  }
+  if (/^AI[a-zA-Z]/.test(key)) {
+    return { kind: "google", confidence: "medium" };
   }
 
   return { kind: "openai-compatible", confidence: "medium" };

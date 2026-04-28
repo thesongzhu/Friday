@@ -6,7 +6,7 @@ describe("agent os navigation", () => {
     expect(AGENT_OS_NAV_PRIMARY.map((item) => item.path)).toEqual([
       "/home",
       "/chat",
-      "/packs",
+      "/studio",
       "/assistant",
     ]);
   });
@@ -14,6 +14,7 @@ describe("agent os navigation", () => {
   it("advanced nav contains operator and system pages", () => {
     expect(AGENT_OS_NAV_ADVANCED.map((item) => item.path)).toEqual([
       "/channels",
+      "/packs",
       "/skills",
       "/plugins",
       "/workflows",
@@ -37,6 +38,7 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/chat")).toEqual({ zh: "聊天", en: "Chat" });
     expect(resolvePageTitle("/home")).toEqual({ zh: "首页", en: "Home" });
     expect(resolvePageTitle("/flow/build-new")).toEqual({ zh: "引导流程", en: "Guided Flow" });
+    expect(resolvePageTitle("/studio")).toEqual({ zh: "Studio", en: "Studio" });
     expect(resolvePageTitle("/assistant")).toEqual({ zh: "助手", en: "Assistant" });
     expect(resolvePageTitle("/marketplace")).toEqual({ zh: "助手", en: "Assistant" });
     expect(resolvePageTitle("/plugins")).toEqual({ zh: "插件", en: "Plugins" });

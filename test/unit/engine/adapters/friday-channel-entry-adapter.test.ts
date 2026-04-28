@@ -139,6 +139,58 @@ describe("FridayChannelEntryAdapter", () => {
     expect(input?.disabledToolNames).toEqual(["dangerous-local-test-tool"]);
   });
 
+  it("forwards Feishu capability consultations to the full agent route without converting them to setup", async () => {
+    const executeRun = vi.fn().mockResolvedValue({
+      runId: "run-feishu-consult",
+      status: "completed",
+      response: "可以，我先确认入口和项目范围。",
+      toolCallCount: 2,
+      durationMs: 20,
+      usageInput: 10,
+      usageOutput: 12,
+    });
+
+    const adapter = createFridayChannelEntryAdapter({
+      engine: {
+        executeRun,
+      },
+      idGenerator: () => "run-feishu-consult",
+      resolveDisabledToolNames: () => [],
+      resolveSessionKey: (message) => `channel:${message.channelKind}:${message.chatId}`,
+    });
+
+    const task = "Friday 能不能帮我把公司内部一个混乱项目审计清楚、列出问题、排优先级、必要时生成报告和自动化？";
+    await adapter.handleMessage({
+      id: "msg-feishu-consult",
+      channelKind: "feishu",
+      senderId: "feishu-user-1",
+      chatId: "feishu-chat-1",
+      chatType: "direct",
+      text: task,
+      timezone: "Asia/Shanghai",
+    });
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      task,
+      runId: "run-feishu-consult",
+      sessionKey: "channel:feishu:feishu-chat-1",
+      timezone: "Asia/Shanghai",
+      scopes: [FRIDAY_CHANNEL_AGENT_SCOPE],
+      disabledToolNames: [],
+      executionContext: expect.objectContaining({
+        surface: "channel",
+        interactive: true,
+        channelKind: "feishu",
+        channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
+      }),
+      tenantContext: {
+        hubId: "default",
+        userId: "feishu-user-1",
+        channelKind: "feishu",
+      },
+    }));
+  });
+
   it("allows image-only channel messages to reach the agent", async () => {
     const executeRun = vi.fn().mockResolvedValue({
       runId: "run-3",

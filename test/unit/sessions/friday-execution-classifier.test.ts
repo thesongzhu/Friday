@@ -63,6 +63,16 @@ describe("classifyFridayExecution", () => {
       expect(result.handler).toBe("capabilities");
     });
 
+    it("classifies channel authority questions as capabilities instead of setup", () => {
+      const result = classifyFridayExecution({
+        task: "飞书和其他渠道可以控制100%的 Friday 所有能力对吧？",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("capabilities");
+    });
+
     it("classifies 'is mcp enabled' as capabilities", () => {
       const result = classifyFridayExecution({
         task: "Is MCP enabled?",
@@ -254,6 +264,53 @@ describe("classifyFridayExecution", () => {
       expect(result.extractedParams).toEqual({ setupTargetService: "discord" });
     });
 
+    it("classifies explicit Feishu setup requests as setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "如何配置飞书渠道接入 Friday？",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "feishu" });
+    });
+
+    it("does not mistake Feishu capability consultation for setup guidance", () => {
+      const result = classifyFridayExecution({
+        task: "在飞书里回复用户：Friday 能不能帮我把公司内部一个混乱项目审计清楚、列出问题、排优先级、必要时生成报告和自动化？我不知道从哪里开始。",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
+    it("does not mistake Feishu task requests for channel setup", () => {
+      const result = classifyFridayExecution({
+        task: "帮我把飞书里的项目消息整理成风险报告",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
+    it("does not treat start-work wording in a Feishu task as channel setup", () => {
+      const result = classifyFridayExecution({
+        task: "开始审计飞书里的项目消息，先列出风险和优先级",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
+    it("does not treat English add-work wording with Feishu as channel setup", () => {
+      const result = classifyFridayExecution({
+        task: "Add the Feishu project audit notes to the report and prioritize the risks.",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("agent_exception_path");
+    });
+
     it("uses the current focus to resolve short direct-operation follow-ups", () => {
       const result = classifyFridayExecution({
         task: "你直接去操作",
@@ -266,6 +323,20 @@ describe("classifyFridayExecution", () => {
       expect(result.category).toBe("sync_immediate");
       expect(result.handler).toBe("setup_guidance");
       expect(result.extractedParams).toEqual({ setupTargetService: "discord" });
+    });
+
+    it("uses setup focus for terse next-step follow-ups without requiring the service name again", () => {
+      const result = classifyFridayExecution({
+        task: "下一步",
+        turnKind: "follow_up",
+        focusState: makeFocus({
+          currentTopicSummary: "User is configuring Feishu as a Friday channel.",
+          assistantAnchorSummary: "Feishu setup requires app credentials and verification.",
+        }),
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("setup_guidance");
+      expect(result.extractedParams).toEqual({ setupTargetService: "feishu" });
     });
 
     it("classifies OCR setup requests as capability setup guidance", () => {

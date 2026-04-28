@@ -709,16 +709,116 @@ function describeCommandFailure(result) {
   return parts.join(" ");
 }
 
-async function createOpenAiProvider(baseUrl, token) {
+function isDeepSeekStyleApiKey(value) {
+  return /^sk-[a-f0-9]{32}$/i.test(String(value ?? "").trim());
+}
+
+function readEnvValue(env, name) {
+  const value = env[name];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function resolveClosureProviderConfig(env = process.env) {
+  const explicitKind = readEnvValue(env, "FRIDAY_CLOSURE_PROVIDER_KIND")?.toLowerCase();
+  const explicitEnvVar = readEnvValue(env, "FRIDAY_CLOSURE_API_KEY_ENV");
+  const explicitModel = readEnvValue(env, "FRIDAY_CLOSURE_MODEL");
+  const explicitAgentModel = readEnvValue(env, "FRIDAY_CLOSURE_AGENT_MODEL");
+
+  const candidates = [
+    {
+      kind: "deepseek",
+      envVar: "FRIDAY_DEEPSEEK_API_KEY",
+      name: "Closure DeepSeek",
+      baseUrl: readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com",
+      api: "openai-completions",
+      supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+      defaultModel: explicitModel ?? "deepseek-v4-flash",
+      generationModel: explicitModel ?? "deepseek-v4-pro",
+      agentModel: explicitAgentModel ?? explicitModel ?? "deepseek-v4-flash",
+    },
+    {
+      kind: "deepseek",
+      envVar: "DEEPSEEK_API_KEY",
+      name: "Closure DeepSeek",
+      baseUrl: readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com",
+      api: "openai-completions",
+      supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
+      defaultModel: explicitModel ?? "deepseek-v4-flash",
+      generationModel: explicitModel ?? "deepseek-v4-pro",
+      agentModel: explicitAgentModel ?? explicitModel ?? "deepseek-v4-flash",
+    },
+    {
+      kind: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "deepseek" : "openai",
+      envVar: "OPENAI_API_KEY",
+      name: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "Closure DeepSeek" : "Closure OpenAI",
+      baseUrl: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY"))
+        ? readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com"
+        : readEnvValue(env, "E2E_OPENAI_BASE_URL") ?? "https://api.openai.com",
+      api: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "openai-completions" : "openai-responses",
+      supportedModels: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY"))
+        ? ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"]
+        : ["gpt-4o-mini", "gpt-4o"],
+      defaultModel: explicitModel ?? (isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "deepseek-v4-flash" : "gpt-4o-mini"),
+      generationModel: explicitModel ?? (isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "deepseek-v4-pro" : "gpt-4o"),
+      agentModel: explicitAgentModel ?? explicitModel ?? (isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "deepseek-v4-flash" : "gpt-4o-mini"),
+    },
+    {
+      kind: "openai",
+      envVar: "FRIDAY_OPENAI_API_KEY",
+      name: "Closure OpenAI",
+      baseUrl: readEnvValue(env, "E2E_OPENAI_BASE_URL") ?? "https://api.openai.com",
+      api: "openai-responses",
+      supportedModels: ["gpt-4o-mini", "gpt-4o"],
+      defaultModel: explicitModel ?? "gpt-4o-mini",
+      generationModel: explicitModel ?? "gpt-4o",
+      agentModel: explicitAgentModel ?? explicitModel ?? "gpt-4o-mini",
+    },
+  ];
+
+  const filtered = candidates.filter((candidate) => {
+    if (explicitKind && candidate.kind !== explicitKind) {
+      return false;
+    }
+    if (explicitEnvVar && candidate.envVar !== explicitEnvVar) {
+      return false;
+    }
+    return Boolean(readEnvValue(env, candidate.envVar));
+  });
+
+  const selected = filtered[0] ?? null;
+  if (!selected) {
+    const expected = explicitEnvVar
+      ? explicitEnvVar
+      : explicitKind === "deepseek"
+        ? "FRIDAY_DEEPSEEK_API_KEY or DEEPSEEK_API_KEY"
+        : explicitKind === "openai"
+          ? "OPENAI_API_KEY or FRIDAY_OPENAI_API_KEY"
+          : "FRIDAY_DEEPSEEK_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY, or FRIDAY_OPENAI_API_KEY";
+    return {
+      available: false,
+      blockerReason: `${expected} is not set`,
+      kind: explicitKind ?? null,
+      envVar: explicitEnvVar ?? null,
+    };
+  }
+
+  return {
+    ...selected,
+    available: true,
+    apiKey: readEnvValue(env, selected.envVar),
+  };
+}
+
+async function createClosureProvider(baseUrl, token, providerConfig) {
   const createRes = await apiFetch(baseUrl, token, "POST", "/v1/providers", {
-    kind: "openai",
-    name: "Closure OpenAI",
-    baseUrl: process.env.E2E_OPENAI_BASE_URL ?? "https://api.openai.com",
+    kind: providerConfig.kind,
+    name: providerConfig.name,
+    baseUrl: providerConfig.baseUrl,
     authMode: "api-key",
-    api: "openai-responses",
-    apiKey: "$OPENAI_API_KEY",
-    supportedModels: ["gpt-4o-mini", "gpt-4o"],
-    defaultModel: "gpt-4o-mini",
+    api: providerConfig.api,
+    apiKey: `$${providerConfig.envVar}`,
+    supportedModels: providerConfig.supportedModels,
+    defaultModel: providerConfig.defaultModel,
     enabled: true,
     validateOnSave: false,
   });
@@ -1206,8 +1306,9 @@ async function runLocalStage(ledger) {
   const baseUrl = `http://${DEFAULT_HOST}:${String(port)}`;
   let token = "";
   let principalUserId = "";
-  let openAiProviderId = "";
+  let modelProviderId = "";
   let workflowGeneratorResult = null;
+  const closureProvider = resolveClosureProviderConfig(process.env);
 
   try {
     await runStep(ledger, {
@@ -1285,43 +1386,57 @@ async function runLocalStage(ledger) {
     await runStep(ledger, {
       id: "local.providers.detect",
       stage: `${stage}.providers`,
-      description: "Detect OpenAI credentials through the public provider detect route",
+      description: "Detect model provider credentials through the public provider detect route",
     }, async () => {
-      if (!process.env.OPENAI_API_KEY?.trim()) {
+      if (!closureProvider.available) {
         return {
           status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
-          details: { reason: "OPENAI_API_KEY is not set" },
+          details: { reason: closureProvider.blockerReason },
         };
       }
       const result = await apiFetch(baseUrl, token, "POST", "/v1/providers/detect", {
-        kind: "openai",
-        apiKey: process.env.OPENAI_API_KEY,
+        kind: closureProvider.kind,
+        apiKey: closureProvider.apiKey,
+        baseUrl: closureProvider.baseUrl,
       });
       const responsePath = writeResponseEvidence(ledger.paths, "local-providers-detect", result);
       if (result.status !== 200 || !result.json.ok) {
-        throw new Error(`OpenAI detect failed: ${JSON.stringify(result.json)}`);
+        throw new Error(`${closureProvider.kind} detect failed: ${JSON.stringify(result.json)}`);
       }
       return {
         evidence: { responsePath },
-        details: { validated: result.json.data?.validated ?? null },
+        details: {
+          kind: closureProvider.kind,
+          envVar: closureProvider.envVar,
+          defaultModel: result.json.data?.defaultModel ?? null,
+          validated: result.json.data?.validated ?? null,
+        },
       };
     });
 
     await runStep(ledger, {
       id: "local.providers.lifecycle",
       stage: `${stage}.providers`,
-      description: "Create, validate, route, and budget an OpenAI provider",
+      description: "Create, validate, route, and budget a model provider",
     }, async () => {
-      openAiProviderId = await createOpenAiProvider(baseUrl, token);
-      const validateResult = await apiFetch(baseUrl, token, "POST", `/v1/providers/${openAiProviderId}/validate`);
+      if (!closureProvider.available) {
+        return {
+          status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
+          details: { reason: closureProvider.blockerReason },
+        };
+      }
+      modelProviderId = await createClosureProvider(baseUrl, token, closureProvider);
+      const validateResult = await apiFetch(baseUrl, token, "POST", `/v1/providers/${modelProviderId}/validate`);
       const budgetSet = await apiFetch(baseUrl, token, "PUT", "/v1/providers/budget", {
         monthlyLimitUsd: 25,
       });
       const budgetGet = await apiFetch(baseUrl, token, "GET", "/v1/providers/budget");
       const usageGet = await apiFetch(baseUrl, token, "GET", "/v1/providers/usage");
-      const routing = await setRouting(baseUrl, token, openAiProviderId);
+      const routing = await setRouting(baseUrl, token, modelProviderId);
       const responsePath = writeResponseEvidence(ledger.paths, "local-providers-lifecycle", {
-        providerId: openAiProviderId,
+        providerId: modelProviderId,
+        providerKind: closureProvider.kind,
+        providerEnvVar: closureProvider.envVar,
         validateResult,
         budgetSet,
         budgetGet,
@@ -1331,12 +1446,21 @@ async function runLocalStage(ledger) {
       if (validateResult.status !== 200 || !validateResult.json.ok) {
         throw new Error(`Provider validate failed: ${JSON.stringify(validateResult.json)}`);
       }
+      if (validateResult.json.data?.validation?.status !== "ok") {
+        throw new Error(`Provider validation status is ${String(validateResult.json.data?.validation?.status ?? "missing")}: ${JSON.stringify(validateResult.json.data?.validation)}`);
+      }
       if (budgetSet.status !== 200 || !budgetSet.json.ok) {
         throw new Error(`Budget set failed: ${JSON.stringify(budgetSet.json)}`);
       }
       return {
         evidence: { responsePath },
-        details: { providerId: openAiProviderId },
+        details: {
+          providerId: modelProviderId,
+          kind: closureProvider.kind,
+          defaultModel: closureProvider.defaultModel,
+          generationModel: closureProvider.generationModel,
+          agentModel: closureProvider.agentModel,
+        },
       };
     });
 
@@ -1517,7 +1641,7 @@ async function runLocalStage(ledger) {
       stage: `${stage}.skills`,
       description: "Generate, approve, and persist a skill through Friday's public generator API",
     }, async () => {
-      const result = await startSkillGenerator(baseUrl, token, principalUserId, "gpt-4o");
+      const result = await startSkillGenerator(baseUrl, token, principalUserId, closureProvider.generationModel);
       const responsePath = writeResponseEvidence(ledger.paths, "local-skills-generator", result);
       return {
         evidence: { responsePath },
@@ -1533,7 +1657,7 @@ async function runLocalStage(ledger) {
       description: "Generate, approve, and run a workflow through Friday's public workflow generator API",
     }, async () => {
       try {
-        workflowGeneratorResult = await startWorkflowGenerator(baseUrl, token, "gpt-4o");
+        workflowGeneratorResult = await startWorkflowGenerator(baseUrl, token, closureProvider.generationModel);
       } catch (error) {
         const responsePath = writeResponseEvidence(ledger.paths, "local-workflows-generator-failure", {
           attempts: error?.closureAttempts ?? [],
@@ -1625,8 +1749,8 @@ async function runLocalStage(ledger) {
       });
       const run = await apiFetch(baseUrl, token, "POST", "/v1/agent/runs", {
         task: "Tell me 3 concise facts about octopuses.",
-        providerId: openAiProviderId,
-        model: "gpt-4o-mini",
+        providerId: modelProviderId,
+        model: closureProvider.agentModel,
         timeoutMs: 90_000,
       }, { timeoutMs: 180_000 });
       if (run.status !== 200 || !run.json.ok) {
@@ -1672,8 +1796,8 @@ async function runLocalStage(ledger) {
       }
       const automationId = automationCreate.json.data.automation.id;
       const automationRun = await apiFetch(baseUrl, token, "POST", `/v1/agent/automations/${automationId}/run`, {
-        providerId: openAiProviderId,
-        model: "gpt-4o-mini",
+        providerId: modelProviderId,
+        model: closureProvider.agentModel,
         timeoutMs: 90_000,
       }, { timeoutMs: 180_000 });
       const automationDisable = await apiFetch(baseUrl, token, "PATCH", `/v1/agent/automations/${automationId}`, {

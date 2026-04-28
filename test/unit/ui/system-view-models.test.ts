@@ -29,7 +29,7 @@ describe("system view models", () => {
 
     expect(cards).toHaveLength(3);
     expect(cards.find((card) => card.action === "clipboard_read")?.decision).toBe("allow");
-    expect(cards.find((card) => card.action === "close_app")?.decision).toBe("missing");
+    expect(cards.find((card) => card.action === "close_app")?.decision).toBe("prompt");
   });
 
   it("summarizes safe mode and degraded health clearly", () => {
