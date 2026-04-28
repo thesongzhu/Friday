@@ -5,9 +5,9 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>A local personal AI that learns your work, uses skills, and acts with approval.</strong><br>
+  <strong>A personal AI that learns your work, uses skills, and acts with approval.</strong><br>
   Chat with it, give it goals, connect your tools, and let repeated work become auditable workflows.<br>
-  Local-first · BYOK · Approval-first · Human-controlled
+  Local-first · BYOK · Approval-first · Human-controlled · AGI-Like
 </p>
 
 <p align="center">
