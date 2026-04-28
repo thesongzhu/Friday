@@ -42,6 +42,8 @@ import type { DesktopSessionManager } from "../../desktop/engine/session-manager
 import { createFridayAgentDesktopTool } from "./friday-agent-desktop-tool.js";
 import type { FridaySystemService } from "../../system/engine/friday-system-service.js";
 import { createFridayAgentSystemTool } from "./friday-agent-system-tool.js";
+import type { FridayGuideLensService } from "../../guide-lens/model/friday-guide-lens.types.js";
+import { createFridayAgentGuideLensTool } from "./friday-agent-guide-lens-tool.js";
 import { createFridayAgentMemoryExtractTool } from "./friday-agent-memory-extract-tool.js";
 import type { FridayMcpAdapter } from "../mcp/friday-mcp-adapter.types.js";
 import { listFridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
@@ -108,6 +110,8 @@ export interface CreateFridayAgentToolRegistryOptions {
   desktopSessionManager?: DesktopSessionManager;
   /** Agent OS orchestration service for the `system` tool. */
   systemService?: FridaySystemService;
+  /** Read-only native guide overlay service for the `guide_lens` tool. */
+  guideLensService?: FridayGuideLensService;
   /** Optional MCP adapter for external MCP server integration. */
   mcpAdapter?: FridayMcpAdapter;
   /** OC-013: Session memory extraction service for memory_extract tool. */
@@ -288,6 +292,12 @@ export function createFridayAgentToolRegistry(
   if (options?.systemService) {
     tools.push(
       createFridayAgentSystemTool({ systemService: options.systemService }),
+    );
+  }
+
+  if (options?.guideLensService) {
+    tools.push(
+      createFridayAgentGuideLensTool({ guideLensService: options.guideLensService }),
     );
   }
 

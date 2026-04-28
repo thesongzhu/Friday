@@ -6,6 +6,7 @@ import type {
   FridaySystemWindowLayout,
   FridaySystemWindowRef,
 } from "../model/friday-system.types.js";
+import type { FridayGuideLensOverlayCommand } from "../../guide-lens/model/friday-guide-lens.types.js";
 
 export interface FridaySystemCompanionSnapshot {
   apps: FridaySystemAppRef[];
@@ -62,6 +63,7 @@ export interface FridaySystemCompanionNotificationActionResult {
 export interface FridaySystemCompanionOverlayState {
   visible: boolean;
   changedAt: string;
+  guideOverlay?: FridayGuideLensOverlayCommand;
 }
 
 export interface FridaySystemCompanionBridge {
@@ -81,4 +83,6 @@ export interface FridaySystemCompanionBridge {
     input: FridaySystemCompanionNotificationActionInput,
   ): Promise<FridaySystemCompanionNotificationActionResult | null>;
   setOverlayVisible(visible: boolean): Promise<FridaySystemCompanionOverlayState>;
+  showGuideOverlay(command: FridayGuideLensOverlayCommand): Promise<FridaySystemCompanionOverlayState>;
+  clearGuideOverlay(): Promise<FridaySystemCompanionOverlayState>;
 }

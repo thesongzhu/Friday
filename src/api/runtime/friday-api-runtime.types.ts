@@ -56,6 +56,7 @@ import type { FridayDiagnosisRoutesDeps } from "../http/routes/friday-diagnosis-
 import type { FridayAutoFixRoutesDeps } from "../http/routes/friday-auto-fix-routes.js";
 import type { FridayAgentLoopRoutesDeps } from "../http/routes/friday-agent-loop-routes.js";
 import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes.js";
+import type { FridayGuideLensRoutesDeps } from "../http/routes/friday-guide-lens-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
 import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
 import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
@@ -103,6 +104,7 @@ export interface FridayApiRuntime {
   uix?: FridayUixRoutesDeps;
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   system?: FridaySystemRoutesDeps;
+  guideLens?: FridayGuideLensRoutesDeps;
   channels?: FridayChannelRoutesDeps;
 }
 
@@ -231,6 +233,8 @@ export interface CreateFridayApiRuntimeDeps {
   channels?: FridayChannelRoutesDeps;
   /** Optional: Agent OS system route surface. */
   system?: FridaySystemRoutesDeps;
+  /** Optional: read-only native guidance overlay route surface. */
+  guideLens?: FridayGuideLensRoutesDeps;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
   /** Optional: cross-border operating pack route surface. */

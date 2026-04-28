@@ -17,6 +17,112 @@ private func slugify(_ value: String) -> String {
     .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
 }
 
+private struct GuideBounds {
+  let x: CGFloat
+  let y: CGFloat
+  let width: CGFloat
+  let height: CGFloat
+}
+
+private struct GuideAvatar {
+  let kind: String
+  let imageUrl: String?
+  let localPath: String?
+  let initials: String
+  let sizePx: CGFloat
+}
+
+private struct GuideOverlayCommand {
+  let id: String
+  let mode: String
+  let message: String
+  let targetBounds: GuideBounds?
+  let avatar: GuideAvatar
+  let stepLabel: String?
+  let tone: String
+}
+
+private final class GuideOverlayRootView: NSView {
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    guard let hit = super.hitTest(point), hit !== self else {
+      return nil
+    }
+    var current: NSView? = hit
+    while let view = current {
+      if view.identifier?.rawValue == "guide-control" {
+        return hit
+      }
+      current = view.superview
+    }
+    return nil
+  }
+}
+
+private final class GuideFocusView: NSView {
+  override var isFlipped: Bool { false }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let rect = bounds.insetBy(dx: 4, dy: 4)
+    let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
+    NSColor(calibratedRed: 0.11, green: 0.45, blue: 1.0, alpha: 0.18).setFill()
+    path.fill()
+    NSColor(calibratedRed: 0.11, green: 0.45, blue: 1.0, alpha: 0.95).setStroke()
+    path.lineWidth = 3
+    path.stroke()
+  }
+}
+
+private final class GuideAvatarView: NSView {
+  private let avatar: GuideAvatar
+
+  init(frame: NSRect, avatar: GuideAvatar) {
+    self.avatar = avatar
+    super.init(frame: frame)
+    wantsLayer = true
+  }
+
+  required init?(coder: NSCoder) {
+    return nil
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2))
+    NSColor(calibratedWhite: 0.76, alpha: 1.0).setFill()
+    circle.fill()
+
+    if let image = loadAvatarImage() {
+      NSGraphicsContext.saveGraphicsState()
+      circle.addClip()
+      image.draw(in: bounds)
+      NSGraphicsContext.restoreGraphicsState()
+      return
+    }
+
+    let text = avatar.initials.isEmpty ? "F" : avatar.initials
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.systemFont(ofSize: min(bounds.width, bounds.height) * 0.44, weight: .semibold),
+      .foregroundColor: NSColor.white,
+    ]
+    let size = text.size(withAttributes: attributes)
+    text.draw(
+      at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
+      withAttributes: attributes
+    )
+  }
+
+  private func loadAvatarImage() -> NSImage? {
+    if avatar.kind == "local_image", let path = avatar.localPath {
+      return NSImage(contentsOfFile: path)
+    }
+    if avatar.kind == "profile_image", let value = avatar.imageUrl, value.hasPrefix("file://"), let url = URL(string: value) {
+      return NSImage(contentsOf: url)
+    }
+    return nil
+  }
+}
+
 @MainActor
 final class CompanionAppController: NSObject, NSApplicationDelegate {
   private let config: CompanionConfig
@@ -37,6 +143,7 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
   private var heartbeatTimer: Timer?
   private var server: CompanionUnixSocketServer?
   private var overlayVisible = false
+  private var guideOverlayCommand: GuideOverlayCommand?
   private var panicActive = false
   private var lastHeartbeatAt = nowIso()
   private var lastNotificationRefreshError: String?
@@ -146,44 +253,24 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
   }
 
   private func buildOverlayWindow() {
-    let frame = NSRect(x: 0, y: 0, width: 560, height: 240)
+    let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     let panel = NSPanel(
-      contentRect: frame,
+      contentRect: screenFrame,
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false
     )
     panel.level = .statusBar
     panel.isOpaque = false
-    panel.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.92)
-    panel.hasShadow = true
+    panel.backgroundColor = .clear
+    panel.hasShadow = false
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
     panel.isReleasedWhenClosed = false
+    panel.ignoresMouseEvents = false
 
-    let contentView = NSView(frame: frame)
-    let titleLabel = NSTextField(labelWithString: "Friday Agent OS")
-    titleLabel.font = NSFont.systemFont(ofSize: 28, weight: .semibold)
-    titleLabel.textColor = .white
-    titleLabel.frame = NSRect(x: 28, y: 148, width: 320, height: 36)
-
-    let detailLabel = NSTextField(labelWithString: "Command overlay ready. Use the web console for full operator control.")
-    detailLabel.font = NSFont.systemFont(ofSize: 14, weight: .regular)
-    detailLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1.0)
-    detailLabel.frame = NSRect(x: 28, y: 112, width: 500, height: 20)
-
-    let hotkeyLabel = NSTextField(
-      labelWithString: "Overlay: \(config.overlayHotkey.displayString)  •  Panic: \(config.panicHotkey.displayString)"
-    )
-    hotkeyLabel.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-    hotkeyLabel.textColor = NSColor(calibratedWhite: 0.68, alpha: 1.0)
-    hotkeyLabel.frame = NSRect(x: 28, y: 72, width: 500, height: 18)
-
-    contentView.addSubview(titleLabel)
-    contentView.addSubview(detailLabel)
-    contentView.addSubview(hotkeyLabel)
-    panel.contentView = contentView
+    panel.contentView = GuideOverlayRootView(frame: NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height))
     overlayWindow = panel
     centerOverlayWindow()
   }
@@ -192,11 +279,7 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
     guard let overlayWindow, let screen = NSScreen.main else {
       return
     }
-    let origin = NSPoint(
-      x: screen.frame.midX - overlayWindow.frame.width / 2,
-      y: screen.frame.midY - overlayWindow.frame.height / 2
-    )
-    overlayWindow.setFrameOrigin(origin)
+    overlayWindow.setFrame(screen.frame, display: true)
   }
 
   private func installHotkeyMonitors() {
@@ -284,10 +367,191 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
     }
     centerOverlayWindow()
     if visible {
+      renderGuideOverlay(guideOverlayCommand ?? defaultGuideOverlayCommand())
       overlayWindow.orderFrontRegardless()
     } else {
+      guideOverlayCommand = nil
+      overlayWindow.contentView?.subviews.forEach { $0.removeFromSuperview() }
       overlayWindow.orderOut(nil)
     }
+  }
+
+  private func defaultGuideOverlayCommand() -> GuideOverlayCommand {
+    GuideOverlayCommand(
+      id: "manual-overlay",
+      mode: "speech_bubble",
+      message: "Guide Mode is ready. Ask Friday for help and I will point to the next step.",
+      targetBounds: nil,
+      avatar: GuideAvatar(kind: "default_f", imageUrl: nil, localPath: nil, initials: "F", sizePx: 56),
+      stepLabel: nil,
+      tone: "calm"
+    )
+  }
+
+  private func showGuideOverlay(command: GuideOverlayCommand) -> [String: Any] {
+    guideOverlayCommand = command
+    panicActive = false
+    setOverlayVisible(true)
+    refreshMenuState()
+    return [
+      "visible": true,
+      "changedAt": nowIso(),
+    ]
+  }
+
+  private func clearGuideOverlay() -> [String: Any] {
+    guideOverlayCommand = nil
+    setOverlayVisible(false)
+    refreshMenuState()
+    return [
+      "visible": false,
+      "changedAt": nowIso(),
+    ]
+  }
+
+  private func renderGuideOverlay(_ command: GuideOverlayCommand) {
+    guard let root = overlayWindow?.contentView, let screen = NSScreen.main else {
+      return
+    }
+    root.subviews.forEach { $0.removeFromSuperview() }
+
+    if let target = command.targetBounds {
+      let focusFrame = convertGuideBounds(target, screen: screen).insetBy(dx: -8, dy: -8)
+      let focusView = GuideFocusView(frame: focusFrame)
+      focusView.wantsLayer = true
+      focusView.layer?.shadowColor = NSColor(calibratedRed: 0.11, green: 0.45, blue: 1.0, alpha: 0.65).cgColor
+      focusView.layer?.shadowRadius = 18
+      focusView.layer?.shadowOpacity = 1
+      focusView.layer?.shadowOffset = .zero
+      root.addSubview(focusView)
+    }
+
+    let avatarSize = max(40, min(96, command.avatar.sizePx))
+    let bubbleSize = computeBubbleSize(message: command.message, stepLabel: command.stepLabel)
+    let bubbleOrigin = resolveBubbleOrigin(
+      targetBounds: command.targetBounds,
+      bubbleSize: bubbleSize,
+      avatarSize: avatarSize,
+      screen: screen
+    )
+    let avatarFrame = NSRect(
+      x: bubbleOrigin.x,
+      y: bubbleOrigin.y + bubbleSize.height - avatarSize,
+      width: avatarSize,
+      height: avatarSize
+    )
+    let bubbleFrame = NSRect(
+      x: bubbleOrigin.x + avatarSize + 12,
+      y: bubbleOrigin.y,
+      width: bubbleSize.width,
+      height: bubbleSize.height
+    )
+
+    let avatarView = GuideAvatarView(frame: avatarFrame, avatar: command.avatar)
+    avatarView.wantsLayer = true
+    avatarView.layer?.shadowColor = NSColor.black.withAlphaComponent(0.18).cgColor
+    avatarView.layer?.shadowOpacity = 1
+    avatarView.layer?.shadowRadius = 12
+    avatarView.layer?.shadowOffset = NSSize(width: 0, height: -2)
+    root.addSubview(avatarView)
+
+    let bubble = NSView(frame: bubbleFrame)
+    bubble.wantsLayer = true
+    bubble.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.96).cgColor
+    bubble.layer?.cornerRadius = 18
+    bubble.layer?.shadowColor = NSColor.black.withAlphaComponent(0.16).cgColor
+    bubble.layer?.shadowOpacity = 1
+    bubble.layer?.shadowRadius = 18
+    bubble.layer?.shadowOffset = NSSize(width: 0, height: -4)
+
+    let stepText = command.stepLabel ?? labelForGuideMode(command.mode)
+    let stepLabel = NSTextField(labelWithString: stepText.uppercased())
+    stepLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+    stepLabel.textColor = NSColor(calibratedRed: 0.11, green: 0.35, blue: 0.84, alpha: 1)
+    stepLabel.frame = NSRect(x: 18, y: bubbleFrame.height - 34, width: bubbleFrame.width - 58, height: 16)
+
+    let closeButton = NSButton(title: "Close", target: self, action: #selector(closeGuideOverlayFromButton))
+    closeButton.identifier = NSUserInterfaceItemIdentifier("guide-control")
+    closeButton.isBordered = false
+    closeButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    closeButton.contentTintColor = NSColor(calibratedWhite: 0.32, alpha: 1)
+    closeButton.frame = NSRect(x: bubbleFrame.width - 62, y: bubbleFrame.height - 36, width: 50, height: 22)
+
+    let messageLabel = NSTextField(wrappingLabelWithString: command.message)
+    messageLabel.font = NSFont.systemFont(ofSize: 15, weight: .regular)
+    messageLabel.textColor = NSColor(calibratedWhite: 0.12, alpha: 1)
+    messageLabel.frame = NSRect(x: 18, y: 18, width: bubbleFrame.width - 36, height: bubbleFrame.height - 58)
+
+    bubble.addSubview(stepLabel)
+    bubble.addSubview(closeButton)
+    bubble.addSubview(messageLabel)
+    root.addSubview(bubble)
+  }
+
+  @objc private func closeGuideOverlayFromButton() {
+    _ = clearGuideOverlay()
+  }
+
+  private func labelForGuideMode(_ mode: String) -> String {
+    switch mode {
+    case "focus_frame":
+      return "Next step"
+    case "scroll_hint":
+      return "Scroll needed"
+    case "page_transition":
+      return "New page"
+    case "blocked":
+      return "Need help"
+    case "confirm_step":
+      return "Confirm"
+    default:
+      return "Guide Mode"
+    }
+  }
+
+  private func computeBubbleSize(message: String, stepLabel: String?) -> NSSize {
+    let width: CGFloat = min(420, max(300, CGFloat(message.count) * 4.8))
+    let lineCount = max(1, Int(ceil(Double(message.count) / 42.0)))
+    let height = CGFloat(76 + lineCount * 24 + (stepLabel == nil ? 0 : 4))
+    return NSSize(width: width, height: min(220, max(124, height)))
+  }
+
+  private func resolveBubbleOrigin(
+    targetBounds: GuideBounds?,
+    bubbleSize: NSSize,
+    avatarSize: CGFloat,
+    screen: NSScreen
+  ) -> NSPoint {
+    let rootFrame = NSRect(x: 0, y: 0, width: screen.frame.width, height: screen.frame.height)
+    let totalWidth = bubbleSize.width + avatarSize + 12
+    let totalHeight = max(bubbleSize.height, avatarSize)
+    let margin: CGFloat = 28
+
+    if let targetBounds {
+      let target = convertGuideBounds(targetBounds, screen: screen)
+      var x = target.maxX + 18
+      if x + totalWidth > rootFrame.maxX - margin {
+        x = target.minX - totalWidth - 18
+      }
+      var y = target.midY - totalHeight / 2
+      y = min(max(y, rootFrame.minY + margin), rootFrame.maxY - totalHeight - margin)
+      x = min(max(x, rootFrame.minX + margin), rootFrame.maxX - totalWidth - margin)
+      return NSPoint(x: x, y: y)
+    }
+
+    return NSPoint(
+      x: rootFrame.maxX - totalWidth - 44,
+      y: rootFrame.maxY - totalHeight - 96
+    )
+  }
+
+  private func convertGuideBounds(_ bounds: GuideBounds, screen: NSScreen) -> NSRect {
+    NSRect(
+      x: bounds.x,
+      y: screen.frame.height - bounds.y - bounds.height,
+      width: bounds.width,
+      height: bounds.height
+    )
   }
 
   private func refreshMenuState() {
@@ -349,11 +613,74 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
         "visible": visible,
         "changedAt": nowIso(),
       ]
+    case "companion.showGuideOverlay":
+      guard let command = parseGuideOverlayCommand(params["command"]) else {
+        throw NSError(domain: "FridayCompanion", code: 400, userInfo: [
+          NSLocalizedDescriptionKey: "Invalid guide overlay command",
+        ])
+      }
+      return showGuideOverlay(command: command)
+    case "companion.clearGuideOverlay":
+      return clearGuideOverlay()
     default:
       throw NSError(domain: "FridayCompanion", code: 404, userInfo: [
         NSLocalizedDescriptionKey: "Unknown companion method: \(method)",
       ])
     }
+  }
+
+  private func parseGuideOverlayCommand(_ raw: Any?) -> GuideOverlayCommand? {
+    guard let dict = raw as? [String: Any] else {
+      return nil
+    }
+    let avatarDict = dict["avatar"] as? [String: Any] ?? [:]
+    let stepDict = dict["step"] as? [String: Any]
+    return GuideOverlayCommand(
+      id: dict["id"] as? String ?? "guide-overlay",
+      mode: dict["mode"] as? String ?? "speech_bubble",
+      message: dict["message"] as? String ?? "Please follow this highlighted step.",
+      targetBounds: parseGuideBounds(dict["targetBounds"]),
+      avatar: GuideAvatar(
+        kind: avatarDict["kind"] as? String ?? "default_f",
+        imageUrl: avatarDict["imageUrl"] as? String,
+        localPath: avatarDict["localPath"] as? String,
+        initials: avatarDict["initials"] as? String ?? "F",
+        sizePx: numberValue(avatarDict["sizePx"]) ?? 56
+      ),
+      stepLabel: stepDict?["label"] as? String,
+      tone: dict["tone"] as? String ?? "calm"
+    )
+  }
+
+  private func parseGuideBounds(_ raw: Any?) -> GuideBounds? {
+    guard let dict = raw as? [String: Any],
+      let x = numberValue(dict["x"]),
+      let y = numberValue(dict["y"]),
+      let width = numberValue(dict["width"]),
+      let height = numberValue(dict["height"])
+    else {
+      return nil
+    }
+    return GuideBounds(x: x, y: y, width: max(1, width), height: max(1, height))
+  }
+
+  private func numberValue(_ raw: Any?) -> CGFloat? {
+    if let value = raw as? CGFloat {
+      return value
+    }
+    if let value = raw as? Double {
+      return CGFloat(value)
+    }
+    if let value = raw as? Int {
+      return CGFloat(value)
+    }
+    if let value = raw as? NSNumber {
+      return CGFloat(truncating: value)
+    }
+    if let value = raw as? String, let parsed = Double(value) {
+      return CGFloat(parsed)
+    }
+    return nil
   }
 
   private func statusPayload() -> [String: Any] {

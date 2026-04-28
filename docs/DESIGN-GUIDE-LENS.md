@@ -2,7 +2,17 @@
 
 ## Status
 
-Draft for product and architecture review.
+Implemented MVP for the macOS native companion path.
+
+The shipped slice includes the read-only Guide Lens domain service, HTTP API,
+agent tool, macOS companion guide overlay RPC, native blue focus-frame overlay,
+settings-page avatar controls, screenshot-intake heuristics, redaction, target
+resolution, optional loopback parser adapter, and verification tests.
+
+Remaining future work is higher-fidelity perception: real Accessibility element
+tree harvesting beyond the current system/window snapshot bridge, richer
+OmniParser/Midscene health/ranking, and broader Windows/Linux native overlay
+ports.
 
 Guide Mode is the user-facing product name. `guide_lens` is the internal
 capability name.
@@ -1202,14 +1212,12 @@ src/guide-lens/model/friday-guide-lens.types.ts
 src/guide-lens/engine/screenshot-intake.ts
 src/guide-lens/engine/ui-map-builder.ts
 src/guide-lens/engine/target-resolver.ts
-src/guide-lens/engine/parser-registry.ts
+src/guide-lens/engine/parser-adapter.ts
 src/guide-lens/engine/redaction.ts
 src/guide-lens/engine/verification.ts
 src/agent/tools/friday-agent-guide-lens-tool.ts
-src/system/companion/friday-system-guide-overlay.types.ts
-src/system/companion/friday-system-native-guide-overlay.ts
-src/system/companion/friday-system-guide-avatar-store.ts
-ui/src/components/guide-lens/guide-lens-overlay.tsx
+apps/macos/FridayCompanion/Sources/FridayCompanion/main.swift
+ui/src/routes/settings-page.tsx
 ```
 
 Suggested new API routes:
@@ -1217,10 +1225,11 @@ Suggested new API routes:
 ```text
 GET  /v1/guide-lens/state
 POST /v1/guide-lens/snapshot
-POST /v1/guide-lens/screenshot-intake
-POST /v1/guide-lens/resolve-target
+POST /v1/guide-lens/screenshots/analyze
+POST /v1/guide-lens/targets/resolve
 POST /v1/guide-lens/overlay
-POST /v1/guide-lens/verify
+DELETE /v1/guide-lens/overlay
+POST /v1/guide-lens/verifications
 PATCH /v1/guide-lens/preferences
 POST /v1/guide-lens/avatar
 ```

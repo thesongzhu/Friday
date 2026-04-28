@@ -92,7 +92,7 @@ import {
   getChannelPersona,
   hydrateChannelPersonaStore,
 } from "#api";
-import type { FridayChannelPersonaConfig, FridaySystemRoutesDeps } from "#api";
+import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
   createPackageInstaller,
@@ -308,6 +308,8 @@ import {
   resolveFridaySystemCompanionServerMode,
 } from "../system/index.js";
 import type { FridaySystemRemoteMode, FridaySystemService } from "../system/index.js";
+import { createFridayGuideLensHttpParserAdapter, createFridayGuideLensService } from "../guide-lens/index.js";
+import type { FridayGuideLensPreferences } from "../guide-lens/index.js";
 import { buildFridayCommunicationPromptFragment, resolveFridayCommunicationPersona } from "../uix/services/friday-communication-persona.js";
 import { createFridayUixGuidedContextRepository } from "../uix/persistence/friday-uix-guided-context-repository.js";
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
@@ -1535,6 +1537,8 @@ export async function createFridayHub(
   const systemEnabled = capabilityGates.systemEnabled;
   let systemService: FridaySystemService | undefined;
   let systemRouteDeps: FridaySystemRoutesDeps | undefined;
+  let guideLensService: ReturnType<typeof createFridayGuideLensService> | undefined;
+  let guideLensRouteDeps: FridayGuideLensRoutesDeps | undefined;
   let systemCompanionServer:
     | ReturnType<typeof createFridaySystemUnixSocketCompanionServer>
     | undefined;
@@ -1861,6 +1865,44 @@ export async function createFridayHub(
           })),
         }),
       },
+    };
+
+    const guideLensParserProvider = (
+      process.env.FRIDAY_GUIDE_LENS_PARSER_PROVIDER === "omniparser"
+      || process.env.FRIDAY_GUIDE_LENS_PARSER_PROVIDER === "midscene"
+      || process.env.FRIDAY_GUIDE_LENS_PARSER_PROVIDER === "custom"
+    )
+      ? process.env.FRIDAY_GUIDE_LENS_PARSER_PROVIDER
+      : "custom";
+    const guideLensParserEndpoint = process.env.FRIDAY_GUIDE_LENS_PARSER_URL?.trim();
+    const guideLensParserAdapter = guideLensParserEndpoint
+      ? createFridayGuideLensHttpParserAdapter({
+        endpointUrl: guideLensParserEndpoint,
+        provider: guideLensParserProvider,
+      })
+      : undefined;
+    const guideLensParserPreference: FridayGuideLensPreferences["parserProvider"] = guideLensParserAdapter
+      ? guideLensParserProvider
+      : "local_none";
+
+    guideLensService = createFridayGuideLensService({
+      idGenerator,
+      nowIso,
+      systemService,
+      companionBridge: systemCompanionBridge,
+      parserAdapter: guideLensParserAdapter,
+      defaultPreferences: {
+        defaultSurface: "native_desktop",
+        parserProvider: guideLensParserPreference,
+        avatar: {
+          kind: "default_f",
+          initials: "F",
+          sizePx: 56,
+        },
+      },
+    });
+    guideLensRouteDeps = {
+      service: guideLensService,
     };
 
     console.log(
@@ -2406,6 +2448,7 @@ export async function createFridayHub(
     xhsSessionManager,
     desktopSessionManager,
     systemService,
+    guideLensService,
     ssrfGuard: agentSsrfGuard,
     sessionService: hubSessionService,
     agentRuntimeGetter,
@@ -3945,6 +3988,7 @@ export async function createFridayHub(
         xhsSessionManager,
         desktopSessionManager,
         systemService,
+        guideLensService,
         ssrfGuard: agentSsrfGuard,
         sessionService: hubSessionService,
         agentRuntimeGetter: childRuntimeGetter,
@@ -5476,6 +5520,7 @@ export async function createFridayHub(
       },
     },
     system: systemRouteDeps,
+    guideLens: guideLensRouteDeps,
     uix: {
       service: uixService,
       readSetupCompletedAt: () =>

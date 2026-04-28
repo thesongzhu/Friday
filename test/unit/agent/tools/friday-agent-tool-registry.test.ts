@@ -9,6 +9,7 @@ import type { FridayJobSchedulerService } from "../../../../src/jobs/scheduler/f
 import type { FridayChannelRegistry } from "../../../../src/channels/friday-channel-registry.js";
 import type { FridayMcpAdapter } from "../../../../src/agent/mcp/friday-mcp-adapter.types.js";
 import type { FridayProviderService } from "../../../../src/providers/services/friday-provider-service.types.js";
+import type { FridayGuideLensService } from "../../../../src/guide-lens/model/friday-guide-lens.types.js";
 
 function stubSessionService(): FridaySessionService {
   return {
@@ -80,6 +81,21 @@ function stubProviderService(): FridayProviderService {
     runWithFallback: vi.fn(),
     recordUsage: vi.fn(),
   } as unknown as FridayProviderService;
+}
+
+function stubGuideLensService(): FridayGuideLensService {
+  return {
+    getState: vi.fn(),
+    updatePreferences: vi.fn(),
+    updateAvatar: vi.fn(),
+    captureSnapshot: vi.fn(),
+    resolveTarget: vi.fn(),
+    showOverlay: vi.fn(),
+    clearOverlay: vi.fn(),
+    analyzeScreenshot: vi.fn(),
+    verify: vi.fn(),
+    assertReadOnlyAction: vi.fn(),
+  } as unknown as FridayGuideLensService;
 }
 
 describe("createFridayAgentToolRegistry", () => {
@@ -186,6 +202,14 @@ describe("createFridayAgentToolRegistry", () => {
     });
     const names = tools.map((t) => t.name);
     expect(names).toContain("provider");
+  });
+
+  it("includes guide_lens tool when guideLensService is provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      guideLensService: stubGuideLensService(),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("guide_lens");
   });
 
   it("includes capabilities tool when capabilitySnapshotGetter is provided", () => {

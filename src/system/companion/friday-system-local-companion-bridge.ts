@@ -90,5 +90,15 @@ export function createFridaySystemLocalCompanionBridge(
       lastHeartbeatAt = options.nowIso();
       return controller.setOverlayVisible(visible);
     },
+
+    async showGuideOverlay(command) {
+      lastHeartbeatAt = options.nowIso();
+      return controller.showGuideOverlay(command);
+    },
+
+    async clearGuideOverlay() {
+      lastHeartbeatAt = options.nowIso();
+      return controller.clearGuideOverlay();
+    },
   };
 }

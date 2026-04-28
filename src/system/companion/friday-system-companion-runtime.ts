@@ -18,6 +18,9 @@ import type {
   ISODateTime,
 } from "../model/friday-system.types.js";
 import type {
+  FridayGuideLensOverlayCommand,
+} from "../../guide-lens/model/friday-guide-lens.types.js";
+import type {
   FridaySystemCompanionFocusTargetInput,
   FridaySystemCompanionFocusTargetResult,
   FridaySystemCompanionLaunchAppResult,
@@ -63,6 +66,7 @@ export interface FridaySystemCompanionRuntimeOptions {
     notification: FridaySystemNotificationRef,
   ) => Promise<FridaySystemCompanionNotificationActionResult | null>;
   overlayVisibilityHandler?: (visible: boolean) => Promise<FridaySystemCompanionOverlayState>;
+  guideOverlayHandler?: (command: FridayGuideLensOverlayCommand | null) => Promise<FridaySystemCompanionOverlayState>;
 }
 
 export async function collectDarwinApps(): Promise<FridaySystemAppRef[]> {
@@ -190,6 +194,17 @@ function resolveOverlayVisibilityHandler(
     ?? (async (visible: boolean) => ({
       visible,
       changedAt: options.nowIso(),
+    }));
+}
+
+function resolveGuideOverlayHandler(
+  options: FridaySystemCompanionRuntimeOptions,
+): (command: FridayGuideLensOverlayCommand | null) => Promise<FridaySystemCompanionOverlayState> {
+  return options.guideOverlayHandler
+    ?? (async (command) => ({
+      visible: command !== null,
+      changedAt: options.nowIso(),
+      ...(command ? { guideOverlay: command } : {}),
     }));
 }
 
@@ -525,6 +540,8 @@ export interface FridaySystemCompanionRuntimeController {
     input: FridaySystemCompanionNotificationActionInput,
   ): Promise<FridaySystemCompanionNotificationActionResult | null>;
   setOverlayVisible(visible: boolean): Promise<FridaySystemCompanionOverlayState>;
+  showGuideOverlay(command: FridayGuideLensOverlayCommand): Promise<FridaySystemCompanionOverlayState>;
+  clearGuideOverlay(): Promise<FridaySystemCompanionOverlayState>;
 }
 
 export function createFridaySystemCompanionRuntimeController(
@@ -532,6 +549,7 @@ export function createFridaySystemCompanionRuntimeController(
 ): FridaySystemCompanionRuntimeController {
   const notificationState = new Map<string, { read: boolean; dismissed: boolean }>();
   let overlayVisible = options.overlayEnabled ?? false;
+  let guideOverlay: FridayGuideLensOverlayCommand | undefined;
   let safeMode = false;
 
   function mergeNotifications(
@@ -637,9 +655,37 @@ export function createFridaySystemCompanionRuntimeController(
     async setOverlayVisible(visible) {
       safeMode = false;
       overlayVisible = visible;
+      if (!visible) {
+        guideOverlay = undefined;
+      }
       const result = await resolveOverlayVisibilityHandler(options)(visible);
       overlayVisible = result.visible;
       return result;
+    },
+
+    async showGuideOverlay(command) {
+      safeMode = false;
+      guideOverlay = command;
+      overlayVisible = true;
+      const result = await resolveGuideOverlayHandler(options)(command);
+      overlayVisible = result.visible;
+      guideOverlay = result.guideOverlay ?? command;
+      return {
+        ...result,
+        visible: true,
+        guideOverlay,
+      };
+    },
+
+    async clearGuideOverlay() {
+      guideOverlay = undefined;
+      overlayVisible = false;
+      const result = await resolveGuideOverlayHandler(options)(null);
+      overlayVisible = result.visible;
+      return {
+        ...result,
+        visible: false,
+      };
     },
   };
 }

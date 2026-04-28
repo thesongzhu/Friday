@@ -1,0 +1,17 @@
+export type {
+  FridayGuideLensAvatarPreference,
+  FridayGuideLensBounds,
+  FridayGuideLensElement,
+  FridayGuideLensOverlayCommand,
+  FridayGuideLensPreferences,
+  FridayGuideLensScreenshotIntakeRequest,
+  FridayGuideLensScreenshotIntakeResult,
+  FridayGuideLensSession,
+  FridayGuideLensShowOverlayRequest,
+  FridayGuideLensSnapshotRequest,
+  FridayGuideLensState,
+  FridayGuideLensTargetResolution,
+  FridayGuideLensUiMap,
+  FridayGuideLensVerificationRequest,
+  FridayGuideLensVerificationResult,
+} from "../../guide-lens/model/friday-guide-lens.types.js";

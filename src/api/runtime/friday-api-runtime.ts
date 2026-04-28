@@ -89,6 +89,7 @@ import { createFridayChannelRoutes } from "../http/routes/friday-channel-routes.
 import { createFridayDeepLinkRoutes } from "../http/routes/friday-deeplink-routes.js";
 import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
+import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
@@ -2021,6 +2022,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   }
 
+  // Register read-only Guide Mode routes (optional)
+  if (deps.guideLens) {
+    for (const route of createFridayGuideLensRoutes(deps.guideLens)) {
+      routes.register(route);
+    }
+  }
+
   // Register local discovery routes (optional)
   for (const route of deps.discovery
     ? createFridayDiscoveryRoutes(deps.discovery)
@@ -2912,5 +2920,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     agentLoop: deps.agentLoop,
     uix: deps.uix,
     system: deps.system,
+    guideLens: deps.guideLens,
   };
 }

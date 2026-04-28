@@ -363,6 +363,11 @@ export { createFridayAgentMcpTool } from "./tools/friday-agent-mcp-tool.js";
 export type { CreateFridayAgentSystemToolOptions } from "./tools/friday-agent-system-tool.js";
 export { createFridayAgentSystemTool } from "./tools/friday-agent-system-tool.js";
 
+// ─── Guide Lens tool ───
+
+export type { CreateFridayAgentGuideLensToolOptions } from "./tools/friday-agent-guide-lens-tool.js";
+export { createFridayAgentGuideLensTool } from "./tools/friday-agent-guide-lens-tool.js";
+
 // ─── Capabilities tool ───
 
 export type {
