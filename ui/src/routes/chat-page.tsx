@@ -56,6 +56,7 @@ export function ChatPage() {
     runEvents,
     sendMessage,
     isStreaming,
+    queuedMessageCount,
     clearHistory,
     startNewConversation,
   } = useChatSession({ packId: packIdParam });
@@ -519,12 +520,19 @@ export function ChatPage() {
           <ChatInput
             onSend={handleSend}
             onCommand={handleCommand}
-            disabled={isStreaming}
+            disabled={false}
             autoFocus
             value={draftText}
             onValueChange={setDraftText}
-            placeholder={isStreaming ? localize(locale, "Friday 正在处理…", "Friday is working…") : undefined}
+            placeholder={isStreaming
+              ? localize(locale, "继续输入，消息会排队发送", "Keep typing; messages will be queued")
+              : undefined}
           />
+          {queuedMessageCount > 0 ? (
+            <p className="mt-2 px-1 text-xs text-[color:var(--color-text-secondary)]">
+              {localize(locale, `已排队 ${queuedMessageCount} 条消息`, `${queuedMessageCount} message${queuedMessageCount === 1 ? "" : "s"} queued`)}
+            </p>
+          ) : null}
         </div>
       </section>
 

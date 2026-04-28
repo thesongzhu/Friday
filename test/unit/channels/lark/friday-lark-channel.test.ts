@@ -742,6 +742,56 @@ describe("FridayLarkChannel", () => {
         chat_type: "direct",
       }));
     });
+
+    it("updates a sent Feishu message via REST API", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
+      await plugin.init({
+        appId: "cli-test",
+        appSecret: "secret-test",
+        useFeishu: true,
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
+      });
+
+      fetchMock.responses.push(
+        {
+          url: "tenant_access_token",
+          body: {
+            code: 0,
+            msg: "ok",
+            tenant_access_token: "t-token-update",
+            expire: 7200,
+          },
+        },
+        {
+          url: "/im/v1/messages/om_progress_1",
+          body: {
+            code: 0,
+            data: { message_id: "om_progress_1" },
+          },
+        },
+      );
+
+      await plugin.start(() => {});
+
+      const result = await plugin.adapters!.outbound!.update!("om_progress_1", {
+        chatId: "oc_target",
+        text: "最终回复",
+      });
+
+      expect(result.messageId).toBe("om_progress_1");
+
+      const updateCall = fetchMock.mockFetch.mock.calls.find(
+        (c) => String(c[0]).includes("/im/v1/messages/om_progress_1"),
+      );
+      expect(updateCall).toBeDefined();
+      expect((updateCall![1] as RequestInit).method).toBe("PUT");
+
+      const body = JSON.parse((updateCall![1] as RequestInit).body as string);
+      expect(body.msg_type).toBe("text");
+      expect(JSON.parse(body.content)).toEqual({ text: "最终回复" });
+    });
   });
 
   describe("lifecycle", () => {

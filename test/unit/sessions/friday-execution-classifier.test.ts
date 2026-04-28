@@ -322,6 +322,28 @@ describe("classifyFridayExecution", () => {
     });
   });
 
+  describe("session recall and policy boundaries", () => {
+    it("classifies last-message recall as deterministic session recall", () => {
+      const result = classifyFridayExecution({
+        task: "你还记得我上次最后写的是什么吗？",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("last_user_message");
+    });
+
+    it("classifies anti-detection scraping skill requests as a deterministic boundary", () => {
+      const result = classifyFridayExecution({
+        task: "你可以自己写一个skills去爬小红书的内容吗？不被发现和不被ban的。",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("unsafe_automation_boundary");
+    });
+  });
+
   describe("workflow control commands", () => {
     it("classifies cancel with run id as managed_async workflow control", () => {
       const result = classifyFridayExecution({

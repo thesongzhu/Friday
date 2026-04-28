@@ -25,6 +25,7 @@ describe("Friday autostart scripts", () => {
     expect(installer).toContain("<key>RunAtLoad</key>");
     expect(installer).toContain("<key>KeepAlive</key>");
     expect(installer).toContain("FRIDAY_CHANNEL_WAKE_UI");
+    expect(installer).toContain("<key>FRIDAY_CHANNEL_WAKE_UI</key>\n    <string>false</string>");
     expect(installer).toContain("FRIDAY_STATE_DIR");
     expect(serviceRunner).toContain('exec "${NODE_BIN}" "${DIST_ENTRY}" start');
     expect(uiRunner).toContain("/v1/health");
@@ -40,12 +41,12 @@ describe("Friday autostart scripts", () => {
     expect(packageJson.files).toContain("scripts/ops/install-friday-launchagent.sh");
   });
 
-  it("wakes the local UI when a configured channel receives a message", () => {
+  it("keeps channel UI wake opt-in so channel messages do not spawn browser tabs by default", () => {
     const hubSource = readFileSync("src/hub/friday-hub-bootstrap.ts", "utf8");
 
     expect(hubSource).toContain("FRIDAY_CHANNEL_WAKE_UI");
     expect(hubSource).toContain("wakeUiForChannelMessage");
-    expect(hubSource).toContain('new URL("/channels"');
+    expect(hubSource).toContain('process.env.FRIDAY_CHANNEL_WAKE_UI !== "true"');
     expect(hubSource).toContain("FRIDAY_CHANNEL_WAKE_UI_COOLDOWN_MS");
   });
 });

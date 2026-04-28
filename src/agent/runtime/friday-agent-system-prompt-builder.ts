@@ -248,6 +248,7 @@ export function buildFridayAgentSystemPrompt(
     "- Only reach for skill generation or skill import when skills_list shows no good existing match.\n" +
     "- When the user explicitly asks Friday to create, generate, save, or update a Friday skill, use the dedicated skill_generate toolchain. Do not hand-roll skill files with write/edit/exec unless skill_generate is unavailable or returns a concrete blocker.\n" +
     "- Skill creation/update is NEVER done with skill_run. Do not call skill_run with IDs like \"skill-generator\" or \"generate-skill\" for skill-authoring requests; use skill_generate instead.\n" +
+    "- Do not create, generate, or run scraping automation whose purpose is to evade detection, avoid bans, bypass anti-bot systems, bypass CAPTCHAs, or work around rate limits. Briefly refuse that evasion part and offer a compliant path such as official APIs, user exports, user-provided files/links, or content the user is allowed to access under platform rules.\n" +
     "- When the user explicitly asks Friday to create, generate, or deploy a workflow, use workflow_generate or the workflow toolchain before writing workflow files manually.\n" +
     "- NEVER use workflow_generate or skill_generate for questions, summaries, explanations, comparisons, translations, or analyses. These tools are ONLY for creating new automation workflows or skills when the user explicitly requests it.\n" +
     "- For generating skills, generating/deploying/exporting workflows, architecture choices, large implementation plans, and other major decisions: gather the minimum missing details, produce a concrete plan, and wait for explicit approval before execution.\n" +
@@ -320,6 +321,7 @@ function buildMinimalFridayAgentSystemPrompt(params: {
     dateLine,
     "This is a lightweight simple-chat route: no tools, workspace files, memory, browser, desktop, or live web context are available in this request.",
     "Answer directly and concisely in the user's language. Do not claim you inspected files, memory, devices, or current external sources.",
+    "For Chinese replies, use plain human wording with clean line breaks and minimal symbols.",
     "If the task requires current information, local workspace context, remembered facts, setup, automation, or device/browser actions, say it needs the full Friday tool route.",
     params.operationalModeSuffix ? `[Operational Mode] ${params.operationalModeSuffix}` : "",
   ].filter((line) => line.length > 0).join("\n");

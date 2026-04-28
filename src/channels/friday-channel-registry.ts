@@ -108,6 +108,9 @@ export interface FridayChannelRegistry {
   /** Send a message through a specific channel kind. */
   send(kind: string, options: FridayChannelSendOptions): Promise<{ messageId: string }>;
 
+  /** Optionally update a previously sent message through a specific channel kind. */
+  update(kind: string, messageId: string, options: FridayChannelSendOptions): Promise<{ messageId: string }>;
+
   /** Optionally signal typing state for a specific channel kind/chat. */
   signalTyping(kind: string, chatId: string): Promise<void>;
 
@@ -510,6 +513,22 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
         return entry.plugin.adapters.outbound.send(options);
       }
       return entry.plugin.send(options);
+    },
+
+    async update(kind, messageId, options) {
+      const entry = entries.get(kind);
+      if (!entry) {
+        throw new FridayDomainError("NOT_FOUND", `Channel kind "${kind}" is not registered`, { httpStatus: 404 });
+      }
+      if (!entry.running) {
+        throw new FridayDomainError("NOT_INITIALIZED", `Channel kind "${kind}" is not running`, { httpStatus: 503 });
+      }
+
+      const update = entry.plugin.adapters?.outbound?.update;
+      if (!update) {
+        throw new FridayDomainError("NOT_IMPLEMENTED", `Channel kind "${kind}" does not support updating sent messages`, { httpStatus: 501 });
+      }
+      return update(messageId, options);
     },
 
     async signalTyping(kind, chatId) {

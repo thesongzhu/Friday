@@ -170,6 +170,7 @@ export interface FridayChannelTerminalTextInput {
   status: "completed" | "failed" | "cancelled";
   response: string;
   imageCount: number;
+  sourceText?: string;
 }
 
 export function stripFridayUiActionHints(text: string): string {
@@ -180,6 +181,28 @@ export function resolveFridayChannelTerminalText(input: FridayChannelTerminalTex
   const response = stripFridayUiActionHints(input.response);
   const hasResponse = response.length > 0;
   const hasImages = input.imageCount > 0;
+  const isChinese = /[\u4e00-\u9fff]/u.test(input.sourceText ?? "");
+
+  if (isChinese) {
+    if (input.status === "completed" && !hasResponse) {
+      return hasImages
+        ? "已完成，已附上输出。"
+        : "已完成。";
+    }
+    if (input.status === "failed" && !hasResponse) {
+      return "请求失败，请重试。";
+    }
+    if (input.status === "cancelled" && !hasResponse) {
+      return "请求已取消，未完成。";
+    }
+    if (input.status === "failed" && hasResponse) {
+      return `请求失败：${response}`;
+    }
+    if (input.status === "cancelled" && hasResponse) {
+      return `请求已取消：${response}`;
+    }
+    return response;
+  }
 
   if (input.status === "completed" && !hasResponse) {
     return hasImages
@@ -201,7 +224,10 @@ export function resolveFridayChannelTerminalText(input: FridayChannelTerminalTex
   return response;
 }
 
-export function buildFridayChannelDeliveryFailureText(runId: string): string {
+export function buildFridayChannelDeliveryFailureText(runId: string, sourceText?: string): string {
+  if (/[\u4e00-\u9fff]/u.test(sourceText ?? "")) {
+    return `请求已完成，但消息发送失败（E-CH-OUTBOUND-001）。关联 ID：${runId}。`;
+  }
   return (
     "I completed your request, but delivery failed (E-CH-OUTBOUND-001). " +
     `Correlation: ${runId}. You can query /v1/agent/runs/${runId}.`

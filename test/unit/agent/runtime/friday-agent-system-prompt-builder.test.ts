@@ -283,6 +283,8 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("Use \"Friday\" when explaining product capability boundaries");
     expect(prompt).toContain("Progress updates use smart frequency");
     expect(prompt).toContain("state the immediate check and why it matters");
+    expect(prompt).toContain("Chinese replies should feel human, concise, and tidy");
+    expect(prompt).toContain("avoid markdown-heavy formatting, emoji, decorative symbols");
   });
 
   it("locks failure, missing-capability, and completion replies to closed-loop wording", () => {

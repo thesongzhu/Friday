@@ -65,6 +65,18 @@ const WORKFLOW_QUERY =
 const WORKFLOW_QUERY_WITH_RUN =
   /\b(?:workflow status|workflow run|workflow runs?|show workflow(?: run)? status)\s+([A-Za-z0-9:_-]+)\b/i;
 
+const LAST_USER_MESSAGE_QUERY =
+  /\b(?:do you remember\s+)?what did i (?:last|previously) (?:write|say|ask|send)\b|\bdo you remember what i (?:last|previously) (?:wrote|said|asked|sent)\b/i;
+const CHINESE_LAST_USER_MESSAGE_QUERY =
+  /(?:还记得)?我(?:上次|刚才|上一条|前一条|最后)(?:最后)?(?:写|说|问|发)(?:的)?(?:是|了)?(?:什么|啥)|我上次最后写的是什么/u;
+
+const UNSAFE_AUTOMATION_EVASION_REQUEST =
+  /\b(?:scrap(?:e|ing)|crawl(?:er|ing)?|bot|automation|skill|tool)\b[\s\S]{0,140}\b(?:avoid detection|undetected|not (?:be )?detected|avoid (?:a )?ban|not (?:get )?banned|bypass(?:ing)? (?:anti[- ]?bot|rate limits?|captcha)|evad(?:e|ing))\b/i;
+const UNSAFE_AUTOMATION_EVASION_REQUEST_REVERSE =
+  /\b(?:avoid detection|undetected|not (?:be )?detected|avoid (?:a )?ban|not (?:get )?banned|bypass(?:ing)? (?:anti[- ]?bot|rate limits?|captcha)|evad(?:e|ing))\b[\s\S]{0,140}\b(?:scrap(?:e|ing)|crawl(?:er|ing)?|bot|automation|skill|tool)\b/i;
+const CHINESE_UNSAFE_AUTOMATION_EVASION_REQUEST =
+  /(?:爬|抓取|采集|自动化|脚本|skill|技能)[\s\S]{0,100}(?:不被发现|不被检测|不被封|不会被\s*ban|防封|绕过|规避|反爬)|(?:不被发现|不被检测|不被封|不会被\s*ban|防封|绕过|规避|反爬)[\s\S]{0,100}(?:爬|抓取|采集|自动化|脚本|skill|技能)/iu;
+
 const SETUP_INTENT =
   /\b(bind|connect|configure|set\s*up|setup|enable|register|add|link|onboard|install)\b/i;
 const SETUP_INFO_INTENT =
@@ -219,7 +231,24 @@ export function classifyFridayExecution(
     };
   }
 
-  // 7. Setup / binding / configuration intents
+  // 7. Simple session recall
+  if (
+    LAST_USER_MESSAGE_QUERY.test(normalized)
+    || CHINESE_LAST_USER_MESSAGE_QUERY.test(normalized)
+  ) {
+    return { category: "sync_immediate", handler: "last_user_message" };
+  }
+
+  // 8. Unsafe automation / anti-detection requests
+  if (
+    UNSAFE_AUTOMATION_EVASION_REQUEST.test(normalized)
+    || UNSAFE_AUTOMATION_EVASION_REQUEST_REVERSE.test(normalized)
+    || CHINESE_UNSAFE_AUTOMATION_EVASION_REQUEST.test(normalized)
+  ) {
+    return { category: "sync_immediate", handler: "unsafe_automation_boundary" };
+  }
+
+  // 9. Setup / binding / configuration intents
   if (looksLikeSetupIntent(normalized)) {
     const setupTargetService = extractSetupTargetService(normalized) ?? resolveSetupTargetFromFocus(focusState);
     if (setupTargetService) {
@@ -231,7 +260,7 @@ export function classifyFridayExecution(
     }
   }
 
-  // 8. Capability queries
+  // 10. Capability queries
   if (
     CAPABILITY_QUERY.test(normalized)
     || CAPABILITY_STATE_QUERY.test(normalized)

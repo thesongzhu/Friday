@@ -6770,6 +6770,7 @@ export async function createFridayHub(
 
       // Deterministic dispatch deps — reused across all channel messages.
       const deterministicDispatchDeps: FridayDeterministicDispatchDeps = {
+        sessionMessageGetter: (key: string, limit?: number) => hubSessionService.getMessages(key, limit),
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
         taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
         getDaemonStatus: () => daemonService.status(),
@@ -6856,7 +6857,7 @@ export async function createFridayHub(
           msg: FridayChannelMessage,
           runId: string,
         ): void => {
-          if (process.env.FRIDAY_CHANNEL_WAKE_UI === "false") return;
+          if (process.env.FRIDAY_CHANNEL_WAKE_UI !== "true") return;
           const nowMs = Date.now();
           if (
             channelUiWakeCooldownMs > 0 &&
@@ -6883,6 +6884,103 @@ export async function createFridayHub(
           } catch (err) {
             warnHubBootstrapOnce(`[friday] channel-ui-wake: ${err instanceof Error ? err.message : String(err)}`);
           }
+        };
+
+        const channelProgressReceiptKinds = new Set(["feishu", "lark"]);
+        const channelProgressReceiptDelayMs = Math.max(
+          0,
+          Number.parseInt(process.env.FRIDAY_CHANNEL_PROGRESS_RECEIPT_DELAY_MS ?? "1000", 10) || 0,
+        );
+        const progressReceiptEnabled = (): boolean =>
+          process.env.FRIDAY_CHANNEL_PROGRESS_RECEIPT !== "false";
+        const buildChannelProgressReceiptText = (sourceText: string): string =>
+          /[\u4e00-\u9fff]/u.test(sourceText)
+            ? "收到，正在处理。"
+            : "Received. Working on it.";
+        const createChannelProgressReceipt = (
+          msg: FridayChannelMessage,
+          sourceText: string,
+          logChannelIssue: (input: {
+            level: "warn" | "error";
+            code: string;
+            routeId: string;
+            runId?: string;
+            error: unknown;
+          }) => void,
+        ) => {
+          let closed = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let receipt: { messageId: string } | undefined;
+          let sendPromise: Promise<void> | undefined;
+          const enabled = progressReceiptEnabled() && channelProgressReceiptKinds.has(msg.channelKind);
+
+          return {
+            start(): void {
+              if (!enabled || closed) return;
+              timer = setTimeout(() => {
+                if (closed) return;
+                sendPromise = channelRegistry.send(msg.channelKind, {
+                  chatId: msg.chatId,
+                  text: buildChannelProgressReceiptText(sourceText),
+                  replyTo: msg.id,
+                }).then((delivery) => {
+                  receipt = delivery;
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-PROGRESS-RECEIPT-001",
+                    routeId: "hub.channel.progress_receipt.send",
+                    error: err,
+                  });
+                });
+              }, channelProgressReceiptDelayMs);
+            },
+            async deliverFinal(input: {
+              text: string;
+              runId?: string;
+              images?: string[];
+            }): Promise<{ messageId: string }> {
+              closed = true;
+              if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+              if (sendPromise) {
+                await sendPromise;
+              }
+              if (receipt?.messageId) {
+                try {
+                  return await channelRegistry.update(msg.channelKind, receipt.messageId, {
+                    chatId: msg.chatId,
+                    text: input.text,
+                    replyTo: msg.id,
+                    images: input.images,
+                  });
+                } catch (err) {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-PROGRESS-RECEIPT-002",
+                    routeId: "hub.channel.progress_receipt.update",
+                    runId: input.runId,
+                    error: err,
+                  });
+                }
+              }
+              return channelRegistry.send(msg.channelKind, {
+                chatId: msg.chatId,
+                text: input.text,
+                replyTo: msg.id,
+                images: input.images,
+              });
+            },
+            stop(): void {
+              closed = true;
+              if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+            },
+          };
         };
 
         const channelMessageHandler = (msg: FridayChannelMessage) => {
@@ -7082,6 +7180,8 @@ export async function createFridayHub(
             },
           });
           typingController.start();
+          const progressReceipt = createChannelProgressReceipt(msg, taskText, logChannelIssue);
+          progressReceipt.start();
 
           void (async () => {
             const runId = idGenerator();
@@ -7190,6 +7290,7 @@ export async function createFridayHub(
                       : "failed",
                   response: result.response,
                   imageCount: outboundImages?.length ?? 0,
+                  sourceText: taskText,
                 });
 
               console.log(
@@ -7199,10 +7300,9 @@ export async function createFridayHub(
               );
 
               try {
-                const delivery = await channelRegistry.send(msg.channelKind, {
-                  chatId: msg.chatId,
+                const delivery = await progressReceipt.deliverFinal({
                   text: outboundText,
-                  replyTo: msg.id,
+                  runId: result.runId,
                   images: outboundImages,
                 });
                 // Engine handles planning decisions internally; use "assistant" kind
@@ -7236,7 +7336,7 @@ export async function createFridayHub(
                   runId: result.runId,
                   error: err,
                 });
-                const fallbackText = buildFridayChannelDeliveryFailureText(result.runId);
+                const fallbackText = buildFridayChannelDeliveryFailureText(result.runId, taskText);
                 await hubSessionService.addMessage(sessionKey, {
                   role: "assistant",
                   content: fallbackText,
@@ -7277,13 +7377,11 @@ export async function createFridayHub(
                 routeId: "hub.channel.run.execute",
                 error: err,
               });
-              await channelRegistry
-                .send(msg.channelKind, {
-                  chatId: msg.chatId,
+              await progressReceipt
+                .deliverFinal({
                   text:
                     `Sorry, I couldn't complete your request (${errorCode}). ` +
                     `Correlation: ${correlationId}. Please retry.`,
-                  replyTo: msg.id,
                 })
                 .catch((sendErr) => {
                   logChannelIssue({
@@ -7295,6 +7393,7 @@ export async function createFridayHub(
                 });
             } finally {
               slowTaskNotifier.stop();
+              progressReceipt.stop();
               typingController.stopDispatch();
             }
           })()

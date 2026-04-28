@@ -3,6 +3,32 @@ import { describe, expect, it } from "vitest";
 import { evaluateFridayAnswerAlignment } from "../../../../src/agent/runtime/friday-agent-answer-alignment.js";
 
 describe("evaluateFridayAnswerAlignment", () => {
+  it("requests a retry when a Chinese user message receives an English prose answer", () => {
+    const decision = evaluateFridayAnswerAlignment({
+      task: "你现在进度怎么样？",
+      responseText: "The task is still running and I will send the result when it finishes.",
+      historyMessages: [],
+      conversationContext: {
+        turnKind: "status_check",
+      },
+    });
+
+    expect(decision.retryPrompt).toContain("latest user message is in Chinese");
+  });
+
+  it("allows English answers when the Chinese task explicitly asks for English", () => {
+    const decision = evaluateFridayAnswerAlignment({
+      task: "请用英文回答：现在进度怎么样？",
+      responseText: "The task is still running.",
+      historyMessages: [],
+      conversationContext: {
+        turnKind: "status_check",
+      },
+    });
+
+    expect(decision.retryPrompt).toBeUndefined();
+  });
+
   it("requests a retry when a pure deictic follow-up is echoed as a standalone issue", () => {
     const decision = evaluateFridayAnswerAlignment({
       task: "这里",

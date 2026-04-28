@@ -14,7 +14,6 @@ import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { getBootstrapStatus } from "@/lib/api/auth";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
-import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -25,7 +24,6 @@ const AutomationsPage = lazy(async () => import("@/routes/automations-page").the
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
 const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
-const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
@@ -465,15 +463,7 @@ export const router = createBrowserRouter([
           },
           {
             path: "marketplace",
-            element: (
-              HIDE_MARKETPLACE_UI
-                ? <Navigate to="/assistant" replace />
-                : (
-                    <RouteSuspense title={localizedText("加载市场", "Loading marketplace")} detail={localizedText("Friday 正在准备创作者生态。", "Friday is preparing the public creator ecosystem.")}>
-                      <MarketplacePage />
-                    </RouteSuspense>
-                  )
-            ),
+            element: <Navigate to="/assistant" replace />,
           },
           {
             path: "plugins",

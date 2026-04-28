@@ -22,12 +22,20 @@ export interface UseChatSessionResult {
   runEvents: UseAgentRunEventsResult;
   sendMessage: (text: string, options?: { taskPrompt?: string; onAccepted?: () => void }) => Promise<void>;
   isStreaming: boolean;
+  queuedMessageCount: number;
   clearHistory: () => void;
   startNewConversation: () => void;
 }
 
 export interface UseChatSessionOptions {
   packId?: string | null;
+}
+
+interface QueuedChatSend {
+  text: string;
+  options?: { taskPrompt?: string; onAccepted?: () => void };
+  sessionKey: string;
+  userMessageId: string;
 }
 
 // ─── Persistent session key ───
@@ -183,9 +191,14 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
   const [sessionKey, setSessionKey] = useState<string>(() => getOrCreateSessionKey());
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadHistory(sessionKey));
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [queuedMessageCount, setQueuedMessageCount] = useState(0);
   const sessionKeyRef = useRef(sessionKey);
+  const currentRunIdRef = useRef<string | null>(null);
   const currentRunSessionKeyRef = useRef<string | null>(null);
   const outputTextRef = useRef("");
+  const isStartingRunRef = useRef(false);
+  const pendingQueueRef = useRef<QueuedChatSend[]>([]);
+  const beginRunForMessageRef = useRef<((input: QueuedChatSend) => Promise<void>) | null>(null);
 
   const syncMessagesFromServer = useCallback(async (targetSessionKey: string): Promise<boolean> => {
     try {
@@ -243,70 +256,36 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
     });
   }, []);
 
-  const runEvents = useAgentRunEvents(currentRunId, {
-    enabled: currentRunId !== null,
-    onTerminal: (status) => {
-      // Finalize the assistant message with full output text
-      const finalText = outputTextRef.current;
-      const runSessionKey = currentRunSessionKeyRef.current ?? sessionKeyRef.current;
-      updateSessionHistory(runSessionKey, (prev) =>
-        prev.map((m) =>
-          m.runId === currentRunId && m.role === "assistant"
-            ? {
-                ...m,
-                content: finalText,
-                status: (status === "completed" ? "done" : "error") as ChatMessage["status"],
-              }
-            : m,
-        ),
-      );
-      outputTextRef.current = "";
-      currentRunSessionKeyRef.current = null;
-      setCurrentRunId(null);
-      scheduleSyncFromServer(runSessionKey);
-    },
-  });
+  const beginRunForMessage = useCallback(async (input: QueuedChatSend): Promise<void> => {
+    const activeSessionKey = input.sessionKey;
+    isStartingRunRef.current = true;
 
-  // Keep ref in sync with latest streaming output
-  useEffect(() => {
-    outputTextRef.current = runEvents.outputText;
-  }, [runEvents.outputText]);
-
-  useEffect(() => {
-    sessionKeyRef.current = sessionKey;
-    setMessages(loadHistory(sessionKey));
-    void syncMessagesFromServer(sessionKey);
-  }, [sessionKey, syncMessagesFromServer]);
-
-  const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
-
-  const sendMessage = useCallback(async (
-    text: string,
-    sendOptions?: { taskPrompt?: string; onAccepted?: () => void },
-  ) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const activeSessionKey = sessionKeyRef.current;
-
-    // Add user message
-    const userMsg: ChatMessage = {
-      id: `msg-${Date.now().toString(36)}`,
-      role: "user",
-      content: trimmed,
-      timestamp: new Date().toISOString(),
-      status: "done",
-    };
-
-    updateSessionHistory(activeSessionKey, (prev) => [...prev, userMsg]);
+    updateSessionHistory(activeSessionKey, (prev) => {
+      const hasExistingUserMessage = prev.some((message) => message.id === input.userMessageId);
+      if (hasExistingUserMessage) {
+        return prev.map((message) =>
+          message.id === input.userMessageId
+            ? { ...message, status: "done" as const }
+            : message,
+        );
+      }
+      const userMsg: ChatMessage = {
+        id: input.userMessageId,
+        role: "user",
+        content: input.text,
+        timestamp: new Date().toISOString(),
+        status: "done",
+      };
+      return [...prev, userMsg];
+    });
 
     try {
       await ensureRemoteSession(activeSessionKey);
 
-      // Start a new agent run
       const result = await agentApi.startRun({
-        task: trimmed,
-        taskPrompt: typeof sendOptions?.taskPrompt === "string" && sendOptions.taskPrompt.trim().length > 0
-          ? sendOptions.taskPrompt.trim()
+        task: input.text,
+        taskPrompt: typeof input.options?.taskPrompt === "string" && input.options.taskPrompt.trim().length > 0
+          ? input.options.taskPrompt.trim()
           : undefined,
         sessionKey: activeSessionKey,
         executionContext: {
@@ -329,7 +308,7 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
 
         updateSessionHistory(activeSessionKey, (prev) => [...prev, assistantMsg]);
         scheduleSyncFromServer(activeSessionKey);
-        sendOptions?.onAccepted?.();
+        input.options?.onAccepted?.();
         return;
       }
 
@@ -337,7 +316,6 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
         throw new Error("Run started without event stream support");
       }
 
-      // Add placeholder assistant message
       const assistantMsg: ChatMessage = {
         id: `msg-${Date.now().toString(36)}-reply`,
         role: "assistant",
@@ -350,10 +328,10 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
       updateSessionHistory(activeSessionKey, (prev) => [...prev, assistantMsg]);
 
       currentRunSessionKeyRef.current = activeSessionKey;
+      currentRunIdRef.current = result.runId;
       setCurrentRunId(result.runId);
-      sendOptions?.onAccepted?.();
+      input.options?.onAccepted?.();
     } catch (err) {
-      // Add error message
       const errMsg: ChatMessage = {
         id: `msg-${Date.now().toString(36)}-err`,
         role: "assistant",
@@ -362,14 +340,121 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
         status: "error",
       };
       updateSessionHistory(activeSessionKey, (prev) => [...prev, errMsg]);
+    } finally {
+      isStartingRunRef.current = false;
+      if (currentRunIdRef.current === null && pendingQueueRef.current.length > 0) {
+        window.setTimeout(() => {
+          const next = pendingQueueRef.current.shift();
+          setQueuedMessageCount(pendingQueueRef.current.length);
+          if (next) {
+            void beginRunForMessageRef.current?.(next);
+          }
+        }, 0);
+      }
     }
   }, [ensureRemoteSession, options.packId, scheduleSyncFromServer, updateSessionHistory]);
+
+  beginRunForMessageRef.current = beginRunForMessage;
+
+  const drainQueuedMessage = useCallback(() => {
+    const next = pendingQueueRef.current.shift();
+    setQueuedMessageCount(pendingQueueRef.current.length);
+    if (!next) return;
+    void beginRunForMessageRef.current?.(next);
+  }, []);
+
+  const runEvents = useAgentRunEvents(currentRunId, {
+    enabled: currentRunId !== null,
+    onTerminal: (status) => {
+      // Finalize the assistant message with full output text
+      const finalText = outputTextRef.current;
+      const runSessionKey = currentRunSessionKeyRef.current ?? sessionKeyRef.current;
+      const terminalRunId = currentRunIdRef.current ?? currentRunId;
+      updateSessionHistory(runSessionKey, (prev) =>
+        prev.map((m) =>
+          m.runId === terminalRunId && m.role === "assistant"
+            ? {
+                ...m,
+                content: finalText,
+                status: (status === "completed" ? "done" : "error") as ChatMessage["status"],
+              }
+            : m,
+        ),
+      );
+      outputTextRef.current = "";
+      currentRunSessionKeyRef.current = null;
+      currentRunIdRef.current = null;
+      setCurrentRunId(null);
+      scheduleSyncFromServer(runSessionKey);
+      window.setTimeout(drainQueuedMessage, 0);
+    },
+  });
+
+  // Keep ref in sync with latest streaming output
+  useEffect(() => {
+    outputTextRef.current = runEvents.outputText;
+  }, [runEvents.outputText]);
+
+  useEffect(() => {
+    currentRunIdRef.current = currentRunId;
+  }, [currentRunId]);
+
+  useEffect(() => {
+    sessionKeyRef.current = sessionKey;
+    setMessages(loadHistory(sessionKey));
+    void syncMessagesFromServer(sessionKey);
+  }, [sessionKey, syncMessagesFromServer]);
+
+  const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
+
+  const sendMessage = useCallback(async (
+    text: string,
+    sendOptions?: { taskPrompt?: string; onAccepted?: () => void },
+  ) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const activeSessionKey = sessionKeyRef.current;
+
+    const userMessageId = `msg-${Date.now().toString(36)}`;
+    if (currentRunIdRef.current || isStartingRunRef.current) {
+      const queuedUserMsg: ChatMessage = {
+        id: userMessageId,
+        role: "user",
+        content: trimmed,
+        timestamp: new Date().toISOString(),
+        status: "sending",
+      };
+      updateSessionHistory(activeSessionKey, (prev) => [...prev, queuedUserMsg]);
+      const queuedOptions = sendOptions
+        ? { taskPrompt: sendOptions.taskPrompt }
+        : undefined;
+      pendingQueueRef.current.push({
+        text: trimmed,
+        ...(queuedOptions ? { options: queuedOptions } : {}),
+        sessionKey: activeSessionKey,
+        userMessageId,
+      });
+      setQueuedMessageCount(pendingQueueRef.current.length);
+      sendOptions?.onAccepted?.();
+      return;
+    }
+
+    await beginRunForMessage({
+      text: trimmed,
+      ...(sendOptions ? { options: sendOptions } : {}),
+      sessionKey: activeSessionKey,
+      userMessageId,
+    });
+  }, [beginRunForMessage, updateSessionHistory]);
 
   const clearHistory = useCallback(() => {
     const currentSessionKey = sessionKeyRef.current;
     void sessionsApi.reset(currentSessionKey).catch(() => {});
     outputTextRef.current = "";
     currentRunSessionKeyRef.current = null;
+    currentRunIdRef.current = null;
+    pendingQueueRef.current = [];
+    setQueuedMessageCount(0);
     setCurrentRunId(null);
     setMessages([]);
     localStorage.removeItem(getHistoryStorageKey(currentSessionKey));
@@ -383,6 +468,9 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
     // Generate a fresh session key so the next send starts a clean server-backed session.
     outputTextRef.current = "";
     currentRunSessionKeyRef.current = null;
+    currentRunIdRef.current = null;
+    pendingQueueRef.current = [];
+    setQueuedMessageCount(0);
     setCurrentRunId(null);
     setMessages([]);
     localStorage.removeItem(SESSION_KEY_STORAGE);
@@ -398,6 +486,7 @@ export function useChatSession(options: UseChatSessionOptions = {}): UseChatSess
     runEvents,
     sendMessage,
     isStreaming,
+    queuedMessageCount,
     clearHistory,
     startNewConversation,
   };

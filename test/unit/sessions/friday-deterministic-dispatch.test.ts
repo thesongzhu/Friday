@@ -10,6 +10,7 @@ import type { FridayAgentTaskStatusSnapshot } from "../../../src/agent/tools/fri
 import type { FridayWorkflowApprovalService } from "../../../src/workflows/services/friday-workflow-approval-service.types.js";
 import type { FridayWorkflowExecutionService, FridayWorkflowRunEntity } from "#workflows";
 import type { FridayWorkflowApprovalRequestEntity } from "../../../src/workflows/model/friday-workflow-engine.types.js";
+import type { FridaySessionMessageRecord } from "../../../src/sessions/model/friday-session.types.js";
 
 function makeWorkflowRun(overrides?: Partial<FridayWorkflowRunEntity>): FridayWorkflowRunEntity {
   return {
@@ -41,8 +42,31 @@ function makeApproval(overrides?: Partial<FridayWorkflowApprovalRequestEntity>):
   };
 }
 
+function makeSessionMessage(input: {
+  sequence: number;
+  role: "user" | "assistant";
+  contentText: string;
+}): FridaySessionMessageRecord {
+  return {
+    id: `msg-${String(input.sequence)}`,
+    sessionId: "session-1",
+    sessionKey: "test",
+    sequence: input.sequence,
+    role: input.role,
+    content: input.contentText,
+    contentText: input.contentText,
+    tokenCount: 0,
+    metadata: {},
+    memoryExtractStatus: "skipped",
+    occurredAt: "2026-03-24T10:00:00.000Z",
+    createdAt: "2026-03-24T10:00:00.000Z",
+    updatedAt: "2026-03-24T10:00:00.000Z",
+  };
+}
+
 function createMockDeps(overrides?: Partial<FridayDeterministicDispatchDeps>): FridayDeterministicDispatchDeps {
   return {
+    sessionMessageGetter: vi.fn(() => []),
     capabilitySnapshotGetter: vi.fn().mockResolvedValue({
       readOnly: false,
       messaging: { enabled: true, kinds: ["discord"] },
@@ -243,6 +267,82 @@ describe("dispatchDeterministic", () => {
       );
       expect(result.handled).toBe(true);
       expect(result.response).toContain("No active task");
+    });
+
+    it("localizes task status for Chinese requests", async () => {
+      const deps = createMockDeps();
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "task_status" },
+          sessionKey: "test",
+          runId: "run-1",
+          task: "现在进度怎么样？",
+        },
+        deps,
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("任务状态：执行中");
+      expect(result.response).toContain("最近工具：exec");
+      expect(result.response).not.toContain("Task status");
+    });
+  });
+
+  describe("last_user_message handler", () => {
+    it("returns only the previous user message for Chinese recall", async () => {
+      const deps = createMockDeps({
+        sessionMessageGetter: vi.fn(() => [
+          makeSessionMessage({
+            sequence: 1,
+            role: "user",
+            contentText: "要 promote Friday，在不同社交媒体上，中国和美国",
+          }),
+          makeSessionMessage({
+            sequence: 2,
+            role: "assistant",
+            contentText: "我可以帮你拆渠道。",
+          }),
+          makeSessionMessage({
+            sequence: 3,
+            role: "user",
+            contentText: "你还记得我上次最后写的是什么吗？",
+          }),
+        ]),
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "last_user_message" },
+          sessionKey: "test",
+          runId: "run-1",
+          task: "你还记得我上次最后写的是什么吗？",
+          currentUserSequence: 3,
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toBe("你上次问的是：要 promote Friday，在不同社交媒体上，中国和美国");
+      expect(result.response).not.toContain("**");
+    });
+  });
+
+  describe("unsafe_automation_boundary handler", () => {
+    it("refuses anti-detection scraping requests in Chinese without invoking the agent", async () => {
+      const deps = createMockDeps();
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "unsafe_automation_boundary" },
+          sessionKey: "test",
+          runId: "run-1",
+          task: "你可以自己写一个skills去爬小红书的内容吗？不被发现和不被ban的。",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("不能帮你写");
+      expect(result.response).toContain("合规版本");
+      expect(result.response).not.toContain("Still working");
     });
   });
 

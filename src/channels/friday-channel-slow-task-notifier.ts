@@ -20,6 +20,8 @@ export interface FridayChannelSlowTaskNotifierOptions {
   runId: string;
   publicRunUrl?: string;
   sourceText?: string;
+  initialDelayMs?: number;
+  heartbeatIntervalMs?: number;
   nowMs?: () => number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -52,6 +54,12 @@ function formatDurationZh(valueMs: number): string {
 
 function containsChinese(text: string | undefined): boolean {
   return typeof text === "string" && /[\u4e00-\u9fff]/u.test(text);
+}
+
+function normalizeDelay(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : fallback;
 }
 
 function localizePhaseZh(phase: string): string {
@@ -97,37 +105,31 @@ function buildSlowTaskMessage(input: {
   sourceText?: string;
 }): string {
   if (containsChinese(input.sourceText)) {
+    const current = input.snapshot.activeTool
+      ? `${localizePhaseZh(input.snapshot.phase)}（${input.snapshot.activeTool}）`
+      : localizePhaseZh(input.snapshot.phase);
     const etaText = typeof input.snapshot.eta === "number"
-      ? `最多 ${formatDurationZh(input.snapshot.eta)}（${localizeConfidenceZh(input.snapshot.etaConfidence)}）`
-      : "暂时无法估算";
-    const linkLine = input.publicRunUrl
-      ? `查看实时进度：${input.publicRunUrl}`
-      : `追踪 runId：${input.runId}`;
+      ? `预计还需要最多 ${formatDurationZh(input.snapshot.eta)}（${localizeConfidenceZh(input.snapshot.etaConfidence)}）。`
+      : "完成后会直接发结果。";
 
     return [
-      `还在处理你的请求，已运行 ${formatDurationZh(input.snapshot.elapsedMs)}。`,
-      `阶段：${localizePhaseZh(input.snapshot.phase)}`,
-      `当前工具：${input.snapshot.activeTool ?? "无"}`,
-      `子任务：${String(input.snapshot.subagentCount)}`,
-      `预计时间：${etaText}`,
-      linkLine,
-    ].join("\n");
+      `我还在处理，已运行 ${formatDurationZh(input.snapshot.elapsedMs)}。`,
+      `当前：${current}。${input.snapshot.subagentCount > 0 ? `子任务 ${String(input.snapshot.subagentCount)} 个。` : ""}`,
+      etaText,
+    ].filter((line) => line.trim().length > 0).join("\n");
   }
 
+  const current = input.snapshot.activeTool
+    ? `${input.snapshot.phase} (${input.snapshot.activeTool})`
+    : input.snapshot.phase;
   const etaText = typeof input.snapshot.eta === "number"
-    ? `up to ${formatDuration(input.snapshot.eta)} (${input.snapshot.etaConfidence ?? "low"} confidence)`
-    : "ETA unavailable";
-  const linkLine = input.publicRunUrl
-    ? `Watch live: ${input.publicRunUrl}`
-    : `Track with runId: ${input.runId}`;
+    ? `Estimated remaining time is up to ${formatDuration(input.snapshot.eta)} (${input.snapshot.etaConfidence ?? "low"} confidence).`
+    : "I will send the result when it finishes.";
 
   return [
-    `Still working on your request after ${formatDuration(input.snapshot.elapsedMs)}.`,
-    `Phase: ${input.snapshot.phase}`,
-    `Active tool: ${input.snapshot.activeTool ?? "none"}`,
-    `Subagents: ${String(input.snapshot.subagentCount)}`,
-    `ETA: ${etaText}`,
-    linkLine,
+    `Still working, elapsed ${formatDuration(input.snapshot.elapsedMs)}.`,
+    `Current: ${current}.${input.snapshot.subagentCount > 0 ? ` Subtasks: ${String(input.snapshot.subagentCount)}.` : ""}`,
+    etaText,
   ].join("\n");
 }
 
@@ -138,6 +140,8 @@ export function createFridayChannelSlowTaskNotifier(
   const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
   const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
   const startedAtMs = nowMs();
+  const initialDelayMs = normalizeDelay(options.initialDelayMs, 0);
+  const heartbeatIntervalMs = normalizeDelay(options.heartbeatIntervalMs, 0);
 
   let snapshot: FridaySlowTaskSnapshot = {
     elapsedMs: 0,
@@ -171,23 +175,25 @@ export function createFridayChannelSlowTaskNotifier(
   };
 
   const scheduleHeartbeat = (): void => {
-    if (stopped) return;
+    if (stopped || heartbeatIntervalMs <= 0) return;
     heartbeatTimer = setTimeoutFn(() => {
       void sendUpdate()
         .catch(() => undefined)
         .finally(() => {
           scheduleHeartbeat();
         });
-    }, 60_000);
+    }, heartbeatIntervalMs);
   };
 
-  initialTimer = setTimeoutFn(() => {
-    void sendUpdate()
-      .catch(() => undefined)
-      .finally(() => {
-        scheduleHeartbeat();
-      });
-  }, 30_000);
+  if (initialDelayMs > 0) {
+    initialTimer = setTimeoutFn(() => {
+      void sendUpdate()
+        .catch(() => undefined)
+        .finally(() => {
+          scheduleHeartbeat();
+        });
+    }, initialDelayMs);
+  }
 
   const onProgress = (payload: FridayAgentEventMap["agent.run.progress"]): void => {
     if (payload.runId !== options.runId) return;

@@ -80,6 +80,8 @@ const UNSAFE_SKILL_GENERATION_GOAL_PATTERNS: readonly RegExp[] = [
   /\b(?:build|create|generate|write|develop|make|install|load)\b[\s\S]{0,160}\b(?:kernel\s+(?:module|extension)|kext)\b[\s\S]{0,160}\b(?:bypass(?:es|ing)?|disabl(?:e|es|ing)|circumvent(?:s|ing)?|evad(?:e|es|ing))\b[\s\S]{0,80}\b(?:system\s+integrity\s+protection|sip|security)\b/i,
   /\b(?:bypass(?:es|ing)?|disabl(?:e|es|ing)|circumvent(?:s|ing)?|evad(?:e|es|ing))\b[\s\S]{0,80}\b(?:system\s+integrity\s+protection|sip)\b[\s\S]{0,160}\b(?:kernel\s+(?:module|extension)|kext|skill|tool)\b/i,
   /\b(?:build|create|generate|write|develop|make)\b[\s\S]{0,120}\b(?:rootkit|keylogger|credential\s+(?:theft|harvest(?:er|ing)?)|steal(?:s|ing)?\s+(?:tokens|credentials|passwords|secrets)|exfiltrat(?:e|es|ing|ion)\s+(?:tokens|credentials|passwords|secrets)|privilege\s+escalation|disabl(?:e|es|ing)\s+(?:antivirus|edr|security))\b/i,
+  /\b(?:build|create|generate|write|develop|make)\b[\s\S]{0,160}\b(?:scrap(?:e|ing)|crawl(?:er|ing)?|bot|automation|skill|tool)\b[\s\S]{0,160}\b(?:avoid detection|undetected|not (?:be )?detected|avoid (?:a )?ban|not (?:get )?banned|bypass(?:ing)? (?:anti[- ]?bot|rate limits?|captcha)|evad(?:e|ing))\b/i,
+  /(?:生成|创建|写|开发|制作)[\s\S]{0,120}(?:爬|抓取|采集|自动化|脚本|skill|技能)[\s\S]{0,120}(?:不被发现|不被检测|不被封|不会被\s*ban|防封|绕过|规避|反爬)/iu,
 ];
 
 function assertSafeSkillGenerationGoal(goal: string): void {

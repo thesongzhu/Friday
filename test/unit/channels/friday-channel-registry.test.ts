@@ -628,7 +628,42 @@ describe("FridayChannelRegistry", () => {
     });
   });
 
-  describe("signalTyping", () => {
+  describe("outbound adapter helpers", () => {
+    it("calls outbound update adapter when available", async () => {
+      const update = vi.fn(async () => ({ messageId: "edited-1" }));
+      const plugin: FridayChannelPlugin = {
+        kind: "feishu",
+        init: vi.fn(async () => {}),
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+        send: vi.fn(async () => ({ messageId: "sent-1" })),
+        adapters: {
+          outbound: {
+            send: vi.fn(async () => ({ messageId: "sent-1" })),
+            update,
+          },
+        },
+      };
+
+      registry.register(plugin);
+      await registry.startAll(() => {});
+      await expect(
+        registry.update("feishu", "om_progress_1", { chatId: "chat-1", text: "done" }),
+      ).resolves.toEqual({ messageId: "edited-1" });
+
+      expect(update).toHaveBeenCalledWith("om_progress_1", { chatId: "chat-1", text: "done" });
+    });
+
+    it("throws when a running channel has no update adapter", async () => {
+      const plugin = createMockPlugin("qq");
+      registry.register(plugin);
+      await registry.startAll(() => {});
+
+      await expect(
+        registry.update("qq", "msg-1", { chatId: "chat-1", text: "done" }),
+      ).rejects.toThrow('Channel kind "qq" does not support updating sent messages');
+    });
+
     it("calls outbound typing adapter when available", async () => {
       const typing = vi.fn(async () => {});
       const plugin: FridayChannelPlugin = {

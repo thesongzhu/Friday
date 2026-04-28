@@ -144,11 +144,11 @@ export interface CreateFridayEngineRunExecutorDeps {
 
   // Dispatch functions injected for testability
   dispatchDeterministic: (
-    input: { classification: FridayExecutionClassification; task?: string; sessionKey?: string; runId?: string; actorId?: string },
+    input: { classification: FridayExecutionClassification; task?: string; sessionKey?: string; runId?: string; actorId?: string; currentUserSequence?: number },
     deps: Record<string, unknown>,
   ) => Promise<FridayEngineDeterministicDispatchResult>;
   dispatchManagedAsync: (
-    input: { classification: FridayExecutionClassification },
+    input: { classification: FridayExecutionClassification; task?: string },
     deps: Record<string, unknown>,
   ) => Promise<FridayEngineManagedAsyncDispatchResult>;
   finalizeFocus: (input: FridayFinalizeFocusInput) => FridaySessionConversationFocusState;
@@ -320,6 +320,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
           sessionKey: input.sessionKey,
           runId: input.runId,
           actorId: input.principalId,
+          currentUserSequence: prepared.currentUserSequence,
         },
         deterministicDispatchDeps,
       );
@@ -331,7 +332,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
     // ── 2. Managed async dispatch ──
     if (prepared.executionClassification.category === "managed_async") {
       const result = await dispatchManagedAsync(
-        { classification: prepared.executionClassification },
+        { classification: prepared.executionClassification, task },
         managedAsyncDispatchDeps,
       );
       if (result.handled && result.response) {

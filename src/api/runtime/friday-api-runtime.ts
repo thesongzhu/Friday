@@ -2354,6 +2354,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Alignment invariant: the engine's turn preparer loads loadSessionHistoryMessages(sessionKey)
   // and injects historyMessages, into agentRuntime.executeRun() internally.
   const apiDispatchDeps: FridayDeterministicDispatchDeps = {
+    sessionMessageGetter: (key: string, limit?: number) => sessionService.getMessages(key, limit),
     capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
     taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter,
     getDaemonStatus: deps.daemonStatusGetter,

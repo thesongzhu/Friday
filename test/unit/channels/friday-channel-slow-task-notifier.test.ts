@@ -25,7 +25,38 @@ describe("FridayChannelSlowTaskNotifier", () => {
     vi.useRealTimers();
   });
 
-  it("sends the first slow-task update after 30 seconds", async () => {
+  it("does not send slow-task updates by default", async () => {
+    const registry = createFridayChannelRegistry();
+    const plugin = createMockPlugin();
+    registry.register(plugin);
+    await registry.startAll(() => {});
+
+    const emitter = createFridayAgentEventEmitter();
+    createFridayChannelSlowTaskNotifier({
+      eventEmitter: emitter,
+      channelRegistry: registry,
+      channelKind: "discord",
+      chatId: "chat-1",
+      runId: "run-default",
+    });
+
+    emitter.emit("agent.run.progress", {
+      runId: "run-default",
+      phase: "executing",
+      elapsedMs: 121_000,
+      activeTool: "browser",
+      subagentCount: 1,
+      latestSubagentId: "sub-1",
+      activeSubagentIds: ["sub-1"],
+      etaConfidence: "unavailable",
+    });
+
+    await vi.advanceTimersByTimeAsync(180_000);
+
+    expect(plugin.send).not.toHaveBeenCalled();
+  });
+
+  it("sends the first slow-task update after the configured delay", async () => {
     const registry = createFridayChannelRegistry();
     const plugin = createMockPlugin();
     registry.register(plugin);
@@ -39,6 +70,7 @@ describe("FridayChannelSlowTaskNotifier", () => {
       chatId: "chat-1",
       runId: "run-1",
       publicRunUrl: "https://friday.example.com/command-center?runId=run-1",
+      initialDelayMs: 30_000,
     });
 
     emitter.emit("agent.run.progress", {
@@ -58,13 +90,10 @@ describe("FridayChannelSlowTaskNotifier", () => {
     expect(plugin.send).toHaveBeenCalledTimes(1);
     expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
       chatId: "chat-1",
-      text: expect.stringContaining("Still working on your request after"),
+      text: expect.stringContaining("Still working, elapsed"),
     }));
     expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("Active tool: browser"),
-    }));
-    expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("Watch live: https://friday.example.com/command-center?runId=run-1"),
+      text: expect.stringContaining("Current: executing (browser)"),
     }));
   });
 
@@ -81,6 +110,7 @@ describe("FridayChannelSlowTaskNotifier", () => {
       channelKind: "discord",
       chatId: "chat-1",
       runId: "run-2",
+      initialDelayMs: 30_000,
     });
 
     emitter.emit("agent.run.progress", {
@@ -106,7 +136,7 @@ describe("FridayChannelSlowTaskNotifier", () => {
 
     expect(plugin.send).toHaveBeenCalledTimes(2);
     expect(plugin.send).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("Phase: testing"),
+      text: expect.stringContaining("Current: testing"),
     }));
   });
 
@@ -124,6 +154,7 @@ describe("FridayChannelSlowTaskNotifier", () => {
       chatId: "chat-1",
       runId: "run-zh",
       sourceText: "帮我查一下这个问题",
+      initialDelayMs: 30_000,
     });
 
     emitter.emit("agent.run.progress", {
@@ -138,10 +169,10 @@ describe("FridayChannelSlowTaskNotifier", () => {
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("还在处理你的请求"),
+      text: expect.stringContaining("我还在处理"),
     }));
     expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("阶段：执行中"),
+      text: expect.stringContaining("当前：执行中"),
     }));
     expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
       text: expect.not.stringContaining("Still working"),
@@ -161,6 +192,7 @@ describe("FridayChannelSlowTaskNotifier", () => {
       channelKind: "discord",
       chatId: "chat-1",
       runId: "run-3",
+      initialDelayMs: 30_000,
     });
 
     emitter.emit("agent.run.progress", {

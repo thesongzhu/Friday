@@ -98,6 +98,7 @@ export function ChannelsPage() {
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isOutboundSending, setIsOutboundSending] = useState(false);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Persona panel state
@@ -115,8 +116,38 @@ export function ChannelsPage() {
 
   useEffect(() => {
     const sessionKey = searchParams.get("sessionKey");
-    setSelectedSessionKey(sessionKey);
-  }, [searchParams]);
+    if (sessionKey) {
+      setSelectedSessionKey(sessionKey);
+      return;
+    }
+
+    const channelParam = searchParams.get("channel")?.trim();
+    const chatIdParam = searchParams.get("chatId")?.trim();
+    if (channelParam) {
+      setFilterChannel(channelParam);
+    }
+    if (!channelParam && !chatIdParam) {
+      setSelectedSessionKey(null);
+      return;
+    }
+
+    const matchedSession = sessions.find((session) => {
+      const matchesChannel = !channelParam || getSessionChannelKind(session) === channelParam;
+      const matchesChat = !chatIdParam || session.chatId === chatIdParam;
+      return matchesChannel && matchesChat;
+    });
+    if (!matchedSession) {
+      setSelectedSessionKey(null);
+      return;
+    }
+
+    setSelectedSessionKey(matchedSession.key);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("sessionKey", matchedSession.key);
+      return next;
+    }, { replace: true });
+  }, [searchParams, sessions, setSearchParams]);
 
   // Streaming response for current reply
   const runEvents = useAgentRunEvents(currentRunId, {
@@ -130,10 +161,23 @@ export function ChannelsPage() {
 
   const isStreaming = runEvents.connectionState === "streaming" || runEvents.connectionState === "connecting";
 
-  // Auto-scroll when new messages or streaming text arrives
+  const scrollMessagesToBottom = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+      const scrollEl = messagesScrollRef.current;
+      if (scrollEl) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
+    });
+  }, []);
+  const latestMessageId = messages.at(-1)?.id;
+
+  // Auto-scroll when new messages, streaming text, or selected thread changes.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, runEvents.outputText]);
+    scrollMessagesToBottom();
+    const timeout = window.setTimeout(scrollMessagesToBottom, 50);
+    return () => window.clearTimeout(timeout);
+  }, [latestMessageId, messages.length, runEvents.outputText, scrollMessagesToBottom, selectedSessionKey]);
 
   // Clear reply state when switching sessions
   useEffect(() => {
@@ -571,7 +615,7 @@ export function ChannelsPage() {
               </div>
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-5 py-4">
+              <div ref={messagesScrollRef} className="flex-1 overflow-y-auto px-5 py-4">
                 {messages.length === 0 && !isStreaming ? (
                   <p className="text-center text-sm text-[color:var(--color-text-tertiary)]">
                     {localize(locale, "暂无消息", "No messages yet")}

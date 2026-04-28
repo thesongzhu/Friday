@@ -75,6 +75,12 @@ export interface FridayChannelOutboundAdapter {
   send(options: FridayChannelSendOptions): Promise<{ messageId: string }>;
 
   /**
+   * Optionally update a message previously sent by this bot.
+   * Channels that do not support message editing can omit it.
+   */
+  update?(messageId: string, options: FridayChannelSendOptions): Promise<{ messageId: string }>;
+
+  /**
    * Optionally signal "typing..." (or equivalent) to a chat.
    * Channels that do not support this can omit it.
    */

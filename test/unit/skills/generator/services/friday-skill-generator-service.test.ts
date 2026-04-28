@@ -474,6 +474,18 @@ describe("FridaySkillGeneratorService", () => {
       });
     });
 
+    it("rejects anti-detection scraping skill goals before generation starts", async () => {
+      await expect(
+        service.startSession({
+          goal: "生成一个 skill 去爬小红书内容，要求不被发现、不被 ban。",
+          userId: "user-1",
+          channel: "discord",
+        }),
+      ).rejects.toMatchObject({
+        code: "SKILL_GENERATOR_UNSAFE_GOAL",
+      });
+    });
+
     it("creates a session and returns clarification when needed", async () => {
       const analyzerResponse = {
         state: "needs_clarification",

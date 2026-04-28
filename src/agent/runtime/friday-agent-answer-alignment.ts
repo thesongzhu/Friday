@@ -48,6 +48,20 @@ function normalizeText(text: string): string {
   return text.trim().replace(/\s+/g, " ");
 }
 
+function hasCjkText(text: string): boolean {
+  return /[\u4e00-\u9fff]/u.test(text);
+}
+
+function explicitlyRequestsEnglish(task: string): boolean {
+  return /\b(?:in english|answer in english|reply in english|translate (?:it )?to english)\b/i.test(task)
+    || /(?:用英文|英文回答|回复英文|翻译成英文)/u.test(task);
+}
+
+function isMostlyNonNaturalLanguage(responseText: string): boolean {
+  return /```/.test(responseText)
+    || /^[\s\p{P}\p{S}A-Z0-9_.:/-]+$/u.test(responseText);
+}
+
 function tokenize(text: string): string[] {
   const expandToken = (token: string): string[] => {
     if (/^[\u4e00-\u9fff]+$/u.test(token)) {
@@ -311,6 +325,21 @@ export function evaluateFridayAnswerAlignment(params: {
   const hasAssistantFactAnchor = hasAnchoredAssistantFact(params.conversationContext);
   const anchorBlocks = (params.conversationContext?.selectedBlocks ?? [])
     .filter((block) => block.source === "reply_anchor" || block.source === "assistant_anchor");
+
+  if (
+    hasCjkText(params.task)
+    && !hasCjkText(responseText)
+    && !explicitlyRequestsEnglish(params.task)
+    && !isMostlyNonNaturalLanguage(responseText)
+  ) {
+    return {
+      retryPrompt: [
+        "The latest user message is in Chinese, but your answer was not.",
+        `Current user message: ${params.task}`,
+        "Rewrite the answer in concise Chinese. Keep the same facts and do not add new claims.",
+      ].join("\n"),
+    };
+  }
 
   if (turnKind === "status_check") {
     const hasStatusLanguage = STATUS_TERMS.test(responseText) || CHINESE_STATUS_TERMS.test(responseText);

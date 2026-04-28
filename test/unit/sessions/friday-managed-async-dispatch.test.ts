@@ -77,6 +77,25 @@ describe("dispatchManagedAsync", () => {
     expect(result.response).toContain("retry");
   });
 
+  it("localizes missing run id prompts for Chinese commands", async () => {
+    const result = await dispatchManagedAsync(
+      {
+        classification: {
+          category: "managed_async",
+          handler: "workflow_control",
+          extractedParams: { controlAction: "cancel" },
+        },
+        task: "取消",
+      },
+      createDeps(),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.response).toContain("请提供");
+    expect(result.response).toContain("取消");
+    expect(result.response).not.toContain("Please specify");
+  });
+
   it("cancels a workflow run through the execution service", async () => {
     const deps = createDeps();
 

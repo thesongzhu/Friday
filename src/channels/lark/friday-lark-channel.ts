@@ -793,6 +793,9 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     async send(options: FridayChannelSendOptions): Promise<{ messageId: string }> {
       return plugin.send(options);
     },
+    async update(messageId: string, options: FridayChannelSendOptions): Promise<{ messageId: string }> {
+      return updateSentMessage(messageId, options);
+    },
   };
 
   const statusAdapter: FridayChannelStatusAdapter = {
@@ -979,6 +982,48 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       return { messageId: result.data?.message_id ?? "" };
     },
   };
+
+  async function updateSentMessage(
+    messageId: string,
+    options: FridayChannelSendOptions,
+  ): Promise<{ messageId: string }> {
+    const accessToken = await ensureToken();
+    const { text, approval } = options;
+    const body: Record<string, unknown> = {
+      msg_type: approval ? "interactive" : "text",
+      content: approval
+        ? JSON.stringify(buildApprovalCard(approval))
+        : JSON.stringify({ text }),
+    };
+
+    const response = await fetch(
+      `${apiBase()}${MESSAGE_RESOURCE_PATH}/${encodeURIComponent(messageId)}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new FridayDomainError("INTERNAL_ERROR", `Lark update failed: ${response.status} ${errorText}`, { httpStatus: 500 });
+    }
+
+    const result = (await response.json()) as {
+      code: number;
+      data?: { message_id?: string };
+    };
+
+    if (result.code !== 0) {
+      throw new FridayDomainError("INTERNAL_ERROR", `Lark update error: code ${result.code}`, { httpStatus: 500 });
+    }
+
+    return { messageId: result.data?.message_id ?? messageId };
+  }
 
   return plugin;
 }

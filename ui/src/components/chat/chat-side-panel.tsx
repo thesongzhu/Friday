@@ -49,6 +49,7 @@ export function ChatSidePanel() {
     runEvents,
     sendMessage,
     isStreaming,
+    queuedMessageCount,
     clearHistory,
     startNewConversation,
   } = useChatSession({});
@@ -126,13 +127,13 @@ export function ChatSidePanel() {
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed) return;
     void sendMessage(trimmed);
     setText("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, isStreaming, sendMessage]);
+  }, [text, sendMessage]);
 
   const handleRetry = useCallback((assistantMsgId: string) => {
     const idx = messages.findIndex((m) => m.id === assistantMsgId);
@@ -314,17 +315,16 @@ export function ChatSidePanel() {
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             placeholder={localize(locale, "告诉 Friday 你要完成什么…", "Tell Friday what you want to do...")}
-            disabled={isStreaming}
             rows={1}
-            className="min-h-[24px] max-h-[120px] flex-1 resize-none bg-transparent text-sm leading-relaxed text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:outline-none disabled:opacity-50"
+            className="min-h-[24px] max-h-[120px] flex-1 resize-none bg-transparent text-sm leading-relaxed text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:outline-none"
           />
           <button
             type="button"
             onClick={handleSend}
-            disabled={isStreaming || text.trim().length === 0}
+            disabled={text.trim().length === 0}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
-              text.trim().length > 0 && !isStreaming
+              text.trim().length > 0
                 ? "bg-[color:var(--color-accent)] text-[color:var(--color-bg-base)] hover:opacity-90"
                 : "bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-faint)]",
             )}
@@ -335,7 +335,9 @@ export function ChatSidePanel() {
         <div className="mt-1.5 flex items-center gap-1.5 px-1">
           <span className="h-[5px] w-[5px] rounded-full bg-emerald-400" />
           <span className="text-[10px] text-[color:var(--color-text-faint)]">
-            {localize(locale, "Friday 已加载记忆和上下文 · 单会话", "Memory & context loaded · Single session")}
+            {queuedMessageCount > 0
+              ? localize(locale, `已排队 ${queuedMessageCount} 条`, `${queuedMessageCount} queued`)
+              : localize(locale, "Friday 已加载记忆和上下文 · 单会话", "Memory & context loaded · Single session")}
           </span>
         </div>
       </div>

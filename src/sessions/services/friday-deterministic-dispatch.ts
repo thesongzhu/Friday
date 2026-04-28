@@ -16,6 +16,7 @@ import type { FridaySetupRecipe, FridaySetupRecipeRegistry } from "../../setup/f
 import type { FridayWorkflowApprovalService } from "../../workflows/services/friday-workflow-approval-service.types.js";
 import type { FridayWorkflowExecutionService, FridayWorkflowRunEntity } from "#workflows";
 import type { FridayExecutionClassification } from "./friday-execution-classifier.js";
+import type { FridaySessionMessageRecord } from "../model/friday-session.types.js";
 
 // ─── Types ───
 
@@ -25,6 +26,11 @@ export interface FridayDeterministicDispatchResult {
 }
 
 export interface FridayDeterministicDispatchDeps {
+  readonly sessionMessageGetter?: (
+    key: string,
+    limit?: number,
+  ) => Promise<FridaySessionMessageRecord[]> | FridaySessionMessageRecord[];
+
   readonly capabilitySnapshotGetter?: (input: {
     readOnly: boolean;
   }) => Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;
@@ -49,6 +55,7 @@ export interface DispatchDeterministicInput {
   readonly sessionKey?: string;
   readonly runId?: string;
   readonly actorId?: string;
+  readonly currentUserSequence?: number;
 }
 
 // ─── Dispatch ───
@@ -61,7 +68,7 @@ export async function dispatchDeterministic(
 
   switch (handler) {
     case "capabilities":
-      return handleCapabilities(deps);
+      return handleCapabilities(input, deps);
 
     case "task_status":
       return handleTaskStatus(input, deps);
@@ -81,6 +88,12 @@ export async function dispatchDeterministic(
     case "setup_guidance":
       return handleSetupGuidance(input, deps);
 
+    case "last_user_message":
+      return handleLastUserMessage(input, deps);
+
+    case "unsafe_automation_boundary":
+      return handleUnsafeAutomationBoundary(input);
+
     default:
       return { handled: false };
   }
@@ -89,6 +102,7 @@ export async function dispatchDeterministic(
 // ─── Handlers ───
 
 async function handleCapabilities(
+  input: DispatchDeterministicInput,
   deps: FridayDeterministicDispatchDeps,
 ): Promise<FridayDeterministicDispatchResult> {
   if (!deps.capabilitySnapshotGetter) {
@@ -96,6 +110,45 @@ async function handleCapabilities(
   }
   try {
     const snap = await deps.capabilitySnapshotGetter({ readOnly: false });
+    const isChinese = containsChinese(input.task ?? "");
+    if (isChinese) {
+      const lines: string[] = ["当前能力："];
+
+      lines.push(`  只读模式：${snap.readOnly ? "是" : "否"}`);
+      lines.push(`  消息渠道：${snap.messaging.enabled ? `已启用（${snap.messaging.kinds.join("、")}）` : "未启用"}`);
+      lines.push(`  MCP：${snap.mcp.enabled ? `已启用（${String(snap.mcp.serverCount)} 个 server）` : "未启用"}`);
+      if (snap.mcp.servers.length > 0) {
+        lines.push(
+          `  MCP servers：${snap.mcp.servers
+            .map((server) => `${server.name}（${server.connected ? "已连接" : "未连接"}，${server.authenticated ? "已认证" : "未认证"}）`)
+            .join("；")}`,
+        );
+      }
+      lines.push(`  Provider：${snap.provider.available ? `可用（已配置 ${String(snap.provider.configuredCount)} 个）` : "不可用"}`);
+      if (snap.runtime) {
+        lines.push(
+          `  已验证能力：${String(snap.runtime.summary.available)} 个可用，${String(snap.runtime.summary.needsVerification)} 个需要验证，${String(snap.runtime.summary.needsUserAction)} 个需要你配置，${String(snap.runtime.summary.installable)} 个可在批准后安装或生成。`,
+        );
+        for (const item of snap.runtime.items) {
+          const sourceSummary = item.sources.length > 0
+            ? item.sources.slice(0, 2).map((source) => source.label).join("；")
+            : item.blockers[0] ?? "没有来源";
+          const repair = item.repairOptions[0];
+          const repairSummary = repair
+            ? `；修复：${repair.label}${repair.setupHref ? `，入口 ${repair.setupHref}` : repair.href ? `，入口 ${repair.href}` : ""}`
+            : "";
+          lines.push(`  - ${item.capability}: ${item.state}（${sourceSummary}${repairSummary}）`);
+        }
+      }
+      if (snap.browser.activeMode) {
+        lines.push(`  浏览器：${snap.browser.activeMode}${snap.browser.targetBrowser ? `（${snap.browser.targetBrowser}）` : ""}`);
+      }
+      lines.push(`  系统编排：${snap.system.enabled ? "已启用" : "未启用"}`);
+      lines.push(`  桌面 companion：${snap.desktop.connected ? "已连接" : "未连接"}`);
+
+      return { handled: true, response: lines.join("\n") };
+    }
+
     const lines: string[] = ["Current capabilities:"];
 
     lines.push(`  Read-only mode: ${snap.readOnly ? "yes" : "no"}`);
@@ -152,31 +205,38 @@ async function handleTaskStatus(
     });
 
     const lines: string[] = [];
+    const isChinese = containsChinese(input.task ?? "");
 
     if (snap.terminalOutcome) {
-      lines.push(`Task ${snap.terminalOutcome.status}${snap.terminalOutcome.summary ? `: ${snap.terminalOutcome.summary}` : ""}`);
+      lines.push(isChinese
+        ? `任务${localizeStatusZh(snap.terminalOutcome.status)}${snap.terminalOutcome.summary ? `：${snap.terminalOutcome.summary}` : ""}`
+        : `Task ${snap.terminalOutcome.status}${snap.terminalOutcome.summary ? `: ${snap.terminalOutcome.summary}` : ""}`);
       if (snap.terminalOutcome.responseText) {
         lines.push(snap.terminalOutcome.responseText);
       }
     } else if (snap.runStatus) {
-      lines.push(`Task status: ${snap.runStatus}${snap.phase ? ` (${snap.phase})` : ""}`);
+      lines.push(isChinese
+        ? `任务状态：${localizeStatusZh(snap.runStatus)}${snap.phase ? `（${localizeStatusZh(snap.phase)}）` : ""}`
+        : `Task status: ${snap.runStatus}${snap.phase ? ` (${snap.phase})` : ""}`);
       if (snap.task) {
-        lines.push(`Task: ${snap.task}`);
+        lines.push(isChinese ? `任务：${snap.task}` : `Task: ${snap.task}`);
       }
       if (snap.latestTool) {
-        lines.push(`Latest tool: ${snap.latestTool}`);
+        lines.push(isChinese ? `最近工具：${snap.latestTool}` : `Latest tool: ${snap.latestTool}`);
       }
       if (typeof snap.elapsedMs === "number") {
-        lines.push(`Elapsed: ${String(Math.round(snap.elapsedMs / 1000))}s`);
+        lines.push(isChinese
+          ? `已运行：${formatDurationZh(snap.elapsedMs)}`
+          : `Elapsed: ${String(Math.round(snap.elapsedMs / 1000))}s`);
       }
       if (snap.blockers.length > 0) {
-        lines.push(`Blockers: ${snap.blockers.join(", ")}`);
+        lines.push(isChinese ? `阻塞项：${snap.blockers.join("、")}` : `Blockers: ${snap.blockers.join(", ")}`);
       }
       if (snap.activeSubagents.length > 0) {
-        lines.push(`Active subagents: ${String(snap.activeSubagents.length)}`);
+        lines.push(isChinese ? `活跃子任务：${String(snap.activeSubagents.length)}` : `Active subagents: ${String(snap.activeSubagents.length)}`);
       }
     } else {
-      lines.push("No active task at this time.");
+      lines.push(isChinese ? "当前没有正在运行的任务。" : "No active task at this time.");
     }
 
     return { handled: true, response: lines.join("\n") };
@@ -184,6 +244,67 @@ async function handleTaskStatus(
     console.warn("[friday][deterministic-dispatch] task status failed:", err instanceof Error ? err.message : String(err));
     return { handled: false };
   }
+}
+
+async function handleLastUserMessage(
+  input: DispatchDeterministicInput,
+  deps: FridayDeterministicDispatchDeps,
+): Promise<FridayDeterministicDispatchResult> {
+  const isChinese = containsChinese(input.task ?? "");
+  if (!input.sessionKey || !deps.sessionMessageGetter) {
+    return {
+      handled: true,
+      response: isChinese
+        ? "我现在拿不到这个会话的上一条消息。"
+        : "I cannot access the previous message for this session right now.",
+    };
+  }
+
+  const records = await Promise.resolve(deps.sessionMessageGetter(input.sessionKey, 50));
+  const previousUserMessage = [...records]
+    .filter((record) =>
+      record.role === "user"
+      && record.contentText.trim().length > 0
+      && (
+        typeof input.currentUserSequence !== "number"
+        || record.sequence < input.currentUserSequence
+      ))
+    .reverse()[0];
+
+  if (!previousUserMessage) {
+    return {
+      handled: true,
+      response: isChinese
+        ? "我没找到你上一条消息。"
+        : "I could not find your previous message.",
+    };
+  }
+
+  const content = previousUserMessage.contentText.trim();
+  return {
+    handled: true,
+    response: isChinese
+      ? `你上次问的是：${content}`
+      : `You last wrote: ${content}`,
+  };
+}
+
+function handleUnsafeAutomationBoundary(
+  input: DispatchDeterministicInput,
+): FridayDeterministicDispatchResult {
+  const isChinese = containsChinese(input.task ?? "");
+  return {
+    handled: true,
+    response: isChinese
+      ? [
+          "这部分我不能做：不能帮你写用于规避检测、防封、绕过反爬或降低被平台发现概率的爬取 skill。",
+          "可以做合规版本：基于官方接口、账号可导出的数据、你提供的链接/文件，或低频读取你有权访问的公开内容，并遵守平台规则。",
+        ].join("\n")
+      : [
+          "I cannot help build scraping automation designed to evade detection, avoid bans, bypass anti-bot systems, or reduce the chance of a platform noticing it.",
+          "I can help with a compliant version based on official APIs, account exports, user-provided links/files, or low-rate reads of content you are allowed to access under the platform rules.",
+        ].join("\n"),
+  };
 }
 
 function handleDaemonStatus(
@@ -276,6 +397,43 @@ function handleSetupGuidance(
 
 function containsChinese(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
+}
+
+function localizeStatusZh(status: string): string {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "running":
+    case "executing":
+      return "执行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "pending":
+      return "等待中";
+    case "planning":
+      return "规划中";
+    case "testing":
+      return "验证中";
+    case "fixing":
+      return "修复中";
+    default:
+      return status;
+  }
+}
+
+function formatDurationZh(valueMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(valueMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds} 秒`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分` : `${hours} 小时`;
 }
 
 function serviceLabel(service: string, locale: "zh" | "en" = "en"): string {
