@@ -875,6 +875,8 @@ Explicit triggers:
 
 - User says "guide me", "show me where", "walk me through this", or equivalent
   Chinese phrases such as "引导我", "告诉我点哪里", or "帮我看这个界面".
+- User takes or uploads a screenshot and asks a question, or sends a screenshot
+  without enough text context.
 - User clicks a "Guide me" button in Friday.
 - User chooses "Guide me here" from the companion menu bar.
 - User presses a configurable hotkey, suggested default `cmd+shift+g` on macOS.
@@ -942,6 +944,70 @@ Failure states:
 - `ambiguous_target`: several targets look plausible.
 - `sensitive_remote_blocked`: remote parsing is disabled for the current screen.
 - `user_cancelled`: user dismissed the bubble or disabled Guide Mode.
+
+## Screenshot Intake
+
+Screenshots are a first-class Guide Mode intake path. When the user captures,
+uploads, drags, pastes, or sends a screenshot to Friday, Friday should analyze
+both the image and the likely user intent before deciding whether to answer in
+chat, ask a question, or start Guide Mode.
+
+Default behavior:
+
+1. Detect screenshot input from chat attachments, channel attachments, paste,
+   drag-and-drop, or OS screenshot handoff when available.
+2. Run local image understanding first: OCR, visible UI element detection,
+   app/window cues, sensitive field redaction, and screenshot metadata if
+   available.
+3. Infer the user intent:
+   - "What is this?"
+   - "What should I click?"
+   - "Why is this error happening?"
+   - "Help me fill this in."
+   - "Continue this task from here."
+4. If the answer is explanatory, answer directly in the existing chat.
+5. If the screenshot implies a next UI action on the current desktop, offer or
+   start Guide Mode depending on trust and permissions.
+6. If intent is ambiguous, open a compact chatbox near the avatar bubble and ask
+   one short question.
+
+Screenshot-specific chatbox:
+
+- The chatbox is not always required.
+- Use it when Friday needs missing context, for example:
+  "What are you trying to finish on this screen?"
+- Do not ask if the screenshot and task are obvious, for example a visible error
+  dialog with a clear "Retry" button.
+- The chatbox should stay visually tied to the Guide Mode avatar, not become a
+  separate full chat app.
+- For channel screenshots, Friday can ask the clarifying question in the same
+  channel unless the answer requires local screen reading.
+
+Examples:
+
+```text
+User sends screenshot only.
+Friday: I see a provider setup page with an Allow access button. Do you want me
+to guide you through connecting it?
+```
+
+```text
+User sends screenshot: "what now?"
+Friday: Click the highlighted Allow access button. I can open Guide Mode on your
+Mac if you want me to follow the next page.
+```
+
+```text
+User sends screenshot of an error.
+Friday: This looks like a missing API key error. Open Settings -> Providers and
+paste the key there. I can guide you if you want.
+```
+
+Important privacy rule:
+
+Screenshots supplied by the user can be analyzed as task input, but they still
+follow the same privacy policy: local-first, redact sensitive fields, do not save
+long-term by default, and ask before remote vision/crop upload.
 
 ## Agent Runtime Behavior
 
@@ -1049,6 +1115,70 @@ User-visible settings:
 - Store screenshots for debugging for N hours.
 - Always ask before sending screen crops to a provider.
 
+## Implementation Risks And Defaults
+
+These risks should be handled as defaults, not left to later product decisions.
+
+1. Permission wording.
+   macOS permission prompts can make read-only guidance look like control. Friday
+   settings must explain that Guide Mode uses Accessibility to read button/text
+   positions and does not click or type.
+
+2. Screenshot privacy.
+   Screenshots and full-screen captures are not saved by default. Debug capture
+   requires an explicit setting and automatic expiry.
+
+3. Remote vision.
+   Remote vision is off by default. The first crop upload requires a user-visible
+   explanation. Password fields and nearby crops are blocked by default.
+
+4. Performance and battery.
+   Guide Mode should be event-driven, not constant high-frequency capture. It can
+   temporarily increase observation rate during active target search, navigation,
+   or scroll guidance, then return to idle.
+
+5. Scroll unreliability.
+   Some native apps do not expose scroll state. When direction is uncertain,
+   Friday should say "Scroll slowly; I will highlight it when I see it" instead
+   of pretending to know.
+
+6. Coordinate drift.
+   Retina scale, multiple displays, browser zoom, and window movement can shift
+   bounding boxes. The implementation must normalize coordinate systems and add
+   screenshot-pixel calibration tests.
+
+7. Overlay obstruction.
+   Avatar and speech bubble must auto-avoid the target. If avoidance fails, the
+   bubble collapses to the edge and leaves only the blue focus frame and a short
+   arrow.
+
+8. Navigation delay.
+   New pages and windows may load slowly. The bubble should immediately enter
+   `Opening` or `Checking`, then show "still loading" after a few seconds rather
+   than appearing stuck.
+
+9. User clicked the wrong thing.
+   Friday should not blame the user. It should re-observe and say "I do not see
+   the next step yet; I will mark it again."
+
+10. Multilingual UI.
+    The speech bubble follows the user's conversation language, but visible
+    target labels should preserve the page's exact text, for example "点击高亮的
+    `Allow access`".
+
+11. Channel safety.
+    Group chat or remote channel messages cannot silently start screen reading.
+    First use requires local confirmation and trusted channel/device binding.
+
+12. Audit records.
+    Audit logs record that Guide Mode read the screen, showed a target, and
+    verified a user step. They do not record sensitive field values or full
+    screenshots by default.
+
+13. Emergency escape.
+    `Esc`, the companion menu, and the bubble menu must provide pause/hide/stop.
+    A stuck overlay is a product safety issue.
+
 ## Friday Integration Points
 
 Current Friday already has relevant foundations:
@@ -1069,6 +1199,7 @@ Suggested new modules:
 
 ```text
 src/guide-lens/model/friday-guide-lens.types.ts
+src/guide-lens/engine/screenshot-intake.ts
 src/guide-lens/engine/ui-map-builder.ts
 src/guide-lens/engine/target-resolver.ts
 src/guide-lens/engine/parser-registry.ts
@@ -1086,6 +1217,7 @@ Suggested new API routes:
 ```text
 GET  /v1/guide-lens/state
 POST /v1/guide-lens/snapshot
+POST /v1/guide-lens/screenshot-intake
 POST /v1/guide-lens/resolve-target
 POST /v1/guide-lens/overlay
 POST /v1/guide-lens/verify
@@ -1097,6 +1229,8 @@ Suggested new events:
 
 ```text
 guide_lens.snapshot.captured
+guide_lens.screenshot.received
+guide_lens.screenshot.intent_inferred
 guide_lens.ui_map.built
 guide_lens.target.resolved
 guide_lens.overlay.shown
@@ -1119,6 +1253,8 @@ guide_lens.avatar.updated
   blocked/permission states.
 - Add macOS read-only Accessibility snapshot.
 - Add screen capture hashing and OCR hook.
+- Add screenshot intake from attachments/paste/drag-and-drop with intent
+  inference and optional compact chatbox.
 - Add `guide_lens` agent tool with read-only enforcement.
 - Add auto-verification plus "I did it" fallback.
 - Add tests for target resolution, redaction, overlay command rendering, and

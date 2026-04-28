@@ -4352,7 +4352,7 @@ export async function createFridayHub(
 
     const activationTimeoutMs = Math.max(
       1_000,
-      Number.parseInt(process.env.FRIDAY_SETUP_CHANNEL_ACTIVATION_TIMEOUT_MS ?? "15000", 10) || 15_000,
+      Number.parseInt(process.env.FRIDAY_SETUP_CHANNEL_ACTIVATION_TIMEOUT_MS ?? "5000", 10) || 5_000,
     );
     let activationTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const activationTimeout = new Promise<RuntimeChannelActivationResult>((resolve) => {
