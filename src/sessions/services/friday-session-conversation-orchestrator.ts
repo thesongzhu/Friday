@@ -27,6 +27,10 @@ const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendati
 const STATUS_CHECK_HINTS =
   /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|what(?:'s| is) (?:the )?(?:final )?result(?: now)?|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
 const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|那个任务结果呢|结果呢|还没好|ETA)/;
+const CANCELLATION_STATUS_CHECK_HINTS =
+  /\b(request (?:was )?(?:cancelled|canceled|aborted)|(?:cancelled|canceled|aborted) before completion|why (?:was|did|is).{0,80}(?:cancelled|canceled|aborted)|what happened.{0,80}(?:cancelled|canceled|aborted)|(?:run|task|request).{0,40}(?:cancelled|canceled|aborted))\b/i;
+const CHINESE_CANCELLATION_STATUS_CHECK_HINTS =
+  /(?:(?:为什么|为何).{0,40}(?:取消|中止|终止)|(?:请求|任务).{0,30}(?:取消|中止|终止)|(?:取消|中止|终止).{0,20}(?:完成前|之前))/;
 const CONTINUE_HINTS =
   /\b(continue|go ahead|proceed|keep going|do it|start it|carry on)\b/i;
 const CHINESE_CONTINUE_HINTS = /(继续|开始吧|继续做|接着做|往下做|执行吧)/;
@@ -192,6 +196,66 @@ function isExplicitLiteralResponseInstruction(task: string): boolean {
   const normalized = normalizeText(task);
   return EXPLICIT_LITERAL_RESPONSE_INSTRUCTION.test(normalized)
     || CHINESE_EXPLICIT_LITERAL_RESPONSE_INSTRUCTION.test(normalized);
+}
+
+function isCancellationStatusCheck(task: string): boolean {
+  const normalized = normalizeText(task);
+  return CANCELLATION_STATUS_CHECK_HINTS.test(normalized)
+    || CHINESE_CANCELLATION_STATUS_CHECK_HINTS.test(normalized);
+}
+
+function isShortChoiceReplyTask(task: string): boolean {
+  const normalized = normalizeText(task)
+    .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/gu, "")
+    .replace(/[。.!！?？]+$/u, "")
+    .trim();
+  if (normalized.length === 0 || normalized.length > 32) {
+    return false;
+  }
+  return (
+    /^(?:(?:option|plan)\s*)?[a-d](?:\s*(?:option|plan))?$/i.test(normalized)
+    || /^(?:方案\s*)?[a-d](?:\s*方案)?$/i.test(normalized)
+    || /^(?:#?\d{1,2}|[①②③④⑤⑥⑦⑧⑨])$/u.test(normalized)
+    || /^(?:我)?(?:选|选择|用|要|就)\s*(?:方案\s*)?(?:[a-d]|#?\d{1,2})(?:\s*方案)?吧?$/iu.test(normalized)
+    || /^(?:pick|choose|use|go with)\s+(?:(?:option|plan)\s*)?(?:[a-d]|#?\d{1,2})$/i.test(normalized)
+    || /^(?:第)?[一二三四五六七八九](?:个|项|种|套)?(?:方案)?$/u.test(normalized)
+    || /^(?:前者|后者)$/u.test(normalized)
+  );
+}
+
+function assistantAppearsToAskForChoice(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (normalized.length === 0) {
+    return false;
+  }
+  const hasTwoLetterOptions =
+    /\b(?:option|plan)\s*a\b[\s\S]{0,1400}\b(?:option|plan)\s*b\b/i.test(normalized)
+    || /\bA\s*[):.：、][\s\S]{0,1400}\bB\s*[):.：、]/.test(normalized)
+    || /方案\s*A[\s\S]{0,1400}方案\s*B/i.test(normalized);
+  const hasTwoNumberedOptions =
+    /(?:^|\s)(?:1|①)\s*[):.：、][\s\S]{0,1400}(?:^|\s)(?:2|②)\s*[):.：、]/u.test(normalized)
+    || /方案\s*(?:一|1|①)[\s\S]{0,1400}方案\s*(?:二|2|②)/u.test(normalized);
+  const asksForChoice =
+    /\b(?:which|prefer|choose|pick|select|option|plan)\b/i.test(normalized)
+    || /(?:选择|选|偏好|确认|哪个|哪一个|哪种|第几个|前者|后者|方案)/u.test(normalized);
+  const explicitChoiceQuestion =
+    /\b(?:which (?:one|option|plan)|which do you prefer|pick one|choose one)\b/i.test(normalized)
+    || /(?:你偏好哪个|你选哪个|选择哪个|确认哪个|选一个)/u.test(normalized);
+  return ((hasTwoLetterOptions || hasTwoNumberedOptions) && asksForChoice) || explicitChoiceQuestion;
+}
+
+function assistantAppearsToAskQuestion(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (normalized.length === 0) {
+    return false;
+  }
+  const tail = normalized.slice(-240);
+  return (
+    /[?？]/u.test(tail)
+    || assistantAppearsToAskForChoice(normalized)
+    || /\b(?:please confirm|please choose|please pick|please select|which do you prefer|could you|can you|please provide)\b/i.test(tail)
+    || /(?:请(?:确认|告诉|选择|提供)|你(?:偏好|选择|选|要|想要).{0,30}(?:哪个|哪一个|哪种|吗)|方便.{0,20}(?:继续|处理))/u.test(tail)
+  );
 }
 
 export interface FridayPreparedConversationTurn {
@@ -404,6 +468,13 @@ export function classifyFridayConversationTurn(input: {
   const hasUnresolvedReplyAnchor = Boolean(input.replyToMessageId?.trim()) && !hasReplyAnchor;
   const hasAssistantAnchor = Boolean(latestAssistant?.contentText || focusState?.assistantAnchorSummary);
   const shortTask = task.length > 0 && task.length <= 120;
+  const shortChoiceReply = isShortChoiceReplyTask(task);
+  const latestAssistantAsksForChoice = assistantAppearsToAskForChoice(
+    latestAssistant?.contentText ?? focusState?.assistantAnchorSummary ?? "",
+  );
+  const latestAssistantAskedQuestion =
+    Boolean(focusState?.lastAssistantAskedQuestion)
+    || assistantAppearsToAskQuestion(latestAssistant?.contentText ?? "");
   const advisoryContinuation =
     ADVISORY_CONTINUATION_HINTS.test(taskLower)
     && ADVISORY_CONTINUATION_HINTS.test(focusSummary.toLowerCase());
@@ -415,7 +486,7 @@ export function classifyFridayConversationTurn(input: {
   const assistantOverlapSignal = latestAssistantMeaningfulOverlap >= 1;
   const userOverlapSignal = latestUserMeaningfulOverlap >= 1;
 
-  if (STATUS_CHECK_HINTS.test(taskLower) || CHINESE_STATUS_CHECK_HINTS.test(task)) {
+  if (STATUS_CHECK_HINTS.test(taskLower) || CHINESE_STATUS_CHECK_HINTS.test(task) || isCancellationStatusCheck(task)) {
     return "status_check";
   }
   if (CONTINUE_HINTS.test(taskLower) || CHINESE_CONTINUE_HINTS.test(task)) {
@@ -433,6 +504,9 @@ export function classifyFridayConversationTurn(input: {
   if (latestUser && isBareNudgeTask(task)) {
     return "follow_up";
   }
+  if (shortChoiceReply && latestAssistantAsksForChoice) {
+    return "clarification";
+  }
   if (hasFocus && hasAssistantAnchor && isShortOperationalTroubleshootingFollowUpTask(task)) {
     return "follow_up";
   }
@@ -446,8 +520,7 @@ export function classifyFridayConversationTurn(input: {
     return "new_topic";
   }
   if (
-    Boolean(focusState?.lastAssistantAskedQuestion)
-    && shortTask
+    latestAssistantAskedQuestion && shortTask
   ) {
     return "clarification";
   }
@@ -543,6 +616,7 @@ function classifyConversationHistoryBlockKind(
   if (
     STATUS_CHECK_HINTS.test(combined)
     || CHINESE_STATUS_CHECK_HINTS.test(combined)
+    || isCancellationStatusCheck(combined)
   ) {
     return "task_status_block";
   }
@@ -801,7 +875,17 @@ function buildConversationBlockSelection(input: {
   const recentAssistantRewriteRequest = isRecentAssistantRewriteRequest(input.task);
   const crossTopicRecapRequest = isCrossTopicRecapRequest(input.task);
   const bareNudgeTask = isBareNudgeTask(input.task);
-  const preferLatestAssistantAnchor = !replyAnchor && (hasUnresolvedReplyAnchor || (recentAssistantRewriteRequest && !crossTopicRecapRequest));
+  const latestAssistant = findLatestRecord(records, "assistant");
+  const shortChoiceReplyAnswersLatestAssistant = Boolean(
+    isShortChoiceReplyTask(input.task)
+    && latestAssistant
+    && assistantAppearsToAskForChoice(latestAssistant.contentText),
+  );
+  const preferLatestAssistantAnchor = !replyAnchor && (
+    hasUnresolvedReplyAnchor
+    || (recentAssistantRewriteRequest && !crossTopicRecapRequest)
+    || shortChoiceReplyAnswersLatestAssistant
+  );
   const preferRecentUserAnchor = !replyAnchor && bareNudgeTask;
   const preferRecencyAnchor = preferLatestAssistantAnchor || preferRecentUserAnchor;
   const replyAnchorInCurrentTopicWindow = Boolean(
@@ -820,7 +904,6 @@ function buildConversationBlockSelection(input: {
     }));
   }
 
-  const latestAssistant = findLatestRecord(records, "assistant");
   if (latestAssistant) {
     const assistantOverlap = countOverlap(taskTokens, tokenize(latestAssistant.contentText));
     const assistantScore = (assistantOverlap * 20)
@@ -855,7 +938,9 @@ function buildConversationBlockSelection(input: {
         reason: preferLatestAssistantAnchor
           ? hasUnresolvedReplyAnchor
             ? "Platform reply target was not found locally, so the latest assistant answer is used as the safest reply anchor."
-            : "Latest assistant answer is preferred for a short rewrite or explanation request."
+            : shortChoiceReplyAnswersLatestAssistant
+              ? "Latest assistant answer is preferred because the user replied with a short option choice."
+              : "Latest assistant answer is preferred for a short rewrite or explanation request."
           : assistantOverlap > 0
           ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
           : "Latest assistant answer is a plausible short-follow-up anchor.",
@@ -1406,7 +1491,7 @@ export function finalizeFridayConversationFocus(
     ? input.currentUserSequence
     : previous?.currentTopicStartSequence ?? input.currentUserSequence;
   const activeSubagentIds = previous?.activeSubagentIds;
-  const assistantAskedQuestion = /(?:\?|？)\s*$/.test(input.responseText.trim());
+  const assistantAskedQuestion = assistantAppearsToAskQuestion(input.responseText);
   const assistantAnchorSummary = summarizeTopic(input.responseText);
   const assistantAnchorFingerprint = fingerprintTopic(input.responseText);
 

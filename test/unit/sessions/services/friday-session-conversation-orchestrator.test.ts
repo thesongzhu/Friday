@@ -124,6 +124,41 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.taskPrompt).not.toContain("chat ok");
   });
 
+  it("treats single-letter option replies as clarification anchored to the latest assistant choice prompt", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "A",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Create a reusable session summarizer skill for Friday.",
+        currentTopicStartSequence: 1,
+        lastAssistantAskedQuestion: false,
+      },
+      currentUserSequence: 3,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "要我直接写这个 skill 吗？",
+        }),
+        makeMessage({
+          sequence: 2,
+          role: "assistant",
+          contentText: "方案 A：用 skill_generate 工具走完整生成流程。方案 B：直接写 skill 文件。你偏好哪个？方便我立即继续。",
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("clarification");
+    expect(prepared.selectedBlocks.some((block) => block.source === "assistant_anchor")).toBe(true);
+    expect(prepared.historyMessages.some((message) =>
+      message.role === "assistant"
+      && typeof message.content === "string"
+      && message.content.includes("方案 A"))).toBe(true);
+    expect(prepared.taskPrompt).toContain("replying to your clarification request");
+    expect(prepared.taskPrompt).toContain("方案 A");
+    expect(prepared.taskPrompt).not.toContain("A previous topic exists");
+  });
+
   it("classifies short follow-ups against the latest assistant answer", () => {
     const prepared = prepareFridayConversationTurn({
       task: "为什么没有connect",
@@ -365,6 +400,27 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("status_check");
     expect(prepared.taskPrompt).toContain("asking for a status update");
     expect(prepared.taskPrompt).toContain("Pending plan run: run-plan-1");
+  });
+
+  it("treats cancelled-request follow-ups as status_check instead of new topics", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "为什么 Request was cancelled before completion?",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Generate a social media promotion plan for Friday.",
+        lastRunId: "run-promote-1",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "帮我做 Friday 的社交媒体推广方案" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "Still working on your request after 30s. Phase: executing" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("status_check");
+    expect(prepared.taskPrompt).toContain("asking for a status update");
+    expect(prepared.taskPrompt).toContain("Use the task_status tool before answering.");
+    expect(prepared.taskPrompt).not.toContain("A previous topic exists");
   });
 
   it("selects deterministic evidence blocks for status questions", () => {
@@ -640,6 +696,23 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(focus.lastRunId).toBe("run-2");
     expect(focus.lastTurnKind).toBe("new_topic");
     expect(focus.assistantAnchorSummary).toBe("Use a starter and let the dough ferment overnight.");
+  });
+
+  it("remembers assistant choice questions even when the final sentence has no question mark", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "要我直接写这个 skill 吗？",
+      responseText: "方案 A：用 skill_generate 工具走完整生成流程。方案 B：直接写 skill 文件。你偏好哪个？方便我立即继续。",
+      runId: "run-choice-1",
+      turnKind: "follow_up",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Create a reusable session summarizer skill for Friday.",
+      },
+      currentUserSequence: 9,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.lastAssistantAskedQuestion).toBe(true);
   });
 
   it("preserves persisted harness focus when normal turns finalize", () => {

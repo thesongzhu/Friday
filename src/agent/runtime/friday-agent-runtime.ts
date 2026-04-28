@@ -2827,6 +2827,9 @@ export function createFridayAgentRuntime(
         // Check if cancelled
         if (runAbortController.signal.aborted) {
           const durationMs = Date.now() - startedAt;
+          const cancelMessage = runAbortController.signal.reason instanceof Error
+            ? runAbortController.signal.reason.message
+            : "Agent run cancelled";
           db.withWriteTransaction((writer) =>
             repo.update(writer, {
               id: runId,
@@ -2836,25 +2839,26 @@ export function createFridayAgentRuntime(
               actualExecution: buildActualExecution({
                 finalFailureReason: "Agent run cancelled",
               }),
-              responseText: responseText || undefined,
+              responseText: responseText || cancelMessage,
+              summary: deriveSummary(responseText || cancelMessage) || undefined,
               contextCostSummary: latestContextCostSummary,
               taskProfile: resolvedTaskProfile,
             }),
           );
 
-          handleTrackedEvent("agent.run.cancelled", { runId });
+          handleTrackedEvent("agent.run.cancelled", { runId, reason: cancelMessage });
 
           return await finalizeResult({
             runId,
             status: "cancelled",
-            response: responseText,
+            response: responseText || cancelMessage,
             toolCallCount: allToolCalls.length,
             durationMs,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             contextCostSummary: latestContextCostSummary,
             taskProfile: resolvedTaskProfile,
-            summary: deriveSummary(responseText),
+            summary: deriveSummary(responseText || cancelMessage),
           });
         }
 
@@ -3254,8 +3258,8 @@ export function createFridayAgentRuntime(
               actualExecution: latestActualExecution,
               testResults: latestTestResults,
               artifacts: persistedArtifacts.artifacts,
-              responseText: responseText || undefined,
-              summary: deriveSummary(responseText) || undefined,
+              responseText: responseText || cancelMessage,
+              summary: deriveSummary(responseText || cancelMessage) || undefined,
               artifactDir: persistedArtifacts.artifactDir,
               contextCostSummary: latestContextCostSummary,
               taskProfile: resolvedTaskProfile,
@@ -3266,19 +3270,19 @@ export function createFridayAgentRuntime(
             runId,
             reason: cancelMessage,
           });
-          await mirrorAssistantResponse(responseText, allToolCalls);
+          await mirrorAssistantResponse(responseText || cancelMessage, allToolCalls);
 
           return await finalizeResult({
             runId,
             status: "cancelled",
-            response: responseText,
+            response: responseText || cancelMessage,
             toolCallCount: allToolCalls.length,
             durationMs,
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             contextCostSummary: latestContextCostSummary,
             taskProfile: resolvedTaskProfile,
-            summary: deriveSummary(responseText) || undefined,
+            summary: deriveSummary(responseText || cancelMessage) || undefined,
             artifactDir: persistedArtifacts.artifactDir,
           });
         }

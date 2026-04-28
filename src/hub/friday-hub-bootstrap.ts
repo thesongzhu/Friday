@@ -2156,6 +2156,23 @@ export async function createFridayHub(
     const trackedEvents = trackedRunId
       ? stateRuntime!.sqlite.withReadConnection((reader) => agentRunEventRepository.list(reader, trackedRunId))
       : [];
+    const firstNonEmpty = (...values: Array<string | undefined>): string | undefined => {
+      for (const value of values) {
+        const normalized = value?.trim();
+        if (normalized && normalized.length > 0) {
+          return normalized;
+        }
+      }
+      return undefined;
+    };
+    const latestCancellationReason = firstNonEmpty(
+      ...[...trackedEvents]
+        .reverse()
+        .map((event) =>
+          event.eventName === "agent.run.cancelled" && typeof event.payload.reason === "string"
+            ? event.payload.reason
+            : undefined),
+    );
 
     let latestPhase: string | undefined;
     let latestTool: string | undefined;
@@ -2268,8 +2285,12 @@ export async function createFridayHub(
             }
           : {
               status: trackedRun.status,
-              summary: trackedRun.summary,
-              responseText: trackedRun.responseText,
+              summary: trackedRun.status === "cancelled"
+                ? firstNonEmpty(trackedRun.summary, latestCancellationReason, "Cancelled before completion.")
+                : trackedRun.summary,
+              responseText: trackedRun.status === "cancelled"
+                ? firstNonEmpty(trackedRun.responseText, latestCancellationReason, "Cancelled before completion.")
+                : trackedRun.responseText,
             }
       : undefined;
 
@@ -7198,7 +7219,9 @@ export async function createFridayHub(
                 senderName: inboundMessage.senderName,
                 text: inboundMessage.text,
                 id: inboundMessage.id,
-                timestamp: inboundMessage.timestamp ?? Date.now(),
+                timestamp: typeof inboundMessage.timestamp === "number" && Number.isFinite(inboundMessage.timestamp)
+                  ? inboundMessage.timestamp
+                  : Date.now(),
                 chatType: inboundMessage.chatType,
                 replyTo: inboundMessage.replyToMessageId,
                 timezone: inboundMessage.timezone,
@@ -7208,6 +7231,9 @@ export async function createFridayHub(
                 identityMap: crossChannelIdentityMap,
               }),
             });
+            const messageTimestampMs = typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp)
+              ? msg.timestamp
+              : Date.now();
             const slowTaskNotifier = createFridayChannelSlowTaskNotifier({
               eventEmitter: agentEventEmitter,
               channelRegistry,
@@ -7256,7 +7282,7 @@ export async function createFridayHub(
                 chatId: msg.chatId,
                 chatType: msg.chatType,
                 text: taskText,
-                occurredAt: new Date(msg.timestamp).toISOString(),
+                occurredAt: new Date(messageTimestampMs).toISOString(),
                 replyToMessageId: msg.replyTo,
                 timezone: msg.timezone,
                 images: msg.images,

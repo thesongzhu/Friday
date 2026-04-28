@@ -53,6 +53,10 @@ export function normalizeTelegramUpdate(update: TelegramUpdate): FridayChannelMe
     // Use largest photo (last in array)
     images.push(msg.photo[msg.photo.length - 1].file_id);
   }
+  if (/^\/start(?:@\S+)?\s+friday_[a-z0-9]+(?:\s|$)/i.test((msg.text ?? "").trim())) {
+    return null;
+  }
+  const timestamp = Number.isFinite(msg.date) ? msg.date * 1000 : Date.now();
 
   return {
     id: String(msg.message_id),
@@ -64,7 +68,7 @@ export function normalizeTelegramUpdate(update: TelegramUpdate): FridayChannelMe
     text: msg.text ?? "",
     images: images.length > 0 ? images : undefined,
     replyTo: msg.reply_to_message ? String(msg.reply_to_message.message_id) : undefined,
-    timestamp: msg.date * 1000,
+    timestamp,
     raw: update,
   };
 }

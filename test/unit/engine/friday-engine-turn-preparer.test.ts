@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createFridayEngineTurnPreparer } from "../../../src/engine/friday-engine-turn-preparer.js";
+import { buildFridayEvidenceBlocks } from "../../../src/agent/runtime/friday-agent-evidence-blocks.js";
+import { FRIDAY_SUPPORTED_CHANNEL_KINDS } from "../../../src/channels/friday-channel-config.js";
+import { classifyFridayExecution } from "../../../src/sessions/services/friday-execution-classifier.js";
+import { prepareFridayConversationTurn } from "../../../src/sessions/services/friday-session-conversation-orchestrator.js";
 import type {
   FridayPreparedConversationTurn,
   FridayPrepareConversationTurnInput,
@@ -30,6 +34,178 @@ function createMessage(
 }
 
 describe("createFridayEngineTurnPreparer", () => {
+  it.each([...FRIDAY_SUPPORTED_CHANNEL_KINDS])(
+    "keeps short option replies anchored through the shared turn preparer for %s",
+    async (channelKind) => {
+      const sessionKey = `channel:${channelKind}:chat-123`;
+      const messages: FridaySessionMessageRecord[] = [
+        createMessage({
+          id: `${channelKind}-m-1`,
+          sequence: 1,
+          role: "user",
+          contentText: "要我直接写这个 skill 吗？",
+          sessionKey,
+        }),
+        createMessage({
+          id: `${channelKind}-m-2`,
+          sequence: 2,
+          role: "assistant",
+          contentText: "方案 A：用 skill_generate 工具走完整生成流程。方案 B：直接写 skill 文件。你偏好哪个？方便我立即继续。",
+          sessionKey,
+        }),
+        createMessage({
+          id: `${channelKind}-m-3`,
+          sequence: 3,
+          role: "user",
+          contentText: "A",
+          sessionKey,
+        }),
+      ];
+      const focusState: FridaySessionConversationFocusState = {
+        currentTopicSummary: "Create a reusable session summarizer skill for Friday.",
+        currentTopicStartSequence: 1,
+        lastAssistantAskedQuestion: false,
+        updatedAt: "2026-04-16T00:00:00.000Z",
+      };
+      const setConversationFocus = vi.fn();
+
+      const preparer = createFridayEngineTurnPreparer({
+        sessionDeps: {
+          async getMessages(key) {
+            expect(key).toBe(sessionKey);
+            return messages;
+          },
+          async addMessage() {
+            throw new Error("channel messages are already mirrored before engine preparation");
+          },
+          async getConversationFocus(key) {
+            expect(key).toBe(sessionKey);
+            return focusState;
+          },
+          setConversationFocus,
+        },
+        historyLimit: 24,
+        nowIso: () => "2026-04-16T00:00:05.000Z",
+        prepareTurn: prepareFridayConversationTurn,
+        buildEvidenceBlocks: buildFridayEvidenceBlocks,
+        classifyExecution: classifyFridayExecution,
+      });
+
+      const prepared = await preparer.prepare({
+        task: "A",
+        runId: `run-${channelKind}`,
+        sessionKey,
+        persistTaskMessage: false,
+        taskAlreadyInHistory: true,
+        idempotencyPrefix: `channel-${channelKind}`,
+      });
+
+      expect(prepared.conversationContext?.turnKind).toBe("clarification");
+      expect(prepared.executionClassification).toEqual({ category: "agent_exception_path" });
+      expect(prepared.taskPrompt).toContain("replying to your clarification request");
+      expect(prepared.taskPrompt).toContain("方案 A");
+      expect(prepared.taskPrompt).not.toContain("A previous topic exists");
+      expect(prepared.historyMessages?.some((message) =>
+        message.role === "assistant"
+        && typeof message.content === "string"
+        && message.content.includes("你偏好哪个"))).toBe(true);
+      expect(setConversationFocus).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([...FRIDAY_SUPPORTED_CHANNEL_KINDS])(
+    "classifies cancelled-request follow-ups as deterministic status checks for %s",
+    async (channelKind) => {
+      const sessionKey = `channel:${channelKind}:chat-456`;
+      const messages: FridaySessionMessageRecord[] = [
+        createMessage({
+          id: `${channelKind}-cancel-m-1`,
+          sequence: 1,
+          role: "user",
+          contentText: "帮我做 Friday 的社交媒体推广方案",
+          sessionKey,
+        }),
+        createMessage({
+          id: `${channelKind}-cancel-m-2`,
+          sequence: 2,
+          role: "assistant",
+          contentText: "Still working on your request after 30s. Phase: executing",
+          sessionKey,
+        }),
+        createMessage({
+          id: `${channelKind}-cancel-m-3`,
+          sequence: 3,
+          role: "user",
+          contentText: "为什么 Request was cancelled before completion?",
+          sessionKey,
+        }),
+      ];
+      const focusState: FridaySessionConversationFocusState = {
+        currentTopicSummary: "Generate a social media promotion plan for Friday.",
+        currentTopicStartSequence: 1,
+        lastRunId: `run-${channelKind}-cancelled`,
+        updatedAt: "2026-04-16T00:00:00.000Z",
+      };
+      const setConversationFocus = vi.fn();
+
+      const preparer = createFridayEngineTurnPreparer({
+        sessionDeps: {
+          async getMessages(key) {
+            expect(key).toBe(sessionKey);
+            return messages;
+          },
+          async addMessage() {
+            throw new Error("channel messages are already mirrored before engine preparation");
+          },
+          async getConversationFocus(key) {
+            expect(key).toBe(sessionKey);
+            return focusState;
+          },
+          setConversationFocus,
+        },
+        historyLimit: 24,
+        nowIso: () => "2026-04-16T00:00:05.000Z",
+        prepareTurn: prepareFridayConversationTurn,
+        buildEvidenceBlocks: buildFridayEvidenceBlocks,
+        classifyExecution: classifyFridayExecution,
+        taskStatusSnapshotGetter: async () => ({
+          readOnly: false,
+          trackedRunId: `run-${channelKind}-cancelled`,
+          runStatus: "cancelled",
+          activeSubagents: [],
+          blockers: [],
+          terminalOutcome: {
+            status: "cancelled",
+            summary: "Cancelled via API",
+            responseText: "Cancelled via API",
+          },
+        }),
+      });
+
+      const prepared = await preparer.prepare({
+        task: "为什么 Request was cancelled before completion?",
+        runId: `status-${channelKind}`,
+        sessionKey,
+        persistTaskMessage: false,
+        taskAlreadyInHistory: true,
+        idempotencyPrefix: `channel-${channelKind}`,
+      });
+
+      expect(prepared.conversationContext?.turnKind).toBe("status_check");
+      expect(prepared.executionClassification).toEqual({
+        category: "sync_immediate",
+        handler: "task_status",
+      });
+      expect(prepared.evidenceBlocks.some((block) =>
+        block.source === "task_status_block"
+        && block.summary.includes("Cancelled via API"))).toBe(true);
+      expect(prepared.taskPrompt).toContain("asking for a status update");
+      expect(prepared.taskPrompt).toContain("Use the task_status tool before answering.");
+      expect(prepared.taskPrompt).not.toContain("A previous topic exists");
+      expect(setConversationFocus).not.toHaveBeenCalled();
+    },
+  );
+
   it("persists compaction evidence when the selected context is a compacted topic block", async () => {
     const messages: FridaySessionMessageRecord[] = [
       createMessage({ id: "m-1", sequence: 1, role: "assistant", contentText: "Earlier debugging thread." }),

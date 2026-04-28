@@ -175,6 +175,11 @@ describe("FridayTelegramChannel", () => {
       expect(normalizeTelegramUpdate(update)).toBeNull();
     });
 
+    it("skips setup verification start commands", () => {
+      const update = makeUpdate({ text: "/start friday_abc123def4" });
+      expect(normalizeTelegramUpdate(update)).toBeNull();
+    });
+
     it("extracts photo file_id from largest photo", () => {
       const update = makeUpdate({
         text: undefined,
@@ -199,6 +204,15 @@ describe("FridayTelegramChannel", () => {
       const update = makeUpdate({ date: 1740150000 });
       const result = normalizeTelegramUpdate(update);
       expect(result!.timestamp).toBe(1740150000000);
+    });
+
+    it("falls back to current time when Telegram date is missing", () => {
+      const before = Date.now();
+      const update = makeUpdate({ date: undefined as unknown as number });
+      const result = normalizeTelegramUpdate(update);
+      const after = Date.now();
+      expect(result!.timestamp).toBeGreaterThanOrEqual(before);
+      expect(result!.timestamp).toBeLessThanOrEqual(after);
     });
   });
 

@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Friday Guide Mode Native Overlay Preview</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #eceff1;
+      --desktop: #dfe5e8;
+      --window: #f8faf9;
+      --window-2: #ffffff;
+      --text: #18201f;
+      --muted: #687574;
+      --line: #cfd8d6;
+      --accent: #2f6bff;
+      --accent-2: #1f56d8;
+      --safe: #2d6e45;
+      --warn: #8a5b1d;
+      --blocked: #8c2d3e;
+      --shadow: rgba(21, 31, 34, 0.2);
+      --bubble: rgba(250, 252, 251, 0.94);
+      --bubble-border: rgba(88, 103, 101, 0.2);
+      --guide-blue: #2f6bff;
+      --guide-blue-soft: rgba(47, 107, 255, 0.18);
+      --guide-blue-glow: rgba(47, 107, 255, 0.38);
+      --ghost: #45515f;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .preview-shell {
+      width: min(1180px, 100%);
+      display: grid;
+      gap: 14px;
+    }
+
+    .stage {
+      position: relative;
+      overflow: hidden;
+      min-height: 680px;
+      border: 1px solid #c7d1cf;
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0) 30%),
+        var(--desktop);
+      box-shadow: 0 22px 60px rgba(33, 45, 50, 0.18);
+      isolation: isolate;
+    }
+
+    .menu-bar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: rgba(248, 250, 249, 0.72);
+      border-bottom: 1px solid rgba(114, 130, 128, 0.24);
+      backdrop-filter: blur(16px);
+      font-size: 12px;
+      color: #43514f;
+    }
+
+    .menu-left,
+    .menu-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      white-space: nowrap;
+    }
+
+    .desk {
+      position: relative;
+      min-height: 646px;
+      padding: 34px;
+    }
+
+    .app-window {
+      width: min(890px, calc(100% - 54px));
+      min-height: 540px;
+      border: 1px solid rgba(91, 105, 103, 0.28);
+      border-radius: 12px;
+      background: var(--window);
+      box-shadow: 0 24px 50px rgba(38, 53, 58, 0.18);
+      overflow: hidden;
+    }
+
+    .titlebar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: #f3f6f5;
+    }
+
+    .traffic {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: #d56a5e;
+      box-shadow: 18px 0 0 #d5a13a, 36px 0 0 #54a567;
+      margin-right: 42px;
+      flex: 0 0 auto;
+    }
+
+    .window-title {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .app-layout {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 498px;
+    }
+
+    .sidebar {
+      padding: 18px 14px;
+      background: #eef3f1;
+      border-right: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      font-weight: 650;
+    }
+
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #1d2b2a;
+      color: #f7fbfa;
+      font-size: 14px;
+    }
+
+    .nav-item {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      border-radius: 8px;
+      color: #566462;
+      font-size: 13px;
+    }
+
+    .nav-item.active {
+      background: #dce7e3;
+      color: #17302c;
+      font-weight: 620;
+    }
+
+    .content {
+      padding: 28px 34px;
+      background: var(--window-2);
+    }
+
+    .crumb {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    .content h1 {
+      margin: 0 0 8px;
+      font-size: 25px;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 570px;
+      margin: 0 0 26px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .form-panel {
+      position: relative;
+      width: min(540px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 20px;
+      background: #fbfdfc;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 15px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: #50615f;
+      font-weight: 600;
+    }
+
+    .input {
+      height: 42px;
+      border: 1px solid #cbd6d3;
+      border-radius: 8px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      color: #8a9694;
+      font-size: 14px;
+      background: #ffffff;
+    }
+
+    .checks {
+      display: grid;
+      gap: 10px;
+      margin: 18px 0 22px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #344240;
+      font-size: 13px;
+    }
+
+    .box {
+      width: 17px;
+      height: 17px;
+      border-radius: 5px;
+      border: 1px solid #b7c4c1;
+      background: #ffffff;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .primary-action {
+      height: 42px;
+      min-width: 128px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 18px;
+      background: #1f625c;
+      color: #ffffff;
+      font-weight: 650;
+      cursor: default;
+    }
+
+    .secondary-action {
+      height: 42px;
+      min-width: 96px;
+      border: 1px solid #c6d2cf;
+      border-radius: 8px;
+      padding: 0 18px;
+      background: #ffffff;
+      color: #3e4e4b;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .native-overlay {
+      position: absolute;
+      inset: 34px 0 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .dim {
+      display: none;
+    }
+
+    .spotlight {
+      position: absolute;
+      left: 286px;
+      top: 488px;
+      width: 142px;
+      height: 52px;
+      border-radius: 13px;
+      border: 2px solid var(--guide-blue);
+      box-shadow:
+        0 0 0 6px var(--guide-blue-soft),
+        0 0 32px var(--guide-blue-glow),
+        0 14px 26px rgba(31, 86, 216, 0.18),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.86);
+      background: rgba(47, 107, 255, 0.04);
+    }
+
+    .target-ring {
+      position: absolute;
+      inset: -7px;
+      border-radius: 18px;
+      border: 1px solid rgba(47, 107, 255, 0.32);
+    }
+
+    .scroll-guide {
+      position: absolute;
+      left: 614px;
+      top: 290px;
+      width: 54px;
+      height: 214px;
+      display: none;
+      border: 2px solid var(--guide-blue);
+      border-radius: 999px;
+      box-shadow:
+        0 0 0 6px var(--guide-blue-soft),
+        0 0 34px var(--guide-blue-glow);
+      background: rgba(47, 107, 255, 0.035);
+    }
+
+    .scroll-guide::before,
+    .scroll-guide::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--guide-blue);
+    }
+
+    .scroll-guide::before {
+      top: 34px;
+      width: 2px;
+      height: 118px;
+      border-radius: 999px;
+    }
+
+    .scroll-guide::after {
+      bottom: 28px;
+      width: 16px;
+      height: 16px;
+      border-right: 2px solid var(--guide-blue);
+      border-bottom: 2px solid var(--guide-blue);
+      background: transparent;
+      transform: translateX(-50%) rotate(45deg);
+    }
+
+    .ghost-cursor {
+      position: absolute;
+      left: 454px;
+      top: 438px;
+      width: 28px;
+      height: 34px;
+      color: var(--ghost);
+      filter: drop-shadow(0 8px 16px rgba(0,0,0,0.22));
+      transform: rotate(-9deg);
+    }
+
+    .ghost-cursor svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .avatar-stack {
+      position: absolute;
+      right: 112px;
+      top: 260px;
+      width: 360px;
+      display: grid;
+      justify-items: end;
+      gap: 12px;
+    }
+
+    .bubble-row {
+      width: 100%;
+      display: flex;
+      align-items: end;
+      justify-content: flex-end;
+      gap: 14px;
+    }
+
+    .speech {
+      position: relative;
+      width: min(312px, calc(100vw - 128px));
+      padding: 15px 16px 14px;
+      border: 1px solid var(--bubble-border);
+      border-radius: 20px;
+      background: var(--bubble);
+      box-shadow: 0 18px 45px rgba(20, 32, 35, 0.2);
+      backdrop-filter: blur(20px);
+      pointer-events: auto;
+    }
+
+    .speech::after {
+      content: "";
+      position: absolute;
+      right: -7px;
+      bottom: 21px;
+      width: 14px;
+      height: 14px;
+      transform: rotate(45deg);
+      border-top: 1px solid var(--bubble-border);
+      border-right: 1px solid var(--bubble-border);
+      background: var(--bubble);
+    }
+
+    .step-kicker {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 7px;
+      color: #64716f;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .state-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 22px;
+      border-radius: 999px;
+      padding: 0 8px;
+      border: 1px solid #d3ddda;
+      background: rgba(255,255,255,0.65);
+      color: #3d514e;
+      font-size: 11px;
+    }
+
+    .state-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .speech-main {
+      margin: 0;
+      color: #172421;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .speech-main strong {
+      color: #1e57d6;
+    }
+
+    .microcopy {
+      margin: 10px 0 0;
+      color: #6a7775;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .bubble-controls {
+      display: none;
+      gap: 8px;
+      margin-top: 13px;
+    }
+
+    .overlay-button {
+      height: 30px;
+      border: 1px solid #c9d4d1;
+      border-radius: 8px;
+      padding: 0 10px;
+      background: #ffffff;
+      color: #263431;
+      font-size: 12px;
+      font-weight: 650;
+      pointer-events: auto;
+    }
+
+    .avatar {
+      position: relative;
+      width: 64px;
+      height: 64px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.8);
+      background:
+        radial-gradient(circle at 36% 30%, #879190 0 16%, transparent 17%),
+        linear-gradient(145deg, #c2c8c7, #7f8a89);
+      color: #f9fbfb;
+      font-size: 28px;
+      font-weight: 760;
+      box-shadow:
+        0 14px 34px rgba(13, 24, 27, 0.28),
+        inset 0 1px 0 rgba(255,255,255,0.55);
+      pointer-events: auto;
+    }
+
+    .avatar::before {
+      content: "";
+      position: absolute;
+      inset: -5px;
+      border-radius: inherit;
+      border: 1px solid rgba(47, 107, 255, 0.32);
+    }
+
+    .avatar::after {
+      content: "";
+      position: absolute;
+      inset: -9px;
+      border-radius: inherit;
+      border: 1px solid rgba(47, 107, 255, 0.16);
+    }
+
+    .avatar-status {
+      position: absolute;
+      right: 2px;
+      bottom: 2px;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #f8faf9;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .avatar.photo-avatar {
+      background:
+        radial-gradient(circle at 50% 32%, #edd0b8 0 18%, transparent 19%),
+        radial-gradient(circle at 50% 75%, #405f70 0 32%, transparent 33%),
+        linear-gradient(145deg, #d6e6e1, #9fb5b0);
+      color: transparent;
+    }
+
+    .status-strip {
+      width: 362px;
+      margin-right: 78px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      pointer-events: auto;
+    }
+
+    .status-strip button {
+      height: 28px;
+      border: 1px solid rgba(208, 218, 215, 0.8);
+      border-radius: 8px;
+      background: rgba(249, 251, 250, 0.82);
+      color: #455351;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .status-strip button.active {
+      border-color: rgba(47, 107, 255, 0.5);
+      background: #e5ecff;
+      color: #1d4fc3;
+    }
+
+    .bottom-bar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid #cbd6d3;
+      border-radius: 12px;
+      background: rgba(248, 250, 249, 0.9);
+    }
+
+    .caption {
+      min-width: 0;
+    }
+
+    .caption strong {
+      display: block;
+      margin-bottom: 2px;
+      font-size: 14px;
+    }
+
+    .caption span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .avatar-options {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .avatar-option {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #c7d1cf;
+      border-radius: 999px;
+      background: #a7afae;
+      color: #ffffff;
+      font-weight: 760;
+      font-size: 15px;
+    }
+
+    .avatar-option.photo {
+      background:
+        radial-gradient(circle at 50% 34%, #f1d5bd 0 18%, transparent 19%),
+        radial-gradient(circle at 50% 74%, #48606e 0 31%, transparent 32%),
+        #cbded8;
+      color: transparent;
+    }
+
+    .avatar-option.selected {
+      outline: 2px solid var(--guide-blue);
+      outline-offset: 2px;
+    }
+
+    .stage[data-state="looking"] .state-dot,
+    .stage[data-state="looking"] .avatar-status {
+      background: var(--accent-2);
+    }
+
+    .stage[data-state="waiting"] .state-dot,
+    .stage[data-state="waiting"] .avatar-status {
+      background: var(--warn);
+    }
+
+    .stage[data-state="checking"] .state-dot,
+    .stage[data-state="checking"] .avatar-status {
+      background: var(--safe);
+    }
+
+    .stage[data-state="blocked"] .state-dot,
+    .stage[data-state="blocked"] .avatar-status {
+      background: var(--blocked);
+    }
+
+    .stage[data-state="blocked"] .spotlight {
+      left: 280px;
+      top: 368px;
+      width: 332px;
+      height: 52px;
+      border-color: var(--guide-blue);
+      box-shadow:
+        0 0 0 6px rgba(47, 107, 255, 0.14),
+        0 0 32px rgba(47, 107, 255, 0.32),
+        0 14px 26px rgba(31, 86, 216, 0.16),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.86);
+    }
+
+    .stage[data-state="blocked"] .bubble-controls {
+      display: flex;
+    }
+
+    .stage[data-state="checking"] .spotlight,
+    .stage[data-state="looking"] .spotlight {
+      opacity: 0.72;
+    }
+
+    .stage[data-state="scroll"] .spotlight {
+      display: none;
+    }
+
+    .stage[data-state="scroll"] .scroll-guide {
+      display: block;
+    }
+
+    .stage[data-state="scroll"] .ghost-cursor {
+      left: 592px;
+      top: 502px;
+      transform: rotate(4deg);
+    }
+
+    .stage[data-state="page"] .spotlight {
+      left: 286px;
+      top: 488px;
+      width: 142px;
+      height: 52px;
+    }
+
+    @media (max-width: 860px) {
+      .page {
+        padding: 12px;
+      }
+
+      .stage {
+        min-height: 760px;
+      }
+
+      .desk {
+        padding: 18px;
+      }
+
+      .app-window {
+        width: 100%;
+      }
+
+      .app-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .content {
+        padding: 22px;
+      }
+
+      .spotlight {
+        left: 40px;
+        top: 466px;
+      }
+
+      .scroll-guide {
+        left: auto;
+        right: 46px;
+        top: 320px;
+      }
+
+      .avatar-stack {
+        right: 18px;
+        top: 565px;
+        width: calc(100% - 36px);
+      }
+
+      .bubble-row {
+        align-items: end;
+      }
+
+      .status-strip {
+        margin-right: 78px;
+      }
+
+      .bottom-bar {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .avatar {
+        animation: breathe 3.8s ease-in-out infinite;
+      }
+
+      .stage[data-state="looking"] .ghost-cursor {
+        animation: cursorFloat 1.8s ease-in-out infinite;
+      }
+
+      .stage[data-state="waiting"] .avatar {
+        animation-duration: 2.8s;
+      }
+    }
+
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.025); }
+    }
+
+    @keyframes cursorFloat {
+      0%, 100% { transform: translateY(0) rotate(-9deg); }
+      50% { transform: translateY(-5px) rotate(-9deg); }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="preview-shell" aria-label="Friday Guide Mode native overlay preview">
+      <div class="stage" data-state="guiding" id="stage">
+        <div class="menu-bar">
+          <div class="menu-left">
+            <strong>Friday</strong>
+            <span>Guide Mode</span>
+            <span>Provider Setup</span>
+          </div>
+          <div class="menu-right">
+            <span>Tue 2:03 AM</span>
+            <span>Screen read-only</span>
+          </div>
+        </div>
+
+        <div class="desk">
+          <section class="app-window" aria-label="Mock provider setup window">
+            <div class="titlebar">
+              <div class="traffic" aria-hidden="true"></div>
+              <div class="window-title">Provider Access - Safari</div>
+            </div>
+
+            <div class="app-layout">
+              <aside class="sidebar">
+                <div class="brand">
+                  <div class="brand-mark">F</div>
+                  <span>Friday Setup</span>
+                </div>
+                <div class="nav-item">Overview</div>
+                <div class="nav-item active">Providers</div>
+                <div class="nav-item">Permissions</div>
+                <div class="nav-item">Channels</div>
+                <div class="nav-item">Review</div>
+              </aside>
+
+              <div class="content">
+                <div class="crumb">Providers / Connect account</div>
+                <h1>Connect your model provider</h1>
+                <p class="lead">Friday needs you to complete this account-owned step. Guide Mode can read the visible page and show the next action, while every real click stays yours.</p>
+
+                <div class="form-panel">
+                  <div class="field">
+                    <label>Account email</label>
+                    <div class="input">you@example.com</div>
+                  </div>
+                  <div class="field">
+                    <label>Organization</label>
+                    <div class="input">Personal workspace</div>
+                  </div>
+                  <div class="checks">
+                    <div class="check"><span class="box"></span><span>Allow Friday to verify provider health</span></div>
+                    <div class="check"><span class="box"></span><span>Use local audit logging for setup evidence</span></div>
+                  </div>
+                  <div class="actions">
+                    <button class="primary-action">Allow access</button>
+                    <button class="secondary-action">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="native-overlay" aria-hidden="true">
+          <div class="dim"></div>
+          <div class="spotlight"><div class="target-ring"></div></div>
+          <div class="scroll-guide"></div>
+          <div class="ghost-cursor">
+            <svg viewBox="0 0 36 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M5.5 4.5L29.5 25.8L18.7 27.2L14.2 39L5.5 4.5Z" fill="#f7faf9" stroke="#40505e" stroke-width="2.4" stroke-linejoin="round"/>
+            </svg>
+          </div>
+
+          <div class="avatar-stack">
+            <div class="bubble-row">
+              <div class="speech">
+                <div class="step-kicker">
+                  <span id="stepLabel">Step 2 of 4</span>
+                  <span class="state-pill"><span class="state-dot"></span><span id="stateLabel">Guiding</span></span>
+                </div>
+                <p class="speech-main" id="speechText">Click the highlighted <strong>Allow access</strong> button. I will check the next screen after you do.</p>
+                <p class="microcopy" id="microcopy">The button is real. The overlay is only a guide.</p>
+                <div class="bubble-controls">
+                  <button class="overlay-button">Not there</button>
+                  <button class="overlay-button">I did it</button>
+                </div>
+              </div>
+              <div class="avatar" id="avatar">F<span class="avatar-status"></span></div>
+            </div>
+
+            <div class="status-strip" aria-label="Preview states">
+              <button class="active" type="button" data-state-button="guiding">Guiding</button>
+              <button type="button" data-state-button="page">Open page</button>
+              <button type="button" data-state-button="scroll">Scroll</button>
+              <button type="button" data-state-button="checking">Checking</button>
+              <button type="button" data-state-button="blocked">Blocked</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <div class="caption">
+          <strong>Native Companion Overlay visual direction</strong>
+          <span>Restrained avatar bubble, read-only guidance, one step at a time.</span>
+        </div>
+        <div class="avatar-options" aria-label="Avatar choices">
+          <button class="avatar-option selected" type="button" data-avatar="F">F</button>
+          <button class="avatar-option photo" type="button" data-avatar=""></button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const stage = document.querySelector("#stage");
+    const stateLabel = document.querySelector("#stateLabel");
+    const stepLabel = document.querySelector("#stepLabel");
+    const speechText = document.querySelector("#speechText");
+    const microcopy = document.querySelector("#microcopy");
+    const buttons = [...document.querySelectorAll("[data-state-button]")];
+    const avatar = document.querySelector("#avatar");
+    const avatarButtons = [...document.querySelectorAll("[data-avatar]")];
+
+    const copy = {
+      guiding: {
+        state: "Guiding",
+        step: "Step 2 of 4",
+        speech: "Click the highlighted <strong>Allow access</strong> button. I will check the next screen after you do.",
+        micro: "The button is real. The overlay is only a guide."
+      },
+      looking: {
+        state: "Looking",
+        step: "Reading screen",
+        speech: "I am reading the visible window and matching the account setup controls.",
+        micro: "No clicks or typing. This mode only reads and highlights."
+      },
+      page: {
+        state: "Opening",
+        step: "New page",
+        speech: "Click <strong>Allow access</strong>. If a new page opens, I will follow it and guide the next step.",
+        micro: "I watch the URL, title, focus, and visible text changes locally."
+      },
+      scroll: {
+        state: "Watching",
+        step: "Scroll down",
+        speech: "Scroll down slowly. I am watching for the <strong>Security</strong> section.",
+        micro: "When it appears, I will move the blue frame to the right control."
+      },
+      checking: {
+        state: "Checking",
+        step: "Verifying",
+        speech: "I am checking whether the provider setup moved to the next step.",
+        micro: "If the page did not change, I will re-read it and guide again."
+      },
+      blocked: {
+        state: "Needs you",
+        step: "Low confidence",
+        speech: "I cannot tell which field is correct. I marked the likely area, but I need you to confirm.",
+        micro: "Choose Not there if this is the wrong place."
+      }
+    };
+
+    function setState(next) {
+      const item = copy[next];
+      stage.dataset.state = next;
+      stateLabel.textContent = item.state;
+      stepLabel.textContent = item.step;
+      speechText.innerHTML = item.speech;
+      microcopy.textContent = item.micro;
+      buttons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.stateButton === next);
+      });
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => setState(button.dataset.stateButton));
+    });
+
+    avatarButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        avatarButtons.forEach((candidate) => candidate.classList.remove("selected"));
+        button.classList.add("selected");
+        avatar.textContent = button.dataset.avatar;
+        const status = document.createElement("span");
+        status.className = "avatar-status";
+        avatar.appendChild(status);
+        avatar.classList.toggle("photo-avatar", button.classList.contains("photo"));
+      });
+    });
+  </script>
+</body>
+</html>

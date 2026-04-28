@@ -5,6 +5,7 @@ import {
   FRIDAY_CHANNEL_AGENT_SCOPE,
   FRIDAY_CHANNEL_CONTROL_ROUTE,
 } from "../../../../src/engine/adapters/friday-channel-entry-adapter.js";
+import { FRIDAY_SUPPORTED_CHANNEL_KINDS } from "../../../../src/channels/friday-channel-config.js";
 
 describe("FridayChannelEntryAdapter", () => {
   it("derives tenantContext from inbound channel messages", async () => {
@@ -51,6 +52,56 @@ describe("FridayChannelEntryAdapter", () => {
       },
     }));
   });
+
+  it.each([...FRIDAY_SUPPORTED_CHANNEL_KINDS])(
+    "routes %s messages through the unified channel engine contract",
+    async (channelKind) => {
+      const executeRun = vi.fn().mockResolvedValue({
+        runId: `run-${channelKind}`,
+        status: "completed",
+        toolCallCount: 0,
+        durationMs: 10,
+      });
+
+      const adapter = createFridayChannelEntryAdapter({
+        engine: {
+          executeRun,
+        },
+        idGenerator: () => `run-${channelKind}`,
+        resolveDisabledToolNames: () => [],
+        resolveSessionKey: (message) => `channel:${message.channelKind}:${message.chatId}`,
+      });
+
+      await adapter.handleMessage({
+        id: `msg-${channelKind}`,
+        channelKind,
+        senderId: "user-42",
+        chatId: "chat-7",
+        chatType: "direct",
+        text: "A",
+        replyToMessageId: `assistant-${channelKind}`,
+      });
+
+      expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+        task: "A",
+        runId: `run-${channelKind}`,
+        sessionKey: `channel:${channelKind}:chat-7`,
+        replyToMessageId: `assistant-${channelKind}`,
+        taskAlreadyInHistory: true,
+        idempotencyPrefix: `channel-${channelKind}`,
+        executionContext: expect.objectContaining({
+          surface: "channel",
+          channelKind,
+          channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
+        }),
+        tenantContext: {
+          hubId: "default",
+          userId: "user-42",
+          channelKind,
+        },
+      }));
+    },
+  );
 
   it("keeps chat channels on the full agent route without hub-admin scope", async () => {
     const executeRun = vi.fn().mockResolvedValue({

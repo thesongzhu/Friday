@@ -199,9 +199,17 @@ export function createTelegramPollingService(
           );
         }
 
+        let processedUpdateCount = 0;
         for (const update of json.result) {
+          if (update.update_id < offset) {
+            continue;
+          }
           offset = update.update_id + 1;
+          processedUpdateCount += 1;
           onUpdate(update);
+        }
+        if (polling && json.result.length > 0 && processedUpdateCount === 0) {
+          await new Promise((r) => setTimeout(r, 1_000));
         }
       } catch (err: unknown) {
         // If the abort signal fired, exit silently — the loop was intentionally stopped.

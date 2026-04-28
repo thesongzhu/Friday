@@ -1822,7 +1822,7 @@ describe("FridayAgentRuntime", () => {
         }
         yield {
           type: "text_delta",
-          text: "1. Headline A (2026-02-19) https://example.com/a\n2. Headline B (2026-02-18) https://example.com/b\n3. Headline C (2026-02-17) https://example.com/c",
+          text: "1. 新闻 A（2026-02-19）https://example.com/a\n2. 新闻 B（2026-02-18）https://example.com/b\n3. 新闻 C（2026-02-17）https://example.com/c",
         };
         yield { type: "message_end", stopReason: "end_turn", inputTokens: 11, outputTokens: 9 };
       },

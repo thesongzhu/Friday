@@ -249,6 +249,33 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("Done building feature X");
     });
 
+    it("shows cancelled terminal outcome with the persisted reason", async () => {
+      const deps = createMockDeps({
+        taskStatusSnapshotGetter: vi.fn().mockResolvedValue({
+          readOnly: false,
+          activeSubagents: [],
+          blockers: [],
+          terminalOutcome: {
+            status: "cancelled",
+            summary: "Cancelled via API",
+            responseText: "Cancelled via API",
+          },
+        } satisfies FridayAgentTaskStatusSnapshot),
+      });
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "task_status" },
+          sessionKey: "test",
+          runId: "run-1",
+          task: "为什么 Request was cancelled before completion?",
+        },
+        deps,
+      );
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("任务已取消");
+      expect(result.response).toContain("Cancelled via API");
+    });
+
     it("shows no active task when status is empty", async () => {
       const deps = createMockDeps({
         taskStatusSnapshotGetter: vi.fn().mockResolvedValue({

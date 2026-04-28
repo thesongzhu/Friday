@@ -43,6 +43,7 @@ Use these before relying on older design or audit material.
 - [Workflow Engine Design](workflow-engine-design.md)
 - [Channel System Design](DESIGN-CHANNEL-SYSTEM.md)
 - [Browser Plugin Design](DESIGN-BROWSER-PLUGIN.md)
+- [Guide Lens Design](DESIGN-GUIDE-LENS.md)
 
 ## Safety And Release
 
