@@ -51,6 +51,41 @@ export interface FridayChannelCapabilityContract {
 
 // ─── Inbound Message ───
 
+export type FridayChannelAttachmentKind = "image" | "file" | "audio" | "video";
+
+export type FridayChannelAttachmentStatus = "resolved" | "failed" | "deferred";
+
+export interface FridayChannelAttachmentPlatformRef {
+  channelKind: string;
+  messageId?: string;
+  resourceKey?: string;
+  resourceType?: "image" | "file";
+  messageType?: string;
+}
+
+export interface FridayChannelAttachment {
+  /** Stable attachment ID within Friday. */
+  id: string;
+  /** Media category used by Friday routing. */
+  kind: FridayChannelAttachmentKind;
+  /** Original filename when the source platform provides one. */
+  filename?: string;
+  /** MIME type after download or source metadata inspection. */
+  contentType?: string;
+  /** Size in bytes when known. */
+  sizeBytes?: number;
+  /** Local file path when the channel has resolved the resource. */
+  localPath?: string;
+  /** Source URL when the platform provides a stable URL. */
+  sourceUrl?: string;
+  /** Resolution state for UI and recovery diagnostics. */
+  status: FridayChannelAttachmentStatus;
+  /** Human-readable failure reason when status is failed/deferred. */
+  error?: string;
+  /** Platform private reference used for diagnostics/retry. */
+  platform?: FridayChannelAttachmentPlatformRef;
+}
+
 export interface FridayChannelMessage {
   /** Unique message ID from the source platform. */
   id: string;
@@ -68,6 +103,8 @@ export interface FridayChannelMessage {
   text: string;
   /** Optional image URLs or file paths. */
   images?: string[];
+  /** Optional attachments already normalized by the channel layer. */
+  attachments?: FridayChannelAttachment[];
   /** ID of the message being replied to, if any. */
   replyTo?: string;
   /** OC-006: Thread or topic ID for thread-aware session routing. */
@@ -87,6 +124,15 @@ export interface FridayChannelSendOptions {
   chatId: string;
   /** Text content to send. */
   text: string;
+  /** Optional approval payload for channels that support native approval UI. */
+  approval?: {
+    shortId: string;
+    toolName: string;
+    reason: string;
+    expiresAt: string;
+    paramsPreview?: string;
+    chatType?: "direct" | "group";
+  };
   /** Optional image URLs or file paths to attach. */
   images?: string[];
   /** Optional message ID to reply to. */

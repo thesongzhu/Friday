@@ -30,9 +30,9 @@ const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|�
 const CONTINUE_HINTS =
   /\b(continue|go ahead|proceed|keep going|do it|start it|carry on)\b/i;
 const CHINESE_CONTINUE_HINTS = /(继续|开始吧|继续做|接着做|往下做|执行吧)/;
-const CROSS_TOPIC_RECAP_HINTS =
-  /\b(summari[sz]e|summary|recap|wrap up|pull together|combine|roll up|recommendations|all recommendations|overall recommendation)\b/i;
-const CHINESE_CROSS_TOPIC_RECAP_HINTS = /(总结|概括|汇总|整体建议|全部建议|总的建议)/;
+const CHINESE_RECENT_ASSISTANT_FOLLOW_UP_HINTS =
+  /(简单解释|解释一下|讲简单|说简单|说人话|展开一下|详细解释|细讲|总结一下|概括一下|什么意思)/;
+const BARE_NUDGE_HINTS = /^(?:[?？]+|嗯+|啊+|所以呢|然后呢|怎么说)$/;
 const EXPLICIT_LITERAL_RESPONSE_INSTRUCTION =
   /\b(?:answer|reply|respond|say)\s+(?:with\s+)?exactly\b|\b(?:only|just)\s+(?:answer|reply|respond|say)\b|\b(?:answer|reply|respond|say)\s+only\b/i;
 const CHINESE_EXPLICIT_LITERAL_RESPONSE_INSTRUCTION = /(?:只|仅)(?:回复|回答|输出|返回|说)/;
@@ -68,10 +68,106 @@ const GENERIC_FOLLOW_UP_TOKENS = new Set([
   "打开",
   "失败",
   "原因",
+  "什么",
+  "是什",
+  "是什么",
+  "这是什么",
+  "那是什么",
+  "解释",
+  "简单",
+  "一下",
+]);
+const WEAK_CONTEXT_OVERLAP_TOKENS = new Set([
+  "what",
+  "why",
+  "how",
+  "this",
+  "that",
+  "here",
+  "there",
+  "same",
+  "again",
+  "cannot",
+  "could",
+  "did",
+  "didnt",
+  "do",
+  "does",
+  "doesnt",
+  "dont",
+  "thing",
+  "not",
+  "would",
+  "什么",
+  "是什",
+  "是什么",
+  "这是什么",
+  "那是什么",
+  "为什么",
+  "怎么",
+  "如何",
+  "这个",
+  "那个",
+  "这里",
+  "这儿",
+  "解释",
+  "简单",
+  "一下",
+  "意思",
 ]);
 
 function hasSpecificFollowUpTokens(task: string): boolean {
   return tokenize(task).some((token) => !GENERIC_FOLLOW_UP_TOKENS.has(token));
+}
+
+function hasDeicticReference(task: string): boolean {
+  const normalized = normalizeText(task).toLowerCase();
+  return (
+    /\b(this|that|it|these|those|same|previous|last|above|earlier)\b/i.test(normalized)
+    || /(这个|那个|这里|这儿|它|这张|那张|刚才|上一个|前面|上一条|同一个)/.test(normalized)
+  );
+}
+
+function isLikelyStandaloneQuestion(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0 || hasDeicticReference(normalized)) {
+    return false;
+  }
+  const hasQuestionForm =
+    /\b(?:what|who|where|when|why|how|can|could|should|would|is|are|do|does)\b/i.test(normalized)
+    || /(是什么|怎么|如何|为什么|能不能|可以|是否|有没有)/.test(normalized);
+  return hasQuestionForm && hasSpecificFollowUpTokens(normalized);
+}
+
+function isRecentAssistantRewriteRequest(task: string): boolean {
+  const normalized = normalizeText(task);
+  return (
+    /\b(?:explain|explain it|explain that|simplify|make it simpler|in simple terms|summari[sz]e|recap|expand on that)\b/i.test(normalized)
+    || CHINESE_RECENT_ASSISTANT_FOLLOW_UP_HINTS.test(normalized)
+  );
+}
+
+function isBareNudgeTask(task: string): boolean {
+  return BARE_NUDGE_HINTS.test(normalizeText(task));
+}
+
+function isCrossTopicRecapRequest(task: string): boolean {
+  const normalized = normalizeText(task);
+  return (
+    /\b(all recommendations|overall recommendations|recommendations|recommendation|pull together|combine|roll up|wrap up)\b/i.test(normalized)
+    || /(全部建议|整体建议|总的建议|汇总)/.test(normalized)
+  );
+}
+
+function isShortOperationalTroubleshootingFollowUpTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0 || normalized.length > 72) {
+    return false;
+  }
+  return (
+    /\b(?:connect|connected|open|opened|load|loaded|work|worked|reply|replied|send|sent|receive|received|fail|failed|failure)\b/i.test(normalized)
+    || /(连接|连上|打开|加载|运行|回复|发送|收到|失败|无法|不能|没|没有|看不到)/.test(normalized)
+  );
 }
 
 function isShortContextualFollowUpTask(task: string): boolean {
@@ -250,6 +346,13 @@ function countOverlap(left: Iterable<string>, right: Iterable<string>): number {
   return matches;
 }
 
+function countMeaningfulOverlap(left: Iterable<string>, right: Iterable<string>): number {
+  return countOverlap(
+    [...left].filter((token) => !WEAK_CONTEXT_OVERLAP_TOKENS.has(token)),
+    [...right].filter((token) => !WEAK_CONTEXT_OVERLAP_TOKENS.has(token)),
+  );
+}
+
 function fingerprintTopic(text: string): string {
   const normalized = summarizeTopic(text).toLowerCase();
   return createHash("sha1").update(normalized).digest("hex").slice(0, 16);
@@ -292,9 +395,13 @@ export function classifyFridayConversationTurn(input: {
   const records = filterConversationRecords(input.historyRecords ?? [], input.currentUserSequence);
   const latestAssistant = findLatestRecord(records, "assistant");
   const latestUser = findLatestRecord(records, "user");
-  const latestAssistantOverlap = countOverlap(taskTokens, tokenize(latestAssistant?.contentText ?? focusState?.assistantAnchorSummary ?? ""));
-  const latestUserOverlap = countOverlap(taskTokens, tokenize(latestUser?.contentText ?? ""));
+  const latestAssistantMeaningfulOverlap = countMeaningfulOverlap(
+    taskTokens,
+    tokenize(latestAssistant?.contentText ?? focusState?.assistantAnchorSummary ?? ""),
+  );
+  const latestUserMeaningfulOverlap = countMeaningfulOverlap(taskTokens, tokenize(latestUser?.contentText ?? ""));
   const hasReplyAnchor = Boolean(resolveReplyAnchorRecord(records, input.replyToMessageId));
+  const hasUnresolvedReplyAnchor = Boolean(input.replyToMessageId?.trim()) && !hasReplyAnchor;
   const hasAssistantAnchor = Boolean(latestAssistant?.contentText || focusState?.assistantAnchorSummary);
   const shortTask = task.length > 0 && task.length <= 120;
   const advisoryContinuation =
@@ -305,14 +412,8 @@ export function classifyFridayConversationTurn(input: {
     || CHINESE_FOLLOW_UP_HINTS.test(task)
     || DEICTIC_FOLLOW_UP_HINTS.test(taskLower);
   const literalResponseInstruction = isExplicitLiteralResponseInstruction(task);
-  const assistantOverlapSignal = latestAssistantOverlap >= 2
-    || (
-      latestAssistantOverlap >= 1
-      && hasFocus
-      && hasAssistantAnchor
-      && isShortAssistantAnchorFollowUpTask(task)
-    );
-  const userOverlapSignal = latestUserOverlap >= 2;
+  const assistantOverlapSignal = latestAssistantMeaningfulOverlap >= 1;
+  const userOverlapSignal = latestUserMeaningfulOverlap >= 1;
 
   if (STATUS_CHECK_HINTS.test(taskLower) || CHINESE_STATUS_CHECK_HINTS.test(task)) {
     return "status_check";
@@ -320,7 +421,28 @@ export function classifyFridayConversationTurn(input: {
   if (CONTINUE_HINTS.test(taskLower) || CHINESE_CONTINUE_HINTS.test(task)) {
     return "continue_active_task";
   }
+  if (hasReplyAnchor || (hasUnresolvedReplyAnchor && hasAssistantAnchor)) {
+    return "follow_up";
+  }
   if (literalResponseInstruction && !hasReplyAnchor) {
+    return "new_topic";
+  }
+  if (latestAssistant && isRecentAssistantRewriteRequest(task)) {
+    return "follow_up";
+  }
+  if (latestUser && isBareNudgeTask(task)) {
+    return "follow_up";
+  }
+  if (hasFocus && hasAssistantAnchor && isShortOperationalTroubleshootingFollowUpTask(task)) {
+    return "follow_up";
+  }
+  if (
+    !hasReplyAnchor
+    && !hasUnresolvedReplyAnchor
+    && isLikelyStandaloneQuestion(task)
+    && !assistantOverlapSignal
+    && !userOverlapSignal
+  ) {
     return "new_topic";
   }
   if (
@@ -329,13 +451,11 @@ export function classifyFridayConversationTurn(input: {
   ) {
     return "clarification";
   }
-  if (hasReplyAnchor) {
-    return "follow_up";
-  }
   if (
     hasFocus
     && hasAssistantAnchor
     && isShortAssistantAnchorFollowUpTask(task)
+    && (hasDeicticReference(task) || assistantOverlapSignal)
   ) {
     return "follow_up";
   }
@@ -677,6 +797,13 @@ function buildConversationBlockSelection(input: {
   };
 
   const replyAnchor = resolveReplyAnchorRecord(records, input.replyToMessageId);
+  const hasUnresolvedReplyAnchor = Boolean(input.replyToMessageId?.trim()) && !replyAnchor;
+  const recentAssistantRewriteRequest = isRecentAssistantRewriteRequest(input.task);
+  const crossTopicRecapRequest = isCrossTopicRecapRequest(input.task);
+  const bareNudgeTask = isBareNudgeTask(input.task);
+  const preferLatestAssistantAnchor = !replyAnchor && (hasUnresolvedReplyAnchor || (recentAssistantRewriteRequest && !crossTopicRecapRequest));
+  const preferRecentUserAnchor = !replyAnchor && bareNudgeTask;
+  const preferRecencyAnchor = preferLatestAssistantAnchor || preferRecentUserAnchor;
   const replyAnchorInCurrentTopicWindow = Boolean(
     replyAnchor
     && typeof focusState?.currentTopicStartSequence === "number"
@@ -697,6 +824,7 @@ function buildConversationBlockSelection(input: {
   if (latestAssistant) {
     const assistantOverlap = countOverlap(taskTokens, tokenize(latestAssistant.contentText));
     const assistantScore = (assistantOverlap * 20)
+      + (preferLatestAssistantAnchor ? 96 : 0)
       + (
         !replyAnchor
         && (
@@ -709,7 +837,12 @@ function buildConversationBlockSelection(input: {
       )
       + (
         (input.turnKind === "follow_up" || input.turnKind === "clarification")
-        && (assistantOverlap > 0 || (!replyAnchor && shortAssistantAnchorFollowUp) || replyAnchorInCurrentTopicWindow)
+        && (
+          assistantOverlap > 0
+          || preferLatestAssistantAnchor
+          || (!replyAnchor && shortAssistantAnchorFollowUp)
+          || replyAnchorInCurrentTopicWindow
+        )
         ? 10
         : 0
       );
@@ -719,13 +852,17 @@ function buildConversationBlockSelection(input: {
         source: "assistant_anchor",
         summary: latestAssistant.contentText,
         score: assistantScore,
-        reason: assistantOverlap > 0
+        reason: preferLatestAssistantAnchor
+          ? hasUnresolvedReplyAnchor
+            ? "Platform reply target was not found locally, so the latest assistant answer is used as the safest reply anchor."
+            : "Latest assistant answer is preferred for a short rewrite or explanation request."
+          : assistantOverlap > 0
           ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
           : "Latest assistant answer is a plausible short-follow-up anchor.",
         records: buildAnchorWindow(records, latestAssistant),
       }),
       taskOverlap: assistantOverlap,
-      fallbackOnly: assistantOverlap === 0,
+      fallbackOnly: assistantOverlap === 0 && !preferLatestAssistantAnchor,
     });
   }
 
@@ -733,9 +870,10 @@ function buildConversationBlockSelection(input: {
   if (latestUser) {
     const userOverlap = countOverlap(taskTokens, tokenize(latestUser.contentText));
     const userScore = (userOverlap * 14)
+      + (preferRecentUserAnchor ? 80 : 0)
       + (
         input.turnKind === "follow_up"
-        && (!replyAnchor || replyAnchorInCurrentTopicWindow || userOverlap > 0)
+        && (!replyAnchor || preferRecentUserAnchor || replyAnchorInCurrentTopicWindow || userOverlap > 0)
         ? 8
         : 0
       );
@@ -745,17 +883,19 @@ function buildConversationBlockSelection(input: {
         source: "recent_user",
         summary: latestUser.contentText,
         score: userScore,
-        reason: userOverlap > 0
+        reason: preferRecentUserAnchor
+          ? "The latest user message is preferred because the current turn is a bare nudge."
+          : userOverlap > 0
           ? `Current turn overlaps the most recent user turn (${String(userOverlap)} token match(es)).`
           : "Most recent user turn is a fallback short-context anchor.",
         records: [latestUser],
       }),
       taskOverlap: userOverlap,
-      fallbackOnly: userOverlap === 0,
+      fallbackOnly: userOverlap === 0 && !preferRecentUserAnchor,
     });
   }
 
-  if (focusState?.currentTopicSummary) {
+  if (focusState?.currentTopicSummary && !preferRecencyAnchor) {
     const focusOverlap = countOverlap(taskTokens, tokenize(focusState.currentTopicSummary));
     const focusScore = (focusOverlap * 12)
       + (
@@ -802,13 +942,14 @@ function buildConversationBlockSelection(input: {
   }
 
   const useCrossTopicRecapWindow =
+    !preferRecencyAnchor
+    &&
     input.turnKind === "follow_up"
-    && (
-      CROSS_TOPIC_RECAP_HINTS.test(input.task)
-      || CHINESE_CROSS_TOPIC_RECAP_HINTS.test(input.task)
-    );
+    && isCrossTopicRecapRequest(input.task);
 
   const topicWindowRecords = (
+    !preferRecencyAnchor
+    &&
     (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
     && typeof focusState?.currentTopicStartSequence === "number"
   )
@@ -888,7 +1029,7 @@ function buildConversationBlockSelection(input: {
     historyBlockCandidates.push(candidate);
   };
 
-  const candidateHistoryRecords = replyAnchor
+  const candidateHistoryRecords = replyAnchor || preferRecencyAnchor
     ? []
     : useCrossTopicRecapWindow
     ? records
@@ -1059,6 +1200,7 @@ function buildTaskPrompt(input: {
       .map((block) => `- [${block.source}] ${block.summary}`)
       .join("\n")
     : undefined;
+  const hasRecentUserAnchor = input.selectedBlocks.some((block) => block.source === "recent_user");
   const hasHistoryOnlySelection = input.selectedBlocks.length > 0
     && input.selectedBlocks.every((block) => block.source.endsWith("_block"));
 
@@ -1075,8 +1217,8 @@ function buildTaskPrompt(input: {
     return [
       "This user started a new question.",
       `Current question: ${task}`,
-      `Previous topic (do not answer this unless the user explicitly asked for it): ${previousTopicSummary}`,
-      "Answer only the current question. If context from the previous topic is not needed, ignore it.",
+      "A previous topic exists, but it was intentionally not selected.",
+      "Answer only the current question. Do not answer or continue prior topics unless the user explicitly references them.",
     ].join("\n");
   }
 
@@ -1140,11 +1282,19 @@ function buildTaskPrompt(input: {
     ].filter((value): value is string => Boolean(value)).join("\n");
   }
 
+  if ((input.turnKind === "follow_up" || input.turnKind === "continue_active_task") && hasRecentUserAnchor && isBareNudgeTask(task)) {
+    return [
+      "The user sent a short nudge that refers to their immediately previous message.",
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      `Latest user turn: ${task}`,
+      "Answer the immediately previous user message directly.",
+      "Do not switch back to an older topic unless the previous user message explicitly referenced it.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
+  }
+
   if (isShortAssistantFactFollowUp && assistantFactSummary) {
     return [
-      previousTopicSummary
-        ? `Continue the current topic: ${previousTopicSummary}`
-        : "The user is following up on the latest assistant-stated fact.",
+      "The user is following up on the latest assistant-stated fact.",
       `Referenced assistant fact: ${assistantFactSummary}`,
       selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
       hasExplicitReplyAnchor

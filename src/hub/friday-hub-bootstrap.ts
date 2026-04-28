@@ -347,6 +347,7 @@ import {
   resolveFridayChannelSessionKey,
   resolveFridayChannelTerminalText,
   resolveTokenSecret,
+  stripFridayUiActionHints,
 } from "./bootstrap/hub-helpers.js";
 import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gates.js";
 
@@ -3302,6 +3303,7 @@ export async function createFridayHub(
   type FridayChannelApprovalRoute = {
     channelKind: string;
     chatId: string;
+    chatType: "direct" | "group";
     senderId: string;
     messageId: string;
   };
@@ -3442,9 +3444,18 @@ export async function createFridayHub(
       route,
     };
     channelToolApprovalSessions.set(channelToolApprovalKey(prompt.sessionKey, shortId), pending);
+    const paramsPreview = buildChannelToolApprovalParamsPreview(pending.params);
     channelRegistry.send(route.channelKind, {
       chatId: route.chatId,
       text: buildChannelToolApprovalPrompt(pending),
+      approval: {
+        shortId: pending.shortId,
+        toolName: pending.toolName,
+        reason: pending.reason,
+        expiresAt: pending.expiresAt,
+        chatType: pending.route.chatType,
+        ...(paramsPreview ? { paramsPreview } : {}),
+      },
       replyTo: route.messageId,
     }).catch((err) => {
       warnHubBootstrapOnce(`[friday] channel-tool-approval-notify: ${err instanceof Error ? err.message : String(err)}`);
@@ -3858,6 +3869,9 @@ export async function createFridayHub(
     kind: "planning" | "assistant" | "planning-reject" | "deterministic";
     status?: FridayAgentRunStatus;
   }): string => {
+    if (input.kind === "assistant") {
+      return `agent-run:${input.runId}:response`;
+    }
     if (input.kind === "planning-reject" || input.kind === "deterministic") {
       return `agent-run:${input.runId}:${input.kind}`;
     }
@@ -6873,6 +6887,14 @@ export async function createFridayHub(
 
         const channelMessageHandler = (msg: FridayChannelMessage) => {
           const text = sanitizeChannelInput(msg.text);
+          const hasInboundImages = (msg.images?.length ?? 0) > 0;
+          const hasInboundAttachments = (msg.attachments?.length ?? 0) > 0;
+          const hasInboundMedia = hasInboundImages || hasInboundAttachments;
+          const taskText = text || (hasInboundImages
+            ? "Analyze the attached image."
+            : hasInboundAttachments
+              ? "Analyze the attached media."
+              : "");
           const sessionKey = resolveFridayChannelSessionKey(msg, {
             crossChannelIdentityEnabled,
             identityMap: crossChannelIdentityMap,
@@ -6925,10 +6947,11 @@ export async function createFridayHub(
               details: payload,
             }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
           };
-          if (text.length === 0) return;
+          if (taskText.length === 0) return;
           channelApprovalRoutesBySession.set(sessionKey, {
             channelKind: msg.channelKind,
             chatId: msg.chatId,
+            chatType: msg.chatType,
             senderId: msg.senderId,
             messageId: msg.id,
           });
@@ -6951,7 +6974,7 @@ export async function createFridayHub(
             return;
           }
 
-          const approvalCommand = parseChannelToolApprovalCommand(text);
+          const approvalCommand = text.length > 0 ? parseChannelToolApprovalCommand(text) : null;
           if (approvalCommand) {
             const pendingApprovals = listPendingChannelToolApprovalsForSession(sessionKey);
             const pendingApproval = approvalCommand.shortId
@@ -7093,17 +7116,21 @@ export async function createFridayHub(
               replyTo: msg.id,
               runId,
               publicRunUrl: resolveFridayPublicRunUrl(runId),
+              sourceText: taskText,
             });
             try {
               const inboundMessage = await hubSessionService.addMessage(sessionKey, {
                 role: "user",
-                content: text,
-                contentText: text,
+                content: taskText,
+                contentText: taskText,
                 idempotencyKey: inboundIdempotencyKey,
                 metadata: {
                   sourceMessageId: msg.id,
                   ...(msg.replyTo ? { replyToMessageId: msg.replyTo } : {}),
                   channelKind: msg.channelKind,
+                  ...(hasInboundMedia ? { mediaMessage: true } : {}),
+                  ...(msg.images?.length ? { images: msg.images } : {}),
+                  ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
                 },
               }).catch((err) => {
                 // Non-fatal: session mirror errors should not block channel handling.
@@ -7128,11 +7155,12 @@ export async function createFridayHub(
                 senderName: msg.senderName,
                 chatId: msg.chatId,
                 chatType: msg.chatType,
-                text,
+                text: taskText,
                 occurredAt: new Date(msg.timestamp).toISOString(),
                 replyToMessageId: msg.replyTo,
                 timezone: msg.timezone,
                 images: msg.images,
+                attachments: msg.attachments,
               });
               const result = {
                 runId: engineResult.runId,
@@ -7153,7 +7181,7 @@ export async function createFridayHub(
                 : undefined;
 
               const outboundText = result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
-                ? result.response
+                ? stripFridayUiActionHints(result.response)
                 : resolveFridayChannelTerminalText({
                   status: result.status === "completed"
                     ? "completed"

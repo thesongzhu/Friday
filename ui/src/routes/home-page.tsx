@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import {
   ArrowRight,
   Bot,
@@ -24,8 +25,13 @@ import { useUserProfile } from "@/hooks/use-user-profile";
 import { automationsApi } from "@/lib/api/automations";
 import { requestCommandPaletteOpen } from "@/lib/command-palette";
 import { learningApi } from "@/lib/api/learning";
+import { healthApi } from "@/lib/api/health";
 import { type AgentAutomationRecord, type AgentRunRecord, type FridayLearningOverview } from "@/lib/api/types";
 import { uixSnapshotsApi } from "@/lib/api/uix-snapshots";
+import {
+  FRIDAY_SETUP_READINESS_SESSION_KEY,
+  FridayReadinessSummaryPanel,
+} from "@/components/setup/friday-readiness-summary";
 import { recordPageVisit } from "@/lib/home/intent-engine";
 import { localize } from "@/lib/i18n/localized-text";
 import { findPackRuns } from "@/lib/packs/pack-assistant-receipt";
@@ -232,6 +238,7 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
 
 export function HomePage() {
   const navigate = useAppNavigate();
+  const location = useLocation();
   const { locale } = useAppLocale();
   const { profileType } = useUserProfile();
   const { pinnedPackIds, pinPack, unpinPack } = useHomeSurfacePreferences(profileType);
@@ -241,6 +248,10 @@ export function HomePage() {
   const systemHealthQuery = useSystemHealthQuery();
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
   const [pendingPackPath, setPendingPackPath] = useState<string | null>(null);
+  const [showSetupReadiness, setShowSetupReadiness] = useState(() => {
+    const state = location.state as { starterSource?: string } | null;
+    return state?.starterSource === "setup" || window.sessionStorage.getItem(FRIDAY_SETUP_READINESS_SESSION_KEY) === "1";
+  });
   const pollInterval = useAdaptivePollingInterval({ activeMs: 12_000, backgroundMs: 36_000 });
 
   useEffect(() => {
@@ -273,6 +284,12 @@ export function HomePage() {
     queryKey: ["agent-os", "automations", "console-home"],
     queryFn: () => automationsApi.list({ limit: 20 }),
     refetchInterval: pollInterval,
+  });
+  const capabilityHealthQuery = useQuery({
+    queryKey: ["health", "capabilities", "home"],
+    queryFn: () => healthApi.getCapabilityHealth(),
+    refetchInterval: showSetupReadiness ? 30_000 : false,
+    staleTime: 10_000,
   });
 
   const recentRuns = snapshotQuery.data?.runs ?? [];
@@ -386,6 +403,17 @@ export function HomePage() {
 
   return (
     <div className="space-y-5 pb-6">
+      {showSetupReadiness ? (
+        <FridayReadinessSummaryPanel
+          health={capabilityHealthQuery.data}
+          locale={locale}
+          onDismiss={() => {
+            window.sessionStorage.removeItem(FRIDAY_SETUP_READINESS_SESSION_KEY);
+            setShowSetupReadiness(false);
+          }}
+        />
+      ) : null}
+
       <section
         data-testid="home-surface-ready"
         className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]"

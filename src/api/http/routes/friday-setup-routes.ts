@@ -4,6 +4,7 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type { FridaySqliteLayer } from "#state";
 import {
   createFridaySecretRepository,
+  decryptSecret,
   detectFridayProviderKindFromApiKey,
   encryptSecret,
   FRIDAY_PROVIDER_KIND_SET,
@@ -17,6 +18,7 @@ import {
   getMasterKey,
   isFridayProviderAuthModeSupportedForKind,
 } from "#providers";
+import type { FridayEncryptedEnvelope } from "#providers";
 import type { FridaySkillRegistry } from "#skills";
 import {
   buildFridayChannelSecretRef,
@@ -25,6 +27,7 @@ import {
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
   getFridayChannelSecretFieldDescriptors,
   parseFridayChannelsConfig,
+  parseFridayChannelSecretRef,
 } from "#channels";
 import type { FridaySupportedChannelKind } from "#channels";
 import { FridayDomainError } from "#errors";
@@ -1108,6 +1111,7 @@ function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabl
 }
 
 const feishuRegistrationSessions = new Map<string, FeishuAppRegistrationSession>();
+const feishuSetupReadinessWelcomeSent = new Set<string>();
 
 function pruneFeishuRegistrationSessions(nowMs = Date.now()): void {
   for (const [registrationId, session] of feishuRegistrationSessions.entries()) {
@@ -1295,6 +1299,7 @@ async function sendFeishuSetupWelcomeMessage(input: {
   appId: string;
   appSecret: string;
   ownerOpenId: string;
+  text?: string;
 }): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
   const tenantAccessToken = await fetchFeishuTenantAccessToken(input.appId, input.appSecret);
   if (!tenantAccessToken) {
@@ -1314,7 +1319,7 @@ async function sendFeishuSetupWelcomeMessage(input: {
         receive_id: input.ownerOpenId,
         msg_type: "text",
         content: JSON.stringify({
-          text: "Friday 飞书应用已创建。请回到 Friday setup 点击“保存并启动”；启动后你就可以在这个对话里给 Friday 发消息，敏感操作会在这里请求确认。",
+          text: input.text ?? "Friday 飞书应用已创建。请回到 Friday setup 点击“保存并启动”；启动后你就可以在这个对话里给 Friday 发消息，敏感操作会在这里请求确认。",
         }),
       }),
       signal: controller.signal,
@@ -1353,6 +1358,97 @@ async function sendFeishuSetupWelcomeMessage(input: {
     };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+function resolveSetupChannelSecretValue(deps: Pick<FridaySetupRoutesDeps, "db">, raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  const refKey = parseFridayChannelSecretRef(value);
+  if (!refKey) return value;
+  try {
+    const entity = deps.db.withReadConnection((db) =>
+      channelSecretRepository.getByRef(db, FRIDAY_CHANNEL_SECRET_SCOPE, refKey),
+    );
+    if (!entity) return undefined;
+    const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
+    return decryptSecret(envelope, getMasterKey());
+  } catch (error) {
+    console.warn("[friday][setup-routes] could not resolve channel secret for setup welcome:", error instanceof Error ? error.message : String(error));
+    return undefined;
+  }
+}
+
+function normalizeSetupStringList(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+  }
+  if (typeof raw === "string") {
+    return raw.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function loadFeishuSetupWelcomeTarget(
+  deps: Pick<FridaySetupRoutesDeps, "db">,
+): { appId: string; appSecret: string; ownerOpenId: string } | null {
+  const state = deps.db.withReadConnection((db) => {
+    return db.prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'").get() as { channels_json: string } | undefined;
+  });
+  if (!state?.channels_json) return null;
+
+  let channels: unknown;
+  try {
+    channels = JSON.parse(state.channels_json);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(channels)) return null;
+
+  for (const entry of channels) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as SetupChannelPersistedConfig;
+    if (record.kind !== "feishu" || record.enabled !== true) continue;
+    const config = record.config ?? {};
+    const appId = typeof config.appId === "string" ? config.appId.trim() : "";
+    const appSecret = resolveSetupChannelSecretValue(deps, config.appSecret);
+    const ownerOpenId = normalizeSetupStringList(config.allowedUsers)[0] ?? "";
+    if (appId && appSecret && ownerOpenId) {
+      return { appId, appSecret, ownerOpenId };
+    }
+  }
+  return null;
+}
+
+function buildFeishuSetupCompleteWelcomeText(): string {
+  return [
+    "Friday 已启动，可以直接在这个飞书私聊里发消息。",
+    "",
+    "已打开：文本模型、飞书、文件读写、PDF、Skills。",
+    "需要你连接账号/模型或开本机权限后会自动可用：看图、OCR、Embedding、TTS。",
+    "需要你批准后才会执行：MCP、生成/安装自定义工具、第三方安装、写配置。",
+    "",
+    "如果飞书里出现多个 Friday，请以收到这条欢迎消息的私聊为准；旧私聊不会再连接当前这台本地 Friday。",
+    "",
+    "首页也会显示同一份状态。默认是简版，点“高级详情”可以看完整边界。",
+  ].join("\n");
+}
+
+async function sendFeishuSetupCompleteWelcomeIfConfigured(deps: Pick<FridaySetupRoutesDeps, "db">): Promise<void> {
+  const target = loadFeishuSetupWelcomeTarget(deps);
+  if (!target) return;
+  const dedupeKey = `${target.appId}:${target.ownerOpenId}`;
+  if (feishuSetupReadinessWelcomeSent.has(dedupeKey)) return;
+  const result = await sendFeishuSetupWelcomeMessage({
+    ...target,
+    text: buildFeishuSetupCompleteWelcomeText(),
+  });
+  if (result.ok) {
+    feishuSetupReadinessWelcomeSent.add(dedupeKey);
+  }
+  if (!result.ok) {
+    console.warn("[friday][setup-routes] setup completion Feishu welcome failed:", result.error);
   }
 }
 
@@ -2414,6 +2510,10 @@ export function createFridaySetupRoutes(
           }
         }
 
+        if (savedKinds.includes("feishu")) {
+          await sendFeishuSetupCompleteWelcomeIfConfigured(deps);
+        }
+
         return { savedKinds, ...(activation ? { activation } : {}) };
       },
     },
@@ -2452,6 +2552,7 @@ export function createFridaySetupRoutes(
           ).get() as { setup_completed_at: string } | undefined;
         });
         if (existingState?.setup_completed_at) {
+          await sendFeishuSetupCompleteWelcomeIfConfigured(deps);
           return { setupCompletedAt: existingState.setup_completed_at };
         }
 
@@ -2479,6 +2580,8 @@ export function createFridaySetupRoutes(
              WHERE id = 'singleton'`,
           ).run(now, JSON.stringify(normalizedCompletedSteps), JSON.stringify(skippedSteps), now);
         });
+
+        await sendFeishuSetupCompleteWelcomeIfConfigured(deps);
 
         return { setupCompletedAt: now };
       },

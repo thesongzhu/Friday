@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "title": "whatsapp-channel-status",
+  "description": "# WhatsApp Channel Status",
+  "sections": [
+    {
+      "id": "main",
+      "label": "Configuration",
+      "fieldIds": []
+    }
+  ],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "output-stdout",
+      "outputKey": "stdout",
+      "label": "Command standard output",
+      "widget": "text"
+    },
+    {
+      "id": "output-stderr",
+      "outputKey": "stderr",
+      "label": "Command standard error",
+      "widget": "text"
+    },
+    {
+      "id": "output-exitCode",
+      "outputKey": "exitCode",
+      "label": "Command exit code",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    },
+    {
+      "id": "reset",
+      "label": "Reset",
+      "style": "secondary"
+    }
+  ]
+}

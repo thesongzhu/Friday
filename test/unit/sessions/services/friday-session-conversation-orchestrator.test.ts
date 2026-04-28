@@ -77,7 +77,7 @@ describe("friday-session-conversation-orchestrator", () => {
 
     expect(prepared.turnKind).toBe("follow_up");
     expect(prepared.historyMessages).toHaveLength(4);
-    expect(prepared.taskPrompt).toContain("Continue the current topic");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact:");
     expect(prepared.selectedBlocks.length).toBeGreaterThan(0);
   });
 
@@ -206,6 +206,106 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("follow_up");
     expect(prepared.replyAnchorMessageId).toBe("msg-2");
     expect(prepared.selectedBlocks[0]?.source).toBe("reply_anchor");
+  });
+
+  it("treats short explanation requests as follow-ups to the latest assistant answer", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "简单解释一下",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。",
+      },
+      currentUserSequence: 6,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "这是什么" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "你的安全机制是什么" }),
+        makeMessage({
+          sequence: 4,
+          role: "assistant",
+          contentText: "Friday 的安全机制包括能力分级控制、破坏性操作审批门、只读模式保护。",
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.source).toBe("assistant_anchor");
+    expect(prepared.historyMessages.some((message) =>
+      message.role === "assistant"
+      && typeof message.content === "string"
+      && message.content.includes("安全机制"))).toBe(true);
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact:");
+    expect(prepared.taskPrompt).toContain("安全机制");
+    expect(prepared.taskPrompt).not.toContain("image_key");
+  });
+
+  it("treats substantive Chinese questions as new topics despite stale deictic focus", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "你的安全机制是什么",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "这是什么" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("Current question: 你的安全机制是什么");
+    expect(prepared.taskPrompt).not.toContain("image_key");
+  });
+
+  it("falls back unresolved platform reply anchors to the latest assistant answer", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "简单解释一下",
+      focusState: baseFocusState,
+      currentUserSequence: 5,
+      replyToMessageId: "lark-message-not-yet-mirrored",
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "你的安全机制是什么" }),
+        makeMessage({
+          sequence: 2,
+          role: "assistant",
+          contentText: "Friday 遇到敏感操作会先说明风险，然后等待 allowlist 用户审批。",
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.replyAnchorMessageId).toBeUndefined();
+    expect(prepared.selectedBlocks[0]?.source).toBe("assistant_anchor");
+    expect(prepared.taskPrompt).toContain("Referenced assistant fact:");
+    expect(prepared.taskPrompt).toContain("敏感操作");
+  });
+
+  it("treats a bare punctuation nudge as referring to the immediately previous user message", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "？",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "图片文件不能在本地工作区中找到，image_key 是聊天系统里的图片引用。",
+        currentTopicStartSequence: 1,
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "assistant", contentText: "我无法直接读取这张图片。" }),
+        makeMessage({ sequence: 2, role: "user", contentText: "你没有办法看到你发给我的信息没" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.source).toBe("recent_user");
+    expect(prepared.taskPrompt).toContain("immediately previous message");
+    expect(prepared.taskPrompt).toContain("你没有办法看到你发给我的信息没");
+    expect(prepared.taskPrompt).not.toContain("image_key");
   });
 
   it("builds an anchored follow-up prompt even without persisted focus state", () => {
@@ -407,7 +507,8 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("new_topic");
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
-    expect(prepared.taskPrompt).toContain("Previous topic");
+    expect(prepared.taskPrompt).toContain("previous topic exists");
+    expect(prepared.taskPrompt).not.toContain("Open GitHub");
   });
 
   it("prefers the relevant older compacted block over the latest topic window when a long follow-up names an older entity", () => {

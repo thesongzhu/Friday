@@ -110,6 +110,44 @@ describe("FridayChannelSlowTaskNotifier", () => {
     }));
   });
 
+  it("localizes slow-task updates for Chinese channel requests", async () => {
+    const registry = createFridayChannelRegistry();
+    const plugin = createMockPlugin("feishu");
+    registry.register(plugin);
+    await registry.startAll(() => {});
+
+    const emitter = createFridayAgentEventEmitter();
+    createFridayChannelSlowTaskNotifier({
+      eventEmitter: emitter,
+      channelRegistry: registry,
+      channelKind: "feishu",
+      chatId: "chat-1",
+      runId: "run-zh",
+      sourceText: "帮我查一下这个问题",
+    });
+
+    emitter.emit("agent.run.progress", {
+      runId: "run-zh",
+      phase: "executing",
+      elapsedMs: 31_000,
+      subagentCount: 0,
+      eta: 45_000,
+      etaConfidence: "low",
+    });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("还在处理你的请求"),
+    }));
+    expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("阶段：执行中"),
+    }));
+    expect(plugin.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.not.stringContaining("Still working"),
+    }));
+  });
+
   it("stops notifying once the run reaches a terminal state", async () => {
     const registry = createFridayChannelRegistry();
     const plugin = createMockPlugin();

@@ -29,6 +29,14 @@ describe("createDefaultFridayDecisionEngine", () => {
     expect(decision.reason).toContain("greeting");
   });
 
+  it("responds to Chinese greeting in Chinese", async () => {
+    const decision = await engine.decideLocally(makeCtx("嗨"));
+    expect(decision.action).toBe("respond");
+    expect(decision.response).toContain("嗨");
+    expect(decision.response).toContain("敏感操作");
+    expect(decision.response).not.toContain("Hello");
+  });
+
   // ─── Status patterns ────────────────────────────────────────
 
   it.each(["status", "health", "运行情况", "状态", "how are you", "are you running?"])
@@ -39,7 +47,7 @@ describe("createDefaultFridayDecisionEngine", () => {
   it("responds to status with system overview", async () => {
     const decision = await engine.decideLocally(makeCtx("status"));
     expect(decision.action).toBe("respond");
-    expect(decision.response).toContain("Online");
+    expect(decision.response).toContain("online");
   });
 
   // ─── Help patterns ──────────────────────────────────────────
@@ -53,7 +61,7 @@ describe("createDefaultFridayDecisionEngine", () => {
     const decision = await engine.decideLocally(makeCtx("help"));
     expect(decision.action).toBe("respond");
     expect(decision.response).toContain("Automation");
-    expect(decision.response).toContain("Monitoring");
+    expect(decision.response).toContain("Diagnosis");
   });
 
   // ─── Cancel patterns ────────────────────────────────────────

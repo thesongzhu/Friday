@@ -191,6 +191,37 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
     if (lifecycle) {
       const wrappedEventHandler = (rawEvent: unknown) => {
         if (inbound) {
+          if (inbound.normalizeAllAsync) {
+            void inbound.normalizeAllAsync(rawEvent)
+              .then((msgs) => {
+                for (const msg of msgs) {
+                  if (!checkAllowlist(msg, entry.allowlist)) continue;
+                  handler(msg);
+                }
+              })
+              .catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                healthState.get(plugin.kind)!.lastError = message;
+                console.warn(`[friday][channel-registry] async inbound normalizeAll failed for ${plugin.kind}: ${message}`);
+              });
+            return;
+          }
+
+          if (inbound.normalizeAsync) {
+            void inbound.normalizeAsync(rawEvent)
+              .then((msg) => {
+                if (!msg) return;
+                if (!checkAllowlist(msg, entry.allowlist)) return;
+                handler(msg);
+              })
+              .catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                healthState.get(plugin.kind)!.lastError = message;
+                console.warn(`[friday][channel-registry] async inbound normalize failed for ${plugin.kind}: ${message}`);
+              });
+            return;
+          }
+
           if (inbound.normalizeAll) {
             const msgs = inbound.normalizeAll(rawEvent);
             for (const msg of msgs) {

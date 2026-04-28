@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Radio, Send, Settings2, Wifi, WifiOff, MessageSquare, ChevronRight, X, Zap } from "lucide-react";
+import { AlertTriangle, Radio, Send, Settings2, Wifi, WifiOff, MessageSquare, ChevronRight, X, Zap, Paperclip, Image as ImageIcon, FileAudio, FileVideo, File } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ActionButton, StatusPill } from "@/components/core/primitives";
@@ -65,6 +65,22 @@ function formatTime(iso: string): string {
   } catch {
     return "";
   }
+}
+
+function channelDiagnosticString(channel: ChannelRegistryView | undefined, key: string): string | undefined {
+  const value = channel?.diagnostics?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isHistoricalChannelSession(session: FridaySessionRecord, channel: ChannelRegistryView | undefined): boolean {
+  const setupActivatedAt = channelDiagnosticString(channel, "setupActivatedAt");
+  if (!setupActivatedAt) return false;
+
+  const activatedAtMs = Date.parse(setupActivatedAt);
+  const activityAtMs = Date.parse(session.lastActivityAt ?? session.updatedAt ?? session.createdAt);
+  if (!Number.isFinite(activatedAtMs) || !Number.isFinite(activityAtMs)) return false;
+
+  return activityAtMs + 1000 < activatedAtMs;
 }
 
 // ─── Main component ───
@@ -161,7 +177,7 @@ export function ChannelsPage() {
   // Send reply handler
   async function handleSendOutbound() {
     const trimmed = replyText.trim();
-    if (!trimmed || !selectedSessionKey || isOutboundSending || isSending) return;
+    if (!trimmed || !selectedSessionKey || selectedSessionHistorical || isOutboundSending || isSending) return;
 
     setIsOutboundSending(true);
     setReplyText("");
@@ -189,7 +205,7 @@ export function ChannelsPage() {
 
   async function handleSendReply() {
     const trimmed = replyText.trim();
-    if (!trimmed || !selectedSessionKey || isSending || isOutboundSending) return;
+    if (!trimmed || !selectedSessionKey || selectedSessionHistorical || isSending || isOutboundSending) return;
 
     setIsSending(true);
     setReplyText("");
@@ -226,6 +242,11 @@ export function ChannelsPage() {
 
   const connectedChannels = registry.filter((ch) => ch.running);
   const selectedSession = sessions.find((s) => s.key === selectedSessionKey) ?? null;
+  const selectedChannelRegistry = selectedSession ? registryMap.get(getSessionChannelKind(selectedSession)) : undefined;
+  const selectedSessionHistorical = selectedSession
+    ? isHistoricalChannelSession(selectedSession, selectedChannelRegistry)
+    : false;
+  const selectedChannelAppId = channelDiagnosticString(selectedChannelRegistry, "appId");
 
   async function handleContinueToMainChat() {
     if (!selectedSession) {
@@ -406,6 +427,7 @@ export function ChannelsPage() {
                 const isActive = session.key === selectedSessionKey;
                 const chRegistry = registryMap.get(chKind);
                 const needsAttention = chRegistry?.health.state === "error" || chRegistry?.health.credentialStatus === "invalid";
+                const isHistorical = isHistoricalChannelSession(session, chRegistry);
                 return (
                   <button
                     key={session.key}
@@ -446,6 +468,11 @@ export function ChannelsPage() {
                         {session.lastActivityAt && (
                           <span className="text-[10px] text-[color:var(--color-text-faint)]">
                             {formatTime(session.lastActivityAt)}
+                          </span>
+                        )}
+                        {isHistorical && (
+                          <span className="rounded-full bg-[color:var(--color-bg-warning-subtle)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-warning)]">
+                            {localize(locale, "历史连接", "Previous connection")}
                           </span>
                         )}
                       </div>
@@ -489,12 +516,31 @@ export function ChannelsPage() {
                 >
                   <Settings2 className="h-4 w-4" />
                 </button>
-                <StatusPill tone={selectedSession.status === "active" ? "success" : "neutral"}>
-                  {selectedSession.status}
+                <StatusPill tone={selectedSessionHistorical ? "warning" : selectedSession.status === "active" ? "success" : "neutral"}>
+                  {selectedSessionHistorical
+                    ? localize(locale, "历史连接", "Previous")
+                    : selectedSession.status}
                 </StatusPill>
               </div>
 
               <div className="border-b border-[color:var(--color-border-soft)] px-5 py-3">
+                {selectedSessionHistorical && (
+                  <div className="mb-3 flex gap-3 rounded-2xl border border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] px-4 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-text-warning)]" />
+                    <div className="min-w-0 text-sm leading-6 text-[color:var(--color-text-primary)]">
+                      <p className="font-medium">
+                        {localize(locale, "这个会话属于上一次 Feishu 连接", "This conversation belongs to a previous Feishu connection")}
+                      </p>
+                      <p className="mt-1 text-[color:var(--color-text-secondary)]">
+                        {localize(
+                          locale,
+                          `当前 Friday 已连接到新的 Feishu 应用${selectedChannelAppId ? `（${selectedChannelAppId}）` : ""}。旧私聊里的新消息不会到达这台 Friday，请使用 setup 完成后收到欢迎消息的那个私聊。`,
+                          `Friday is now connected to a newer Feishu app${selectedChannelAppId ? ` (${selectedChannelAppId})` : ""}. New messages in the old chat will not reach this Friday; use the private chat that received the setup welcome message.`,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -576,17 +622,17 @@ export function ChannelsPage() {
                     }}
                     placeholder={localize(
                       locale,
-                      "输入要发到渠道的消息...",
-                      "Type a message to send to the channel...",
+                      selectedSessionHistorical ? "历史连接不可发送，请切换到最新 Feishu 私聊。" : "输入要发到渠道的消息...",
+                      selectedSessionHistorical ? "Previous connection. Switch to the latest Feishu chat." : "Type a message to send to the channel...",
                     )}
-                    disabled={isSending || isOutboundSending}
+                    disabled={selectedSessionHistorical || isSending || isOutboundSending}
                     rows={1}
                     className="min-h-[40px] max-h-[120px] flex-1 resize-none rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-2.5 text-sm text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-faint)] focus:border-[color:var(--color-accent)] focus:outline-none disabled:opacity-50"
                   />
                   <ActionButton
                     tone="secondary"
                     onClick={() => void handleSendReply()}
-                    disabled={!replyText.trim() || isSending || isOutboundSending}
+                    disabled={!replyText.trim() || selectedSessionHistorical || isSending || isOutboundSending}
                   >
                     {isSending
                       ? localize(locale, "处理中", "Running")
@@ -595,7 +641,7 @@ export function ChannelsPage() {
                   <button
                     type="button"
                     onClick={() => void handleSendOutbound()}
-                    disabled={!replyText.trim() || isSending || isOutboundSending}
+                    disabled={!replyText.trim() || selectedSessionHistorical || isSending || isOutboundSending}
                     title={localize(locale, "直接发送到渠道", "Send directly to channel")}
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[color:var(--color-accent)] text-white transition hover:opacity-90 disabled:opacity-40"
                   >
@@ -605,11 +651,17 @@ export function ChannelsPage() {
                 <div className="mt-1.5 flex items-center gap-1.5 px-1">
                   <Zap className="h-3 w-3 text-[color:var(--color-accent)]" />
                   <p className="text-[10px] text-[color:var(--color-text-faint)]">
-                    {localize(
-                      locale,
-                      `发送按钮会直接发到 ${safeChannelName(getSessionChannelKind(selectedSession), locale)}；“让 Friday 处理”会在同一渠道会话里启动一次真实 run。主聊天默认不会自动合并这条线。`,
-                      `Send delivers directly to ${safeChannelName(getSessionChannelKind(selectedSession), locale)}; "Ask Friday" starts a real run in this channel session. Main chat does not auto-merge this thread.`,
-                    )}
+                    {selectedSessionHistorical
+                      ? localize(
+                        locale,
+                        "这个会话只是历史记录，当前连接不会收到这里的新消息。",
+                        "This is a historical record; the current connection will not receive new messages here.",
+                      )
+                      : localize(
+                        locale,
+                        `发送按钮会直接发到 ${safeChannelName(getSessionChannelKind(selectedSession), locale)}；“让 Friday 处理”会在同一渠道会话里启动一次真实 run。主聊天默认不会自动合并这条线。`,
+                        `Send delivers directly to ${safeChannelName(getSessionChannelKind(selectedSession), locale)}; "Ask Friday" starts a real run in this channel session. Main chat does not auto-merge this thread.`,
+                      )}
                   </p>
                 </div>
               </div>
@@ -749,6 +801,22 @@ function MessageBubble({ message, locale }: { message: FridaySessionMessageRecor
   const rawText = message.contentText || (typeof message.content === "string" ? message.content : JSON.stringify(message.content));
   const text = redactSecretLikeText(rawText);
   const time = message.occurredAt ? formatTime(message.occurredAt) : "";
+  const metadata = message.metadata as Record<string, unknown>;
+  const attachments = Array.isArray(metadata.attachments)
+    ? metadata.attachments.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+  const statusLabel = (status: string | undefined) => {
+    if (status === "resolved") return localize(locale, "已下载", "Downloaded");
+    if (status === "failed") return localize(locale, "失败", "Failed");
+    if (status === "deferred") return localize(locale, "待处理", "Deferred");
+    return localize(locale, "未知", "Unknown");
+  };
+  const attachmentIcon = (kind: string | undefined) => {
+    if (kind === "image") return <ImageIcon className="h-3.5 w-3.5" />;
+    if (kind === "audio") return <FileAudio className="h-3.5 w-3.5" />;
+    if (kind === "video") return <FileVideo className="h-3.5 w-3.5" />;
+    return <File className="h-3.5 w-3.5" />;
+  };
 
   return (
     <div className={`flex ${isAssistant ? "justify-start" : "justify-end"}`}>
@@ -770,6 +838,41 @@ function MessageBubble({ message, locale }: { message: FridaySessionMessageRecor
           </p>
         )}
         <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
+        {attachments.length > 0 && (
+          <div className={`mt-2 space-y-1.5 rounded-xl border px-2.5 py-2 text-xs ${
+            isAssistant
+              ? "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-secondary)]"
+              : "border-white/25 bg-white/10 text-white/85"
+          }`}
+          >
+            <div className="flex items-center gap-1.5 font-medium">
+              <Paperclip className="h-3.5 w-3.5" />
+              {localize(locale, "附件", "Attachments")} · {attachments.length}
+            </div>
+            {attachments.map((attachment, index) => {
+              const kind = typeof attachment.kind === "string" ? attachment.kind : "file";
+              const name = typeof attachment.filename === "string" && attachment.filename.length > 0
+                ? attachment.filename
+                : `${kind} ${String(index + 1)}`;
+              const status = typeof attachment.status === "string" ? attachment.status : undefined;
+              const error = typeof attachment.error === "string" ? attachment.error : "";
+              const contentType = typeof attachment.contentType === "string" ? attachment.contentType : "";
+              return (
+                <div key={`${name}-${String(index)}`} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0">{attachmentIcon(kind)}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate">{name}</p>
+                    <p className={isAssistant ? "text-[color:var(--color-text-faint)]" : "text-white/60"}>
+                      {statusLabel(status)}
+                      {contentType ? ` · ${contentType}` : ""}
+                      {error ? ` · ${error}` : ""}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {time && (
           <p className={`mt-1 text-[10px] ${isAssistant ? "text-[color:var(--color-text-faint)]" : "opacity-60"}`}>
             {time}

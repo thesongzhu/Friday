@@ -6696,9 +6696,11 @@ describe("FridayAgentRuntime", () => {
 
   it("includes inline image blocks when images are provided", async () => {
     let capturedMessages: FridayAgentMessage[] | undefined;
+    let capturedRequiredCapabilities: string[] | undefined;
 
     const llmClient: FridayAgentLlmClient = {
       async *stream(params) {
+        capturedRequiredCapabilities = params.routingContext?.requiredCapabilities;
         capturedMessages = params.messages.map((message) => ({
           role: message.role,
           content: typeof message.content === "string"
@@ -6743,6 +6745,7 @@ describe("FridayAgentRuntime", () => {
       type: "image",
       source: { type: "url", url: "https://cdn.discord.com/attachments/123/456/screenshot.png" },
     });
+    expect(capturedRequiredCapabilities).toEqual(["vision"]);
   });
 
   it("sends plain string content when no images provided", async () => {

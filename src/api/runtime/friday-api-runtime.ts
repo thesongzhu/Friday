@@ -2337,6 +2337,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     kind: "planning" | "assistant" | "planning-reject" | "deterministic";
     status?: FridayAgentRunStatus;
   }): string => {
+    if (input.kind === "assistant") {
+      return `agent-run:${input.runId}:response`;
+    }
     if (input.kind === "planning-reject" || input.kind === "deterministic" || !agentRepo) {
       return `agent-run:${input.runId}:${input.kind}`;
     }

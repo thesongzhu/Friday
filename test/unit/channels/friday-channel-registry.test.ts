@@ -373,6 +373,90 @@ describe("FridayChannelRegistry", () => {
   // ─── Adapter-driven batch normalization ───
 
   describe("adapter normalizeAll", () => {
+    it("awaits normalizeAsync for lifecycle adapter events before routing", async () => {
+      let eventHandler: ((rawEvent: unknown) => void) | null = null;
+
+      const plugin: FridayChannelPlugin = {
+        kind: "async-test",
+        init: vi.fn(async () => {}),
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+        send: vi.fn(async () => ({ messageId: "s" })),
+        adapters: {
+          inbound: {
+            normalize: () => null,
+            async normalizeAsync(rawEvent: unknown): Promise<FridayChannelMessage | null> {
+              const msg = rawEvent as FridayChannelMessage;
+              return {
+                ...msg,
+                text: "normalized async",
+                attachments: [
+                  {
+                    id: "att-1",
+                    kind: "image",
+                    localPath: "/tmp/friday-channel-attachments/image.png",
+                    status: "resolved",
+                  },
+                ],
+              };
+            },
+          },
+          lifecycle: {
+            async connect(onEvent) { eventHandler = onEvent; },
+            async disconnect() { eventHandler = null; },
+          },
+        },
+      };
+
+      registry.register(plugin);
+      const handler = vi.fn();
+      await registry.startAll(handler);
+
+      eventHandler!(createTestMessage({ text: "raw" }));
+
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+      expect(handler.mock.calls[0][0]).toEqual(expect.objectContaining({
+        text: "normalized async",
+        attachments: [expect.objectContaining({ status: "resolved" })],
+      }));
+    });
+
+    it("awaits normalizeAllAsync and applies allowlist per normalized message", async () => {
+      let eventHandler: ((rawEvent: unknown) => void) | null = null;
+
+      const plugin: FridayChannelPlugin = {
+        kind: "async-batch-test",
+        init: vi.fn(async () => {}),
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+        send: vi.fn(async () => ({ messageId: "s" })),
+        adapters: {
+          inbound: {
+            normalize: () => null,
+            async normalizeAllAsync(rawEvent: unknown): Promise<FridayChannelMessage[]> {
+              return rawEvent as FridayChannelMessage[];
+            },
+          },
+          lifecycle: {
+            async connect(onEvent) { eventHandler = onEvent; },
+            async disconnect() { eventHandler = null; },
+          },
+        },
+      };
+
+      registry.register(plugin, { allowedUsers: ["user-1"] });
+      const handler = vi.fn();
+      await registry.startAll(handler);
+
+      eventHandler!([
+        createTestMessage({ senderId: "user-1", text: "Allowed async" }),
+        createTestMessage({ senderId: "user-2", text: "Blocked async" }),
+      ]);
+
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+      expect(handler.mock.calls[0][0].text).toBe("Allowed async");
+    });
+
     it("uses normalizeAll to deliver all messages from batch events", async () => {
       // Create a plugin with lifecycle + inbound adapters that simulates batch webhook
       let eventHandler: ((rawEvent: unknown) => void) | null = null;

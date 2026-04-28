@@ -34,6 +34,10 @@ import {
   SETUP_CHANNEL_CONTROL_ROUTE_STEPS,
 } from "@/lib/setup/channel-control-route";
 import { useSaveChannelsMutation } from "@/hooks/use-setup";
+import {
+  FRIDAY_SETUP_READINESS_SESSION_KEY,
+  FridayReadinessSummaryPanel,
+} from "@/components/setup/friday-readiness-summary";
 
 const SETUP_CHANNEL_KINDS_ORDERED: ChannelKind[] = ["telegram", "discord", "feishu"];
 
@@ -294,6 +298,21 @@ export function SetupPage() {
     staleTime: 5_000,
     retry: 0,
   });
+
+  const capabilityHealthQuery = useQuery({
+    queryKey: ["health", "capabilities", "setup"],
+    queryFn: () => healthApi.getCapabilityHealth(),
+    refetchInterval: currentStep === 5 ? 12_000 : false,
+    staleTime: 5_000,
+    retry: 0,
+  });
+  const refetchCapabilityHealth = capabilityHealthQuery.refetch;
+
+  useEffect(() => {
+    if (currentStep === 5) {
+      void refetchCapabilityHealth();
+    }
+  }, [currentStep, refetchCapabilityHealth]);
 
   const { data: existingProviders = [] } = useQuery({
     queryKey: ["setup", "providers"],
@@ -1045,6 +1064,8 @@ export function SetupPage() {
       const starterTask = getAssistantStarterTask(starterTaskId);
       toast.success(localize(locale, "设置完成", "Setup complete"), { duration: 4000 });
       await queryClient.invalidateQueries({ queryKey: ["setup", "status"] });
+      await queryClient.invalidateQueries({ queryKey: ["health", "capabilities"] });
+      window.sessionStorage.setItem(FRIDAY_SETUP_READINESS_SESSION_KEY, "1");
       navigate("/home", {
         replace: true,
         state: starterTask
@@ -2411,6 +2432,12 @@ export function SetupPage() {
             {summaryItems.join(" · ")}
           </p>
         )}
+
+        <FridayReadinessSummaryPanel
+          health={capabilityHealthQuery.data}
+          locale={locale}
+          className="mt-8 w-full max-w-3xl text-left"
+        />
 
         <button
           type="button"

@@ -857,6 +857,9 @@ export function createFridayAgentRuntime(
           localOnly: constraints?.localOnly,
           noEgress: constraints?.noEgress,
           satelliteAvailable: constraints?.satelliteAvailable,
+          ...(params.images && params.images.length > 0
+            ? { requiredCapabilities: ["vision"] }
+            : {}),
         };
       };
 

@@ -39,12 +39,26 @@ export interface FridayChannelInboundAdapter {
   normalize(rawEvent: unknown): FridayChannelMessage | null;
 
   /**
+   * Normalize a raw platform event asynchronously. Channels that must resolve
+   * private platform resources (for example Feishu image_key/file_key) should
+   * implement this so the registry can await channel-owned attachment work
+   * before routing to Friday.
+   */
+  normalizeAsync?(rawEvent: unknown): Promise<FridayChannelMessage | null>;
+
+  /**
    * Normalize a raw platform event that may contain multiple messages (batch webhooks).
    * When provided, the registry uses this instead of `normalize` to avoid dropping
    * messages in batch payloads (e.g. WhatsApp, LINE).
    * If not provided, falls back to `normalize` (single message).
    */
   normalizeAll?(rawEvent: unknown): FridayChannelMessage[];
+
+  /**
+   * Async batch variant for channels that receive batches and must resolve
+   * private platform resources before forwarding messages.
+   */
+  normalizeAllAsync?(rawEvent: unknown): Promise<FridayChannelMessage[]>;
 }
 
 // ─── Outbound Adapter ───

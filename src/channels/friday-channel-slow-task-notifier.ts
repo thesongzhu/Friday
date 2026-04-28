@@ -19,6 +19,7 @@ export interface FridayChannelSlowTaskNotifierOptions {
   replyTo?: string;
   runId: string;
   publicRunUrl?: string;
+  sourceText?: string;
   nowMs?: () => number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -38,11 +39,81 @@ function formatDuration(valueMs: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function formatDurationZh(valueMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(valueMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 1) return `${seconds} 秒`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 1) return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分` : `${hours} 小时`;
+}
+
+function containsChinese(text: string | undefined): boolean {
+  return typeof text === "string" && /[\u4e00-\u9fff]/u.test(text);
+}
+
+function localizePhaseZh(phase: string): string {
+  switch (phase) {
+    case "pending":
+      return "等待中";
+    case "planning":
+      return "规划中";
+    case "executing":
+      return "执行中";
+    case "testing":
+      return "验证中";
+    case "fixing":
+      return "修复中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    default:
+      return phase;
+  }
+}
+
+function localizeConfidenceZh(confidence: FridaySlowTaskSnapshot["etaConfidence"]): string {
+  switch (confidence) {
+    case "high":
+      return "高可信";
+    case "medium":
+      return "中等可信";
+    case "low":
+      return "低可信";
+    default:
+      return "可信度未知";
+  }
+}
+
 function buildSlowTaskMessage(input: {
   runId: string;
   snapshot: FridaySlowTaskSnapshot;
   publicRunUrl?: string;
+  sourceText?: string;
 }): string {
+  if (containsChinese(input.sourceText)) {
+    const etaText = typeof input.snapshot.eta === "number"
+      ? `最多 ${formatDurationZh(input.snapshot.eta)}（${localizeConfidenceZh(input.snapshot.etaConfidence)}）`
+      : "暂时无法估算";
+    const linkLine = input.publicRunUrl
+      ? `查看实时进度：${input.publicRunUrl}`
+      : `追踪 runId：${input.runId}`;
+
+    return [
+      `还在处理你的请求，已运行 ${formatDurationZh(input.snapshot.elapsedMs)}。`,
+      `阶段：${localizePhaseZh(input.snapshot.phase)}`,
+      `当前工具：${input.snapshot.activeTool ?? "无"}`,
+      `子任务：${String(input.snapshot.subagentCount)}`,
+      `预计时间：${etaText}`,
+      linkLine,
+    ].join("\n");
+  }
+
   const etaText = typeof input.snapshot.eta === "number"
     ? `up to ${formatDuration(input.snapshot.eta)} (${input.snapshot.etaConfidence ?? "low"} confidence)`
     : "ETA unavailable";
@@ -93,6 +164,7 @@ export function createFridayChannelSlowTaskNotifier(
           elapsedMs: Math.max(snapshot.elapsedMs, nowMs() - startedAtMs),
         },
         publicRunUrl: options.publicRunUrl,
+        sourceText: options.sourceText,
       }),
       replyTo: options.replyTo,
     });

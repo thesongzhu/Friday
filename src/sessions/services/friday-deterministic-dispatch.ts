@@ -225,7 +225,8 @@ function handleSetupGuidance(
 
   const recipe = deps.setupRecipeRegistry?.getByTarget(targetService) ?? defaultSetupRecipe(targetService);
   const isChinese = containsChinese(input.task ?? "");
-  const label = serviceLabel(targetService);
+  const locale = isChinese ? "zh" : "en";
+  const label = serviceLabel(targetService, locale);
   const setupHref = setupHrefForService(targetService, recipe);
   const targetKind = setupTargetKind(targetService, recipe);
   const outputSummary = recipe?.outputs.map((output) => output.label).join(isChinese ? "、" : ", ");
@@ -240,15 +241,14 @@ function handleSetupGuidance(
       opening,
       "",
       recipe
-        ? `我找到的配置路径是 \`${recipe.id}\`（${recipe.name}）。它会处理：${outputSummary || "配置步骤和验证检查"}。`
+        ? `我找到的配置路径是 \`${recipe.id}\`（${label}）。它会处理：${outputSummary || "配置步骤和验证检查"}。`
         : "当前没有找到完整 recipe，但可以先打开设置页查看现有配置入口和缺口。",
       "你需要准备的最小信息：",
-      ...setupInputsForService(targetService).map((item, index) => `${String(index + 1)}. ${item}`),
+      ...setupInputsForService(targetService, locale).map((item, index) => `${String(index + 1)}. ${item}`),
       "",
       targetKind === "capability"
-        ? "下一步：打开能力配置路径或执行对应 recipe。涉及 API key、OAuth、安装依赖、下载第三方包、生成本地工具、写入配置时会先暂停等待确认；配完后必须运行 doctor 或代表性任务验证。"
-        : "下一步：打开设置页，选择并展开对应配置，填入凭据后保存。涉及创建应用、重置 token、写入配置这类步骤时应先经过明确批准。",
-      `<!--action:{"type":"open_page","label":"打开 ${label} 设置","href":"${setupHref}"}-->`,
+        ? `下一步：打开 ${label} 设置。Friday 会自动使用已经验证过的来源；如果需要 API key、OAuth、安装依赖、下载第三方包、生成本地工具或写配置，会先暂停等你批准。配完后必须跑一次验证，验证通过才算真正打开。设置入口：${setupHref}`
+        : `下一步：打开设置页，选择并展开对应配置，填入凭据后保存。涉及创建应用、重置 token、写入配置这类步骤时应先经过明确批准。设置入口：${setupHref}`,
     ];
     return { handled: true, response: lines.join("\n") };
   }
@@ -265,12 +265,11 @@ function handleSetupGuidance(
       ? `Detected setup path: \`${recipe.id}\` (${recipe.name}). It handles: ${outputSummary || "configuration steps and verification checks"}.`
       : "No complete recipe is registered for this service, but Settings can still show the current configuration entry points and blockers.",
     "Minimum information needed:",
-    ...setupInputsForService(targetService).map((item, index) => `${String(index + 1)}. ${item}`),
+    ...setupInputsForService(targetService, locale).map((item, index) => `${String(index + 1)}. ${item}`),
     "",
     targetKind === "capability"
-      ? "Next step: open the capability setup path or execute the recipe. API keys, OAuth, dependency installs, third-party downloads, generated local tools, and config writes must pause for approval; after setup, run doctor or a representative task."
-      : "Next step: open Settings, select and expand the target config, enter credentials, then save. Creating apps, resetting tokens, or writing config should remain approval-gated.",
-    `<!--action:{"type":"open_page","label":"Open ${label} Setup","href":"${setupHref}"}-->`,
+      ? `Next step: open ${label} setup. Friday will automatically use verified sources; API keys, OAuth, dependency installs, third-party downloads, generated local tools, and config writes must pause for approval. After setup, run a verification probe before marking it available. Setup: ${setupHref}`
+      : `Next step: open Settings, select and expand the target config, enter credentials, then save. Creating apps, resetting tokens, or writing config should remain approval-gated. Setup: ${setupHref}`,
   ];
   return { handled: true, response: lines.join("\n") };
 }
@@ -279,7 +278,55 @@ function containsChinese(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
 }
 
-function serviceLabel(service: string): string {
+function serviceLabel(service: string, locale: "zh" | "en" = "en"): string {
+  if (locale === "zh") {
+    switch (service) {
+      case "anthropic":
+        return "Claude/Anthropic";
+      case "qwen":
+        return "通义千问 Qwen";
+      case "deepseek":
+        return "DeepSeek";
+      case "openai":
+        return "OpenAI";
+      case "google":
+        return "Gemini/Google";
+      case "volcengine":
+        return "火山/豆包";
+      case "moonshot":
+        return "月之暗面/Kimi";
+      case "glm":
+        return "智谱 GLM";
+      case "qianfan":
+        return "百度千帆";
+      case "minimax":
+        return "MiniMax";
+      case "text":
+        return "文本模型";
+      case "vision":
+        return "看图 / 图片理解";
+      case "ocr":
+        return "OCR 文字识别";
+      case "embedding":
+        return "Embedding 记忆检索";
+      case "web_search":
+        return "网页搜索";
+      case "pdf_parse":
+        return "PDF 解析";
+      case "tts":
+        return "TTS 语音";
+      case "browser":
+        return "浏览器";
+      case "mcp":
+        return "MCP";
+      case "skills":
+        return "Skills 技能";
+      case "custom":
+        return "自定义能力";
+      default:
+        return service;
+    }
+  }
   switch (service) {
     case "anthropic":
       return "Claude/Anthropic";
@@ -379,7 +426,54 @@ function isCapabilityService(service: string): boolean {
   ].includes(service);
 }
 
-function setupInputsForService(service: string): string[] {
+function setupInputsForService(service: string, locale: "zh" | "en" = "en"): string[] {
+  if (locale === "zh") {
+    switch (service) {
+      case "discord":
+        return ["Discord Bot Token", "如果要绑定固定服务器，需要 Guild/server ID", "允许创建或复用 bot，并邀请它读取和发送消息"];
+      case "telegram":
+        return ["BotFather bot token", "如果需要主动发消息，需要目标私聊或群组信息"];
+      case "slack":
+        return ["Slack bot token", "如果使用 Socket Mode，需要 app token", "工作区和频道权限批准"];
+      case "whatsapp":
+        return ["WhatsApp Business access token", "Phone Number ID", "如果接收消息，需要 webhook verify token"];
+      case "qq":
+        return ["QQ bot App ID", "QQ bot App Secret"];
+      case "lark":
+      case "feishu":
+        return ["用手机扫码授权创建应用", "允许 Friday 给你发私聊验证消息", "保存后 Friday 会用长连接接收消息，不需要公网回调地址"];
+      case "line":
+        return ["Channel access token", "Channel secret"];
+      case "signal":
+        return ["Signal CLI API URL", "手机号"];
+      case "irc":
+        return ["IRC server", "Nickname", "Channel list", "如有需要再提供密码"];
+      case "text":
+        return ["一个可用的文本模型账号/API key，或本地模型 endpoint", "模型 ID", "文本验证任务通过"];
+      case "vision":
+        return ["一个支持图片输入的模型来源，比如 Gemini、Qwen-VL、豆包视觉，或本地视觉 endpoint", "要使用的视觉模型 ID", "用样例图片跑一次理解验证"];
+      case "ocr":
+        return ["OCR 服务账号/API key，或批准生成/安装本地 OCR 工具", "一张包含文字的样例图片", "OCR 验证能返回预期文字"];
+      case "embedding":
+        return ["Embedding 服务账号/API key，或本地 embedding endpoint", "Embedding 模型 ID", "向量验证能返回非空数字向量"];
+      case "web_search":
+        return ["Serper、Tavily 或其他搜索提供方 API key", "选择搜索提供方", "搜索验证能返回真实且有时效的结果"];
+      case "pdf_parse":
+        return ["工作区里的样例 PDF", "如果内置解析不可用，需要批准安装/生成解析工具"];
+      case "tts":
+        return ["语音/TTS 服务 API key", "语音模型和声音", "短音频合成验证能生成非空文件"];
+      case "browser":
+        return ["Playwright Chromium 或宿主浏览器可用", "允许启动浏览器自动化", "导航和截图验证通过"];
+      case "mcp":
+        return ["可信 MCP server 命令或 URL", "必要的环境密钥", "权限审查通过后再做 discovery/list_tools 验证"];
+      case "skills":
+        return ["可信 skill 来源、市场条目、Git URL 或生成目标", "安装/生成前先批准", "刷新 registry，必要时跑 smoke test"];
+      case "custom":
+        return ["明确目标和预期输出", "选择路径：内置工具、生成 skill/tool、provider 或 MCP", "一个能证明能力可用的代表性测试"];
+      default:
+        return ["账号/API 凭据", "目标工作区、服务器或频道", "写配置前的权限批准"];
+    }
+  }
   switch (service) {
     case "discord":
       return [

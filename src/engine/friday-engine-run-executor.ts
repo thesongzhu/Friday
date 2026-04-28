@@ -58,6 +58,7 @@ export interface FridayEngineRunExecutorAgentRuntime {
     apiRequestIdempotency?: FridayAgentApiRequestMetadata;
     historyMessages?: FridayPreparedEngineContext["historyMessages"];
     taskProfile?: FridayEngineRunInput["taskProfile"];
+    images?: string[];
   }): Promise<FridayAgentRuntimeResult>;
 }
 
@@ -500,6 +501,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       apiRequestIdempotency: input.apiRequestIdempotency,
       historyMessages: prepared.historyMessages,
       taskProfile: input.taskProfile,
+      images: input.images,
     });
 
     // ── 5. Finalize focus after agent run ──

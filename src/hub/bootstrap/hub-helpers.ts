@@ -172,8 +172,13 @@ export interface FridayChannelTerminalTextInput {
   imageCount: number;
 }
 
+export function stripFridayUiActionHints(text: string): string {
+  return text.replace(/<!--action:.*?-->/gs, "").trim();
+}
+
 export function resolveFridayChannelTerminalText(input: FridayChannelTerminalTextInput): string {
-  const hasResponse = input.response.trim().length > 0;
+  const response = stripFridayUiActionHints(input.response);
+  const hasResponse = response.length > 0;
   const hasImages = input.imageCount > 0;
 
   if (input.status === "completed" && !hasResponse) {
@@ -188,12 +193,12 @@ export function resolveFridayChannelTerminalText(input: FridayChannelTerminalTex
     return "Request was cancelled before completion.";
   }
   if (input.status === "failed" && hasResponse) {
-    return `Request failed: ${input.response}`;
+    return `Request failed: ${response}`;
   }
   if (input.status === "cancelled" && hasResponse) {
-    return `Request cancelled: ${input.response}`;
+    return `Request cancelled: ${response}`;
   }
-  return input.response;
+  return response;
 }
 
 export function buildFridayChannelDeliveryFailureText(runId: string): string {
@@ -400,6 +405,7 @@ interface SetupChannelPersistedEntry {
   enabled?: unknown;
   config?: unknown;
   controlConfirmed?: unknown;
+  controlConfirmedAt?: unknown;
 }
 
 export function loadChannelsConfigFromSetupState(
@@ -439,6 +445,9 @@ export function loadChannelsConfigFromSetupState(
       kind,
       enabled: entry.enabled !== false,
       ...config,
+      ...(typeof entry.controlConfirmedAt === "string" && entry.controlConfirmedAt.trim().length > 0
+        ? { setupActivatedAt: entry.controlConfirmedAt.trim() }
+        : {}),
     });
   }
 

@@ -14,6 +14,7 @@ import type {
   FridayEngineRunResult,
   FridayOrchestrationEngine,
 } from "../friday-orchestration-engine.types.js";
+import type { FridayChannelAttachment } from "../../channels/friday-channel.types.js";
 
 // ─── Channel message shape (mirrors FridayChannelMessage) ───
 
@@ -42,6 +43,8 @@ export interface FridayChannelInboundMessage {
   timestamp?: number;
   /** Optional image attachments already normalized by the channel layer. */
   images?: string[];
+  /** Optional normalized attachments from the channel layer. */
+  attachments?: FridayChannelAttachment[];
 }
 
 // ─── Adapter ───
@@ -60,11 +63,43 @@ export interface FridayChannelEntryAdapterDeps {
 export const FRIDAY_CHANNEL_AGENT_SCOPE = "agent.run";
 export const FRIDAY_CHANNEL_CONTROL_ROUTE = "full_agent";
 
+function resolvedAttachmentPath(attachment: FridayChannelAttachment): string | undefined {
+  return attachment.localPath ?? attachment.sourceUrl;
+}
+
+function buildAttachmentPrompt(attachments: readonly FridayChannelAttachment[] | undefined): string | undefined {
+  if (!attachments || attachments.length === 0) return undefined;
+  const lines = attachments.map((attachment, index) => {
+    const location = resolvedAttachmentPath(attachment);
+    const status = attachment.status === "resolved"
+      ? "resolved"
+      : `${attachment.status}${attachment.error ? `: ${attachment.error}` : ""}`;
+    const name = attachment.filename ? ` "${attachment.filename}"` : "";
+    const details = [
+      `#${String(index + 1)}`,
+      attachment.kind,
+      name,
+      attachment.contentType ? `type=${attachment.contentType}` : undefined,
+      attachment.sizeBytes !== undefined ? `size=${String(attachment.sizeBytes)} bytes` : undefined,
+      location ? `path=${location}` : undefined,
+      `status=${status}`,
+    ].filter((item): item is string => typeof item === "string" && item.length > 0);
+    return `- ${details.join(" ")}`;
+  });
+  return [
+    "Channel attachments have already been normalized by the channel adapter.",
+    "Use the local paths below when a tool needs to inspect a file. If an attachment failed to resolve, explain the exact failure and do not pretend to see it.",
+    ...lines,
+  ].join("\n");
+}
+
 export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterDeps) {
   const { engine, idGenerator, resolveSessionKey, resolveDisabledToolNames, resolveChannelPersona } = deps;
 
   async function handleMessage(msg: FridayChannelInboundMessage): Promise<FridayEngineRunResult> {
-    const task = msg.text.trim();
+    const hasImages = (msg.images?.length ?? 0) > 0;
+    const hasAttachments = (msg.attachments?.length ?? 0) > 0;
+    const task = msg.text.trim() || (hasImages ? "Analyze the attached image." : hasAttachments ? "Analyze the attached media." : "");
     if (!task) {
       return {
         runId: "",
@@ -82,9 +117,17 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
     // Resolve optional per-channel persona
     const personaConfig = resolveChannelPersona?.(msg.channelKind);
     const channelPersona = personaConfig?.systemPrompt || personaConfig?.persona || undefined;
+    const attachmentPrompt = buildAttachmentPrompt(msg.attachments);
+    const taskPrompt = attachmentPrompt ? `${task}\n\n${attachmentPrompt}` : undefined;
+    const attachmentImages = (msg.attachments ?? [])
+      .filter((attachment) => attachment.kind === "image" && attachment.status === "resolved")
+      .map(resolvedAttachmentPath)
+      .filter((image): image is string => typeof image === "string" && image.length > 0);
+    const images = [...new Set([...(msg.images ?? []), ...attachmentImages])];
 
     const input: FridayEngineRunInput = {
       task,
+      taskPrompt,
       runId: idGenerator(),
       sessionKey: resolveSessionKey(msg),
       replyToMessageId: msg.replyToMessageId,
@@ -92,7 +135,7 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       principalId: msg.senderId,
       scopes: [FRIDAY_CHANNEL_AGENT_SCOPE],
       disabledToolNames: resolveDisabledToolNames?.(msg.channelKind) ?? [],
-      images: msg.images,
+      images: images.length > 0 ? images : undefined,
       taskAlreadyInHistory: true,
       executionContext: {
         surface: "channel",

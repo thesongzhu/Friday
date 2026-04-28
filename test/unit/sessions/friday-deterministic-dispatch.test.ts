@@ -488,7 +488,7 @@ describe("dispatchDeterministic", () => {
       expect(result.response).toContain("channel-discord-bot");
       expect(result.response).toContain("Discord Bot Token");
       expect(result.response).toContain("/setup?step=channels&channel=discord");
-      expect(result.response).toContain("<!--action:");
+      expect(result.response).not.toContain("<!--action:");
     });
 
     it("uses a registered recipe when available", async () => {
@@ -544,9 +544,9 @@ describe("dispatchDeterministic", () => {
       expect(result.handled).toBe(true);
       expect(result.response).toContain("能力闭环");
       expect(result.response).toContain("capability-ocr");
-      expect(result.response).toContain("OCR provider/API key");
+      expect(result.response).toContain("OCR 服务账号/API key");
       expect(result.response).toContain("/setup?recipeId=capability-ocr&targetService=ocr");
-      expect(result.response).toContain("运行 doctor 或代表性任务验证");
+      expect(result.response).toContain("跑一次验证");
     });
 
     it("returns capability setup guidance for generated custom capabilities", async () => {
@@ -567,7 +567,7 @@ describe("dispatchDeterministic", () => {
       expect(result.handled).toBe(true);
       expect(result.response).toContain("capability-custom");
       expect(result.response).toContain("生成本地工具");
-      expect(result.response).toContain("Representative test");
+      expect(result.response).toContain("代表性测试");
       expect(result.response).toContain("/setup?recipeId=capability-custom&targetService=custom");
     });
   });

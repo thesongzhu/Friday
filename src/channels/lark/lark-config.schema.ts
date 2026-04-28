@@ -24,6 +24,8 @@ export const FridayLarkChannelConfigSchema = z.object({
   allowedChats: z.array(z.string()).optional(),
   /** Receive mode: websocket (default) or webhook relay. */
   receiveMode: z.enum(["websocket", "webhook"]).default("websocket"),
+  /** Setup activation timestamp used to distinguish current chats from stale historical sessions. */
+  setupActivatedAt: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (value.receiveMode === "webhook" && !value.verificationToken) {
     ctx.addIssue({

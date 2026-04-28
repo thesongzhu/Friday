@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { createFridayLarkChannel } from "#channels";
 import type { FridayChannelPlugin, FridayChannelMessage } from "#channels";
 import type { LarkWebhookRelayService } from "#channels";
@@ -54,7 +57,12 @@ class MockWebSocket {
 // ─── Mock fetch ───
 
 function createMockFetch() {
-  const responses: Array<{ url: string; body: unknown; status?: number }> = [];
+  const responses: Array<{
+    url: string;
+    body: unknown;
+    status?: number;
+    headers?: Record<string, string>;
+  }> = [];
 
   const mockFetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
     const urlStr = String(url);
@@ -64,16 +72,36 @@ function createMockFetch() {
         ok: false,
         status: 404,
         statusText: "Not Found",
+        headers: { get: () => "text/plain" },
         json: async () => ({}),
         text: async () => "Not Found",
+        arrayBuffer: async () => new TextEncoder().encode("Not Found").buffer,
       };
     }
+    const bodyToArrayBuffer = (): ArrayBuffer => {
+      if (match.body instanceof ArrayBuffer) return match.body;
+      if (ArrayBuffer.isView(match.body)) {
+        return match.body.buffer.slice(match.body.byteOffset, match.body.byteOffset + match.body.byteLength);
+      }
+      if (typeof match.body === "string") {
+        return new TextEncoder().encode(match.body).buffer;
+      }
+      return new TextEncoder().encode(JSON.stringify(match.body)).buffer;
+    };
     return {
       ok: (match.status ?? 200) < 400,
       status: match.status ?? 200,
       statusText: "OK",
+      headers: {
+        get: (name: string) => {
+          const normalized = name.toLowerCase();
+          const entry = Object.entries(match.headers ?? {}).find(([key]) => key.toLowerCase() === normalized);
+          return entry?.[1] ?? null;
+        },
+      },
       json: async () => match.body,
-      text: async () => JSON.stringify(match.body),
+      text: async () => typeof match.body === "string" ? match.body : JSON.stringify(match.body),
+      arrayBuffer: async () => bodyToArrayBuffer(),
     };
   });
 
@@ -130,12 +158,17 @@ function createMockWebhookRelay(): LarkWebhookRelayService & {
 describe("FridayLarkChannel", () => {
   let originalFetch: typeof globalThis.fetch;
   let originalWebSocket: typeof globalThis.WebSocket;
+  let originalAttachmentDir: string | undefined;
   let plugin: FridayChannelPlugin;
   let fetchMock: ReturnType<typeof createMockFetch>;
+  let attachmentDir: string;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
     originalWebSocket = globalThis.WebSocket;
+    originalAttachmentDir = process.env.FRIDAY_CHANNEL_ATTACHMENT_DIR;
+    attachmentDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-lark-attachments-"));
+    process.env.FRIDAY_CHANNEL_ATTACHMENT_DIR = attachmentDir;
 
     fetchMock = createMockFetch();
     globalThis.fetch = fetchMock.mockFetch as unknown as typeof globalThis.fetch;
@@ -154,6 +187,12 @@ describe("FridayLarkChannel", () => {
     }
     globalThis.fetch = originalFetch;
     (globalThis as unknown as Record<string, unknown>).WebSocket = originalWebSocket;
+    if (originalAttachmentDir === undefined) {
+      delete process.env.FRIDAY_CHANNEL_ATTACHMENT_DIR;
+    } else {
+      process.env.FRIDAY_CHANNEL_ATTACHMENT_DIR = originalAttachmentDir;
+    }
+    fs.rmSync(attachmentDir, { recursive: true, force: true });
   });
 
   describe("init", () => {
@@ -183,30 +222,25 @@ describe("FridayLarkChannel", () => {
 
   describe("token refresh", () => {
     it("fetches tenant_access_token from Feishu API", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
         useFeishu: true,
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-123",
-            expire: 7200,
-          },
+      fetchMock.responses.push({
+        url: "tenant_access_token",
+        body: {
+          code: 0,
+          msg: "ok",
+          tenant_access_token: "t-token-123",
+          expire: 7200,
         },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
+      });
 
       await plugin.start(() => {});
 
@@ -215,33 +249,29 @@ describe("FridayLarkChannel", () => {
       );
       expect(tokenCall).toBeDefined();
       expect(String(tokenCall![0])).toContain("open.feishu.cn");
+      expect(MockWebSocket.instances).toHaveLength(0);
     });
 
     it("uses international Lark API base when useFeishu is false", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
         useFeishu: false,
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-456",
-            expire: 7200,
-          },
+      fetchMock.responses.push({
+        url: "tenant_access_token",
+        body: {
+          code: 0,
+          msg: "ok",
+          tenant_access_token: "t-token-456",
+          expire: 7200,
         },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
+      });
 
       await plugin.start(() => {});
 
@@ -250,46 +280,39 @@ describe("FridayLarkChannel", () => {
       );
       expect(tokenCall).toBeDefined();
       expect(String(tokenCall![0])).toContain("open.larksuite.com");
+      expect(MockWebSocket.instances).toHaveLength(0);
     });
   });
 
   describe("message parsing", () => {
-    it("parses im.message.receive_v1 events", async () => {
+    async function startWebhookMessageTest(options: { useFeishu?: boolean; token?: string } = {}) {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
+        useFeishu: options.useFeishu ?? false,
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
-
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-789",
-            expire: 7200,
-          },
+      fetchMock.responses.push({
+        url: "tenant_access_token",
+        body: {
+          code: 0,
+          msg: "ok",
+          tenant_access_token: options.token ?? "t-token-webhook-test",
+          expire: 7200,
         },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
-
+      });
       const messages: FridayChannelMessage[] = [];
       await plugin.start((msg) => messages.push(msg));
+      return { webhookRelay, messages };
+    }
 
-      const ws = MockWebSocket.instances[0];
-      expect(ws).toBeDefined();
+    it("parses im.message.receive_v1 events", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest();
 
-      // Wait for open event
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Simulate a message receive event
-      ws.simulateMessage({
+      webhookRelay._handler?.({
         header: {
           event_type: "im.message.receive_v1",
           event_id: "evt-001",
@@ -321,37 +344,9 @@ describe("FridayLarkChannel", () => {
     });
 
     it("parses p2p (direct) messages", async () => {
-      await plugin.init({
-        appId: "cli-test",
-        appSecret: "secret-test",
-      });
+      const { webhookRelay, messages } = await startWebhookMessageTest();
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-aaa",
-            expire: 7200,
-          },
-        },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
-
-      const messages: FridayChannelMessage[] = [];
-      await plugin.start((msg) => messages.push(msg));
-
-      const ws = MockWebSocket.instances[0];
-      await new Promise((r) => setTimeout(r, 10));
-
-      ws.simulateMessage({
+      webhookRelay._handler?.({
         header: {
           event_type: "im.message.receive_v1",
         },
@@ -374,37 +369,9 @@ describe("FridayLarkChannel", () => {
     });
 
     it("handles non-JSON content gracefully", async () => {
-      await plugin.init({
-        appId: "cli-test",
-        appSecret: "secret-test",
-      });
+      const { webhookRelay, messages } = await startWebhookMessageTest();
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-bbb",
-            expire: 7200,
-          },
-        },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
-
-      const messages: FridayChannelMessage[] = [];
-      await plugin.start((msg) => messages.push(msg));
-
-      const ws = MockWebSocket.instances[0];
-      await new Promise((r) => setTimeout(r, 10));
-
-      ws.simulateMessage({
+      webhookRelay._handler?.({
         header: { event_type: "im.message.receive_v1" },
         event: {
           message: {
@@ -424,39 +391,233 @@ describe("FridayLarkChannel", () => {
       expect(messages[0].text).toBe("plain text fallback");
     });
 
-    it("ignores non-message events", async () => {
-      await plugin.init({
-        appId: "cli-test",
-        appSecret: "secret-test",
+    it("downloads Feishu image resources before forwarding to Friday", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest({
+        useFeishu: true,
+        token: "t-token-image",
+      });
+      fetchMock.responses.push({
+        url: "/open-apis/im/v1/messages/om_image/resources/img_v3_test",
+        body: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        headers: { "content-type": "image/png" },
       });
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-ccc",
-            expire: 7200,
+      webhookRelay._handler?.({
+        header: { event_type: "im.message.receive_v1" },
+        event: {
+          message: {
+            message_id: "om_image",
+            chat_id: "oc_image",
+            chat_type: "p2p",
+            content: '{"image_key":"img_v3_test"}',
+            create_time: "1708416000000",
+          },
+          sender: {
+            sender_id: { open_id: "ou_image_user" },
           },
         },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
+      });
+
+      await vi.waitFor(() => expect(messages).toHaveLength(1));
+      expect(messages[0].channelKind).toBe("feishu");
+      expect(messages[0].text).toBe("");
+      expect(messages[0].images).toHaveLength(1);
+      expect(messages[0].images?.[0]).toContain(attachmentDir);
+      expect(fs.readFileSync(messages[0].images![0]!)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      expect(messages[0].attachments?.[0]).toEqual(expect.objectContaining({
+        kind: "image",
+        status: "resolved",
+        contentType: "image/png",
+        sizeBytes: 4,
+      }));
+    });
+
+    it("keeps image download failures explainable instead of forwarding an empty message", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest({
+        useFeishu: true,
+        token: "t-token-image-failed",
+      });
+      fetchMock.responses.push({
+        url: "/open-apis/im/v1/messages/om_image_failed/resources/img_v3_failed",
+        status: 403,
+        body: { code: 99991663, msg: "permission denied" },
+        headers: { "content-type": "application/json" },
+      });
+
+      webhookRelay._handler?.({
+        header: { event_type: "im.message.receive_v1" },
+        event: {
+          message: {
+            message_id: "om_image_failed",
+            chat_id: "oc_image",
+            chat_type: "p2p",
+            content: '{"image_key":"img_v3_failed"}',
+            create_time: "1708416000000",
           },
+          sender: {
+            sender_id: { open_id: "ou_image_user" },
+          },
+        },
+      });
+
+      await vi.waitFor(() => expect(messages).toHaveLength(1));
+      expect(messages[0].images).toBeUndefined();
+      expect(messages[0].text).toContain("could not download the resource bytes");
+      expect(messages[0].attachments?.[0]).toEqual(expect.objectContaining({
+        kind: "image",
+        status: "failed",
+      }));
+    });
+
+    it("downloads Feishu file, audio, video, and post image resources as normalized attachments", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest({
+        useFeishu: true,
+        token: "t-token-media",
+      });
+      fetchMock.responses.push(
+        {
+          url: "/open-apis/im/v1/messages/om_file/resources/file_key_1",
+          body: Buffer.from("pdf"),
+          headers: { "content-type": "application/pdf" },
+        },
+        {
+          url: "/open-apis/im/v1/messages/om_audio/resources/audio_key_1",
+          body: Buffer.from("audio"),
+          headers: { "content-type": "audio/mpeg" },
+        },
+        {
+          url: "/open-apis/im/v1/messages/om_video/resources/video_key_1",
+          body: Buffer.from("video"),
+          headers: { "content-type": "video/mp4" },
+        },
+        {
+          url: "/open-apis/im/v1/messages/om_post/resources/post_img_1",
+          body: Buffer.from([1, 2, 3]),
+          headers: { "content-type": "image/png" },
         },
       );
 
-      const messages: FridayChannelMessage[] = [];
-      await plugin.start((msg) => messages.push(msg));
+      const baseEvent = {
+        header: { event_type: "im.message.receive_v1" },
+        event: {
+          message: {
+            chat_id: "oc_media",
+            chat_type: "p2p",
+            create_time: "1708416000000",
+          },
+          sender: {
+            sender_id: { open_id: "ou_media_user" },
+          },
+        },
+      };
+      webhookRelay._handler?.({
+        ...baseEvent,
+        event: {
+          ...baseEvent.event,
+          message: {
+            ...baseEvent.event.message,
+            message_id: "om_file",
+            message_type: "file",
+            content: "{\"file_key\":\"file_key_1\",\"file_name\":\"report.pdf\"}",
+          },
+        },
+      });
+      webhookRelay._handler?.({
+        ...baseEvent,
+        event: {
+          ...baseEvent.event,
+          message: {
+            ...baseEvent.event.message,
+            message_id: "om_audio",
+            message_type: "audio",
+            content: "{\"file_key\":\"audio_key_1\",\"file_name\":\"voice.mp3\"}",
+          },
+        },
+      });
+      webhookRelay._handler?.({
+        ...baseEvent,
+        event: {
+          ...baseEvent.event,
+          message: {
+            ...baseEvent.event.message,
+            message_id: "om_video",
+            message_type: "video",
+            content: "{\"file_key\":\"video_key_1\",\"file_name\":\"clip.mp4\"}",
+          },
+        },
+      });
+      webhookRelay._handler?.({
+        ...baseEvent,
+        event: {
+          ...baseEvent.event,
+          message: {
+            ...baseEvent.event.message,
+            message_id: "om_post",
+            message_type: "post",
+            content: JSON.stringify({
+              post: {
+                zh_cn: {
+                  title: "Post title",
+                  content: [[{ tag: "text", text: "caption" }, { tag: "img", image_key: "post_img_1" }]],
+                },
+              },
+            }),
+          },
+        },
+      });
 
-      const ws = MockWebSocket.instances[0];
-      await new Promise((r) => setTimeout(r, 10));
+      await vi.waitFor(() => expect(messages).toHaveLength(4));
+      expect(messages.map((message) => message.attachments?.[0]?.kind).sort()).toEqual(["audio", "file", "image", "video"]);
+      expect(messages.every((message) => message.attachments?.[0]?.status === "resolved")).toBe(true);
+      const postMessage = messages.find((message) => message.text.includes("caption"));
+      expect(postMessage?.images).toHaveLength(1);
+    });
 
-      // Some other event type
-      ws.simulateMessage({
+    it("normalizes Feishu approval card button clicks into approval commands", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest({
+        useFeishu: true,
+        token: "t-token-card-action",
+      });
+
+      webhookRelay._handler?.({
+        header: { event_type: "card.action.trigger" },
+        event: {
+          context: {
+            open_message_id: "om_approval_card",
+            open_chat_id: "oc_approval",
+          },
+          operator: {
+            open_id: "ou_approver",
+            name: "Approver",
+          },
+          action: {
+            tag: "button",
+            value: {
+              friday_action: "tool_approval",
+              decision: "approve",
+              short_id: "ABC123",
+              chat_type: "direct",
+            },
+          },
+        },
+      });
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toEqual(expect.objectContaining({
+        channelKind: "feishu",
+        senderId: "ou_approver",
+        senderName: "Approver",
+        chatId: "oc_approval",
+        chatType: "direct",
+        text: "批准 ABC123",
+        replyTo: "om_approval_card",
+      }));
+    });
+
+    it("ignores non-message events", async () => {
+      const { webhookRelay, messages } = await startWebhookMessageTest();
+
+      webhookRelay._handler?.({
         header: { event_type: "im.chat.member.bot.added_v1" },
         event: { chat_id: "oc_x" },
       });
@@ -467,9 +628,13 @@ describe("FridayLarkChannel", () => {
 
   describe("send", () => {
     it("sends text messages via REST API", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
 
       fetchMock.responses.push(
@@ -480,13 +645,6 @@ describe("FridayLarkChannel", () => {
             msg: "ok",
             tenant_access_token: "t-token-send",
             expire: 7200,
-          },
-        },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
           },
         },
         {
@@ -507,7 +665,6 @@ describe("FridayLarkChannel", () => {
 
       expect(result.messageId).toBe("om_sent_1");
 
-      // Verify the send call
       const sendCall = fetchMock.mockFetch.mock.calls.find(
         (c) => String(c[0]).includes("/im/v1/messages"),
       );
@@ -518,15 +675,16 @@ describe("FridayLarkChannel", () => {
       expect(body.msg_type).toBe("text");
       expect(JSON.parse(body.content)).toEqual({ text: "Response from bot" });
     });
-  });
 
-  describe("reconnect after stop", () => {
-    it("does not schedule reconnect after stop()", async () => {
-      vi.useFakeTimers();
-
+    it("sends approval requests as Feishu interactive cards with text fallback", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
+        useFeishu: true,
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
 
       fetchMock.responses.push(
@@ -535,132 +693,85 @@ describe("FridayLarkChannel", () => {
           body: {
             code: 0,
             msg: "ok",
-            tenant_access_token: "t-token-stop",
+            tenant_access_token: "t-token-approval-send",
             expire: 7200,
           },
         },
         {
-          url: "/callback/ws/endpoint",
+          url: "/im/v1/messages",
           body: {
             code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
+            data: { message_id: "om_approval_sent" },
           },
         },
       );
 
       await plugin.start(() => {});
 
-      const ws = MockWebSocket.instances[0];
-      ws.emit("open", {});
-
-      const instanceCountBefore = MockWebSocket.instances.length;
-
-      // Stop the plugin, then trigger close on the socket
-      await plugin.stop();
-
-      // Advance past reconnect delay
-      vi.advanceTimersByTime(15_000);
-
-      // No new WebSocket should have been created
-      expect(MockWebSocket.instances.length).toBe(instanceCountBefore);
-
-      vi.useRealTimers();
-    });
-
-    it("ignores stale socket close events", async () => {
-      vi.useFakeTimers();
-
-      await plugin.init({
-        appId: "cli-test",
-        appSecret: "secret-test",
+      const result = await plugin.send({
+        chatId: "oc_target",
+        text: "需要确认敏感操作 ABC123\n回复「批准 ABC123」继续。",
+        approval: {
+          shortId: "ABC123",
+          toolName: "filesystem.write",
+          reason: "Writes a file",
+          expiresAt: "2026-04-27T12:00:00.000Z",
+          paramsPreview: "path: /tmp/example.txt",
+          chatType: "direct",
+        },
       });
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-stale",
-            expire: 7200,
-          },
-        },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
+      expect(result.messageId).toBe("om_approval_sent");
+
+      const sendCall = fetchMock.mockFetch.mock.calls.find(
+        (c) => String(c[0]).includes("/im/v1/messages"),
       );
+      expect(sendCall).toBeDefined();
 
-      await plugin.start(() => {});
-
-      const staleSocket = MockWebSocket.instances[0];
-      staleSocket.emit("open", {});
-
-      const instanceCountBefore = MockWebSocket.instances.length;
-
-      // Stop the plugin (which closes and nulls ws)
-      await plugin.stop();
-
-      // Simulate the stale socket firing close event after stop
-      staleSocket.emit("close", {});
-
-      vi.advanceTimersByTime(15_000);
-
-      // No new reconnection should happen
-      expect(MockWebSocket.instances.length).toBe(instanceCountBefore);
-
-      vi.useRealTimers();
+      const body = JSON.parse((sendCall![1] as RequestInit).body as string);
+      expect(body.receive_id).toBe("oc_target");
+      expect(body.msg_type).toBe("interactive");
+      const card = JSON.parse(body.content);
+      expect(card.header.title.content).toContain("ABC123");
+      expect(JSON.stringify(card)).toContain("filesystem.write");
+      expect(JSON.stringify(card)).toContain("批准 ABC123");
+      expect(card.elements[1].actions[0].value).toEqual(expect.objectContaining({
+        friday_action: "tool_approval",
+        decision: "approve",
+        short_id: "ABC123",
+        chat_type: "direct",
+      }));
     });
   });
 
-  describe("ping keepalive", () => {
-    it("sends ping messages after connection opens", async () => {
-      vi.useFakeTimers();
-
+  describe("lifecycle", () => {
+    it("stops the webhook relay without creating SDK websocket instances", async () => {
+      const webhookRelay = createMockWebhookRelay();
+      plugin = createFridayLarkChannel({ webhookRelay });
       await plugin.init({
         appId: "cli-test",
         appSecret: "secret-test",
+        receiveMode: "webhook",
+        verificationToken: "verify-token-1",
       });
 
-      fetchMock.responses.push(
-        {
-          url: "tenant_access_token",
-          body: {
-            code: 0,
-            msg: "ok",
-            tenant_access_token: "t-token-ping",
-            expire: 7200,
-          },
+      fetchMock.responses.push({
+        url: "tenant_access_token",
+        body: {
+          code: 0,
+          msg: "ok",
+          tenant_access_token: "t-token-stop",
+          expire: 7200,
         },
-        {
-          url: "/callback/ws/endpoint",
-          body: {
-            code: 0,
-            data: { URL: "wss://lark.example.com/ws" },
-          },
-        },
-      );
+      });
 
       await plugin.start(() => {});
+      expect(webhookRelay.isListening()).toBe(true);
+      expect(MockWebSocket.instances).toHaveLength(0);
 
-      const ws = MockWebSocket.instances[0];
-
-      // Trigger the open event manually since we're using fake timers
-      ws.emit("open", {});
-
-      // Advance past ping interval
-      vi.advanceTimersByTime(30_000);
-
-      const pingSent = ws.sentMessages.find((m) => {
-        const parsed = JSON.parse(m);
-        return parsed.type === "ping";
-      });
-      expect(pingSent).toBeDefined();
-
-      vi.useRealTimers();
+      await plugin.stop();
+      expect(webhookRelay.isListening()).toBe(false);
+      expect(MockWebSocket.instances).toHaveLength(0);
     });
   });
 

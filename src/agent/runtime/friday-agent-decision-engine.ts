@@ -24,7 +24,6 @@ interface IntentPattern {
   name: string;
   regex: RegExp;
   action: "respond";
-  response: string;
   confidence: number;
 }
 
@@ -32,13 +31,6 @@ const GREETING_PATTERN: IntentPattern = {
   name: "greeting",
   regex: /^\s*(hello|hi|hey|yo|greetings|good\s+(morning|afternoon|evening)|你好|嗨|哈喽|早上好|下午好|晚上好)\s*[!.?]*\s*$/i,
   action: "respond",
-  response:
-    "Hello! I'm Friday, your AI automation assistant. How can I help you today? You can ask me to:\n\n" +
-    "- **Create workflows** to automate repetitive tasks\n" +
-    "- **Install skills** to extend my capabilities\n" +
-    "- **Monitor systems** and get health reports\n" +
-    "- **Diagnose issues** and suggest fixes\n\n" +
-    "Just tell me what you'd like to do!",
   confidence: 0.95,
 };
 
@@ -46,12 +38,6 @@ const STATUS_PATTERN: IntentPattern = {
   name: "status",
   regex: /^\s*(status|system\s*status|health|健康|运行情况|状态|how\s+are\s+you|are\s+you\s+(ok|running|alive))\s*[?!.]*\s*$/i,
   action: "respond",
-  response:
-    "I'm running and ready to help! Here's a quick overview:\n\n" +
-    "- **Agent**: Online and processing requests\n" +
-    "- **Skills**: Check the Skills page for installed capabilities\n" +
-    "- **Workflows**: Check the Workflows page for active automations\n\n" +
-    "For detailed system diagnostics, try asking me to \"run a health check\" or visit the Observability dashboard.",
   confidence: 0.9,
 };
 
@@ -59,22 +45,6 @@ const HELP_PATTERN: IntentPattern = {
   name: "help",
   regex: /^\s*(help|帮助|what\s+can\s+you\s+do|你能做什么|你会什么|capabilities|功能|features|usage)\s*[?!.]*\s*$/i,
   action: "respond",
-  response:
-    "Here's what I can help you with:\n\n" +
-    "**Automation**\n" +
-    "- Create and manage workflows (multi-step automations)\n" +
-    "- Generate and install skills (single-purpose scripts)\n" +
-    "- Schedule recurring tasks\n\n" +
-    "**Monitoring & Repair**\n" +
-    "- Diagnose errors and suggest fixes\n" +
-    "- Self-healing: automatically detect and repair issues\n" +
-    "- System health monitoring\n\n" +
-    "**Fleet Management**\n" +
-    "- Manage satellite nodes (remote devices)\n" +
-    "- Monitor fleet health and trust scores\n\n" +
-    "**Getting Started**\n" +
-    "- Just describe what you want in plain language\n" +
-    "- Example: \"Create a workflow that backs up my database every night\"",
   confidence: 0.95,
 };
 
@@ -82,7 +52,6 @@ const CANCEL_PATTERN: IntentPattern = {
   name: "cancel",
   regex: /^\s*(stop|cancel|abort|取消|停止|算了吧?|never\s*mind|nevermind)\s*[!.?]*\s*$/i,
   action: "respond",
-  response: "Got it, I've stopped the current operation. Let me know if you need anything else!",
   confidence: 0.9,
 };
 
@@ -92,6 +61,76 @@ const INTENT_PATTERNS: IntentPattern[] = [
   HELP_PATTERN,
   CANCEL_PATTERN,
 ];
+
+function containsChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/u.test(text);
+}
+
+function responseForIntent(name: string, task: string): string {
+  const zh = containsChinese(task);
+  switch (name) {
+    case "greeting":
+      return zh
+        ? [
+            "嗨，我在。你可以直接告诉我想让 Friday 做什么。",
+            "",
+            "我现在可以帮你处理任务、创建或运行 Skills、看系统状态、诊断问题；涉及敏感操作时会先发审批让你确认。",
+          ].join("\n")
+        : [
+            "Hello, I'm here. Tell me what you want Friday to handle.",
+            "",
+            "I can help with tasks, skills, system status, and diagnosis. Sensitive actions will pause for approval first.",
+          ].join("\n");
+    case "status":
+      return zh
+        ? [
+            "Friday 正在运行，可以接收任务。",
+            "",
+            "- Agent：在线",
+            "- Skills：可以在 Skills 页面查看已安装能力",
+            "- Workflows：可以在 Workflows 页面查看自动化",
+            "",
+            "如果你要更详细的诊断，可以直接说“检查系统健康”。",
+          ].join("\n")
+        : [
+            "Friday is running and ready.",
+            "",
+            "- Agent: online",
+            "- Skills: check the Skills page for installed capabilities",
+            "- Workflows: check the Workflows page for automations",
+            "",
+            "For deeper diagnostics, ask me to run a health check.",
+          ].join("\n");
+    case "help":
+      return zh
+        ? [
+            "你可以直接用自然语言给 Friday 派任务。",
+            "",
+            "- 自动化：创建/运行 workflows，安排重复任务",
+            "- Skills：安装、创建、运行技能",
+            "- 诊断与修复：查问题、给方案、需要时自修复",
+            "- 渠道：飞书/Telegram/Discord 对话入口",
+            "",
+            "涉及 MCP、第三方安装、生成工具、写配置或敏感操作时，我会先问你批准。",
+          ].join("\n")
+        : [
+            "You can give Friday tasks in plain language.",
+            "",
+            "- Automation: create and run workflows, schedule recurring work",
+            "- Skills: install, create, and run skills",
+            "- Diagnosis: investigate issues and suggest or apply fixes",
+            "- Channels: Feishu, Telegram, and Discord entry points",
+            "",
+            "MCP, third-party installs, generated tools, config writes, and sensitive actions pause for approval.",
+          ].join("\n");
+    case "cancel":
+      return zh
+        ? "收到，当前操作已停止。"
+        : "Got it, I've stopped the current operation.";
+    default:
+      return zh ? "我在。你直接说要做什么就行。" : "I'm here. Tell me what you want to do.";
+  }
+}
 
 // ─── Factory ────────────────────────────────────────────────────
 
@@ -115,7 +154,7 @@ export function createDefaultFridayDecisionEngine(): FridayDecisionEngine {
         if (pattern.regex.test(task)) {
           return {
             action: "respond",
-            response: pattern.response,
+            response: responseForIntent(pattern.name, task),
             confidence: pattern.confidence,
             reason: `Matched local intent pattern: ${pattern.name}`,
           };

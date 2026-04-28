@@ -87,4 +87,78 @@ describe("FridayChannelEntryAdapter", () => {
     expect(input?.scopes).not.toContain("hub.admin");
     expect(input?.disabledToolNames).toEqual(["dangerous-local-test-tool"]);
   });
+
+  it("allows image-only channel messages to reach the agent", async () => {
+    const executeRun = vi.fn().mockResolvedValue({
+      runId: "run-3",
+      status: "completed",
+      toolCallCount: 0,
+      durationMs: 10,
+    });
+
+    const adapter = createFridayChannelEntryAdapter({
+      engine: {
+        executeRun,
+      },
+      idGenerator: () => "run-3",
+      resolveSessionKey: (message) => `${message.channelKind}:default:${message.chatId}`,
+    });
+
+    await adapter.handleMessage({
+      id: "msg-image",
+      channelKind: "feishu",
+      senderId: "user-image",
+      chatId: "chat-image",
+      chatType: "direct",
+      text: "",
+      images: ["data:image/png;base64,iVBORw=="],
+    });
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      task: "Analyze the attached image.",
+      images: ["data:image/png;base64,iVBORw=="],
+    }));
+  });
+
+  it("passes normalized attachments through the channel task prompt", async () => {
+    const executeRun = vi.fn().mockResolvedValue({
+      runId: "run-4",
+      status: "completed",
+      toolCallCount: 0,
+      durationMs: 10,
+    });
+
+    const adapter = createFridayChannelEntryAdapter({
+      engine: {
+        executeRun,
+      },
+      idGenerator: () => "run-4",
+      resolveSessionKey: (message) => `${message.channelKind}:default:${message.chatId}`,
+    });
+
+    await adapter.handleMessage({
+      id: "msg-file",
+      channelKind: "feishu",
+      senderId: "user-file",
+      chatId: "chat-file",
+      chatType: "direct",
+      text: "",
+      attachments: [
+        {
+          id: "att-1",
+          kind: "file",
+          filename: "report.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 3,
+          localPath: "/tmp/friday-channel-attachments/report.pdf",
+          status: "resolved",
+        },
+      ],
+    });
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      task: "Analyze the attached media.",
+      taskPrompt: expect.stringContaining("/tmp/friday-channel-attachments/report.pdf"),
+    }));
+  });
 });
