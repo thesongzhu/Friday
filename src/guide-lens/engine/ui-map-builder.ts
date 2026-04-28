@@ -1,9 +1,9 @@
 import type {
   FridayGuideLensBounds,
   FridayGuideLensElement,
+  FridayGuideLensPreferences,
   FridayGuideLensSnapshotRequest,
   FridayGuideLensUiMap,
-  FridayGuideLensPreferences,
 } from "../model/friday-guide-lens.types.js";
 import { redactGuideLensText } from "./redaction.js";
 

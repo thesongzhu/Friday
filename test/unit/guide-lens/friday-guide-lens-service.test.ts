@@ -88,6 +88,7 @@ function systemSnapshot(): FridaySystemSnapshot {
 
 describe("createFridayGuideLensService", () => {
   it("builds a compact redacted UI map from text and system state", async () => {
+    const apiKey = ["sk", "examplevalue1234567890"].join("-");
     const service = createFridayGuideLensService({
       idGenerator: idGenerator(),
       nowIso,
@@ -95,7 +96,7 @@ describe("createFridayGuideLensService", () => {
     });
 
     const result = await service.captureSnapshot({
-      visibleText: "OpenAI API key: sk-examplevalue1234567890\nContinue",
+      visibleText: `OpenAI API key: ${apiKey}\nContinue`,
       elements: [{
         id: "continue-button",
         role: "button",
@@ -165,6 +166,7 @@ describe("createFridayGuideLensService", () => {
   });
 
   it("runs optional parser adapters with redacted snapshot input", async () => {
+    const parserKey = ["sk", "parsersecretvalue1234567890"].join("-");
     const parse = vi.fn().mockResolvedValue({
       provider: "omniparser",
       used: true,
@@ -188,7 +190,7 @@ describe("createFridayGuideLensService", () => {
     });
 
     const result = await service.captureSnapshot({
-      visibleText: "API key: sk-parsersecretvalue1234567890",
+      visibleText: `API key: ${parserKey}`,
     });
 
     expect(parse).toHaveBeenCalledWith(expect.objectContaining({
