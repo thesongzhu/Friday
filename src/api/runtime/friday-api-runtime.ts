@@ -35,9 +35,7 @@ import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
 import { createFridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
-import { getScopesForRole } from "../auth/friday-rbac-policy.js";
 import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
-import { createFridayUserRepository } from "../persistence/friday-user-repository.js";
 import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-bus.js";
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
@@ -47,7 +45,6 @@ import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboa
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
 import { createFridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
 import { createFridayHttpRawTextResponse } from "../http/friday-http-raw-response.js";
-import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
 import { createFridayAuthRoutes } from "../http/routes/friday-auth-routes.js";
 import { createFridayRuntimeAdminRoutes } from "../http/routes/friday-runtime-admin-routes.js";
 import { createFridayAutonomyRoutes } from "../http/routes/friday-autonomy-routes.js";
@@ -89,6 +86,7 @@ import { createFridayChannelRoutes } from "../http/routes/friday-channel-routes.
 import { createFridayDeepLinkRoutes } from "../http/routes/friday-deeplink-routes.js";
 import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
+import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
@@ -153,7 +151,7 @@ import {
   createFridayCapabilityAcquisitionService,
   createFridayStandingAgendaService,
 } from "../../autonomy/index.js";
-import type { FridayAuthPrincipal, FridayHttpContext } from "../model/friday-api-common.types.js";
+import type { FridayAuthPrincipal } from "../model/friday-api-common.types.js";
 import type { FridayRole } from "../model/friday-api-auth.types.js";
 import type {
   FridayGetRunEvidenceQuery,
@@ -271,20 +269,6 @@ function resolvePrincipalTenantId(principal: FridayAuthPrincipal | null): string
   return principal.principalId;
 }
 
-function isFridayRole(value: string): value is FridayRole {
-  return value === "owner" || value === "admin" || value === "operator" || value === "viewer";
-}
-
-function isLocalBypassHttpContext(
-  ctx: FridayHttpContext<unknown, unknown, unknown>,
-): boolean {
-  if (ctx.socketIp) {
-    return isFridayLoopbackAddress(ctx.socketIp)
-      && (!ctx.ip || isFridayLoopbackAddress(ctx.ip));
-  }
-  return isFridayLoopbackAddress(ctx.ip);
-}
-
 function createWorkflowWebhookSecretResolver(
   db: FridaySqliteLayer,
 ): (refKey: string) => string | null {
@@ -390,7 +374,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Auth
   const tokenRepo = createFridayApiTokenRepository();
   const sessionRepo = createFridayAuthSessionRepository();
-  const userRepo = createFridayUserRepository();
 
   // ─── In-memory access token revocation map (SEC-005) ───
   // Load persisted revocations from DB on startup
@@ -516,34 +499,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const middleware = createFridayAuthMiddlewareFactory({
     tokenValidator,
     rateLimitService: rateLimiter,
-    resolveLocalBypassPrincipal: (ctx) => {
-      if (!(deps.allowLocalBypassLogin ?? false) || !isLocalBypassHttpContext(ctx)) {
-        return null;
-      }
-      const localUser = deps.db.withReadConnection((db) => userRepo.findLocalUser(db));
-      if (!localUser) {
-        return null;
-      }
-      const role = isFridayRole(localUser.role) ? localUser.role : "admin";
-      const tenantId = asString(deps.resolveAuthTenantId?.({
-        principalType: "user",
-        principalId: localUser.id,
-        userId: localUser.id,
-        role,
-      })) ?? localUser.id;
-
-      return {
-        principalType: "user",
-        principalId: localUser.id,
-        tenantId,
-        userId: localUser.id,
-        role,
-        scopes: [...getScopesForRole(role)],
-        tokenId: "00000000-0000-0000-0000-000000000000",
-        tokenKind: "access",
-        issuedAt: deps.nowIso(),
-      };
-    },
   });
 
   // Realtime
@@ -2021,6 +1976,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   }
 
+  // Register read-only Guide Mode routes (optional)
+  if (deps.guideLens) {
+    for (const route of createFridayGuideLensRoutes(deps.guideLens)) {
+      routes.register(route);
+    }
+  }
+
   // Register local discovery routes (optional)
   for (const route of deps.discovery
     ? createFridayDiscoveryRoutes(deps.discovery)
@@ -2912,5 +2874,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     agentLoop: deps.agentLoop,
     uix: deps.uix,
     system: deps.system,
+    guideLens: deps.guideLens,
   };
 }

@@ -134,6 +134,27 @@ function applyDraftToPreferencePayload(draft: {
   ];
 }
 
+interface GuideLensState {
+  preferences: {
+    enabled: boolean;
+    triggerPolicy: "manual" | "confirm_first" | "trusted_context_auto";
+    defaultSurface: string;
+    parserProvider: string;
+    chatboxPolicy: string;
+    avatar: {
+      kind: "default_f" | "profile_image" | "local_image";
+      imageUrl?: string;
+      localPath?: string;
+      initials?: string;
+      sizePx: number;
+    };
+  };
+  activeSession?: {
+    status: string;
+    surface: string;
+  };
+}
+
 export function SettingsPage() {
   const { locale } = useAppLocale();
   const queryClient = useQueryClient();
@@ -195,6 +216,13 @@ export function SettingsPage() {
     queryFn: () => systemApi.getState(),
     retry: 0,
     refetchInterval: 10_000,
+  });
+
+  const { data: guideLensState } = useQuery({
+    queryKey: ["settings", "guide-lens"],
+    queryFn: () => apiClient.get<GuideLensState>("/v1/guide-lens/state"),
+    retry: 0,
+    refetchInterval: 15_000,
   });
 
   const { data: persona } = useQuery({
@@ -381,6 +409,30 @@ export function SettingsPage() {
     },
   });
 
+  const updateGuideLensPreferencesMutation = useMutation({
+    mutationFn: (patch: Partial<GuideLensState["preferences"]>) =>
+      apiClient.patch<Partial<GuideLensState["preferences"]>, GuideLensState["preferences"]>("/v1/guide-lens/preferences", patch),
+    onSuccess: async () => {
+      toast.success(localize(locale, "引导模式已更新", "Guide Mode updated"));
+      await queryClient.invalidateQueries({ queryKey: ["settings", "guide-lens"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新引导模式", "Could not update Guide Mode"));
+    },
+  });
+
+  const updateGuideLensAvatarMutation = useMutation({
+    mutationFn: (avatar: Partial<GuideLensState["preferences"]["avatar"]>) =>
+      apiClient.post<Partial<GuideLensState["preferences"]["avatar"]>, GuideLensState["preferences"]["avatar"]>("/v1/guide-lens/avatar", avatar),
+    onSuccess: async () => {
+      toast.success(localize(locale, "引导头像已更新", "Guide avatar updated"));
+      await queryClient.invalidateQueries({ queryKey: ["settings", "guide-lens"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新引导头像", "Could not update guide avatar"));
+    },
+  });
+
   const toggleExpertMutation = useMutation({
     mutationFn: (enabled: boolean) => systemApi.updateAgentLoopExpertMode({ enabled }),
     onSuccess: (result) => {
@@ -486,6 +538,74 @@ export function SettingsPage() {
             </div>
           ) : (
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载诊断信息…", "Loading diagnostics...")}</p>
+          )}
+        </ShellCard>
+
+        <ShellCard eyebrow={localize(locale, "引导模式", "Guide Mode")} title={localize(locale, "Native Companion Overlay", "Native Companion Overlay")}>
+          {guideLensState ? (
+            <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
+              <div className="flex items-center gap-4 rounded-[18px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[#c4c7c5] text-xl font-semibold text-white">
+                  {guideLensState.preferences.avatar.kind === "default_f" ? (guideLensState.preferences.avatar.initials ?? "F") : "F"}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-[color:var(--color-text-primary)]">
+                    {localize(locale, "只读引导，不接管操作", "Read-only guidance, no input takeover")}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[color:var(--color-text-tertiary)]">
+                    {localize(locale, "默认灰色 F 头像，可切换复用 profile 或本地图片；蓝色焦点框会显示在 native companion 上。", "Default grey F avatar, with profile/local image options; blue focus frames render in the native companion.")}
+                  </p>
+                </div>
+                <StatusPill tone={guideLensState.preferences.enabled ? "success" : "neutral"}>
+                  {guideLensState.preferences.enabled ? "enabled" : "disabled"}
+                </StatusPill>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-[color:var(--color-text-tertiary)]">{localize(locale, "触发方式", "Trigger")}</span>
+                  <select
+                    className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2 text-sm text-[color:var(--color-text-primary)]"
+                    value={guideLensState.preferences.triggerPolicy}
+                    onChange={(event) => updateGuideLensPreferencesMutation.mutate({ triggerPolicy: event.target.value as GuideLensState["preferences"]["triggerPolicy"] })}
+                  >
+                    <option value="confirm_first">{localize(locale, "首次确认后弹出", "Confirm first")}</option>
+                    <option value="manual">{localize(locale, "只手动触发", "Manual only")}</option>
+                    <option value="trusted_context_auto">{localize(locale, "信任场景自动弹出", "Trusted auto")}</option>
+                  </select>
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-[color:var(--color-text-tertiary)]">{localize(locale, "头像来源", "Avatar")}</span>
+                  <select
+                    className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2 text-sm text-[color:var(--color-text-primary)]"
+                    value={guideLensState.preferences.avatar.kind}
+                    onChange={(event) => updateGuideLensAvatarMutation.mutate({ kind: event.target.value as GuideLensState["preferences"]["avatar"]["kind"] })}
+                  >
+                    <option value="default_f">{localize(locale, "默认灰色 F", "Default grey F")}</option>
+                    <option value="profile_image">{localize(locale, "复用 profile 图片", "Use profile image")}</option>
+                    <option value="local_image">{localize(locale, "本地图片路径", "Local image path")}</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-[color:var(--color-text-tertiary)]">{localize(locale, "本地图片路径", "Local image path")}</span>
+                <input
+                  className="w-full rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2 text-sm text-[color:var(--color-text-primary)]"
+                  defaultValue={guideLensState.preferences.avatar.localPath ?? ""}
+                  placeholder="/Users/me/Pictures/profile.png"
+                  onBlur={(event) => updateGuideLensAvatarMutation.mutate({ kind: "local_image", localPath: event.target.value })}
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <DiagnosticRow label={localize(locale, "Parser", "Parser")} value={guideLensState.preferences.parserProvider} />
+                <DiagnosticRow label={localize(locale, "Chatbox", "Chatbox")} value={guideLensState.preferences.chatboxPolicy} />
+                <DiagnosticRow label={localize(locale, "Session", "Session")} value={guideLensState.activeSession?.status ?? "idle"} />
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "引导模式未启用或系统伴侣未连接。", "Guide Mode is not enabled or the companion is not connected.")}</p>
           )}
         </ShellCard>
 

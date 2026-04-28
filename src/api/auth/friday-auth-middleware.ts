@@ -1,6 +1,5 @@
 import type { FridayHttpContext } from "../model/friday-api-common.types.js";
 import type {
-  FridayAuthPrincipal,
   FridayRateLimitPolicyId,
   FridayRole,
   FridayScope,
@@ -50,9 +49,6 @@ export interface FridayAuthMiddlewareFactory {
 export interface CreateFridayAuthMiddlewareFactoryDeps {
   tokenValidator: FridayTokenValidator;
   rateLimitService: FridayRateLimitService;
-  resolveLocalBypassPrincipal?: (
-    ctx: FridayHttpContext<unknown, unknown, unknown>,
-  ) => FridayAuthPrincipal | null | undefined;
 }
 
 // ─── Helpers ───
@@ -84,21 +80,6 @@ function getRateLimitKey(
   }
 }
 
-function applyLocalBypassPrincipal(
-  ctx: FridayHttpContext<unknown, unknown, unknown>,
-  resolveLocalBypassPrincipal?: CreateFridayAuthMiddlewareFactoryDeps["resolveLocalBypassPrincipal"],
-): FridayMiddlewareResult | undefined {
-  const localPrincipal = resolveLocalBypassPrincipal?.(ctx);
-  if (!localPrincipal) {
-    return undefined;
-  }
-  ctx.principal = localPrincipal;
-  return {
-    passed: true,
-    headers: { "X-Friday-Local-Session": "bypass" },
-  };
-}
-
 // ─── Factory ───
 
 export function createFridayAuthMiddlewareFactory(
@@ -112,10 +93,6 @@ export function createFridayAuthMiddlewareFactory(
 
       const token = extractBearerToken(ctx.headers);
       if (!token) {
-        const localBypass = applyLocalBypassPrincipal(ctx, deps.resolveLocalBypassPrincipal);
-        if (localBypass) {
-          return localBypass;
-        }
         return {
           passed: false,
           statusCode: 401,
@@ -129,10 +106,6 @@ export function createFridayAuthMiddlewareFactory(
         ctx.principal = validated.principal;
         return { passed: true };
       } catch (err) {
-        const localBypass = applyLocalBypassPrincipal(ctx, deps.resolveLocalBypassPrincipal);
-        if (localBypass) {
-          return localBypass;
-        }
         if (err instanceof FridayTokenValidationError) {
           return {
             passed: false,

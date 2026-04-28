@@ -409,5 +409,40 @@ export function createFridaySystemUnixSocketBridge(
         };
       }
     },
+
+    async showGuideOverlay(command) {
+      try {
+        const result = await callRpc("companion.showGuideOverlay", { command });
+        connected = true;
+        lastHeartbeatAt = options.nowIso();
+        return result as Awaited<ReturnType<FridaySystemCompanionBridge["showGuideOverlay"]>>;
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] showGuideOverlay:", err instanceof Error ? err.message : String(err));
+        connected = false;
+        lastHeartbeatAt = options.nowIso();
+        return {
+          visible: true,
+          changedAt: options.nowIso(),
+          guideOverlay: command,
+        };
+      }
+    },
+
+    async clearGuideOverlay() {
+      try {
+        const result = await callRpc("companion.clearGuideOverlay");
+        connected = true;
+        lastHeartbeatAt = options.nowIso();
+        return result as Awaited<ReturnType<FridaySystemCompanionBridge["clearGuideOverlay"]>>;
+      } catch (err) {
+        console.warn("[friday][unix-socket-bridge] clearGuideOverlay:", err instanceof Error ? err.message : String(err));
+        connected = false;
+        lastHeartbeatAt = options.nowIso();
+        return {
+          visible: false,
+          changedAt: options.nowIso(),
+        };
+      }
+    },
   };
 }

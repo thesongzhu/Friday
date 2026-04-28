@@ -11,7 +11,7 @@ import {
 } from "#api";
 import { createFridayRateLimitService } from "#api";
 import type { FridayHttpContext } from "#api";
-import type { FridayAccessTokenClaims, FridayAuthPrincipal } from "#api";
+import type { FridayAccessTokenClaims } from "#api";
 
 describe("FridayAuthMiddleware", () => {
   let db: FridaySqliteLayer;
@@ -47,9 +47,7 @@ describe("FridayAuthMiddleware", () => {
     return encodeToken(claims, SECRET);
   }
 
-  function createMiddleware(
-    resolveLocalBypassPrincipal?: () => FridayAuthPrincipal | null,
-  ): FridayAuthMiddlewareFactory {
+  function createMiddleware(): FridayAuthMiddlewareFactory {
     const tokenValidator = createFridayTokenValidator({
       tokenSecret: SECRET,
       nowMs: () => NOW_SEC * 1000,
@@ -62,20 +60,8 @@ describe("FridayAuthMiddleware", () => {
     return createFridayAuthMiddlewareFactory({
       tokenValidator,
       rateLimitService,
-      resolveLocalBypassPrincipal,
     });
   }
-
-  const localBypassPrincipal: FridayAuthPrincipal = {
-    principalType: "user",
-    principalId: "local-user-1",
-    userId: "local-user-1",
-    role: "admin",
-    scopes: ["hub.admin"],
-    tokenId: "local-bypass-token",
-    tokenKind: "access",
-    issuedAt: NOW,
-  };
 
   beforeEach(() => {
     db = createTestDb();
@@ -121,17 +107,6 @@ describe("FridayAuthMiddleware", () => {
       }
     });
 
-    it("uses local bypass principal when no bearer token is present", () => {
-      const localMw = createMiddleware(() => localBypassPrincipal);
-      const ctx = makeCtx();
-      const result = localMw.requireAuth(ctx);
-      expect(result.passed).toBe(true);
-      expect(ctx.principal?.principalId).toBe("local-user-1");
-      if (result.passed) {
-        expect(result.headers?.["X-Friday-Local-Session"]).toBe("bypass");
-      }
-    });
-
     it("rejects when token is invalid", () => {
       const ctx = makeCtx({
         headers: { authorization: "Bearer invalid.token" },
@@ -143,14 +118,18 @@ describe("FridayAuthMiddleware", () => {
       }
     });
 
-    it("falls back to local bypass when a stale bearer token is present", () => {
-      const localMw = createMiddleware(() => localBypassPrincipal);
+    it("rejects invalid tokens without falling back to local auth state", () => {
       const ctx = makeCtx({
         headers: { authorization: "Bearer invalid.token" },
+        ip: "127.0.0.1",
+        socketIp: "127.0.0.1",
       });
-      const result = localMw.requireAuth(ctx);
-      expect(result.passed).toBe(true);
-      expect(ctx.principal?.principalId).toBe("local-user-1");
+      const result = mw.requireAuth(ctx);
+      expect(result.passed).toBe(false);
+      expect(ctx.principal).toBeNull();
+      if (!result.passed) {
+        expect(result.statusCode).toBe(401);
+      }
     });
   });
 

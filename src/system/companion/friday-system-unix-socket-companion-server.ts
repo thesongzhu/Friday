@@ -7,6 +7,7 @@ import {
   createFridaySystemCompanionRuntimeController,
   type FridaySystemCompanionRuntimeOptions,
 } from "./friday-system-companion-runtime.js";
+import type { FridayGuideLensOverlayCommand } from "../../guide-lens/model/friday-guide-lens.types.js";
 
 interface FridayJsonRpcRequest {
   jsonrpc?: string;
@@ -116,6 +117,10 @@ export function createFridaySystemUnixSocketCompanionServer(
         });
       case "companion.setOverlayVisible":
         return controller.setOverlayVisible(Boolean(params?.visible));
+      case "companion.showGuideOverlay":
+        return controller.showGuideOverlay(params?.command as FridayGuideLensOverlayCommand);
+      case "companion.clearGuideOverlay":
+        return controller.clearGuideOverlay();
       default:
         throw new FridayDomainError("VALIDATION_ERROR", `Unknown companion method: ${method}`, { httpStatus: 400 });
     }
