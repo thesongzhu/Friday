@@ -20,9 +20,9 @@ export const AGENT_OS_NAV_PRIMARY: AgentOsNavItem[] = [
     description: localizedText("最快开始一个新任务，直接告诉 Friday 你要完成什么。", "Start a new task quickly by telling Friday what you want done."),
   },
   {
-    label: localizedText("行业与任务", "Industry & Tasks"),
-    path: "/packs",
-    description: localizedText("管理你自创的任务定义，并把真实运行入口固定到首页。", "Manage your custom task definitions and pin live execution entry points back to home."),
+    label: localizedText("Studio", "Studio"),
+    path: "/studio",
+    description: localizedText("从 SEO、报告、PPT、小程序、引导和集成入口直接生成交付件。", "Generate deliverables from SEO, research, slides, mini apps, guided flows, and integrations."),
   },
   {
     label: localizedText("助手", "Assistant"),
@@ -40,6 +40,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("监控和管理 Friday 在 Discord、Telegram、Slack 等平台上的对话。", "Monitor and manage Friday's conversations across Discord, Telegram, Slack, and more."),
   },
   // ── Create & Build ──
+  {
+    label: localizedText("行业与任务", "Industry & Tasks"),
+    path: "/packs",
+    description: localizedText("管理你自创和导入的任务定义，并把真实运行入口固定到首页。", "Manage custom and imported task definitions and pin live execution entry points back to home."),
+  },
   {
     label: localizedText("能力包", "Skills"),
     path: "/skills",
@@ -112,6 +117,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname === "/chat") {
     return localizedText("聊天", "Chat");
+  }
+  if (pathname === "/studio") {
+    return localizedText("Studio", "Studio");
   }
   if (pathname === "/packs") {
     return localizedText("行业与任务", "Industry & Tasks");

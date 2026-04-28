@@ -89,6 +89,7 @@ import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js
 import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
+import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
 import { createFridayMarketplaceCommerceRoutes } from "../http/routes/friday-marketplace-commerce-routes.js";
@@ -102,6 +103,7 @@ import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satell
 import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satellite-runtime-routes.js";
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
+import { createFridayStudioService } from "../../studio/index.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -2115,6 +2117,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register packaging routes with stable disabled semantics when packaging is absent.
   for (const route of createFridayPackagingRoutes(deps.packaging)) {
+    routes.register(route);
+  }
+
+  const studioService = createFridayStudioService({
+    workspaceRoot: deps.stateDir ?? process.cwd(),
+    nowIso: deps.nowIso,
+  });
+  for (const route of createFridayStudioRoutes({ service: studioService })) {
     routes.register(route);
   }
 

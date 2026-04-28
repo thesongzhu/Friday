@@ -39,6 +39,7 @@ const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) =
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
+const StudioPage = lazy(async () => import("@/routes/studio-page").then((module) => ({ default: module.StudioPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 
@@ -397,6 +398,17 @@ export const router = createBrowserRouter([
                 detail={localizedText("Friday 正在准备行业与任务库。", "Friday is preparing the industry and task library.")}
               >
                 <PacksPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "studio",
+            element: (
+              <RouteSuspense
+                title={localizedText("加载 Studio", "Loading Studio")}
+                detail={localizedText("Friday 正在准备开箱即用的工作产品入口。", "Friday is preparing ready-to-use work product entrypoints.")}
+              >
+                <StudioPage />
               </RouteSuspense>
             ),
           },

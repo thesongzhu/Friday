@@ -22,6 +22,7 @@ export type * from "./model/friday-api-guide-lens.types.js";
 export type * from "./model/friday-api-self-healing.types.js";
 export type * from "./model/friday-api-uix-surface.types.js";
 export type * from "./model/friday-api-cross-border-pack.types.js";
+export type * from "./model/friday-api-studio.types.js";
 export type * from "./model/friday-api-runtime-admin.types.js";
 export type * from "./model/friday-api-autonomy.types.js";
 
@@ -210,6 +211,8 @@ export { createFridayUixRoutes } from "./http/routes/friday-uix-routes.js";
 export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
 export { createFridayCrossBorderPackRoutes } from "./http/routes/friday-cross-border-pack-routes.js";
 export type { FridayCrossBorderPackRoutesDeps } from "./http/routes/friday-cross-border-pack-routes.js";
+export { createFridayStudioRoutes } from "./http/routes/friday-studio-routes.js";
+export type { FridayStudioRoutesDeps } from "./http/routes/friday-studio-routes.js";
 
 // Discovery routes (C-005)
 export { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";

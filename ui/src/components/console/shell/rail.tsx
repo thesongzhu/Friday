@@ -32,12 +32,13 @@ import { useAppLocale } from "@/providers/locale-provider";
 const PRIMARY_ICONS: Record<string, LucideIcon> = {
   "/home": Home,
   "/chat": MessageCircle,
-  "/packs": ListFilter,
+  "/studio": Sparkles,
   "/assistant": Sparkles,
 };
 
 const ADVANCED_ICONS: Record<string, LucideIcon> = {
   "/channels": MessageSquare,
+  "/packs": ListFilter,
   "/skills": Layers,
   "/plugins": Plug,
   "/workflows": Workflow,
