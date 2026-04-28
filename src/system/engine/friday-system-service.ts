@@ -77,6 +77,28 @@ const HIGH_RISK_INTENTS = new Set<FridaySystemIntentAction>([
   "notification_act",
 ]);
 
+const DEFAULT_APPROVAL_RULES: Array<{
+  action: FridaySystemIntentAction;
+  riskLevel: FridayDesktopRiskLevel;
+  rationale: string;
+}> = [
+  {
+    action: "clipboard_read",
+    riskLevel: "high",
+    rationale: "Default gate for inspecting clipboard contents.",
+  },
+  {
+    action: "close_app",
+    riskLevel: "high",
+    rationale: "Default gate for closing desktop applications.",
+  },
+  {
+    action: "notification_act",
+    riskLevel: "high",
+    rationale: "Default gate for opening, dismissing, or marking notifications.",
+  },
+];
+
 const MUTATING_INTENTS = new Set<FridaySystemIntentAction>([
   "open",
   "focus",
@@ -1042,6 +1064,29 @@ export async function createFridaySystemService(
       }),
     );
 
+  function ensureDefaultApprovalRules(): void {
+    const now = deps.nowIso();
+    deps.db.withWriteTransaction((db) => {
+      for (const rule of DEFAULT_APPROVAL_RULES) {
+        const existing = repository.findMatchingApprovalRule(db, {
+          action: rule.action,
+        });
+        if (existing) {
+          continue;
+        }
+        repository.insertApprovalRule(db, {
+          id: deps.idGenerator(),
+          action: rule.action,
+          riskLevel: rule.riskLevel,
+          decision: "prompt",
+          rationale: rule.rationale,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+  }
+
   const upsertApprovalRule = (input: {
     action: FridaySystemIntentAction | string;
     appIdentifier?: string;
@@ -1079,6 +1124,8 @@ export async function createFridaySystemService(
       }),
     );
   };
+
+  ensureDefaultApprovalRules();
 
   function hydrateRemoteDeviceWithDb(
     db: Parameters<typeof repository.findRemotePasskeyByDeviceId>[0],

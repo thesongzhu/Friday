@@ -326,6 +326,22 @@ describe("createFridaySystemService", () => {
     expect(events.map((event) => event.event)).toContain("system.companion.connected");
   });
 
+  it("seeds default prompt approval rules for command-center risk gates", async () => {
+    const fixture = await createServiceFixture();
+    allocatedDbs.push(fixture.db);
+
+    const approvals = fixture.service.listApprovalRules();
+    const defaults = approvals.filter((approval) =>
+      ["clipboard_read", "close_app", "notification_act"].includes(approval.action),
+    );
+    const state = await fixture.service.getState();
+
+    expect(defaults).toHaveLength(3);
+    expect(defaults.map((approval) => approval.decision)).toEqual(["prompt", "prompt", "prompt"]);
+    expect(defaults.map((approval) => approval.riskLevel)).toEqual(["high", "high", "high"]);
+    expect(state.approvalsSummary.total).toBeGreaterThanOrEqual(3);
+  });
+
   it("starts in degraded mode when the companion socket is unavailable", async () => {
     const warn = vi.fn();
     const fixture = await createServiceFixtureWithOptions({

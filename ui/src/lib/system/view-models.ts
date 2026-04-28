@@ -60,7 +60,7 @@ export function buildApprovalActionCards(
       action: item.action,
       label: item.label,
       summary: item.summary,
-      decision: rule?.decision ?? "missing",
+      decision: rule?.decision ?? "prompt",
       ruleId: rule?.id,
       updatedAt: rule?.updatedAt,
     };

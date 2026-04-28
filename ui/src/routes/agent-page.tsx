@@ -122,8 +122,27 @@ function isActiveRunStatus(status: string): status is (typeof ACTIVE_RUN_STATUSE
 function mapTone(status?: string): "neutral" | "success" | "warning" | "danger" {
   if (status === "healthy" || status === "completed" || status === "active") return "success";
   if (status === "blocked" || status === "degraded" || status === "safe_mode") return "warning";
+  if (status === "allow") return "success";
+  if (status === "prompt") return "warning";
+  if (status === "deny") return "danger";
   if (status === "failed" || status === "unavailable" || status === "revoked") return "danger";
   return "neutral";
+}
+
+function formatApprovalDecision(
+  decision: FridaySystemApprovalRule["decision"] | "missing",
+  locale: string,
+): string {
+  if (locale === "zh") {
+    if (decision === "allow") return "已允许";
+    if (decision === "deny") return "已拒绝";
+    if (decision === "prompt") return "待确认";
+    return "未同步";
+  }
+  if (decision === "allow") return "Allowed";
+  if (decision === "deny") return "Denied";
+  if (decision === "prompt") return "Prompt";
+  return "Unsynced";
 }
 
 function formatBrowserMode(mode?: "headless" | "host_chrome_visible"): string {
@@ -533,6 +552,7 @@ export function AgentPage() {
       action: FridaySystemIntentAction;
       target?: string;
       reason?: string;
+      approvalId?: string;
       notificationId?: string;
       notificationAction?: FridaySystemNotificationAction;
       layout?: "single_focus" | "dual_pane" | "triad";
@@ -543,6 +563,7 @@ export function AgentPage() {
         actorKind: "api",
         target: input.target,
         reason: input.reason,
+        approvalId: input.approvalId,
         notificationId: input.notificationId,
         notificationAction: input.notificationAction,
         layout: input.layout,
@@ -1124,7 +1145,7 @@ export function AgentPage() {
                     <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">{card.summary}</p>
                   </div>
                   <StatusPill tone={mapTone(card.decision === "missing" ? "neutral" : card.decision)}>
-                    {card.decision}
+                    {formatApprovalDecision(card.decision, locale)}
                   </StatusPill>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -1133,8 +1154,10 @@ export function AgentPage() {
                     onClick={() => systemIntentMutation.mutate({
                       action: "approve",
                       target: card.action,
+                      approvalId: card.ruleId,
                       reason: locale === "zh" ? "已从命令中心允许" : "Allowed from Command Center",
                     })}
+                    disabled={systemIntentMutation.isPending}
                   >
                     {locale === "zh" ? "允许" : "Allow"}
                   </ActionButton>
@@ -1143,8 +1166,10 @@ export function AgentPage() {
                     onClick={() => systemIntentMutation.mutate({
                       action: "deny",
                       target: card.action,
+                      approvalId: card.ruleId,
                       reason: locale === "zh" ? "已从命令中心拒绝" : "Denied from Command Center",
                     })}
+                    disabled={systemIntentMutation.isPending}
                   >
                     {locale === "zh" ? "拒绝" : "Deny"}
                   </ActionButton>
