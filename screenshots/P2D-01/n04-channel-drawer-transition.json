@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:34:53.228Z",
-  "observed": {
-    "drawerPresent": true,
-    "animationName": "trace-drawer-slide-in",
-    "animationDuration": "0.2s",
-    "transitionDuration": "0.2s, 0.2s"
-  }
-}

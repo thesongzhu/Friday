@@ -14,7 +14,7 @@ const DIST_CLI = path.join(REPO_ROOT, "dist", "cli", "friday-cli.js");
 const HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEEPSEEK_MODEL = process.env.FRIDAY_EXTERNAL_CLOSURE_MODEL ?? "deepseek-v4-flash";
-const REDBOX_REPO = process.env.FRIDAY_EXTERNAL_CLOSURE_GITHUB_REPO ?? "https://github.com/Jamailar/RedBox.git";
+const SAMPLE_REPO = process.env.FRIDAY_EXTERNAL_CLOSURE_GITHUB_REPO ?? "https://github.com/modelcontextprotocol/servers.git";
 
 function nowIso() {
   return new Date().toISOString();
@@ -484,7 +484,7 @@ async function main() {
     report.steps.failingSkill = { skillId: failingSkillId, status: failingRun.json.data.status, stderr: failingRun.json.data.stderr };
 
     const githubConvert = await mustOk("GitHub code-repo convert", api(runtime.baseUrl, runtime.token, "POST", "/v1/skills/convert", {
-      source: { uri: REDBOX_REPO },
+      source: { uri: SAMPLE_REPO },
       formatHint: "code-repo",
       dryRun: true,
       options: { maxDrafts: 3 },
@@ -494,7 +494,7 @@ async function main() {
       throw new Error(`GitHub code-repo convert returned no drafts: ${JSON.stringify(githubConvert.json.data).slice(0, 2000)}`);
     }
     report.steps.githubCodeRepoConvert = {
-      repo: REDBOX_REPO,
+      repo: SAMPLE_REPO,
       converterId: githubConvert.json.data.converterId,
       draftCount: githubDrafts.length,
       firstSkillId: githubDrafts[0]?.manifest?.id,

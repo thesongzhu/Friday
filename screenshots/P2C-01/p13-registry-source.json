@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:33:18.173Z",
-  "observed": {
-    "usesRegistry": true,
-    "literalIds": [],
-    "registryCount": 7
-  },
-  "functionMarker": "function renderPacksPage()"
-}

@@ -1,7 +1,0 @@
-G01_placeholder_count=0
-G02_todo_count=0
-G03_any_count=0
-G04_console_log_count=0
-G04_console_warn_count=0
-G04_console_info_count=0
-G04_console_error_count=0

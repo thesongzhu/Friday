@@ -1,9 +1,0 @@
-{
-  "caseId": "sessions-memory-approval",
-  "name": "sessions-memory-approval",
-  "startedAt": "2026-03-31T09:29:10.929Z",
-  "finishedAt": "2026-03-31T09:29:10.936Z",
-  "verdict": "FAIL",
-  "severity": "P1",
-  "error": "Create session failed: {\"ok\":false,\"error\":{\"code\":\"SESSION_INVALID_INPUT\",\"message\":\"Invalid request body: chatId is required and must be a non-empty string\",\"retryable\":false},\"requestId\":\"a917766c-e246-43c1-9bc4-dd5b54c158b7\"}"
-}

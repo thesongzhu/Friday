@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:36:33.682Z",
-  "observed": {
-    "route": "/flow?dev=1",
-    "title": "找不到引导",
-    "ctaHref": "/assistant"
-  },
-  "screenshot": "screenshots/P2E-04/gf11-guided-empty.png"
-}

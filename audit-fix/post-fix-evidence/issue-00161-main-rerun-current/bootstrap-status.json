@@ -1,9 +1,0 @@
-{
-  "ok": true,
-  "data": {
-    "bootstrapRequired": false,
-    "allowPasswordlessLocalLogin": true,
-    "allowLocalBypassLogin": true
-  },
-  "requestId": "626e0e05-fdbc-404d-9a57-6a78d654ec4a"
-}

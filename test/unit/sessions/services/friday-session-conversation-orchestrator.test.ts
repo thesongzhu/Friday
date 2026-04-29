@@ -106,7 +106,7 @@ describe("friday-session-conversation-orchestrator", () => {
       task: "刚刚找到了什么？",
       focusState: {
         ...baseFocusState,
-        currentTopicSummary: "去华人168网站上找 6264098976 这个号码相关的所有信息",
+        currentTopicSummary: "去示例目录网站上找 5550100199 这个号码相关的所有信息",
         currentTopicStartSequence: 3,
         assistantAnchorSummary: "Agent run timed out",
       },
@@ -115,17 +115,17 @@ describe("friday-session-conversation-orchestrator", () => {
         makeMessage({
           sequence: 1,
           role: "user",
-          contentText: "把 RedBox 做成一个 Friday skill",
+          contentText: "把 SampleBoard 做成一个 Friday skill",
         }),
         makeMessage({
           sequence: 2,
           role: "assistant",
-          contentText: "我查看了 RedBox，并准备生成 skill。",
+          contentText: "我查看了 SampleBoard，并准备生成 skill。",
         }),
         makeMessage({
           sequence: 3,
           role: "user",
-          contentText: "去华人168网站上去找6264098976这个号码相关的所有信息",
+          contentText: "去示例目录网站上去找5550100199这个号码相关的所有信息",
         }),
         makeMessage({
           sequence: 4,
@@ -134,9 +134,9 @@ describe("friday-session-conversation-orchestrator", () => {
           toolCalls: [
             {
               toolName: "web_fetch",
-              args: { url: "https://168worker.com/search/6264098976" },
+              args: { url: "https://example.test/search/5550100199" },
               result: {
-                content: "HTTP 200 OK\nExtracted text: 6264098976，美国华人168找工作，招聘，美国168，美国找工作网",
+                content: "HTTP 200 OK\nExtracted text: 5550100199，示例目录搜索结果，公开列表，测试数据",
               },
             },
             {
@@ -153,13 +153,13 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnFrame.intent).toBe("result_recall");
     expect(prepared.turnFrame.referent.type).toBe("last_run");
     expect(prepared.selectedBlocks[0]?.id).toContain("recent-result:");
-    expect(prepared.selectedBlocks[0]?.summary).toContain("6264098976");
-    expect(prepared.selectedBlocks[0]?.summary).toContain("168worker.com/search/6264098976");
-    expect(prepared.selectedBlocks[0]?.summary).not.toContain("RedBox");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("5550100199");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("example.test/search/5550100199");
+    expect(prepared.selectedBlocks[0]?.summary).not.toContain("SampleBoard");
     expect(prepared.taskPrompt).toContain("immediately previous task");
     expect(prepared.taskPrompt).toContain("Do not switch to durable memory");
     expect(prepared.historyMessages).toEqual([
-      { role: "user", content: "去华人168网站上去找6264098976这个号码相关的所有信息" },
+      { role: "user", content: "去示例目录网站上去找5550100199这个号码相关的所有信息" },
       { role: "assistant", content: "Agent run timed out" },
     ]);
   });
@@ -169,11 +169,11 @@ describe("friday-session-conversation-orchestrator", () => {
       task: "取消前找到了什么？",
       focusState: {
         ...baseFocusState,
-        currentTopicSummary: "搜索华人168上的号码信息",
+        currentTopicSummary: "搜索示例目录上的号码信息",
         assistantAnchorSummary: "请求已取消：Agent run timed out",
       },
       historyRecords: [
-        makeMessage({ sequence: 1, role: "user", contentText: "搜索华人168上的号码信息" }),
+        makeMessage({ sequence: 1, role: "user", contentText: "搜索示例目录上的号码信息" }),
         makeMessage({ sequence: 2, role: "assistant", contentText: "请求已取消：Agent run timed out" }),
       ],
       currentUserSequence: 3,
@@ -187,18 +187,18 @@ describe("friday-session-conversation-orchestrator", () => {
         ...baseFocusState,
         currentTopicSummary: "刚刚找到了什么？",
         currentTopicStartSequence: 88,
-        assistantAnchorSummary: "我找到了以下关于 626-409-8976 的信息",
+        assistantAnchorSummary: "我找到了以下关于 555-010-0199 的信息",
         lastAssistantAskedQuestion: true,
         lastRunId: "run-phone",
       },
       currentUserSequence: 7,
       historyRecords: [
-        makeMessage({ sequence: 1, role: "user", contentText: "把 RedBox 做成一个 Friday skill" }),
-        makeMessage({ sequence: 2, role: "assistant", contentText: "我查看了 RedBox，并准备生成 skill。" }),
-        makeMessage({ sequence: 3, role: "user", contentText: "去华人168网站上找6264098976这个号码相关信息" }),
+        makeMessage({ sequence: 1, role: "user", contentText: "把 SampleBoard 做成一个 Friday skill" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "我查看了 SampleBoard，并准备生成 skill。" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "去示例目录网站上找5550100199这个号码相关信息" }),
         makeMessage({ sequence: 4, role: "assistant", contentText: "Agent run timed out" }),
         makeMessage({ sequence: 5, role: "user", contentText: "刚刚找到了什么？" }),
-        makeMessage({ sequence: 6, role: "assistant", contentText: "我找到了以下关于 626-409-8976 的信息" }),
+        makeMessage({ sequence: 6, role: "assistant", contentText: "我找到了以下关于 555-010-0199 的信息" }),
       ],
     });
 
@@ -209,7 +209,7 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("configuration value");
     expect(prepared.taskPrompt).not.toContain("626");
-    expect(prepared.taskPrompt).not.toContain("RedBox");
+    expect(prepared.taskPrompt).not.toContain("SampleBoard");
     expect(prepared.selectionReasons).toEqual([
       "turn_frame -> config_question selected no prior task blocks; answer the configuration question from deterministic retrieval or current code only.",
     ]);
@@ -400,8 +400,8 @@ describe("friday-session-conversation-orchestrator", () => {
       historyRecords: [
         makeMessage({ sequence: 1, role: "user", contentText: "帮我比较一下 Omi 和 Notion AI 的记录方式。" }),
         makeMessage({ sequence: 2, role: "assistant", contentText: "Omi 可以加入 Friday 的模块包括实时音频、会话摘要和知识库整理。" }),
-        makeMessage({ sequence: 3, role: "user", contentText: "再换个问题：RedBox 里有哪些素材生成入口？" }),
-        makeMessage({ sequence: 4, role: "assistant", contentText: "RedBox 里有小红书、漫画选题、素材管理等入口。" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "再换个问题：SampleBoard 里有哪些素材生成入口？" }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "SampleBoard 里有小红书、漫画选题、素材管理等入口。" }),
         makeMessage({ sequence: 5, role: "user", contentText: "先问一个代码问题：workflow runner 为什么要记录 state？" }),
         makeMessage({ sequence: 6, role: "assistant", contentText: "因为 runner 需要在中断后恢复进度并避免重复执行。" }),
         makeMessage({
@@ -494,7 +494,7 @@ describe("friday-session-conversation-orchestrator", () => {
       makeMessage({
         sequence: 39,
         role: "user",
-        contentText: "把 RedBox 的功能搬过来做成 Friday skill。",
+        contentText: "把 SampleBoard 的功能搬过来做成 Friday skill。",
       }),
       makeMessage({
         sequence: 40,
@@ -1073,8 +1073,8 @@ describe("friday-session-conversation-orchestrator", () => {
 
   it("creates an active task ledger entry and replaces stale greeting focus for substantive follow-ups", () => {
     const focus = finalizeFridayConversationFocus({
-      task: "把 RedBox 的功能搬过来做成 Friday skill。",
-      responseText: "我会把 RedBox 拆成 skill_generate 生成 skill，再接 workflow_generate 做自动化 workflow。",
+      task: "把 SampleBoard 的功能搬过来做成 Friday skill。",
+      responseText: "我会把 SampleBoard 拆成 skill_generate 生成 skill，再接 workflow_generate 做自动化 workflow。",
       runId: "run-redbox-1",
       turnKind: "follow_up",
       focusState: {
@@ -1086,11 +1086,11 @@ describe("friday-session-conversation-orchestrator", () => {
       nowIso: "2026-03-15T11:00:00.000Z",
     });
 
-    expect(focus.currentTopicSummary).toBe("把 RedBox 的功能搬过来做成 Friday skill。");
+    expect(focus.currentTopicSummary).toBe("把 SampleBoard 的功能搬过来做成 Friday skill。");
     expect(focus.currentTopicStartSequence).toBe(39);
     expect(focus.taskLedger?.activeTaskId).toBeDefined();
     expect(focus.taskLedger?.tasks[0]).toEqual(expect.objectContaining({
-      summary: "把 RedBox 的功能搬过来做成 Friday skill。",
+      summary: "把 SampleBoard 的功能搬过来做成 Friday skill。",
       status: "active",
       toolProfile: "workflow",
       lastSequence: 39,

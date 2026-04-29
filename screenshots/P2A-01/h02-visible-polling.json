@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:29:34.646Z",
-  "observed": {
-    "before": 1,
-    "after4800": 1,
-    "after5000": 2,
-    "latencyMs": 2.100000023841858
-  }
-}

@@ -1,3 +1,0 @@
-friday tui [--host <addr>] [--port <n>]
-
-Open the terminal dashboard against the current Friday API binding.

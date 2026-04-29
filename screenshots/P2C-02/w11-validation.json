@@ -1,8 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:33:29.488Z",
-  "observed": {
-    "inlineError": "至少选择 1 个目标。",
-    "stepDots": 1,
-    "currentStepClass": "wizard-step is-current is-error"
-  }
-}

@@ -310,7 +310,7 @@ describe("FridayAgentMemoryTools", () => {
         memoryService: svc,
         listLearnedFacts: () => [{
           key: "pref:user_name",
-          value: "Leo",
+          value: "测试名",
           confidence: 1,
           evidenceCount: 1,
           lastConfirmedAt: "2026-02-19T00:00:00.000Z",
@@ -325,7 +325,7 @@ describe("FridayAgentMemoryTools", () => {
       expect(result.isError).toBeUndefined();
       expect(JSON.parse(result.content)).toMatchObject([
         {
-          content: "Leo",
+          content: "测试名",
           metadata: {
             id: "learned-fact:pref:user_name",
             source: "learned_fact",
@@ -564,12 +564,12 @@ describe("FridayAgentMemoryTools", () => {
 
       await storeTool.execute(
         {
-          content: "用户希望被称为 Leo",
+          content: "用户希望被称为 测试名",
           tags: ["user_preference", "name"],
         },
         signalWithContext({
           principalId: "user-1",
-          taskPrompt: "我的名字是 Leo，以后叫我 Leo。",
+          taskPrompt: "我的名字是 测试名，以后叫我 测试名。",
         }),
       );
 
@@ -581,8 +581,8 @@ describe("FridayAgentMemoryTools", () => {
           kind: "user_correction",
           payload: expect.objectContaining({
             correctedField: "user_name",
-            newValue: "Leo",
-            value: "Leo",
+            newValue: "测试名",
+            value: "测试名",
           }),
         }),
       ]);

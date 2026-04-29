@@ -816,7 +816,7 @@ describe("FridayAgentRuntime", () => {
     const llmClient: FridayAgentLlmClient = {
       async *stream(params) {
         capturedToolNames = params.tools.map((tool) => tool.name).sort();
-        yield { type: "text_delta", text: "我会继续生成 RedBox workflow。" };
+        yield { type: "text_delta", text: "我会继续生成 SampleBoard workflow。" };
         yield { type: "message_end", stopReason: "end_turn", inputTokens: 160, outputTokens: 8 };
       },
     };
@@ -849,7 +849,7 @@ describe("FridayAgentRuntime", () => {
       task: "4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
       conversationContext: {
         turnKind: "clarification",
-        currentTopicSummary: "RedBox skill 和 workflow 生成",
+        currentTopicSummary: "SampleBoard skill 和 workflow 生成",
         selectedBlocks: [
           {
             id: "assistant:msg-40",
@@ -1147,7 +1147,7 @@ describe("FridayAgentRuntime", () => {
           yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 18 };
           return;
         }
-        yield { type: "text_delta", text: "我会按第 4 项继续：把 RedBox 打包成 Friday skill，并生成可调整后直接运行的 workflow。" };
+        yield { type: "text_delta", text: "我会按第 4 项继续：把 SampleBoard 打包成 Friday skill，并生成可调整后直接运行的 workflow。" };
         yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 20 };
       },
     };
@@ -1168,14 +1168,14 @@ describe("FridayAgentRuntime", () => {
       task: "4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
       taskPrompt: [
         "The user is replying to your clarification request: 4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
-        "Current topic: RedBox skill 和 workflow 生成",
+        "Current topic: SampleBoard skill 和 workflow 生成",
         "Relevant anchors:",
         "- [assistant_anchor] 4. 全部打包成一个 skill，然后做成 workflow。你选哪个？",
         "Use this answer to continue the current topic.",
       ].join("\n"),
       conversationContext: {
         turnKind: "clarification",
-        currentTopicSummary: "RedBox skill 和 workflow 生成",
+        currentTopicSummary: "SampleBoard skill 和 workflow 生成",
         selectedBlocks: [
           {
             id: "assistant:msg-40",
@@ -1189,7 +1189,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.response).toContain("RedBox");
+    expect(result.response).toContain("SampleBoard");
     expect(result.response).toContain("workflow");
     expect(capturedCalls).toHaveLength(2);
     expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
@@ -2594,7 +2594,7 @@ describe("FridayAgentRuntime", () => {
     const feedbackSpy = vi.fn();
     const llmClient = createMockLlmClient([
       [
-        { type: "text_delta", text: "好的 Leo，记住了。" },
+        { type: "text_delta", text: "好的 测试名，记住了。" },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
       ],
       [
@@ -2602,12 +2602,12 @@ describe("FridayAgentRuntime", () => {
           type: "tool_use",
           id: "call-1",
           name: "feedback",
-          input: { kind: "preference", field: "user_name", value: "Leo" },
+          input: { kind: "preference", field: "user_name", value: "测试名" },
         },
         { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
       ],
       [
-        { type: "text_delta", text: "好的 Leo，我会使用这个称呼。" },
+        { type: "text_delta", text: "好的 测试名，我会使用这个称呼。" },
         { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 },
       ],
     ]);
@@ -2625,15 +2625,15 @@ describe("FridayAgentRuntime", () => {
     });
 
     const result = await runtime.executeRun({
-      task: "我的名字是 Leo，以后叫我 Leo。",
+      task: "我的名字是 测试名，以后叫我 测试名。",
     });
 
     expect(result.status).toBe("completed");
     expect(result.toolCallCount).toBe(1);
     expect(feedbackSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "preference", field: "user_name", value: "Leo" }),
+      expect.objectContaining({ kind: "preference", field: "user_name", value: "测试名" }),
     );
-    expect(result.response).toContain("Leo");
+    expect(result.response).toContain("测试名");
     expect(result.response).not.toContain("feedback persistence was claimed");
   });
 

@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:37:12.762Z",
-  "observed": {
-    "shellPresent": true,
-    "buttonText": "重试",
-    "buttonClassName": "action-button action-button-primary"
-  },
-  "screenshot": "screenshots/P2F-04/f04-01-retry-primary.png"
-}

@@ -1,9 +1,0 @@
-{
-  "url": "http://127.0.0.1:3141/onboarding",
-  "title": "Friday",
-  "bodyText": "WELCOME TO FRIDAY\n\nYour AI assistant that gets things done\n\nFriday helps you achieve complex goals with simple clicks. Here's how it works:\n\nTell Friday your goal\n\nPick what you want to achieve. No technical knowledge needed.\n\nFriday investigates\n\nFriday researches your situation, analyzes options, and finds the best approach.\n\nYou click to decide\n\nFriday presents clear options with recommendations. You just click to choose.\n\nGet started",
-  "buttons": [
-    "Get started"
-  ],
-  "inputs": []
-}

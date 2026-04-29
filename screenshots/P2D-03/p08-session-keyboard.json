@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:35:20.693Z",
-  "tabbable": "obs-row-main-button",
-  "afterArrow": {
-    "focusedPayload": "session-provider-circuit",
-    "selectedId": "session-provider-circuit"
-  },
-  "afterEnter": "/chat?session=session-provider-circuit"
-}

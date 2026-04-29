@@ -131,14 +131,14 @@ describe("FridayPreferenceExtractionService", () => {
     it("extracts Chinese display-name patterns", () => {
       const event = makeEvent({
         kind: "user_message",
-        payload: { text: "我的名字是 Leo，以后叫我 Leo。" },
+        payload: { text: "我的名字是 测试名，以后叫我 测试名。" },
       });
 
       const signals = service.extract(event);
       expect(signals).toHaveLength(1);
       expect(signals[0]!.kind).toBe("preference");
       expect(signals[0]!.key).toBe("pref:display_name");
-      expect(signals[0]!.value).toBe("Leo");
+      expect(signals[0]!.value).toBe("测试名");
     });
 
     it("returns empty for no matching pattern", () => {

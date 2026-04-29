@@ -1,4 +1,0 @@
-stash@{0}: On codex/efficiency-audit-fixes: pre-branch-cleanup-2026-04-04
-stash@{1}: On codex/fix-cd6efb4-secrets-gate: post-test-artifact-claude-2026-03-28
-stash@{2}: On main: pre-cd6efb4-repair-2026-03-28
-stash@{3}: On main: wip: closure harness before serene merge

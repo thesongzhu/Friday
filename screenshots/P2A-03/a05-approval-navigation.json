@@ -1,9 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:30:02.713Z",
-  "before": {
-    "route": "/home?dev=1&__state=normal",
-    "dialogs": 0,
-    "drawers": 0
-  },
-  "route": "/assistant?approvalId=approval-warehouse"
-}

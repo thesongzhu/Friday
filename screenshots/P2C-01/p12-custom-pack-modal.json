@@ -1,8 +1,0 @@
-{
-  "generatedAt": "2026-04-21T10:33:18.170Z",
-  "observed": {
-    "activeModal": "自定义 Pack Builder",
-    "copy": "Pack 名称目标行业复用自 core/custom-pack-builder.tsx 的构建入口这里展示标题、目标、技能和输出摘要，供静态原型验收。"
-  },
-  "screenshot": "screenshots/P2C-01/p12-custom-pack-modal.png"
-}

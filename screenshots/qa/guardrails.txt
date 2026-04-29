@@ -1,6 +1,0 @@
-G01 placeholder grep: 0 matches
-G02 TODO grep: 0 matches
-G04 console.log/warn/info grep: 0 matches
-Runtime sweep checked: 237
-Runtime problems: 0
-Axe sample scan: 0 violations across Home/Chat/Assistant/Observability/Settings/Builder

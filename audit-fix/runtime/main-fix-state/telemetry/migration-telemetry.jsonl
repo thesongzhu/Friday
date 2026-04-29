@@ -1,6 +1,0 @@
-{"runId":"0e1d649c-407f-40f0-ae2f-5fd42f057e08","at":"2026-04-19T09:06:51.192Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}
-{"runId":"5504bc07-4135-4d9b-b0d4-7521a1d4043a","at":"2026-04-19T09:15:34.583Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}
-{"runId":"c16fc137-d210-4049-bc44-08d9057b2cc8","at":"2026-04-19T09:22:59.199Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}
-{"runId":"4788564a-8a76-4dab-8715-1059685e5839","at":"2026-04-19T09:37:27.599Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}
-{"runId":"b3797690-dd85-4ffa-94d9-a59fe45c7fee","at":"2026-04-19T09:49:26.939Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}
-{"runId":"773a9d7c-4cad-439e-9ba0-6cd34947e8ae","at":"2026-04-19T09:58:46.954Z","type":"sqlite-migration","status":"ok","message":"Phase 0 state initialized"}

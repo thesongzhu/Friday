@@ -4,9 +4,9 @@ Last reviewed: 2026-04-22
 
 ## Verdict
 
-Friday can be open sourced, but the full current working tree should not be published as-is.
+Friday can be open sourced from the tracked source tree after the cleanup commit that removes generated runtime evidence and local QA artifacts.
 
-The product code, README positioning, npm install path, source install path, Docker source build path, and GPL-3.0-only license story are now aligned. The blocker is generated evidence and audit material that is currently tracked in the repository and exposes local runtime details.
+The product code, README positioning, npm install path, source install path, Docker source build path, and GPL-3.0-only license story are aligned. Local runtime state, generated evidence bundles, static QA captures, and user-specific validation outputs should remain untracked.
 
 ## Fixed In This Pass
 
@@ -16,24 +16,19 @@ The product code, README positioning, npm install path, source install path, Doc
 - The README license text now matches the repository `LICENSE` file: GPL-3.0-only.
 - Public CI, npm script, test display, and file naming for the overlap suite now use neutral `agent-parity` language.
 - `.claude/launch.json` no longer contains a personal absolute Node path.
+- Generated evidence, branch reconciliation dumps, static QA captures, and screenshot artifacts are removed from the tracked source tree and covered by ignore rules.
 
-## Current Public-Release Blockers
+## Current Public-Release Rule
 
-These paths should be removed from the public source snapshot or replaced with redacted summaries before a clean launch:
+Do not commit generated evidence, local runtime exports, screenshots, static QA captures, branch/preflight dumps, or local IDE/agent configuration. Keep these in ignored local paths and publish only redacted summaries when a report is needed.
 
-- `audit-fix/` contains local rerun evidence, login responses, auth-mode metadata, runtime state paths, and issue remediation internals.
-- `docs/reports/ops/real-world-validation/` contains local filesystem paths, auth source metadata, provider lane details, screenshots, and runtime environment snapshots.
-- `docs/reports/ops/real-green-gate/` contains branch/status dumps and preflight records with local machine and run metadata.
-- Some `screenshots/**` JSON artifacts contain form values, local paths, and generated audit payloads.
-- `.claude/` is local tooling configuration and should not be part of a public product source release unless fully sanitized.
-
-The targeted scan did not find a raw production API key in README or GitHub workflow files. It did find many references to GitHub Actions secret names, local auth modes, test fixture tokens, local paths, and generated login/evidence JSON. Those are not always credentials, but they reveal enough operational topology to be treated as public-release blockers.
+The targeted scan did not find a raw production API key in README or GitHub workflow files. Remaining references to GitHub Actions secret names, fixture tokens, and example local paths are source-code examples or tests, not persisted Friday user memory.
 
 Several internal benchmark/adoption implementation paths still contain historical OpenClaw naming. They were not renamed in this pass because doing so would require source-level path and import changes beyond the requested public `openclaw-overlap` cleanup.
 
 ## Reverse-Operation Risk
 
-The main risk is not a single leaked password. The risk is operational reconstruction:
+The main risk is not a single leaked password. The risk to avoid is operational reconstruction:
 
 - local usernames and absolute paths reveal development machine layout
 - runtime database and token-secret paths reveal where a local deployment stores security state

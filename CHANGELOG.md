@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning.
 
-## [1.0.0] — Leopy — 2026-04-18
+## [1.0.0] — Initial Release — 2026-04-18
 
 ### Added
 - Deep link protocol: `friday://` import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets with preview + validate + confirm flow.

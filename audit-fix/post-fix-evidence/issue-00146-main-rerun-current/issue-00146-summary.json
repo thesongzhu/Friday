@@ -1,8 +1,0 @@
-{
-  "route": "/v1/deeplink/preview",
-  "verdict": "ready",
-  "providerKind": "openai",
-  "model": "gpt-4o",
-  "previewApiKey": "[redacted]",
-  "plaintextLeaked": false
-}

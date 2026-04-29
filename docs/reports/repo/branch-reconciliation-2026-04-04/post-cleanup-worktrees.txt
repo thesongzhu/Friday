@@ -1,8 +1,0 @@
-worktree /path/to/friday
-HEAD 3f4321f4361e15c8d2dd67a1a32c5a3366b243dd
-branch refs/heads/main
-
-worktree /path/to/friday-publish-real-world
-HEAD 876368fe547227f680e2b74b68b8e48a51d33c33
-branch refs/heads/claude/investigate-twitter-thread-4PNHG
-

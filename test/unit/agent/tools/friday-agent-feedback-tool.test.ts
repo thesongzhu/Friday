@@ -97,17 +97,17 @@ describe("FridayAgentFeedbackTool", () => {
     const { tool, written } = setup();
 
     const result = await tool.execute(
-      { kind: "preference", field: "user_name", value: "Leo" },
-      signalWithTaskPrompt("我的名字是 Leo，以后叫我 Leo。"),
+      { kind: "preference", field: "user_name", value: "测试名" },
+      signalWithTaskPrompt("我的名字是 测试名，以后叫我 测试名。"),
     );
 
     const event = written[0]![0]!;
     expect(event.payload).toEqual({
       feedbackKind: "preference",
       correctedField: "user_name",
-      newValue: "Leo",
+      newValue: "测试名",
       field: "user_name",
-      value: "Leo",
+      value: "测试名",
     });
     expect(result.content).toContain("Feedback recorded");
   });

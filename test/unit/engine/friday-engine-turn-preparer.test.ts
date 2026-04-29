@@ -215,21 +215,21 @@ describe("createFridayEngineTurnPreparer", () => {
         id: "cfg-m-1",
         sequence: 1,
         role: "user",
-        contentText: "把 RedBox 做成一个 Friday skill",
+        contentText: "把 SampleBoard 做成一个 Friday skill",
         sessionKey,
       }),
       createMessage({
         id: "cfg-m-2",
         sequence: 2,
         role: "assistant",
-        contentText: "我查看了 RedBox，并准备生成 skill。",
+        contentText: "我查看了 SampleBoard，并准备生成 skill。",
         sessionKey,
       }),
       createMessage({
         id: "cfg-m-3",
         sequence: 3,
         role: "user",
-        contentText: "去华人168网站上找6264098976这个号码相关信息",
+        contentText: "去示例目录网站上找5550100199这个号码相关信息",
         sessionKey,
       }),
       createMessage({
@@ -250,14 +250,14 @@ describe("createFridayEngineTurnPreparer", () => {
         id: "cfg-m-6",
         sequence: 6,
         role: "assistant",
-        contentText: "我找到了以下关于 626-409-8976 的信息",
+        contentText: "我找到了以下关于 555-010-0199 的信息",
         sessionKey,
       }),
     ];
     const focusState: FridaySessionConversationFocusState = {
       currentTopicSummary: "刚刚找到了什么？",
       currentTopicStartSequence: 5,
-      assistantAnchorSummary: "我找到了以下关于 626-409-8976 的信息",
+      assistantAnchorSummary: "我找到了以下关于 555-010-0199 的信息",
       lastAssistantAskedQuestion: true,
       lastRunId: "run-phone",
       updatedAt: "2026-04-16T00:00:00.000Z",
@@ -307,7 +307,7 @@ describe("createFridayEngineTurnPreparer", () => {
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("configuration value");
     expect(prepared.taskPrompt).not.toContain("626");
-    expect(prepared.taskPrompt).not.toContain("RedBox");
+    expect(prepared.taskPrompt).not.toContain("SampleBoard");
   });
 
   it("persists compaction evidence when the selected context is a compacted topic block", async () => {

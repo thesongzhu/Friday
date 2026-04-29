@@ -28,6 +28,7 @@ pnpm-debug.log*
 .idea/
 .openclaw/
 .friday/
+screenshots/
 managed-skills/**/conversion.report.json
 managed-skills/e2e-date-skill-*/
 managed-skills/stab-skill/
@@ -37,9 +38,18 @@ artifacts/
 audit-fix/
 docs/reports/ops/real-world-validation/
 docs/reports/ops/real-green-gate/
+docs/reports/ops/friday-real-validation-*/
 docs/reports/repo/FRIDAY_*.json
 docs/reports/repo/FRIDAY_*.md
+docs/reports/repo/FULL_AUDIT_*.md
+docs/reports/repo/SELF_EVOLUTION_*.json
+docs/reports/repo/SELF_EVOLUTION_*.md
+docs/reports/repo/TIER1_*.json
+docs/reports/repo/TIER1_*.md
+docs/reports/repo/branch-reconciliation-*/
 friday-static*.html
 qa-report.html
+polish-report.html
+scripts/qa/rebuild-friday-static-qa.mjs
 docs/CX*-FIX-PLAN*.md
 roi-calculator.js

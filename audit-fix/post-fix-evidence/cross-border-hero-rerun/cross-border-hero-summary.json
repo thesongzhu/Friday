@@ -1,9 +1,0 @@
-{
-  "uiFinalUrl": "http://127.0.0.1:5273/flow/cross-border-hero",
-  "uiContainsFailureCopy": false,
-  "uiContainsCrossBorderPrompt": true,
-  "wizardStartOk": true,
-  "wizardContinueState": "needs_one_answer",
-  "agentRunId": "324b953b-da34-4d69-a852-495799f76128",
-  "sessionKey": "guided:default:admin-001-cross-border-hero"
-}
