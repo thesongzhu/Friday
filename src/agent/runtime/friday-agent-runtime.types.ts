@@ -1,6 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayEvaluationContext, FridayEvaluationResult } from "#rules";
-import type { FridayConversationBlock } from "#sessions";
+import type { FridayConversationBlock, FridayConversationTurnFrame } from "#sessions";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridayWorkspaceContext } from "./friday-agent-workspace-context.js";
 
@@ -52,6 +52,7 @@ export interface FridayAgentExecutionContext {
 
 export interface FridayAgentConversationContext {
   turnKind?: "new_topic" | "follow_up" | "clarification" | "status_check" | "continue_active_task";
+  turnFrame?: FridayConversationTurnFrame;
   previousTopicSummary?: string;
   currentTopicSummary?: string;
   selectedBlocks?: FridayConversationBlock[];

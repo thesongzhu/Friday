@@ -101,6 +101,7 @@ describe("createFridayEngineTurnPreparer", () => {
       });
 
       expect(prepared.conversationContext?.turnKind).toBe("clarification");
+      expect(prepared.conversationContext?.turnFrame?.intent).toBe("clarification_reply");
       expect(prepared.executionClassification).toEqual({ category: "agent_exception_path" });
       expect(prepared.taskPrompt).toContain("replying to your clarification request");
       expect(prepared.taskPrompt).toContain("方案 A");
@@ -192,6 +193,7 @@ describe("createFridayEngineTurnPreparer", () => {
       });
 
       expect(prepared.conversationContext?.turnKind).toBe("status_check");
+      expect(prepared.conversationContext?.turnFrame?.intent).toBe("status_check");
       expect(prepared.executionClassification).toEqual({
         category: "sync_immediate",
         handler: "task_status",
@@ -205,6 +207,108 @@ describe("createFridayEngineTurnPreparer", () => {
       expect(setConversationFocus).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps runtime config questions out of stale task history through the engine preparer", async () => {
+    const sessionKey = "channel:lark:chat-config";
+    const messages: FridaySessionMessageRecord[] = [
+      createMessage({
+        id: "cfg-m-1",
+        sequence: 1,
+        role: "user",
+        contentText: "把 RedBox 做成一个 Friday skill",
+        sessionKey,
+      }),
+      createMessage({
+        id: "cfg-m-2",
+        sequence: 2,
+        role: "assistant",
+        contentText: "我查看了 RedBox，并准备生成 skill。",
+        sessionKey,
+      }),
+      createMessage({
+        id: "cfg-m-3",
+        sequence: 3,
+        role: "user",
+        contentText: "去华人168网站上找6264098976这个号码相关信息",
+        sessionKey,
+      }),
+      createMessage({
+        id: "cfg-m-4",
+        sequence: 4,
+        role: "assistant",
+        contentText: "Agent run timed out",
+        sessionKey,
+      }),
+      createMessage({
+        id: "cfg-m-5",
+        sequence: 5,
+        role: "user",
+        contentText: "刚刚找到了什么？",
+        sessionKey,
+      }),
+      createMessage({
+        id: "cfg-m-6",
+        sequence: 6,
+        role: "assistant",
+        contentText: "我找到了以下关于 626-409-8976 的信息",
+        sessionKey,
+      }),
+    ];
+    const focusState: FridaySessionConversationFocusState = {
+      currentTopicSummary: "刚刚找到了什么？",
+      currentTopicStartSequence: 5,
+      assistantAnchorSummary: "我找到了以下关于 626-409-8976 的信息",
+      lastAssistantAskedQuestion: true,
+      lastRunId: "run-phone",
+      updatedAt: "2026-04-16T00:00:00.000Z",
+    };
+
+    const preparer = createFridayEngineTurnPreparer({
+      sessionDeps: {
+        async getMessages(key) {
+          expect(key).toBe(sessionKey);
+          return messages;
+        },
+        async addMessage(_key, message) {
+          return createMessage({
+            id: "cfg-m-7",
+            sequence: 7,
+            role: message.role,
+            contentText: message.contentText,
+            sessionKey,
+            idempotencyKey: message.idempotencyKey,
+            metadata: message.metadata ?? {},
+          });
+        },
+        async getConversationFocus(key) {
+          expect(key).toBe(sessionKey);
+          return focusState;
+        },
+        async setConversationFocus() {
+          return undefined;
+        },
+      },
+      historyLimit: 24,
+      nowIso: () => "2026-04-16T00:00:05.000Z",
+      prepareTurn: prepareFridayConversationTurn,
+      buildEvidenceBlocks: buildFridayEvidenceBlocks,
+      classifyExecution: classifyFridayExecution,
+    });
+
+    const prepared = await preparer.prepare({
+      task: "agent run的设定的是多少",
+      runId: "run-config",
+      sessionKey,
+    });
+
+    expect(prepared.conversationContext?.turnKind).toBe("new_topic");
+    expect(prepared.conversationContext?.turnFrame?.intent).toBe("config_question");
+    expect(prepared.conversationContext?.selectedBlocks).toEqual([]);
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("configuration value");
+    expect(prepared.taskPrompt).not.toContain("626");
+    expect(prepared.taskPrompt).not.toContain("RedBox");
+  });
 
   it("persists compaction evidence when the selected context is a compacted topic block", async () => {
     const messages: FridaySessionMessageRecord[] = [

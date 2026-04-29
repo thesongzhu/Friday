@@ -1119,6 +1119,9 @@ export function createFridayAgentRuntime(
           contextSelection: conversationContext
             ? {
               turnKind: conversationContext.turnKind,
+              ...(conversationContext.turnFrame
+                ? { turnFrame: conversationContext.turnFrame }
+                : {}),
               selectedBlocks: (conversationContext.selectedBlocks ?? []).map((block) => ({
                 id: block.id,
                 source: block.source,

@@ -8,6 +8,55 @@ export type FridayConversationTurnKind =
   | "status_check"
   | "continue_active_task";
 
+export type FridayConversationIntent =
+  | "new_task"
+  | "follow_up"
+  | "status_check"
+  | "config_question"
+  | "result_recall"
+  | "memory_recall"
+  | "memory_write"
+  | "control"
+  | "skill_workflow_operation"
+  | "clarification_reply";
+
+export type FridayConversationReferentType =
+  | "reply_anchor"
+  | "last_run"
+  | "active_run"
+  | "named_run"
+  | "last_user_message"
+  | "last_assistant_message"
+  | "current_topic"
+  | "past_topic"
+  | "durable_memory"
+  | "none";
+
+export type FridayConversationAction =
+  | "answer_existing_evidence"
+  | "execute"
+  | "resume"
+  | "retry"
+  | "ask_clarification";
+
+export type FridayConversationEvidencePolicy =
+  | "deterministic_required"
+  | "allow_retrieval"
+  | "allow_agent_reasoning";
+
+export interface FridayConversationTurnFrame {
+  intent: FridayConversationIntent;
+  referent: {
+    type: FridayConversationReferentType;
+    id?: string;
+    confidence: number;
+    reason: string;
+  };
+  action: FridayConversationAction;
+  evidencePolicy: FridayConversationEvidencePolicy;
+  ambiguity?: string[];
+}
+
 export type FridayConversationBlockSource =
   | "reply_anchor"
   | "assistant_anchor"

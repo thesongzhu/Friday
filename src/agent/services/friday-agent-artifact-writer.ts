@@ -63,6 +63,9 @@ export function createFridayAgentArtifactWriter(
         contextSelection: params.conversationContext
           ? {
             turnKind: params.conversationContext.turnKind ?? null,
+            ...(params.conversationContext.turnFrame
+              ? { turnFrame: params.conversationContext.turnFrame }
+              : {}),
             selectedBlocks: params.conversationContext.selectedBlocks ?? [],
             selectionReasons: params.conversationContext.selectionReasons ?? [],
             replyToMessageId: params.conversationContext.replyToMessageId ?? null,

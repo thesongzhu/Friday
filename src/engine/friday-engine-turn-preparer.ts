@@ -21,6 +21,7 @@
 import type { FridayAgentMessage } from "../agent/model/friday-agent.types.js";
 import type {
   FridayConversationBlock,
+  FridayConversationTurnFrame,
   FridayConversationTurnKind,
   FridayEvidenceBlock,
   FridaySessionConversationFocusState,
@@ -62,6 +63,7 @@ export interface FridayPrepareConversationTurnInput {
 
 export interface FridayPreparedConversationTurn {
   turnKind: FridayConversationTurnKind;
+  turnFrame?: FridayConversationTurnFrame;
   historyMessages: FridayAgentMessage[];
   taskPrompt: string;
   previousTopicSummary?: string;
@@ -112,6 +114,7 @@ export interface FridayPreparedEngineContext {
   /** Conversation metadata for answer alignment. */
   conversationContext?: {
     turnKind?: FridayConversationTurnKind;
+    turnFrame?: FridayConversationTurnFrame;
     previousTopicSummary?: string;
     currentTopicSummary?: string;
     selectedBlocks?: FridayConversationBlock[];
@@ -428,6 +431,7 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
         : preparedTurn.taskPrompt;
       conversationContext = {
         turnKind: preparedTurn.turnKind,
+        ...(preparedTurn.turnFrame ? { turnFrame: preparedTurn.turnFrame } : {}),
         previousTopicSummary: preparedTurn.previousTopicSummary,
         currentTopicSummary: preparedTurn.currentTopicSummary,
         selectedBlocks: preparedTurn.selectedBlocks,

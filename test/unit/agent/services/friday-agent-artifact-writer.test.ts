@@ -75,6 +75,17 @@ describe("FridayAgentArtifactWriter", () => {
       ...makeParams(),
       conversationContext: {
         turnKind: "follow_up",
+        turnFrame: {
+          intent: "result_recall",
+          referent: {
+            type: "last_run",
+            id: "run-previous",
+            confidence: 0.95,
+            reason: "The user is asking what was found in the immediately previous task/result pair.",
+          },
+          action: "answer_existing_evidence",
+          evidencePolicy: "deterministic_required",
+        },
         previousTopicSummary: "Desktop companion is not connected.",
         currentTopicSummary: "Desktop companion is not connected.",
         replyToMessageId: "discord-msg-2",
@@ -95,6 +106,17 @@ describe("FridayAgentArtifactWriter", () => {
     const runMeta = JSON.parse(fs.readFileSync(path.join(result.artifactDir, "run.json"), "utf-8"));
     expect(runMeta.contextSelection).toEqual({
       turnKind: "follow_up",
+      turnFrame: {
+        intent: "result_recall",
+        referent: {
+          type: "last_run",
+          id: "run-previous",
+          confidence: 0.95,
+          reason: "The user is asking what was found in the immediately previous task/result pair.",
+        },
+        action: "answer_existing_evidence",
+        evidencePolicy: "deterministic_required",
+      },
       selectedBlocks: [
         {
           id: "reply:msg-2",

@@ -9,6 +9,7 @@ import type {
   FridayConversationHistoryBlockSummary,
   FridayConversationTaskLedger,
   FridayConversationTaskLedgerEntry,
+  FridayConversationTurnFrame,
   FridayConversationTurnKind,
   FridayEvidenceBlock,
   FridaySessionConversationFocusState,
@@ -38,6 +39,14 @@ const CHINESE_CONTEXT_EXCLUSION_HINTS =
 const STATUS_CHECK_HINTS =
   /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|what(?:'s| is) (?:the )?(?:final )?result(?: now)?|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
 const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|那个任务结果呢|结果呢|还没好|ETA)/;
+const CONFIG_QUESTION_HINTS =
+  /\b(?:agent\s*run|run\s*(?:timeout|setting|settings?|config(?:uration)?|default|limit|duration)|timeout|time\s*out|settings?|config(?:uration)?|default|limit|duration|ttl|window|threshold)\b/i;
+const CHINESE_CONFIG_QUESTION_HINTS =
+  /(?:agent\s*run|run.{0,12}(?:超时|timeout|设定|设置|配置|默认|限制|上限|多久|多少|时间|阈值)|超时|timeout|设定|设置|配置|默认|限制|上限|阈值|窗口)/iu;
+const CONFIG_QUESTION_SHAPE =
+  /\b(?:what(?:'s| is)?|which|how much|how many|how long|show|tell me|where)\b|[?？]/i;
+const CHINESE_CONFIG_QUESTION_SHAPE =
+  /(?:是什么|是多少|多少|多长|多久|哪个|哪里|怎么看|告诉我|显示|查看|查一下|问的是)/u;
 const CANCELLATION_STATUS_CHECK_HINTS =
   /\b(request (?:was )?(?:cancelled|canceled|aborted)|(?:cancelled|canceled|aborted) before completion|why (?:was|did|is).{0,80}(?:cancelled|canceled|aborted)|what happened.{0,80}(?:cancelled|canceled|aborted)|(?:run|task|request).{0,40}(?:cancelled|canceled|aborted))\b/i;
 const CHINESE_CANCELLATION_STATUS_CHECK_HINTS =
@@ -231,6 +240,44 @@ function isCancellationStatusCheck(task: string): boolean {
     || CHINESE_CANCELLATION_STATUS_CHECK_HINTS.test(normalized);
 }
 
+function isConfigQuestionTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0 || normalized.length > 180) {
+    return false;
+  }
+  const hasRuntimeSubject =
+    /\b(?:friday|agent\s*run|runtime|run\s*(?:timeout|setting|settings?|config(?:uration)?|default|limit|duration)|timeout|time\s*out)\b/i.test(normalized)
+    || /(?:Friday|agent\s*run|运行|超时|timeout)/iu.test(normalized);
+  const hasExplicitConfigValueSubject =
+    /\b(?:setting|settings?|config(?:uration)?|default|limit|duration|ttl|window|threshold|how much|how many|how long)\b/i.test(normalized)
+    || /(?:设定|设置|配置|默认|限制|上限|多久|多少|多长|阈值|窗口)/u.test(normalized);
+  const asksAboutFailureCause =
+    /\b(?:why|what happened|what went wrong)\b.{0,80}\b(?:run|timeout|timed out|time\s*out)\b/i.test(normalized)
+    || /\b(?:run|timeout|timed out|time\s*out)\b.{0,80}\b(?:why|what happened|what went wrong)\b/i.test(normalized)
+    || /(?:(?:为什么|为何|怎么回事|什么情况).{0,80}(?:run|超时|timeout)|(?:run|超时|timeout).{0,80}(?:为什么|为何|怎么回事|什么情况))/iu.test(normalized);
+  if (asksAboutFailureCause && !hasExplicitConfigValueSubject) {
+    return false;
+  }
+  const hasConfigSubject =
+    hasRuntimeSubject
+    && (
+      CONFIG_QUESTION_HINTS.test(normalized)
+      || CHINESE_CONFIG_QUESTION_HINTS.test(normalized)
+      || hasExplicitConfigValueSubject
+    );
+  if (!hasConfigSubject) {
+    return false;
+  }
+  const hasQuestionShape =
+    CONFIG_QUESTION_SHAPE.test(normalized)
+    || CHINESE_CONFIG_QUESTION_SHAPE.test(normalized);
+  if (!hasQuestionShape) {
+    return false;
+  }
+  return !isRecentResultFollowUpTask(normalized)
+    && !isCancellationStatusCheck(normalized);
+}
+
 function isShortChoiceReplyTask(task: string): boolean {
   const normalized = normalizeText(task)
     .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/gu, "")
@@ -395,6 +442,7 @@ function assistantAppearsToAskQuestion(text: string): boolean {
 
 export interface FridayPreparedConversationTurn {
   turnKind: FridayConversationTurnKind;
+  turnFrame: FridayConversationTurnFrame;
   historyMessages: FridayAgentMessage[];
   taskPrompt: string;
   previousTopicSummary?: string;
@@ -662,6 +710,23 @@ export function classifyFridayConversationTurn(input: {
   currentUserSequence?: number;
   replyToMessageId?: string;
 }): FridayConversationTurnKind {
+  const turnFrame = resolveFridayConversationTurnFrame(input);
+  if (turnFrame.intent === "config_question") {
+    return "new_topic";
+  }
+  if (turnFrame.intent === "status_check") {
+    return "status_check";
+  }
+  if (turnFrame.intent === "control") {
+    return "continue_active_task";
+  }
+  if (turnFrame.intent === "result_recall") {
+    return "follow_up";
+  }
+  if (turnFrame.intent === "follow_up" && turnFrame.referent.type === "reply_anchor") {
+    return "follow_up";
+  }
+
   const task = normalizeText(input.task);
   const focusState = input.focusState ?? null;
   const taskLower = task.toLowerCase();
@@ -828,6 +893,169 @@ function resolveReplyAnchorRecord(
   const normalizedReplyId = replyToMessageId.trim();
   return records.find((record) =>
     record.id === normalizedReplyId || resolveSourceMessageId(record) === normalizedReplyId);
+}
+
+function resolveFridayConversationTurnFrame(input: {
+  task: string;
+  focusState?: FridaySessionConversationFocusState | null;
+  historyRecords?: FridaySessionMessageRecord[];
+  currentUserSequence?: number;
+  replyToMessageId?: string;
+}): FridayConversationTurnFrame {
+  const task = normalizeText(input.task);
+  const focusState = input.focusState ?? null;
+  const records = filterConversationRecords(input.historyRecords ?? [], input.currentUserSequence);
+  const replyAnchor = resolveReplyAnchorRecord(records, input.replyToMessageId);
+  const latestAssistant = findLatestRecord(records, "assistant");
+  const latestUser = findLatestRecord(records, "user");
+  const latestAssistantAskedQuestion =
+    Boolean(focusState?.lastAssistantAskedQuestion)
+    || assistantAppearsToAskQuestion(latestAssistant?.contentText ?? "");
+
+  if (replyAnchor) {
+    return {
+      intent: "follow_up",
+      referent: {
+        type: "reply_anchor",
+        id: replyAnchor.id,
+        confidence: 1,
+        reason: "Explicit platform reply target matched a prior message.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "deterministic_required",
+    };
+  }
+
+  if (isConfigQuestionTask(task)) {
+    return {
+      intent: "config_question",
+      referent: {
+        type: "none",
+        confidence: 0.95,
+        reason: "The user is asking about a setting/configuration value, not prior task content.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "allow_retrieval",
+    };
+  }
+
+  if (
+    STATUS_CHECK_HINTS.test(task.toLowerCase())
+    || CHINESE_STATUS_CHECK_HINTS.test(task)
+    || isCancellationStatusCheck(task)
+  ) {
+    const activeRunId = focusState?.activeRunId ?? focusState?.pendingPlanRunId ?? focusState?.lastRunId;
+    return {
+      intent: "status_check",
+      referent: {
+        type: focusState?.activeRunId || focusState?.pendingPlanRunId ? "active_run" : activeRunId ? "last_run" : "none",
+        ...(activeRunId ? { id: activeRunId } : {}),
+        confidence: activeRunId ? 0.9 : 0.7,
+        reason: activeRunId
+          ? "Status/progress wording should anchor to deterministic run state."
+          : "Status/progress wording was detected, but no run id is persisted in focus.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "deterministic_required",
+    };
+  }
+
+  if (isRecentResultFollowUpTask(task) && (latestUser || latestAssistant || focusState?.lastRunId)) {
+    return {
+      intent: "result_recall",
+      referent: {
+        type: focusState?.lastRunId
+          ? "last_run"
+          : latestUser
+            ? "last_user_message"
+            : latestAssistant
+              ? "last_assistant_message"
+              : "current_topic",
+        ...(focusState?.lastRunId
+          ? { id: focusState.lastRunId }
+          : latestUser
+            ? { id: latestUser.id }
+            : latestAssistant
+              ? { id: latestAssistant.id }
+              : {}),
+        confidence: 0.95,
+        reason: "The user is asking what was found in the immediately previous task/result pair.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "deterministic_required",
+    };
+  }
+
+  if (CONTINUE_HINTS.test(task.toLowerCase()) || CHINESE_CONTINUE_HINTS.test(task)) {
+    return {
+      intent: "control",
+      referent: {
+        type: focusState?.activeRunId || focusState?.pendingPlanRunId || focusState?.lastRunId
+          ? "last_run"
+          : "current_topic",
+        ...(focusState?.activeRunId ?? focusState?.pendingPlanRunId ?? focusState?.lastRunId
+          ? { id: focusState?.activeRunId ?? focusState?.pendingPlanRunId ?? focusState?.lastRunId }
+          : {}),
+        confidence: 0.82,
+        reason: "Continue/resume wording should target the active or most recent task lane.",
+      },
+      action: "resume",
+      evidencePolicy: "deterministic_required",
+    };
+  }
+
+  if (isRecallRequestTask(task)) {
+    return {
+      intent: "memory_recall",
+      referent: {
+        type: hasDeicticReference(task) ? "past_topic" : "durable_memory",
+        confidence: hasDeicticReference(task) ? 0.78 : 0.86,
+        reason: hasDeicticReference(task)
+          ? "Recall wording includes a local deictic reference."
+          : "Recall wording asks for remembered or stored information.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "allow_retrieval",
+    };
+  }
+
+  if (latestAssistantAskedQuestion && task.length > 0 && task.length <= 120) {
+    return {
+      intent: "clarification_reply",
+      referent: {
+        type: latestAssistant ? "last_assistant_message" : "current_topic",
+        ...(latestAssistant ? { id: latestAssistant.id } : {}),
+        confidence: 0.72,
+        reason: "The latest assistant turn asked a question and the user replied briefly.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "allow_agent_reasoning",
+    };
+  }
+
+  if (focusState?.currentTopicSummary && hasDeicticReference(task)) {
+    return {
+      intent: "follow_up",
+      referent: {
+        type: "current_topic",
+        confidence: 0.68,
+        reason: "The user used deictic wording and a current topic exists.",
+      },
+      action: "answer_existing_evidence",
+      evidencePolicy: "allow_agent_reasoning",
+    };
+  }
+
+  return {
+    intent: "new_task",
+    referent: {
+      type: "none",
+      confidence: 0.75,
+      reason: "No stronger reply, run, status, config, or recall referent was resolved.",
+    },
+    action: "execute",
+    evidencePolicy: "allow_agent_reasoning",
+  };
 }
 
 function clampSummary(text: string, limit = MAX_BLOCK_SUMMARY_CHARS): string {
@@ -1332,6 +1560,7 @@ function buildConversationBlockSelection(input: {
   historyRecords: FridaySessionMessageRecord[];
   focusState?: FridaySessionConversationFocusState | null;
   turnKind: FridayConversationTurnKind;
+  turnFrame: FridayConversationTurnFrame;
   replyToMessageId?: string;
   evidenceBlocks?: FridayEvidenceBlock[];
 }): FridayContextSelectionResult & { historyMessages: FridayAgentMessage[]; replyAnchorMessageId?: string; replyAnchorSequence?: number } {
@@ -1363,6 +1592,15 @@ function buildConversationBlockSelection(input: {
   const bareNudgeTask = isBareNudgeTask(input.task);
   const latestAssistant = findLatestRecord(records, "assistant");
   const latestUser = findLatestRecord(records, "user");
+  if (input.turnFrame.intent === "config_question" && input.turnFrame.referent.type === "none") {
+    return {
+      selectedBlocks: [],
+      selectionReasons: [
+        "turn_frame -> config_question selected no prior task blocks; answer the configuration question from deterministic retrieval or current code only.",
+      ],
+      historyMessages: [],
+    };
+  }
   const shortChoiceReplyAnswersLatestAssistant = Boolean(
     isChoiceReplyTask(input.task)
     && latestAssistant
@@ -1914,6 +2152,7 @@ function buildConversationBlockSelection(input: {
 function buildTaskPrompt(input: {
   task: string;
   turnKind: FridayConversationTurnKind;
+  turnFrame: FridayConversationTurnFrame;
   focusState?: FridaySessionConversationFocusState | null;
   selectedBlocks: FridayConversationBlock[];
 }): string {
@@ -1943,6 +2182,16 @@ function buildTaskPrompt(input: {
   const hasRecentResultAnchor = input.selectedBlocks.some((block) => block.id.startsWith("recent-result:"));
   const explicitTopicSwitch = isExplicitTopicSwitchTask(task);
   const literalFormatInstruction = isExplicitLiteralResponseInstruction(task);
+
+  if (input.turnFrame.intent === "config_question") {
+    return [
+      "The user is asking about a Friday/runtime configuration value.",
+      `Current question: ${task}`,
+      "Answer only the configuration question.",
+      "Use deterministic evidence from the current run, local source, or local configuration if needed.",
+      "Do not answer, continue, retry, or summarize any previous user task/run unless the user explicitly asks for that prior task.",
+    ].join("\n");
+  }
 
   if (input.turnKind === "new_topic" && explicitTopicSwitch) {
     return [
@@ -2115,6 +2364,12 @@ export function prepareFridayConversationTurn(
 ): FridayPreparedConversationTurn {
   const focusState = input.focusState ?? null;
   const filteredRecords = filterConversationRecords(input.historyRecords, input.currentUserSequence);
+  const turnFrame = resolveFridayConversationTurnFrame({
+    task: input.task,
+    focusState,
+    historyRecords: filteredRecords,
+    replyToMessageId: input.replyToMessageId,
+  });
   const turnKind = classifyFridayConversationTurn({
     task: input.task,
     focusState,
@@ -2127,6 +2382,7 @@ export function prepareFridayConversationTurn(
     historyRecords: filteredRecords,
     focusState,
     turnKind,
+    turnFrame,
     replyToMessageId: input.replyToMessageId,
     evidenceBlocks: input.evidenceBlocks,
   });
@@ -2139,10 +2395,12 @@ export function prepareFridayConversationTurn(
 
   return {
     turnKind,
+    turnFrame,
     historyMessages: selection.historyMessages,
     taskPrompt: buildTaskPrompt({
       task: input.task,
       turnKind,
+      turnFrame,
       focusState,
       selectedBlocks: selection.selectedBlocks,
     }),

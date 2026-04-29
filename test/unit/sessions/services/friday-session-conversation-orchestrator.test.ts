@@ -150,6 +150,8 @@ describe("friday-session-conversation-orchestrator", () => {
     });
 
     expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.turnFrame.intent).toBe("result_recall");
+    expect(prepared.turnFrame.referent.type).toBe("last_run");
     expect(prepared.selectedBlocks[0]?.id).toContain("recent-result:");
     expect(prepared.selectedBlocks[0]?.summary).toContain("6264098976");
     expect(prepared.selectedBlocks[0]?.summary).toContain("168worker.com/search/6264098976");
@@ -176,6 +178,41 @@ describe("friday-session-conversation-orchestrator", () => {
       ],
       currentUserSequence: 3,
     })).toBe("follow_up");
+  });
+
+  it("treats runtime setting questions as config questions and blocks stale timeout anchors", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "agent run的设定的是多少",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "刚刚找到了什么？",
+        currentTopicStartSequence: 88,
+        assistantAnchorSummary: "我找到了以下关于 626-409-8976 的信息",
+        lastAssistantAskedQuestion: true,
+        lastRunId: "run-phone",
+      },
+      currentUserSequence: 7,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "把 RedBox 做成一个 Friday skill" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "我查看了 RedBox，并准备生成 skill。" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "去华人168网站上找6264098976这个号码相关信息" }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "Agent run timed out" }),
+        makeMessage({ sequence: 5, role: "user", contentText: "刚刚找到了什么？" }),
+        makeMessage({ sequence: 6, role: "assistant", contentText: "我找到了以下关于 626-409-8976 的信息" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.turnFrame.intent).toBe("config_question");
+    expect(prepared.turnFrame.referent.type).toBe("none");
+    expect(prepared.selectedBlocks).toEqual([]);
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.taskPrompt).toContain("configuration value");
+    expect(prepared.taskPrompt).not.toContain("626");
+    expect(prepared.taskPrompt).not.toContain("RedBox");
+    expect(prepared.selectionReasons).toEqual([
+      "turn_frame -> config_question selected no prior task blocks; answer the configuration question from deterministic retrieval or current code only.",
+    ]);
   });
 
   it("treats explicit literal response requests as new turns instead of stale follow-ups", () => {
