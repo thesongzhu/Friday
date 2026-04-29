@@ -13,11 +13,13 @@ import {
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   getFridayLocalSkillExecutionContext,
-  type FridaySkillExecutor,
-  type FridaySkillLifecycleService,
-  type FridaySkillRegistry,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
+} from "#skills";
+import type {
+  FridaySkillExecutor,
+  FridaySkillLifecycleService,
+  FridaySkillRegistry,
 } from "#skills";
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir } from "#utilities";
