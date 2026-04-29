@@ -93,6 +93,25 @@ describe("FridayAgentFeedbackTool", () => {
     });
   });
 
+  it("records Chinese display-name preferences from the current task prompt", async () => {
+    const { tool, written } = setup();
+
+    const result = await tool.execute(
+      { kind: "preference", field: "user_name", value: "Leo" },
+      signalWithTaskPrompt("我的名字是 Leo，以后叫我 Leo。"),
+    );
+
+    const event = written[0]![0]!;
+    expect(event.payload).toEqual({
+      feedbackKind: "preference",
+      correctedField: "user_name",
+      newValue: "Leo",
+      field: "user_name",
+      value: "Leo",
+    });
+    expect(result.content).toContain("Feedback recorded");
+  });
+
   it("rejects invalid feedback kind", async () => {
     const { tool, learningEventWriter } = setup();
 

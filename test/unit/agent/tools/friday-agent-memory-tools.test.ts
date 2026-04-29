@@ -304,6 +304,36 @@ describe("FridayAgentMemoryTools", () => {
       ]);
     });
 
+    it("matches learned display-name facts for Chinese name-recall questions", async () => {
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        listLearnedFacts: () => [{
+          key: "pref:user_name",
+          value: "Leo",
+          confidence: 1,
+          evidenceCount: 1,
+          lastConfirmedAt: "2026-02-19T00:00:00.000Z",
+        }],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "我叫什么名字", namespace: "user", limit: 1 },
+        signalWithPrincipal("user-1"),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content)).toMatchObject([
+        {
+          content: "Leo",
+          metadata: {
+            id: "learned-fact:pref:user_name",
+            source: "learned_fact",
+          },
+        },
+      ]);
+    });
+
     it("throws on missing query", async () => {
       const svc = mockMemoryService();
       const [searchTool] = createFridayAgentMemoryTools({ memoryService: svc });
@@ -516,6 +546,43 @@ describe("FridayAgentMemoryTools", () => {
             correctedField: "user_name",
             newValue: "Captain Friday",
             value: "Captain Friday",
+          }),
+        }),
+      ]);
+    });
+
+    it("mirrors Chinese name preferences from memory_store into learning events", async () => {
+      const svc = mockMemoryService();
+      const learningEventWriter = vi.fn();
+      const tools = createFridayAgentMemoryTools({
+        memoryService: svc,
+        learningEventWriter,
+        idGenerator: () => "event-zh-1",
+        nowIso: () => "2026-02-19T10:00:00.000Z",
+      });
+      const storeTool = tools[1]!;
+
+      await storeTool.execute(
+        {
+          content: "用户希望被称为 Leo",
+          tags: ["user_preference", "name"],
+        },
+        signalWithContext({
+          principalId: "user-1",
+          taskPrompt: "我的名字是 Leo，以后叫我 Leo。",
+        }),
+      );
+
+      expect(learningEventWriter).toHaveBeenCalledWith([
+        expect.objectContaining({
+          eventId: "event-zh-1",
+          userId: "user-1",
+          runId: "run-1",
+          kind: "user_correction",
+          payload: expect.objectContaining({
+            correctedField: "user_name",
+            newValue: "Leo",
+            value: "Leo",
           }),
         }),
       ]);

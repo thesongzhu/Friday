@@ -69,6 +69,7 @@ function buildLearnedFactAliasText(key: string): string {
   if (/(^|[:_])display[_:]name$|(^|[:_])name$/.test(key.toLowerCase())) {
     aliases.push(
       "name nickname preferred name preference preferred call me what should you call me what should i call you what to call user",
+      "名字 昵称 称呼 叫我 我的名字 我叫什么名字 我的名字是什么 你应该叫我什么 你该怎么称呼我 怎么称呼我 用户名字 用户昵称",
     );
   }
   if (/favorite[_:]color|colour/.test(key.toLowerCase())) {

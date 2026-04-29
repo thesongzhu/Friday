@@ -2590,6 +2590,53 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toContain("use that name");
   });
 
+  it("retries Chinese display-name setting tasks until feedback persistence evidence exists", async () => {
+    const feedbackSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "好的 Leo，记住了。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "feedback",
+          input: { kind: "preference", field: "user_name", value: "Leo" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "好的 Leo，我会使用这个称呼。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 7 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createFeedbackTool(feedbackSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "我的名字是 Leo，以后叫我 Leo。",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(feedbackSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "preference", field: "user_name", value: "Leo" }),
+    );
+    expect(result.response).toContain("Leo");
+    expect(result.response).not.toContain("feedback persistence was claimed");
+  });
+
   it("enforces tool evidence for desktop inspection tasks before concluding", async () => {
     const execSpy = vi.fn();
     const llmClient = createMockLlmClient([
@@ -2714,6 +2761,50 @@ describe("FridayAgentRuntime", () => {
 
     const result = await runtime.executeRun({
       task: "What should you call me? Reply with only the name.",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(memorySearchSpy).toHaveBeenCalledTimes(1);
+    expect(result.response).toBe("Captain Friday");
+  });
+
+  it("retries Chinese name-recall questions until memory_search evidence exists", async () => {
+    const memorySearchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "我现在不知道你的名字。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "memory_search",
+          input: { query: "我叫什么名字", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 10, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "Captain Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 9, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createMemorySearchTool(memorySearchSpy)],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "我叫什么名字？只回答名字。",
     });
 
     expect(result.status).toBe("completed");

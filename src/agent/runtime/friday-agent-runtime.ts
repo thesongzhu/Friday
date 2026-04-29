@@ -4746,7 +4746,7 @@ function taskRequiresPreferencePersistence(task: string): boolean {
     || /\bi prefer\b/.test(normalized)
     || /\bplease use\b/.test(normalized)
     || /\bmy name is\b/.test(normalized)
-    || /^(叫我|称呼我为|把我叫做|被称为|请叫我)/u.test(task.trim())
+    || /^(叫我|称呼我为|把我叫做|被称为|请叫我|我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为)/u.test(task.trim())
     || /(请用中文|请用英文)/u.test(task)
   );
 }
@@ -4754,7 +4754,10 @@ function taskRequiresPreferencePersistence(task: string): boolean {
 function extractTaskDeclaredDisplayName(task: string): string | null {
   const patterns = [
     /\bcall me\s+(.+?)\s*[.!?]?$/i,
+    /\bmy name is\s+(.+?)\s*[.!?]?$/i,
+    /\brefer to me as\s+(.+?)\s*[.!?]?$/i,
     /(叫我|称呼我为|把我叫做|被称为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+    /(我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
   ] as const;
   for (const pattern of patterns) {
     const match = task.match(pattern);
@@ -4808,6 +4811,7 @@ function taskRequiresMemorySearch(task: string): boolean {
     || /\bwhat(?:'s| is)\s+my\s+(?:codename|code phrase|passphrase|preferred name)\b/.test(normalized)
     || /\bwhat should you call me\b/.test(normalized)
     || /\bwhat should i call you\b/.test(normalized)
+    || taskRequestsDirectNameRecall(task)
     || /\bwhat(?:\s+\S+){0,6}\s+(?:do\s+)?i\s+(?:like|prefer)\b/.test(normalized)
     || /\b(?:my|user)\s+(?:preferred|stored)\s+(?:name|preference|preferences)\b/.test(normalized)
     || /\b(?:do you remember|what do you remember|recall|stored fact|stored facts|previous conversation|past decision|past decisions)\b/.test(normalized)
@@ -4823,7 +4827,7 @@ function taskRequestsDirectNameRecall(task: string): boolean {
     /\bwhat should you call me\b/.test(normalized)
     || /\bwhat should i call you\b/.test(normalized)
     || /\bwhat (?:name|nickname) (?:should|do) you (?:use|call me with)\b/.test(normalized)
-    || /(怎么称呼我|该怎么叫我|应该怎么称呼我|应该叫我什么|你该怎么称呼我|你应该怎么叫我|怎么称呼您|该怎么叫您|应该怎么称呼您|应该叫您什么)/u.test(task)
+    || /(我叫什么名字|我的名字是什么|我叫啥|我叫什[么麼]|你记得我叫什么|还记得我叫什么|怎么称呼我|该怎么叫我|应该怎么称呼我|应该叫我什么|你该怎么称呼我|你应该怎么叫我|怎么称呼您|该怎么叫您|应该怎么称呼您|应该叫您什么)/u.test(task)
   );
 }
 

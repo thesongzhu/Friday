@@ -177,7 +177,7 @@ const MEMORY_SEARCH_STOPWORDS = new Set([
 const EXPLICIT_USER_FACT_STATEMENT_PATTERNS: ReadonlyArray<RegExp> = [
   /\b(?:my codename is|my code phrase is|my passphrase is|my preferred name is|my name is)\b/i,
   /\b(?:i prefer|i like|i want|i need|call me|refer to me as)\b/i,
-  /(我的代号是|我的口令是|我的名字是|我更喜欢|我喜欢|我想要|请叫我|称呼我为)/u,
+  /(我的代号是|我的口令是|我的名字是|我叫|我的昵称是|名字叫|昵称是|我更喜欢|我喜欢|我想要|请叫我|叫我|称呼我为|以后叫我|以后称呼我为)/u,
 ];
 
 function tokenizeMemorySearchText(raw: string): string[] {
@@ -423,7 +423,9 @@ function extractStoredPreferenceValue(input: {
     /\bcall me\s+["']?([^"'!?.,\n]+)["']?/i,
     /\bwhat should you call me\??\s*["']?([^"'!?.,\n]+)["']?/i,
     /\bmy name is\s+["']?([^"'!?.,\n]+)["']?/i,
+    /\brefer to me as\s+["']?([^"'!?.,\n]+)["']?/i,
     /(叫我|称呼我为|把我叫做|被称为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+    /(我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
   ] as const;
 
   for (const candidate of candidates) {

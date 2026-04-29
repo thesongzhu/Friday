@@ -37,7 +37,7 @@ const EXPLICIT_FEEDBACK_STATEMENT_PATTERNS = [
   /\b(?:i|we)\s+(?:prefer|like|want|need|usually use|would like)\b/i,
   /\b(?:call me|refer to me as|my codename is|my name is)\b/i,
   /\b(?:that(?:'s| is)\s+wrong|incorrect|actually|instead|use .* instead)\b/i,
-  /(我更喜欢|我希望|我想要|请叫我|称呼我为|我的代号是|这是错的|应该改成)/u,
+  /(我更喜欢|我希望|我想要|请叫我|叫我|称呼我为|我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为|我的代号是|这是错的|应该改成)/u,
 ] as const;
 const FEEDBACK_QUESTION_PATTERNS = [
   /^\s*(?:what|which|who|can|could|would|do|did|does|is|are)\b/i,
@@ -98,7 +98,10 @@ function extractExplicitDisplayName(taskPrompt?: string): string | null {
   }
   const patterns = [
     /\bcall me\s+(.+?)\s*[.!?]?$/i,
+    /\bmy name is\s+(.+?)\s*[.!?]?$/i,
+    /\brefer to me as\s+(.+?)\s*[.!?]?$/i,
     /(叫我|称呼我为|把我叫做|被称为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+    /(我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
   ] as const;
   for (const pattern of patterns) {
     const match = taskPrompt.match(pattern);

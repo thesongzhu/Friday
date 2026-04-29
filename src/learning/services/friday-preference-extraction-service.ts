@@ -157,6 +157,12 @@ const PREFERENCE_RULES: PreferenceRule[] = [
     valueExtractor: (m) => m[1]!.trim(),
     confidence: 0.80,
   },
+  {
+    pattern: /(?:请叫我|叫我|称呼我为|把我叫做|被称为|我的名字是|我叫|我的昵称是|名字叫|昵称是|以后叫我|以后称呼我为)\s*["“]?([^"”'。！？!,，\n]+)["”']?/u,
+    keyExtractor: () => "pref:display_name",
+    valueExtractor: (m) => m[1]!.trim(),
+    confidence: 0.80,
+  },
 ];
 
 export function createFridayPreferenceExtractionService(
