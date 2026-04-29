@@ -1342,6 +1342,12 @@ export function createFridayUixSurfaceService(
       includeExport: input.includeExport,
       resyncTriggers: true,
     });
+    const runStatus = deployment.run?.status;
+    const deploySummary = runStatus === "completed"
+      ? "Friday published the workflow and completed the one-click deploy flow."
+      : runStatus
+        ? `Friday published the workflow and started the one-click deploy run (${runStatus}).`
+        : "Friday published the workflow and prepared it for execution.";
     return {
       deployment,
       workflow: {
@@ -1351,7 +1357,7 @@ export function createFridayUixSurfaceService(
         draftId: input.draftId,
         summary: input.includeExport
           ? "Friday exported the workflow bundle and recorded deployment evidence."
-          : "Friday published the workflow and completed the one-click deploy flow.",
+          : deploySummary,
         routeTarget: "/workflows" as const,
         deployReady: true,
         latestRun: deployment.run,

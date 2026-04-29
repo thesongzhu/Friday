@@ -506,6 +506,54 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(compiledNode?.config).toEqual({ mapping: { message: "version two" } });
     });
 
+    it("normalizes object transforms inside step args into data-node mapping", async () => {
+      mockFetchForLlm([
+        makeRequirementsResponse("ready_for_generation"),
+        makeSpecResponse({
+          startStepId: "output_version_two",
+          inputs: [],
+          steps: [
+            {
+              id: "output_version_two",
+              type: "transform",
+              args: { transform: { message: "version two" } },
+            },
+          ],
+          outputs: [{ key: "message", fromStep: "output_version_two", path: "message" }],
+        }),
+        {
+          schemaVersion: "1.0",
+          workflowId: "send-emails",
+          viewport: { x: 0, y: 0, zoom: 1 },
+          panelLayout: { leftOpen: true, rightOpen: false, bottomOpen: false },
+          nodes: [
+            { nodeId: "__trigger__", x: 100, y: 100 },
+            { nodeId: "output_version_two", x: 350, y: 100 },
+          ],
+          edges: [],
+        },
+        [
+          {
+            name: "version two path",
+            inputs: {},
+            assertions: [{ path: "outputs.message", operator: "==", expected: "version two" }],
+          },
+        ],
+      ]);
+
+      const result = await service.startSession({
+        goal: "Update the workflow to return version two",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(result.mode).toBe("preview_ready");
+      expect(result.draft).toBeDefined();
+      expect(result.draft!.spec.steps[0]?.args).toEqual({ mapping: { message: "version two" } });
+      const compiledNode = result.draft!.compiledGraph.graph.nodes.find((node) => node.id === "output_version_two");
+      expect(compiledNode?.config).toEqual({ mapping: { message: "version two" } });
+    });
+
     it("normalizes top-level expression fields into step.args.transform before compilation", async () => {
       mockFetchForLlm([
         makeRequirementsResponse("ready_for_generation"),

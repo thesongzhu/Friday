@@ -348,6 +348,15 @@ function normalizeGeneratedSpecStep(
   if (raw.expression !== undefined && normalizedArgs.transform === undefined) {
     normalizedArgs.transform = raw.expression;
   }
+  if (
+    normalizedArgs.transform != null &&
+    typeof normalizedArgs.transform === "object" &&
+    !Array.isArray(normalizedArgs.transform) &&
+    normalizedArgs.mapping === undefined
+  ) {
+    normalizedArgs.mapping = normalizedArgs.transform;
+    delete normalizedArgs.transform;
+  }
 
   return {
     id: step.id,

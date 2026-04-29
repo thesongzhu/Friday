@@ -1682,6 +1682,9 @@ async function runLocalStage(ledger) {
         runTrigger: runTrigger.json,
         run,
       });
+      if (run.status !== "completed") {
+        throw new Error(`Generated workflow run did not complete: status=${String(run.status)} (evidence: ${responsePath})`);
+      }
       return {
         evidence: { responsePath },
         details: {
@@ -1710,6 +1713,12 @@ async function runLocalStage(ledger) {
           runNow: true,
         },
       }, { timeoutMs: 300_000 });
+      let deployRun = null;
+      const deployRunId = deploy.json?.data?.result?.deployment?.run?.id
+        ?? deploy.json?.data?.workflow?.latestRun?.id;
+      if (typeof deployRunId === "string" && deployRunId.trim().length > 0) {
+        deployRun = await waitForWorkflowRun(baseUrl, token, deployRunId);
+      }
       const exportBundle = await apiFetch(baseUrl, token, "POST", "/v1/uix/templates/export-workflow-bundle/execute", {
         parameters: {
           sessionId: workflowGeneratorResult.sessionId,
@@ -1717,6 +1726,7 @@ async function runLocalStage(ledger) {
       }, { timeoutMs: 300_000 });
       const responsePath = writeResponseEvidence(ledger.paths, "local-uix-deploy-export", {
         deploy: deploy.json,
+        deployRun,
         exportBundle: exportBundle.json,
       });
       if (deploy.status !== 200 || !deploy.json.ok) {
@@ -1724,6 +1734,9 @@ async function runLocalStage(ledger) {
       }
       if (exportBundle.status !== 200 || !exportBundle.json.ok) {
         throw new Error(`export-workflow-bundle template failed: ${JSON.stringify(exportBundle.json)}`);
+      }
+      if (deployRun && deployRun.status !== "completed") {
+        throw new Error(`Deploy workflow run did not complete: status=${String(deployRun.status)} (evidence: ${responsePath})`);
       }
       return {
         evidence: { responsePath },

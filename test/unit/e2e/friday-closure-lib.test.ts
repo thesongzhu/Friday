@@ -172,4 +172,19 @@ describe("friday closure lib", () => {
     expect(verdict.summary).toEqual({ pass: 0, fail: 1, blocker: 0 });
     expect(verdict.verdict).toBe("NO-GO");
   });
+
+  it("treats failed runStatus inside PASS entries as failed in closure verdict summaries", () => {
+    const verdict = resolveClosureVerdict([
+      {
+        id: "local.workflows.generator",
+        status: FRIDAY_CLOSURE_STATUSES.PASS,
+        details: {
+          runStatus: "failed",
+        },
+      },
+    ]);
+
+    expect(verdict.summary).toEqual({ pass: 0, fail: 1, blocker: 0 });
+    expect(verdict.verdict).toBe("NO-GO");
+  });
 });

@@ -168,8 +168,19 @@ function entryHasHiddenClosureFailure(entry) {
   }
 
   const closureFailures = entry.details?.closureFailures;
-  return Array.isArray(closureFailures)
-    && closureFailures.some((item) => typeof item === "string" && item.trim().length > 0);
+  if (
+    Array.isArray(closureFailures)
+    && closureFailures.some((item) => typeof item === "string" && item.trim().length > 0)
+  ) {
+    return true;
+  }
+
+  const runStatus = entry.details?.runStatus;
+  if (typeof runStatus === "string" && ["failed", "cancelled", "timeout"].includes(runStatus)) {
+    return true;
+  }
+
+  return false;
 }
 
 export function summarizeLedger(entries) {
