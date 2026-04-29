@@ -292,7 +292,7 @@ async function closeFriday(runtime) {
 }
 
 async function configureDeepSeek(baseUrl, token) {
-  const keyPresent = typeof process.env.FRIDAY_DEEPSEEK_API_KEY === "string"
+  const keyPresent = typeof process.env.FRIDAY_DEEPSEEK_API_KEY === "string" // pragma: allowlist secret
     && process.env.FRIDAY_DEEPSEEK_API_KEY.trim().length > 0;
   if (!keyPresent) {
     return { skipped: true, reason: "FRIDAY_DEEPSEEK_API_KEY not set" };
