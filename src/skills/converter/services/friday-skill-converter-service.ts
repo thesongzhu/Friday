@@ -21,7 +21,11 @@ import type {
   FridaySkillSourceFormat,
 } from "../model/friday-skill-converter.types.js";
 import type { FridaySkillConverterRegistry } from "./friday-skill-converter-registry.js";
-import type { FridaySkillImportInstaller } from "./friday-skill-import-installer.js";
+import type {
+  FridaySkillImportInstaller,
+  FridaySkillInstallResult,
+  FridaySkillInstallTarget,
+} from "./friday-skill-import-installer.js";
 import type { FridaySkillPackageArchiver } from "./friday-skill-package-archive.js";
 import { summarizeFridaySkillConversionQuality } from "./friday-skill-converter-quality.js";
 import type {
@@ -43,7 +47,17 @@ export interface CreateFridaySkillConverterServiceDeps {
   context: FridaySkillConverterContext;
   hubVersion?: string;
   supportedApiVersions?: string[];
+  onSkillImported?: (event: FridaySkillImportedEvent) => Promise<void> | void;
   onRegistryRefresh?: () => Promise<void>;
+}
+
+export interface FridaySkillImportedEvent {
+  draft: FridayConvertedSkillDraft;
+  installResult: FridaySkillInstallResult;
+  source: FridaySkillConversionSource;
+  target: FridaySkillInstallTarget;
+  converterId: string;
+  detectedFormat: FridaySkillSourceFormat;
 }
 
 // ─── Factory ───
@@ -58,6 +72,7 @@ export function createFridaySkillConverterService(
     context,
     hubVersion = "1.0.0",
     supportedApiVersions = ["1"],
+    onSkillImported,
     onRegistryRefresh,
   } = deps;
 
@@ -182,6 +197,16 @@ export function createFridaySkillConverterService(
           });
 
           imports.push(installResult);
+          if (installResult.installed && onSkillImported) {
+            await onSkillImported({
+              draft,
+              installResult,
+              source,
+              target,
+              converterId: result.converterId,
+              detectedFormat: result.detectedFormat,
+            });
+          }
         }
       }
 

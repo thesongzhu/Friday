@@ -329,7 +329,10 @@ export type {
   FridaySkillExecutionReadiness,
   FridaySkillExecutionReadinessRequirements,
 } from "./executor/friday-skill-execution-readiness.js";
-export { evaluateFridaySkillExecutionReadiness } from "./executor/friday-skill-execution-readiness.js";
+export {
+  evaluateFridaySkillExecutionReadiness,
+  getFridayLocalSkillExecutionContext,
+} from "./executor/friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./executor/friday-skill-executor.js";
 
 // Converter (re-export key types for convenience; full module at #skills/converter)

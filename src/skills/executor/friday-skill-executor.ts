@@ -25,7 +25,10 @@ import {
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
-import { evaluateFridaySkillExecutionReadiness } from "./friday-skill-execution-readiness.js";
+import {
+  evaluateFridaySkillExecutionReadiness,
+  getFridayLocalSkillExecutionContext,
+} from "./friday-skill-execution-readiness.js";
 import {
   getFridayPythonRuntimeUnavailableMessage,
   resolveFridayPythonCommand,
@@ -503,7 +506,10 @@ export function createFridaySkillExecutor(
         };
 
         try {
-          const readiness = evaluateFridaySkillExecutionReadiness({ manifest });
+          const readiness = evaluateFridaySkillExecutionReadiness({
+            manifest,
+            ...getFridayLocalSkillExecutionContext(),
+          });
           if (!readiness.ready) {
             execResult = {
               runId,

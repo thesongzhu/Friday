@@ -43,6 +43,7 @@ describe("FridayChannelEntryAdapter", () => {
         surface: "channel",
         interactive: true,
         channelKind: "discord",
+        channelChatType: "direct",
         channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
       }),
       tenantContext: {
@@ -92,6 +93,7 @@ describe("FridayChannelEntryAdapter", () => {
         executionContext: expect.objectContaining({
           surface: "channel",
           channelKind,
+          channelChatType: "direct",
           channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
         }),
         tenantContext: {
@@ -132,6 +134,7 @@ describe("FridayChannelEntryAdapter", () => {
     const input = executeRun.mock.calls[0]?.[0];
     expect(input?.executionContext).toEqual(expect.objectContaining({
       surface: "channel",
+      channelChatType: "direct",
       channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
     }));
     expect(input?.scopes).toEqual([FRIDAY_CHANNEL_AGENT_SCOPE]);
@@ -181,6 +184,7 @@ describe("FridayChannelEntryAdapter", () => {
         surface: "channel",
         interactive: true,
         channelKind: "feishu",
+        channelChatType: "direct",
         channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
       }),
       tenantContext: {

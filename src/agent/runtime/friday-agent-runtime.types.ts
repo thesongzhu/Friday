@@ -42,6 +42,8 @@ export interface FridayAgentExecutionContext {
   packId?: string;
   /** Channel kind when the run enters through a connected chat channel. */
   channelKind?: string;
+  /** Channel chat shape for private-memory defaults. */
+  channelChatType?: "direct" | "group" | "channel" | "thread" | "dm" | "private";
   /** Explicit route marker for channel runs that enter the full agent/orchestration path. */
   channelControlRoute?: "full_agent";
   /** Per-channel persona/role instruction injected by the channel entry adapter. */

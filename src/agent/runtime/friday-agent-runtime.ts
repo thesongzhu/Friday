@@ -199,6 +199,16 @@ function hasExplicitResearchIntent(task: string): boolean {
     || /(搜索|搜一下|查一下|查一查|上网查|最新|新闻|帮我找资料|对比|价格|多少钱|现在|当前|查查)/.test(task);
 }
 
+function shouldInjectPrivateActiveMemoryContext(
+  executionContext?: FridayAgentExecutionContext,
+): boolean {
+  if (executionContext?.surface !== "channel") {
+    return true;
+  }
+  const chatType = executionContext.channelChatType;
+  return chatType === "direct" || chatType === "dm" || chatType === "private";
+}
+
 function isFridayValidationJudgeTask(task: string): boolean {
   return task.trim().startsWith("You are validating a Friday real-world scenario run.");
 }
@@ -501,6 +511,7 @@ export function createFridayAgentRuntime(
       const isReadOnly = constraints?.readOnly === true;
       const disabledToolNames = new Set(normalizeToolNameSet(params.disabledToolNames));
       const executionContext = params.executionContext;
+      const privateActiveMemoryContext = shouldInjectPrivateActiveMemoryContext(executionContext);
       const runMetadata = buildFridayAgentRunMetadata({
         executionContext,
         updatedAt: nowIso(),
@@ -740,7 +751,7 @@ export function createFridayAgentRuntime(
         ? params.taskPrompt.trim()
         : params.task;
       let learnedPreferences: Record<string, unknown> = {};
-      if (learningContextBuilder && principalId) {
+      if (privateActiveMemoryContext && learningContextBuilder && principalId) {
         try {
           const learningCtx = learningContextBuilder({ userId: principalId, nowIso: nowIso() });
           if (learningCtx.preferences && typeof learningCtx.preferences === "object") {
@@ -1359,6 +1370,8 @@ export function createFridayAgentRuntime(
             );
 
             if (terminalStatus === "completed") {
+              await mirrorAssistantResponse(terminalResponse, allToolCalls);
+
               handleTrackedEvent("agent.run.completed", {
                 runId,
                 durationMs,
@@ -1366,8 +1379,6 @@ export function createFridayAgentRuntime(
                 testsPassed: latestTestResults.every((result) => result.passed),
                 artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
               });
-
-              await mirrorAssistantResponse(terminalResponse, allToolCalls);
 
               return await finalizeResult({
                 runId,
@@ -1469,7 +1480,7 @@ export function createFridayAgentRuntime(
 
         let effectiveSystemPrompt = baseSystemPrompt;
         const skipSupplementalContext = toolRouting.promptProfile === "minimal";
-        if (!skipSupplementalContext && deps.compactionContextBuilder && params.sessionKey) {
+        if (!skipSupplementalContext && privateActiveMemoryContext && deps.compactionContextBuilder && params.sessionKey) {
           try {
             const fragment = await deps.compactionContextBuilder({
               userId: principalId,
@@ -1486,7 +1497,7 @@ export function createFridayAgentRuntime(
             }
           }
         }
-        if (communicationPromptBuilder && principalId) {
+        if (privateActiveMemoryContext && communicationPromptBuilder && principalId) {
           try {
             const fragment = await communicationPromptBuilder({ userId: principalId, nowIso: nowIso() });
             if (fragment && fragment.trim().length > 0) {
@@ -2184,12 +2195,6 @@ export function createFridayAgentRuntime(
               });
               if (fallbackResponse) {
                 responseText = fallbackResponse;
-                break;
-              }
-
-              const fallbackValues = latestMemorySearchResultContents(allToolCalls);
-              if (fallbackValues.length > 0) {
-                responseText = fallbackValues[0]!;
                 break;
               }
             }
@@ -3185,6 +3190,8 @@ export function createFridayAgentRuntime(
           }),
         );
 
+        await mirrorAssistantResponse(responseText, allToolCalls);
+
         if (llmDegraded) {
           handleTrackedEvent("agent.run.failed", {
             runId,
@@ -3206,8 +3213,6 @@ export function createFridayAgentRuntime(
             artifacts: persistedArtifacts.artifacts.map((a) => ({ type: a.type, path: a.path })),
           });
         }
-
-        await mirrorAssistantResponse(responseText, allToolCalls);
 
         return await finalizeResult({
           runId,
@@ -4896,16 +4901,9 @@ function parseMemorySearchResults(toolCall: FridayAgentToolCallRecord): Array<Re
   }
 }
 
-function latestMemorySearchResultContents(toolCalls: FridayAgentToolCallRecord[]): string[] {
-  const successfulSearchCalls = toolCalls
-    .filter((call) => call.toolName === "memory_search" && !call.result.isError);
-  if (successfulSearchCalls.length === 0) {
-    return [];
-  }
-  const latestCall = successfulSearchCalls[successfulSearchCalls.length - 1];
-  return parseMemorySearchResults(latestCall)
-    .map((entry) => typeof entry.content === "string" ? entry.content.trim() : "")
-    .filter((content) => content.length > 0);
+function taskLooksLikeLocalConversationRecall(task: string): boolean {
+  return /(?:刚刚|刚才|方才|上文|上面|前面|前文|刚说|刚提到|那个|那条|那件|刚才那个|刚刚那个)/u.test(task)
+    || /\b(?:that|this|previous|earlier|above|last)\b/i.test(task);
 }
 
 interface FridayMemoryRecallExpectation {
@@ -4917,6 +4915,28 @@ interface FridayMemoryRecallExpectation {
 
 function normalizeMemoryRecallValue(raw: string): string {
   return raw.trim().replace(/^["'“”]+|["'“”.]+$/gu, "");
+}
+
+function canUseWholeMemoryContentForField(field: FridayMemoryRecallExpectation["field"], content: string): boolean {
+  const trimmed = content.trim();
+  if (trimmed.length === 0 || trimmed.includes("\n")) {
+    return false;
+  }
+  if (field === "release_note_style") {
+    return trimmed.length <= 500;
+  }
+
+  const compact = trimmed.length <= 80
+    && !/[。！？!?；;：:，,]/u.test(trimmed)
+    && trimmed.split(/\s+/).length <= 6;
+  if (!compact) {
+    return false;
+  }
+
+  if (field === "codename") {
+    return /[A-Za-z0-9][A-Za-z0-9_-]{1,}|[\p{Script=Han}]{1,12}(?:[-_][A-Za-z0-9]{1,12})?/u.test(trimmed);
+  }
+  return true;
 }
 
 function extractMemoryRecallValue(field: FridayMemoryRecallExpectation["field"], content: string): string | undefined {
@@ -4958,7 +4978,8 @@ function collectMemoryRecallExpectations(params: {
       return;
     }
     const value = extractMemoryRecallValue(field, content);
-    if (!value && !allowWholeContentFallback) {
+    const canUseWholeContent = allowWholeContentFallback && canUseWholeMemoryContentForField(field, content);
+    if (!value && !canUseWholeContent) {
       return;
     }
     expectations.set(field, {
@@ -5166,6 +5187,15 @@ function shouldAttemptDeterministicMemoryRecallFallback(params: {
     return false;
   }
   if (params.disabledToolNames?.has("memory_search")) {
+    return false;
+  }
+
+  if (
+    !hasSuccessfulMemorySearchEvidence(params.toolCalls)
+    && params.responseText.trim().length > 0
+    && taskLooksLikeLocalConversationRecall(params.task)
+    && !responseClaimsStoredFactMissing(params.responseText)
+  ) {
     return false;
   }
 

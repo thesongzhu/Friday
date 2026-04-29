@@ -140,6 +140,31 @@ describe("FridaySkillExecutor", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("runs shell skills that require the local shell capability", async () => {
+    const skill = makeRegisteredSkill({
+      id: "echo-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+    });
+    skill.manifest.executionTargets.requiredCapabilities = ["shell"];
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("echo-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    const result = await executor.execute(baseRequest).result;
+
+    expect(result.status).toBe("completed");
+  });
+
   it("blocks restricted shell entrypoints that escape the skill directory sandbox", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");

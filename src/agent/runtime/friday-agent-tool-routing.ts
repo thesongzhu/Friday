@@ -249,13 +249,10 @@ function classifyFridayToolRoutingProfile(input: {
   conversationContext?: FridayAgentConversationContext;
   executionContext?: FridayAgentExecutionContext;
 }): FridayAgentToolRoutingProfile {
-  const text = input.task.toLowerCase();
+  const text = buildToolRoutingIntentText(input);
   const hasImages = (input.images?.length ?? 0) > 0;
   if (hasImages || /\b(image|photo|screenshot|pdf|audio|tts|subtitle|caption)\b|图片|截图|照片|语音|字幕/u.test(text)) {
     return "media";
-  }
-  if (input.executionContext?.channelControlRoute === "full_agent") {
-    return "general";
   }
   if (input.conversationContext?.turnKind === "status_check") {
     return "status";
@@ -269,14 +266,14 @@ function classifyFridayToolRoutingProfile(input: {
   if (/\b(browser|click|open page|navigate|login|interactive|screenshot|playwright|spa|reddit|twitter|x\.com)\b|浏览器|点击|打开网页|登录|截图/u.test(text)) {
     return "browser";
   }
-  if (/\b(latest|current|today|news|search|lookup|source|url|https?:\/\/|documentation|docs)\b|最新|今天|最近|新闻|搜索|查一下|资料|来源/u.test(text)) {
-    return "web";
-  }
   if (/\b(workflow|automation|schedule|cron|trigger|dag|pipeline)\b|工作流|自动化|定时|触发器/u.test(text)) {
     return "workflow";
   }
   if (/\b(skill|skills|plugin|marketplace)\b|技能|插件|市场/u.test(text)) {
     return "skill";
+  }
+  if (/\b(latest|current|today|news|search|lookup|source|url|https?:\/\/|documentation|docs)\b|最新|今天|最近|新闻|搜索|查一下|资料|来源/u.test(text)) {
+    return "web";
   }
   if (/\b(provider|model|api key|oauth|setup|configure|config|install|connect|integration|slack|discord|telegram|service)\b|模型|供应商|密钥|配置|安装|连接|集成/u.test(text)) {
     return "system";
@@ -294,6 +291,22 @@ function classifyFridayToolRoutingProfile(input: {
     return "trivial";
   }
   return "general";
+}
+
+function buildToolRoutingIntentText(input: {
+  task: string;
+  conversationContext?: FridayAgentConversationContext;
+}): string {
+  const parts = [
+    input.task,
+    input.conversationContext?.currentTopicSummary,
+    input.conversationContext?.previousTopicSummary,
+    ...(input.conversationContext?.selectedBlocks ?? []).map((block) => block.summary),
+  ];
+  return parts
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join("\n")
+    .toLowerCase();
 }
 
 function isFridayTrivialSimpleChat(

@@ -141,6 +141,7 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
         surface: "channel",
         interactive: true,
         channelKind: msg.channelKind,
+        channelChatType: msg.chatType,
         channelControlRoute: FRIDAY_CHANNEL_CONTROL_ROUTE,
         channelPersona,
       },

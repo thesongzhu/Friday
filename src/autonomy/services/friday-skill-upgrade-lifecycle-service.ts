@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillRepository } from "../../skills/persistence/friday-skill-repository.js";
 import type { FridayAutonomyCanaryStats } from "../model/friday-autonomy-upgrade.types.js";
@@ -39,7 +40,7 @@ export function createFridaySkillUpgradeLifecycleService(
   function getSkill(skillId: string): FridaySkillEntity {
     const skill = deps.db.withReadConnection((db) => deps.skillRepo.getSkillById(db, skillId));
     if (!skill) {
-      throw new Error(`Skill ${skillId} not found`);
+      throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${skillId}" not found`, { httpStatus: 404 });
     }
     return skill;
   }
@@ -51,7 +52,7 @@ export function createFridaySkillUpgradeLifecycleService(
     return deps.db.withWriteTransaction((db) => {
       const updated = deps.skillRepo.setUpgradeMetadata(db, skillId, patch, deps.nowIso());
       if (!updated) {
-        throw new Error(`Skill ${skillId} not found`);
+        throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${skillId}" not found`, { httpStatus: 404 });
       }
       return updated;
     });

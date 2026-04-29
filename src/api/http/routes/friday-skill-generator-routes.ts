@@ -14,6 +14,7 @@ import {
   createFridayShellExecutor,
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayLocalSkillExecutionContext,
   getFridayPythonRuntimeUnavailableMessage,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
@@ -307,7 +308,10 @@ async function executeDraftFromTempDir(
   stdout: string;
   stderr: string;
 }> {
-  const readiness = evaluateFridaySkillExecutionReadiness({ manifest });
+  const readiness = evaluateFridaySkillExecutionReadiness({
+    manifest,
+    ...getFridayLocalSkillExecutionContext(),
+  });
   if (!readiness.ready) {
     return {
       status: "failed",

@@ -492,6 +492,44 @@ describe("FridaySkillGeneratorRoutes", () => {
       );
     });
 
+    it("runs shell draft self-tests that require the local shell capability", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.test",
+      )!;
+      generatorService.getSession = vi.fn(async (sessionId: string) => {
+        if (sessionId === "not-found") return null;
+        const draft = makeMockDraft();
+        return {
+          session: {
+            ...makeMockSession().session,
+            sessionId,
+            draftSkillId: "test-skill",
+            status: "ready_for_review",
+            goal: 'Build a timer and must output the exact string "OK-MARKER"',
+          },
+          turns: [],
+          draft: {
+            ...draft,
+            manifest: {
+              ...draft.manifest,
+              executionTargets: {
+                ...draft.manifest.executionTargets,
+                requiredCapabilities: ["shell"],
+              },
+            },
+          },
+        };
+      });
+
+      const result = await route.handler(
+        makeCtx({ params: { sessionId: "sess-1" } }),
+      ) as { test: { ok: boolean; executable: boolean } };
+
+      expect(result.test.ok).toBe(true);
+      expect(result.test.executable).toBe(true);
+    });
+
     it("fails closed when the extracted contract has no required output markers", async () => {
       const { routes, generatorService } = createRoutes();
       const route = routes.find(

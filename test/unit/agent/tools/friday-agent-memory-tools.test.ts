@@ -179,6 +179,32 @@ describe("FridayAgentMemoryTools", () => {
       expect(JSON.parse(result.content)).toEqual([]);
     });
 
+    it("does not return current-session fallback memories when the query has zero lexical overlap", async () => {
+      const sessionKey = "channel:feishu:chat";
+      const sessionNamespace = "tenant.default.channel.feishu.user.chat.shared";
+      const unrelatedSessionMemory = makeItem({
+        id: "approval-memory",
+        namespace: sessionNamespace,
+        content: "涉及敏感操作时，用户可通过审批卡片操作或回复“批准 <编号>”/“拒绝 <编号>”。",
+        source: `session:${sessionKey}`,
+        tags: [`session:${sessionKey}`, "approval"],
+      });
+      const svc = mockMemoryService([]);
+      vi.mocked(svc.list).mockResolvedValue([unrelatedSessionMemory]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespace: async () => sessionNamespace,
+      });
+
+      const result = await searchTool!.execute(
+        { query: "codename", namespace: "user", limit: 1 },
+        signalWithContext({ sessionKey }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.content)).toEqual([]);
+    });
+
     it("includes learned facts for the current principal when search finds none", async () => {
       const svc = mockMemoryService([]);
       const [searchTool] = createFridayAgentMemoryTools({

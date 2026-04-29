@@ -124,6 +124,208 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.taskPrompt).not.toContain("chat ok");
   });
 
+  it("treats explicit topic switches as new topics even with one overlapping memory token", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "请记住：本轮闭环测试的暗号是 松针-4729。之后我可能只说“那个暗号”来问你。",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "已记住。",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "请记住：本轮闭环测试的暗号是 松针-4729。之后我可能只说“那个暗号”来问你。",
+        }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "已记住。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("new_topic");
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.selectedBlocks).toEqual([]);
+    expect(prepared.taskPrompt).toContain("explicitly switched away from the prior topic");
+    expect(prepared.taskPrompt).toContain("Do not mention, restate, or continue the previous topic");
+    expect(prepared.taskPrompt).not.toContain("松针-4729");
+  });
+
+  it("treats literal-format recall requests as anchored follow-ups, not standalone literal turns", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "刚刚那个暗号是什么？只回复暗号。",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "请记住：本轮闭环测试的暗号是 松针-4729。之后我可能只说“那个暗号”来问你。",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "已记住。",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "请记住：本轮闭环测试的暗号是 松针-4729。之后我可能只说“那个暗号”来问你。",
+        }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "已记住。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks.some((block) => block.source === "focus_topic")).toBe(true);
+    expect(prepared.taskPrompt).toContain("tightly formatted answer from referenced context");
+    expect(prepared.taskPrompt).toContain("松针-4729");
+    expect(prepared.taskPrompt).toContain("Respect the latest user's output-format constraint exactly");
+    expect(prepared.taskPrompt).not.toContain("Do not reuse previous user text");
+  });
+
+  it("recalls earlier facts after an explicit topic switch without reusing the switch topic", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "刚刚那个暗号是什么？只回复暗号。",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+        currentTopicStartSequence: 3,
+        assistantAnchorSummary: "今天是星期二。",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "请记住：本轮闭环测试的暗号是 松针-4729。之后我可能只说“那个暗号”来问你。",
+        }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "已记住。" }),
+        makeMessage({
+          sequence: 3,
+          role: "user",
+          contentText: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+        }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "今天是星期二。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.source).toBe("conversation_block");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("松针-4729");
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("不要提暗号"))).toBe(false);
+    expect(prepared.taskPrompt).toContain("tightly formatted answer from referenced context");
+    expect(prepared.taskPrompt).toContain("松针-4729");
+    expect(prepared.taskPrompt).not.toContain("今天是星期二");
+  });
+
+  it("treats bare field recall questions as recall and ignores negative field mentions", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "FRIDAY-CODEX-LIVE-UI-12：少关键词测试：暗号？只回复暗号。",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "FRIDAY-CODEX-LIVE-UI-11：随机换个话题：给我一个不超过8字的项目代号，只回复代号，不要提暗号。",
+        currentTopicStartSequence: 9,
+        assistantAnchorSummary: "青鸾-7214",
+      },
+      currentUserSequence: 11,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "请记住这次 Feishu 真链路测试暗号「青杉-6184」，只回复“已记住”。",
+        }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "已记住。" }),
+        makeMessage({
+          sequence: 3,
+          role: "user",
+          contentText: "刚刚那个暗号是什么？只回复暗号。",
+        }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "Your codename is unrelated approval text." }),
+        makeMessage({
+          sequence: 5,
+          role: "user",
+          contentText: "请记住这次修复复测暗号「雪松-9307」，只回复“已记住”。",
+        }),
+        makeMessage({ sequence: 6, role: "assistant", contentText: "已记住。" }),
+        makeMessage({
+          sequence: 7,
+          role: "user",
+          contentText: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+        }),
+        makeMessage({ sequence: 8, role: "assistant", contentText: "今天是星期二。" }),
+        makeMessage({
+          sequence: 9,
+          role: "user",
+          contentText: "FRIDAY-CODEX-LIVE-UI-11：随机换个话题：给我一个不超过8字的项目代号，只回复代号，不要提暗号。",
+        }),
+        makeMessage({ sequence: 10, role: "assistant", contentText: "青鸾-7214" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("雪松-9307");
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("青杉-6184"))).toBe(false);
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("Your codename"))).toBe(false);
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("不要提暗号"))).toBe(false);
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("青鸾-7214"))).toBe(false);
+    expect(prepared.taskPrompt).toContain("雪松-9307");
+    expect(prepared.taskPrompt).not.toContain("青杉-6184");
+    expect(prepared.taskPrompt).not.toContain("Your codename");
+    expect(prepared.taskPrompt).not.toContain("青鸾-7214");
+  });
+
+  it("prefers the newest recallable fact over prior recall-question blocks", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "FRIDAY-CODEX-LIVE-UI-09：刚刚那个暗号是什么？只回复暗号。",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+        currentTopicStartSequence: 13,
+        assistantAnchorSummary: "今天是星期二。",
+      },
+      currentUserSequence: 15,
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "帮我比较一下 Omi 和 Notion AI 的记录方式。" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "Omi 可以加入 Friday 的模块包括实时音频、会话摘要和知识库整理。" }),
+        makeMessage({ sequence: 3, role: "user", contentText: "再换个问题：RedBox 里有哪些素材生成入口？" }),
+        makeMessage({ sequence: 4, role: "assistant", contentText: "RedBox 里有小红书、漫画选题、素材管理等入口。" }),
+        makeMessage({ sequence: 5, role: "user", contentText: "先问一个代码问题：workflow runner 为什么要记录 state？" }),
+        makeMessage({ sequence: 6, role: "assistant", contentText: "因为 runner 需要在中断后恢复进度并避免重复执行。" }),
+        makeMessage({
+          sequence: 7,
+          role: "user",
+          contentText: "请记住这次 Feishu 真链路测试暗号「青杉-6184」，只回复“已记住”。",
+        }),
+        makeMessage({ sequence: 8, role: "assistant", contentText: "已记住。" }),
+        makeMessage({
+          sequence: 9,
+          role: "user",
+          contentText: "刚刚那个暗号是什么？只回复暗号。",
+        }),
+        makeMessage({ sequence: 10, role: "assistant", contentText: "Your codename is unrelated approval text." }),
+        makeMessage({
+          sequence: 11,
+          role: "user",
+          contentText: "请记住这次修复复测暗号「雪松-9307」，只回复“已记住”。",
+        }),
+        makeMessage({ sequence: 12, role: "assistant", contentText: "已记住。" }),
+        makeMessage({
+          sequence: 13,
+          role: "user",
+          contentText: "换个话题：用一句话说说今天是星期几，不要提暗号。",
+        }),
+        makeMessage({ sequence: 14, role: "assistant", contentText: "今天是星期二。" }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("雪松-9307");
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("Your codename"))).toBe(false);
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("青杉-6184"))).toBe(false);
+    expect(prepared.selectedBlocks.some((block) => block.summary.includes("Omi"))).toBe(false);
+    expect(prepared.historyMessages.some((message) =>
+      typeof message.content === "string" && message.content.includes("Your codename"))).toBe(false);
+    expect(prepared.taskPrompt).toContain("雪松-9307");
+    expect(prepared.taskPrompt).not.toContain("Your codename");
+  });
+
   it("treats single-letter option replies as clarification anchored to the latest assistant choice prompt", () => {
     const prepared = prepareFridayConversationTurn({
       task: "A",
@@ -157,6 +359,61 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.taskPrompt).toContain("replying to your clarification request");
     expect(prepared.taskPrompt).toContain("方案 A");
     expect(prepared.taskPrompt).not.toContain("A previous topic exists");
+  });
+
+  it("treats option replies with follow-on instructions as anchored clarification and suppresses stale topic windows", () => {
+    const staleHistory: FridaySessionMessageRecord[] = [
+      makeMessage({ sequence: 1, role: "user", contentText: "你好" }),
+      makeMessage({ sequence: 2, role: "assistant", contentText: "你好，我是 Friday。" }),
+      ...Array.from({ length: 36 }, (_, index) => {
+        const sequence = index + 3;
+        return makeMessage({
+          sequence,
+          role: sequence % 2 === 1 ? "user" : "assistant",
+          contentText: sequence % 2 === 1
+            ? `旧话题 filler ${String(sequence)}`
+            : `旧回复 filler ${String(sequence)}`,
+        });
+      }),
+      makeMessage({
+        sequence: 39,
+        role: "user",
+        contentText: "把 RedBox 的功能搬过来做成 Friday skill。",
+      }),
+      makeMessage({
+        sequence: 40,
+        role: "assistant",
+        contentText: [
+          "几个选项：",
+          "1. 小红书创作工作流",
+          "2. 漫步选题",
+          "3. RedClaw 自动化",
+          "4. 全部打包成一个 skill，然后做成 workflow",
+          "你选哪个？",
+        ].join("\n"),
+      }),
+    ];
+
+    const prepared = prepareFridayConversationTurn({
+      task: "4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "你好",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "你好，我是 Friday。",
+      },
+      currentUserSequence: 41,
+      historyRecords: staleHistory,
+    });
+
+    expect(prepared.turnKind).toBe("clarification");
+    expect(prepared.selectedBlocks.some((block) => block.source === "assistant_anchor")).toBe(true);
+    expect(prepared.selectedBlocks.some((block) => block.id.startsWith("topic-window:"))).toBe(false);
+    expect(prepared.currentTopicSummary).toContain("全部打包成一个 skill");
+    expect(prepared.taskPrompt).toContain("replying to your clarification request");
+    expect(prepared.taskPrompt).toContain("4. 全部打包成一个 skill");
+    expect(prepared.taskPrompt).not.toContain("Current topic: 你好");
+    expect(prepared.taskPrompt).not.toContain("旧话题 filler");
   });
 
   it("classifies short follow-ups against the latest assistant answer", () => {
@@ -696,6 +953,32 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(focus.lastRunId).toBe("run-2");
     expect(focus.lastTurnKind).toBe("new_topic");
     expect(focus.assistantAnchorSummary).toBe("Use a starter and let the dough ferment overnight.");
+  });
+
+  it("creates an active task ledger entry and replaces stale greeting focus for substantive follow-ups", () => {
+    const focus = finalizeFridayConversationFocus({
+      task: "把 RedBox 的功能搬过来做成 Friday skill。",
+      responseText: "我会把 RedBox 拆成 skill_generate 生成 skill，再接 workflow_generate 做自动化 workflow。",
+      runId: "run-redbox-1",
+      turnKind: "follow_up",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "你好",
+        currentTopicStartSequence: 1,
+      },
+      currentUserSequence: 39,
+      nowIso: "2026-03-15T11:00:00.000Z",
+    });
+
+    expect(focus.currentTopicSummary).toBe("把 RedBox 的功能搬过来做成 Friday skill。");
+    expect(focus.currentTopicStartSequence).toBe(39);
+    expect(focus.taskLedger?.activeTaskId).toBeDefined();
+    expect(focus.taskLedger?.tasks[0]).toEqual(expect.objectContaining({
+      summary: "把 RedBox 的功能搬过来做成 Friday skill。",
+      status: "active",
+      toolProfile: "workflow",
+      lastSequence: 39,
+    }));
   });
 
   it("remembers assistant choice questions even when the final sentence has no question mark", () => {

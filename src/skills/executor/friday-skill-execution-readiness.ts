@@ -6,6 +6,7 @@ import {
 } from "./friday-runtime-probe.js";
 
 type FridaySatelliteType = SkillManifestV2["executionTargets"]["allowedSatelliteTypes"][number];
+const FRIDAY_LOCAL_SKILL_SATELLITE_TYPE: FridaySatelliteType = "desktop";
 
 export interface FridaySkillExecutionReadinessRequirements {
   bins: string[];
@@ -30,6 +31,20 @@ export interface EvaluateFridaySkillExecutionReadinessInput {
   platform?: NodeJS.Platform;
   currentSatelliteType?: FridaySatelliteType;
   availableCapabilities?: readonly string[];
+}
+
+export function getFridayLocalSkillExecutionContext(env: NodeJS.ProcessEnv = process.env): Pick<
+  EvaluateFridaySkillExecutionReadinessInput,
+  "availableCapabilities" | "currentSatelliteType"
+> {
+  const capabilities = new Set<string>(["shell", "node"]);
+  if (resolveFridayPythonCommand(env)) {
+    capabilities.add("python");
+  }
+  return {
+    currentSatelliteType: FRIDAY_LOCAL_SKILL_SATELLITE_TYPE,
+    availableCapabilities: [...capabilities],
+  };
 }
 
 export function evaluateFridaySkillExecutionReadiness(

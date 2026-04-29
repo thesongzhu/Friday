@@ -281,6 +281,40 @@ describe("createFridaySkillRoutes", () => {
     expect(result).toHaveProperty("output.result", "ok");
   });
 
+  it("runs registered shell skills that require the local shell capability", async () => {
+    const lifecycle = makeLifecycle();
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => ({
+          manifest: {
+            id: "skill.alpha",
+            kind: "conversation",
+            runtime: { kind: "shell" },
+            requirements: { bins: [], env: [], config: [], os: [] },
+            executionTargets: {
+              allowedSatelliteTypes: ["desktop"],
+              requiredCapabilities: ["shell"],
+            },
+          },
+        })),
+      } as never,
+      lifecycle: lifecycle as never,
+      skillExecutor: executor as never,
+    });
+
+    const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+      params: { skillId: "skill.alpha" },
+      body: { input: {} },
+    }));
+
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      skillId: "skill.alpha",
+    }));
+    expect(result).toHaveProperty("status", "completed");
+  });
+
   it("returns CAPABILITY_DISABLED for node-runtime skill execution when the gate is off", async () => {
     const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
     delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];

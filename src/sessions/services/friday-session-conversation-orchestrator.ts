@@ -7,6 +7,8 @@ import type {
   FridayConversationBlock,
   FridayConversationHistoryBlockKind,
   FridayConversationHistoryBlockSummary,
+  FridayConversationTaskLedger,
+  FridayConversationTaskLedgerEntry,
   FridayConversationTurnKind,
   FridayEvidenceBlock,
   FridaySessionConversationFocusState,
@@ -19,11 +21,20 @@ const MAX_STATUS_HISTORY = 6;
 const MAX_SELECTED_BLOCKS = 6;
 const MAX_RELEVANT_HISTORY_BLOCKS = 3;
 const MAX_BLOCK_SUMMARY_CHARS = 240;
+const MAX_TASK_LEDGER_ENTRIES = 8;
 const FOLLOW_UP_HINTS =
   /\b(that|it|this|those|these|also|and|then|what about|more about|continue|same|again|summari[sz]e|summary|recap|recommendation|recommendations)\b/i;
 const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|这里|这儿|继续|还有|然后|刚才|上一个|同一个|总结|概括|再说|细讲)/;
 const DEICTIC_FOLLOW_UP_HINTS = /\b(this one|that one|same one|same issue|that issue|this issue|that part|this part|here|there)\b/i;
 const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendation|recommendations|should i|best)\b/i;
+const TOPIC_SWITCH_HINTS =
+  /\b(?:new topic|switch topics?|change topics?|different topic|unrelated question|separate question|another question)\b/i;
+const CHINESE_TOPIC_SWITCH_HINTS =
+  /(?:换个话题|换一个话题|切换话题|另一个话题|另外一个话题|无关问题|另一个问题|另外问|先不说|不聊这个|不说这个)/;
+const EXPLICIT_CONTEXT_EXCLUSION_HINTS =
+  /\b(?:do not|don't|dont|without|stop)\s+(?:mention|bring up|refer(?:ence)?|continue|use)\b/i;
+const CHINESE_CONTEXT_EXCLUSION_HINTS =
+  /(?:不要|别|不用|先不|不许|禁止)(?:再)?(?:提|提到|说|聊|引用|继续|带上|使用)/;
 const STATUS_CHECK_HINTS =
   /\b(status update|check status|current status|what(?:'s| is) (?:the )?status|what(?:'s| is) (?:the )?(?:final )?result(?: now)?|progress|still working|still running|still executing|what are you doing|what's happening|how long|eta|done yet|finished yet)\b/i;
 const CHINESE_STATUS_CHECK_HINTS = /(状态|进度|还在|多久|完成了吗|现在在做什么|刚才那个任务|那个任务结果呢|结果呢|还没好|ETA)/;
@@ -221,6 +232,114 @@ function isShortChoiceReplyTask(task: string): boolean {
     || /^(?:第)?[一二三四五六七八九](?:个|项|种|套)?(?:方案)?$/u.test(normalized)
     || /^(?:前者|后者)$/u.test(normalized)
   );
+}
+
+function isChoiceReplyTask(task: string): boolean {
+  if (isShortChoiceReplyTask(task)) {
+    return true;
+  }
+
+  const normalized = normalizeText(task)
+    .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/gu, "")
+    .trim();
+  if (normalized.length === 0 || normalized.length > 220) {
+    return false;
+  }
+
+  return (
+    /^(?:(?:我)?(?:选|选择|用|要|就)\s*)?(?:方案\s*)?(?:[a-d]|#?\d{1,2}|[①②③④⑤⑥⑦⑧⑨])(?:\s*(?:方案|选项|option|plan))?(?:\s*[,，、:：.;；\-—]\s*|\s+(?:and|then|plus|with)\b|\s*(?:然后|并且|同时|再|接着|顺便))/iu.test(normalized)
+    || /^(?:第)?[一二三四五六七八九](?:个|项|种|套)?(?:方案)?(?:\s*[,，、:：.;；\-—]\s*|\s*(?:然后|并且|同时|再|接着|顺便))/u.test(normalized)
+    || /^(?:pick|choose|use|go with)\s+(?:(?:option|plan)\s*)?(?:[a-d]|#?\d{1,2})(?:\s+(?:and|then|plus|with)\b|\s*[,，、:：.;；\-—]\s*)/i.test(normalized)
+  );
+}
+
+function isExplicitTopicSwitchTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0) {
+    return false;
+  }
+  return TOPIC_SWITCH_HINTS.test(normalized)
+    || CHINESE_TOPIC_SWITCH_HINTS.test(normalized)
+    || EXPLICIT_CONTEXT_EXCLUSION_HINTS.test(normalized)
+    || CHINESE_CONTEXT_EXCLUSION_HINTS.test(normalized);
+}
+
+function isRecallRequestTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0) {
+    return false;
+  }
+  const directRecallQuestion =
+    /(?:暗号|代号|口令|编号|名字|名称|链接|地址|内容)\s*(?:是(?:什么|啥|哪(?:一个|个)?)|多少|[?？])/u.test(normalized)
+    || /(?:是什么|是啥|哪(?:一个|个)|多少).{0,24}(?:暗号|代号|口令|编号|名字|名称|链接|地址|内容)/u.test(normalized)
+    || /\b(?:what|which).{0,40}\b(?:codename|code phrase|passphrase|marker|secret|identifier|name|link|url|address)\b/i.test(normalized)
+    || /\b(?:codename|code phrase|passphrase|marker|secret|identifier)\s*\?$/i.test(normalized);
+  if (directRecallQuestion) {
+    return true;
+  }
+  if (!hasDeicticReference(normalized)) {
+    return false;
+  }
+  return /\b(?:previous|earlier|above|last|remember|recall|name|code|marker|secret|identifier)\b/i.test(normalized)
+    || /(?:是什么|哪一个|哪个|名字|名称|代号|暗号|编号|链接|地址|内容|刚刚|刚才|之前|前面)/.test(normalized);
+}
+
+function establishesRecallableFact(text: string): boolean {
+  return /\b(?:remember|keep|store|save)\s+(?:my\s+|the\s+)?(?:codename|code phrase|passphrase|marker|secret|identifier)\b/iu.test(text)
+    || /\bmy\s+(?:codename|code phrase|passphrase|marker|secret|identifier)\s+(?:is|=|:)\b/iu.test(text)
+    || /\b(?:codename|code phrase|passphrase|marker|secret|identifier)\s+(?:is|=|:)\b/iu.test(text)
+    || /(?:记住|保存|记录|暗号是(?!什么|啥|哪)|代号是(?!什么|啥|哪)|口令是(?!什么|啥|哪)|编号是(?!什么|啥|哪)|名字是(?!什么|啥|哪)|名称是(?!什么|啥|哪))/u.test(text);
+}
+
+function isRecallQuestionRecord(text: string): boolean {
+  return isRecallRequestTask(text) && !establishesRecallableFact(text);
+}
+
+function asksForMostRecentRecall(task: string): boolean {
+  return /(?:刚刚|刚才|方才|刚说|刚提到|最新|最近|上一条|上一个)/u.test(task)
+    || /\b(?:last|latest|most recent|just mentioned|just said)\b/i.test(task);
+}
+
+function asksForOlderRecallFact(task: string): boolean {
+  return /(?:更早|最早|第一个|上上个|前一个|前一次|上一版|旧的|老的)/u.test(task)
+    || /\b(?:earlier|older|old|previous version|first)\b/i.test(task);
+}
+
+function recallFieldTokens(text: string): Set<string> {
+  const fields = new Set<string>();
+  if (/(?:暗号|代号|口令|\b(?:codename|code phrase|passphrase|marker|secret|identifier)\b)/iu.test(text)) {
+    fields.add("code");
+  }
+  if (/(?:名字|名称|\b(?:name|title)\b)/iu.test(text)) {
+    fields.add("name");
+  }
+  if (/(?:编号|\b(?:number|id|identifier)\b)/iu.test(text)) {
+    fields.add("identifier");
+  }
+  if (/(?:链接|地址|\b(?:link|url|address)\b)/iu.test(text)) {
+    fields.add("link");
+  }
+  return fields;
+}
+
+function intersectsRecallFields(left: Set<string>, right: Set<string>): boolean {
+  if (left.size === 0 || right.size === 0) {
+    return false;
+  }
+  for (const field of left) {
+    if (right.has(field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function recallableFactMatchesFields(text: string, requestedFields: Set<string>): boolean {
+  if (!establishesRecallableFact(text)) {
+    return false;
+  }
+  return requestedFields.size === 0
+    || intersectsRecallFields(requestedFields, recallFieldTokens(text));
 }
 
 function assistantAppearsToAskForChoice(text: string): boolean {
@@ -468,7 +587,7 @@ export function classifyFridayConversationTurn(input: {
   const hasUnresolvedReplyAnchor = Boolean(input.replyToMessageId?.trim()) && !hasReplyAnchor;
   const hasAssistantAnchor = Boolean(latestAssistant?.contentText || focusState?.assistantAnchorSummary);
   const shortTask = task.length > 0 && task.length <= 120;
-  const shortChoiceReply = isShortChoiceReplyTask(task);
+  const choiceReply = isChoiceReplyTask(task);
   const latestAssistantAsksForChoice = assistantAppearsToAskForChoice(
     latestAssistant?.contentText ?? focusState?.assistantAnchorSummary ?? "",
   );
@@ -483,8 +602,20 @@ export function classifyFridayConversationTurn(input: {
     || CHINESE_FOLLOW_UP_HINTS.test(task)
     || DEICTIC_FOLLOW_UP_HINTS.test(taskLower);
   const literalResponseInstruction = isExplicitLiteralResponseInstruction(task);
+  const explicitTopicSwitch = isExplicitTopicSwitchTask(task);
+  const recallRequest = isRecallRequestTask(task);
+  const requestedRecallFields = recallRequest ? recallFieldTokens(task) : new Set<string>();
+  const hasRecallableAnchor = recallRequest && (
+    recallableFactMatchesFields(focusSummary, requestedRecallFields)
+    || records.some((record) => recallableFactMatchesFields(record.contentText, requestedRecallFields))
+  );
   const assistantOverlapSignal = latestAssistantMeaningfulOverlap >= 1;
   const userOverlapSignal = latestUserMeaningfulOverlap >= 1;
+  const deicticRecallSignal =
+    hasDeicticReference(task)
+    || DEICTIC_FOLLOW_UP_HINTS.test(taskLower)
+    || CHINESE_FOLLOW_UP_HINTS.test(task)
+    || /\b(?:previous|earlier|above|before|that|this|it)\b/i.test(taskLower);
 
   if (STATUS_CHECK_HINTS.test(taskLower) || CHINESE_STATUS_CHECK_HINTS.test(task) || isCancellationStatusCheck(task)) {
     return "status_check";
@@ -495,7 +626,17 @@ export function classifyFridayConversationTurn(input: {
   if (hasReplyAnchor || (hasUnresolvedReplyAnchor && hasAssistantAnchor)) {
     return "follow_up";
   }
-  if (literalResponseInstruction && !hasReplyAnchor) {
+  if (hasRecallableAnchor) {
+    return "follow_up";
+  }
+  if (explicitTopicSwitch && !hasReplyAnchor && !hasUnresolvedReplyAnchor) {
+    return "new_topic";
+  }
+  if (
+    literalResponseInstruction
+    && !hasReplyAnchor
+    && !(deicticRecallSignal && (hasFocus || assistantOverlapSignal || userOverlapSignal))
+  ) {
     return "new_topic";
   }
   if (latestAssistant && isRecentAssistantRewriteRequest(task)) {
@@ -504,7 +645,7 @@ export function classifyFridayConversationTurn(input: {
   if (latestUser && isBareNudgeTask(task)) {
     return "follow_up";
   }
-  if (shortChoiceReply && latestAssistantAsksForChoice) {
+  if (choiceReply && latestAssistantAsksForChoice) {
     return "clarification";
   }
   if (hasFocus && hasAssistantAnchor && isShortOperationalTroubleshootingFollowUpTask(task)) {
@@ -844,6 +985,249 @@ function deriveSelectedAssistantFact(input: {
   return undefined;
 }
 
+function resolveActiveTaskLedgerEntry(
+  focusState?: FridaySessionConversationFocusState | null,
+): FridayConversationTaskLedgerEntry | undefined {
+  const ledger = focusState?.taskLedger;
+  if (!ledger?.activeTaskId || !Array.isArray(ledger.tasks)) {
+    return undefined;
+  }
+  return ledger.tasks.find((task) => task.id === ledger.activeTaskId && task.status === "active");
+}
+
+function formatTaskLedgerEntry(task: FridayConversationTaskLedgerEntry): string {
+  const parts = [
+    `active task: ${task.title}`,
+    task.summary && task.summary !== task.title ? `summary: ${task.summary}` : undefined,
+    task.lastUserText ? `last user turn: ${task.lastUserText}` : undefined,
+    task.lastAssistantSummary ? `last assistant answer: ${task.lastAssistantSummary}` : undefined,
+    task.toolProfile ? `tool profile: ${task.toolProfile}` : undefined,
+    task.openQuestions?.length ? `open questions: ${task.openQuestions.join(" | ")}` : undefined,
+  ];
+  return normalizeText(parts.filter((value): value is string => Boolean(value)).join("; "));
+}
+
+function isTrivialTopicSummary(summary?: string): boolean {
+  const normalized = normalizeText(summary ?? "").toLowerCase();
+  if (normalized.length === 0) {
+    return true;
+  }
+  return /^(?:hi|hello|hey|thanks|thank you|ok|okay|yo|你好|嗨|谢谢|好的|嗯|哈喽)[!.。！\s]*$/iu.test(normalized);
+}
+
+function isSubstantiveTaskText(text: string): boolean {
+  const normalized = normalizeText(text);
+  return normalized.length > 16
+    || /\b(workflow|automation|skill|plugin|repo|github|url|https?:\/\/|debug|fix|build|test|deploy|memory|session)\b/i.test(normalized)
+    || /(工作流|自动化|技能|插件|仓库|源码|修复|调试|构建|测试|部署|记忆|上下文|会话|源码)/u.test(normalized);
+}
+
+function inferTaskToolProfile(text: string): string | undefined {
+  const normalized = normalizeText(text).toLowerCase();
+  if (/\b(workflow|automation|schedule|cron|trigger|dag|pipeline)\b|工作流|自动化|定时|触发器/u.test(normalized)) {
+    return "workflow";
+  }
+  if (/\b(skill|skills|plugin|marketplace)\b|技能|插件|市场/u.test(normalized)) {
+    return "skill";
+  }
+  if (/\b(code|repo|repository|file|fix|debug|test|build|typescript|javascript|python|git|commit|diff|pr)\b|代码|仓库|文件|修复|调试|测试|构建/u.test(normalized)) {
+    return "code";
+  }
+  if (/\b(browser|click|open page|navigate|screenshot)\b|浏览器|点击|打开网页|截图/u.test(normalized)) {
+    return "browser";
+  }
+  if (/\b(memory|remember|preference|recall)\b|记忆|记住|偏好/u.test(normalized)) {
+    return "memory";
+  }
+  return undefined;
+}
+
+function derivePromptTopicSummary(input: {
+  focusState?: FridaySessionConversationFocusState | null;
+  selectedBlocks: FridayConversationBlock[];
+}): string | undefined {
+  const activeTask = resolveActiveTaskLedgerEntry(input.focusState);
+  if (activeTask?.summary && !isTrivialTopicSummary(activeTask.summary)) {
+    return activeTask.summary;
+  }
+
+  const focusSummary = input.focusState?.currentTopicSummary?.trim();
+  if (focusSummary && !isTrivialTopicSummary(focusSummary)) {
+    return focusSummary;
+  }
+
+  const assistantFact = deriveSelectedAssistantFact({
+    selectedBlocks: input.selectedBlocks,
+    focusState: input.focusState,
+  });
+  if (assistantFact && assistantAppearsToAskForChoice(assistantFact)) {
+    return summarizeTopic(assistantFact);
+  }
+
+  return focusSummary;
+}
+
+function resolvePreparedCurrentTopicSummary(input: {
+  task: string;
+  turnKind: FridayConversationTurnKind;
+  focusState?: FridaySessionConversationFocusState | null;
+  selectedBlocks: FridayConversationBlock[];
+}): string | undefined {
+  if (input.turnKind === "new_topic") {
+    return summarizeTopic(input.task);
+  }
+
+  const promptTopic = derivePromptTopicSummary({
+    focusState: input.focusState,
+    selectedBlocks: input.selectedBlocks,
+  });
+  if (promptTopic && !isTrivialTopicSummary(promptTopic)) {
+    return promptTopic;
+  }
+
+  return input.focusState?.currentTopicSummary ?? summarizeTopic(input.task);
+}
+
+function extractOpenQuestions(text: string): string[] {
+  return normalizeText(text)
+    .split(/(?<=[?？])\s+/u)
+    .map((part) => part.trim())
+    .filter((part) => /[?？]/u.test(part))
+    .map((part) => clampSummary(part, 120))
+    .slice(0, 3);
+}
+
+function shouldReplaceStaleCurrentTopic(input: {
+  previousSummary?: string;
+  task: string;
+  turnKind: FridayConversationTurnKind;
+}): boolean {
+  if (input.turnKind === "status_check") {
+    return false;
+  }
+  return isTrivialTopicSummary(input.previousSummary) && isSubstantiveTaskText(input.task);
+}
+
+function deriveCurrentTopicForFocus(input: {
+  task: string;
+  turnKind: FridayConversationTurnKind;
+  previous?: FridaySessionConversationFocusState | null;
+}): { summary: string; fingerprint: string; startSequence?: number } {
+  if (input.turnKind === "new_topic" || shouldReplaceStaleCurrentTopic({
+    previousSummary: input.previous?.currentTopicSummary,
+    task: input.task,
+    turnKind: input.turnKind,
+  })) {
+    const summary = summarizeTopic(input.task);
+    return {
+      summary,
+      fingerprint: fingerprintTopic(input.task),
+    };
+  }
+
+  const activeTask = resolveActiveTaskLedgerEntry(input.previous);
+  const previousSummary = input.previous?.currentTopicSummary;
+  const summary = previousSummary && !isTrivialTopicSummary(previousSummary)
+    ? previousSummary
+    : activeTask?.summary && !isTrivialTopicSummary(activeTask.summary)
+      ? activeTask.summary
+      : summarizeTopic(input.task);
+  return {
+    summary,
+    fingerprint: input.previous?.currentTopicFingerprint ?? fingerprintTopic(summary),
+    startSequence: input.previous?.currentTopicStartSequence,
+  };
+}
+
+function updateTaskLedger(input: {
+  task: string;
+  responseText: string;
+  turnKind: FridayConversationTurnKind;
+  previous?: FridaySessionConversationFocusState | null;
+  topicSummary: string;
+  topicFingerprint: string;
+  currentUserSequence?: number;
+  nowIso: string;
+}): FridayConversationTaskLedger | undefined {
+  const previousLedger = input.previous?.taskLedger;
+  if (input.turnKind === "status_check") {
+    return previousLedger
+      ? { ...previousLedger, updatedAt: input.nowIso }
+      : undefined;
+  }
+
+  let tasks = Array.isArray(previousLedger?.tasks) ? [...previousLedger.tasks] : [];
+  let activeTaskId = previousLedger?.activeTaskId;
+  const activeExists = Boolean(activeTaskId && tasks.some((task) => task.id === activeTaskId));
+  const startNewTask = input.turnKind === "new_topic" || !activeExists || shouldReplaceStaleCurrentTopic({
+    previousSummary: input.previous?.currentTopicSummary,
+    task: input.task,
+    turnKind: input.turnKind,
+  });
+  const toolProfile = inferTaskToolProfile(`${input.task}\n${input.responseText}`) ?? undefined;
+  const openQuestions = extractOpenQuestions(input.responseText);
+  const existingMatch = tasks.find((task) => task.fingerprint === input.topicFingerprint);
+
+  if (startNewTask) {
+    if (activeTaskId) {
+      tasks = tasks.map((task) =>
+        task.id === activeTaskId && task.status === "active"
+          ? { ...task, status: "paused", updatedAt: input.nowIso }
+          : task);
+    }
+    const id = existingMatch?.id ?? `task:${input.topicFingerprint}`;
+    activeTaskId = id;
+    const nextTask: FridayConversationTaskLedgerEntry = {
+      ...(existingMatch ?? {
+        id,
+        fingerprint: input.topicFingerprint,
+        title: input.topicSummary,
+        summary: input.topicSummary,
+        status: "active",
+        createdAt: input.nowIso,
+      }),
+      title: existingMatch?.title ?? input.topicSummary,
+      summary: input.topicSummary,
+      status: "active",
+      startSequence: existingMatch?.startSequence ?? input.currentUserSequence,
+      lastSequence: input.currentUserSequence,
+      lastUserText: summarizeTopic(input.task),
+      lastAssistantSummary: summarizeTopic(input.responseText),
+      toolProfile: toolProfile ?? existingMatch?.toolProfile,
+      openQuestions: openQuestions.length > 0 ? openQuestions : undefined,
+      updatedAt: input.nowIso,
+    };
+    tasks = [nextTask, ...tasks.filter((task) => task.id !== id)];
+  } else if (activeTaskId) {
+    tasks = tasks.map((task) => {
+      if (task.id !== activeTaskId) {
+        return task;
+      }
+      return {
+        ...task,
+        summary: task.summary && !isTrivialTopicSummary(task.summary) ? task.summary : input.topicSummary,
+        status: "active",
+        lastSequence: input.currentUserSequence,
+        lastUserText: summarizeTopic(input.task),
+        lastAssistantSummary: summarizeTopic(input.responseText),
+        toolProfile: toolProfile ?? task.toolProfile,
+        openQuestions: openQuestions.length > 0 ? openQuestions : undefined,
+        updatedAt: input.nowIso,
+      };
+    });
+  }
+
+  const orderedTasks = tasks
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
+    .slice(0, MAX_TASK_LEDGER_ENTRIES);
+
+  return {
+    activeTaskId,
+    tasks: orderedTasks,
+    updatedAt: input.nowIso,
+  };
+}
+
 function buildConversationBlockSelection(input: {
   task: string;
   historyRecords: FridaySessionMessageRecord[];
@@ -857,6 +1241,8 @@ function buildConversationBlockSelection(input: {
   const taskHasSpecificFollowUpTokens = hasSpecificFollowUpTokens(input.task);
   const shortContextualFollowUp = isShortContextualFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
   const shortAssistantAnchorFollowUp = isShortAssistantAnchorFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
+  const recallRequest = input.turnKind !== "status_check" && isRecallRequestTask(input.task);
+  const requestedRecallFields = recallRequest ? recallFieldTokens(input.task) : new Set<string>();
   const focusState = input.focusState ?? null;
   const records = input.historyRecords;
   const candidates: FridayConversationBlockCandidate[] = [];
@@ -877,7 +1263,7 @@ function buildConversationBlockSelection(input: {
   const bareNudgeTask = isBareNudgeTask(input.task);
   const latestAssistant = findLatestRecord(records, "assistant");
   const shortChoiceReplyAnswersLatestAssistant = Boolean(
-    isShortChoiceReplyTask(input.task)
+    isChoiceReplyTask(input.task)
     && latestAssistant
     && assistantAppearsToAskForChoice(latestAssistant.contentText),
   );
@@ -929,30 +1315,35 @@ function buildConversationBlockSelection(input: {
         ? 10
         : 0
       );
-    registerCandidate({
-      ...createMessageBlockCandidate({
-        id: `assistant:${latestAssistant.id}`,
-        source: "assistant_anchor",
-        summary: latestAssistant.contentText,
-        score: assistantScore,
-        reason: preferLatestAssistantAnchor
-          ? hasUnresolvedReplyAnchor
-            ? "Platform reply target was not found locally, so the latest assistant answer is used as the safest reply anchor."
-            : shortChoiceReplyAnswersLatestAssistant
-              ? "Latest assistant answer is preferred because the user replied with a short option choice."
-              : "Latest assistant answer is preferred for a short rewrite or explanation request."
-          : assistantOverlap > 0
-          ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
-          : "Latest assistant answer is a plausible short-follow-up anchor.",
-        records: buildAnchorWindow(records, latestAssistant),
-      }),
-      taskOverlap: assistantOverlap,
-      fallbackOnly: assistantOverlap === 0 && !preferLatestAssistantAnchor,
-    });
+    if (!(recallRequest && assistantOverlap === 0 && !preferLatestAssistantAnchor)) {
+      registerCandidate({
+        ...createMessageBlockCandidate({
+          id: `assistant:${latestAssistant.id}`,
+          source: "assistant_anchor",
+          summary: latestAssistant.contentText,
+          score: assistantScore,
+          reason: preferLatestAssistantAnchor
+            ? hasUnresolvedReplyAnchor
+              ? "Platform reply target was not found locally, so the latest assistant answer is used as the safest reply anchor."
+              : shortChoiceReplyAnswersLatestAssistant
+                ? "Latest assistant answer is preferred because the user replied with an option choice."
+                : "Latest assistant answer is preferred for a short rewrite or explanation request."
+            : assistantOverlap > 0
+            ? `Current turn overlaps the latest assistant answer (${String(assistantOverlap)} token match(es)).`
+            : "Latest assistant answer is a plausible short-follow-up anchor.",
+          records: buildAnchorWindow(records, latestAssistant),
+        }),
+        taskOverlap: assistantOverlap,
+        fallbackOnly: assistantOverlap === 0 && !preferLatestAssistantAnchor,
+      });
+    }
   }
 
   const latestUser = findLatestRecord(records, "user");
-  if (latestUser) {
+  if (
+    latestUser
+    && !(recallRequest && (isExplicitTopicSwitchTask(latestUser.contentText) || isRecallQuestionRecord(latestUser.contentText)))
+  ) {
     const userOverlap = countOverlap(taskTokens, tokenize(latestUser.contentText));
     const userScore = (userOverlap * 14)
       + (preferRecentUserAnchor ? 80 : 0)
@@ -980,7 +1371,12 @@ function buildConversationBlockSelection(input: {
     });
   }
 
-  if (focusState?.currentTopicSummary && !preferRecencyAnchor) {
+  if (
+    focusState?.currentTopicSummary
+    && !preferRecencyAnchor
+    && !(recallRequest && isExplicitTopicSwitchTask(focusState.currentTopicSummary))
+    && !(recallRequest && !recallableFactMatchesFields(focusState.currentTopicSummary, requestedRecallFields))
+  ) {
     const focusOverlap = countOverlap(taskTokens, tokenize(focusState.currentTopicSummary));
     const focusScore = (focusOverlap * 12)
       + (
@@ -1007,6 +1403,34 @@ function buildConversationBlockSelection(input: {
     });
   }
 
+  const activeTask = resolveActiveTaskLedgerEntry(focusState);
+  if (
+    activeTask
+    && !preferRecencyAnchor
+    && !(recallRequest && isExplicitTopicSwitchTask(formatTaskLedgerEntry(activeTask)))
+    && !(recallRequest && !recallableFactMatchesFields(formatTaskLedgerEntry(activeTask), requestedRecallFields))
+    && (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
+  ) {
+    const taskLedgerSummary = formatTaskLedgerEntry(activeTask);
+    const ledgerOverlap = countOverlap(taskTokens, tokenize(taskLedgerSummary));
+    registerCandidate({
+      block: {
+        id: `task-ledger:${activeTask.id}`,
+        source: "task_ledger",
+        summary: taskLedgerSummary,
+        score: (ledgerOverlap * 14) + 28,
+        reason: ledgerOverlap > 0
+          ? `Active task ledger matches this turn (${String(ledgerOverlap)} token match(es)).`
+          : "Active task ledger kept as the bounded current-task memory.",
+        sequenceStart: activeTask.startSequence,
+        sequenceEnd: activeTask.lastSequence,
+      },
+      messages: [],
+      taskOverlap: ledgerOverlap,
+      fallbackOnly: ledgerOverlap === 0,
+    });
+  }
+
   if (
     focusState?.lastHarnessSummary
     && (input.turnKind === "follow_up" || input.turnKind === "continue_active_task")
@@ -1026,6 +1450,76 @@ function buildConversationBlockSelection(input: {
     }
   }
 
+  const mostRecentRecallRequested = recallRequest && !preferRecencyAnchor
+    ? asksForMostRecentRecall(input.task)
+    : false;
+  const shouldPreferLatestRecallFact = recallRequest
+    && !preferRecencyAnchor
+    && (mostRecentRecallRequested || (requestedRecallFields.size > 0 && !asksForOlderRecallFact(input.task)));
+  const latestRecallFactSequence = shouldPreferLatestRecallFact
+    ? records.reduce((latest, record) => {
+      if (!recallableFactMatchesFields(record.contentText, requestedRecallFields)) {
+        return latest;
+      }
+      return Math.max(latest, record.sequence);
+    }, Number.NEGATIVE_INFINITY)
+    : Number.NEGATIVE_INFINITY;
+
+  if (recallRequest && !preferRecencyAnchor) {
+    for (const record of records) {
+      if (record.role !== "user" && record.role !== "assistant") {
+        continue;
+      }
+      if (latestUser && record.id === latestUser.id && isExplicitTopicSwitchTask(record.contentText)) {
+        continue;
+      }
+      if (isExplicitTopicSwitchTask(record.contentText)) {
+        continue;
+      }
+      if (record.role === "user" && isRecallQuestionRecord(record.contentText)) {
+        continue;
+      }
+      if (
+        requestedRecallFields.size > 0
+        && !recallableFactMatchesFields(record.contentText, requestedRecallFields)
+      ) {
+        continue;
+      }
+      if (
+        shouldPreferLatestRecallFact
+        && Number.isFinite(latestRecallFactSequence)
+        && recallableFactMatchesFields(record.contentText, requestedRecallFields)
+        && record.sequence < latestRecallFactSequence
+      ) {
+        continue;
+      }
+      const recordTokens = tokenize(record.contentText);
+      const overlap = countOverlap(taskTokens, recordTokens);
+      const meaningfulOverlap = countMeaningfulOverlap(taskTokens, recordTokens);
+      if (overlap <= 0 && meaningfulOverlap <= 0) {
+        continue;
+      }
+      const rememberLikeBonus = establishesRecallableFact(record.contentText)
+        ? 64
+        : 0;
+      const earliestSequence = records[0]?.sequence ?? record.sequence;
+      const recencyBonus = Math.min(36, Math.max(0, record.sequence - earliestSequence) / 2);
+      const score = (meaningfulOverlap * 22) + (overlap * 8) + rememberLikeBonus + recencyBonus;
+      registerCandidate({
+        ...createMessageBlockCandidate({
+          id: `recall:${record.id}`,
+          source: "conversation_block",
+          summary: record.contentText,
+          score,
+          reason: `Historical recall anchor matched this turn (${String(overlap)} token match(es), ${String(meaningfulOverlap)} meaningful match(es)).`,
+          records: buildAnchorWindow(records, record),
+        }),
+        taskOverlap: Math.max(overlap, meaningfulOverlap),
+        fallbackOnly: false,
+      });
+    }
+  }
+
   const useCrossTopicRecapWindow =
     !preferRecencyAnchor
     &&
@@ -1034,6 +1528,7 @@ function buildConversationBlockSelection(input: {
 
   const topicWindowRecords = (
     !preferRecencyAnchor
+    && !recallRequest
     &&
     (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
     && typeof focusState?.currentTopicStartSequence === "number"
@@ -1136,6 +1631,32 @@ function buildConversationBlockSelection(input: {
       const unanchoredMessageIds = block.messageIds.filter((messageId) => !alreadyAnchoredMessageIds.has(messageId));
       if (unanchoredMessageIds.length === 0) {
         return;
+      }
+
+      if (recallRequest && !preferRecencyAnchor) {
+        const blockRecords = block.messageIds
+          .map((messageId) => candidateHistoryRecords.find((record) => record.id === messageId))
+          .filter((record): record is FridaySessionMessageRecord => Boolean(record));
+        const allMatchingFactSequences = blockRecords
+          .filter((record) => recallableFactMatchesFields(record.contentText, requestedRecallFields))
+          .map((record) => record.sequence);
+        const userMatchingFactSequences = blockRecords
+          .filter((record) => record.role === "user" && recallableFactMatchesFields(record.contentText, requestedRecallFields))
+          .map((record) => record.sequence);
+        const hasRecallQuestion = blockRecords.some((record) =>
+          record.role === "user" && isRecallQuestionRecord(record.contentText));
+
+        if (
+          allMatchingFactSequences.length === 0
+          || (hasRecallQuestion && userMatchingFactSequences.length === 0)
+          || (
+            shouldPreferLatestRecallFact
+            && Number.isFinite(latestRecallFactSequence)
+            && Math.max(...allMatchingFactSequences) < latestRecallFactSequence
+          )
+        ) {
+          return;
+        }
       }
 
       const formattedSummary = formatConversationHistoryBlockSummary(block);
@@ -1269,12 +1790,15 @@ function buildTaskPrompt(input: {
   selectedBlocks: FridayConversationBlock[];
 }): string {
   const task = normalizeText(input.task);
-  const previousTopicSummary = input.focusState?.currentTopicSummary?.trim();
   const hasExplicitReplyAnchor = input.selectedBlocks.some((block) => block.source === "reply_anchor");
   const assistantFactSummary = deriveSelectedAssistantFact({
     selectedBlocks: input.selectedBlocks,
     focusState: input.focusState,
   });
+  const previousTopicSummary = derivePromptTopicSummary({
+    focusState: input.focusState,
+    selectedBlocks: input.selectedBlocks,
+  })?.trim();
   const isShortAssistantFactFollowUp = Boolean(
     assistantFactSummary
     && (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
@@ -1288,8 +1812,19 @@ function buildTaskPrompt(input: {
   const hasRecentUserAnchor = input.selectedBlocks.some((block) => block.source === "recent_user");
   const hasHistoryOnlySelection = input.selectedBlocks.length > 0
     && input.selectedBlocks.every((block) => block.source.endsWith("_block"));
+  const explicitTopicSwitch = isExplicitTopicSwitchTask(task);
+  const literalFormatInstruction = isExplicitLiteralResponseInstruction(task);
 
-  if (input.turnKind === "new_topic" && isExplicitLiteralResponseInstruction(task)) {
+  if (input.turnKind === "new_topic" && explicitTopicSwitch) {
+    return [
+      "This user explicitly switched away from the prior topic or excluded prior context.",
+      `Current question: ${task}`,
+      "Answer only the current question.",
+      "Do not mention, restate, or continue the previous topic unless the user explicitly asks to recall it.",
+    ].join("\n");
+  }
+
+  if (input.turnKind === "new_topic" && literalFormatInstruction) {
     return [
       "This user started a literal response request.",
       `Current question: ${task}`,
@@ -1319,6 +1854,20 @@ function buildTaskPrompt(input: {
       "Do not answer the content of the previous task unless the user explicitly asked for that content.",
       "If you do not have deterministic status evidence in this turn, say that clearly instead of assuming.",
     ].join("\n");
+  }
+
+  if (
+    literalFormatInstruction
+    && selectedBlockSummary
+    && (input.turnKind === "follow_up" || input.turnKind === "clarification" || input.turnKind === "continue_active_task")
+  ) {
+    return [
+      "The user is asking for a tightly formatted answer from referenced context.",
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      `Latest user turn: ${task}`,
+      "Use the selected context only to resolve the referent.",
+      "Respect the latest user's output-format constraint exactly; do not add explanation, caveats, or extra framing.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
   }
 
   if (input.turnKind === "clarification" && previousTopicSummary) {
@@ -1440,9 +1989,12 @@ export function prepareFridayConversationTurn(
     replyToMessageId: input.replyToMessageId,
     evidenceBlocks: input.evidenceBlocks,
   });
-  const currentTopicSummary = turnKind === "new_topic"
-    ? summarizeTopic(input.task)
-    : focusState?.currentTopicSummary ?? summarizeTopic(input.task);
+  const currentTopicSummary = resolvePreparedCurrentTopicSummary({
+    task: input.task,
+    turnKind,
+    focusState,
+    selectedBlocks: selection.selectedBlocks,
+  });
 
   return {
     turnKind,
@@ -1453,7 +2005,9 @@ export function prepareFridayConversationTurn(
       focusState,
       selectedBlocks: selection.selectedBlocks,
     }),
-    previousTopicSummary: focusState?.currentTopicSummary,
+    previousTopicSummary: turnKind === "new_topic"
+      ? focusState?.currentTopicSummary
+      : currentTopicSummary,
     currentTopicSummary,
     selectedBlocks: selection.selectedBlocks,
     selectionReasons: selection.selectionReasons,
@@ -1481,24 +2035,41 @@ export function finalizeFridayConversationFocus(
     : input.harnessFocus === null
       ? undefined
       : input.harnessFocus.summary;
-  const currentTopicSummary = input.turnKind === "new_topic"
-    ? summarizeTopic(input.task)
-    : previous?.currentTopicSummary ?? summarizeTopic(input.task);
-  const currentTopicFingerprint = input.turnKind === "new_topic"
-    ? fingerprintTopic(input.task)
-    : previous?.currentTopicFingerprint ?? fingerprintTopic(input.task);
+  const topicForFocus = deriveCurrentTopicForFocus({
+    task: input.task,
+    turnKind: input.turnKind,
+    previous,
+  });
+  const currentTopicSummary = topicForFocus.summary;
+  const currentTopicFingerprint = topicForFocus.fingerprint;
   const currentTopicStartSequence = input.turnKind === "new_topic"
+    || shouldReplaceStaleCurrentTopic({
+      previousSummary: previous?.currentTopicSummary,
+      task: input.task,
+      turnKind: input.turnKind,
+    })
     ? input.currentUserSequence
-    : previous?.currentTopicStartSequence ?? input.currentUserSequence;
+    : topicForFocus.startSequence ?? input.currentUserSequence;
   const activeSubagentIds = previous?.activeSubagentIds;
   const assistantAskedQuestion = assistantAppearsToAskQuestion(input.responseText);
   const assistantAnchorSummary = summarizeTopic(input.responseText);
   const assistantAnchorFingerprint = fingerprintTopic(input.responseText);
+  const taskLedger = updateTaskLedger({
+    task: input.task,
+    responseText: input.responseText,
+    turnKind: input.turnKind,
+    previous,
+    topicSummary: currentTopicSummary,
+    topicFingerprint: currentTopicFingerprint,
+    currentUserSequence: input.currentUserSequence,
+    nowIso: input.nowIso,
+  });
 
   return {
     currentTopicFingerprint,
     currentTopicSummary,
     currentTopicStartSequence,
+    taskLedger,
     assistantAnchorSummary,
     assistantAnchorFingerprint,
     replyAnchorMessageId: input.replyAnchorMessageId,

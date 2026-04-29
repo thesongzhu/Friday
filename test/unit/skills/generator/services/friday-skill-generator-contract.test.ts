@@ -62,4 +62,21 @@ describe("extractFridaySkillGenerationContract", () => {
 
     expect(contract.requiredOutputMarkers).toEqual(["LIVE_MARKER_V2"]);
   });
+
+  it("extracts unquoted output marker and marker JSON phrasing", () => {
+    const contract = extractFridaySkillGenerationContract({
+      goal: 'Create a skill that prints JSON {"marker":"CODEX_GENERATOR_SKILL_OK"}.',
+      turns: [
+        {
+          turnId: "t1",
+          sessionId: "s1",
+          role: "user",
+          content: "Fix the draft self-test contract: add required output marker CODEX_GENERATOR_SKILL_OK.",
+          createdAt: "2026-04-16T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(contract.requiredOutputMarkers).toEqual(["CODEX_GENERATOR_SKILL_OK"]);
+  });
 });

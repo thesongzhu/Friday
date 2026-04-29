@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "2.0",
+  "id": "codex-live-fail-1777431418921",
+  "name": "codex-live-fail-1777431418921",
+  "description": "Live audit skill codex-live-fail-1777431418921",
+  "version": "1.0.0",
+  "kind": "conversation",
+  "category": "utility",
+  "author": {
+    "name": "Codex audit"
+  },
+  "tags": [
+    "codex.audit",
+    "codex.audit.fail"
+  ],
+  "runtime": {
+    "kind": "shell",
+    "entrypoint": "run.sh",
+    "minHubVersion": "1.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 10000
+  },
+  "triggers": {
+    "intents": [
+      "codex-live-fail-1777431418921"
+    ],
+    "phrases": [
+      "run codex-live-fail-1777431418921"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 50,
+    "modes": [
+      "intent"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "message",
+      "type": "string",
+      "required": false,
+      "label": "Message",
+      "help": "optional message"
+    }
+  ],
+  "outputs": [
+    {
+      "key": "marker",
+      "type": "string",
+      "description": "audit marker"
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": [
+      "shell"
+    ]
+  },
+  "telemetry": {
+    "events": []
+  }
+}

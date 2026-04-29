@@ -143,6 +143,7 @@ export {
 
 export type {
   CreateFridaySkillConverterServiceDeps,
+  FridaySkillImportedEvent,
 } from "./services/friday-skill-converter-service.js";
 
 // Discovery (E5)

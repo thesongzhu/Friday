@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "title": "codex-live-fail-1777431418921",
+  "description": "Live audit UI codex-live-fail-1777431418921",
+  "sections": [],
+  "fields": [],
+  "outputs": [
+    {
+      "id": "marker",
+      "outputKey": "marker",
+      "label": "Marker",
+      "widget": "text"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Run",
+      "style": "primary"
+    }
+  ]
+}

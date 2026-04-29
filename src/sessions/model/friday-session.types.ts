@@ -13,6 +13,7 @@ export type FridayConversationBlockSource =
   | "assistant_anchor"
   | "recent_user"
   | "focus_topic"
+  | "task_ledger"
   | "harness_block"
   | "active_run"
   | "pending_plan"
@@ -72,6 +73,30 @@ export interface FridayContextSelectionResult {
   selectionReasons: string[];
 }
 
+export type FridayConversationTaskStatus = "active" | "paused" | "completed" | "abandoned";
+
+export interface FridayConversationTaskLedgerEntry {
+  id: string;
+  fingerprint: string;
+  title: string;
+  summary: string;
+  status: FridayConversationTaskStatus;
+  startSequence?: number;
+  lastSequence?: number;
+  lastUserText?: string;
+  lastAssistantSummary?: string;
+  toolProfile?: string;
+  openQuestions?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FridayConversationTaskLedger {
+  activeTaskId?: string;
+  tasks: FridayConversationTaskLedgerEntry[];
+  updatedAt: string;
+}
+
 /**
  * Send policy controls whether outbound messages are allowed for a session.
  * - "allow"  — messages can be sent (default behavior)
@@ -122,6 +147,7 @@ export interface FridaySessionConversationFocusState {
   currentTopicFingerprint?: string;
   currentTopicSummary?: string;
   currentTopicStartSequence?: number;
+  taskLedger?: FridayConversationTaskLedger;
   assistantAnchorSummary?: string;
   assistantAnchorFingerprint?: string;
   replyAnchorMessageId?: string;

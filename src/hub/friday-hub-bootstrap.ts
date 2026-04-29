@@ -58,7 +58,12 @@ import {
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderProfile, FridayProviderService } from "#providers";
 import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
-import { FridaySkillRegistryImpl, safeParseFridaySkillManifestV2 } from "#skills";
+import {
+  createFridaySkillRepository,
+  FridaySkillRegistryImpl,
+  safeParseFridaySkillManifestV2,
+} from "#skills";
+import type { SkillOrigin, SkillSource } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
@@ -72,6 +77,7 @@ import {
   createLinuxProgramScanner,
   createWin32ProgramScanner,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
+  type FridaySkillInstallTarget,
   type FridaySkillSourceFormat,
 } from "#skills/converter";
 import { createFridaySkillRunStore } from "#ledger";
@@ -818,6 +824,24 @@ async function readResponseTextWithLimit(response: Response, maxBytes: number): 
   return chunks.join("");
 }
 
+function resolveImportedSkillSource(uri?: string): SkillSource {
+  const trimmed = uri?.trim() ?? "";
+  if (/^(git\+)?https?:\/\/[^/]*github\.com\//i.test(trimmed) || /^git@github\.com:/i.test(trimmed) || /\.git(?:[#?]|$)/i.test(trimmed)) {
+    return "git";
+  }
+  return "local";
+}
+
+function resolveImportedSkillOrigin(target: FridaySkillInstallTarget): SkillOrigin {
+  if (target === "workspace") {
+    return "workspace";
+  }
+  if (target === "managed") {
+    return "managed";
+  }
+  return "extra";
+}
+
 // ─── Factory ───
 
 export async function createFridayHub(
@@ -1117,6 +1141,7 @@ export async function createFridayHub(
 
   const converterInstaller = createFridaySkillImportInstaller();
   const converterArchiver = createFridaySkillPackageArchiver();
+  const converterSkillRepo = createFridaySkillRepository();
 
   const converterService = createFridaySkillConverterService({
     registry: converterRegistry,
@@ -1129,6 +1154,23 @@ export async function createFridayHub(
     },
     hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
     supportedApiVersions: ["1"],
+    onSkillImported: async ({ draft, source, target }) => {
+      const manifest = draft.manifest;
+      const persistedAt = nowIso();
+      stateRuntime.sqlite.withWriteTransaction((conn) => {
+        converterSkillRepo.upsertSkillFromMarketplace(conn, {
+          id: manifest.id,
+          name: manifest.name,
+          source: resolveImportedSkillSource(source.uri),
+          origin: resolveImportedSkillOrigin(target),
+          latestVersion: manifest.version,
+          status: "installed",
+          currentManifest: manifest,
+          nowIso: persistedAt,
+        });
+        converterSkillRepo.setInstalledVersion(conn, manifest.id, manifest.version, manifest, persistedAt);
+      });
+    },
     onRegistryRefresh: async () => {
       await registry.refresh();
     },

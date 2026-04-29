@@ -12,6 +12,7 @@ import {
   canRunFridayBundledSystemNodeSkillWithoutGate,
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  getFridayLocalSkillExecutionContext,
   type FridaySkillExecutor,
   type FridaySkillLifecycleService,
   type FridaySkillRegistry,
@@ -389,6 +390,7 @@ export function createFridaySkillRoutes(
       if (registeredSkill) {
         const readiness = evaluateFridaySkillExecutionReadiness({
           manifest: registeredSkill.manifest,
+          ...getFridayLocalSkillExecutionContext(),
         });
         if (!readiness.ready) {
           throw new FridayDomainError(

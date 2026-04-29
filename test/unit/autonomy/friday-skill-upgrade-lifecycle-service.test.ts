@@ -71,4 +71,25 @@ describe("createFridaySkillUpgradeLifecycleService", () => {
     expect(rolledBack.shadowVersionId).toBeUndefined();
     expect(rolledBack.canaryStats?.rollbackCount).toBe(1);
   });
+
+  it("reports missing skills as a structured not-found error", () => {
+    const service = createFridaySkillUpgradeLifecycleService({
+      db,
+      skillRepo: createFridaySkillRepository(),
+      nowIso: () => "2026-04-17T20:30:00.000Z",
+    });
+
+    expect(() =>
+      service.registerShadowVersion({
+        skillId: "missing-skill",
+        shadowVersionId: "2.0.0",
+        runtimeVersion: "f27377c",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "SKILL_NOT_FOUND",
+        httpStatus: 404,
+      }),
+    );
+  });
 });

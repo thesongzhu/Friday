@@ -696,6 +696,66 @@ describe("FridayAgentRuntime", () => {
     expect(capturedPromptContext?.toolRouting?.profile).toBe("trivial");
   });
 
+  it("injects active memory context by default only for private channel chats", async () => {
+    const capturedSystemPrompts: string[] = [];
+    const compactionContextBuilder = vi.fn(() => "ACTIVE MEMORY CONTEXT");
+    const communicationPromptBuilder = vi.fn(() => "PRIVATE PERSONA CONTEXT");
+    const learningContextBuilder = vi.fn(() => ({ preferences: { timezone: "America/Los_Angeles" } }));
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedSystemPrompts.push(params.systemPrompt);
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 10, outputTokens: 1 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "BASE_PROMPT",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      compactionContextBuilder,
+      communicationPromptBuilder,
+      learningContextBuilder,
+    });
+
+    await runtime.executeRun({
+      task: "Create a workflow for release reminders",
+      sessionKey: "channel:feishu:group-1",
+      principalId: "user-1",
+      executionContext: {
+        surface: "channel",
+        channelKind: "feishu",
+        channelChatType: "group",
+        channelControlRoute: "full_agent",
+      },
+    });
+
+    await runtime.executeRun({
+      task: "Create a workflow for release reminders",
+      sessionKey: "channel:feishu:dm-user-1",
+      principalId: "user-1",
+      executionContext: {
+        surface: "channel",
+        channelKind: "feishu",
+        channelChatType: "direct",
+        channelControlRoute: "full_agent",
+      },
+    });
+
+    expect(capturedSystemPrompts[0]).toBe("BASE_PROMPT");
+    expect(capturedSystemPrompts[1]).toContain("ACTIVE MEMORY CONTEXT");
+    expect(capturedSystemPrompts[1]).toContain("PRIVATE PERSONA CONTEXT");
+    expect(compactionContextBuilder).toHaveBeenCalledTimes(1);
+    expect(communicationPromptBuilder).toHaveBeenCalledTimes(1);
+    expect(learningContextBuilder).toHaveBeenCalledTimes(1);
+  });
+
   it("routes code tasks to the file and shell pack without browser or provider schemas", async () => {
     let capturedToolNames: string[] = [];
     let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
@@ -748,6 +808,75 @@ describe("FridayAgentRuntime", () => {
     expect(capturedToolNames).not.toContain("browser");
     expect(capturedToolNames).not.toContain("provider");
     expect(capturedToolNames).not.toContain("desktop");
+  });
+
+  it("routes channel full-agent workflow follow-ups to workflow tools", async () => {
+    let capturedToolNames: string[] = [];
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolNames = params.tools.map((tool) => tool.name).sort();
+        yield { type: "text_delta", text: "我会继续生成 RedBox workflow。" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 160, outputTokens: 8 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "STANDARD_PROMPT";
+      },
+      tools: [
+        createNamedTool("task_status"),
+        createNamedTool("workflow_run"),
+        createNamedTool("workflow_generate"),
+        createNamedTool("cron"),
+        createNamedTool("skills_list"),
+        createNamedTool("skill_run"),
+        createNamedTool("memory_search"),
+        createSuccessfulWebSearchTool(),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
+      conversationContext: {
+        turnKind: "clarification",
+        currentTopicSummary: "RedBox skill 和 workflow 生成",
+        selectedBlocks: [
+          {
+            id: "assistant:msg-40",
+            source: "assistant_anchor",
+            summary: "4. 全部打包成一个 skill，然后做成 workflow。你选哪个？",
+            score: 100,
+            reason: "Latest assistant answer is preferred because the user replied with an option choice.",
+          },
+        ],
+      },
+      executionContext: {
+        channelKind: "dm",
+        channelControlRoute: "full_agent",
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(capturedPromptContext?.toolRouting?.profile).toBe("workflow");
+    expect(capturedToolNames).toEqual(expect.arrayContaining([
+      "cron",
+      "skill_run",
+      "skills_list",
+      "task_status",
+      "workflow_generate",
+      "workflow_run",
+    ]));
+    expect(capturedToolNames).not.toContain("memory_search");
   });
 
   it("loads a deferred tool pack on a second LLM turn when request_tool_pack is called", async () => {
@@ -996,6 +1125,77 @@ describe("FridayAgentRuntime", () => {
       expect.objectContaining({
         role: "user",
         content: expect.stringContaining("without carrying forward any concrete detail"),
+      }),
+    );
+  });
+
+  it("retries when an anchored clarification restarts with a generic Friday introduction", async () => {
+    const capturedCalls: FridayAgentMessage[][] = [];
+    let callIndex = 0;
+
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedCalls.push(params.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string"
+            ? message.content
+            : JSON.parse(JSON.stringify(message.content)),
+        })));
+        if (callIndex === 0) {
+          callIndex++;
+          yield { type: "text_delta", text: "我是 Friday，一个开源 AI 自动化 agent。我可以帮你执行多步骤任务、搜索网络、创建工作流。想让我做什么？" };
+          yield { type: "message_end", stopReason: "end_turn", inputTokens: 7, outputTokens: 18 };
+          return;
+        }
+        yield { type: "text_delta", text: "我会按第 4 项继续：把 RedBox 打包成 Friday skill，并生成可调整后直接运行的 workflow。" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 20 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
+      taskPrompt: [
+        "The user is replying to your clarification request: 4，然后做成一个workflow，我打开和调整后可以直接去自动化做任务",
+        "Current topic: RedBox skill 和 workflow 生成",
+        "Relevant anchors:",
+        "- [assistant_anchor] 4. 全部打包成一个 skill，然后做成 workflow。你选哪个？",
+        "Use this answer to continue the current topic.",
+      ].join("\n"),
+      conversationContext: {
+        turnKind: "clarification",
+        currentTopicSummary: "RedBox skill 和 workflow 生成",
+        selectedBlocks: [
+          {
+            id: "assistant:msg-40",
+            source: "assistant_anchor",
+            summary: "4. 全部打包成一个 skill，然后做成 workflow。你选哪个？",
+            score: 100,
+            reason: "Latest assistant answer is preferred because the user replied with an option choice.",
+          },
+        ],
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("RedBox");
+    expect(result.response).toContain("workflow");
+    expect(capturedCalls).toHaveLength(2);
+    expect(capturedCalls[1]![capturedCalls[1]!.length - 1]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("generic self-introduction"),
       }),
     );
   });
@@ -2693,6 +2893,64 @@ describe("FridayAgentRuntime", () => {
     expect(result.toolCallCount).toBe(1);
     expect(memorySearchSpy).toHaveBeenCalledTimes(1);
     expect(result.response).toBe("Captain Friday");
+  });
+
+  it("does not overwrite local conversation recall answers with unrelated memory fallback results", async () => {
+    const memorySearchSpy = vi.fn();
+    const unrelatedMemorySearchTool: FridayAgentToolDefinition = {
+      name: "memory_search",
+      description: "Mock unrelated memory search tool",
+      parameters: {
+        properties: {
+          query: { type: "string" },
+          namespace: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["query"],
+      },
+      async execute(args) {
+        memorySearchSpy(args);
+        return {
+          content: JSON.stringify([
+            {
+              content: "涉及敏感操作时，用户可通过审批卡片操作或回复“批准 <编号>”/“拒绝 <编号>”。",
+              score: 1.15,
+              metadata: {
+                id: "approval-memory",
+                namespace: "tenant.default.channel.feishu.user.chat.shared",
+                source: "session:channel:feishu:chat",
+              },
+            },
+          ]),
+        };
+      },
+    };
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "青杉-6184" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 3 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [unrelatedMemorySearchTool],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "刚刚那个暗号是什么？只回复暗号。",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(memorySearchSpy).not.toHaveBeenCalled();
+    expect(result.response).toBe("青杉-6184");
   });
 
   it("fills missing memory-recall fields with field-specific fallback searches before answering", async () => {

@@ -13,7 +13,7 @@ import { createFridayOpenAiGptActionConverter } from "#skills/converter";
 import { createFridayCodeRepoConverter } from "#skills/converter";
 import { createFridayUndocumentedApiConverter } from "#skills/converter";
 import { createFridayRecordingConverter } from "#skills/converter";
-import type { FridaySkillConverterContext } from "#skills/converter";
+import type { FridaySkillConverterContext, FridaySkillImportedEvent } from "#skills/converter";
 import type { SkillManifestV2 } from "#skills";
 
 const NOW_ISO = "2026-02-17T12:00:00.000Z";
@@ -82,7 +82,10 @@ describe("FridaySkillConverterService", () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  function createService(options: { onRegistryRefresh?: () => Promise<void> } = {}) {
+  function createService(options: {
+    onRegistryRefresh?: () => Promise<void>;
+    onSkillImported?: (event: FridaySkillImportedEvent) => Promise<void> | void;
+  } = {}) {
     const registry = createFridaySkillConverterRegistry();
     registry.register(createNativeSkillPackageConverter());
     registry.register(createClawdbotSkillMdConverter());
@@ -100,6 +103,7 @@ describe("FridaySkillConverterService", () => {
       installer,
       archiver,
       context: ctx,
+      onSkillImported: options.onSkillImported,
       onRegistryRefresh: options.onRegistryRefresh,
     });
   }
@@ -303,6 +307,78 @@ echo "imported"
       expect(result.imports[0]!.skillId).toBe("import-test");
       expect(result.registryRefreshed).toBe(true);
       expect(refreshMock).toHaveBeenCalledOnce();
+    });
+
+    it("notifies lifecycle persistence after a successful import", async () => {
+      const skillDir = join(testDir, "lifecycle-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "SKILL.md"), `---
+name: lifecycle-import
+skillKey: lifecycle-import
+---
+
+\`\`\`bash
+echo lifecycle
+\`\`\`
+`);
+
+      const importedMock = vi.fn().mockResolvedValue(undefined);
+      const service = createService({ onSkillImported: importedMock });
+
+      const result = await service.import({
+        source: { uri: skillDir },
+        target: "managed",
+      });
+
+      expect(result.imports[0]!.installed).toBe(true);
+      expect(importedMock).toHaveBeenCalledOnce();
+      expect(importedMock.mock.calls[0]![0]).toMatchObject({
+        installResult: {
+          skillId: "lifecycle-import",
+          installed: true,
+        },
+        source: { uri: skillDir },
+        target: "managed",
+        converterId: "clawdbot-skill-md",
+        detectedFormat: "clawdbot-skill-md",
+      });
+      expect(importedMock.mock.calls[0]![0].draft.manifest.id).toBe("lifecycle-import");
+    });
+
+    it("does not notify lifecycle persistence for dry runs or failed installs", async () => {
+      const skillDir = join(testDir, "dry-run-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "SKILL.md"), `---
+name: dry-run-import
+skillKey: dry-run-import
+---
+
+\`\`\`bash
+echo dry-run
+\`\`\`
+`);
+
+      const importedMock = vi.fn().mockResolvedValue(undefined);
+      const service = createService({ onSkillImported: importedMock });
+
+      const dryRunResult = await service.import({
+        source: { uri: skillDir },
+        dryRun: true,
+      });
+      expect(dryRunResult.imports[0]!.installed).toBe(false);
+
+      await service.import({
+        source: { uri: skillDir },
+        target: "managed",
+      });
+      const collisionResult = await service.import({
+        source: { uri: skillDir },
+        target: "managed",
+        replace: false,
+      });
+
+      expect(collisionResult.imports[0]!.installed).toBe(false);
+      expect(importedMock).toHaveBeenCalledOnce();
     });
 
     it("does not refresh registry when refreshRegistry is false", async () => {

@@ -275,7 +275,7 @@ async function buildSessionLexicalCandidates(params: {
     ].join(" ").toLowerCase();
     const overlapCount = queryTokens.filter((token) => haystack.includes(token)).length;
     const fromCurrentSession = itemBelongsToSession(item, params.sessionId);
-    if (!fromCurrentSession && overlapCount === 0) {
+    if (overlapCount === 0) {
       continue;
     }
     const overlapScore = overlapCount / queryTokens.length;

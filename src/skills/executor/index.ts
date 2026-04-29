@@ -35,7 +35,10 @@ export type {
   FridaySkillExecutionReadiness,
   FridaySkillExecutionReadinessRequirements,
 } from "./friday-skill-execution-readiness.js";
-export { evaluateFridaySkillExecutionReadiness } from "./friday-skill-execution-readiness.js";
+export {
+  evaluateFridaySkillExecutionReadiness,
+  getFridayLocalSkillExecutionContext,
+} from "./friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./friday-skill-executor.js";
 
 // ─── Desktop Helper (C-002) ───

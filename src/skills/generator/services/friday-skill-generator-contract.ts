@@ -97,6 +97,10 @@ function extractRequiredOutputMarkers(texts: readonly string[]): string[] {
     markers.push(...extractAllCaptures(text, /output the exact string\s+"([^"]+)"/gi));
     markers.push(...extractAllCaptures(text, /include the exact marker\s+"([^"]+)"/gi));
     markers.push(...extractAllCaptures(text, /must include the exact marker\s+"([^"]+)"/gi));
+    markers.push(...extractAllCaptures(text, /required output marker\s+([A-Z0-9][A-Z0-9_:-]*(?:\.[A-Z0-9_:-]+)*)/g));
+    markers.push(...extractAllCaptures(text, /output marker\s+([A-Z0-9][A-Z0-9_:-]*(?:\.[A-Z0-9_:-]+)*)/g));
+    markers.push(...extractAllCaptures(text, /marker\s+(?:is|exactly)\s+([A-Z0-9][A-Z0-9_:-]*(?:\.[A-Z0-9_:-]+)*)/g));
+    markers.push(...extractAllCaptures(text, /"marker"\s*:\s*"([^"]+)"/g));
     markers.push(...extractAllCaptures(text, /say exactly\s+"([^"]+)"/gi));
     markers.push(...extractAllCaptures(text, /reply with exactly this text and nothing else:\s*"([^"]+)"/gi));
     markers.push(...extractAllCaptures(text, /reply with exactly this json and nothing else:\s*(\{[\s\S]+?\})/gi));

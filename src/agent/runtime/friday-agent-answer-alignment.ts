@@ -7,6 +7,10 @@ const CHINESE_STATUS_TERMS = /(状态|进度|运行|等待|完成|失败|阻塞|
 const GENERIC_CONTEXT_REQUEST_TERMS =
   /\b(need more context|need more information|cannot determine what you mean|what do you mean|which one|that could refer to|please provide more context|referent is unclear|not clear what you refer to)\b/i;
 const CHINESE_GENERIC_CONTEXT_REQUEST_TERMS = /(需要更多上下文|无法确定您具体指的内容|请提供更多上下文|请说明具体问题|无法判断您指的是什么|指代可能不太明确|指代不明确|您具体说明)/;
+const GENERIC_AGENT_SELF_INTRO_TERMS =
+  /\b(?:i am|i'm)\s+(?:friday|an?\s+ai|an?\s+assistant|an?\s+automation agent)\b|\bhow can i help\b|\bwhat would you like me to do\b/i;
+const CHINESE_GENERIC_AGENT_SELF_INTRO_TERMS =
+  /(?:^|[。！？!?]\s*)(?:我是|您好，我是|你好，我是)\s*(?:Friday|一个?AI|一名?AI|人工智能|自动化\s*agent)|(?:我可以帮你|我能帮你).{0,40}(?:做什么|执行|搜索|安装|创建)|(?:想让我做什么|需要我做什么)/i;
 const GENERIC_TROUBLESHOOTING_TERMS =
   /\b(check|internet|network|permission|permissions|settings|reconfigure|update|common issues|common issue|try again|restart|troubleshoot|troubleshooting)\b/i;
 const CHINESE_GENERIC_TROUBLESHOOTING_TERMS =
@@ -289,6 +293,11 @@ function responseClaimsPositiveActionState(responseText: string): boolean {
   );
 }
 
+function isGenericAgentRestartResponse(responseText: string): boolean {
+  return GENERIC_AGENT_SELF_INTRO_TERMS.test(responseText)
+    || CHINESE_GENERIC_AGENT_SELF_INTRO_TERMS.test(responseText);
+}
+
 export function evaluateFridayAnswerAlignment(params: {
   task: string;
   responseText: string;
@@ -396,6 +405,24 @@ export function evaluateFridayAnswerAlignment(params: {
         "Answer the referenced point directly. If the user is asking about a prior statement, first explain what that referenced statement means.",
         "If the underlying root cause is unknown, say that the root cause is unknown after restating the anchored fact.",
         "Do not ask the user what 'this/that/here' refers to unless the selected anchor itself is ambiguous.",
+      ].join("\n"),
+    };
+  }
+
+  if (
+    hasAssistantFactAnchor
+    && (turnKind === "follow_up" || turnKind === "clarification" || turnKind === "continue_active_task")
+    && isGenericAgentRestartResponse(responseText)
+  ) {
+    return {
+      retryPrompt: [
+        "You restarted with a generic self-introduction even though this turn is anchored to an existing conversation.",
+        `Current turn: ${params.task}`,
+        `Reply/assistant anchor(s):\n${anchorBlocks
+          .map((block) => `- ${block.summary}`)
+          .join("\n")}`,
+        "Do not introduce Friday or ask what the user wants in general.",
+        "Continue the anchored task directly, preserving the selected option or follow-up intent.",
       ].join("\n"),
     };
   }
