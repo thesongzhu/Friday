@@ -16,6 +16,7 @@ function makeMessage(input: {
   role: "user" | "assistant";
   contentText: string;
   metadata?: Record<string, unknown>;
+  toolCalls?: unknown[];
 }): FridaySessionMessageRecord {
   return {
     id: `msg-${String(input.sequence)}`,
@@ -26,6 +27,7 @@ function makeMessage(input: {
     content: input.contentText,
     contentText: input.contentText,
     tokenCount: 0,
+    toolCalls: input.toolCalls,
     metadata: input.metadata ?? {},
     memoryExtractStatus: "skipped",
     occurredAt: "2026-03-15T10:00:00.000Z",
@@ -97,6 +99,83 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.turnKind).toBe("new_topic");
     expect(prepared.historyMessages).toEqual([]);
     expect(prepared.taskPrompt).toContain("Current question: How do I bake sourdough bread?");
+  });
+
+  it("anchors recent-result follow-ups to the immediately previous timed-out task and partial tool evidence", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "刚刚找到了什么？",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "去华人168网站上找 6264098976 这个号码相关的所有信息",
+        currentTopicStartSequence: 3,
+        assistantAnchorSummary: "Agent run timed out",
+      },
+      currentUserSequence: 5,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "把 RedBox 做成一个 Friday skill",
+        }),
+        makeMessage({
+          sequence: 2,
+          role: "assistant",
+          contentText: "我查看了 RedBox，并准备生成 skill。",
+        }),
+        makeMessage({
+          sequence: 3,
+          role: "user",
+          contentText: "去华人168网站上去找6264098976这个号码相关的所有信息",
+        }),
+        makeMessage({
+          sequence: 4,
+          role: "assistant",
+          contentText: "Agent run timed out",
+          toolCalls: [
+            {
+              toolName: "web_fetch",
+              args: { url: "https://168worker.com/search/6264098976" },
+              result: {
+                content: "HTTP 200 OK\nExtracted text: 6264098976，美国华人168找工作，招聘，美国168，美国找工作网",
+              },
+            },
+            {
+              toolName: "web_fetch",
+              args: { url: "https://www.us168168.com/" },
+              result: { content: "HTTP 403 Forbidden\nAttention Required! | Cloudflare" },
+            },
+          ],
+        }),
+      ],
+    });
+
+    expect(prepared.turnKind).toBe("follow_up");
+    expect(prepared.selectedBlocks[0]?.id).toContain("recent-result:");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("6264098976");
+    expect(prepared.selectedBlocks[0]?.summary).toContain("168worker.com/search/6264098976");
+    expect(prepared.selectedBlocks[0]?.summary).not.toContain("RedBox");
+    expect(prepared.taskPrompt).toContain("immediately previous task");
+    expect(prepared.taskPrompt).toContain("Do not switch to durable memory");
+    expect(prepared.historyMessages).toEqual([
+      { role: "user", content: "去华人168网站上去找6264098976这个号码相关的所有信息" },
+      { role: "assistant", content: "Agent run timed out" },
+    ]);
+  });
+
+  it("treats cancellation-before-result questions as recent-result follow-ups", () => {
+    expect(classifyFridayConversationTurn({
+      task: "取消前找到了什么？",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "搜索华人168上的号码信息",
+        assistantAnchorSummary: "请求已取消：Agent run timed out",
+      },
+      historyRecords: [
+        makeMessage({ sequence: 1, role: "user", contentText: "搜索华人168上的号码信息" }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "请求已取消：Agent run timed out" }),
+      ],
+      currentUserSequence: 3,
+    })).toBe("follow_up");
   });
 
   it("treats explicit literal response requests as new turns instead of stale follow-ups", () => {

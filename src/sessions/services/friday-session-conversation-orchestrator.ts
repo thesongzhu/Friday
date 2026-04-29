@@ -24,7 +24,7 @@ const MAX_BLOCK_SUMMARY_CHARS = 240;
 const MAX_TASK_LEDGER_ENTRIES = 8;
 const FOLLOW_UP_HINTS =
   /\b(that|it|this|those|these|also|and|then|what about|more about|continue|same|again|summari[sz]e|summary|recap|recommendation|recommendations)\b/i;
-const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|这里|这儿|继续|还有|然后|刚才|上一个|同一个|总结|概括|再说|细讲)/;
+const CHINESE_FOLLOW_UP_HINTS = /(这个|那个|这里|这儿|继续|还有|然后|刚刚|刚才|方才|上一个|同一个|总结|概括|再说|细讲)/;
 const DEICTIC_FOLLOW_UP_HINTS = /\b(this one|that one|same one|same issue|that issue|this issue|that part|this part|here|there)\b/i;
 const ADVISORY_CONTINUATION_HINTS = /\b(prefer|preference|recommend|recommendation|recommendations|should i|best)\b/i;
 const TOPIC_SWITCH_HINTS =
@@ -139,7 +139,7 @@ function hasDeicticReference(task: string): boolean {
   const normalized = normalizeText(task).toLowerCase();
   return (
     /\b(this|that|it|these|those|same|previous|last|above|earlier)\b/i.test(normalized)
-    || /(这个|那个|这里|这儿|它|这张|那张|刚才|上一个|前面|上一条|同一个)/.test(normalized)
+    || /(这个|那个|这里|这儿|它|这张|那张|刚刚|刚才|方才|上一个|前面|上一条|同一个)/.test(normalized)
   );
 }
 
@@ -172,6 +172,22 @@ function isCrossTopicRecapRequest(task: string): boolean {
     /\b(all recommendations|overall recommendations|recommendations|recommendation|pull together|combine|roll up|wrap up)\b/i.test(normalized)
     || /(全部建议|整体建议|总的建议|汇总)/.test(normalized)
   );
+}
+
+function isRecentResultFollowUpTask(task: string): boolean {
+  const normalized = normalizeText(task);
+  if (normalized.length === 0 || normalized.length > 160) {
+    return false;
+  }
+  const hasRecentReference =
+    /\b(?:just|last|previous|earlier|before (?:it )?(?:cancelled|canceled|aborted|timed out)|before timeout)\b/i.test(normalized)
+    || /(?:刚刚|刚才|方才|上一个|上一条|取消前|中止前|终止前|超时前)/u.test(normalized);
+  const asksForResult =
+    /\b(?:what|which).{0,40}\b(?:found|find|discovered|saw|result|results|evidence|got)\b/i.test(normalized)
+    || /\b(?:found|find|discovered|saw|result|results|evidence|got).{0,40}\b(?:what|which)\b/i.test(normalized)
+    || /(?:找到|找到了|发现|查到|搜到|搜索到|看到|结果|线索|证据).{0,24}(?:什么|啥|哪些|多少|吗|了)?/u.test(normalized)
+    || /(?:什么|啥|哪些).{0,24}(?:找到|发现|查到|搜到|搜索到|看到|结果|线索|证据)/u.test(normalized);
+  return hasRecentReference && asksForResult;
 }
 
 function isShortOperationalTroubleshootingFollowUpTask(task: string): boolean {
@@ -474,6 +490,85 @@ function summarizeTopic(text: string): string {
   return `${normalized.slice(0, MAX_TOPIC_SUMMARY_CHARS - 1)}…`;
 }
 
+function readStringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim().length > 0
+    ? candidate.trim()
+    : undefined;
+}
+
+function summarizeToolResultContent(content: string): string {
+  const normalized = normalizeText(content)
+    .replace(/\{[\s\S]*$/u, "")
+    .replace(/\[truncated:[\s\S]*$/u, "")
+    .trim();
+  if (/DNS resolution failed/i.test(normalized)) {
+    return "DNS resolution failed";
+  }
+  if (/HTTP 403 Forbidden/i.test(normalized) || /Cloudflare/i.test(normalized)) {
+    return "HTTP 403 / Cloudflare blocked";
+  }
+  if (/Google Search|google\.com\/sorry|unusual traffic/i.test(normalized)) {
+    return "Google search was blocked by anti-abuse page";
+  }
+  if (/HTTP 404/i.test(normalized) || /没有找到/u.test(normalized)) {
+    return "404 / no page found";
+  }
+  const extracted = normalized.match(/Extracted text:\s*([\s\S]+)/i)?.[1]?.trim() ?? normalized;
+  return clampSummary(extracted, 180);
+}
+
+function summarizeSessionToolCalls(toolCalls?: unknown[]): string | undefined {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return undefined;
+  }
+  const lines: string[] = [];
+  for (const call of toolCalls) {
+    if (!call || typeof call !== "object" || Array.isArray(call)) {
+      continue;
+    }
+    const record = call as Record<string, unknown>;
+    const toolName = readStringField(record, "toolName") ?? readStringField(record, "name") ?? "tool";
+    if (toolName === "request_tool_pack") {
+      continue;
+    }
+    const args = record.args;
+    const url = readStringField(args, "url");
+    const query = readStringField(args, "query") ?? readStringField(args, "q");
+    const result = record.result;
+    const resultContent = typeof result === "string"
+      ? result
+      : readStringField(result, "content")
+        ?? readStringField(result, "text")
+        ?? "";
+    if (resultContent.trim().length === 0) {
+      continue;
+    }
+    const target = url ?? query;
+    lines.push(
+      `${toolName}${target ? ` ${target}` : ""}: ${summarizeToolResultContent(resultContent)}`,
+    );
+    if (lines.length >= 8) {
+      break;
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function buildRecentResultAnchorSummary(records: readonly FridaySessionMessageRecord[]): string {
+  const latestUser = [...records].reverse().find((record) => record.role === "user");
+  const latestAssistant = [...records].reverse().find((record) => record.role === "assistant");
+  const toolSummary = latestAssistant ? summarizeSessionToolCalls(latestAssistant.toolCalls) : undefined;
+  return [
+    latestUser ? `Immediate previous user task: ${latestUser.contentText}` : undefined,
+    latestAssistant ? `Immediate previous assistant terminal reply: ${latestAssistant.contentText}` : undefined,
+    toolSummary ? `Partial tool evidence before the terminal reply:\n${toolSummary}` : undefined,
+  ].filter((value): value is string => Boolean(value)).join("\n");
+}
+
 function tokenize(text: string): string[] {
   const expandToken = (token: string): string[] => {
     if (/^[\u4e00-\u9fff]+$/u.test(token)) {
@@ -603,7 +698,8 @@ export function classifyFridayConversationTurn(input: {
     || DEICTIC_FOLLOW_UP_HINTS.test(taskLower);
   const literalResponseInstruction = isExplicitLiteralResponseInstruction(task);
   const explicitTopicSwitch = isExplicitTopicSwitchTask(task);
-  const recallRequest = isRecallRequestTask(task);
+  const recentResultFollowUp = isRecentResultFollowUpTask(task);
+  const recallRequest = !recentResultFollowUp && isRecallRequestTask(task);
   const requestedRecallFields = recallRequest ? recallFieldTokens(task) : new Set<string>();
   const hasRecallableAnchor = recallRequest && (
     recallableFactMatchesFields(focusSummary, requestedRecallFields)
@@ -624,6 +720,9 @@ export function classifyFridayConversationTurn(input: {
     return "continue_active_task";
   }
   if (hasReplyAnchor || (hasUnresolvedReplyAnchor && hasAssistantAnchor)) {
+    return "follow_up";
+  }
+  if (recentResultFollowUp && (latestUser || latestAssistant || hasFocus)) {
     return "follow_up";
   }
   if (hasRecallableAnchor) {
@@ -1241,7 +1340,8 @@ function buildConversationBlockSelection(input: {
   const taskHasSpecificFollowUpTokens = hasSpecificFollowUpTokens(input.task);
   const shortContextualFollowUp = isShortContextualFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
   const shortAssistantAnchorFollowUp = isShortAssistantAnchorFollowUpTask(input.task) && !taskHasSpecificFollowUpTokens;
-  const recallRequest = input.turnKind !== "status_check" && isRecallRequestTask(input.task);
+  const recentResultFollowUp = isRecentResultFollowUpTask(input.task);
+  const recallRequest = input.turnKind !== "status_check" && !recentResultFollowUp && isRecallRequestTask(input.task);
   const requestedRecallFields = recallRequest ? recallFieldTokens(input.task) : new Set<string>();
   const focusState = input.focusState ?? null;
   const records = input.historyRecords;
@@ -1262,6 +1362,7 @@ function buildConversationBlockSelection(input: {
   const crossTopicRecapRequest = isCrossTopicRecapRequest(input.task);
   const bareNudgeTask = isBareNudgeTask(input.task);
   const latestAssistant = findLatestRecord(records, "assistant");
+  const latestUser = findLatestRecord(records, "user");
   const shortChoiceReplyAnswersLatestAssistant = Boolean(
     isChoiceReplyTask(input.task)
     && latestAssistant
@@ -1288,6 +1389,34 @@ function buildConversationBlockSelection(input: {
       reason: "Explicit reply target matched a prior session message.",
       records: buildAnchorWindow(records, replyAnchor),
     }));
+  }
+
+  if (recentResultFollowUp && (latestUser || latestAssistant)) {
+    const latestAssistantIndex = latestAssistant ? findRecordIndex(records, latestAssistant.id) : -1;
+    const previousUserForAssistant = latestAssistantIndex >= 0
+      ? [...records.slice(0, latestAssistantIndex)].reverse().find((record) => record.role === "user")
+      : undefined;
+    const anchorRecords = [
+      previousUserForAssistant ?? latestUser,
+      latestAssistant,
+    ].filter((record): record is FridaySessionMessageRecord => Boolean(record));
+    const messageIds = anchorRecords.map((record) => record.id);
+    registerCandidate({
+      block: {
+        id: `recent-result:${messageIds.join(":")}`,
+        source: "assistant_anchor",
+        summary: buildRecentResultAnchorSummary(anchorRecords),
+        score: 220,
+        reason: "Current turn asks what was found in the immediately previous task, so the latest task/result pair is the primary anchor.",
+        messageIds,
+        sequenceStart: anchorRecords[0]?.sequence,
+        sequenceEnd: anchorRecords[anchorRecords.length - 1]?.sequence,
+      },
+      messages: anchorRecords
+        .map(mapSessionMessageToAgentMessage)
+        .filter((message): message is FridayAgentMessage => message !== null),
+      fallbackOnly: false,
+    });
   }
 
   if (latestAssistant) {
@@ -1339,7 +1468,6 @@ function buildConversationBlockSelection(input: {
     }
   }
 
-  const latestUser = findLatestRecord(records, "user");
   if (
     latestUser
     && !(recallRequest && (isExplicitTopicSwitchTask(latestUser.contentText) || isRecallQuestionRecord(latestUser.contentText)))
@@ -1812,6 +1940,7 @@ function buildTaskPrompt(input: {
   const hasRecentUserAnchor = input.selectedBlocks.some((block) => block.source === "recent_user");
   const hasHistoryOnlySelection = input.selectedBlocks.length > 0
     && input.selectedBlocks.every((block) => block.source.endsWith("_block"));
+  const hasRecentResultAnchor = input.selectedBlocks.some((block) => block.id.startsWith("recent-result:"));
   const explicitTopicSwitch = isExplicitTopicSwitchTask(task);
   const literalFormatInstruction = isExplicitLiteralResponseInstruction(task);
 
@@ -1923,6 +2052,18 @@ function buildTaskPrompt(input: {
       `Latest user turn: ${task}`,
       "Answer the immediately previous user message directly.",
       "Do not switch back to an older topic unless the previous user message explicitly referenced it.",
+    ].filter((value): value is string => Boolean(value)).join("\n");
+  }
+
+  if ((input.turnKind === "follow_up" || input.turnKind === "continue_active_task") && hasRecentResultAnchor) {
+    return [
+      "The user is asking what was found in the immediately previous task.",
+      selectedBlockSummary ? `Relevant anchors:\n${selectedBlockSummary}` : undefined,
+      `Latest user turn: ${task}`,
+      "Answer from the immediately previous task/result pair and its partial tool evidence.",
+      "If the previous task timed out or was cancelled, say that it did not finish, then summarize only the evidence already captured before timeout/cancellation.",
+      "Do not switch to durable memory, older topic blocks, or unrelated prior tasks unless the immediate previous task/result pair is empty.",
+      "Do not restart or retry the original task unless the user explicitly asks for a new action.",
     ].filter((value): value is string => Boolean(value)).join("\n");
   }
 
