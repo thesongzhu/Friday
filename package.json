@@ -114,6 +114,7 @@
     "test:e2e:closure:local": "node scripts/e2e/run-friday-closure.mjs --local-only",
     "test:e2e:closure:all": "node scripts/e2e/run-friday-closure.mjs --all",
     "test:e2e:closure:cloud": "node scripts/e2e/run-friday-closure.mjs --cloud-only",
+    "test:e2e:external-closure": "node scripts/e2e/run-friday-external-closure.mjs",
     "test:e2e:voice:live": "FRIDAY_E2E_LIVE_VOICE=1 vitest run test/e2e/live/friday-execution-voice-live.e2e.test.ts",
     "verify:repo-ready": "npm run release:verify:repo",
     "verify:product-local": "npm run test:e2e:closure",
