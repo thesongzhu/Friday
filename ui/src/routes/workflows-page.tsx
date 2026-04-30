@@ -540,6 +540,12 @@ export function WorkflowsPage() {
               </StatusPill>
               <Link
                 className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
+                to="/workflows/generator"
+              >
+                {locale === "zh" ? "生成草案" : "Generate draft"}
+              </Link>
+              <Link
+                className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-3 py-1.5 text-xs text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
                 to="/workflows/builder"
               >
                 {locale === "zh" ? "打开编辑器" : "Open builder"}
