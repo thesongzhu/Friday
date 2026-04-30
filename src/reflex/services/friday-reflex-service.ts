@@ -6,7 +6,7 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 
 import type { FridayUixUserPreferenceRepository } from "../../uix/persistence/friday-uix-user-preference-repository.js";
-import type { JsonValue, FridayUserPreferenceCategory } from "../../uix/model/friday-uix.types.js";
+import type { FridayUserPreferenceCategory, JsonValue } from "../../uix/model/friday-uix.types.js";
 import type {
   FridayReflexCandidate,
   FridayReflexCandidateInput,
@@ -111,6 +111,11 @@ export interface FridayReflexService {
     value: JsonValue;
     sourceSurface?: FridayReflexSurface;
   }): FridayPreferenceWriteResult;
+  revokePreference(input: {
+    userId: string;
+    preferenceId: string;
+    sourceSurface?: FridayReflexSurface;
+  }): FridayPreferenceRevokeResult;
   listPreferences(userId: string): FridayPreferenceWriteResult["preference"][];
   processRunCompletion(input: FridayReflexRunCompletionInput): Promise<FridayReflexCandidate[]>;
   curateCandidates(input?: { userId?: string }): FridayReflexCandidate[];
@@ -129,6 +134,11 @@ export interface FridayPreferenceWriteResult {
     updatedAt: string;
   };
   skippedBecauseExplicit?: boolean;
+}
+
+export interface FridayPreferenceRevokeResult {
+  revoked: true;
+  preference: FridayPreferenceWriteResult["preference"];
 }
 
 export interface CreateFridayReflexServiceDeps {
@@ -263,6 +273,18 @@ function buildPreferenceEvent(input: {
       context: `Preference set through Friday Reflex: ${input.category}/${input.key}`,
     },
   };
+}
+
+function normalizeReflexTaskSignature(task: string | undefined, toolSequence: string[]): string {
+  const normalizedTask = (task ?? "unknown")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+  return JSON.stringify({
+    task: normalizedTask,
+    tools: toolSequence.map((tool) => tool.toLowerCase().trim()).filter(Boolean),
+  });
 }
 
 export function createFridayReflexService(
@@ -940,6 +962,48 @@ export function createFridayReflexService(
       });
     },
 
+    revokePreference(input) {
+      assertPrincipal(input.userId);
+      const now = deps.nowIso();
+      const preference = deps.db.withWriteTransaction((db) => {
+        const existing = deps.preferenceRepo.getById(db, {
+          principalId: input.userId,
+          preferenceId: input.preferenceId,
+        });
+        if (!existing) {
+          throw new FridayDomainError(
+            "REFLEX_PREFERENCE_NOT_FOUND",
+            `Preference '${input.preferenceId}' was not found.`,
+            { httpStatus: 404 },
+          );
+        }
+        const deleted = deps.preferenceRepo.deleteById(db, {
+          principalId: input.userId,
+          preferenceId: input.preferenceId,
+        });
+        if (!deleted) {
+          throw new FridayDomainError(
+            "REFLEX_PREFERENCE_NOT_FOUND",
+            `Preference '${input.preferenceId}' was not found.`,
+            { httpStatus: 404 },
+          );
+        }
+        return existing;
+      });
+      emitLearning([
+        buildPreferenceEvent({
+          eventId: deps.idGenerator(),
+          ts: now,
+          userId: input.userId,
+          category: preference.category,
+          key: preference.key,
+          value: null,
+          sourceSurface: input.sourceSurface ?? "review_center",
+        }),
+      ]);
+      return { revoked: true, preference };
+    },
+
     listPreferences(userId) {
       assertPrincipal(userId);
       return deps.db.withReadConnection((db) =>
@@ -951,6 +1015,13 @@ export function createFridayReflexService(
       assertPrincipal(input.userId);
       const created: FridayReflexCandidate[] = [];
       const toolSequence = input.toolSequence ?? [];
+      const reflexSignature = normalizeReflexTaskSignature(input.task, toolSequence);
+      const hasPriorReusableSuccess = toolSequence.length >= 2 && deps.db.withReadConnection((db) =>
+        deps.candidateRepo.list(db, {
+          userId: input.userId,
+          kind: "recipe",
+          limit: 200,
+        }).some((candidate) => candidate.evidence.reflexSignature === reflexSignature));
       if (input.outcome === "success" && toolSequence.length >= 2) {
         created.push(this.createCandidate({
           userId: input.userId,
@@ -972,6 +1043,7 @@ export function createFridayReflexService(
             ].join("\n"),
           },
           evidence: {
+            reflexSignature,
             toolSequence,
             artifacts: input.artifacts ?? {},
             feedback: input.feedback ?? {},
@@ -979,6 +1051,44 @@ export function createFridayReflexService(
           confidence: 0.72,
           riskTier: 1,
         }));
+        if (hasPriorReusableSuccess) {
+          const generatedKind: FridayReflexCandidateKind = toolSequence.length >= 3 ? "workflow" : "skill";
+          const generated = this.createCandidate({
+            userId: input.userId,
+            kind: generatedKind,
+            origin: "post_run",
+            sourceRunId: input.runId,
+            sessionKey: input.sessionKey,
+            channelKind: input.channelKind,
+            channelUserId: input.channelUserId,
+            title: input.task
+              ? `Draft ${generatedKind}: ${input.task.slice(0, 80)}`
+              : `Draft ${generatedKind} from repeated success`,
+            summary: input.task
+              ? `Friday saw this task pattern succeed repeatedly and should test a ${generatedKind} draft before any approval.`
+              : `Friday saw the same tool pattern succeed repeatedly and should test a ${generatedKind} draft before any approval.`,
+            payload: {
+              goal: input.task ?? `Automate repeated tool sequence: ${toolSequence.join(" -> ")}`,
+              sourceRecipeSignature: reflexSignature,
+              toolSequence,
+              approvalBoundary: "draft_only_until_user_approval",
+            },
+            evidence: {
+              reflexSignature,
+              repeatedSuccessDetectedAt: deps.nowIso(),
+              priorRecipeCandidate: true,
+              toolSequence,
+              artifacts: input.artifacts ?? {},
+              feedback: input.feedback ?? {},
+            },
+            confidence: 0.78,
+            riskTier: generatedKind === "workflow" ? 3 : 2,
+          });
+          created.push(await this.testCandidate({
+            userId: input.userId,
+            candidateId: generated.id,
+          }));
+        }
       }
       if (input.outcome === "failure" && (input.toolFailures?.length ?? 0) > 0) {
         const failure = input.toolFailures![0]!;

@@ -28,7 +28,12 @@ PACKAGE_DIR="${REPO_DIR}/apps/macos/FridayCompanion"
 INFO_TEMPLATE="${PACKAGE_DIR}/Info.plist"
 ENTITLEMENTS="${PACKAGE_DIR}/FridayCompanion.entitlements"
 BUILD_CONFIGURATION="${FRIDAY_SYSTEM_COMPANION_BUILD_CONFIGURATION:-release}"
-DIST_DIR="${FRIDAY_SYSTEM_COMPANION_DIST_DIR:-${REPO_DIR}/dist/macos}"
+if [[ -n "${FRIDAY_SYSTEM_COMPANION_DIST_DIR:-}" ]]; then
+  DIST_DIR="${FRIDAY_SYSTEM_COMPANION_DIST_DIR}"
+else
+  BUILD_ROOT_ID="$(printf '%s' "${REPO_DIR}" | cksum | awk '{print $1}')"
+  DIST_DIR="${TMPDIR:-/tmp}/friday-companion-build/${BUILD_ROOT_ID}/macos"
+fi
 APP_NAME="FridayCompanion.app"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 APP_BINARY="${APP_DIR}/Contents/MacOS/FridayCompanion"
@@ -172,6 +177,14 @@ fi
 if [[ -n "${SPARKLE_FEED_URL}" && -n "${SPARKLE_PUBLIC_KEY}" ]]; then
   /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "${APP_PLIST}" >/dev/null 2>&1 \
     || /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks true" "${APP_PLIST}"
+fi
+
+if [[ -x /usr/bin/xattr ]]; then
+  /usr/bin/xattr -cr "${APP_DIR}"
+  while IFS= read -r -d '' bundle_path; do
+    /usr/bin/xattr -d com.apple.FinderInfo "${bundle_path}" >/dev/null 2>&1 || true
+    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' "${bundle_path}" >/dev/null 2>&1 || true
+  done < <(find "${APP_DIR}" -print0)
 fi
 
 case "${SIGN_MODE}" in

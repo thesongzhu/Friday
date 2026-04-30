@@ -108,6 +108,26 @@ function readLimit(query: Record<string, unknown>): number | undefined {
   return Math.min(parsed, 200);
 }
 
+function readCandidateStatus(query: Record<string, unknown>): FridayReflexCandidateStatus | undefined {
+  if (query.status === undefined) return undefined;
+  if (typeof query.status === "string" && CANDIDATE_STATUSES.has(query.status as FridayReflexCandidateStatus)) {
+    return query.status as FridayReflexCandidateStatus;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "status is not a valid reflex candidate status", {
+    httpStatus: 400,
+  });
+}
+
+function readCandidateKind(query: Record<string, unknown>): FridayReflexCandidateKind | undefined {
+  if (query.kind === undefined) return undefined;
+  if (typeof query.kind === "string" && CANDIDATE_KINDS.has(query.kind as FridayReflexCandidateKind)) {
+    return query.kind as FridayReflexCandidateKind;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "kind is not a valid reflex candidate kind", {
+    httpStatus: 400,
+  });
+}
+
 export function createFridayReflexRoutes(
   deps: FridayReflexRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -175,17 +195,11 @@ export function createFridayReflexRoutes(
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const query = ctx.query as Record<string, unknown>;
-        const status = typeof query.status === "string" && CANDIDATE_STATUSES.has(query.status as FridayReflexCandidateStatus)
-          ? query.status as FridayReflexCandidateStatus
-          : undefined;
-        const kind = typeof query.kind === "string" && CANDIDATE_KINDS.has(query.kind as FridayReflexCandidateKind)
-          ? query.kind as FridayReflexCandidateKind
-          : undefined;
         return {
           items: deps.service.listCandidates({
             userId,
-            status,
-            kind,
+            status: readCandidateStatus(query),
+            kind: readCandidateKind(query),
             limit: readLimit(query),
           }),
         };
@@ -268,6 +282,22 @@ export function createFridayReflexRoutes(
       auth: { public: false, anyOfScopes: ["agent.run"] },
       async handler(ctx) {
         return { items: deps.service.listPreferences(requireUserId(ctx.principal)) };
+      },
+    },
+    {
+      operationId: "reflex.preferences.revoke",
+      method: "POST",
+      path: "/v1/reflex/preferences/:id/revoke",
+      auth: { public: false, anyOfScopes: ["agent.run"] },
+      async handler(ctx) {
+        const userId = requireUserId(ctx.principal);
+        const { id } = ctx.params as { id: string };
+        const body = readBodyObject(ctx.body);
+        return deps.service.revokePreference({
+          userId,
+          preferenceId: id,
+          sourceSurface: readSurface(body),
+        });
       },
     },
     {

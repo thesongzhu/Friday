@@ -6,7 +6,7 @@ import type {
 } from "../../reflex/index.js";
 import type { FridayUserPreferenceCategory, JsonValue } from "../../uix/model/friday-uix.types.js";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
-import { readNumberParam, readStringParam, jsonResult } from "./friday-agent-tool-helpers.js";
+import { jsonResult, readNumberParam, readStringParam } from "./friday-agent-tool-helpers.js";
 
 const CANDIDATE_STATUSES = new Set<FridayReflexCandidateStatus>([
   "proposed",

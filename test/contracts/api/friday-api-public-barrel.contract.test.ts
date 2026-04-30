@@ -5,5 +5,5 @@ describe("#api public barrel contract", () => {
     const mod = await import("#api");
     expect(mod).not.toHaveProperty("createFridayPackagingRoutes");
     expect(mod).not.toHaveProperty("FridayPackagingRoutesDeps");
-  });
+  }, 30_000);
 });

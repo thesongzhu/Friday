@@ -20,6 +20,7 @@ describe("agent os navigation", () => {
       "/workflows",
       "/automations",
       "/memory",
+      "/reflex",
       "/mcp",
       "/fleet",
       "/observability",
@@ -47,6 +48,7 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/fleet")).toEqual({ zh: "执行节点", en: "Fleet" });
     expect(resolvePageTitle("/automations")).toEqual({ zh: "任务队列", en: "Task Queue" });
     expect(resolvePageTitle("/memory")).toEqual({ zh: "记忆", en: "Memory" });
+    expect(resolvePageTitle("/reflex")).toEqual({ zh: "成长中心", en: "Reflex" });
     expect(resolvePageTitle("/observability")).toEqual({ zh: "可观测性", en: "Observability" });
     expect(resolvePageTitle("/settings")).toEqual({ zh: "设置", en: "Settings" });
     expect(resolvePageTitle("/command-center")).toEqual({ zh: "操作控制台", en: "Operator Console" });
