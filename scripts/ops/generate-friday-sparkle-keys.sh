@@ -46,7 +46,9 @@ if [[ -f "${PRIVATE_KEY_PATH}" && -f "${PUBLIC_KEY_PATH}" && "${FRIDAY_MACOS_SPA
   exit 0
 fi
 
-PUBLIC_KEY="$("${SPARKLE_GENERATE_KEYS}" --account "${SPARKLE_ACCOUNT}" -p)"
+if ! PUBLIC_KEY="$("${SPARKLE_GENERATE_KEYS}" --account "${SPARKLE_ACCOUNT}" -p 2>/dev/null)"; then
+  PUBLIC_KEY="$("${SPARKLE_GENERATE_KEYS}" --account "${SPARKLE_ACCOUNT}")"
+fi
 "${SPARKLE_GENERATE_KEYS}" --account "${SPARKLE_ACCOUNT}" -x "${PRIVATE_KEY_PATH}" >/dev/null
 
 if [[ -z "${PUBLIC_KEY}" || ! -f "${PRIVATE_KEY_PATH}" ]]; then

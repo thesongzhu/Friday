@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFridaySqliteLayer, type FridaySqliteLayer } from "#state";
 import { createFridayUixUserPreferenceRepository } from "../../../src/uix/persistence/friday-uix-user-preference-repository.js";
@@ -11,6 +11,7 @@ import {
   createFridayReflexCandidateRepository,
   createFridayReflexOnboardingRepository,
   createFridayReflexService,
+  parseFridayReflexExplicitPreferenceMessage,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "../../../src/reflex/index.js";
 
@@ -23,7 +24,7 @@ function nextId(): string {
   return `id-${String(idCounter).padStart(4, "0")}`;
 }
 
-function createService() {
+function createService(overrides: Partial<Parameters<typeof createFridayReflexService>[0]> = {}) {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-reflex-test-"));
   db = createFridaySqliteLayer({
     dbPath: path.join(tempDir, "state.sqlite"),
@@ -37,6 +38,7 @@ function createService() {
     preferenceRepo: createFridayUixUserPreferenceRepository(),
     idGenerator: nextId,
     nowIso: () => "2026-04-30T12:00:00.000Z",
+    ...overrides,
   });
 }
 
@@ -71,6 +73,19 @@ describe("Friday Reflex onboarding registry", () => {
       { category: "reflex", key: "communication.language_policy", value: "en" },
       { category: "uix", key: "display.locale", value: "en" },
     ]);
+  });
+
+  it("parses only explicit durable preference messages", () => {
+    expect(parseFridayReflexExplicitPreferenceMessage("以后回答短一点")).toEqual([
+      { category: "communication", key: "persona.verbosity", value: "concise" },
+    ]);
+    expect(parseFridayReflexExplicitPreferenceMessage("以后叫我 Wenxin")).toEqual([
+      { category: "reflex", key: "user.display_name", value: "Wenxin" },
+    ]);
+    expect(parseFridayReflexExplicitPreferenceMessage("以后不要主动生成 workflow")).toEqual([
+      { category: "reflex", key: "workflows.generation_policy", value: "do_not_suggest" },
+    ]);
+    expect(parseFridayReflexExplicitPreferenceMessage("不要记住这个")).toEqual([]);
   });
 });
 
@@ -201,5 +216,73 @@ describe("Friday Reflex service", () => {
     expect(created).toHaveLength(1);
     expect(created[0]?.kind).toBe("recipe");
     expect(created[0]?.status).toBe("proposed");
+  });
+
+  it("revokes explicit preferences through the same canonical store", () => {
+    const service = createService();
+    const written = service.updatePreference({
+      userId: "user-1",
+      category: "reflex",
+      key: "automation.conservatism",
+      value: "balanced",
+      sourceSurface: "operate",
+    });
+
+    const revoked = service.revokePreference({
+      userId: "user-1",
+      preferenceId: written.preference.id,
+      sourceSurface: "review_center",
+    });
+    expect(revoked.revoked).toBe(true);
+    expect(revoked.preference.key).toBe("automation.conservatism");
+    expect(service.listPreferences("user-1")).toEqual([]);
+    expect(() => service.revokePreference({
+      userId: "user-1",
+      preferenceId: written.preference.id,
+      sourceSurface: "review_center",
+    })).toThrow(/not found/);
+  });
+
+  it("turns repeated successful tasks into tested draft candidates without approving them", async () => {
+    const approveAndSave = vi.fn();
+    const service = createService({
+      workflowGenerator: {
+        startSession: vi.fn(async () => ({
+          mode: "new",
+          session: { sessionId: "workflow-session-1" },
+        })),
+        submitTurn: vi.fn(),
+        getSession: vi.fn(),
+        generateDraft: vi.fn(async () => ({
+          spec: { workflowId: "draft-workflow-1", name: "Draft repeated report workflow" },
+          validation: { ok: true },
+        })),
+        getQaVerdict: vi.fn(async () => null),
+        getHarnessSummary: vi.fn(async () => null),
+        approveAndSave,
+        cancelSession: vi.fn(),
+      } as never,
+    });
+
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-1",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+    const repeated = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-2",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+
+    const workflow = repeated.find((candidate) => candidate.kind === "workflow");
+    expect(workflow?.status).toBe("ready_for_review");
+    expect(workflow?.evidence.generatorSessionId).toBe("workflow-session-1");
+    expect(workflow?.evidence.draftWorkflowId).toBe("draft-workflow-1");
+    expect(approveAndSave).not.toHaveBeenCalled();
   });
 });

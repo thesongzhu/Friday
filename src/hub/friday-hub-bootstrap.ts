@@ -329,6 +329,7 @@ import {
   createFridayReflexOnboardingRepository,
   createFridayReflexService,
   type FridayReflexService,
+  parseFridayReflexExplicitPreferenceMessage,
 } from "../reflex/index.js";
 import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
@@ -3493,6 +3494,11 @@ export async function createFridayHub(
     shortId?: string;
     reason?: string;
   };
+  type FridayChannelReflexCandidateCommand = {
+    action: "test" | "approve" | "reject" | "dismiss";
+    candidateId: string;
+    reason?: string;
+  };
   type FridayPendingChannelToolApproval = {
     runId: string;
     sessionKey: string;
@@ -3542,6 +3548,61 @@ export async function createFridayHub(
       ...(shortId ? { shortId } : {}),
       ...(reason ? { reason } : {}),
     };
+  };
+
+  const normalizeReflexCandidateAction = (
+    raw: string | undefined,
+  ): FridayChannelReflexCandidateCommand["action"] | null => {
+    const action = raw?.trim().toLowerCase();
+    if (!action) return null;
+    if (["test", "测试", "自测"].includes(action)) return "test";
+    if (["approve", "approved", "批准", "同意", "通过"].includes(action)) return "approve";
+    if (["reject", "rejected", "deny", "denied", "拒绝", "驳回"].includes(action)) return "reject";
+    if (["dismiss", "ignore", "忽略", "跳过", "先不处理"].includes(action)) return "dismiss";
+    return null;
+  };
+
+  const parseReflexCandidateDecisionCommand = (text: string): FridayChannelReflexCandidateCommand | null => {
+    const trimmed = text.trim();
+    const actionFirst =
+      /^(test|测试|自测|approve|approved|批准|同意|通过|reject|rejected|deny|denied|拒绝|驳回|dismiss|ignore|忽略|跳过|先不处理)\s+(?:reflex|candidate|候选|候选项)\s+([a-z0-9_-]{3,128})(?:\s+(.+))?$/iu.exec(trimmed);
+    if (actionFirst) {
+      const action = normalizeReflexCandidateAction(actionFirst[1]);
+      if (!action) return null;
+      return {
+        action,
+        candidateId: actionFirst[2],
+        ...(actionFirst[3]?.trim() ? { reason: actionFirst[3].trim() } : {}),
+      };
+    }
+    const prefixFirst =
+      /^(?:reflex|candidate|候选|候选项)\s+(test|测试|自测|approve|approved|批准|同意|通过|reject|rejected|deny|denied|拒绝|驳回|dismiss|ignore|忽略|跳过|先不处理)\s+([a-z0-9_-]{3,128})(?:\s+(.+))?$/iu.exec(trimmed);
+    if (!prefixFirst) return null;
+    const action = normalizeReflexCandidateAction(prefixFirst[1]);
+    if (!action) return null;
+    return {
+      action,
+      candidateId: prefixFirst[2],
+      ...(prefixFirst[3]?.trim() ? { reason: prefixFirst[3].trim() } : {}),
+    };
+  };
+
+  const applyChannelReflexExplicitPreferences = (input: {
+    userId: string;
+    text: string;
+  }): number => {
+    if (!reflexService) return 0;
+    const writes = parseFridayReflexExplicitPreferenceMessage(input.text);
+    for (const write of writes) {
+      reflexService.updatePreference({
+        userId: input.userId,
+        category: write.category,
+        key: write.key,
+        value: write.value,
+        sourceSurface: "channel",
+      });
+    }
+    return writes.length;
   };
 
   const listPendingChannelToolApprovalsForSession = (
@@ -5911,6 +5972,7 @@ export async function createFridayHub(
     },
     invokeSkill: invokeSkillForWorkflow,
     agentRuntime,
+    reflexService,
     agentEventEmitter,
     resolveToolApproval,
     subagentRegistry,
@@ -7519,11 +7581,177 @@ export async function createFridayHub(
             return;
           }
 
+          const approvalCommand = text.length > 0 ? parseChannelToolApprovalCommand(text) : null;
+          const pendingApprovalsForCommand = approvalCommand
+            ? listPendingChannelToolApprovalsForSession(sessionKey)
+            : [];
+          const pendingApprovalForCommand = approvalCommand
+            ? approvalCommand.shortId
+              ? pendingApprovalsForCommand.find((pending) => pending.shortId === approvalCommand.shortId)
+              : pendingApprovalsForCommand.length === 1
+                ? pendingApprovalsForCommand[0]
+                : undefined
+            : undefined;
+          const shouldRouteToolApprovalCommand = Boolean(
+            approvalCommand
+            && (pendingApprovalForCommand || approvalCommand.shortId || pendingApprovalsForCommand.length > 1),
+          );
+          const reflexCandidateCommand = text.length > 0 ? parseReflexCandidateDecisionCommand(text) : null;
+          if (reflexCandidateCommand) {
+            void (async () => {
+              await hubSessionService.addMessage(sessionKey, {
+                role: "user",
+                content: text,
+                contentText: text,
+                idempotencyKey: inboundIdempotencyKey,
+                metadata: {
+                  sourceMessageId: msg.id,
+                  channelKind: msg.channelKind,
+                  reflexCandidateCommand: true,
+                },
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-SESSION-MIRROR-001",
+                  routeId: "hub.channel.session.mirror.reflex_candidate_command",
+                  error: err,
+                });
+              });
+
+              let ackText: string;
+              if (!reflexService) {
+                ackText = "Reflex 审核服务当前不可用，候选项没有被更改。";
+              } else {
+                const command = reflexCandidateCommand;
+                try {
+                  const candidate = command.action === "test"
+                    ? await reflexService.testCandidate({
+                        userId: learningDefaultUserId,
+                        candidateId: command.candidateId,
+                      })
+                    : command.action === "approve"
+                      ? await reflexService.approveCandidate({
+                          userId: learningDefaultUserId,
+                          candidateId: command.candidateId,
+                        })
+                      : command.action === "reject"
+                        ? reflexService.rejectCandidate({
+                            userId: learningDefaultUserId,
+                            candidateId: command.candidateId,
+                            reason: command.reason,
+                          })
+                        : reflexService.dismissCandidate({
+                            userId: learningDefaultUserId,
+                            candidateId: command.candidateId,
+                            reason: command.reason,
+                          });
+                  ackText = `Reflex candidate ${candidate.id} 已更新为 ${candidate.status}。`;
+                } catch (err) {
+                  ackText = `Reflex candidate ${command.candidateId} 处理失败：${err instanceof Error ? err.message : String(err)}`;
+                }
+              }
+
+              const delivery = await channelRegistry.send(msg.channelKind, {
+                chatId: msg.chatId,
+                text: ackText,
+                replyTo: msg.id,
+              });
+              await hubSessionService.addMessage(sessionKey, {
+                role: "assistant",
+                content: ackText,
+                contentText: ackText,
+                idempotencyKey: `channel:${msg.channelKind}:${msg.chatId}:${msg.id}:reflex-candidate-ack`,
+                metadata: {
+                  sourceMessageId: delivery.messageId,
+                  replyToMessageId: msg.id,
+                  channelKind: msg.channelKind,
+                  reflexCandidateAck: true,
+                },
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-SESSION-MIRROR-001",
+                  routeId: "hub.channel.session.mirror.reflex_candidate_ack",
+                  error: err,
+                });
+              });
+            })().catch((err) => {
+              logChannelIssue({
+                level: "error",
+                code: "E-CH-REFLEX-CANDIDATE-001",
+                routeId: "hub.channel.reflex_candidate_decision",
+                error: err,
+              });
+            });
+            return;
+          }
+
+          const reflexPreferenceWriteCount = applyChannelReflexExplicitPreferences({
+            userId: learningDefaultUserId,
+            text,
+          });
+          if (reflexPreferenceWriteCount > 0) {
+            void (async () => {
+              await hubSessionService.addMessage(sessionKey, {
+                role: "user",
+                content: text,
+                contentText: text,
+                idempotencyKey: inboundIdempotencyKey,
+                metadata: {
+                  sourceMessageId: msg.id,
+                  channelKind: msg.channelKind,
+                  reflexPreferenceCommand: true,
+                },
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-SESSION-MIRROR-001",
+                  routeId: "hub.channel.session.mirror.reflex_preference_command",
+                  error: err,
+                });
+              });
+              const ackText = `已更新 ${String(reflexPreferenceWriteCount)} 条 Friday 偏好，会在所有绑定渠道生效。你可以在 Review Center 撤销。`;
+              const delivery = await channelRegistry.send(msg.channelKind, {
+                chatId: msg.chatId,
+                text: ackText,
+                replyTo: msg.id,
+              });
+              await hubSessionService.addMessage(sessionKey, {
+                role: "assistant",
+                content: ackText,
+                contentText: ackText,
+                idempotencyKey: `channel:${msg.channelKind}:${msg.chatId}:${msg.id}:reflex-preference-ack`,
+                metadata: {
+                  sourceMessageId: delivery.messageId,
+                  replyToMessageId: msg.id,
+                  channelKind: msg.channelKind,
+                  reflexPreferenceAck: true,
+                },
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-SESSION-MIRROR-001",
+                  routeId: "hub.channel.session.mirror.reflex_preference_ack",
+                  error: err,
+                });
+              });
+            })().catch((err) => {
+              logChannelIssue({
+                level: "error",
+                code: "E-CH-REFLEX-PREFERENCE-001",
+                routeId: "hub.channel.reflex_preference_update",
+                error: err,
+              });
+            });
+            return;
+          }
+
           const reflexSnapshot = reflexService?.getOnboarding(learningDefaultUserId);
           const shouldHandleReflexOnboarding = Boolean(
             reflexSnapshot?.session
             && (reflexSnapshot.session.status === "active" || reflexSnapshot.session.status === "not_started")
-            && (!reflexSnapshot.session.primaryChannelKind || reflexSnapshot.session.primaryChannelKind === msg.channelKind),
+            && (!reflexSnapshot.session.primaryChannelKind || reflexSnapshot.session.primaryChannelKind === msg.channelKind)
+            && !shouldRouteToolApprovalCommand,
           );
           if (shouldHandleReflexOnboarding) {
             void maybeHandleReflexOnboardingChannelMessage(msg, text).catch((err) => {
@@ -7537,18 +7765,8 @@ export async function createFridayHub(
             return;
           }
 
-          const approvalCommand = text.length > 0 ? parseChannelToolApprovalCommand(text) : null;
           if (approvalCommand) {
-            const pendingApprovals = listPendingChannelToolApprovalsForSession(sessionKey);
-            const pendingApproval = approvalCommand.shortId
-              ? pendingApprovals.find((pending) => pending.shortId === approvalCommand.shortId)
-              : pendingApprovals.length === 1
-                ? pendingApprovals[0]
-                : undefined;
-            const shouldHandleApprovalCommand = Boolean(
-              pendingApproval || approvalCommand.shortId || pendingApprovals.length > 1,
-            );
-            if (shouldHandleApprovalCommand) {
+            if (shouldRouteToolApprovalCommand) {
               void (async () => {
                 await hubSessionService.addMessage(sessionKey, {
                   role: "user",
@@ -7570,22 +7788,22 @@ export async function createFridayHub(
                 });
 
                 let ackText: string;
-                if (pendingApproval) {
+                if (pendingApprovalForCommand) {
                   const resolution = resolveToolApproval(
-                    pendingApproval.runId,
-                    pendingApproval.toolCallId,
+                    pendingApprovalForCommand.runId,
+                    pendingApprovalForCommand.toolCallId,
                     approvalCommand.approved,
                     approvalCommand.reason,
                   );
                   if (resolution.resolved) {
                     ackText = approvalCommand.approved
-                      ? `已批准 ${pendingApproval.shortId}，Friday 会继续执行。`
-                      : `已拒绝 ${pendingApproval.shortId}，Friday 不会执行该敏感操作。`;
+                      ? `已批准 ${pendingApprovalForCommand.shortId}，Friday 会继续执行。`
+                      : `已拒绝 ${pendingApprovalForCommand.shortId}，Friday 不会执行该敏感操作。`;
                   } else {
-                    ackText = `审批 ${pendingApproval.shortId} 已经结束，不需要重复处理。`;
+                    ackText = `审批 ${pendingApprovalForCommand.shortId} 已经结束，不需要重复处理。`;
                   }
-                } else if (pendingApprovals.length > 1 && !approvalCommand.shortId) {
-                  const ids = pendingApprovals.map((pending) => pending.shortId).join(", ");
+                } else if (pendingApprovalsForCommand.length > 1 && !approvalCommand.shortId) {
+                  const ids = pendingApprovalsForCommand.map((pending) => pending.shortId).join(", ");
                   ackText = `当前有多个待审批操作：${ids}。请回复「批准 <编号>」或「拒绝 <编号>」。`;
                 } else {
                   ackText = `没有找到待审批操作 ${approvalCommand.shortId ?? ""}。`;

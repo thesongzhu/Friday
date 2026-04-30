@@ -39,6 +39,14 @@ fi
 echo "[friday-companion-verify] verifying bundle structure" >&2
 /usr/bin/plutil -lint "${APP_PLIST}" >/dev/null
 
+if [[ -x /usr/bin/xattr ]]; then
+  /usr/bin/xattr -cr "${APP_DIR}"
+  while IFS= read -r -d '' bundle_path; do
+    /usr/bin/xattr -d com.apple.FinderInfo "${bundle_path}" >/dev/null 2>&1 || true
+    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' "${bundle_path}" >/dev/null 2>&1 || true
+  done < <(find "${APP_DIR}" -print0)
+fi
+
 echo "[friday-companion-verify] verifying executable signature" >&2
 /usr/bin/codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 

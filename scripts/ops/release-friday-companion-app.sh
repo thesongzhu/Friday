@@ -93,6 +93,11 @@ else
   export FRIDAY_MACOS_CODESIGN_MODE="${FRIDAY_MACOS_CODESIGN_MODE:-adhoc}"
 fi
 
+if [[ -z "${FRIDAY_SYSTEM_COMPANION_DIST_DIR:-}" ]]; then
+  BUILD_ROOT_ID="$(printf '%s' "${REPO_DIR}" | cksum | awk '{print $1}')"
+  export FRIDAY_SYSTEM_COMPANION_DIST_DIR="${TMPDIR:-/tmp}/friday-companion-build/${BUILD_ROOT_ID}/macos"
+fi
+
 echo "[friday-companion-release] building app bundle (${RELEASE_MODE})" >&2
 APP_DIR="$(bash "${REPO_DIR}/scripts/ops/build-friday-companion-app.sh" "${REPO_DIR}")"
 
@@ -127,6 +132,14 @@ bash "${REPO_DIR}/scripts/ops/build-friday-source-distribution.sh" "${REPO_DIR}"
 echo "[friday-companion-release] building release artifacts" >&2
 FRIDAY_SYSTEM_COMPANION_APP_DIR="${APP_DIR}" \
   bash "${REPO_DIR}/scripts/ops/build-friday-companion-dmg.sh" "${REPO_DIR}" >/dev/null
+
+if [[ -x /usr/bin/xattr ]]; then
+  /usr/bin/xattr -cr "${APP_DIR}"
+  while IFS= read -r -d '' bundle_path; do
+    /usr/bin/xattr -d com.apple.FinderInfo "${bundle_path}" >/dev/null 2>&1 || true
+    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' "${bundle_path}" >/dev/null 2>&1 || true
+  done < <(find "${APP_DIR}" -print0)
+fi
 
 if [[ -n "${FRIDAY_MACOS_SPARKLE_PRIVATE_KEY:-}" && -n "${FRIDAY_MACOS_APPCAST_BASE_URL:-}" ]]; then
   echo "[friday-companion-release] generating Sparkle appcast" >&2
