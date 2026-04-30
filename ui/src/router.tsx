@@ -36,6 +36,7 @@ const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) =
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
+const WorkflowGeneratorPage = lazy(async () => import("@/routes/workflow-generator-page").then((module) => ({ default: module.WorkflowGeneratorPage })));
 const McpPage = lazy(async () => import("@/routes/mcp-page").then((module) => ({ default: module.McpPage })));
 const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) => ({ default: module.UsagePage })));
@@ -539,6 +540,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载工作流编辑器", "Loading workflow builder")} detail={localizedText("Friday 正在准备模板驱动的工作流编辑。", "Friday is preparing template-first workflow authoring surfaces.")}>
                 <WorkflowBuilderPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "workflows/generator",
+            element: (
+              <RouteSuspense title={localizedText("加载工作流生成器", "Loading workflow generator")} detail={localizedText("Friday 正在准备需求澄清和草案生成。", "Friday is preparing requirement capture and draft generation.")}>
+                <WorkflowGeneratorPage />
               </RouteSuspense>
             ),
           },
