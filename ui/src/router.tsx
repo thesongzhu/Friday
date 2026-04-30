@@ -14,6 +14,7 @@ import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { getBootstrapStatus } from "@/lib/api/auth";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
+import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -29,12 +30,14 @@ const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then(
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
 const PluginsPage = lazy(async () => import("@/routes/plugins-page").then((module) => ({ default: module.PluginsPage })));
 const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-pack-setup-page").then((module) => ({ default: module.CrossBorderPackSetupPage })));
+const ReflexPage = lazy(async () => import("@/routes/reflex-page").then((module) => ({ default: module.ReflexPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const McpPage = lazy(async () => import("@/routes/mcp-page").then((module) => ({ default: module.McpPage })));
+const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) => ({ default: module.UsagePage })));
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
@@ -475,7 +478,13 @@ export const router = createBrowserRouter([
           },
           {
             path: "marketplace",
-            element: <Navigate to="/assistant" replace />,
+            element: HIDE_MARKETPLACE_UI ? (
+              <Navigate to="/assistant" replace />
+            ) : (
+              <RouteSuspense title={localizedText("加载资产市场", "Loading marketplace")} detail={localizedText("Friday 正在准备资产市场。", "Friday is preparing the marketplace.")}>
+                <MarketplacePage />
+              </RouteSuspense>
+            ),
           },
           {
             path: "plugins",
@@ -573,6 +582,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载记忆", "Loading memory")} detail={localizedText("Friday 正在准备记忆存储视图。", "Friday is preparing the memory store view.")}>
                 <MemoryPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "reflex",
+            element: (
+              <RouteSuspense title={localizedText("加载成长中心", "Loading Reflex")} detail={localizedText("Friday 正在准备候选审批和 onboarding 同步。", "Friday is preparing candidate review and onboarding sync.")}>
+                <ReflexPage />
               </RouteSuspense>
             ),
           },

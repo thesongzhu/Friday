@@ -454,7 +454,8 @@ export type FridayUserPreferenceCategory =
   | "disclosure"
   | "provider"
   | "communication"
-  | "uix";
+  | "uix"
+  | "reflex";
 
 /**
  * A single user preference entry.

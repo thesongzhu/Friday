@@ -95,6 +95,7 @@ import { createFridayWorkflowTriggerRepository } from "#workflows";
 import {
   createFridayApiRuntime,
   createFridayDeterministicPipelineRuntime,
+  createFridayReflexRoutes,
   getChannelPersona,
   hydrateChannelPersonaStore,
 } from "#api";
@@ -153,6 +154,7 @@ import {
   createFridayAgentLlmClient,
   createFridayAgentMemoryExtractTool,
   createFridayAgentMessageTool,
+  createFridayAgentNodesTool,
   createFridayAgentPlanningGateService,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
@@ -253,6 +255,7 @@ import {
   createFridaySatelliteRepository,
   createFridaySatelliteRuntime,
 } from "#satellites";
+import { createFridaySatelliteNodesService } from "../nodes/friday-satellite-nodes-service.js";
 import {
   createFridayAgentLoopRepository,
   createFridayAgentLoopService,
@@ -321,6 +324,12 @@ import { createFridayUixGuidedContextRepository } from "../uix/persistence/frida
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
 import { createFridayOnboardingSessionRepository } from "../uix/persistence/friday-onboarding-session-repository.js";
 import { createFridayUixSurfaceService } from "../uix/services/friday-uix-surface-service.js";
+import {
+  createFridayReflexCandidateRepository,
+  createFridayReflexOnboardingRepository,
+  createFridayReflexService,
+  type FridayReflexService,
+} from "../reflex/index.js";
 import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
 import { createFridaySkillMarketplaceRuntime } from "#skills";
@@ -1196,6 +1205,8 @@ export async function createFridayHub(
   const workflowRealtimeEventBuffer: Array<{ streamId: string; event: string; payload: Record<string, unknown> }> = [];
   // Default learning user for runtime-originated remediation and feedback events.
   const learningDefaultUserId = "admin-001";
+  let reflexService: FridayReflexService | undefined;
+  let reflexCuratorInterval: ReturnType<typeof setInterval> | undefined;
   let workflowRealtimeEventPublisher:
     | {
       publish(streamId: string, event: string, payload: Record<string, unknown>): void;
@@ -2167,6 +2178,12 @@ export async function createFridayHub(
       companion: {
         connected: companionConnected,
       },
+      reflex: {
+        onboardingEnabled: true,
+        candidatesEnabled: true,
+        curatorEnabled: true,
+        liveLlmTestsEnabled: process.env.FRIDAY_LIVE_LLM_REFLEX_TESTS === "1",
+      },
       runtime: buildFridayRuntimeCapabilityMatrix({
         nowIso: nowIso(),
         readOnly: input.readOnly,
@@ -2502,6 +2519,8 @@ export async function createFridayHub(
     webSearchApiKey: configuredSearchApiKey,
     capabilitySnapshotGetter: getAgentCapabilitySnapshot,
     taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+    reflexServiceGetter: () => reflexService,
+    defaultReflexUserId: learningDefaultUserId,
     subagentForkModeEnabled,
   });
 
@@ -3075,6 +3094,36 @@ export async function createFridayHub(
             `[friday][marker] world_model_pattern_upserted runId=${input.runId} userId=${userId} count=${String(patterns.length)}`,
           );
         }
+        if (reflexService) {
+          const events = stateRuntime!.sqlite.withReadConnection((reader) =>
+            agentRunEventRepository.list(reader, input.runId));
+          const toolEndEvents = events.filter((event) => event.eventName === "agent.run.tool_end");
+          const toolSequence = toolEndEvents
+            .map((event) => typeof event.payload.toolName === "string" ? event.payload.toolName : undefined)
+            .filter((toolName): toolName is string => !!toolName);
+          const toolFailures = toolEndEvents
+            .filter((event) => event.payload.isError === true)
+            .map((event) => ({
+              toolName: typeof event.payload.toolName === "string" ? event.payload.toolName : "unknown",
+              message: typeof event.payload.summary === "string" ? event.payload.summary : undefined,
+              code: typeof event.payload.errorCode === "string" ? event.payload.errorCode : undefined,
+            }));
+          await reflexService.processRunCompletion({
+            userId,
+            runId: input.runId,
+            sessionKey: input.sessionKey,
+            task: input.task,
+            outcome: input.status === "completed"
+              ? "success"
+              : input.status === "failed"
+                ? "failure"
+                : input.status === "cancelled"
+                  ? "cancelled"
+                  : "unknown",
+            toolSequence,
+            toolFailures,
+          });
+        }
       } catch (err) {
         console.warn("[friday][world-model] afterTurn episode extraction failed:", err instanceof Error ? err.message : String(err));
       }
@@ -3388,6 +3437,31 @@ export async function createFridayHub(
   const _learningContextRef = selfLearningRuntime.context;
   const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
   const uixGuidedContextRepository = createFridayUixGuidedContextRepository();
+  const buildMergedPreferenceContext = (input: { userId: string; nowIso: string }) => {
+    const learned = _learningContextRef?.buildContext(input) ?? { preferences: {} };
+    const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
+      uixUserPreferenceRepository.listByPrincipal(db, { principalId: input.userId }));
+    const preferences: Record<string, unknown> = { ...learned.preferences };
+    for (const preference of explicitPreferences) {
+      preferences[`explicit:${preference.category}/${preference.key}`] = preference.value;
+      if (preference.category === "reflex") {
+        preferences[`reflex:${preference.key}`] = preference.value;
+      }
+    }
+    return { ...learned, preferences };
+  };
+  const buildReflexPreferencePromptFragment = (userId: string): string | null => {
+    const preferences = stateRuntime.sqlite.withReadConnection((db) =>
+      uixUserPreferenceRepository.listByPrincipal(db, {
+        principalId: userId,
+        category: "reflex",
+      }));
+    if (preferences.length === 0) return null;
+    const lines = preferences
+      .slice(0, 32)
+      .map((preference) => `- ${preference.key}: ${JSON.stringify(preference.value)}`);
+    return `Friday Reflex preferences:\n${lines.join("\n")}`;
+  };
 
   // ─── Tool approval gates (GAP 2) ───
   // Shared promise map for tool-level approval flow.
@@ -3809,8 +3883,7 @@ export async function createFridayHub(
     decisionEngine: worldModelDecisionEngine,
     worldStateManager: worldModelStateManager,
     learningContextBuilder: (input) => {
-      if (!_learningContextRef) return { preferences: {} };
-      return _learningContextRef.buildContext(input);
+      return buildMergedPreferenceContext(input);
     },
     compactionContextBuilder: async (input) => {
       if (!agentCompactionContextLoader) return null;
@@ -3832,6 +3905,10 @@ export async function createFridayHub(
       const personaFragment = buildFridayCommunicationPromptFragment(persona);
       if (personaFragment.trim().length > 0) {
         fragments.push(personaFragment.trim());
+      }
+      const reflexFragment = buildReflexPreferencePromptFragment(input.userId);
+      if (reflexFragment) {
+        fragments.push(reflexFragment);
       }
       return fragments.length > 0 ? fragments.join("\n\n") : null;
     },
@@ -4066,6 +4143,8 @@ export async function createFridayHub(
         webSearchApiKey: configuredSearchApiKey,
         capabilitySnapshotGetter: getAgentCapabilitySnapshot,
         taskStatusSnapshotGetter: getAgentTaskStatusSnapshot,
+        reflexServiceGetter: () => reflexService,
+        defaultReflexUserId: learningDefaultUserId,
         subagentForkModeEnabled,
       });
       const childRuntime = createFridayAgentRuntime({
@@ -4091,8 +4170,7 @@ export async function createFridayHub(
         artifactWriter: agentArtifactWriter,
         evaluateRules,
         learningContextBuilder: (input) => {
-          if (!_learningContextRef) return { preferences: {} };
-          return _learningContextRef.buildContext(input);
+          return buildMergedPreferenceContext(input);
         },
         compactionContextBuilder: async (input) => {
           if (!agentCompactionContextLoader) return null;
@@ -4114,6 +4192,10 @@ export async function createFridayHub(
           const personaFragment = buildFridayCommunicationPromptFragment(persona);
           if (personaFragment.trim().length > 0) {
             fragments.push(personaFragment.trim());
+          }
+          const reflexFragment = buildReflexPreferencePromptFragment(input.userId);
+          if (reflexFragment) {
+            fragments.push(reflexFragment);
           }
           return fragments.length > 0 ? fragments.join("\n\n") : null;
         },
@@ -4905,7 +4987,7 @@ export async function createFridayHub(
       // Lazy: learningEventWriter is defined after uixService, so use the pipeline directly.
       selfLearningRuntime.pipeline.processBatch(events);
     },
-    learningContextBuilder: (input) => _learningContextRef?.buildContext(input) ?? { preferences: {} },
+    learningContextBuilder: (input) => buildMergedPreferenceContext(input),
     diagnosticsBuilder: () => ({
       generatedAt: nowIso(),
       taskProfilePresets: [
@@ -4985,6 +5067,89 @@ export async function createFridayHub(
   const learningEventWriter = (events: FridayLearningEventAppendInput[]) => {
     const results = selfLearningRuntime.pipeline.processBatch(events);
     selfHealingApiService.emitProcessResults(results);
+  };
+
+  const reflexCandidateRepository = createFridayReflexCandidateRepository();
+  const reflexOnboardingRepository = createFridayReflexOnboardingRepository();
+  reflexService = createFridayReflexService({
+    db: stateRuntime.sqlite,
+    candidateRepo: reflexCandidateRepository,
+    onboardingRepo: reflexOnboardingRepository,
+    preferenceRepo: uixUserPreferenceRepository,
+    memoryService,
+    skillGenerator,
+    workflowGenerator,
+    learningEventWriter,
+    idGenerator,
+    nowIso,
+    capabilities: {
+      reflexOnboardingEnabled: true,
+      reflexCandidatesEnabled: true,
+      reflexCuratorEnabled: true,
+      liveLlmReflexTestsEnabled: process.env.FRIDAY_LIVE_LLM_REFLEX_TESTS === "1",
+    },
+  });
+  reflexCuratorInterval = setInterval(() => {
+    try {
+      reflexService?.curateCandidates();
+    } catch (err) {
+      console.warn("[friday][reflex] daily curator failed:", err instanceof Error ? err.message : String(err));
+    }
+  }, 24 * 60 * 60 * 1000);
+  reflexCuratorInterval.unref?.();
+
+  const readSetupCompletedAt = (): string | null =>
+    stateRuntime.sqlite.withReadConnection((db) => {
+      const row = db.prepare(
+        `SELECT setup_completed_at
+         FROM friday_setup_state
+         WHERE id = 'singleton'`,
+      ).get() as { setup_completed_at: string | null } | undefined;
+      return row?.setup_completed_at ?? null;
+    });
+
+  const readSavedSetupChannelKinds = (): string[] =>
+    stateRuntime.sqlite.withReadConnection((db) => {
+      const row = db.prepare(
+        `SELECT channels_json
+         FROM friday_setup_state
+         WHERE id = 'singleton'`,
+      ).get() as { channels_json: string | null } | undefined;
+      const parsed = safeJsonParse<unknown>(row?.channels_json ?? "[]");
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((entry): entry is { kind: string; enabled?: unknown } =>
+          !!entry
+          && typeof entry === "object"
+          && typeof (entry as { kind?: unknown }).kind === "string"
+          && (entry as { enabled?: unknown }).enabled === true)
+        .map((entry) => entry.kind);
+    });
+
+  const markReflexEligibleAfterSetup = (input: { userId: string }): void => {
+    if (!reflexService) return;
+    const snapshot = reflexService.markNewUserEligible({ userId: input.userId });
+    const savedKinds = readSavedSetupChannelKinds();
+    if (snapshot.session?.status === "not_started" && savedKinds.length > 0) {
+      reflexService.startOnboarding({
+        userId: input.userId,
+        primaryChannelKind: savedKinds[0],
+      });
+    }
+  };
+
+  const startReflexOnboardingAfterChannelBind = (input: { userId: string; savedKinds: string[] }): void => {
+    if (!reflexService || input.savedKinds.length === 0 || !readSetupCompletedAt()) {
+      return;
+    }
+    const snapshot = reflexService.getOnboarding(input.userId);
+    if (snapshot.session?.status !== "not_started") {
+      return;
+    }
+    reflexService.startOnboarding({
+      userId: input.userId,
+      primaryChannelKind: input.savedKinds[0],
+    });
   };
 
   const marketplaceAssetCatalogService =
@@ -5521,6 +5686,8 @@ export async function createFridayHub(
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
     enabledChannelKinds: getEnabledChannelKinds,
     activateSavedChannels: activateSavedChannelsFromSetupState,
+    onSetupChannelsSaved: startReflexOnboardingAfterChannelBind,
+    onSetupCompleted: markReflexEligibleAfterSetup,
     learningEventWriter,
     learningUserId: learningDefaultUserId,
     sessionService: hubSessionService,
@@ -5566,15 +5733,7 @@ export async function createFridayHub(
     guideLens: guideLensRouteDeps,
     uix: {
       service: uixService,
-      readSetupCompletedAt: () =>
-        stateRuntime.sqlite.withReadConnection((db) => {
-          const row = db.prepare(
-            `SELECT setup_completed_at
-             FROM friday_setup_state
-             WHERE id = 'singleton'`,
-          ).get() as { setup_completed_at: string | null } | undefined;
-          return row?.setup_completed_at ?? null;
-        }),
+      readSetupCompletedAt,
       listLearnedFacts: (input: { userId: string }) =>
         selfLearningRuntime.facts.listActiveFacts({ userId: input.userId, minConfidence: 0, limit: 200 })
           .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
@@ -5759,6 +5918,12 @@ export async function createFridayHub(
     multiTenantSecurity: multiTenantSecurityDeps,
     desktop: desktopRouteDeps,
   });
+
+  if (reflexService) {
+    for (const route of createFridayReflexRoutes({ service: reflexService })) {
+      apiRuntime.routes.register(route as Parameters<typeof apiRuntime.routes.register>[0]);
+    }
+  }
 
   observabilityService.health.registerCheck("api-runtime", "api", async () => ({
     name: "api-runtime",
@@ -6764,6 +6929,81 @@ export async function createFridayHub(
 
   // 5. nodes — only register when nodes service is available (via FRIDAY_NODES_ENABLED).
   // Same principle: don't register tools that can't work.
+  {
+    const encodeNodeControlPayload = (payload: unknown): string =>
+      Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+
+    const rowToSatelliteNode = (row: ReturnType<typeof satelliteRepo.getSatellite>) => {
+      if (!row) return null;
+      return {
+        satelliteId: row.id,
+        displayName: row.display_name,
+        type: row.type,
+        pairingStatus: row.pairing_status,
+        lastSeenAt: row.last_seen_at,
+        metadata: row.metadata_json
+          ? (safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? undefined)
+          : undefined,
+      };
+    };
+
+    const satelliteNodesService = createFridaySatelliteNodesService({
+      listPairedSatellites: async () =>
+        stateRuntime!.sqlite.withReadConnection((db) =>
+          satelliteRepo.listByStatus(db, ["paired", "online", "degraded", "offline"])
+            .map(rowToSatelliteNode)
+            .filter((row): row is NonNullable<ReturnType<typeof rowToSatelliteNode>> => row !== null),
+        ),
+      getSatellite: async (satelliteId) =>
+        stateRuntime!.sqlite.withReadConnection((db) =>
+          rowToSatelliteNode(satelliteRepo.getSatellite(db, satelliteId))),
+      sendCommand: async (satelliteId, command, args, timeoutMs) => {
+        const now = nowIso();
+        const effectiveTimeoutMs = Math.max(timeoutMs ?? 30_000, 1_000);
+        const expiresAt = new Date(new Date(now).getTime() + effectiveTimeoutMs).toISOString();
+        const satellite = stateRuntime!.sqlite.withReadConnection((db) =>
+          satelliteRepo.getSatellite(db, satelliteId));
+
+        if (!satellite || satellite.deleted_at !== null) {
+          return { success: false, error: "satellite not found" };
+        }
+        if (satellite.pairing_status === "pending" || satellite.pairing_status === "revoked") {
+          return {
+            success: false,
+            error: `satellite is ${satellite.pairing_status}`,
+          };
+        }
+
+        const payload = {
+          type: "node.control",
+          nodeId: satelliteId,
+          command,
+          args: args ?? {},
+          timeoutMs: effectiveTimeoutMs,
+          requestedAt: now,
+        };
+        const queued = satelliteRuntime.outbox.enqueue({
+          satelliteId,
+          queueKey: `node:${satelliteId}`,
+          messageType: "node.control",
+          payloadCiphertext: encodeNodeControlPayload(payload),
+          nonce: "inline-transport",
+          keyId: "inline-transport:v1",
+          idempotencyKey: `node-control:${satelliteId}:${command}:${now}`,
+          expiresAt,
+        });
+
+        return {
+          success: true,
+          response: { queued: true, messageId: queued.id, expiresAt },
+        };
+      },
+    });
+
+    const nodesTool = createFridayAgentNodesTool({ nodesService: satelliteNodesService });
+    agentTools.push(nodesTool);
+    agentRuntime.registerTool(nodesTool);
+  }
 
   // 6. gateway — OC-011: real process info instead of stubs
   let gatewayService: ReturnType<typeof createFridayGatewayService> | undefined;
@@ -7092,6 +7332,104 @@ export async function createFridayHub(
           };
         };
 
+        const buildReflexOnboardingChannelText = (
+          snapshot: NonNullable<ReturnType<NonNullable<typeof reflexService>["getOnboarding"]>>,
+        ): string => {
+          const question = snapshot.activeQuestion;
+          if (!question) {
+            return "Reflex onboarding 已完成。你之后仍可在 Review Center 修改偏好或审批候选。";
+          }
+          const optionLines = question.options
+            .map((option, index) => `${String(index + 1)}. ${option.label} — ${option.description}`)
+            .join("\n");
+          return [
+            `Reflex onboarding ${String(snapshot.progress.completed + 1)}/${String(snapshot.progress.total)}`,
+            `${question.id} · ${question.title}`,
+            question.scenario,
+            question.prompt,
+            optionLines,
+            "回复序号即可选择；回复「跳过」或 skip 会永久跳过这一题，之后只能在 Review Center 手动补。",
+          ].join("\n\n");
+        };
+
+        const parseReflexOnboardingAnswer = (
+          textValue: string,
+          question: NonNullable<ReturnType<NonNullable<typeof reflexService>["getOnboarding"]>["activeQuestion"]>,
+        ): { value: string; text?: string } | null => {
+          const normalized = textValue.trim();
+          const numeric = /^(?:选|选择|option\s*)?([1-9])$/iu.exec(normalized);
+          if (numeric?.[1]) {
+            const option = question.options[Number.parseInt(numeric[1], 10) - 1];
+            return option ? { value: option.value } : null;
+          }
+          const lowered = normalized.toLowerCase();
+          const option = question.options.find((candidate) =>
+            candidate.value.toLowerCase() === lowered
+            || candidate.label.toLowerCase() === lowered);
+          if (option) {
+            return { value: option.value };
+          }
+          if (question.id === "O2" && normalized.length > 0 && normalized.length <= 80) {
+            return { value: "custom", text: normalized };
+          }
+          return null;
+        };
+
+        const maybeHandleReflexOnboardingChannelMessage = async (
+          msg: FridayChannelMessage,
+          textValue: string,
+        ): Promise<boolean> => {
+          if (!reflexService || textValue.trim().length === 0) return false;
+          let snapshot = reflexService.getOnboarding(learningDefaultUserId);
+          if (snapshot.session?.status === "not_started") {
+            snapshot = reflexService.startOnboarding({
+              userId: learningDefaultUserId,
+              primaryChannelKind: msg.channelKind,
+              primaryChannelUserId: msg.senderId,
+            });
+          }
+          if (snapshot.session?.status !== "active" || !snapshot.activeQuestion) {
+            return false;
+          }
+          if (
+            snapshot.session.primaryChannelKind
+            && snapshot.session.primaryChannelKind !== msg.channelKind
+          ) {
+            return false;
+          }
+          const trimmed = textValue.trim();
+          const skip = /^(?:skip|跳过|略过|先跳过)$/iu.test(trimmed);
+          if (skip) {
+            snapshot = reflexService.skipOnboarding({
+              userId: learningDefaultUserId,
+              questionId: snapshot.activeQuestion.id,
+              sourceSurface: "channel",
+            });
+          } else {
+            const answer = parseReflexOnboardingAnswer(trimmed, snapshot.activeQuestion);
+            if (!answer) {
+              await channelRegistry.send(msg.channelKind, {
+                chatId: msg.chatId,
+                text: buildReflexOnboardingChannelText(snapshot),
+                replyTo: msg.id,
+              });
+              return true;
+            }
+            snapshot = reflexService.answerOnboarding({
+              userId: learningDefaultUserId,
+              questionId: snapshot.activeQuestion.id,
+              answer,
+              sourceSurface: "channel",
+            });
+          }
+          await channelRegistry.send(msg.channelKind, {
+            chatId: msg.chatId,
+            text: buildReflexOnboardingChannelText(snapshot),
+            replyTo: msg.id,
+          });
+          return true;
+        };
+
         const channelMessageHandler = (msg: FridayChannelMessage) => {
           const text = sanitizeChannelInput(msg.text);
           const hasInboundImages = (msg.images?.length ?? 0) > 0;
@@ -7178,6 +7516,24 @@ export async function createFridayHub(
                   error: err,
                 });
               });
+            return;
+          }
+
+          const reflexSnapshot = reflexService?.getOnboarding(learningDefaultUserId);
+          const shouldHandleReflexOnboarding = Boolean(
+            reflexSnapshot?.session
+            && (reflexSnapshot.session.status === "active" || reflexSnapshot.session.status === "not_started")
+            && (!reflexSnapshot.session.primaryChannelKind || reflexSnapshot.session.primaryChannelKind === msg.channelKind),
+          );
+          if (shouldHandleReflexOnboarding) {
+            void maybeHandleReflexOnboardingChannelMessage(msg, text).catch((err) => {
+              logChannelIssue({
+                level: "error",
+                code: "E-CH-REFLEX-ONBOARDING-001",
+                routeId: "hub.channel.reflex_onboarding",
+                error: err,
+              });
+            });
             return;
           }
 
@@ -7595,6 +7951,10 @@ export async function createFridayHub(
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
       try { agentLearningBridge?.stop(); } catch (err) {
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
+      if (reflexCuratorInterval) {
+        clearInterval(reflexCuratorInterval);
+        reflexCuratorInterval = undefined;
+      }
       try { if (mcpAdapter && "close" in mcpAdapter) await (mcpAdapter as unknown as { close(): Promise<void> }).close(); } catch (err) {
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
 

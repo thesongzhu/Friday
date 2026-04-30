@@ -2164,6 +2164,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       allowPrivateNetwork: deps.allowPrivateNetwork,
       getLiveChannelCount: () => deps.channels?.registry.listViews().length ?? 0,
       activateSavedChannels: deps.activateSavedChannels,
+      onChannelsSaved: deps.onSetupChannelsSaved,
+      onSetupCompleted: deps.onSetupCompleted,
     })) {
       routes.register(route);
     }

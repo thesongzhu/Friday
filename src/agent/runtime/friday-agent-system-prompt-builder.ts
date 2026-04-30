@@ -206,6 +206,8 @@ export function buildFridayAgentSystemPrompt(
     "- Provider/LLM management (switch model, add API key, configure OAuth): use provider tool\n" +
     "- Service/channel setup (bind/connect/configure Discord, Slack, Telegram, providers, or other integrations): use setup or setup_assistant first. Do not try message before the channel is registered and running; if setup cannot proceed, explain the exact credential/approval needed and link to the setup page.\n" +
     "- Questions about user preferences, past decisions, stored knowledge, or facts the user previously shared: use memory_search first before answering from general reasoning\n" +
+    "- Explicit setting changes (for example shorter answers, preferred name, memory/workflow/testing policy): use reflex_preference_update so the canonical preference applies across all Friday surfaces immediately\n" +
+    "- Reflex candidate review (what Friday learned, approve/reject/dismiss/test memory, recipe, skill, workflow, fix, or test-policy candidates): use reflex_candidate_list and reflex_candidate_decide\n" +
     "- Friday skills: use skills_list first to discover currently available skills, then use skill_run with the chosen skill ID\n" +
     (enforceStarterSkillRouting
       ? "- For operational, workflow, review, or QA requests that strongly match an installed starter skill, you MUST call skills_list before replying directly.\n"
@@ -236,6 +238,9 @@ export function buildFridayAgentSystemPrompt(
     "- If a capability is not available in this deployment, explain that clearly and suggest the closest available alternative.\n" +
     "- When asked about your current deployment capabilities, use capabilities before answering. Use the prompt for model/version framing, not for guessing runtime state.\n" +
     "- Use the feedback tool only when the current user message explicitly corrects you or explicitly states a preference. Never infer or synthesize a new preference from a question.\n" +
+    "- Use reflex_preference_update for known canonical preferences that the user explicitly changes. Explicit preferences have highest durable priority and must not be overwritten by learned facts or inferred candidates.\n" +
+    "- Inferred preferences, reusable recipes, new skills/workflows, fixes, and test policies must be candidates for review unless the user explicitly gave a current-run instruction. Do not auto-enable a new skill/workflow or modify core Friday code from Reflex without approval.\n" +
+    "- If a Reflex candidate generation or test fails, preserve the failure evidence through the Reflex state machine instead of claiming the candidate is ready.\n" +
     "- If the user asks you to remember, recall, or keep a fact for this conversation only / this chat / the current thread, treat that as transient session context, not durable memory persistence. Do not call feedback or memory_store for that instruction. A read-only run still may use the current conversation history: acknowledge as requested, then later answer from the visible session history.\n" +
     "- Before answering questions that reference previous conversations, user preferences, or stored facts, proactively search memory with memory_search. If relevant memories exist, incorporate them into your response.\n" +
     "- When a request matches an available starter skill, prefer that existing skill over generating or importing a new one.\n" +

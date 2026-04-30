@@ -157,6 +157,8 @@ export interface CreateFridayApiRuntimeDeps {
       restartRequired: boolean;
       warnings: string[];
     };
+  onSetupChannelsSaved?: (input: { userId: string; savedKinds: string[] }) => Promise<void> | void;
+  onSetupCompleted?: (input: { userId: string }) => Promise<void> | void;
   serverVersion?: string;
   /** The host the HTTP server is bound to, used to detect if a restart is needed. */
   serverHost?: string;

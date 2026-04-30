@@ -1861,6 +1861,13 @@ export interface FridaySetupRoutesDeps {
   activateSavedChannels?: () =>
     | Promise<SetupChannelsActivationResponse>
     | SetupChannelsActivationResponse;
+  onChannelsSaved?: (input: {
+    userId: string;
+    savedKinds: string[];
+  }) => Promise<void> | void;
+  onSetupCompleted?: (input: {
+    userId: string;
+  }) => Promise<void> | void;
 }
 
 // ─── Factory ───
@@ -2514,6 +2521,13 @@ export function createFridaySetupRoutes(
           await sendFeishuSetupCompleteWelcomeIfConfigured(deps);
         }
 
+        if (ctx.principal?.userId && savedKinds.length > 0) {
+          await deps.onChannelsSaved?.({
+            userId: ctx.principal.userId,
+            savedKinds,
+          });
+        }
+
         return { savedKinds, ...(activation ? { activation } : {}) };
       },
     },
@@ -2582,6 +2596,9 @@ export function createFridaySetupRoutes(
         });
 
         await sendFeishuSetupCompleteWelcomeIfConfigured(deps);
+        if (ctx.principal?.userId) {
+          await deps.onSetupCompleted?.({ userId: ctx.principal.userId });
+        }
 
         return { setupCompletedAt: now };
       },

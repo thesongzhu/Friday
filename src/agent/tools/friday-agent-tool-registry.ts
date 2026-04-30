@@ -52,6 +52,7 @@ import type { FridayProviderService } from "../../providers/services/friday-prov
 import { createFridayAgentProviderTool } from "./friday-agent-provider-tool.js";
 import type { FridayLearnedFactView } from "../../learning/services/friday-learned-fact-memory-view.js";
 import type { FridayLearningEventAppendInput } from "#ledger";
+import type { FridayReflexService } from "../../reflex/index.js";
 import {
   createFridayAgentCapabilitiesTool,
   type FridayAgentCapabilitiesSnapshot,
@@ -62,6 +63,7 @@ import {
 } from "./friday-agent-task-status-tool.js";
 import type { FridayOperationalMode } from "../runtime/friday-agent-operational-mode.js";
 import { filterToolsByMode } from "../runtime/friday-agent-operational-mode.js";
+import { createFridayAgentReflexTools } from "./friday-agent-reflex-tools.js";
 
 // ─── Registry options ───
 
@@ -128,6 +130,12 @@ export interface CreateFridayAgentToolRegistryOptions {
   /** Deterministic task status snapshot getter for coordinator/status questions. */
   taskStatusSnapshotGetter?: (input: { runId?: string; sessionKey?: string; readOnly: boolean }) =>
     Promise<FridayAgentTaskStatusSnapshot> | FridayAgentTaskStatusSnapshot;
+  /** Reflex service for candidate review and explicit canonical preference updates. */
+  reflexService?: FridayReflexService;
+  /** Late-bound Reflex service getter for bootstrap order/circular dependency cases. */
+  reflexServiceGetter?: () => FridayReflexService | undefined;
+  /** Default principal for Reflex tools when a runtime principal is not injected. */
+  defaultReflexUserId?: string;
   /** Whether explicit subagent fork mode should be exposed in tool schema. */
   subagentForkModeEnabled?: boolean;
   /** Operational mode — when set, tools are filtered by allowed categories. */
@@ -333,6 +341,16 @@ export function createFridayAgentToolRegistry(
     );
   }
 
+  if (options?.reflexService || options?.reflexServiceGetter) {
+    tools.push(
+      ...createFridayAgentReflexTools({
+        reflexService: options.reflexService,
+        reflexServiceGetter: options.reflexServiceGetter,
+        defaultUserId: options.defaultReflexUserId ?? "local-user",
+      }),
+    );
+  }
+
   // ─── Mode-based tool filtering ───
   const mode = options?.operationalMode;
   if (mode && mode !== "execute") {
@@ -365,6 +383,9 @@ const ALWAYS_LOAD_TOOLS = new Set([
   "controlled_autonomy",
   "capabilities",
   "task_status",
+  "reflex_candidate_list",
+  "reflex_candidate_decide",
+  "reflex_preference_update",
 ]);
 
 export interface FridayAgentToolRegistryPartitioned {

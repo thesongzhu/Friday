@@ -36,6 +36,12 @@ export interface FridayAgentCapabilitiesSnapshot {
   companion: {
     connected: boolean;
   };
+  reflex?: {
+    onboardingEnabled: boolean;
+    candidatesEnabled: boolean;
+    curatorEnabled: boolean;
+    liveLlmTestsEnabled: boolean;
+  };
   runtime?: FridayRuntimeCapabilityMatrix;
 }
 

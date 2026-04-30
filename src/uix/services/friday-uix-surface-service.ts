@@ -28,6 +28,7 @@ import type {
 } from "../../api/model/friday-api-uix-surface.types.js";
 import type { FridayIssueCard } from "../../api/model/friday-api-self-healing.types.js";
 import type { FridayAssistantWorkflowCard } from "../../api/model/friday-api-workflow.types.js";
+import { isFridayReflexPreferenceKey } from "../../reflex/index.js";
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayObservabilityApiService } from "../../observability/services/friday-observability-api-service.js";
 import type {
@@ -634,6 +635,13 @@ function isValidUixPreference(
     return Array.isArray(value) && value.every((item) => isCustomPackInputRecord(item));
   }
   return false;
+}
+
+function isValidReflexPreference(
+  key: string,
+  value: unknown,
+): boolean {
+  return isFridayReflexPreferenceKey(key) && value !== undefined;
 }
 
 function summarizeWorkflowName(goal: string): string {
@@ -1586,7 +1594,8 @@ export function createFridayUixSurfaceService(
         input.request.preferences.map((preference) => {
           const isCommunicationPreference = preference.category === "communication";
           const isUixPreference = preference.category === "uix";
-          if (!isCommunicationPreference && !isUixPreference) {
+          const isReflexPreference = preference.category === "reflex";
+          if (!isCommunicationPreference && !isUixPreference && !isReflexPreference) {
             throw new FridayDomainError(
               "UIX_PREFERENCE_VALIDATION_FAILED",
               `Unsupported preference category: ${preference.category}`,
@@ -1596,6 +1605,7 @@ export function createFridayUixSurfaceService(
           if (
             (isCommunicationPreference && !isValidCommunicationPreference(preference.key, preference.value))
             || (isUixPreference && !isValidUixPreference(preference.key, preference.value))
+            || (isReflexPreference && !isValidReflexPreference(preference.key, preference.value))
           ) {
             throw new FridayDomainError(
               "UIX_PREFERENCE_VALIDATION_FAILED",

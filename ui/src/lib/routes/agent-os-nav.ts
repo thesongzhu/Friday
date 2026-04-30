@@ -72,6 +72,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
   },
   {
+    label: localizedText("成长中心", "Reflex"),
+    path: "/reflex",
+    description: localizedText("审批 Friday 学到的候选、首次 onboarding 和跨渠道偏好。", "Review what Friday learned, first-run onboarding, and cross-channel preferences."),
+  },
+  {
     label: localizedText("MCP 服务", "MCP"),
     path: "/mcp",
     description: localizedText("查看已连接的 MCP 服务器和工具扩展状态。", "View connected MCP servers and tool extension status."),
@@ -159,6 +164,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/memory")) {
     return localizedText("记忆", "Memory");
+  }
+  if (pathname.startsWith("/reflex")) {
+    return localizedText("成长中心", "Reflex");
   }
   if (pathname.startsWith("/sessions")) {
     return localizedText("会话", "Sessions");
