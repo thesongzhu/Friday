@@ -90,41 +90,6 @@ describe("FridayPluginRoutes", () => {
       enablePlugin: vi.fn(async (id: string) => makeEntity(id, { status: "enabled", enabled: true })),
       disablePlugin: vi.fn(async (id: string) => makeEntity(id, { status: "disabled" })),
       uninstallPlugin: vi.fn(async () => undefined),
-      searchMarketplace: vi.fn(async () => ({ items: [], total: 0 })),
-      getMarketplacePlugin: vi.fn(async () => ({
-        id: "friday.test.mp",
-        name: "MP Plugin",
-        description: "test",
-        version: "1.0.0",
-        author: "Test",
-        downloads: 42,
-        manifest: makeManifest("friday.test.mp"),
-        checksum: "abc",
-        packageUrl: "url",
-        updatedAt: NOW,
-        previewSdk: {
-          sdkVersion: "2026-03-preview",
-          capabilities: ["registerTool"],
-          publisherId: "partner.preview",
-        },
-        capabilitySummary: {
-          previewEnabled: true,
-          sdkVersion: "2026-03-preview",
-          requestedCapabilities: ["registerTool"],
-          supportedCapabilities: ["registerTool"],
-          unsupportedCapabilities: [],
-        },
-        policySummary: {
-          publisherProgram: "allowlisted_partner",
-          installAllowed: true,
-          enableAllowed: true,
-          reasons: [],
-        },
-      })),
-      listMarketplacePluginVersions: vi.fn(async () => [
-        { version: "1.0.0", releasedAt: NOW, checksum: "abc123" },
-      ]),
-      installFromMarketplace: vi.fn(async () => makeEntity("friday.test.mp", { source: "marketplace" })),
     };
 
     manifestLoader = {
@@ -140,8 +105,8 @@ describe("FridayPluginRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 11 plugin routes", () => {
-    expect(routes).toHaveLength(11);
+  it("registers 7 plugin routes", () => {
+    expect(routes).toHaveLength(7);
   });
 
   it("has correct operation IDs", () => {
@@ -153,10 +118,6 @@ describe("FridayPluginRoutes", () => {
     expect(ids).toContain("plugins.enable");
     expect(ids).toContain("plugins.disable");
     expect(ids).toContain("plugins.uninstall");
-    expect(ids).toContain("marketplace.plugins.list");
-    expect(ids).toContain("marketplace.plugins.get");
-    expect(ids).toContain("marketplace.plugins.versions.list");
-    expect(ids).toContain("marketplace.plugins.install");
   });
 
   // ─── plugins.list ───
@@ -267,47 +228,6 @@ describe("FridayPluginRoutes", () => {
     expect(pluginService.uninstallPlugin).toHaveBeenCalledWith("friday.test.alpha", true);
   });
 
-  // ─── marketplace.plugins.list ───
-
-  it("searches marketplace", async () => {
-    const route = findRoute("marketplace.plugins.list");
-    const result = await route.handler(makeCtx({ query: { q: "test" } }));
-    expect(result).toMatchObject({ items: [], total: 0 });
-  });
-
-  // ─── marketplace.plugins.get ───
-
-  it("gets marketplace plugin detail", async () => {
-    const route = findRoute("marketplace.plugins.get");
-    const result = await route.handler(makeCtx({ params: { id: "friday.test.mp" } }));
-    expect(result).toMatchObject({
-      plugin: {
-        id: "friday.test.mp",
-        previewSdk: { sdkVersion: "2026-03-preview" },
-        capabilitySummary: { requestedCapabilities: ["registerTool"] },
-        policySummary: { publisherProgram: "allowlisted_partner" },
-      },
-    });
-  });
-
-  // ─── marketplace.plugins.versions.list ───
-
-  it("lists marketplace plugin versions", async () => {
-    const route = findRoute("marketplace.plugins.versions.list");
-    const result = await route.handler(makeCtx({ params: { id: "friday.test.mp" } }));
-    expect(result).toMatchObject({
-      versions: [{ version: "1.0.0", checksum: "abc123" }],
-    });
-  });
-
-  // ─── marketplace.plugins.install ───
-
-  it("installs from marketplace", async () => {
-    const route = findRoute("marketplace.plugins.install");
-    const result = await route.handler(makeCtx({ params: { id: "friday.test.mp" } }));
-    expect(result).toMatchObject({ plugin: { source: "marketplace" } });
-  });
-
   // ─── Auth configuration ───
 
   it("all routes require authentication", () => {
@@ -319,7 +239,6 @@ describe("FridayPluginRoutes", () => {
   it("read routes require plugin.read scope", () => {
     const readRoutes = [
       "plugins.list", "plugins.get", "plugins.versions.list",
-      "marketplace.plugins.list", "marketplace.plugins.get", "marketplace.plugins.versions.list",
     ];
     for (const opId of readRoutes) {
       const route = findRoute(opId);
@@ -340,7 +259,7 @@ describe("FridayPluginRoutes", () => {
   });
 
   it("install routes require plugin.install scope", () => {
-    const installRoutes = ["plugins.install", "marketplace.plugins.install"];
+    const installRoutes = ["plugins.install"];
     for (const opId of installRoutes) {
       const route = findRoute(opId);
       if (!route.auth.public) {
@@ -372,29 +291,4 @@ describe("FridayPluginRoutes", () => {
     ).rejects.toThrow(FridayDomainError);
   });
 
-  it("handles NaN limit in marketplace search gracefully", async () => {
-    const route = findRoute("marketplace.plugins.list");
-    await route.handler(makeCtx({ query: { limit: "not_a_number" } }));
-    // Should not throw; falls back to default
-    expect(pluginService.searchMarketplace).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 50 }),
-    );
-  });
-
-  it("handles NaN offset in marketplace search gracefully", async () => {
-    const route = findRoute("marketplace.plugins.list");
-    await route.handler(makeCtx({ query: { offset: "abc" } }));
-    // Should not throw; falls back to 0
-    expect(pluginService.searchMarketplace).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 0 }),
-    );
-  });
-
-  it("clamps limit to max", async () => {
-    const route = findRoute("marketplace.plugins.list");
-    await route.handler(makeCtx({ query: { limit: "9999" } }));
-    expect(pluginService.searchMarketplace).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 200 }),
-    );
-  });
 });

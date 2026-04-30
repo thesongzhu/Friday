@@ -130,10 +130,21 @@ function authHeaders(token) {
 }
 
 async function loginLocal(baseUrl) {
+  const localPassphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+    ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+    ?? "friday-self-evolution-passphrase-123";
+  const status = await fetchJson(`${baseUrl}/v1/auth/bootstrap/status`);
+  if (status.ok && status.json?.ok === true && status.json.data?.bootstrapRequired === true) {
+    await fetchJson(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase }),
+    });
+  }
   const login = await fetchJson(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase }),
   });
   if (!login.ok || login.json?.ok !== true) {
     throw new Error(`Local login failed: ${login.text}`);
@@ -1219,7 +1230,7 @@ async function main() {
       "- Sessions / Memory / World model: repeat runs, incident learning, lesson extraction, and pattern extraction were checked against the isolated SQLite state.",
       "- Workflow / Approval / Automation / Self-healing: manual resolve and low-risk auto-fix execution were exercised via real diagnosis/auto-fix surfaces plus the live self-healing service path.",
       "- Realtime / Channels / UIX / Observability: not fully live-dogfooded in this script; see blocker and recommendation sections for remaining operator-surface gaps.",
-      "- Marketplace / Skills / Plugins: covered only by existing suite expectations in this run; no new product-surface mutations were introduced here.",
+      "- Skills / Plugins: covered only by existing suite expectations in this run; no new product-surface mutations were introduced here.",
       "- Bootstrap / SQLite / Release harness: isolated hub bootstrap, SQLite state creation, and report artifacts were exercised directly; closure remains separately covered by npm run test:e2e:closure:local.",
       "",
       "## Evidence",

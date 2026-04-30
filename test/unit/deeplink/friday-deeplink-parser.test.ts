@@ -57,16 +57,6 @@ describe("parseFridayDeepLinkUri", () => {
     }
   });
 
-  it("parses marketplace-asset URI", () => {
-    const result = parseFridayDeepLinkUri("friday://marketplace-asset?assetId=abc123&sourceId=official");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.payload.type).toBe("marketplace-asset");
-      expect(result.payload.marketplaceAsset?.assetId).toBe("abc123");
-      expect(result.payload.marketplaceAsset?.sourceId).toBe("official");
-    }
-  });
-
   it("extracts integrity hash and source", () => {
     const result = parseFridayDeepLinkUri(
       "friday://skill-source?url=https://example.com/skill.tgz&integrity=integrity-demo-value&source=trusted-repo",

@@ -13,7 +13,7 @@ describe("describeSetupStatusFailure", () => {
 
     expect(result.title).toContain("local Friday connection");
     expect(result.detail).toContain(origin);
-    expect(result.actions.join(" ")).toContain("FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN");
+    expect(result.actions.join(" ")).toContain("local passphrase");
   });
 
   it("classifies not found setup status failures as origin assembly problems", () => {

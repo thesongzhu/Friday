@@ -17,7 +17,6 @@ export const FRIDAY_CORE_CHANNEL_PLUGIN_IDS = [
 ] as const;
 
 export const FRIDAY_PLUGIN_SOURCE_PRECEDENCE: readonly FridayPluginSource[] = [
-  "marketplace",
   "local",
   "bundled",
 ];
@@ -72,7 +71,6 @@ export const FRIDAY_PLUGIN_VALID_KINDS: readonly FridayPluginKind[] = [
 export const FRIDAY_PLUGIN_VALID_SOURCES: readonly FridayPluginSource[] = [
   "bundled",
   "local",
-  "marketplace",
 ];
 
 export const FRIDAY_PLUGIN_VALID_TRUST_MODES: readonly FridayPluginTrustMode[] = [
@@ -100,7 +98,7 @@ export type FridayPluginKind =
   | "storage"
   | "integration";
 
-export type FridayPluginSource = "bundled" | "local" | "marketplace";
+export type FridayPluginSource = "bundled" | "local";
 
 export type FridayPluginStatus =
   | "not_installed"

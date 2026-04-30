@@ -51,14 +51,30 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
     ...(options.realtimeEnabled !== undefined ? { realtimeEnabled: options.realtimeEnabled } : {}),
   };
   const configuredAccessToken = process.env.FRIDAY_TUI_ACCESS_TOKEN?.trim() || undefined;
+  const localPassphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE?.trim()
+    || process.env.FRIDAY_LOCAL_PASSPHRASE?.trim()
+    || "friday-cli-tui-passphrase-123";
   const loopbackBaseUrl = isLoopbackBaseUrl(config.apiBaseUrl);
   let cachedAccessToken = configuredAccessToken;
 
-  async function loginLocalBypass(): Promise<string> {
+  async function loginLocalPassphrase(): Promise<string> {
+    const bootstrapStatusResponse = await fetch(`${config.apiBaseUrl}/v1/auth/bootstrap/status`);
+    const bootstrapStatus = await bootstrapStatusResponse.json().catch(() => null) as {
+      ok?: boolean;
+      data?: { bootstrapRequired?: boolean };
+    } | null;
+    if (bootstrapStatusResponse.ok && bootstrapStatus?.ok === true && bootstrapStatus.data?.bootstrapRequired === true) {
+      await fetch(`${config.apiBaseUrl}/v1/auth/bootstrap/local-passphrase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ localPassphrase }),
+      });
+    }
+
     const response = await fetch(`${config.apiBaseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase }),
     });
     const body = await response.json().catch(() => null) as FridayCliAuthEnvelope | null;
     if (!response.ok || body?.ok !== true || typeof body.data?.accessToken !== "string") {
@@ -84,7 +100,7 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
     if (!loopbackBaseUrl) {
       return undefined;
     }
-    return loginLocalBypass();
+    return loginLocalPassphrase();
   }
 
   const apiClient = createFridayTuiApiClient({

@@ -143,7 +143,6 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       agentRuntime,
       agentEventEmitter: eventEmitter,
       tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
-      allowLocalBypassLogin: true,
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
@@ -294,7 +293,6 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       agentRuntime,
       agentEventEmitter: eventEmitter,
       tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
-      allowLocalBypassLogin: true,
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),

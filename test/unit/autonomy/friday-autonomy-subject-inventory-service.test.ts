@@ -30,10 +30,10 @@ describe("FridayAutonomySubjectInventoryService", () => {
     const pluginRegistry = createFridayPluginRegistryService({ sqlite: db, pluginRepository: pluginRepo });
 
     db.withWriteTransaction((conn) => {
-      skillRepo.upsertSkillFromMarketplace(conn, {
+      skillRepo.upsertSkillFromCatalog(conn, {
         id: "skill-1",
         name: "Skill One",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         latestVersion: "1.0.0",
         status: "installed",

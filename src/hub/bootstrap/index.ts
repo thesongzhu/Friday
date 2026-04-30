@@ -7,8 +7,6 @@ export type {
 } from "./friday-capability-gates.js";
 
 export {
-  // Marketplace
-  deriveMarketplaceSkillIdCandidates,
   // Cross-channel identity
   parseFridayChannelIdentityMap,
   resolveFridayChannelSessionKey,

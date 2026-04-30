@@ -105,15 +105,6 @@ describe("V008 plugin system foundation schema", () => {
     expect(indexNames).toContain("idx_plugin_deps_dependency");
   });
 
-  // ─── plugin_marketplace_sources table ───
-
-  it("creates plugin_marketplace_sources table", () => {
-    const tables = db.withReadConnection((d) =>
-      d.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plugin_marketplace_sources'").all(),
-    ) as Array<{ name: string }>;
-    expect(tables).toHaveLength(1);
-  });
-
   // ─── plugin_versions table ───
 
   it("creates plugin_versions table", () => {
@@ -131,15 +122,6 @@ describe("V008 plugin system foundation schema", () => {
     ) as Array<{ name: string }>;
     const indexNames = indexes.map((i) => i.name);
     expect(indexNames).toContain("idx_plugin_versions_plugin_released");
-  });
-
-  // ─── plugin_marketplace_cache table ───
-
-  it("creates plugin_marketplace_cache table", () => {
-    const tables = db.withReadConnection((d) =>
-      d.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plugin_marketplace_cache'").all(),
-    ) as Array<{ name: string }>;
-    expect(tables).toHaveLength(1);
   });
 
   // ─── migration row ───

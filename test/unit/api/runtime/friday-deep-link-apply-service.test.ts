@@ -252,27 +252,4 @@ describe("createFridayDeepLinkApplyService", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns an honest unsupported result for marketplace assets", async () => {
-    const service = createFridayDeepLinkApplyService({
-      idGenerator: () => "id-1",
-      providerService: makeProviderService(),
-      converterService: makeConverterService(),
-      workflowImportExport: makeWorkflowImportExport(),
-    });
-
-    const result = await service.apply({
-      version: 1,
-      type: "marketplace-asset",
-      label: "Install asset",
-      marketplaceAsset: {
-        assetId: "asset-1",
-      },
-    });
-
-    expect(result).toEqual({
-      applied: false,
-      resourceType: "marketplace-asset",
-      message: "Deep link apply for marketplace-asset is not yet supported by the marketplace install surface.",
-    });
-  });
 });

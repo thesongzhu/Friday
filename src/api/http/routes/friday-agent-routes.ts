@@ -161,7 +161,6 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
 // ─── Deps ───
 
 export interface FridayAgentRoutesDeps {
-  assertListingEntitled?: (listingId: string, principal: FridayAuthPrincipal | null) => Promise<void>;
   validateRequestedRoute?: (
     providerId?: string,
     model?: string,
@@ -348,20 +347,6 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        const marketplaceListingId = typeof body.marketplaceListingId === "string"
-          ? body.marketplaceListingId.trim()
-          : undefined;
-        if (body.marketplaceListingId !== undefined && !marketplaceListingId) {
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            "marketplaceListingId must be a non-empty string when provided",
-            { httpStatus: 400 },
-          );
-        }
-        if (marketplaceListingId) {
-          await deps.assertListingEntitled?.(marketplaceListingId, ctx.principal);
-        }
-
         assertNoAliasConflict(body.providerId, body.requestedProviderId, "providerId", "requestedProviderId");
         assertNoAliasConflict(body.model, body.requestedModel, "model", "requestedModel");
         const providerId = readPreferredString(body.providerId, body.requestedProviderId);

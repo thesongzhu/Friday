@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, PackagePlus, PlugZap, Power, PowerOff, ShieldCheck, Store, Trash2 } from "lucide-react";
+import { AlertTriangle, PackagePlus, Power, PowerOff, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, EmptyState, FieldLabel, ShellCard, SkeletonCard, StatusPill } from "@/components/core/primitives";
-import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { healthApi } from "@/lib/api/health";
-import { pluginsApi, type FridayMarketplacePluginSummary, type FridayPluginEntity } from "@/lib/api/plugins";
+import { pluginsApi, type FridayPluginEntity } from "@/lib/api/plugins";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -32,16 +31,6 @@ function pluginTone(status: FridayPluginEntity["status"]): "neutral" | "success"
     default:
       return "neutral";
   }
-}
-
-function publisherProgramTone(
-  value?: FridayMarketplacePluginSummary["policySummary"] extends infer T
-    ? T extends { publisherProgram: infer P } ? P : never
-    : never,
-): "neutral" | "success" | "warning" {
-  if (value === "first_party") return "success";
-  if (value === "allowlisted_partner") return "warning";
-  return "neutral";
 }
 
 function PluginInventoryCard(props: {
@@ -130,54 +119,12 @@ function PluginInventoryCard(props: {
   );
 }
 
-function MarketplacePluginCard(props: {
-  plugin: FridayMarketplacePluginSummary;
-  marketplaceAvailable: boolean;
-  onInstall: (pluginId: string) => void;
-  busyPluginId: string | null;
-}) {
-  const { locale } = useAppLocale();
-  const { plugin } = props;
-  const isBusy = props.busyPluginId === plugin.id;
-
-  return (
-    <div className="rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{plugin.name}</p>
-            {plugin.policySummary ? (
-              <StatusPill tone={publisherProgramTone(plugin.policySummary.publisherProgram)}>
-                {plugin.policySummary.publisherProgram}
-              </StatusPill>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">{plugin.id}</p>
-        </div>
-        <ActionButton tone="secondary" disabled={!props.marketplaceAvailable || isBusy} onClick={() => props.onInstall(plugin.id)}>
-          <Store className="mr-2 h-4 w-4" />
-          {localize(locale, "安装", "Install")}
-        </ActionButton>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{plugin.description}</p>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[color:var(--color-text-secondary)]">
-        <span>{plugin.author}</span>
-        <span>·</span>
-        <span>{localize(locale, "下载量", "Downloads")}: {plugin.downloads}</span>
-        <span>·</span>
-        <span>{localize(locale, "更新于", "Updated")}: {formatTimestamp(plugin.updatedAt)}</span>
-      </div>
-    </div>
-  );
-}
-
 export function PluginsPage() {
   const { locale } = useAppLocale();
   const queryClient = useQueryClient();
   const [installPluginId, setInstallPluginId] = useState("");
   const [installPath, setInstallPath] = useState("");
   const [installTrustOnInstall, setInstallTrustOnInstall] = useState(false);
-  const [marketplaceQuery, setMarketplaceQuery] = useState("");
   const [pendingUninstallId, setPendingUninstallId] = useState<string | null>(null);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
 
@@ -194,14 +141,6 @@ export function PluginsPage() {
 
   const health = healthQuery.data;
   const pluginRuntimeMode = health?.capabilities?.plugins?.runtimeMode ?? "stub";
-  const pluginMarketplaceAvailable = health?.capabilities?.plugins?.marketplaceAvailable === true;
-
-  const marketplaceListQuery = useQuery({
-    queryKey: ["plugins", "marketplace", marketplaceQuery],
-    queryFn: () => pluginsApi.searchMarketplace({ q: marketplaceQuery.trim() || undefined, limit: 20 }),
-    enabled: !HIDE_MARKETPLACE_UI && pluginMarketplaceAvailable,
-    refetchInterval: !HIDE_MARKETPLACE_UI && pluginMarketplaceAvailable ? 30_000 : false,
-  });
 
   const plugins = pluginsQuery.data ?? [];
   const installedCount = plugins.length;
@@ -286,24 +225,6 @@ export function PluginsPage() {
     },
   });
 
-  const marketplaceInstallMutation = useMutation({
-    mutationFn: async (pluginId: string) => {
-      setBusyPluginId(pluginId);
-      return pluginsApi.installFromMarketplace(pluginId);
-    },
-    onSuccess: (plugin) => {
-      toast.success(locale === "zh" ? `已从市场安装 ${plugin.name}` : `Installed ${plugin.name} from marketplace`);
-      void queryClient.invalidateQueries({ queryKey: ["plugins"] });
-      void queryClient.invalidateQueries({ queryKey: ["plugins", "marketplace"] });
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : localize(locale, "市场安装失败", "Marketplace install failed"));
-    },
-    onSettled: () => {
-      setBusyPluginId(null);
-    },
-  });
-
   const canInstallLocal =
     installPluginId.trim().length > 0 &&
     installPath.trim().length > 0 &&
@@ -318,17 +239,13 @@ export function PluginsPage() {
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            HIDE_MARKETPLACE_UI
-              ? "这里展示 Friday 真实运行中的插件库存、启停状态和本地安装入口。当前页只保留已经真实接线的本地能力。"
-              : "这里展示 Friday 真实运行中的插件库存、启停状态和插件市场接线情况。当前页不再假设“有插件能力”就等于“用户一定有可用插件”。",
-            HIDE_MARKETPLACE_UI
-              ? "This page shows Friday's live plugin inventory, enablement state, and local install entry. Only locally wired plugin capabilities are shown here."
-              : "This page shows Friday's live plugin inventory, enablement state, and marketplace wiring. It no longer assumes that plugin capability means a user-visible plugin flow is actually ready on this machine.",
+            "这里展示 Friday 真实运行中的插件库存、启停状态和本地安装入口。当前页只保留已经真实接线的本地能力。",
+            "This page shows Friday's live plugin inventory, enablement state, and local install entry. Only locally wired plugin capabilities are shown here.",
           )}
         </p>
       </div>
 
-      <div className={`grid gap-4 ${HIDE_MARKETPLACE_UI ? "md:grid-cols-3" : "md:grid-cols-4"}`}>
+      <div className="grid gap-4 md:grid-cols-3">
         <ShellCard>
           <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "运行模式", "Runtime mode")}</p>
           <p className="mt-2 text-2xl font-semibold text-[color:var(--color-text-primary)]">{pluginRuntimeMode}</p>
@@ -348,21 +265,6 @@ export function PluginsPage() {
           <p className="mt-2 text-2xl font-semibold text-[color:var(--color-text-primary)]">{String(activeCount)}</p>
           <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">{localize(locale, "包括 enabled 和 running 状态。", "Counts enabled and running plugins.")}</p>
         </ShellCard>
-        {!HIDE_MARKETPLACE_UI ? (
-          <ShellCard>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{localize(locale, "插件市场", "Plugin marketplace")}</p>
-            <div className="mt-2">
-              <StatusPill tone={pluginMarketplaceAvailable ? "success" : "neutral"}>
-                {pluginMarketplaceAvailable ? localize(locale, "已连接", "connected") : localize(locale, "未接线", "not connected")}
-              </StatusPill>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
-              {pluginMarketplaceAvailable
-                ? localize(locale, "此机器已接上插件市场源。", "This machine is wired to a plugin marketplace source.")
-                : localize(locale, "此机器的插件市场源当前为空或未配置。", "This machine currently has no configured plugin marketplace source.")}
-            </p>
-          </ShellCard>
-        ) : null}
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -461,67 +363,6 @@ export function PluginsPage() {
           )}
         </ShellCard>
 
-        {!HIDE_MARKETPLACE_UI ? (
-          <ShellCard eyebrow={localize(locale, "插件市场", "Plugin marketplace")} title={localize(locale, "市场源和可安装项", "Marketplace source and installable items")} aside={<StatusPill tone={pluginMarketplaceAvailable ? "success" : "neutral"}>{pluginMarketplaceAvailable ? localize(locale, "live", "live") : localize(locale, "offline", "offline")}</StatusPill>}>
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                className="agent-input max-w-sm"
-                value={marketplaceQuery}
-                onChange={(event) => setMarketplaceQuery(event.target.value)}
-                placeholder={localize(locale, "搜索插件市场", "Search plugin marketplace")}
-              />
-              <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
-                <Store className="h-4 w-4" />
-                <span>
-                  {pluginMarketplaceAvailable
-                    ? localize(locale, "市场已接线，列表来自真实 /v1/marketplace/plugins。", "Marketplace is connected; list comes from live /v1/marketplace/plugins.")
-                    : localize(locale, "此机器未接上插件市场源，所以这里显示真实离线状态。", "This machine is not wired to a plugin marketplace source, so this section shows a real offline state.")}
-                </span>
-              </div>
-            </div>
-
-            {!pluginMarketplaceAvailable ? (
-              <div className="mt-4 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
-                <div className="flex items-start gap-3">
-                  <PlugZap className="mt-0.5 h-5 w-5 text-[color:var(--color-text-faint)]" />
-                  <div className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
-                    <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "插件市场当前未接线", "Plugin marketplace is not wired on this machine")}</p>
-                    <p className="mt-1">{localize(locale, "这不是假报错。健康检查已经明确返回 marketplaceAvailable=false，所以这里直接展示真实状态。", "This is not a fake error. Health explicitly reports marketplaceAvailable=false, so the page shows the real state directly.")}</p>
-                  </div>
-                </div>
-              </div>
-            ) : marketplaceListQuery.isLoading ? (
-              <div className="mt-4 space-y-3">
-                <SkeletonCard lines={2} />
-                <SkeletonCard lines={2} />
-              </div>
-            ) : marketplaceListQuery.isError ? (
-              <EmptyState
-                className="mt-4"
-                title={localize(locale, "插件市场加载失败", "Failed to load plugin marketplace")}
-                description={localize(locale, "市场路由已接线，但当前请求失败。", "Marketplace routes are wired, but the current request failed.")}
-              />
-            ) : (marketplaceListQuery.data?.items.length ?? 0) === 0 ? (
-              <EmptyState
-                className="mt-4"
-                title={localize(locale, "没有可安装的插件项", "No installable marketplace plugins")}
-                description={localize(locale, "当前源返回空列表。真实空状态会被保留，不再伪装成已内建丰富目录。", "The current source returned an empty list. This real empty state is kept instead of pretending a built-in rich catalog exists.")}
-              />
-            ) : (
-              <div className="mt-4 space-y-3">
-                {marketplaceListQuery.data?.items.map((plugin) => (
-                  <MarketplacePluginCard
-                    key={plugin.id}
-                    plugin={plugin}
-                    marketplaceAvailable={pluginMarketplaceAvailable}
-                    busyPluginId={busyPluginId}
-                    onInstall={(pluginId) => marketplaceInstallMutation.mutate(pluginId)}
-                  />
-                ))}
-              </div>
-            )}
-          </ShellCard>
-        ) : null}
       </div>
 
       <div className="mt-6 rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4">
@@ -532,12 +373,8 @@ export function PluginsPage() {
             <p className="mt-1">
               {localize(
                 locale,
-                HIDE_MARKETPLACE_UI
-                  ? "插件能力现在先只按两层看：1. 运行时是否真的开着；2. 当前机器上有没有真实库存和本地安装入口。未完成的外部分发入口已从当前用户面移除。"
-                  : "插件能力现在分成三层看待：1. 运行时是否真的开着；2. 当前机器上有没有真实库存；3. 用户是否有可走的 UI。以前只有第 1 层，现在第 3 层也补上了，但安装引导仍然偏运维，不算新手友好。",
-                HIDE_MARKETPLACE_UI
-                  ? "Plugin capability is currently treated in two layers: 1. whether runtime is truly on, and 2. whether this machine has real inventory and a local install path. Unfinished external distribution surfaces have been removed from the current user UI."
-                  : "Plugin capability is now treated in three layers: 1. whether runtime is truly on, 2. whether this machine has real inventory, and 3. whether the user has a real UI path. We previously only had layer 1. Layer 3 now exists too, but install guidance is still operator-oriented, not beginner-friendly.",
+                "插件能力现在先只按两层看：1. 运行时是否真的开着；2. 当前机器上有没有真实库存和本地安装入口。未完成的外部分发入口已从当前用户面移除。",
+                "Plugin capability is currently treated in two layers: 1. whether runtime is truly on, and 2. whether this machine has real inventory and a local install path. Unfinished external distribution surfaces have been removed from the current user UI.",
               )}
             </p>
           </div>

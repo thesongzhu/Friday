@@ -155,9 +155,7 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
     FRIDAY_STATE_DIR: paths.state,
     FRIDAY_CHANNELS_JSON: baseEnv.FRIDAY_CHANNELS_JSON ?? '{"enabled":true,"instances":[]}',
     FRIDAY_BROWSER_HEADLESS: "true",
-    FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: baseEnv.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "true",
     FRIDAY_SYSTEM_ENABLED: baseEnv.FRIDAY_SYSTEM_ENABLED ?? "true",
-    FRIDAY_MARKETPLACE_COMMERCE_ENABLED: baseEnv.FRIDAY_MARKETPLACE_COMMERCE_ENABLED ?? "true",
     FRIDAY_AUTOFIX_DISPATCHER_ENABLED: baseEnv.FRIDAY_AUTOFIX_DISPATCHER_ENABLED ?? "true",
   };
 }

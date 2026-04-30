@@ -1354,7 +1354,7 @@ function inferTaskToolProfile(text: string): string | undefined {
   if (/\b(workflow|automation|schedule|cron|trigger|dag|pipeline)\b|工作流|自动化|定时|触发器/u.test(normalized)) {
     return "workflow";
   }
-  if (/\b(skill|skills|plugin|marketplace)\b|技能|插件|市场/u.test(normalized)) {
+  if (/\b(skill|skills|plugin)\b|技能|插件/u.test(normalized)) {
     return "skill";
   }
   if (/\b(code|repo|repository|file|fix|debug|test|build|typescript|javascript|python|git|commit|diff|pr)\b|代码|仓库|文件|修复|调试|测试|构建/u.test(normalized)) {

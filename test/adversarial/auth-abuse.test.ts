@@ -27,7 +27,6 @@ import type { FridaySqliteLayer } from "#state";
 
 function createAuthDeps(db: FridaySqliteLayer, opts?: {
   nowIso?: () => string;
-  allowPasswordless?: boolean;
   exemptLoopback?: boolean;
 }) {
   const idGenerator = createTestIdGenerator();
@@ -49,7 +48,6 @@ function createAuthDeps(db: FridaySqliteLayer, opts?: {
     accessTokenTtlSec: 900,
     refreshTokenTtlSec: 604_800,
     rateLimiter,
-    allowPasswordlessLocalLogin: opts?.allowPasswordless ?? false,
   });
 
   return { authService, rateLimiter, idGenerator, nowIso: nowIsoFn };

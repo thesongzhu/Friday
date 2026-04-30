@@ -39,7 +39,6 @@ export interface BuildFridayAgentSystemPromptParams {
     mcpServerCount?: number;
     cronEnabled?: boolean;
     subagentsEnabled?: boolean;
-    marketplaceEnabled?: boolean;
     selfLearningEnabled?: boolean;
   };
   currentTime?: {
@@ -92,7 +91,6 @@ export function buildFridayAgentSystemPrompt(
   const mcpEnabled = runtimeCapabilities?.mcpEnabled ?? hasTool("mcp");
   const cronEnabled = runtimeCapabilities?.cronEnabled ?? hasTool("cron");
   const subagentsEnabled = runtimeCapabilities?.subagentsEnabled ?? hasTool("spawn_subagent");
-  const marketplaceEnabled = runtimeCapabilities?.marketplaceEnabled ?? false;
   const selfLearningEnabled = runtimeCapabilities?.selfLearningEnabled ?? hasTool("feedback");
   const messagingKinds = (runtimeCapabilities?.messagingKinds ?? []).filter((kind) => kind.trim().length > 0);
   const mcpServerCount = runtimeCapabilities?.mcpServerCount ?? 0;
@@ -114,9 +112,7 @@ export function buildFridayAgentSystemPrompt(
     hasFileTools
       ? "- File read/write/edit within the configured workspace sandbox"
       : "- File read/write/edit tools are not enabled in this deployment.",
-    marketplaceEnabled
-      ? "- Skill marketplace: discover, install, and execute third-party skills"
-      : "- Skill marketplace is not enabled in this deployment.",
+    "- Skill catalog: execute bundled, generated, and local skills",
     "- Workflow engine: DAG-based multi-step orchestration with triggers and approval gates",
     messagingEnabled
       ? `- Multi-channel messaging${messagingKinds.length > 0 ? ` (${messagingKinds.join(", ")})` : ""}`

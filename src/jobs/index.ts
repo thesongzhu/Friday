@@ -23,9 +23,6 @@ export type { FridayApprovalExpiryJob } from "./learning/friday-approval-expiry-
 export type { FridayPreferenceDecayJobResult, FridayPreferenceDecayJob } from "./learning/friday-preference-decay-job.js";
 export { createFridayPreferenceDecayJob } from "./learning/friday-preference-decay-job.js";
 
-export { createFridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
-export type { FridayMarketplaceSyncJob } from "./marketplace/friday-marketplace-sync-job.js";
-
 // ─── Session lifecycle & extraction jobs ───
 
 export type { FridaySessionLifecycleJobResult } from "./sessions/friday-session-lifecycle-job.types.js";

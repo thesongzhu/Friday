@@ -49,8 +49,6 @@ export interface MeResponse {
 
 export interface AuthBootstrapStatusResponse {
   bootstrapRequired: boolean;
-  allowPasswordlessLocalLogin: boolean;
-  allowLocalBypassLogin: boolean;
 }
 
 export interface AuthBootstrapResponse {
@@ -2571,18 +2569,8 @@ export interface FridayHealthResponse {
   uptime: number;
   capabilities?: {
     schemaVersion: string;
-    auth?: {
-      allowPasswordlessLocalLogin?: boolean;
-      allowLocalBypassLogin?: boolean;
-    };
     plugins?: {
       runtimeMode?: "stub" | "full";
-      marketplaceAvailable?: boolean;
-    };
-    marketplace?: {
-      commerceEnabled?: boolean;
-      skillSourceEnabled?: boolean;
-      pluginMarketplaceEnabled?: boolean;
     };
     channels?: {
       supportedKinds?: string[];

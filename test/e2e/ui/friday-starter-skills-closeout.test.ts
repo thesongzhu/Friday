@@ -162,7 +162,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday starter skills closeout (mock hub b
       "Page Benchmark Report",
     );
     const skillsText = await pageHandle.page.textContent("body");
-    expect(skillsText).toContain("Bundled Starter Pack");
+    expect(skillsText).toContain("Current skills");
     expect(skillsText).toContain("Page Benchmark Report");
     expect(skillsText).toContain("Security Review");
   });

@@ -85,12 +85,8 @@ describe("FridayAuthRoutes", () => {
     const route = findRoute("auth.bootstrap.status");
     const result = await route.handler(makeCtx()) as {
       bootstrapRequired: boolean;
-      allowPasswordlessLocalLogin: boolean;
-      allowLocalBypassLogin: boolean;
     };
     expect(result.bootstrapRequired).toBe(false);
-    expect(result.allowPasswordlessLocalLogin).toBe(false);
-    expect(result.allowLocalBypassLogin).toBe(false);
   });
 
   it("bootstrap endpoint initializes passphrase once for localhost", async () => {

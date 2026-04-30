@@ -21,6 +21,10 @@ interface FridayErrorEnvelope {
 
 const TOKEN_RECOVERABLE_CODES = new Set(["TOKEN_EXPIRED", "AUTH_INVALID"]);
 const AUTH_STATE_BY_BASE_URL = new Map<string, { accessToken: string; refreshToken?: string }>();
+const LOCAL_PASSPHRASE =
+  process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-test-local-passphrase-123";
 
 async function loginAndGetTokenPair(
   baseUrl: string,
@@ -38,10 +42,33 @@ async function loginAndGetTokenPair(
 async function loginLocalAndGetTokenPair(
   baseUrl: string,
 ): Promise<{ accessToken: string; refreshToken?: string }> {
+  const bootstrapStatusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const bootstrapStatus = (await bootstrapStatusRes.json()) as {
+    ok?: boolean;
+    data?: { bootstrapRequired?: boolean };
+    bootstrapRequired?: boolean;
+  };
+  const bootstrapRequired =
+    bootstrapStatus.data?.bootstrapRequired ?? bootstrapStatus.bootstrapRequired ?? false;
+  if (bootstrapRequired) {
+    const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const bootstrapJson = (await bootstrapRes.json()) as {
+      ok?: boolean;
+      error?: { code?: string; message?: string };
+    };
+    if (!bootstrapRes.ok || bootstrapJson.ok === false) {
+      throw new Error(`Failed to bootstrap local auth token: ${JSON.stringify(bootstrapJson)}`);
+    }
+  }
+
   const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
   });
   const loginJson = (await loginRes.json()) as {
     ok: boolean;

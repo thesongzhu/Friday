@@ -17,7 +17,6 @@ const VALID_RESOURCE_TYPES = new Set<FridayDeepLinkResourceType>([
   "skill-source",
   "mcp-server",
   "workflow-template",
-  "marketplace-asset",
 ]);
 
 export type FridayDeepLinkParseResult =
@@ -88,12 +87,6 @@ export function parseFridayDeepLinkUri(uri: string): FridayDeepLinkParseResult {
         name: params.get("name") ?? undefined,
       };
       break;
-    case "marketplace-asset":
-      payload.marketplaceAsset = {
-        assetId: params.get("assetId") ?? "",
-        sourceId: params.get("sourceId") ?? undefined,
-      };
-      break;
   }
 
   return { ok: true, payload };
@@ -129,7 +122,6 @@ export function parseFridayDeepLinkJson(raw: unknown): FridayDeepLinkParseResult
       skillSource: obj.skillSource as FridayDeepLinkPayload["skillSource"],
       mcpServer: obj.mcpServer as FridayDeepLinkPayload["mcpServer"],
       workflowTemplate: obj.workflowTemplate as FridayDeepLinkPayload["workflowTemplate"],
-      marketplaceAsset: obj.marketplaceAsset as FridayDeepLinkPayload["marketplaceAsset"],
     },
   };
 }

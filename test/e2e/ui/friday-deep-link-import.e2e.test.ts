@@ -18,7 +18,7 @@ const CHROMIUM_AVAILABLE = (() => {
 
 const BROWSER_E2E_TIMEOUT_MS = 180_000;
 
-describe.skipIf(!CHROMIUM_AVAILABLE)("Friday deep link import — skills page (mock hub browser E2E)", () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("Friday skills page local inventory (mock hub browser E2E)", () => {
   let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
 
@@ -39,7 +39,11 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday deep link import — skills page (m
 
     await pageHandle.page.goto("/skills");
     await pageHandle.page.locator('[data-testid="skills-page"]').waitFor({ state: "visible", timeout: 45_000 });
-    await pageHandle.page.locator('[data-testid="skills-import-button"]').waitFor({ state: "visible", timeout: 45_000 });
+    await pageHandle.page.waitForFunction(
+      () => document.body.textContent?.includes("Current skills") ?? false,
+      undefined,
+      { timeout: 45_000 },
+    );
 
     const pageState = await pageHandle.page.evaluate(() => {
       const bodyText = document.body.textContent?.trim() ?? "";
@@ -49,13 +53,15 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday deep link import — skills page (m
         hasContent: bodyText.length > 20,
         appCrashed: bodyText.includes("Something went wrong"),
         hasImportButton: Boolean(document.querySelector('[data-testid="skills-import-button"]')),
+        hasCurrentSkills: bodyText.includes("Current skills"),
       };
     });
 
     expect(pageState.url).toBe("/skills");
     expect(pageState.hasContent).toBe(true);
     expect(pageState.appCrashed).toBe(false);
-    expect(pageState.hasImportButton).toBe(true);
+    expect(pageState.hasImportButton).toBe(false);
+    expect(pageState.hasCurrentSkills).toBe(true);
   });
 
   it("skills page does not crash on initial load", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {

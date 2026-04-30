@@ -102,7 +102,7 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discor
     const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase: "friday-test-local-passphrase-123" }),
     });
     const loginJson = await loginRes.json() as { ok: boolean; data?: { accessToken?: string } };
     expect(loginJson.ok).toBe(true);

@@ -8,7 +8,7 @@
  * @module cross-program/model
  */
 
-// ─── Foundational Value Types (local; mirrors packaging/marketplace/observability pattern) ───
+// ─── Foundational Value Types (local; mirrors packaging/observability pattern) ───
 
 /** UUID string identifier. */
 export type UUID = string;

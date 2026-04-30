@@ -605,7 +605,7 @@ function buildAcquisitionPlan(
         status: "blocked",
         requiresApproval: false,
         requiresHuman: true,
-        detail: "No available, setup, generated, marketplace, or internet candidate was found.",
+        detail: "No available, setup, generated, local, or internet candidate was found.",
       });
       continue;
     }

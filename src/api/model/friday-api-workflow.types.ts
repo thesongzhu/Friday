@@ -461,7 +461,6 @@ export interface FridayWorkflowGeneratorCancelResponse {
 
 export interface FridayStartRunRequest {
   workflowId: UUID;
-  marketplaceListingId?: UUID;
   workflowVersionId?: UUID;
   triggerType: string;
   triggerPayload?: JsonObject;

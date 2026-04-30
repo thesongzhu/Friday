@@ -2,12 +2,12 @@ import type Database from "better-sqlite3";
 import { safeJsonParse } from "#utilities";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type {
-  FridayMarketplaceSignatureAlgorithm,
   FridaySkillSignature,
+  FridaySkillSignatureAlgorithm,
   FridaySkillVersionEntity,
   FridaySkillVersionRow,
   UUID,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 
 // ─── Interface ───
 
@@ -75,7 +75,7 @@ function mapRow(row: FridaySkillVersionRow): FridaySkillVersionEntity {
     row.signature_key_id && row.signature_algorithm && row.signature_value
       ? {
           keyId: row.signature_key_id,
-          algorithm: row.signature_algorithm as FridayMarketplaceSignatureAlgorithm,
+          algorithm: row.signature_algorithm as FridaySkillSignatureAlgorithm,
           value: row.signature_value,
         }
       : undefined;

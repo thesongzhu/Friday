@@ -135,12 +135,7 @@ async function loginAdmin(
     return (await res.json()) as LoginEnvelope;
   };
 
-  const firstAttempt = await tryLogin({ local: true });
-  if (firstAttempt.ok && firstAttempt.data?.accessToken) {
-    return firstAttempt.data.accessToken;
-  }
-
-  const passphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ?? "friday-e2e-passphrase";
+  const passphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ?? "friday-e2e-passphrase-123";
   const bootstrapStatusRes = await fetchImpl(`${baseUrl}/v1/auth/bootstrap/status`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
@@ -149,7 +144,6 @@ async function loginAdmin(
     ok: boolean;
     data?: {
       bootstrapRequired: boolean;
-      allowPasswordlessLocalLogin: boolean;
     };
   };
 
@@ -167,15 +161,8 @@ async function loginAdmin(
     return passphraseAttempt.data.accessToken;
   }
 
-  if (bootstrapStatus.data?.allowPasswordlessLocalLogin) {
-    const fallbackPasswordless = await tryLogin({ local: true });
-    if (fallbackPasswordless.ok && fallbackPasswordless.data?.accessToken) {
-      return fallbackPasswordless.data.accessToken;
-    }
-  }
-
   throw new Error(
-    `Admin login failed: first=${JSON.stringify(firstAttempt)} passphrase=${JSON.stringify(passphraseAttempt)}`,
+    `Admin login failed: passphrase=${JSON.stringify(passphraseAttempt)}`,
   );
 }
 
@@ -322,7 +309,7 @@ export async function createMockHubEnv(opts?: {
   await httpServer.listen();
   const hubBaseUrl = `http://127.0.0.1:${String(port)}`;
 
-  // 4. Login as admin (supports both dev passwordless and production passphrase flows)
+  // 4. Login as admin with local passphrase auth.
   const accessToken = await loginAdmin(hubBaseUrl, originalFetch);
 
   // 5. Build mock fetches per API

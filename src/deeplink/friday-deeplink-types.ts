@@ -6,15 +6,13 @@
  * - skill-source: Import a skill from a URL (GitHub, archive, etc.)
  * - mcp-server: Import an MCP server configuration
  * - workflow-template: Import a workflow template
- * - marketplace-asset: Import a marketplace asset reference
  */
 
 export type FridayDeepLinkResourceType =
   | "provider-template"
   | "skill-source"
   | "mcp-server"
-  | "workflow-template"
-  | "marketplace-asset";
+  | "workflow-template";
 
 export interface FridayDeepLinkPayload {
   /** Protocol version for forward compatibility. */
@@ -59,11 +57,6 @@ export interface FridayDeepLinkPayload {
     name?: string;
   };
 
-  /** Marketplace asset reference fields. */
-  marketplaceAsset?: {
-    assetId: string;
-    sourceId?: string;
-  };
 }
 
 export type FridayDeepLinkCheckLevel = "blocking" | "warning" | "advisory";

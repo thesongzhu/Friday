@@ -52,12 +52,6 @@ export function createFridayDeepLinkApplyService(
             resourceType: payload.type,
             message: "Deep link apply for mcp-server is not yet supported by the runtime config surface.",
           };
-        case "marketplace-asset":
-          return {
-            applied: false,
-            resourceType: payload.type,
-            message: "Deep link apply for marketplace-asset is not yet supported by the marketplace install surface.",
-          };
       }
     },
   };

@@ -1,7 +1,7 @@
 import { apiClient } from "./client";
 
 export type FridayPluginKind = "channel" | "provider" | "skill" | "storage" | "integration";
-export type FridayPluginSource = "bundled" | "local" | "marketplace";
+export type FridayPluginSource = "bundled" | "local";
 export type FridayPluginStatus =
   | "not_installed"
   | "installed"
@@ -78,19 +78,6 @@ export interface FridayPluginEntity {
   policySummary?: FridayPluginPolicySummary;
 }
 
-export interface FridayMarketplacePluginSummary {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  author: string;
-  downloads: number;
-  updatedAt: string;
-  previewSdk?: FridayPluginSdkPreviewManifest;
-  capabilitySummary?: FridayPluginCapabilitySummary;
-  policySummary?: FridayPluginPolicySummary;
-}
-
 interface FridayListPluginsResponse {
   items: FridayPluginEntity[];
 }
@@ -109,11 +96,6 @@ interface FridayDisablePluginResponse {
 
 interface FridayUninstallPluginResponse {
   uninstalled: true;
-}
-
-interface FridayMarketplaceSearchResponse {
-  items: FridayMarketplacePluginSummary[];
-  total: number;
 }
 
 export const pluginsApi = {
@@ -169,26 +151,4 @@ export const pluginsApi = {
     return apiClient.del<FridayUninstallPluginResponse>(`/v1/plugins/${encodeURIComponent(pluginId)}${suffix}`);
   },
 
-  async searchMarketplace(input: {
-    q?: string;
-    kind?: FridayPluginKind;
-    limit?: number;
-    offset?: number;
-  } = {}): Promise<FridayMarketplaceSearchResponse> {
-    const params = new URLSearchParams();
-    if (input.q) params.set("q", input.q);
-    if (input.kind) params.set("kind", input.kind);
-    if (typeof input.limit === "number") params.set("limit", String(input.limit));
-    if (typeof input.offset === "number") params.set("offset", String(input.offset));
-    const suffix = params.size > 0 ? `?${params.toString()}` : "";
-    return apiClient.get<FridayMarketplaceSearchResponse>(`/v1/marketplace/plugins${suffix}`);
-  },
-
-  async installFromMarketplace(pluginId: string): Promise<FridayPluginEntity> {
-    const data = await apiClient.post<Record<string, never>, FridayInstallPluginResponse>(
-      `/v1/marketplace/plugins/${encodeURIComponent(pluginId)}/install`,
-      {},
-    );
-    return data.plugin;
-  },
 };

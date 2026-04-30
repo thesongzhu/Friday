@@ -2189,10 +2189,10 @@ export function createFridaySkillGeneratorService(
       }
 
       deps.db.withWriteTransaction((conn) => {
-        skillRepo.upsertSkillFromMarketplace(conn, {
+        skillRepo.upsertSkillFromCatalog(conn, {
           id: skillId,
           name: promotedManifest.name,
-          source: "marketplace",
+          source: "local",
           origin: "managed",
           latestVersion: promotedManifest.version,
           status: "installed",

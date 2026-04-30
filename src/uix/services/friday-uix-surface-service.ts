@@ -336,7 +336,7 @@ const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
   {
     id: "security-review",
     label: "Run security review",
-    description: "Run a bounded static audit across auth, proxy trust, execution, marketplace, and remote-access surfaces.",
+    description: "Run a bounded static audit across auth, proxy trust, execution, plugin, and remote-access surfaces.",
     category: "skills",
     parameters: [
       {

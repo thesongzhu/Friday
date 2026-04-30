@@ -5,7 +5,7 @@ import type {
   FridaySkillInstallationRow,
   FridaySkillInstallationStatus,
   UUID,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 
 // ─── Interface ───
 

@@ -30,7 +30,7 @@ export function describeSetupStatusFailure(
       detail: `The UI at ${currentOrigin} reached the setup route, but the local Friday connection reset before setup status could be loaded.`,
       actions: [
         "Reload the page and let Friday reconnect to the local service.",
-        "If this keeps happening, confirm this page is opened from the local Friday entrypoint and `FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN` is not set to false.",
+        "If this keeps happening, reopen the canonical local Friday entrypoint and sign in with the local passphrase.",
       ],
     };
   }
@@ -42,7 +42,7 @@ export function describeSetupStatusFailure(
         detail: `The UI at ${currentOrigin} reached \`/v1/setup/status\`, but the Friday API rejected the request as unauthorized.`,
         actions: [
           "Reload this origin so Friday can reconnect locally, or reopen the canonical local entrypoint on the API port.",
-          "If you expect no-sign-in local mode, confirm `FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN` is not set to false.",
+          "Confirm the local passphrase has been bootstrapped and sign in again.",
         ],
       };
     }

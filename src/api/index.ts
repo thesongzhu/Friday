@@ -233,18 +233,6 @@ export type {
 export { createFridayMcpServerRoutes } from "./http/routes/friday-mcp-server-routes.js";
 export type { FridayMcpServerRoutesDeps } from "./http/routes/friday-mcp-server-routes.js";
 
-// Marketplace commerce routes (C-009)
-export { createFridayMarketplaceCommerceRoutes } from "./http/routes/friday-marketplace-commerce-routes.js";
-export type { FridayMarketplaceCommerceRoutesDeps } from "./http/routes/friday-marketplace-commerce-routes.js";
-export { createFridayMarketplaceAssetRoutes } from "./http/routes/friday-marketplace-asset-routes.js";
-export type { FridayMarketplaceAssetRoutesDeps } from "./http/routes/friday-marketplace-asset-routes.js";
-export { createFridayMarketplaceCreatorRoutes } from "./http/routes/friday-marketplace-creator-routes.js";
-export type { FridayMarketplaceCreatorRoutesDeps } from "./http/routes/friday-marketplace-creator-routes.js";
-export { createFridayMarketplaceRequestRoutes } from "./http/routes/friday-marketplace-request-routes.js";
-export type { FridayMarketplaceRequestRoutesDeps } from "./http/routes/friday-marketplace-request-routes.js";
-export { createFridaySkillMarketplaceRoutes } from "./http/routes/friday-skill-marketplace-routes.js";
-export type { FridaySkillMarketplaceRoutesDeps } from "./http/routes/friday-skill-marketplace-routes.js";
-
 // Satellite pairing routes (C-010)
 export { createFridaySatellitePairingRoutes } from "./http/routes/friday-satellite-pairing-routes.js";
 export type { FridaySatellitePairingRoutesDeps } from "./http/routes/friday-satellite-pairing-routes.js";

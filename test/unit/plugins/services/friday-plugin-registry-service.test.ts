@@ -142,9 +142,9 @@ describe("FridayPluginRegistryService", () => {
 
   // ─── resolveRuntimePlugins ───
 
-  it("deduplicates by source precedence (local > marketplace)", () => {
+  it("deduplicates by source precedence (local > bundled)", () => {
     // Same plugin ID from two sources
-    registry.upsert(makeInput("friday.test.alpha", { source: "marketplace" }));
+    registry.upsert(makeInput("friday.test.alpha", { source: "bundled" }));
     registry.upsert(makeInput("friday.test.alpha", { source: "local" }));
 
     // Since upsert on same ID replaces, insert with different approach

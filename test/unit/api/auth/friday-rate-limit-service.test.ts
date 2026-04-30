@@ -69,8 +69,6 @@ describe("FridayRateLimitService", () => {
     expect(service.getPolicy("agent.run")).toMatchObject({ maxHits: 60, keyBy: "principal" });
     expect(service.getPolicy("session.write")).toMatchObject({ maxHits: 60, keyBy: "principal" });
     expect(service.getPolicy("memory.write")).toMatchObject({ maxHits: 60, keyBy: "principal" });
-    expect(service.getPolicy("marketplace.checkout")).toMatchObject({ maxHits: 10, keyBy: "principal" });
-    expect(service.getPolicy("marketplace.write")).toMatchObject({ maxHits: 30, keyBy: "principal" });
   });
 
   it("allows requests for unknown policy (permissive fallback)", () => {

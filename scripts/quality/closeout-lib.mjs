@@ -13,7 +13,6 @@ export const PHASE_DIRECTORY_NAMES = {
   phase3: "phase3-autonomous-loop",
   phase4: "phase4-acceptance-retry-rules",
   phase5: "phase5-skills-lifecycle",
-  marketplace: "marketplace-creator-ecosystem",
   final: "final-non-platform",
 };
 
@@ -23,7 +22,6 @@ export const PHASE_TITLES = {
   phase3: "Autonomous Loop v2",
   phase4: "Acceptance, Retry, And Rules Operations",
   phase5: "Skills Lifecycle Hardening",
-  marketplace: "Marketplace Creator Ecosystem",
   final: "Non-Platform Final Closeout",
 };
 

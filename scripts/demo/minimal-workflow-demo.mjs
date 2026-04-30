@@ -25,6 +25,9 @@ const DEMO_HOME_DIR = join(STATE_DIR, ".demo-home");
 const DEMO_ENV_FILE = join(STATE_DIR, ".demo.env");
 const HEALTH_TIMEOUT_MS = 30_000;
 const RUN_TIMEOUT_MS = 20_000;
+const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-demo-passphrase-123";
 
 let serverProc = null;
 let serverStdout = "";
@@ -154,18 +157,29 @@ async function main() {
     serverStderr += chunk.toString();
   });
 
-  const health = await waitForHealth();
-  if (health?.data?.capabilities?.auth?.allowPasswordlessLocalLogin !== true) {
-    throwWithContext(
-      "passwordless local login is disabled; run demo with NODE_ENV=development and without FRIDAY_TOKEN_SECRET",
-    );
-  }
+  await waitForHealth();
 
-  logStep("logging in with local dev mode");
+  logStep("logging in with local passphrase");
+  const bootstrapStatusRes = await fetch(`${BASE_URL}/v1/auth/bootstrap/status`);
+  const bootstrapStatusJson = await bootstrapStatusRes.json();
+  if (!bootstrapStatusRes.ok || bootstrapStatusJson?.ok !== true) {
+    throwWithContext(`bootstrap status failed: HTTP ${bootstrapStatusRes.status}`);
+  }
+  if (bootstrapStatusJson.data?.bootstrapRequired === true) {
+    const bootstrapRes = await fetch(`${BASE_URL}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const bootstrapJson = await bootstrapRes.json();
+    if (!bootstrapRes.ok || bootstrapJson?.ok !== true) {
+      throwWithContext(`local passphrase bootstrap failed: HTTP ${bootstrapRes.status}`);
+    }
+  }
   const loginRes = await fetch(`${BASE_URL}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
   });
   const loginJson = await loginRes.json();
   if (!loginRes.ok || loginJson?.ok !== true) {

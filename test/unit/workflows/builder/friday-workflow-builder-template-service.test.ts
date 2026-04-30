@@ -289,11 +289,11 @@ describe("FridayWorkflowBuilderTemplateService", () => {
 
     // Install a workflow-capable skill
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "test-wf-skill",
         name: "Workflow Skill",
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         currentManifest: createMinimalManifest(),
         nowIso: NOW,
@@ -319,11 +319,11 @@ describe("FridayWorkflowBuilderTemplateService", () => {
 
     // Install skill
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "test-wf-skill",
         name: "Workflow Skill",
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         currentManifest: createMinimalManifest(),
         nowIso: NOW,
@@ -357,11 +357,11 @@ describe("FridayWorkflowBuilderTemplateService", () => {
 
     // Install skill with same name as a builtin
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "test-wf-skill",
         name: "Blank Workflow", // same as builtin
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         currentManifest: createMinimalManifest({ name: "Blank Workflow" }),
         nowIso: NOW,
@@ -394,11 +394,11 @@ describe("FridayWorkflowBuilderTemplateService", () => {
       },
     });
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "intent-only-skill",
         name: "Intent Only",
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         currentManifest: intentManifest,
         nowIso: NOW,
@@ -414,11 +414,11 @@ describe("FridayWorkflowBuilderTemplateService", () => {
     const { service, skillRepo } = createServiceWithSkills();
 
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "test-wf-skill",
         name: "Workflow Skill",
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         currentManifest: createMinimalManifest(),
         nowIso: NOW,

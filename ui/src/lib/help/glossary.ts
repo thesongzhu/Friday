@@ -41,10 +41,6 @@ export const FRIDAY_GLOSSARY: Record<string, GlossaryEntry> = {
     term: "Observability",
     definition: "Tools for monitoring Friday's behavior — traces, audit logs, alerts, and health metrics for debugging.",
   },
-  marketplace: {
-    term: "Marketplace",
-    definition: "A hub for discovering and sharing skills, workflows, and templates created by the community.",
-  },
   selfHealing: {
     term: "Self-Healing",
     definition: "Friday's ability to automatically detect issues and apply fixes without human intervention.",

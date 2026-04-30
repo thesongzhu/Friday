@@ -43,11 +43,6 @@ import type { FridayDesktopRoutesDeps } from "../http/routes/friday-desktop-rout
 import type { FridayChannelRoutesDeps } from "../http/routes/friday-channel-routes.js";
 import type { FridayDiscoveryRoutesDeps } from "../http/routes/friday-discovery-routes.js";
 import type { FridayMcpServerRoutesDeps } from "../http/routes/friday-mcp-server-routes.js";
-import type { FridayMarketplaceCommerceRoutesDeps } from "../http/routes/friday-marketplace-commerce-routes.js";
-import type { FridayMarketplaceAssetRoutesDeps } from "../http/routes/friday-marketplace-asset-routes.js";
-import type { FridayMarketplaceCreatorRoutesDeps } from "../http/routes/friday-marketplace-creator-routes.js";
-import type { FridayMarketplaceRequestRoutesDeps } from "../http/routes/friday-marketplace-request-routes.js";
-import type { FridaySkillMarketplaceRoutesDeps } from "../http/routes/friday-skill-marketplace-routes.js";
 import type { FridayMultiTenantSecurityRoutesDeps } from "../http/routes/friday-multi-tenant-security-routes.js";
 import type { FridayObservabilityRoutesDeps } from "../http/routes/friday-observability-routes.js";
 import type { FridayObservabilityApiService } from "../../observability/services/friday-observability-api-service.js";
@@ -123,10 +118,6 @@ export interface CreateFridayApiRuntimeDeps {
   tokenSecret: string;
   accessTokenTtlSec?: number;
   refreshTokenTtlSec?: number;
-  /** When true, allow login with `{}` (no credentials) for local-only user. Default: false. */
-  allowPasswordlessLocalLogin?: boolean;
-  /** When true, allow `login({ local: true })` without passphrase checks (localhost-only, never a remote auth bypass). */
-  allowLocalBypassLogin?: boolean;
   /** Optional tenant resolver shared by auth claim issuance and validation. */
   resolveAuthTenantId?: (input: {
     principalType: string;
@@ -138,8 +129,6 @@ export interface CreateFridayApiRuntimeDeps {
   }) => string | null | undefined;
   /** Current plugin runtime mode exposed via health capabilities. */
   pluginRuntimeMode?: "stub" | "full";
-  /** Whether plugin marketplace access is configured and available. */
-  pluginMarketplaceAvailable?: boolean;
   /** Supported channel kinds (from backend schema). */
   supportedChannelKinds?: string[];
   /** Channel kinds currently enabled in runtime config or currently running in runtime state. */
@@ -290,20 +279,8 @@ export interface CreateFridayApiRuntimeDeps {
   discovery?: FridayDiscoveryRoutesDeps;
   /** Optional: MCP server route surface (JSON-RPC tools/resources/prompts). */
   mcpServer?: FridayMcpServerRoutesDeps;
-  /** Optional: marketplace commerce route surface. */
-  marketplaceCommerce?: FridayMarketplaceCommerceRoutesDeps;
-  /** Optional: unified marketplace asset catalog route surface. */
-  marketplaceAssets?: FridayMarketplaceAssetRoutesDeps;
-  /** Optional: creator support/profile route surface. */
-  marketplaceCreators?: FridayMarketplaceCreatorRoutesDeps;
-  /** Optional: request board route surface. */
-  marketplaceRequests?: FridayMarketplaceRequestRoutesDeps;
-  /** Optional: skill marketplace control-plane route surface. */
-  skillMarketplace?: FridaySkillMarketplaceRoutesDeps;
   /** Optional: canonical skills lifecycle service. */
   skillLifecycle?: FridaySkillLifecycleService;
-  /** Optional: runtime entitlement guard for marketplace-protected listings. */
-  marketplaceEntitlementCheck?: (input: { listingId: string; tenantId: string; principalId: string }) => Promise<void>;
   /** Optional: satellite pairing/handshake route surface. */
   satellitePairing?: FridaySatellitePairingRoutesDeps;
   /** Optional: satellite runtime sync/command route surface. */

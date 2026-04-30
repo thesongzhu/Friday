@@ -120,7 +120,6 @@ import {
   createFridayPluginDependencyResolver,
   createFridayPluginLoader,
   createFridayPluginManifestLoader,
-  createFridayPluginMarketplaceClient,
   createFridayPluginRegistryService,
   createFridayPluginRepository,
   createFridayPluginService,
@@ -333,14 +332,6 @@ import {
 } from "../reflex/index.js";
 import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
-import { createFridaySkillMarketplaceRuntime } from "#skills";
-import { createFridayMarketplaceCommercePersistence } from "../marketplace/persistence/index.js";
-import { FridayMarketplaceAssetCatalogService } from "../marketplace/services/friday-marketplace-asset-catalog-service.js";
-import { FridayMarketplaceCreatorService } from "../marketplace/services/friday-marketplace-creator-service.js";
-import { FridayMarketplaceRequestBoardService } from "../marketplace/services/friday-marketplace-request-board-service.js";
-import { assertListingExecutionReady } from "../marketplace/engine/index.js";
-import type { MarketplaceAuditEventSink } from "../marketplace/engine/index.js";
-import type { FridayMarketplaceAssetType } from "../marketplace/model/index.js";
 import { createFridayProviderBackedTtsService } from "../media/friday-provider-backed-tts-service.js";
 
 // ─── Extracted helpers, types, and stubs ───
@@ -351,7 +342,6 @@ import {
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
-  deriveMarketplaceSkillIdCandidates,
   loadChannelsConfigFromSetupState,
   mapPolicyBundleRow,
   mapRuleRow,
@@ -692,16 +682,6 @@ function fridayMessagesContainOcrIntent(messages: readonly FridayAgentMessage[])
 
 // ─── Resolved Hub Config ───
 
-/**
- * Resolves hub configuration with precedence: explicit config > env var > default.
- */
-function resolveFridayAllowLocalBypassLogin(env: NodeJS.ProcessEnv): boolean {
-  const explicit = (env.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN ?? "").trim().toLowerCase();
-  return explicit
-    ? ["1", "true", "yes", "on"].includes(explicit)
-    : true;
-}
-
 export function resolveFridayHubConfig(
   input: FridayHubConfig,
   env: NodeJS.ProcessEnv = process.env,
@@ -724,11 +704,6 @@ export function resolveFridayHubConfig(
 
   const tokenSecretResult = resolveTokenSecret(input.tokenSecret, env);
   const tokenSecret = tokenSecretResult.secret;
-
-  const isProduction = env.NODE_ENV === "production";
-  const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
-  const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
-  const allowLocalBypassLogin = resolveFridayAllowLocalBypassLogin(env);
 
   const serverVersion = input.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION;
 
@@ -777,8 +752,6 @@ export function resolveFridayHubConfig(
     corsOrigins,
     logRequests,
     pluginRuntimeMode,
-    allowPasswordlessLocalLogin,
-    allowLocalBypassLogin,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
     ssrfPolicy: { allowPrivateNetwork },
@@ -890,7 +863,7 @@ export async function createFridayHub(
            VALUES (?, ?, ?, ?, NULL, 1, NULL, ?, ?, NULL)`,
         ).run("admin-001", "admin@friday.dev", "Admin", "admin", nowIso, nowIso);
       });
-      // Always warn when creating passwordless admin (password_hash = NULL)
+      // Always warn when creating a bootstrap-required admin (password_hash = NULL).
       console.warn(
         "[friday][SECURITY] Created default admin user (admin@friday.dev) with localhost-only local sign-in enabled; do not expose this instance without network or upstream auth controls.",
       );
@@ -947,11 +920,6 @@ export async function createFridayHub(
   const tokenSecretResult = resolveTokenSecret(config.tokenSecret);
   const tokenSecret = tokenSecretResult.secret;
 
-  // Auth policy: dev mode = token secret was NOT explicitly set AND not production
-  const isProduction = process.env.NODE_ENV === "production";
-  const tokenSecretExplicit = tokenSecretResult.source === "config" || tokenSecretResult.source === "env";
-  const allowPasswordlessLocalLogin = !tokenSecretExplicit && !isProduction;
-  const allowLocalBypassLogin = resolveFridayAllowLocalBypassLogin(process.env);
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";
@@ -1168,7 +1136,7 @@ export async function createFridayHub(
       const manifest = draft.manifest;
       const persistedAt = nowIso();
       stateRuntime.sqlite.withWriteTransaction((conn) => {
-        converterSkillRepo.upsertSkillFromMarketplace(conn, {
+        converterSkillRepo.upsertSkillFromCatalog(conn, {
           id: manifest.id,
           name: manifest.name,
           source: resolveImportedSkillSource(source.uri),
@@ -3334,7 +3302,6 @@ export async function createFridayHub(
         mcpServerCount: mcpAdapter?.listServers().length ?? 0,
         cronEnabled: input.toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
         subagentsEnabled: input.toolNames.includes("spawn_subagent"),
-        marketplaceEnabled: !!marketplaceRuntime,
         selfLearningEnabled: input.toolNames.includes("feedback"),
       },
     });
@@ -4634,23 +4601,12 @@ export async function createFridayHub(
     installPlugin: () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Plugin installation is not available in standalone mode", { httpStatus: 501 }); },
     enablePlugin: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Plugin management is not available in standalone mode", { httpStatus: 501 }); },
     disablePlugin: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Plugin management is not available in standalone mode", { httpStatus: 501 }); },
-    uninstallPlugin: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Plugin management is not available in standalone mode", { httpStatus: 501 }); },
-    searchMarketplace: async () => ({ items: [], total: 0 }),
-    getMarketplacePlugin: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Marketplace is not available in standalone mode", { httpStatus: 501 }); },
-    listMarketplacePluginVersions: async () => [],
-    installFromMarketplace: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Marketplace is not available in standalone mode", { httpStatus: 501 }); },
-  };
+	    uninstallPlugin: async () => { throw new FridayDomainError("PLUGIN_NOT_IMPLEMENTED", "Plugin management is not available in standalone mode", { httpStatus: 501 }); },
+	  };
 
   let pluginRuntimeMode: "stub" | "full" = configuredPluginRuntimeMode;
   const pluginManifestLoader = createFridayPluginManifestLoader();
   let runtimePluginService: FridayPluginService = stubPluginService;
-  const pluginMarketplaceBaseUrl = (process.env.FRIDAY_PLUGIN_MARKETPLACE_BASE_URL ?? "").trim();
-  const pluginMarketplaceClient = pluginMarketplaceBaseUrl
-    ? createFridayPluginMarketplaceClient({
-      baseUrl: pluginMarketplaceBaseUrl.replace(/\/+$/, ""),
-    })
-    : undefined;
-  let pluginMarketplaceAvailable = false;
 
   if (pluginRuntimeMode === "full") {
     try {
@@ -4668,21 +4624,18 @@ export async function createFridayHub(
       });
 
       runtimePluginService = createFridayPluginService({
-        sqlite: stateRuntime!.sqlite,
-        registry: pluginRegistryService,
-        resolver: pluginResolver,
-        loader: pluginLoader,
-        marketplace: pluginMarketplaceClient,
-        signatureVerifier: pluginSignatureVerifier,
-        nowIso,
-        idGenerator,
-      });
-      pluginMarketplaceAvailable = pluginMarketplaceClient !== undefined;
+	        sqlite: stateRuntime!.sqlite,
+	        registry: pluginRegistryService,
+	        resolver: pluginResolver,
+	        loader: pluginLoader,
+	        signatureVerifier: pluginSignatureVerifier,
+	        nowIso,
+	        idGenerator,
+	      });
       console.log("[friday] Plugin runtime mode: full");
     } catch (err) {
       pluginRuntimeMode = "stub";
       runtimePluginService = stubPluginService;
-      pluginMarketplaceAvailable = false;
       console.error(
         "[friday] WARNING: Plugin runtime full mode initialization failed; falling back to stub mode.",
         "Plugin install/enable/disable APIs will return 501.",
@@ -4690,7 +4643,6 @@ export async function createFridayHub(
       );
     }
   } else {
-    pluginMarketplaceAvailable = false;
     console.log("[friday] Plugin runtime mode: stub");
   }
 
@@ -4727,117 +4679,6 @@ export async function createFridayHub(
       }),
     };
   })();
-
-  // ─── Skill Marketplace runtime (shared by API routes + sync job) ───
-  let marketplaceRuntime: ReturnType<typeof createFridaySkillMarketplaceRuntime> | undefined;
-  let marketplaceInitError: Error | undefined;
-
-  const marketplaceCommerceEnabled = capabilityGates.marketplaceCommerceEnabled;
-  const marketplaceInstallRequired = capabilityGates.marketplaceInstallRequired;
-  const marketplaceCommercePersistence = marketplaceCommerceEnabled
-    ? createFridayMarketplaceCommercePersistence({ db: stateRuntime!.sqlite })
-    : undefined;
-  const marketplaceAuditSink: MarketplaceAuditEventSink | undefined = marketplaceCommercePersistence
-    ? (event) => {
-      void memoryState.appendAuditLog({
-        id: idGenerator(),
-        ts: event.timestamp,
-        actorType: "service",
-        actorId: event.actor,
-        action: event.action,
-        resourceType: `marketplace_${event.entityType}`,
-        resourceId: event.entityId,
-        result: "success",
-        caller: "marketplace.runtime",
-        details: event.metadata ? { ...event.metadata } : undefined,
-      }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
-    }
-    : undefined;
-  const marketplaceEntitlementCheck = marketplaceCommercePersistence
-    ? async (input: { listingId: string; tenantId: string; principalId: string }) => {
-      const result = await assertListingExecutionReady(
-        input,
-        {
-          listEntitlements: marketplaceCommercePersistence.listEntitlements,
-          listInstallations: marketplaceCommercePersistence.listInstallations,
-          requireInstallation: marketplaceInstallRequired,
-        },
-      );
-      if (!result.ok) {
-        void memoryState.appendAuditLog({
-          id: idGenerator(),
-          ts: nowIso(),
-          actorType: "service",
-          actorId: input.principalId,
-          action: "marketplace.execution.denied",
-          resourceType: "marketplace_listing",
-          resourceId: input.listingId,
-          result: "denied",
-          errorCode: result.error.code,
-          errorMessage: result.error.message,
-          caller: "marketplace.entitlement-check",
-          details: {
-            listingId: input.listingId,
-            principalId: input.principalId,
-          },
-        }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
-        throw new FridayDomainError(
-          result.error.code,
-          result.error.message,
-          { httpStatus: result.error.httpStatus, details: { listingId: input.listingId } },
-        );
-      }
-    }
-    : undefined;
-  const marketplaceInstallMaterializer = marketplaceCommercePersistence
-    ? async (input: {
-      listingId: string;
-      versionId: string;
-      tenantId: string;
-      principalId: string;
-      installationId: string;
-      assetType: FridayMarketplaceAssetType;
-      packageName: string;
-      packageVersion: string;
-    }) => {
-      // Allows emergency rollback to legacy behavior.
-      if (!capabilityGates.marketplaceInstallMaterialize) {
-        return;
-      }
-
-      switch (input.assetType) {
-        case "skill": {
-          const candidates = deriveMarketplaceSkillIdCandidates(input.packageName);
-          const resolved = candidates.find((skillId) => registry.get(skillId));
-          if (!resolved) {
-            throw new FridayDomainError("NOT_FOUND", `Marketplace skill asset "${input.packageName}@${input.packageVersion}" not found in local registry`, { httpStatus: 404 });
-          }
-          return;
-        }
-        case "workflow": {
-          const byId = workflowRuntime.crud.getWorkflow(input.packageName);
-          const bySlug = workflowRuntime.crud.getWorkflowBySlug(input.packageName);
-          if (!byId && !bySlug) {
-            throw new FridayDomainError("NOT_FOUND", `Marketplace workflow asset "${input.packageName}@${input.packageVersion}" not found in local runtime`, { httpStatus: 404 });
-          }
-          return;
-        }
-        case "agent": {
-          if (!agentRuntime) {
-            throw new FridayDomainError("NOT_INITIALIZED", `Marketplace agent asset "${input.packageName}@${input.packageVersion}" requires an active agent runtime`, { httpStatus: 503 });
-          }
-          return;
-        }
-        default: {
-          const exhaustive: never = input.assetType;
-          throw new FridayDomainError("VALIDATION_ERROR", `Unsupported marketplace asset type: ${String(exhaustive)}`, { httpStatus: 400 });
-        }
-      }
-    }
-    : undefined;
-  if (marketplaceCommerceEnabled) {
-    console.log("[friday] Marketplace commerce runtime: enabled");
-  }
 
   // ─── Observability runtime ───
 
@@ -5102,29 +4943,10 @@ export async function createFridayHub(
   });
   crossBorderPackServiceRef = crossBorderPackService;
 
-  if (stateRuntime) {
-    try {
-      marketplaceRuntime = createFridaySkillMarketplaceRuntime({
-        db: stateRuntime.sqlite,
-        idGenerator,
-        nowIso,
-        fetchFn: globalThis.fetch.bind(globalThis),
-        managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
-        hubVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
-        supportedApiVersions: ["1"],
-        registry,
-        selfHealing: selfHealingApiService,
-      });
-    } catch (err) {
-      marketplaceInitError = err instanceof Error ? err : new Error(String(err));
-      console.error("[friday] Marketplace runtime init failed:", marketplaceInitError.message);
-    }
-  }
-
   // ─── API runtime ───
 
   // Shared learning event writer — used by satellite sync, agent bridge, feedback,
-  // and incentive-alignment marketplace/automation signals.
+  // and incentive-alignment automation signals.
   const learningEventWriter = (events: FridayLearningEventAppendInput[]) => {
     const results = selfLearningRuntime.pipeline.processBatch(events);
     selfHealingApiService.emitProcessResults(results);
@@ -5212,59 +5034,6 @@ export async function createFridayHub(
       primaryChannelKind: input.savedKinds[0],
     });
   };
-
-  const marketplaceAssetCatalogService =
-    marketplaceRuntime && marketplaceCommercePersistence
-      ? new FridayMarketplaceAssetCatalogService({
-        commerce: {
-          getPublisher: marketplaceCommercePersistence.getPublisher,
-          getSearchIndex: marketplaceCommercePersistence.getSearchIndex,
-        },
-        commerceAnalytics: {
-          listInstallations: marketplaceCommercePersistence.listInstallations,
-          listSupportEvents: marketplaceCommercePersistence.listSupportEvents,
-          listAcceptedRequestCountsByCreator: marketplaceCommercePersistence.listAcceptedRequestCountsByCreator,
-        },
-        skillLifecycle: marketplaceRuntime.lifecycle,
-      })
-      : null;
-
-  const marketplaceCreatorService =
-    marketplaceAssetCatalogService && marketplaceCommercePersistence
-      ? new FridayMarketplaceCreatorService({
-        commerce: {
-          getPublisher: marketplaceCommercePersistence.getPublisher,
-          listPublishers: marketplaceCommercePersistence.listPublishers,
-          listInstallations: marketplaceCommercePersistence.listInstallations,
-          listAcceptedRequestCountsByCreator: marketplaceCommercePersistence.listAcceptedRequestCountsByCreator,
-          listSupportEvents: marketplaceCommercePersistence.listSupportEvents,
-          saveSupportEvent: marketplaceCommercePersistence.saveSupportEvent,
-        },
-        assetCatalog: marketplaceAssetCatalogService,
-        generateId: idGenerator,
-        now: nowIso,
-        learningEventWriter,
-        learningUserId: learningDefaultUserId,
-      })
-      : null;
-
-  const marketplaceRequestBoardService =
-    marketplaceCommercePersistence
-      ? new FridayMarketplaceRequestBoardService({
-        commerce: {
-          getPublisherByPrincipal: marketplaceCommercePersistence.getPublisherByPrincipal,
-          getRequest: marketplaceCommercePersistence.getRequest,
-          listRequestResponses: marketplaceCommercePersistence.listRequestResponses,
-          listRequests: marketplaceCommercePersistence.listRequests,
-          saveRequest: marketplaceCommercePersistence.saveRequest,
-          saveRequestResponse: marketplaceCommercePersistence.saveRequestResponse,
-        },
-        generateId: idGenerator,
-        now: nowIso,
-        learningEventWriter,
-        learningUserId: learningDefaultUserId,
-      })
-      : null;
 
   // ─── Satellite runtime ───
   const satelliteRuntime = createFridaySatelliteRuntime({
@@ -5740,10 +5509,7 @@ export async function createFridayHub(
     skillRegistry: registry,
     skillExecutor: executor,
     tokenSecret,
-    allowPasswordlessLocalLogin,
-    allowLocalBypassLogin,
     pluginRuntimeMode,
-    pluginMarketplaceAvailable,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
     enabledChannelKinds: getEnabledChannelKinds,
     activateSavedChannels: activateSavedChannelsFromSetupState,
@@ -5824,33 +5590,6 @@ export async function createFridayHub(
     systemHealth: getPublicSystemHealth,
     discovery,
     mcpServer,
-    marketplaceEntitlementCheck,
-    marketplaceCommerce: marketplaceCommercePersistence
-      ? {
-        generateId: idGenerator,
-        now: nowIso,
-        auditSink: marketplaceAuditSink,
-        learningEventWriter,
-        learningUserId: learningDefaultUserId,
-        beforePersistInstallation: marketplaceInstallMaterializer,
-        ...marketplaceCommercePersistence,
-      }
-      : undefined,
-    marketplaceAssets: marketplaceAssetCatalogService
-      ? {
-        service: marketplaceAssetCatalogService,
-      }
-      : undefined,
-    marketplaceCreators: marketplaceCreatorService
-      ? {
-        service: marketplaceCreatorService,
-      }
-      : undefined,
-    marketplaceRequests: marketplaceRequestBoardService
-      ? {
-        service: marketplaceRequestBoardService,
-      }
-      : undefined,
     outboxQueueService: satelliteRuntime.outbox,
     satellitePairing: {
       registerSatellite: async (input) => satelliteRuntime.registration.register({
@@ -5951,16 +5690,6 @@ export async function createFridayHub(
           };
         }),
     },
-    skillMarketplace: marketplaceRuntime
-      ? {
-        sources: marketplaceRuntime.sources,
-        discovery: marketplaceRuntime.discovery,
-        installations: marketplaceRuntime.installations,
-        sync: marketplaceRuntime.sync,
-        cache: marketplaceRuntime.cache,
-      }
-      : undefined,
-    skillLifecycle: marketplaceRuntime?.lifecycle,
     channelWebhooks: {
       lineWebhookRelay: lineWebhookRelay,
       whatsappWebhookRelay: whatsappWebhookRelay,
@@ -6364,25 +6093,6 @@ export async function createFridayHub(
         timeoutMs: 600_000, // 10 min
         catchUpRuns: 1,
         run: async () => { await extractionWorkerJob.run(); },
-      });
-    }
-
-    // Marketplace sync — always registered; degraded runner if init failed (L2)
-    {
-      const marketplaceSyncRunner = marketplaceRuntime
-        ? async () => { await marketplaceRuntime!.syncJob.runOnce(); }
-        : async () => {
-            const errMsg = marketplaceInitError?.message ?? "unknown init error";
-            console.error(`[friday] marketplace-sync skipped: MARKETPLACE_RUNTIME_INIT_FAILED — ${errMsg}`);
-            throw new FridayDomainError("NOT_INITIALIZED", `MARKETPLACE_RUNTIME_INIT_FAILED: ${errMsg}`, { httpStatus: 503 });
-          };
-
-      schedulerJobs.push({
-        id: "marketplace-sync",
-        intervalMs: 3_600_000, // every 1h
-        timeoutMs: 300_000, // 5 min
-        catchUpRuns: 0, // no catch-up for periodic sync
-        run: marketplaceSyncRunner,
       });
     }
 

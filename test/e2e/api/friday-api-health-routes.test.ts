@@ -100,17 +100,13 @@ describe("GET /v1/health (e2e)", () => {
     const json = await res.json() as {
       ok: boolean;
       data: {
-        capabilities?: {
-          auth?: {
-            allowPasswordlessLocalLogin?: boolean;
-            allowLocalBypassLogin?: boolean;
-          };
-        };
+        capabilities?: Record<string, unknown>;
       };
     };
 
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
-    expect(json.data.capabilities?.auth).toBeDefined();
+    expect(json.data.capabilities?.schemaVersion).toBe("1.0");
+    expect(json.data.capabilities?.plugins).toBeDefined();
   });
 });

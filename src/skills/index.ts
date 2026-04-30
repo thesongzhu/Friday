@@ -127,36 +127,27 @@ export type {
 } from "./registry/friday-skill-registry.types.js";
 export { FridaySkillRegistryImpl } from "./registry/friday-skill-registry.js";
 
-// Marketplace barrel (inlined from former friday-skill-marketplace-index)
-// Model — marketplace types
+// Skill catalog model types
 export type {
   UUID,
   ISODateTime,
   JsonPrimitive,
   JsonValue,
   JsonObject,
-  FridayMarketplaceTrustPolicy,
-  FridayMarketplaceSignatureAlgorithm,
+  FridaySkillTrustPolicy,
+  FridaySkillSignatureAlgorithm,
   FridaySkillInstallationStatus,
-  FridayMarketplaceSourceRow,
-  FridayMarketplaceCacheRow,
   FridaySkillRow,
   FridaySkillVersionRow,
   FridaySkillInstallationRow,
-  FridayMarketplaceSourceEntity,
-  FridayMarketplaceSourceCatalogSummary,
-  FridayMarketplaceSourceTrustSummary,
-  FridayMarketplaceSourceHealthSummary,
-  FridayMarketplaceSourceView,
-  FridayMarketplaceCacheEntity,
+  FridaySkillSourceEntity,
   FridaySkillEntity,
   FridaySkillSignature,
   FridaySkillVersionEntity,
   FridaySkillInstallationEntity,
-  FridayMarketplaceSourceCreateInput,
-  FridayMarketplaceSourcePatchInput,
   FridaySkillCatalogQuery,
   FridaySkillCatalogItem,
+  FridaySkillCatalogResult,
   FridaySkillVerificationStatus,
   FridaySkillRequirementPreview,
   FridaySkillPermissionPreviewGrant,
@@ -164,26 +155,17 @@ export type {
   FridaySkillEligibility,
   FridaySkillInstallPlanSummary,
   FridaySkillFailureEvidenceSummary,
-  FridayMarketplaceIndexDocument,
-  FridayMarketplaceSignatureDocument,
-  FridayMarketplacePublisherKeyDocument,
+  FridaySkillSignatureDocument,
+  FridaySkillPublisherKeyDocument,
   FridaySignatureVerificationResult,
   FridayTrustScoreBreakdown,
   FridaySkillVersionResolutionInput,
   FridaySkillVersionResolutionResult,
   FridaySkillInstallRequest,
   FridaySkillInstallResult,
-} from "./model/friday-skill-marketplace.types.js";
+} from "./model/friday-skill-catalog.types.js";
 
-// Persistence — marketplace
-export {
-  createFridayMarketplaceSourceRepository,
-  type FridayMarketplaceSourceRepository,
-} from "./persistence/friday-marketplace-source-repository.js";
-export {
-  createFridayMarketplaceCacheRepository,
-  type FridayMarketplaceCacheRepository,
-} from "./persistence/friday-marketplace-cache-repository.js";
+// Persistence
 export {
   createFridaySkillRepository,
   type FridaySkillRepository,
@@ -197,13 +179,7 @@ export {
   type FridaySkillInstallationRepository,
 } from "./persistence/friday-skill-installation-repository.js";
 
-// Services — marketplace
-export {
-  createFridayMarketplaceHttpClient,
-  type FridayMarketplaceHttpClient,
-  type FetchFn,
-  type CreateMarketplaceHttpClientDeps,
-} from "./services/friday-marketplace-http-client.js";
+// Services
 export type {
   FridaySkillReadonlySystemContext,
   FridaySkillReadonlyDiagnosisContext,
@@ -213,30 +189,6 @@ export type {
   FridaySkillReadonlyBrowserContext,
   FridaySkillNodeRuntimeContext,
 } from "./executor/friday-skill-executor.types.js";
-export {
-  createFridayMarketplaceSourceService,
-  type FridayMarketplaceSourceService,
-  type CreateMarketplaceSourceServiceDeps,
-} from "./services/friday-marketplace-source-service.js";
-export {
-  createFridayMarketplaceCacheService,
-  FRIDAY_DEFAULT_CACHE_TTL,
-  type FridayMarketplaceCacheService,
-  type FridayMarketplaceCacheTtlConfig,
-  type CreateMarketplaceCacheServiceDeps,
-} from "./services/friday-marketplace-cache-service.js";
-export {
-  createFridayMarketplaceDiscoveryService,
-  type FridayMarketplaceDiscoveryService,
-  type FridaySkillCatalogResult,
-  type CreateMarketplaceDiscoveryServiceDeps,
-} from "./services/friday-marketplace-discovery-service.js";
-export {
-  createFridayMarketplaceSyncService,
-  type FridayMarketplaceSyncService,
-  type FridaySyncResult,
-  type CreateMarketplaceSyncServiceDeps,
-} from "./services/friday-marketplace-sync-service.js";
 export {
   createFridaySkillSignatureVerifier,
   type FridaySkillSignatureVerifier,
@@ -282,13 +234,6 @@ export {
   type FridayManifestValidationOutcome,
   type CreateFridaySkillLifecycleServiceDeps,
 } from "./services/friday-skill-lifecycle-service.js";
-
-// Runtime — marketplace
-export type { FridaySkillMarketplaceRuntime } from "./runtime/friday-skill-marketplace-runtime.types.js";
-export {
-  createFridaySkillMarketplaceRuntime,
-  type CreateSkillMarketplaceRuntimeDeps,
-} from "./runtime/friday-skill-marketplace-runtime.js";
 
 // Generator (re-export key types for convenience; full module at #skills/generator)
 export type { FridaySkillGeneratorService } from "./generator/services/friday-skill-generator-service.types.js";

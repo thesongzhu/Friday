@@ -27,15 +27,10 @@ import type {
   FridayDiagnosisRoutesDeps,
   FridayDiscoveryRoutesDeps,
   FridayMcpServerRoutesDeps,
-  FridayMarketplaceCommerceRoutesDeps,
-  FridayMarketplaceAssetRoutesDeps,
-  FridayMarketplaceCreatorRoutesDeps,
-  FridayMarketplaceRequestRoutesDeps,
   FridayMultiTenantSecurityRoutesDeps,
   FridayObservabilityRoutesDeps,
   FridaySatellitePairingRoutesDeps,
   FridaySatelliteRuntimeRoutesDeps,
-  FridaySkillMarketplaceRoutesDeps,
   FridaySystemRoutesDeps,
   FridayUixRoutesDeps,
 } from "#api";
@@ -60,7 +55,6 @@ const FIXED_NOW = "2025-06-15T10:00:00.000Z";
 const FIXED_TOKEN_SECRET = "contract-test-secret-32-bytes!!";
 
 import type { FridayPluginManifest, FridayPluginEntity } from "#plugins";
-import type { FridayMarketplacePluginDetail } from "#plugins";
 
 /** Minimal valid plugin manifest matching FridayPluginManifest. */
 const STUB_PLUGIN_MANIFEST: FridayPluginManifest = {
@@ -101,20 +95,6 @@ const STUB_PLUGIN_ENTITY: FridayPluginEntity = {
   lastErrorMessage: null,
 };
 
-/** Minimal valid marketplace plugin detail matching FridayMarketplacePluginDetail. */
-const STUB_MARKETPLACE_PLUGIN_DETAIL: FridayMarketplacePluginDetail = {
-  id: "stub.plugin",
-  name: "Stub Plugin",
-  description: "Stub plugin for contract tests",
-  version: "0.0.0",
-  author: "stub",
-  downloads: 0,
-  manifest: STUB_PLUGIN_MANIFEST,
-  checksum: "0000000000000000000000000000000000000000000000000000000000000000",
-  packageUrl: "https://example.com/stub-plugin.tar.gz",
-  updatedAt: FIXED_NOW,
-};
-
 const EXTENDED_ROUTE_SENTINELS = {
   multiTenantSecurity: "security.tenants.list",
   observability: "observability.traces.search",
@@ -123,11 +103,6 @@ const EXTENDED_ROUTE_SENTINELS = {
   system: "system.session.get",
   discovery: "discovery.scan",
   mcpServer: "mcp.server.rpc",
-  marketplaceCommerce: "marketplace.publishers.create",
-  marketplaceAssets: "marketplace.assets.list",
-  marketplaceCreators: "marketplace.creators.list",
-  marketplaceRequests: "marketplace.requests.list",
-  skillMarketplace: "marketplace.sources.list",
   satellitePairing: "satellites.register",
   satelliteRuntime: "satellites.heartbeat",
 } as const;
@@ -473,10 +448,6 @@ const stubPluginService: FridayPluginService = {
   enablePlugin: async () => ({ ...STUB_PLUGIN_ENTITY, enabled: true, status: "enabled" as const }),
   disablePlugin: async () => ({ ...STUB_PLUGIN_ENTITY, enabled: false, status: "disabled" as const }),
   uninstallPlugin: async () => {},
-  searchMarketplace: async () => ({ items: [], total: 0 }),
-  getMarketplacePlugin: async () => STUB_MARKETPLACE_PLUGIN_DETAIL,
-  listMarketplacePluginVersions: async () => [],
-  installFromMarketplace: async () => ({ ...STUB_PLUGIN_ENTITY, source: "marketplace" as const }),
 };
 
 /** Stub manifest loader — matches FridayPluginManifestLoader interface. */
@@ -628,34 +599,6 @@ function createContractRuntime(options: { includeExtendedRouteFamilies?: boolean
         system: {} as FridaySystemRoutesDeps,
         discovery: {} as FridayDiscoveryRoutesDeps,
         mcpServer: {} as FridayMcpServerRoutesDeps,
-        marketplaceCommerce: {} as FridayMarketplaceCommerceRoutesDeps,
-        marketplaceAssets: {
-          service: {
-            listAssets: async () => [],
-            getAsset: async () => null,
-          },
-        } as FridayMarketplaceAssetRoutesDeps,
-        marketplaceCreators: {
-          service: {
-            listCreators: async () => [],
-            getCreator: async () => null,
-            recordSupport: async () => ({
-              supportEvent: {} as never,
-              creator: {} as never,
-            }),
-          },
-        } as FridayMarketplaceCreatorRoutesDeps,
-        marketplaceRequests: {
-          service: {
-            listRequests: async () => [],
-            createRequest: async () => ({} as never),
-            getRequest: async () => null,
-            createResponse: async () => ({} as never),
-            acceptResponse: async () => ({} as never),
-            closeRequest: async () => ({} as never),
-          },
-        } as FridayMarketplaceRequestRoutesDeps,
-        skillMarketplace: {} as FridaySkillMarketplaceRoutesDeps,
         satellitePairing: {} as FridaySatellitePairingRoutesDeps,
         satelliteRuntime: {
           recordHeartbeat: async () => ({ accepted: true as const, now: FIXED_NOW, expectedIntervalMs: 15_000, status: "online" }),
@@ -761,11 +704,6 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         system: false,
         discovery: true,
         mcpServer: true,
-        marketplaceCommerce: false,
-        marketplaceAssets: false,
-        marketplaceCreators: false,
-        marketplaceRequests: false,
-        skillMarketplace: false,
         satellitePairing: false,
         satelliteRuntime: false,
       });
@@ -777,11 +715,6 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         system: true,
         discovery: true,
         mcpServer: true,
-        marketplaceCommerce: true,
-        marketplaceAssets: true,
-        marketplaceCreators: true,
-        marketplaceRequests: true,
-        skillMarketplace: true,
         satellitePairing: true,
         satelliteRuntime: true,
       });
@@ -799,7 +732,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       const renameEntries = Object.entries(FRIDAY_ROUTE_OPERATION_ID_RENAMES).sort(([left], [right]) =>
         left.localeCompare(right),
       );
-      expect(renameEntries).toHaveLength(24);
+      expect(renameEntries).toHaveLength(20);
       expect(renameEntries.every(([from]) => !FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(from))).toBe(true);
       expect(renameEntries.every(([, to]) => FRIDAY_ROUTE_OPERATION_ID_PATTERN.test(to))).toBe(true);
       expect(renameEntries.some(([, to]) => to.startsWith("packaging."))).toBe(false);

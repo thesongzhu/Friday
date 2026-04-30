@@ -1,5 +1,5 @@
 /**
- * Plugin management and marketplace API routes.
+ * Plugin management API routes.
  */
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
@@ -9,10 +9,6 @@ import type {
   FridayGetPluginResponse,
   FridayInstallPluginResponse,
   FridayListPluginsResponse,
-  FridayMarketplaceInstallResponse,
-  FridayMarketplacePluginDetailResponse,
-  FridayMarketplacePluginVersionsResponse,
-  FridayMarketplaceSearchResponse,
   FridayPluginVersionsResponse,
   FridayUninstallPluginResponse,
 } from "../../model/friday-api-plugin.types.js";
@@ -48,25 +44,6 @@ function validateInstallBody(body: unknown): asserts body is { installPath: stri
 }
 
 // ─── Factory ───
-
-// ─── Query Validation ───
-
-const FRIDAY_PLUGIN_ROUTE_DEFAULT_LIMIT = 50;
-const FRIDAY_PLUGIN_ROUTE_MAX_LIMIT = 200;
-
-function parseValidLimit(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) return FRIDAY_PLUGIN_ROUTE_DEFAULT_LIMIT;
-  return Math.min(Math.floor(n), FRIDAY_PLUGIN_ROUTE_MAX_LIMIT);
-}
-
-function parseValidOffset(raw: string | undefined): number | undefined {
-  if (raw === undefined) return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
-}
 
 function validateEnumParam<T extends string>(
   value: string | undefined,
@@ -213,76 +190,6 @@ export function createFridayPluginRoutes(
         const force = query.force === "true";
         await pluginService.uninstallPlugin(id, force);
         return { uninstalled: true };
-      },
-    },
-
-    // ─── Marketplace: search ───
-    {
-      operationId: "marketplace.plugins.list",
-      method: "GET",
-      path: "/v1/marketplace/plugins",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
-      async handler(ctx): Promise<FridayMarketplaceSearchResponse> {
-        const query = ctx.query as Record<string, string | undefined>;
-        const result = await pluginService.searchMarketplace({
-          query: query.q,
-          kind: validateEnumParam(query.kind, FRIDAY_PLUGIN_VALID_KINDS, "kind"),
-          limit: parseValidLimit(query.limit),
-          offset: parseValidOffset(query.offset),
-        });
-        return { items: result.items, total: result.total };
-      },
-    },
-
-    // ─── Marketplace: get plugin detail ───
-    {
-      operationId: "marketplace.plugins.get",
-      method: "GET",
-      path: "/v1/marketplace/plugins/:id",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
-      async handler(ctx): Promise<FridayMarketplacePluginDetailResponse> {
-        const { id } = ctx.params as { id: string };
-        const detail = await pluginService.getMarketplacePlugin(id);
-        return {
-          plugin: {
-            id: detail.id,
-            name: detail.name,
-            description: detail.description,
-            version: detail.version,
-            author: detail.author,
-            downloads: detail.downloads,
-            updatedAt: detail.updatedAt,
-            previewSdk: detail.previewSdk,
-            capabilitySummary: detail.capabilitySummary,
-            policySummary: detail.policySummary,
-          },
-        };
-      },
-    },
-
-    // ─── Marketplace: plugin versions ───
-    {
-      operationId: "marketplace.plugins.versions.list",
-      method: "GET",
-      path: "/v1/marketplace/plugins/:id/versions",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
-      async handler(ctx): Promise<FridayMarketplacePluginVersionsResponse> {
-        const { id } = ctx.params as { id: string };
-        const versions = await pluginService.listMarketplacePluginVersions(id);
-        return { versions };
-      },
-    },
-
-    // ─── Marketplace: install from marketplace ───
-    {
-      operationId: "marketplace.plugins.install",
-      method: "POST",
-      path: "/v1/marketplace/plugins/:id/install",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
-      async handler(ctx): Promise<FridayMarketplaceInstallResponse> {
-        const { id } = ctx.params as { id: string };
-        const plugin = await pluginService.installFromMarketplace(id);
-        return { plugin };
       },
     },
   ];

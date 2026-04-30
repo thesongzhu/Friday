@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS plugins (
   name TEXT NOT NULL,
   description TEXT NOT NULL,
   version TEXT NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('bundled','local','marketplace')),
+  source TEXT NOT NULL CHECK (source IN ('bundled','local')),
   status TEXT NOT NULL CHECK (status IN (
     'not_installed','installed','configured','enabled','running','disabled','error','uninstalled'
   )),
@@ -50,17 +50,6 @@ CREATE TABLE IF NOT EXISTS plugin_dependencies (
 CREATE INDEX IF NOT EXISTS idx_plugin_deps_dependency
   ON plugin_dependencies(dependency_plugin_id);
 
-CREATE TABLE IF NOT EXISTS plugin_marketplace_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  base_url TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-  trust_policy TEXT NOT NULL CHECK (trust_policy IN ('strict','warn','permissive')),
-  pinned_key_ids_json TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS plugin_versions (
   id TEXT PRIMARY KEY,
   plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
@@ -81,18 +70,6 @@ CREATE TABLE IF NOT EXISTS plugin_versions (
 CREATE INDEX IF NOT EXISTS idx_plugin_versions_plugin_released
   ON plugin_versions(plugin_id, released_at DESC);
 
-CREATE TABLE IF NOT EXISTS plugin_marketplace_cache (
-  id TEXT PRIMARY KEY,
-  source_id TEXT NOT NULL REFERENCES plugin_marketplace_sources(id) ON DELETE CASCADE,
-  plugin_id TEXT NOT NULL,
-  version TEXT NOT NULL,
-  manifest_json TEXT NOT NULL,
-  signature_valid INTEGER NOT NULL CHECK (signature_valid IN (0,1)),
-  indexed_at TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(source_id, plugin_id, version)
-);
 `;
 
 const V008_CHECKSUM = computeFridayMigrationChecksum(V008_PLUGIN_SYSTEM_FOUNDATION_SQL);
@@ -102,4 +79,5 @@ export const V008_PLUGIN_SYSTEM_FOUNDATION_MIGRATION: FridaySqliteMigration = {
   name: "v008-plugin-system-foundation",
   sql: V008_PLUGIN_SYSTEM_FOUNDATION_SQL,
   checksum: V008_CHECKSUM,
+  acceptedChecksums: ["235ef3974a95b6e176cacc988c8da19177405f621d838554074d8421bf3228c9"], // pragma: allowlist secret
 };

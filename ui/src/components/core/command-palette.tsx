@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Compass, History, Link as LinkIcon, MessageSquarePlus, Search, Settings2, type LucideIcon } from "lucide-react";
 import { DeepLinkPreviewDialog } from "@/components/deeplink/deeplink-preview-dialog";
 import { useRecentSessionsQuery } from "@/hooks/use-recent-sessions";
-import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, resolveLocalizedText, type AppLocale, type LocalizedText } from "@/lib/i18n/localized-text";
 import {
   AGENT_OS_NAV_ADVANCED,
@@ -60,16 +59,6 @@ function buildNavCommands(): CommandItem[] {
     path: "/settings",
     hint: localizedText("/settings", "/settings"),
   });
-  if (!HIDE_MARKETPLACE_UI) {
-    all.push({
-      id: "nav:/marketplace",
-      kind: "nav",
-      label: localizedText("资产市场", "Marketplace"),
-      section: SECTION_NAV_ADVANCED,
-      path: "/marketplace",
-      hint: localizedText("/marketplace", "/marketplace"),
-    });
-  }
   return all;
 }
 

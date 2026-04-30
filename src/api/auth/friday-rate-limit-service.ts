@@ -29,14 +29,12 @@ const DEFAULT_POLICIES: FridayRateLimitPolicy[] = [
   // Provider write + validate
   { id: "provider.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
   { id: "provider.validate", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
-  // Agent / memory / marketplace writes
+  // Agent / memory writes
   { id: "agent.run", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
   { id: "channel.webhook", windowMs: 60_000, maxHits: 120, keyBy: "ip" },
   { id: "satellite.register", windowMs: 60_000, maxHits: 20, keyBy: "ip" },
   { id: "satellite.handshake", windowMs: 60_000, maxHits: 30, keyBy: "ip" },
   { id: "memory.write", windowMs: 60_000, maxHits: 60, keyBy: "principal" },
-  { id: "marketplace.checkout", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
-  { id: "marketplace.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },
   // Workflow generator (LLM-heavy)
   { id: "generator.llm", windowMs: 60_000, maxHits: 10, keyBy: "principal" },
   { id: "generator.write", windowMs: 60_000, maxHits: 30, keyBy: "principal" },

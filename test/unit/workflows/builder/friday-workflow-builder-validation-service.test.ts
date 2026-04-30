@@ -283,11 +283,11 @@ describe("FridayWorkflowBuilderValidationService", () => {
 
     // Install the referenced skill
     db.withWriteTransaction((writerDb) => {
-      skillRepo.upsertSkillFromMarketplace(writerDb, {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
         id: "test-skill",
         name: "Test Skill",
-        source: "marketplace",
-        origin: "marketplace",
+        source: "local",
+        origin: "workspace",
         status: "installed",
         nowIso: NOW,
       });

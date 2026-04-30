@@ -4,7 +4,7 @@ import type { FridaySqliteMigration } from "./friday-migration.types.js";
 
 export const V056_INCENTIVE_ALIGNMENT_FOUNDATION_SQL = `
 -- V056: Incentive-alignment foundation for outcome receipts, reuse scoring,
--- marketplace proof-of-use ranking, and learning metrics expansion.
+-- proof-of-use ranking, and learning metrics expansion.
 
 ALTER TABLE friday_agent_automations
   ADD COLUMN estimated_time_saved_minutes INTEGER NOT NULL DEFAULT 15;

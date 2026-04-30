@@ -12,10 +12,6 @@ import type {
   FridayDiagnosisRoutesDeps,
   FridayDiscoveryRoutesDeps,
   FridayMcpServerRoutesDeps,
-  FridayMarketplaceCommerceRoutesDeps,
-  FridayMarketplaceAssetRoutesDeps,
-  FridayMarketplaceCreatorRoutesDeps,
-  FridayMarketplaceRequestRoutesDeps,
   FridayMultiTenantSecurityRoutesDeps,
   FridayObservabilityRoutesDeps,
   FridaySatellitePairingRoutesDeps,
@@ -155,7 +151,6 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("discovery.status");
     expect(operationIds).toContain("mcp.server.rpc");
     expect(operationIds).toContain("packaging.packages.list");
-    expect(operationIds.some((id) => id.startsWith("marketplace."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("satellites."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("diagnosis."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("autofix."))).toBe(false);
@@ -224,33 +219,6 @@ describe("API Runtime — Extended Route Registration", () => {
       system: {} as FridaySystemRoutesDeps,
       discovery: {} as FridayDiscoveryRoutesDeps,
       mcpServer: {} as FridayMcpServerRoutesDeps,
-      marketplaceCommerce: {} as FridayMarketplaceCommerceRoutesDeps,
-      marketplaceAssets: {
-        service: {
-          listAssets: vi.fn(async () => []),
-          getAsset: vi.fn(async () => null),
-        },
-      } as unknown as FridayMarketplaceAssetRoutesDeps,
-      marketplaceCreators: {
-        service: {
-          listCreators: vi.fn(async () => []),
-          getCreator: vi.fn(async () => null),
-          recordSupport: vi.fn(async () => ({
-            supportEvent: {} as never,
-            creator: {} as never,
-          })),
-        },
-      } as unknown as FridayMarketplaceCreatorRoutesDeps,
-      marketplaceRequests: {
-        service: {
-          listRequests: vi.fn(async () => []),
-          createRequest: vi.fn(),
-          getRequest: vi.fn(async () => null),
-          createResponse: vi.fn(),
-          acceptResponse: vi.fn(),
-          closeRequest: vi.fn(),
-        },
-      } as unknown as FridayMarketplaceRequestRoutesDeps,
       satellitePairing: {} as FridaySatellitePairingRoutesDeps,
       satelliteRuntime: {
         recordHeartbeat: vi.fn(),
@@ -342,11 +310,6 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("system.session.get");
     expect(operationIds).toContain("discovery.scan");
     expect(operationIds).toContain("mcp.server.rpc");
-    expect(operationIds).toContain("marketplace.publishers.create");
-    expect(operationIds).toContain("marketplace.assets.list");
-    expect(operationIds).toContain("marketplace.creators.list");
-    expect(operationIds).toContain("marketplace.assets.support");
-    expect(operationIds).toContain("marketplace.requests.list");
     expect(operationIds).toContain("satellites.register");
     expect(operationIds).toContain("satellites.heartbeat");
     expect(operationIds).toContain("diagnosis.incidents.list");
@@ -700,191 +663,4 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(tenantsGet).not.toHaveBeenCalled();
   });
 
-  it("enforces tenant boundary on marketplace routes when buyerTenantId is requested", async () => {
-    const listPurchasesSpy = vi.fn(async () => []);
-    const marketplaceCommerce = {
-      generateId: () => "id-1",
-      now: () => NOW,
-      getPublisher: vi.fn(async () => null),
-      getPublisherByPrincipal: vi.fn(async () => null),
-      getPublisherVerification: vi.fn(async () => null),
-      listPublishers: vi.fn(async () => []),
-      getListing: vi.fn(async () => null),
-      getListingBySlug: vi.fn(async () => null),
-      listListings: vi.fn(async () => []),
-      getListingVersion: vi.fn(async () => null),
-      listListingVersions: vi.fn(async () => []),
-      getPricingPlan: vi.fn(async () => null),
-      listPricingPlans: vi.fn(async () => []),
-      getPurchase: vi.fn(async () => null),
-      listPurchases: listPurchasesSpy,
-      getEntitlement: vi.fn(async () => null),
-      listEntitlements: vi.fn(async () => []),
-      listSubscriptions: vi.fn(async () => []),
-      getSubscription: vi.fn(async () => null),
-      listRefunds: vi.fn(async () => []),
-      getSearchIndex: vi.fn(async () => []),
-      savePublisher: vi.fn(async () => undefined),
-      saveListing: vi.fn(async () => undefined),
-      saveListingVersion: vi.fn(async () => undefined),
-      savePricingPlan: vi.fn(async () => undefined),
-      savePurchase: vi.fn(async () => undefined),
-      saveEntitlement: vi.fn(async () => undefined),
-      saveSubscription: vi.fn(async () => undefined),
-      saveRefund: vi.fn(async () => undefined),
-    } as unknown as FridayMarketplaceCommerceRoutesDeps;
-
-    const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
-      marketplaceCommerce,
-    });
-    const route = runtime.routes
-      .getRoutes()
-      .find((entry) => entry.operationId === "marketplace.purchases.list");
-    expect(route).toBeDefined();
-
-    await expect(route!.handler({
-      params: {},
-      query: {
-        buyerTenantId: "tenant-a",
-      },
-      body: null,
-      headers: {},
-      principal: makePrincipal({
-        principalId: "tenant-b",
-        scopes: ["marketplace.read"],
-      }),
-      requestId: "req-1",
-      receivedAt: NOW,
-    } as never)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-
-    expect(listPurchasesSpy).not.toHaveBeenCalled();
-  });
-
-  it("allows marketplace routes when buyerTenantId matches principal", async () => {
-    const listPurchasesSpy = vi.fn(async () => []);
-    const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
-      marketplaceCommerce: {
-        generateId: () => "id-1",
-        now: () => NOW,
-        getPublisher: vi.fn(async () => null),
-        getPublisherByPrincipal: vi.fn(async () => null),
-        getPublisherVerification: vi.fn(async () => null),
-        listPublishers: vi.fn(async () => []),
-        getListing: vi.fn(async () => null),
-        getListingBySlug: vi.fn(async () => null),
-        listListings: vi.fn(async () => []),
-        getListingVersion: vi.fn(async () => null),
-        listListingVersions: vi.fn(async () => []),
-        getPricingPlan: vi.fn(async () => null),
-        listPricingPlans: vi.fn(async () => []),
-        getPurchase: vi.fn(async () => null),
-        listPurchases: listPurchasesSpy,
-        getEntitlement: vi.fn(async () => null),
-        listEntitlements: vi.fn(async () => []),
-        listSubscriptions: vi.fn(async () => []),
-        getSubscription: vi.fn(async () => null),
-        listRefunds: vi.fn(async () => []),
-        getSearchIndex: vi.fn(async () => []),
-        savePublisher: vi.fn(async () => undefined),
-        saveListing: vi.fn(async () => undefined),
-        saveListingVersion: vi.fn(async () => undefined),
-        savePricingPlan: vi.fn(async () => undefined),
-        savePurchase: vi.fn(async () => undefined),
-        saveEntitlement: vi.fn(async () => undefined),
-        saveSubscription: vi.fn(async () => undefined),
-        saveRefund: vi.fn(async () => undefined),
-      } as unknown as FridayMarketplaceCommerceRoutesDeps,
-    });
-
-    const route = runtime.routes
-      .getRoutes()
-      .find((entry) => entry.operationId === "marketplace.purchases.list");
-    expect(route).toBeDefined();
-
-    await expect(route!.handler({
-      params: {},
-      query: {
-        buyerTenantId: "tenant-a",
-      },
-      body: null,
-      headers: {},
-      principal: makePrincipal({
-        principalId: "tenant-a",
-        scopes: ["marketplace.read"],
-      }),
-      requestId: "req-2",
-      receivedAt: NOW,
-    } as never)).resolves.toMatchObject({
-      items: [],
-    });
-
-    expect(listPurchasesSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("allows privileged principals for cross-tenant marketplace queries", async () => {
-    const listPurchasesSpy = vi.fn(async () => []);
-    const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
-      marketplaceCommerce: {
-        generateId: () => "id-1",
-        now: () => NOW,
-        getPublisher: vi.fn(async () => null),
-        getPublisherByPrincipal: vi.fn(async () => null),
-        getPublisherVerification: vi.fn(async () => null),
-        listPublishers: vi.fn(async () => []),
-        getListing: vi.fn(async () => null),
-        getListingBySlug: vi.fn(async () => null),
-        listListings: vi.fn(async () => []),
-        getListingVersion: vi.fn(async () => null),
-        listListingVersions: vi.fn(async () => []),
-        getPricingPlan: vi.fn(async () => null),
-        listPricingPlans: vi.fn(async () => []),
-        getPurchase: vi.fn(async () => null),
-        listPurchases: listPurchasesSpy,
-        getEntitlement: vi.fn(async () => null),
-        listEntitlements: vi.fn(async () => []),
-        listSubscriptions: vi.fn(async () => []),
-        getSubscription: vi.fn(async () => null),
-        listRefunds: vi.fn(async () => []),
-        getSearchIndex: vi.fn(async () => []),
-        savePublisher: vi.fn(async () => undefined),
-        saveListing: vi.fn(async () => undefined),
-        saveListingVersion: vi.fn(async () => undefined),
-        savePricingPlan: vi.fn(async () => undefined),
-        savePurchase: vi.fn(async () => undefined),
-        saveEntitlement: vi.fn(async () => undefined),
-        saveSubscription: vi.fn(async () => undefined),
-        saveRefund: vi.fn(async () => undefined),
-      } as unknown as FridayMarketplaceCommerceRoutesDeps,
-    });
-
-    const route = runtime.routes
-      .getRoutes()
-      .find((entry) => entry.operationId === "marketplace.purchases.list");
-    expect(route).toBeDefined();
-
-    await expect(route!.handler({
-      params: {},
-      query: {
-        buyerTenantId: "tenant-a",
-      },
-      body: null,
-      headers: {},
-      principal: makePrincipal({
-        principalId: "tenant-admin",
-        role: "admin",
-        scopes: ["marketplace.read"],
-      }),
-      requestId: "req-3",
-      receivedAt: NOW,
-    } as never)).resolves.toMatchObject({
-      items: [],
-    });
-
-    expect(listPurchasesSpy).toHaveBeenCalledTimes(1);
-  });
 });

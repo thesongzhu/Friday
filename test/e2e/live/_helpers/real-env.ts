@@ -79,6 +79,10 @@ export const CODE_MODEL =
       ? "gpt-4o"
       : "qwen2.5-coder:7b");
 export const LIVE_TARGET: FridayE2eTarget = E2E_TARGET;
+const LOCAL_PASSPHRASE =
+  process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-test-local-passphrase-123";
 
 // ─── Types ───
 
@@ -286,10 +290,33 @@ async function startLocalRealHubEnv(
   await httpServer.listen();
   const baseUrl = `http://127.0.0.1:${String(port)}`;
 
+  const bootstrapStatusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const bootstrapStatus = (await bootstrapStatusRes.json()) as {
+    ok?: boolean;
+    data?: { bootstrapRequired?: boolean };
+    bootstrapRequired?: boolean;
+  };
+  const bootstrapRequired =
+    bootstrapStatus.data?.bootstrapRequired ?? bootstrapStatus.bootstrapRequired ?? false;
+  if (bootstrapRequired) {
+    const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const bootstrapJson = (await bootstrapRes.json()) as {
+      ok?: boolean;
+      error?: { code?: string; message?: string };
+    };
+    if (!bootstrapRes.ok || bootstrapJson.ok === false) {
+      throw new Error(`Local passphrase bootstrap failed: ${JSON.stringify(bootstrapJson)}`);
+    }
+  }
+
   const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
   });
   const loginJson = (await loginRes.json()) as {
     ok: boolean;

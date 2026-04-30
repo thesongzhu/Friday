@@ -41,7 +41,6 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/flow/build-new")).toEqual({ zh: "引导流程", en: "Guided Flow" });
     expect(resolvePageTitle("/studio")).toEqual({ zh: "Studio", en: "Studio" });
     expect(resolvePageTitle("/assistant")).toEqual({ zh: "助手", en: "Assistant" });
-    expect(resolvePageTitle("/marketplace")).toEqual({ zh: "助手", en: "Assistant" });
     expect(resolvePageTitle("/plugins")).toEqual({ zh: "插件", en: "Plugins" });
     expect(resolvePageTitle("/skills")).toEqual({ zh: "能力包", en: "Skills" });
     expect(resolvePageTitle("/workflows/123")).toEqual({ zh: "自动化", en: "Workflows" });

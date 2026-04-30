@@ -97,25 +97,10 @@ export { createFridayPluginLoader } from "./services/friday-plugin-loader.js";
 export type {
   FridayPluginSignatureVerifier,
   FridayPluginSignatureVerificationResult,
-  FridayPluginMarketplaceVerifyInput,
   FridayPluginLocalTrustInput,
   CreateFridayPluginSignatureVerifierDeps,
 } from "./security/friday-plugin-signature-verifier.js";
 export { createFridayPluginSignatureVerifier } from "./security/friday-plugin-signature-verifier.js";
-
-// ─── Marketplace Client ───
-
-export type {
-  FridayPluginMarketplaceClient,
-  FridayMarketplacePluginSummary,
-  FridayMarketplacePluginDetail,
-  FridayMarketplaceSearchQuery,
-  FridayMarketplaceSearchResult,
-  FridayMarketplaceDownloadResult,
-  FridayMarketplaceVersionEntry,
-  CreateFridayPluginMarketplaceClientDeps,
-} from "./services/friday-plugin-marketplace-client.js";
-export { createFridayPluginMarketplaceClient } from "./services/friday-plugin-marketplace-client.js";
 
 // ─── Plugin Service ───
 
@@ -124,7 +109,6 @@ export type {
   FridayPluginInstallInput,
   FridayPluginPreviewPolicyConfig,
   FridayPluginVersionInfo,
-  FridayMarketplacePluginVersionInfo,
   CreateFridayPluginServiceDeps,
 } from "./services/friday-plugin-service.types.js";
 export { createFridayPluginService } from "./services/friday-plugin-service.js";

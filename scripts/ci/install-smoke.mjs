@@ -9,7 +9,7 @@
  *   3. Verify `friday --help` prints usage
  *   4. Start the server with isolated state
  *   5. Poll GET /v1/health until success
- *   6. POST /v1/auth/login with { "local": true }
+ *   6. Bootstrap a local passphrase when needed and log in with it
  *   7. GET / — verifies the UI bundle is served from the install location
  *      (regression guard: the CLI must resolve dist/ui relative to the
  *      installed module, not relative to process.cwd())
@@ -32,6 +32,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 const ROOT = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
 const TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
+const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-install-smoke-passphrase-123";
 
 let tmpDir;
 let serverProc;
@@ -83,6 +86,51 @@ function cleanup() {
 process.on("uncaughtException", (err) => {
   fail(`Uncaught exception: ${err.message}`);
 });
+
+async function loginWithLocalPassphrase(baseUrl) {
+  async function bootstrapLocalPassphrase() {
+    const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const bootstrapBody = await bootstrapRes.json();
+    if (!bootstrapRes.ok || bootstrapBody.ok === false) {
+      fail(`Local passphrase bootstrap failed: ${JSON.stringify(bootstrapBody)}`);
+    }
+  }
+
+  async function postLogin() {
+    const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const loginBody = await loginRes.json();
+    return { loginRes, loginBody };
+  }
+
+  const statusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const statusBody = await statusRes.json();
+  if (!statusRes.ok || statusBody.ok === false) {
+    fail(`Bootstrap status failed: ${JSON.stringify(statusBody)}`);
+  }
+
+  const statusData = statusBody.data ?? statusBody;
+  if (statusData?.bootstrapRequired === true) {
+    await bootstrapLocalPassphrase();
+  }
+
+  let { loginRes, loginBody } = await postLogin();
+  if (!loginRes.ok && loginBody?.error?.code === "NO_PASSWORD_CONFIGURED") {
+    await bootstrapLocalPassphrase();
+    ({ loginRes, loginBody } = await postLogin());
+  }
+  if (!loginRes.ok || loginBody.ok !== true || typeof loginBody.data?.accessToken !== "string") {
+    fail(`Local passphrase login failed: status=${loginRes.status} body=${JSON.stringify(loginBody)}`);
+  }
+  return loginBody.data.accessToken;
+}
 
 async function run() {
   console.log("── Install Smoke Test ──\n");
@@ -147,7 +195,7 @@ async function run() {
     ...process.env,
     FRIDAY_STATE_DIR: stateDir,
     FRIDAY_ENV_FILE: smokeEnvFile,
-    FRIDAY_TOKEN_SECRET: "smoke-test-secret-not-real",
+    FRIDAY_TOKEN_SECRET: "smoke-test-secret-not-real-32-characters", // pragma: allowlist secret
     HOME: smokeHomeDir,
     USERPROFILE: smokeHomeDir,
     XDG_STATE_HOME: join(smokeHomeDir, ".local", "state"),
@@ -222,21 +270,11 @@ async function run() {
     );
   }
 
-  // ── Step 6: POST /v1/auth/login ──
+  // ── Step 6: bootstrap + POST /v1/auth/login ──
   console.log("6. Verifying POST /v1/auth/login…");
   try {
-    const loginRes = await fetch(`http://127.0.0.1:${port}/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
-    });
-    const loginStatus = loginRes.status;
-    console.log(`   → Login endpoint responded: ${loginStatus}`);
-    const allowedLoginStatuses = new Set([200, 400, 401, 403]);
-    if (!allowedLoginStatuses.has(loginStatus)) {
-      const body = await loginRes.text();
-      fail(`Login endpoint returned unexpected status ${loginStatus}: ${body}`);
-    }
+    const token = await loginWithLocalPassphrase(`http://127.0.0.1:${port}`);
+    console.log(`   → Login succeeded with token length ${token.length}`);
   } catch (err) {
     fail(`Login request failed: ${err.message}`);
   }

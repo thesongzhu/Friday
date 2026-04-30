@@ -45,6 +45,10 @@ const ANTHROPIC_E2E_ENABLED =
   !!process.env.FRIDAY_LLM_E2E;
 const HAS_LLM_CREDENTIAL = hasLiveAnthropicApiKey();
 const LIVE_ANTHROPIC_API_KEY_ENV_REF = resolveLiveAnthropicApiKeyEnvRef();
+const LOCAL_PASSPHRASE =
+  process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ??
+  process.env.FRIDAY_LOCAL_PASSPHRASE ??
+  "friday-test-local-passphrase-123";
 
 // ─── Helpers ───
 
@@ -74,6 +78,28 @@ function authHeaders(token: string): Record<string, string> {
 
 function computeTestChecksum(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
+async function ensureLocalPassphrase(baseUrl: string): Promise<void> {
+  const statusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const statusJson = (await statusRes.json()) as {
+    ok: boolean;
+    data?: { bootstrapRequired?: boolean };
+  };
+  if (!statusJson.ok) {
+    throw new Error(`Auth bootstrap status failed: ${JSON.stringify(statusJson)}`);
+  }
+  if (statusJson.data?.bootstrapRequired !== true) return;
+
+  const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+  });
+  const bootstrapJson = (await bootstrapRes.json()) as { ok: boolean };
+  if (!bootstrapJson.ok) {
+    throw new Error(`Auth bootstrap failed: ${JSON.stringify(bootstrapJson)}`);
+  }
 }
 
 async function pollUntil<T>(
@@ -124,10 +150,11 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
     await httpServer.listen();
     baseUrl = `http://127.0.0.1:${String(port)}`;
 
+    await ensureLocalPassphrase(baseUrl);
     const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
     });
     const loginJson = (await loginRes.json()) as {
       ok: boolean;
@@ -1609,10 +1636,11 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       baseUrl = `http://127.0.0.1:${String(port)}`;
 
       // Login
+      await ensureLocalPassphrase(baseUrl);
       const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ local: true }),
+        body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
       });
       const loginJson = (await loginRes.json()) as {
         ok: boolean;

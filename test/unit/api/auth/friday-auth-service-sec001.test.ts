@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
-import { createFridayAuthService, FridayAuthError, hashPasswordScrypt } from "#api";
-import type { FridayAuthService } from "#api";
+import { createFridayAuthService, FridayAuthError } from "#api";
 
-describe("FridayAuthService — SEC-001: Login bypass hardening", () => {
+describe("FridayAuthService — SEC-001: Login hardening", () => {
   let db: FridaySqliteLayer;
   let idCounter: number;
   const NOW = "2025-06-15T10:00:00.000Z";
@@ -82,71 +81,6 @@ describe("FridayAuthService — SEC-001: Login bypass hardening", () => {
     expect(result.user.id).toBe("test-user");
   });
 
-  // ─── Problem 2: Dev-mode passwordless login tightening ───
-
-  it("rejects dev-mode {} login without local:true flag", () => {
-    const service = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-    });
-
-    expect(() => service.login({}, "127.0.0.1")).toThrow(FridayAuthError);
-    try {
-      service.login({}, "127.0.0.1");
-    } catch (err) {
-      expect((err as FridayAuthError).code).toBe("LOCAL_FLAG_REQUIRED");
-    }
-  });
-
-  it("rejects dev-mode { local: true } when user has a password configured", () => {
-    // Default test user has a password hash
-    const service = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-    });
-
-    expect(() => service.login({ local: true }, "127.0.0.1")).toThrow(FridayAuthError);
-    try {
-      service.login({ local: true }, "127.0.0.1");
-    } catch (err) {
-      expect((err as FridayAuthError).code).toBe("PASSPHRASE_REQUIRED");
-    }
-  });
-
-  it("allows dev-mode { local: true } only when user has no password", () => {
-    // Replace test user with a no-password user
-    db.writer.prepare("DELETE FROM users WHERE id = 'test-user'").run();
-    db.writer.prepare(
-      `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
-       VALUES ('test-user', 'Test User', 'admin', 1, NULL, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
-    ).run();
-
-    const service = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: () => {},
-    });
-
-    const result = service.login({ local: true }, "127.0.0.1");
-    expect(result.user.id).toBe("test-user");
-    expect(result.accessToken).toBeTruthy();
-  });
-
   it("still rejects {} in strict mode (non-dev)", () => {
     const service = createFridayAuthService({
       db,
@@ -155,7 +89,6 @@ describe("FridayAuthService — SEC-001: Login bypass hardening", () => {
       tokenSecret: TOKEN_SECRET,
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604800,
-      // allowPasswordlessLocalLogin defaults to false
     });
 
     expect(() => service.login({}, "127.0.0.1")).toThrow(FridayAuthError);

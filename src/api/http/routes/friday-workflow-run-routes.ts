@@ -33,10 +33,6 @@ export interface FridayWorkflowRunRoutesDeps {
     input: FridayStartRunRequest,
     principal: FridayAuthPrincipal | null,
   ) => Promise<FridayStartRunResponse>;
-  assertListingEntitled?: (
-    listingId: UUID,
-    principal: FridayAuthPrincipal | null,
-  ) => Promise<void>;
   getRun: (
     runId: UUID,
     principal: FridayAuthPrincipal | null,
@@ -110,16 +106,6 @@ export function createFridayWorkflowRunRoutes(
             "workflowId is required and must be a non-empty string",
             { httpStatus: 400 },
           );
-        }
-        if (body.marketplaceListingId !== undefined) {
-          if (typeof body.marketplaceListingId !== "string" || body.marketplaceListingId.trim() === "") {
-            throw new FridayDomainError(
-              "VALIDATION_ERROR",
-              "marketplaceListingId must be a non-empty string when provided",
-              { httpStatus: 400 },
-            );
-          }
-          await deps.assertListingEntitled?.(body.marketplaceListingId as UUID, ctx.principal);
         }
         return deps.startRun(body as unknown as FridayStartRunRequest, ctx.principal);
       },

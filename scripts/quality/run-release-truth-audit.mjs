@@ -178,7 +178,7 @@ async function resolveAccessToken() {
   const localPassphrase = process.env.FRIDAY_LOCAL_PASSPHRASE
     ?? process.env.FRIDAY_AUDIT_LOCAL_PASSPHRASE
     ?? process.env.FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE
-    ?? null;
+    ?? "friday-release-truth-passphrase-123";
 
   const bootstrap = await fetchJson("/v1/auth/bootstrap/status");
   if (!bootstrap.ok) {
@@ -198,42 +198,6 @@ async function resolveAccessToken() {
     });
   }
 
-  if (localPassphrase) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
-    try {
-      const response = await fetch(`${BASE_URL}/v1/auth/login`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ localPassphrase }),
-        signal: controller.signal,
-      });
-      const text = await response.text();
-      const body = text.length > 0 ? JSON.parse(text) : null;
-      const data = unwrapEnvelope(body);
-      return {
-        token: data?.accessToken ?? null,
-        source: data?.accessToken ? "local-passphrase" : "none",
-      };
-    } catch {
-      return {
-        token: null,
-        source: "none",
-      };
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  if (!bootstrapData.allowLocalBypassLogin && !bootstrapData.allowPasswordlessLocalLogin) {
-    return {
-      token: null,
-      source: "none",
-    };
-  }
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
   try {
@@ -242,7 +206,7 @@ async function resolveAccessToken() {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase }),
       signal: controller.signal,
     });
     const text = await response.text();
@@ -250,7 +214,7 @@ async function resolveAccessToken() {
     const data = unwrapEnvelope(body);
     return {
       token: data?.accessToken ?? null,
-      source: data?.accessToken ? "local-bypass" : "none",
+      source: data?.accessToken ? "local-passphrase" : "none",
     };
   } catch {
     return {
@@ -521,10 +485,6 @@ function buildThreeDayRealityCheck({
   const companionReadiness = health?.capabilities?.system?.companionReadiness ?? "unknown";
   const installedSkillsCount = runtime.skills?.data?.items?.length ?? 0;
   const catalogSkillsCount = runtime.skillsCatalog?.data?.items?.length ?? 0;
-  const marketplaceSourceCount = Array.isArray(runtime.marketplaceSources?.data)
-    ? runtime.marketplaceSources.data.length
-    : runtime.marketplaceSources?.data?.items?.length ?? 0;
-  const marketplaceAssetCount = runtime.marketplaceAssets?.data?.items?.length ?? 0;
   const pluginUiPresent = routerPaths.includes("/plugins");
   const channelsUiPresent = routerPaths.includes("/channels");
   const heartbeatCanonicalOk = runtime.heartbeatStatus?.ok === true;
@@ -598,16 +558,16 @@ function buildThreeDayRealityCheck({
       verificationMethod: "Live /v1/plugins plus UI route census.",
     },
     {
-      claimId: "skills-marketplace-readiness",
-      reportSection: "技能 / 市场",
-      claim: "技能目录、source、marketplace assets 已达到可公开浏览状态。",
-      classification: installedSkillsCount > 0 && (catalogSkillsCount > 0 || marketplaceSourceCount > 0 || marketplaceAssetCount > 0)
+      claimId: "skills-catalog-readiness",
+      reportSection: "技能",
+      claim: "技能目录已达到可浏览状态。",
+      classification: installedSkillsCount > 0 && catalogSkillsCount > 0
         ? "verified"
         : installedSkillsCount > 0
           ? "partially verified"
           : "not proven",
-      realEvidence: `/v1/skills=${installedSkillsCount}, /v1/skills/catalog=${catalogSkillsCount}, /v1/marketplace/sources=${marketplaceSourceCount}, /v1/marketplace/assets=${marketplaceAssetCount}.`,
-      verificationMethod: "Live runtime inventory and marketplace probes.",
+      realEvidence: `/v1/skills=${installedSkillsCount}, /v1/skills/catalog=${catalogSkillsCount}.`,
+      verificationMethod: "Live runtime inventory probes.",
     },
     {
       claimId: "skill-run-route",
@@ -766,15 +726,12 @@ async function main() {
     { id: "routing", path: "/v1/model-routing" },
     { id: "skills", path: "/v1/skills" },
     { id: "skillsCatalog", path: "/v1/skills/catalog" },
-    { id: "marketplaceSources", path: "/v1/marketplace/sources" },
-    { id: "marketplaceAssets", path: "/v1/marketplace/assets" },
     { id: "observability", path: "/v1/observability/overview" },
     { id: "heartbeatStatus", path: "/v1/heartbeat/status" },
     { id: "legacyHeartbeatStatus", path: "/v1/observability/heartbeat/status" },
     { id: "fleet", path: "/v1/fleet/overview" },
     { id: "channels", path: "/v1/channels" },
     { id: "plugins", path: "/v1/plugins" },
-    { id: "marketplacePlugins", path: "/v1/marketplace/plugins" },
     { id: "packages", path: "/v1/packages" },
     { id: "multiTenantTenants", path: "/v1/security/tenants" },
     { id: "autoFixActions", path: "/v1/auto-fix/actions" },
@@ -794,10 +751,6 @@ async function main() {
   const providerCount = runtime.providers?.data?.items?.length ?? 0;
   const installedSkillsCount = runtime.skills?.data?.items?.length ?? 0;
   const catalogSkillsCount = runtime.skillsCatalog?.data?.items?.length ?? 0;
-  const marketplaceSourceCount = Array.isArray(runtime.marketplaceSources?.data)
-    ? runtime.marketplaceSources.data.length
-    : runtime.marketplaceSources?.data?.items?.length ?? 0;
-  const marketplaceAssetCount = runtime.marketplaceAssets?.data?.items?.length ?? 0;
   const pluginUiPresent = routerPaths.includes("/plugins");
   const releaseVerifyCommand = packageScripts["release:verify"] ?? "";
   const releaseVerifyRoutesThroughRepo = /\brelease:verify:repo\b/.test(releaseVerifyCommand);
@@ -851,10 +804,10 @@ async function main() {
       status: proofSignals.searchFreshnessVerified || searchLatestness === "verified" ? "aligned" : "bounded",
     },
     {
-      surface: "Skills inventory vs marketplace",
-      claim: "Skills catalog and marketplace sources are currently populated and ready for public browsing.",
-      realEvidence: `/v1/skills=${installedSkillsCount}, /v1/skills/catalog=${catalogSkillsCount}, /v1/marketplace/sources=${marketplaceSourceCount}, /v1/marketplace/assets=${marketplaceAssetCount}.`,
-      status: catalogSkillsCount > 0 || marketplaceSourceCount > 0 ? "aligned" : "bounded",
+      surface: "Skills inventory",
+      claim: "Skills catalog is currently populated and ready for public browsing.",
+      realEvidence: `/v1/skills=${installedSkillsCount}, /v1/skills/catalog=${catalogSkillsCount}.`,
+      status: catalogSkillsCount > 0 ? "aligned" : "bounded",
     },
     {
       surface: "Plugin distribution",
@@ -973,11 +926,11 @@ async function main() {
       "real evidence": `/v1/plugins status=${String(runtime.plugins?.status ?? "unknown")}, router /plugins=${String(pluginUiPresent)}.`,
       repro: "Hit /v1/plugins and compare with ui/src/router.tsx route census.",
       "root cause": pluginUiPresent
-        ? "The routed UI surface now exists. Remaining risk is operator-first UX drift if install and marketplace boundaries are not labeled clearly."
+        ? "The routed UI surface now exists. Remaining risk is operator-first UX drift if install boundaries are not labeled clearly."
         : "API/runtime surface exists without a dedicated routed UI entry, so capability docs can outrun the actual beginner-visible product.",
       severity: "P2",
       "release impact": pluginUiPresent
-        ? "Closed for routed UI availability. Keep operator-only install and marketplace boundaries explicit in UI copy."
+        ? "Closed for routed UI availability. Keep operator-only install boundaries explicit in UI copy."
         : "Ship only with explicit de-scope or add a dedicated plugins UI surface.",
       "fix owner": "ui",
       "verification method": "Route census plus live /v1/plugins response check",
@@ -993,11 +946,6 @@ async function main() {
           evidence: `Router has /plugins=${String(pluginUiPresent)} while /v1/plugins returned status ${String(runtime.plugins?.status ?? "unknown")}.`,
         }]
       : []),
-    {
-      category: "bounded-empty",
-      surface: "marketplace catalog",
-      evidence: `installedSkills=${installedSkillsCount}, catalogSkills=${catalogSkillsCount}, sources=${marketplaceSourceCount}, marketplaceAssets=${marketplaceAssetCount}.`,
-    },
     {
       category: "unused-ui-file",
       surface: "unrouted ui route modules",
@@ -1015,8 +963,7 @@ async function main() {
   const deScopeConditions = [
     !proofSignals.searchFreshnessVerified && searchLatestness !== "verified",
     !pluginUiPresent,
-    catalogSkillsCount === 0 && marketplaceSourceCount === 0,
-    !runtime.marketplaceAssets?.ok,
+    catalogSkillsCount === 0,
     !runtime.channels?.ok,
     !runtime.observability?.ok,
     !runtime.fleet?.ok,
@@ -1091,8 +1038,6 @@ async function main() {
 | /v1/setup/status | providerCount=${providerCount} |
 | /v1/skills | installed=${installedSkillsCount} |
 | /v1/skills/catalog | catalog=${catalogSkillsCount} |
-| /v1/marketplace/sources | sources=${marketplaceSourceCount} |
-| /v1/marketplace/assets | assets=${marketplaceAssetCount} |
 | /v1/plugins | status=${String(runtime.plugins?.status ?? "blocked")} |
 | /v1/heartbeat/status | status=${String(runtime.heartbeatStatus?.status ?? "blocked")} |
 | /v1/packages | status=${String(runtime.packages?.status ?? "blocked")} |

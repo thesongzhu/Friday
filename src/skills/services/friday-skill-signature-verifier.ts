@@ -1,10 +1,10 @@
 import { createHash, createPublicKey, constants as cryptoConstants, verify } from "node:crypto";
 import type {
-  FridayMarketplacePublisherKeyDocument,
-  FridayMarketplaceSignatureAlgorithm,
-  FridayMarketplaceSignatureDocument,
   FridaySignatureVerificationResult,
-} from "../model/friday-skill-marketplace.types.js";
+  FridaySkillPublisherKeyDocument,
+  FridaySkillSignatureAlgorithm,
+  FridaySkillSignatureDocument,
+} from "../model/friday-skill-catalog.types.js";
 
 // ─── Interface ───
 
@@ -18,8 +18,8 @@ export interface FridaySkillSignatureVerifier {
     expectedChecksum: string;
     skillId: string;
     version: string;
-    signatureDoc?: FridayMarketplaceSignatureDocument;
-    publisherKey?: FridayMarketplacePublisherKeyDocument;
+    signatureDoc?: FridaySkillSignatureDocument;
+    publisherKey?: FridaySkillPublisherKeyDocument;
     pinnedKeyIds?: string[];
   }): FridaySignatureVerificationResult;
 }
@@ -33,7 +33,7 @@ function buildCanonicalPayload(skillId: string, version: string, checksumHex: st
 // ─── Algorithm Verify ───
 
 function verifyByAlgorithm(
-  algorithm: FridayMarketplaceSignatureAlgorithm,
+  algorithm: FridaySkillSignatureAlgorithm,
   payload: Buffer,
   publicKeyPem: string,
   signatureBuffer: Buffer,
