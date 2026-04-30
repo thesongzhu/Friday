@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node >=22">
-  <img src="https://img.shields.io/badge/License-GPL--3.0--only-blue?style=flat-square" alt="GPL-3.0-only">
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
   <img src="https://img.shields.io/badge/npm-%40thesongzhu%2Ffriday-red?style=flat-square" alt="@thesongzhu/friday">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
@@ -59,7 +59,18 @@ friday start
 # 打开 http://localhost:3141
 ```
 
-### 方式二 - 源码启动
+### 方式二 - 源码首次安装
+
+```bash
+git clone https://github.com/thesongzhu/Friday.git
+cd Friday
+bash scripts/ops/friday-first-run.sh
+# macOS 也可以双击 "Friday Setup.command"
+```
+
+首次安装助手会安装依赖、构建 Friday、启动本机 runtime，并自动打开 setup 页面。在 macOS 上，它还会安装登录自启动和右上角菜单栏 companion，重启后 Friday 可以自己回来。如果你从 Desktop、Documents 或 Downloads 运行，它会先自动准备 `~/Friday` 这个 launchd 可安全启动的 runtime，再安装登录项。
+
+### 方式三 - 手动源码启动
 
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
@@ -70,7 +81,7 @@ npm start
 # 打开 http://localhost:3141
 ```
 
-### 方式三 - Docker 源码构建
+### 方式四 - Docker 源码构建
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
@@ -165,7 +176,7 @@ Friday 的原则很简单：重复、低风险、可验证的事情尽量自动�
 
 ## 许可证
 
-Friday 使用 [GPL-3.0-only](LICENSE) 开源许可证。
+Friday 使用 [MIT](LICENSE) 开源许可证。
 
 ## 第三方声明
 
