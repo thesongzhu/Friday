@@ -2,7 +2,15 @@ import { apiClient } from "./client";
 
 // ─── Types ───
 
-export type LocalSkillSourceTool = "claude-code" | "cursor" | "n8n" | "codex" | "openclaw" | "friday" | "unknown";
+export type LocalSkillSourceTool =
+  | "claude-code"
+  | "cursor"
+  | "n8n"
+  | "codex"
+  | "openclaw"
+  | "friday"
+  | "local-project"
+  | "unknown";
 
 export interface LocalSkillScanItem {
   id: string;

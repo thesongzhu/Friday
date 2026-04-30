@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Self-hosted, skill-driven Agent OS for local AI automation",
-  "license": "GPL-3.0-only",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/thesongzhu/Friday.git"
@@ -29,7 +29,9 @@
     "scripts/ops/friday-service-run.sh",
     "scripts/ops/friday-companion-run.sh",
     "scripts/ops/friday-open-ui-on-login.sh",
+    "scripts/ops/friday-first-run.sh",
     "scripts/ops/install-friday-launchagent.sh",
+    "Friday Setup.command",
     "!dist/**/*.js.map",
     "!dist/**/*.d.ts.map",
     "README.md",

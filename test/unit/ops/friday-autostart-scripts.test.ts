@@ -6,12 +6,30 @@ describe("Friday autostart scripts", () => {
     const serviceMode = statSync("scripts/ops/friday-service-run.sh").mode;
     const companionMode = statSync("scripts/ops/friday-companion-run.sh").mode;
     const uiMode = statSync("scripts/ops/friday-open-ui-on-login.sh").mode;
+    const firstRunMode = statSync("scripts/ops/friday-first-run.sh").mode;
+    const setupCommandMode = statSync("Friday Setup.command").mode;
     const installMode = statSync("scripts/ops/install-friday-launchagent.sh").mode;
 
     expect(serviceMode & 0o111).not.toBe(0);
     expect(companionMode & 0o111).not.toBe(0);
     expect(uiMode & 0o111).not.toBe(0);
+    expect(firstRunMode & 0o111).not.toBe(0);
+    expect(setupCommandMode & 0o111).not.toBe(0);
     expect(installMode & 0o111).not.toBe(0);
+  });
+
+  it("provides a first-run entrypoint that opens setup and installs macOS login startup", () => {
+    const firstRun = readFileSync("scripts/ops/friday-first-run.sh", "utf8");
+    const setupCommand = readFileSync("Friday Setup.command", "utf8");
+
+    expect(firstRun).toContain("npm run build");
+    expect(firstRun).toContain("scripts/ops/install-friday-launchagent.sh");
+    expect(firstRun).toContain('SETUP_URL="${BASE_URL%/}/setup"');
+    expect(firstRun).toContain("relocate_for_launchd_if_needed");
+    expect(firstRun).toContain('"${home_dir}/Desktop"');
+    expect(firstRun).toContain('install_dir="${HOME}/Friday"');
+    expect(firstRun).toContain("FRIDAY_FIRST_RUN_RELOCATED=true");
+    expect(setupCommand).toContain("scripts/ops/friday-first-run.sh");
   });
 
   it("starts Friday at login, keeps it alive, and opens the UI after health is ready", () => {
@@ -38,7 +56,9 @@ describe("Friday autostart scripts", () => {
     expect(packageJson.files).toContain("scripts/ops/friday-service-run.sh");
     expect(packageJson.files).toContain("scripts/ops/friday-companion-run.sh");
     expect(packageJson.files).toContain("scripts/ops/friday-open-ui-on-login.sh");
+    expect(packageJson.files).toContain("scripts/ops/friday-first-run.sh");
     expect(packageJson.files).toContain("scripts/ops/install-friday-launchagent.sh");
+    expect(packageJson.files).toContain("Friday Setup.command");
   });
 
   it("keeps channel UI wake opt-in so channel messages do not spawn browser tabs by default", () => {

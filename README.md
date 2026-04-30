@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node >=22">
-  <img src="https://img.shields.io/badge/License-GPL--3.0--only-blue?style=flat-square" alt="GPL-3.0-only">
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
   <img src="https://img.shields.io/badge/npm-%40thesongzhu%2Ffriday-red?style=flat-square" alt="@thesongzhu/friday">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
@@ -64,13 +64,24 @@ friday start
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
 cd Friday
+bash scripts/ops/friday-first-run.sh
+# Or on macOS, double-click "Friday Setup.command"
+```
+
+The first-run helper installs dependencies, builds Friday, starts the local runtime, and opens the setup page. On macOS it also installs the login startup agent and menu bar companion so Friday can come back after restart. If you run it from Desktop, Documents, or Downloads, it prepares the launchd-safe runtime at `~/Friday` automatically before installing the login agents.
+
+### Option 3 - manual source start
+
+```bash
+git clone https://github.com/thesongzhu/Friday.git
+cd Friday
 npm install
 npm run build
 npm start
 # Open http://localhost:3141
 ```
 
-### Option 3 - Docker from source
+### Option 4 - Docker from source
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
@@ -165,7 +176,7 @@ The official npm package is `@thesongzhu/friday`. The unscoped `friday` package 
 
 ## License
 
-Friday is open-source software under the [GPL-3.0-only license](LICENSE).
+Friday is open-source software under the [MIT license](LICENSE).
 
 ## Third-Party Notices
 

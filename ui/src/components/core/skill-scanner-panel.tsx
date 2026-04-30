@@ -26,9 +26,13 @@ const TOP_N = 20;
 const SOURCE_FILTERS = [
   { key: "all", zh: "全部", en: "All" },
   { key: "claude-code", zh: "Claude Code", en: "Claude Code" },
-  { key: "openclaw", zh: "OpenClaw", en: "OpenClaw" },
+  { key: "cursor", zh: "Cursor", en: "Cursor" },
   { key: "codex", zh: "Codex", en: "Codex" },
+  { key: "openclaw", zh: "OpenClaw", en: "OpenClaw" },
+  { key: "local-project", zh: "本地项目", en: "Local Project" },
   { key: "friday", zh: "Friday", en: "Friday" },
+  { key: "n8n", zh: "n8n", en: "n8n" },
+  { key: "unknown", zh: "本地文件", en: "Local File" },
 ] as const;
 
 // ─── Source tool badge config ───
@@ -41,6 +45,7 @@ function sourceToolTone(tool: LocalSkillSourceTool): "neutral" | "success" | "wa
     case "codex": return "success";
     case "openclaw": return "neutral";
     case "friday": return "success";
+    case "local-project": return "neutral";
     default: return "neutral";
   }
 }
@@ -53,6 +58,8 @@ function sourceToolLabel(tool: LocalSkillSourceTool): string {
     case "codex": return "Codex";
     case "openclaw": return "OpenClaw";
     case "friday": return "Friday";
+    case "local-project": return "Local Project";
+    case "unknown": return "Local File";
     default: return "Unknown";
   }
 }

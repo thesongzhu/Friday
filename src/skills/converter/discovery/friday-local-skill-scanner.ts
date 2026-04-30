@@ -10,11 +10,19 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 // ─── Types ───
 
-export type LocalSkillSourceTool = "claude-code" | "cursor" | "n8n" | "codex" | "openclaw" | "friday" | "unknown";
+export type LocalSkillSourceTool =
+  | "claude-code"
+  | "cursor"
+  | "n8n"
+  | "codex"
+  | "openclaw"
+  | "friday"
+  | "local-project"
+  | "unknown";
 
 export interface LocalSkillScanItem {
   id: string;
@@ -33,6 +41,14 @@ export interface LocalSkillScanResult {
   scannedAt: string;
   scanDurationMs: number;
   directoriesScanned: string[];
+}
+
+export interface ScanLocalSkillsOptions {
+  homeDir?: string;
+  cwd?: string;
+  projectDirs?: string[];
+  fridayRoots?: string[];
+  includeCwdSkills?: boolean;
 }
 
 // ─── Helpers ───
@@ -106,6 +122,90 @@ function safeStat(path: string): { size: number; mtime: Date; isFile: boolean; i
   } catch { return null; }
 }
 
+function safeParseJson(path: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function isPathInside(candidate: string, root: string): boolean {
+  const candidatePath = canonicalPath(candidate);
+  const rootPath = canonicalPath(root);
+  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}/`);
+}
+
+function looksLikeFridayRoot(dir: string): boolean {
+  const packageJson = safeParseJson(join(dir, "package.json"));
+  if (packageJson?.name === "@thesongzhu/friday") return true;
+
+  return existsSync(join(dir, "scripts", "ops", "friday-first-run.sh"))
+    && existsSync(join(dir, "src", "hub", "friday-hub-bootstrap.ts"))
+    && existsSync(join(dir, "ui", "src", "routes", "setup-page.tsx"));
+}
+
+function findFridayAncestor(startDir: string): string | null {
+  let cursor = resolve(startDir);
+  for (;;) {
+    if (looksLikeFridayRoot(cursor)) return cursor;
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    cursor = parent;
+  }
+}
+
+function collectFridayRoots(home: string, cwd: string, explicitRoots: string[] = []): string[] {
+  const candidates = [
+    cwd,
+    findFridayAncestor(cwd),
+    join(home, "Friday"),
+    join(home, "Desktop", "Friday"),
+    ...explicitRoots,
+  ].filter((value): value is string => Boolean(value));
+
+  const roots: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    const root = looksLikeFridayRoot(candidate) ? candidate : findFridayAncestor(candidate);
+    if (!root) continue;
+    const canonical = canonicalPath(root);
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    roots.push(root);
+  }
+  return roots;
+}
+
+function isInsideFridayRoot(path: string, fridayRoots: string[]): boolean {
+  return fridayRoots.some((root) => isPathInside(path, root));
+}
+
+function looksLikeOpenClawProject(projectPath: string): boolean {
+  const projectName = basename(projectPath).toLowerCase();
+  if (projectName.includes("openclaw") || projectName.includes("clawdbot")) return true;
+
+  const packageJson = safeParseJson(join(projectPath, "package.json"));
+  const packageName = typeof packageJson?.name === "string" ? packageJson.name.toLowerCase() : "";
+  if (packageName.includes("openclaw") || packageName.includes("clawdbot")) return true;
+
+  return existsSync(join(projectPath, ".openclaw"))
+    || existsSync(join(projectPath, "openclaw.json"))
+    || existsSync(join(projectPath, "clawdbot.config.json"))
+    || existsSync(join(projectPath, "clawdbot.config.ts"));
+}
+
+function appendItems(
+  allItems: LocalSkillScanItem[],
+  directoriesScanned: string[],
+  dir: string,
+  items: LocalSkillScanItem[],
+): void {
+  if (existsSync(dir)) directoriesScanned.push(dir);
+  allItems.push(...items);
+}
+
 // ─── Core scan logic ───
 
 function scanFlatDir(
@@ -163,6 +263,7 @@ function scanSkillSubdirs(
   if (!existsSync(resolved)) return items;
 
   for (const subdir of safeReadDir(resolved)) {
+    if (subdir.startsWith(".")) continue;
     const subdirPath = join(resolved, subdir);
     const subdirStat = safeStat(subdirPath);
     if (!subdirStat?.isDir) continue;
@@ -197,25 +298,30 @@ function scanSkillSubdirs(
  * Find skill directories in ~/Projects/ by looking for known patterns.
  * Scans 2 levels deep: ~/Projects/<project>/skills/ and ~/Projects/<project>/.agents/skills/
  */
-function scanProjectSkills(projectsDir: string): LocalSkillScanItem[] {
+function scanProjectSkills(projectsDir: string, fridayRoots: string[]): LocalSkillScanItem[] {
   const items: LocalSkillScanItem[] = [];
   if (!existsSync(projectsDir)) return items;
-  const currentWorkspace = canonicalPath(process.cwd());
 
   for (const project of safeReadDir(projectsDir)) {
+    if (project.startsWith(".")) continue;
     const projectPath = join(projectsDir, project);
     const projectStat = safeStat(projectPath);
     if (!projectStat?.isDir) continue;
-    if (canonicalPath(projectPath) === currentWorkspace) continue;
+    if (looksLikeFridayRoot(projectPath)) continue;
+    if (isInsideFridayRoot(projectPath, fridayRoots)) continue;
+
+    const projectSourceTool: LocalSkillSourceTool = looksLikeOpenClawProject(projectPath)
+      ? "openclaw"
+      : "local-project";
 
     // Check <project>/skills/
-    items.push(...scanSkillSubdirs(join(projectPath, "skills"), "openclaw", "clawdbot-skill-md"));
+    items.push(...scanSkillSubdirs(join(projectPath, "skills"), projectSourceTool, "clawdbot-skill-md"));
 
     // Check <project>/.agents/skills/
-    items.push(...scanSkillSubdirs(join(projectPath, ".agents", "skills"), "openclaw", "clawdbot-skill-md"));
+    items.push(...scanSkillSubdirs(join(projectPath, ".agents", "skills"), projectSourceTool, "clawdbot-skill-md"));
 
     // Check <project>/extensions/
-    items.push(...scanSkillSubdirs(join(projectPath, "extensions"), "openclaw", "clawdbot-skill-md"));
+    items.push(...scanSkillSubdirs(join(projectPath, "extensions"), projectSourceTool, "clawdbot-skill-md"));
 
     // Check <project>/managed-skills/
     items.push(...scanSkillSubdirs(join(projectPath, "managed-skills"), "friday", "friday-package", { sourcePathMode: "directory" }));
@@ -225,10 +331,11 @@ function scanProjectSkills(projectsDir: string): LocalSkillScanItem[] {
 
 // ─── Main scanner ───
 
-export function scanLocalSkills(): LocalSkillScanResult {
+export function scanLocalSkills(options: ScanLocalSkillsOptions = {}): LocalSkillScanResult {
   const start = Date.now();
-  const home = homedir();
-  const cwd = process.cwd();
+  const home = options.homeDir ?? homedir();
+  const cwd = options.cwd ?? process.cwd();
+  const fridayRoots = collectFridayRoots(home, cwd, options.fridayRoots);
   const allItems: LocalSkillScanItem[] = [];
   const directoriesScanned: string[] = [];
 
@@ -236,36 +343,33 @@ export function scanLocalSkills(): LocalSkillScanResult {
   const claudeDirs = [
     join(home, ".claude", "commands"),
     join(home, ".claude", "skills"),
-    join(cwd, ".claude", "commands"),
   ];
   for (const dir of claudeDirs) {
     const items = scanFlatDir(dir, "claude-code", [".md"], "clawdbot-skill-md");
-    if (items.length > 0) directoriesScanned.push(dir);
-    allItems.push(...items);
+    appendItems(allItems, directoriesScanned, dir, items);
   }
   // Also scan ~/.claude/skills/ as subdirectories (each skill in its own folder)
   const claudeSkillsDir = join(home, ".claude", "skills");
   const claudeSkillSubItems = scanSkillSubdirs(claudeSkillsDir, "claude-code", "clawdbot-skill-md");
-  if (claudeSkillSubItems.length > 0) directoriesScanned.push(claudeSkillsDir);
-  allItems.push(...claudeSkillSubItems);
+  appendItems(allItems, directoriesScanned, claudeSkillsDir, claudeSkillSubItems);
 
   // ── 2. Cursor ──
   const cursorItems = scanFlatDir(join(home, ".cursor", "rules"), "cursor", [".md", ".mdc"], "clawdbot-skill-md");
-  if (cursorItems.length > 0) directoriesScanned.push(join(home, ".cursor", "rules"));
-  allItems.push(...cursorItems);
+  appendItems(allItems, directoriesScanned, join(home, ".cursor", "rules"), cursorItems);
 
   // ── 3. n8n ──
   const n8nItems = scanFlatDir(join(home, ".n8n"), "n8n", [".json"], "n8n-node", ["nodes", "connections"]);
-  if (n8nItems.length > 0) directoriesScanned.push(join(home, ".n8n"));
-  allItems.push(...n8nItems);
+  appendItems(allItems, directoriesScanned, join(home, ".n8n"), n8nItems);
 
   // ── 4. Codex ──
   const codexItems = scanFlatDir(join(home, ".codex"), "codex", [".md", ".yaml"], "clawdbot-skill-md");
-  if (codexItems.length > 0) directoriesScanned.push(join(home, ".codex"));
-  allItems.push(...codexItems);
+  appendItems(allItems, directoriesScanned, join(home, ".codex"), codexItems);
+  const codexSkillsDir = join(home, ".codex", "skills");
+  const codexSkillSubItems = scanSkillSubdirs(codexSkillsDir, "codex", "clawdbot-skill-md");
+  appendItems(allItems, directoriesScanned, codexSkillsDir, codexSkillSubItems);
 
-  // ── 5. Projects directory — scan for OpenClaw/skill repos ──
-  const projectsDirs = [
+  // ── 5. Projects directory — scan external skill-like repos ──
+  const projectsDirs = options.projectDirs ?? [
     join(home, "Projects"),
     join(home, "projects"),
     join(home, "Developer"),
@@ -273,14 +377,16 @@ export function scanLocalSkills(): LocalSkillScanResult {
   ];
   for (const dir of projectsDirs) {
     if (!existsSync(dir)) continue;
-    directoriesScanned.push(dir);
-    allItems.push(...scanProjectSkills(dir));
+    const projectItems = scanProjectSkills(dir, fridayRoots);
+    appendItems(allItems, directoriesScanned, dir, projectItems);
   }
 
-  // ── 6. Current working directory skills ──
-  const cwdSkills = scanSkillSubdirs(join(cwd, "skills"), "openclaw", "clawdbot-skill-md");
-  if (cwdSkills.length > 0) directoriesScanned.push(join(cwd, "skills"));
-  allItems.push(...cwdSkills);
+  // ── 6. Current working directory skills — opt-in only for developer use ──
+  if (options.includeCwdSkills && !isInsideFridayRoot(cwd, fridayRoots)) {
+    const cwdSkillsDir = join(cwd, "skills");
+    const cwdSkills = scanSkillSubdirs(cwdSkillsDir, "local-project", "clawdbot-skill-md");
+    appendItems(allItems, directoriesScanned, cwdSkillsDir, cwdSkills);
+  }
 
   // ── Dedup by sourcePath ──
   const seen = new Set<string>();

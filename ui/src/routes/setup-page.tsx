@@ -185,6 +185,31 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
+function localSkillSourceLabel(tool: LocalSkillScanItem["sourceTool"], locale: "zh" | "en"): string {
+  const labels: Record<LocalSkillScanItem["sourceTool"], { zh: string; en: string }> = {
+    "claude-code": { zh: "Claude Code", en: "Claude Code" },
+    cursor: { zh: "Cursor", en: "Cursor" },
+    n8n: { zh: "n8n", en: "n8n" },
+    codex: { zh: "Codex", en: "Codex" },
+    openclaw: { zh: "OpenClaw", en: "OpenClaw" },
+    friday: { zh: "Friday", en: "Friday" },
+    "local-project": { zh: "本地项目", en: "Local Project" },
+    unknown: { zh: "本地文件", en: "Local File" },
+  };
+  return labels[tool][locale];
+}
+
+function summarizeLocalSkillSources(items: LocalSkillScanItem[], locale: "zh" | "en"): string {
+  const sourceLabels = Array.from(
+    new Set(items.map((item) => localSkillSourceLabel(item.sourceTool, locale))),
+  );
+  if (sourceLabels.length <= 3) return sourceLabels.join(locale === "zh" ? "、" : ", ");
+  const shown = sourceLabels.slice(0, 3).join(locale === "zh" ? "、" : ", ");
+  return locale === "zh"
+    ? `${shown} 等来源`
+    : `${shown}, and other sources`;
+}
+
 function isDiscoveryDisabledError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -1143,8 +1168,8 @@ export function SetupPage() {
         const sorted = [...result.items]
           .filter((item) => item.convertible && item.sourceTool !== "friday")
           .sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
-        setSkillScanItems(sorted.slice(0, 10));
-        setSelectedSkillPaths(new Set(sorted.slice(0, 10).map((i) => i.sourcePath)));
+        setSkillScanItems(sorted);
+        setSelectedSkillPaths(new Set(sorted.map((i) => i.sourcePath)));
         setSkillScanDone(true);
       } catch (error) {
         setSkillScanItems([]);
@@ -1168,7 +1193,9 @@ export function SetupPage() {
     setSkillImporting(true);
     setSkillImportResult(null);
     try {
-      const items = Array.from(selectedSkillPaths).map((sourcePath) => ({ sourcePath }));
+      const items = skillScanItems
+        .filter((item) => selectedSkillPaths.has(item.sourcePath))
+        .map((item) => ({ sourcePath: item.sourcePath, formatHint: item.converterHint }));
       const result = await scanMigrateApi.importBatch(items);
       setSkillImportResult(result);
       toast.success(
@@ -1727,11 +1754,11 @@ export function SetupPage() {
                   <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
                     {localize(
                       locale,
-                      `Friday 在你的电脑上找到了 ${skillScanItems.length} 个来自 Claude Code、Codex 等工具的技能配置。`,
-                      `Friday found ${skillScanItems.length} skill configs from Claude Code, Codex, and other tools on your computer.`,
+                      `Friday 在你的电脑上找到了 ${skillScanItems.length} 个来自 ${summarizeLocalSkillSources(skillScanItems, locale)} 的技能配置。`,
+                      `Friday found ${skillScanItems.length} skill configs from ${summarizeLocalSkillSources(skillScanItems, locale)} on your computer.`,
                     )}
                   </p>
-                  <div className="mt-4 space-y-2">
+                  <div className="mt-4 max-h-[28rem] space-y-2 overflow-y-auto pr-1">
                     {skillScanItems.map((item) => (
                       <label
                         key={item.sourcePath}
@@ -1754,7 +1781,7 @@ export function SetupPage() {
                           )}
                         </div>
                         <StatusPill tone="neutral" className="ml-2 shrink-0">
-                          {item.sourceTool}
+                          {localSkillSourceLabel(item.sourceTool, locale)}
                         </StatusPill>
                       </label>
                     ))}
