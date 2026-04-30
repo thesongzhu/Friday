@@ -6,12 +6,16 @@ export {
   getNextFridayReflexQuestionId,
 } from "./services/friday-reflex-question-registry.js";
 export {
+  parseFridayReflexExplicitPreferenceMessage,
+} from "./services/friday-reflex-explicit-preference-parser.js";
+export {
   isFridayReflexPreferenceKey,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./services/friday-reflex-preference-resolver.js";
 export { createFridayReflexService } from "./services/friday-reflex-service.js";
 export type {
   CreateFridayReflexServiceDeps,
+  FridayPreferenceRevokeResult,
   FridayPreferenceWriteResult,
   FridayReflexOnboardingSnapshot,
   FridayReflexRunCompletionInput,

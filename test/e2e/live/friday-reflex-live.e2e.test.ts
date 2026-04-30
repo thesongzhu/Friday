@@ -12,6 +12,7 @@ import {
 } from "../../../src/reflex/index.js";
 
 const LIVE_ENABLED = process.env.FRIDAY_REFLEX_LIVE_PROFILE === "1";
+const LIVE_TEST_TIMEOUT_MS = 60_000;
 
 let db: FridaySqliteLayer | undefined;
 let tempDir: string | undefined;
@@ -97,10 +98,17 @@ describe.runIf(LIVE_ENABLED)("Friday Reflex live LLM profile", () => {
 
   it("verifies explicit preferences write immediately while ambiguous preferences become candidates", async () => {
     const modelResult = await callOpenAiCompatibleJson(
-      "Return JSON with keys explicitShorter and ambiguousWorkflow. Sentence A: '以后回答短一点'. Sentence B: 'I keep doing this export flow a lot'. Values must be booleans.",
+      [
+        "Return JSON with keys explicitPreference and ambiguousCandidate.",
+        "Sentence A: '以后回答短一点'.",
+        "Sentence B: 'I keep doing this export flow a lot'.",
+        "explicitPreference is true when Sentence A is an explicit durable preference.",
+        "ambiguousCandidate is true when Sentence B should become a review candidate, not an immediate preference write.",
+        "Values must be booleans.",
+      ].join(" "),
     );
-    expect(modelResult.explicitShorter).toBe(true);
-    expect(modelResult.ambiguousWorkflow).toBe(false);
+    expect(modelResult.explicitPreference).toBe(true);
+    expect(modelResult.ambiguousCandidate).toBe(true);
 
     const service = createService();
     service.updatePreference({
@@ -124,5 +132,5 @@ describe.runIf(LIVE_ENABLED)("Friday Reflex live LLM profile", () => {
     expect(service.listPreferences("live-user").find((pref) => pref.key === "persona.verbosity")?.value)
       .toBe("concise");
     expect(candidate.status).toBe("proposed");
-  });
+  }, LIVE_TEST_TIMEOUT_MS);
 });

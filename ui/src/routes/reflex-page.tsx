@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ClipboardCheck, FlaskConical, RefreshCcw, SkipForward, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, FlaskConical, RefreshCcw, SkipForward, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, EmptyState, ShellCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { reflexApi, type ReflexCandidate, type ReflexCandidateKind, type ReflexCandidateStatus } from "@/lib/api/reflex";
@@ -66,6 +66,66 @@ function statusLabel(status: ReflexCandidateStatus, locale: "zh" | "en"): string
   return match ? localize(locale, match.labelZh, match.labelEn) : status;
 }
 
+function metadataValue(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function candidateSourceSummary(candidate: ReflexCandidate, locale: "zh" | "en"): Array<{ label: string; value: string }> {
+  const items: Array<{ label: string; value: string }> = [
+    { label: localize(locale, "来源", "Origin"), value: candidate.origin },
+    { label: localize(locale, "风险", "Risk"), value: String(candidate.riskTier) },
+    { label: localize(locale, "置信度", "Confidence"), value: `${Math.round(candidate.confidence * 100)}%` },
+  ];
+  if (candidate.sourceRunId) items.push({ label: "Run", value: candidate.sourceRunId });
+  if (candidate.channelKind) items.push({ label: localize(locale, "渠道", "Channel"), value: candidate.channelKind });
+  if (candidate.sessionKey) items.push({ label: "Session", value: candidate.sessionKey });
+  if (candidate.decidedAt) items.push({ label: localize(locale, "决定于", "Decided"), value: formatTime(candidate.decidedAt) });
+  return items;
+}
+
+function candidateImpact(candidate: ReflexCandidate, locale: "zh" | "en"): string {
+  if (candidate.kind === "preference") {
+    const category = metadataValue(candidate.payload.category);
+    const key = metadataValue(candidate.payload.key);
+    return category && key
+      ? `${category}/${key}`
+      : localize(locale, "会影响 canonical preference", "Affects canonical preference");
+  }
+  if (candidate.kind === "skill") {
+    return localize(locale, "批准后才会保存并启用新 skill", "Saved and enabled only after approval");
+  }
+  if (candidate.kind === "workflow") {
+    return localize(locale, "批准后才会保存或发布 workflow", "Saved or published only after approval");
+  }
+  if (candidate.kind === "fix") {
+    const toolName = metadataValue(candidate.payload.toolName);
+    return toolName
+      ? localize(locale, `修复 ${toolName} 的失败路径`, `Fixes failure path for ${toolName}`)
+      : localize(locale, "批准前不会执行真实修复", "No real fix runs before approval");
+  }
+  if (candidate.kind === "recipe") {
+    return localize(locale, "批准后写入 recipe memory", "Approval writes recipe memory");
+  }
+  if (candidate.kind === "memory") {
+    return localize(locale, "批准后写入长期记忆", "Approval writes long-term memory");
+  }
+  return localize(locale, "批准后更新测试策略", "Approval updates test policy");
+}
+
+function candidateTestSummary(candidate: ReflexCandidate, locale: "zh" | "en"): string {
+  const completed = metadataValue(candidate.evidence.testCompletedAt);
+  const failed = metadataValue(candidate.evidence.testFailedAt);
+  const draftSkill = metadataValue(candidate.evidence.draftSkillId);
+  const draftWorkflow = metadataValue(candidate.evidence.draftWorkflowId);
+  if (failed) return localize(locale, `测试失败：${failed}`, `Test failed: ${failed}`);
+  if (draftSkill) return localize(locale, `已测试 skill 草稿 ${draftSkill}`, `Tested skill draft ${draftSkill}`);
+  if (draftWorkflow) return localize(locale, `已测试 workflow 草稿 ${draftWorkflow}`, `Tested workflow draft ${draftWorkflow}`);
+  if (completed) return localize(locale, `已完成 deterministic test：${completed}`, `Deterministic test completed: ${completed}`);
+  return localize(locale, "尚未测试", "Not tested yet");
+}
+
 function ReflexCandidateCard(props: {
   candidate: ReflexCandidate;
   isPending: boolean;
@@ -98,6 +158,24 @@ function ReflexCandidateCard(props: {
           <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
             {props.candidate.summary}
           </p>
+          <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-secondary)] sm:grid-cols-2 lg:grid-cols-3">
+            {candidateSourceSummary(props.candidate, locale).map((item) => (
+              <div key={`${item.label}:${item.value}`} className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2">
+                <span className="block font-medium text-[color:var(--color-text-faint)]">{item.label}</span>
+                <span className="mt-1 block truncate text-[color:var(--color-text-secondary)]" title={item.value}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-secondary)] md:grid-cols-2">
+            <p className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2">
+              <span className="font-medium text-[color:var(--color-text-faint)]">{localize(locale, "影响", "Impact")}: </span>
+              {candidateImpact(props.candidate, locale)}
+            </p>
+            <p className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2">
+              <span className="font-medium text-[color:var(--color-text-faint)]">{localize(locale, "测试", "Test")}: </span>
+              {candidateTestSummary(props.candidate, locale)}
+            </p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
           <ActionButton
@@ -163,6 +241,7 @@ export function ReflexPage() {
   const [tab, setTab] = useState<ReflexTab>("review");
   const [status, setStatus] = useState<ReflexCandidateStatus>("ready_for_review");
   const [busyCandidateId, setBusyCandidateId] = useState<string | null>(null);
+  const [busyPreferenceId, setBusyPreferenceId] = useState<string | null>(null);
 
   const onboardingQuery = useQuery({
     queryKey: [...REFLEX_QUERY_KEY, "onboarding"],
@@ -226,6 +305,19 @@ export function ReflexPage() {
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : localize(locale, "候选项操作失败", "Candidate action failed")),
     onSettled: () => setBusyCandidateId(null),
+  });
+
+  const revokePreferenceMutation = useMutation({
+    mutationFn: async (id: string) => {
+      setBusyPreferenceId(id);
+      return reflexApi.revokePreference(id);
+    },
+    onSuccess: async () => {
+      toast.success(localize(locale, "偏好已撤销", "Preference revoked"));
+      await invalidateReflex();
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : localize(locale, "撤销失败", "Failed to revoke preference")),
+    onSettled: () => setBusyPreferenceId(null),
   });
 
   const onboarding = onboardingQuery.data;
@@ -423,7 +515,7 @@ export function ReflexPage() {
           ) : (
             <div className="divide-y divide-[color:var(--color-border-soft)]">
               {preferences.map((preference) => (
-                <div key={preference.id} className="grid gap-2 py-3 md:grid-cols-[180px_1fr_150px] md:items-center">
+                <div key={preference.id} className="grid gap-3 py-3 md:grid-cols-[180px_1fr_150px_112px] md:items-center">
                   <div>
                     <StatusPill>{preference.category}</StatusPill>
                     <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{preference.source}</p>
@@ -437,6 +529,17 @@ export function ReflexPage() {
                   <p className="text-xs text-[color:var(--color-text-faint)] md:text-right">
                     {formatTime(preference.updatedAt)}
                   </p>
+                  <div className="flex md:justify-end">
+                    <ActionButton
+                      tone="secondary"
+                      className="!min-h-[34px] !px-3 !text-xs"
+                      disabled={revokePreferenceMutation.isPending && busyPreferenceId === preference.id}
+                      onClick={() => revokePreferenceMutation.mutate(preference.id)}
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                      {localize(locale, "撤销", "Revoke")}
+                    </ActionButton>
+                  </div>
                 </div>
               ))}
             </div>

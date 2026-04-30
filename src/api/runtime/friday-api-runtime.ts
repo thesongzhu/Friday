@@ -30,6 +30,7 @@ import { dispatchDeterministic } from "../../sessions/services/friday-determinis
 import type { FridayDeterministicDispatchDeps } from "../../sessions/services/friday-deterministic-dispatch.js";
 import { dispatchManagedAsync } from "../../sessions/services/friday-managed-async-dispatch.js";
 import type { FridayManagedAsyncDispatchDeps } from "../../sessions/services/friday-managed-async-dispatch.js";
+import { parseFridayReflexExplicitPreferenceMessage } from "../../reflex/index.js";
 import type { CreateFridayApiRuntimeDeps, FridayApiRuntime } from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
@@ -2563,6 +2564,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       taskAlreadyInHistory?: boolean;
     }) => {
       const runId = deps.idGenerator();
+      const reflexUserId = input.tenantContext?.userId?.trim();
+      if (deps.reflexService && reflexUserId) {
+        for (const write of parseFridayReflexExplicitPreferenceMessage(input.task)) {
+          deps.reflexService.updatePreference({
+            userId: reflexUserId,
+            category: write.category,
+            key: write.key,
+            value: write.value,
+            sourceSurface: "operate",
+          });
+        }
+      }
       return executeAgentRunWithSessionContext!({
         task: input.task,
         taskPrompt: input.taskPrompt,

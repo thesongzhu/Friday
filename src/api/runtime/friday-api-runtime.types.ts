@@ -28,6 +28,7 @@ import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayMcpAdapter } from "../../agent/mcp/friday-mcp-adapter.types.js";
+import type { FridayReflexService } from "../../reflex/index.js";
 import type {
   FridayAgentAutomationService,
   FridayAgentEventEmitter,
@@ -186,6 +187,8 @@ export interface CreateFridayApiRuntimeDeps {
   sessionService?: FridaySessionService;
   /** Optional: agent runtime for agent run endpoints. */
   agentRuntime?: FridayAgentRuntime;
+  /** Optional: Reflex service for deterministic preference writes before agent runs. */
+  reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */
   capabilitySnapshotGetter?: (input: { readOnly: boolean }) =>
     Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;

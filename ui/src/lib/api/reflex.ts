@@ -144,4 +144,10 @@ export const reflexApi = {
   listPreferences(): Promise<{ items: ReflexPreference[] }> {
     return apiClient.get<{ items: ReflexPreference[] }>("/v1/reflex/preferences");
   },
+  revokePreference(id: string): Promise<{ revoked: true; preference: ReflexPreference }> {
+    return apiClient.post<Record<string, never>, { revoked: true; preference: ReflexPreference }>(
+      `/v1/reflex/preferences/${encodeURIComponent(id)}/revoke`,
+      {},
+    );
+  },
 };
