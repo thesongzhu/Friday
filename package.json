@@ -223,6 +223,9 @@
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
   },
+  "overrides": {
+    "axios": "^1.15.2"
+  },
   "imports": {
     "#utilities": "./dist/utilities/index.js",
     "#api": "./dist/api/index.js",
