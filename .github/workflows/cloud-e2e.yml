@@ -44,9 +44,41 @@ permissions:
   contents: read
 
 jobs:
+  authorize-live-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Authorize actor and ref for secret-bearing live run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+
+          permission="$(gh api "repos/${REPOSITORY}/collaborators/${ACTOR}/permission" --jq '.permission')"
+          case "${permission}" in
+            admin|maintain|write)
+              echo "Authorized actor ${ACTOR} with ${permission} permission."
+              ;;
+            *)
+              echo "::error::Cloud Live E2E can only be run by actors with write, maintain, or admin permission."
+              exit 1
+              ;;
+          esac
+
+          if [[ "${REF_TYPE}" != "branch" || "${REF_NAME}" != "main" ]]; then
+            echo "::error::Cloud Live E2E is restricted to the protected main branch."
+            exit 1
+          fi
+
   cloud-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: authorize-live-run
     environment: ${{ inputs.environment_name }}
     concurrency:
       group: cloud-live-e2e-${{ inputs.environment_name }}
@@ -96,7 +128,7 @@ jobs:
   cloud-live-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: cloud-contract
+    needs: [authorize-live-run, cloud-contract]
     environment: ${{ inputs.environment_name }}
     concurrency:
       group: cloud-live-e2e-${{ inputs.environment_name }}
