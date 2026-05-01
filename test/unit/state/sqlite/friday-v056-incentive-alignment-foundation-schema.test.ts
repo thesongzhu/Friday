@@ -84,6 +84,17 @@ describe("V056 — incentive alignment foundation schema", () => {
     expect(row?.name).toBe("v056-incentive-alignment-foundation");
   });
 
+  it("accepts the legacy v056 checksum from existing local databases", () => {
+    const db = freshDb();
+    runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS });
+    db.prepare("UPDATE schema_migrations SET checksum = ? WHERE version = 56")
+      .run("36666c7bc0d6fe25228bd23ab9f8bbc29262c9cd4bb2319c93fd281d0504800c"); // pragma: allowlist secret - migration checksum fixture, not a credential.
+
+    expect(() =>
+      runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS }),
+    ).not.toThrow();
+  });
+
   it("repairs a partially applied v056 when the migration row is missing", () => {
     const db = freshDb();
     const throughV055 = FRIDAY_SQLITE_MIGRATIONS.filter((migration) => migration.version <= 55);

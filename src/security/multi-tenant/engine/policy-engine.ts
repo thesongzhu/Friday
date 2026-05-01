@@ -34,7 +34,55 @@ import type { FridayCreatePolicyRuleInput } from "../api/friday-multi-tenant-sec
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
-import { precompileRegexPattern } from "../../../rules/engine/condition-evaluator.js";
+
+const MAX_POLICY_REGEX_CACHE_ENTRIES = 1000;
+const MAX_POLICY_REGEX_PATTERN_LENGTH = 512;
+const policyRegexCache = new Map<string, RegExp>();
+const REDOS_NESTED_QUANTIFIER_RE = /[+*}]\s*\)[\s)]*[+*?{]/;
+const REDOS_STAR_PLUS_ALTERNATION_RE = /\([^)]*\|[^)]*\)[+*]{1}/;
+const REDOS_LOOKAHEAD_QUANTIFIER_RE = /\(\?[=!][^)]*[+*]\)/;
+const REDOS_REPETITION_OVERLAP_RE = /\[[^\]]*\]\+[^?][^\[]*\[[^\]]*\]\+/;
+const REDOS_DEEP_NESTING_RE = /\({3,}/;
+
+function isUnsafePolicyRegexPattern(pattern: string): boolean {
+  if (pattern.length > MAX_POLICY_REGEX_PATTERN_LENGTH) return true;
+  if (REDOS_NESTED_QUANTIFIER_RE.test(pattern)) return true;
+  if (REDOS_STAR_PLUS_ALTERNATION_RE.test(pattern)) return true;
+  if (REDOS_LOOKAHEAD_QUANTIFIER_RE.test(pattern)) return true;
+  if (REDOS_REPETITION_OVERLAP_RE.test(pattern)) return true;
+  if (REDOS_DEEP_NESTING_RE.test(pattern)) return true;
+  return false;
+}
+
+function precompilePolicyRegexPattern(pattern: string, flags = ""): RegExp {
+  if (!/^[dgimsuvy]*$/.test(flags) || new Set(flags).size !== flags.length) {
+    throw new Error("Regex pattern rejected: invalid flags");
+  }
+
+  const cacheKey = `${flags}\0${pattern}`;
+  const cached = policyRegexCache.get(cacheKey);
+  if (cached) {
+    policyRegexCache.delete(cacheKey);
+    policyRegexCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  if (isUnsafePolicyRegexPattern(pattern)) {
+    throw new Error(
+      `Regex pattern rejected: potentially unsafe (ReDoS risk or exceeds max length ${String(MAX_POLICY_REGEX_PATTERN_LENGTH)})`,
+    );
+  }
+
+  const compiled = new RegExp(pattern, flags);
+  if (policyRegexCache.size >= MAX_POLICY_REGEX_CACHE_ENTRIES) {
+    const leastRecentlyUsedKey = policyRegexCache.keys().next().value;
+    if (leastRecentlyUsedKey !== undefined) {
+      policyRegexCache.delete(leastRecentlyUsedKey);
+    }
+  }
+  policyRegexCache.set(cacheKey, compiled);
+  return compiled;
+}
 
 // ─── Input Types ───
 
@@ -532,7 +580,7 @@ export class PolicyEngine {
           );
         }
         try {
-          precompileRegexPattern(condition.value);
+          precompilePolicyRegexPattern(condition.value);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new SecurityEngineError(
@@ -590,7 +638,7 @@ export class PolicyEngine {
       case "matches":
         if (typeof fieldValue === "string" && typeof condValue === "string") {
           try {
-            return precompileRegexPattern(condValue).test(fieldValue);
+            return precompilePolicyRegexPattern(condValue).test(fieldValue);
           } catch (err) {
             console.warn("[friday][policy-engine] regex match failed:", err instanceof Error ? err.message : String(err));
             return false;

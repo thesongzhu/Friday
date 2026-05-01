@@ -457,18 +457,15 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
         typeof client?.email === "string" && client.email.trim().length > 0
         && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
       );
-    const browserLoginAvailable = authCapabilities.allowLocalBypassLogin === true
-      || authCapabilities.allowPasswordlessLocalLogin === true;
-    if (!hasBrowserLoginCredential && !browserLoginAvailable) {
+    if (!hasBrowserLoginCredential) {
       artifact.result = "blocked";
       artifact.failureClass = "environment";
       artifact.notes = [
         ...(artifact.notes ?? []),
-        "Real browser probe requires a real browser-login path. This runtime does not expose local bypass/passwordless browser auth, and no real browser credential was provided.",
+        "Real browser probe requires localPassphrase or email/password browser credentials.",
       ];
       artifact.observedEvidence.push(
-        `browser auth capability allowLocalBypassLogin=${String(authCapabilities.allowLocalBypassLogin === true)}`,
-        `browser auth capability allowPasswordlessLocalLogin=${String(authCapabilities.allowPasswordlessLocalLogin === true)}`,
+        "browser auth credential missing",
       );
       artifact.raw = {
         ...(artifact.raw ?? {}),

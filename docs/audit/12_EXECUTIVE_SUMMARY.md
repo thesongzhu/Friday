@@ -2,101 +2,94 @@
 
 ## Overall Status
 
-RED: The project is not currently verified as a real production-ready closed-loop product. It has substantial local functionality and many strong tests; local production CORS smoke and Docker container health are now verified, but Docker auth/bootstrap E2E, paid marketplace, native companion, live channel, LLM multi-turn/tool-bridge, and browser E2E paths remain incomplete, failing, skipped, or mock-only. External webhook/callback-provider verification was removed from this supplemental pass by user request.
+YELLOW: Current local closed-loop readiness is now strong. Marketplace and passwordless local login are retired, Docker/install auth uses real passphrase login, npm audit passes, architecture-boundary check passes, and both Fresh and Current-config real-world smokes passed 27/27 with real DeepSeek primary and OpenAI fallback calls. The project is still not fully production-verified because live channel delivery and external deployed CORS/cookie/callback-domain behavior have not been exercised against a real staging target.
 
 ## Status Model
 
-- GREEN: health/version/static UI build, Docker image build/container start/health, local production CORS/header smoke, API route contract registration, many auth/session/workflow/memory/repository paths under local tests.
-- YELLOW: auth bootstrap, agent chat, provider setup, workflows, memory, plugins, skills, observability, multi-tenant security. These have meaningful local tests; the default DeepSeek lane now has partial real-world smoke evidence, but failed/blocked scenarios remain.
-- RED: paid marketplace entitlement flow, billing webhook closed-loop, Docker auth/bootstrap E2E on clean host port, native macOS companion release/runtime, full `npm test`, channel production delivery.
-- GRAY: real external production deployment, real channel sandboxes, branch protection, external observability backends.
+- GREEN: local health/static UI, install smoke, Docker passphrase smoke, auth/passphrase bootstrap, route contracts, typecheck, build, npm audit, architecture boundary, repo-root/clean migration checks, real-world Fresh smoke, real-world Current-config smoke, marketplace/passwordless residue scan.
+- YELLOW: broader agent/workflow/browser/live coverage, lint warning backlog, hub/runtime maintainability, operational docs.
+- RED: no current local smoke P0/P1 blocker remains.
+- GRAY: external deployment URL/TLS/CORS/cookie/callback provider behavior, branch protection, external observability backends, live channel delivery until sandbox proof exists.
 
 ## Verified Closed-Loop Features
 
-- `/v1/health` and UI production build.
-- Docker image build/container start/health smoke. Docker runtime/bootstrap/plugins auth assertions are not closed-loop on a clean host-published port.
-- Local production-mode CORS/auth/header smoke with configured allowed origins.
-- CLI server start/shutdown smoke.
-- Local workflow CRUD/run/approval/trigger integration against SQLite.
-- Local memory/session persistence and guard behavior.
-- Auth middleware/token revocation/rate-limit policy behavior at unit/integration level.
+- Local passphrase bootstrap/login through API, install smoke, Docker smoke, and real-world validation.
+- Real provider routing with DeepSeek `deepseek-v4-flash` primary and OpenAI `gpt-4o-mini` fallback.
+- Real-world smoke surfaces: health/version, setup truth, provider lanes, chat UI, assistant UI, observability UI, settings UI, route contracts, chat/direct answer, summary guard, long summary, JSON extraction, multi-turn memory, read-only file tool roundtrip, workflow approval roundtrip.
+- Marketplace removal from active source/UI/scripts/tests/validation/docs.
+- Current-config copied local state startup with v056 legacy checksum compatibility.
 
-## Partial, Unwired, Fake, or Broken Features
+## Partial, Unwired, Fake, Broken, Unknown
 
-- PARTIAL: agent chat, providers, skills, plugins, workflows from UI, automations, observability, memory semantic search.
-- UNWIRED: billing webhook route.
-- FAKE_OR_MOCK_ONLY: several channel services and many E2E proofs.
-- BROKEN: marketplace paid completion trust boundary, native companion release/runtime tests, full test suite.
+- PARTIAL: live channels, because safe sandbox delivery proof is still missing.
+- PARTIAL: external production/staging deployment, because no target URL/domain/callback config was exercised.
+- YELLOW: lint/maintainability, because `npm run lint` passes but reports 1334 warnings.
+- GRAY: external observability/alerting backends and branch protection.
 
 ## P0/P1 Launch Blockers
 
-1. P0: user-facing marketplace purchase completion can grant paid entitlements.
-2. P0: billing webhook handler is not wired to an HTTP route.
-3. P1: unknown billing events map to payment success.
-4. P1: local bypass auth defaults are unsafe for public production exposure.
-5. P1: full `npm test` fails.
-6. P1: native companion release/runtime fails.
-7. P1: dependency audit fails on production dependency graph.
-8. P1: architecture boundary check fails.
-9. P1: channel integrations are partly stubbed and live tests are skipped.
-10. P1: Docker E2E smoke can false-pass on default port conflicts and fails clean auth/bootstrap assertions on Docker Desktop.
-11. P1/P2: browser E2E coverage is mostly skipped.
-12. P1: real-world smoke failed/blocked 12 scenario outcomes despite a healthy default DeepSeek lane.
-13. P1: local closure ledger is NO-GO with provider, generator, UIX, and agent/memory failures.
+1. No current local-smoke P0 remains.
+2. P1 for external launch: live Discord/channel delivery needs safe sandbox config and proof.
+3. P1 for external launch: staging/prod deployment smoke needs URL/domain/callback provider config.
+4. P1 security hygiene: rotate the provider keys and Discord token exposed in this conversation.
 
 ## Security Issues That Could Expose Data, Money, Credentials, or Admin Access
 
-- Money/access: paid entitlement self-grant route.
-- Money/access: absent provider webhook route means payment source of truth is not enforced.
-- Money/access: unknown billing events default to success.
-- Admin/auth: local passwordless bypass default and default admin bootstrap require strict deployment controls.
-- Credentials/supply chain: axios advisories through Lark SDK remain unresolved.
-- Privacy: localStorage/sessionStorage retains user/chat/custom pack data.
+- Money/marketplace: retired from active runtime; keep source/route contract hygiene to prevent reintroduction.
+- Admin/auth: passwordless removed; passphrase remains the local/test auth path and must stay secret-managed for deployment.
+- Credentials: user-pasted provider keys and Discord bot token are exposed through chat history and should be rotated.
+- Channels/webhooks: real sandbox signature/outbound delivery proof is still missing.
 
 ## Architecture Problems
 
-- One giant hub bootstrap and very large runtime functions make lifecycle, security, and state-machine review hard.
-- Boundary check already fails in the security layer.
-- Mock, stub, and live implementations coexist without enough release-gate separation.
-- Tenant/principal identity is inconsistent in marketplace checkout.
+- Central hub/bootstrap and large agent/runtime files remain high-blast-radius modules.
+- Validation/report helper shape needs a small guard so local orchestration cannot confuse artifact `result` with `status`.
+- Mock/live/stub evidence tiers need clearer CI separation.
+- Channel/plugin capability truth should be explicit in UI/API.
 
 ## Tests Passed
 
-- Typecheck, lint with warnings, API build, UI build, route contracts, migration check, secret pattern check.
-- 10807 tests passed inside `npm test`, but the suite still failed.
-- UI browser E2E command exited 0, but only 2 tests ran and 21 skipped.
-- Install smoke passed after the initial audit: packaged tarball installed into a temp project, server started, `/v1/health` was OK, auth login returned 200, bundled UI served, and shutdown exited 0.
-- Additional gates passed: `check:all`, `check:security-doctor`, `check:ui-bundle-health`, and `release:check`.
+- `npm ci`
+- `npm audit --audit-level=moderate`
+- `npm run check:architecture-boundaries`
+- `npm run check:migrations` in clean worktree
+- `npm run check:migrations` in repo root after quarantining local duplicate artifacts
+- `npm run typecheck`
+- `npm run test:contracts:update`
+- `npm run test:contracts:routes`
+- Focused unit tests: 4 files, 109 tests
+- `npm run build`
+- `npm run test:docker:e2e-smoke`
+- `npm run test:install:smoke`
+- Fresh real-world smoke: 27 passed
+- Current-config real-world smoke: 27 passed
+- New report secret scan
+- `npm run lint`: 0 errors, 1334 warnings
+- Earlier full `npm test`: 10301 passed, 251 skipped
 
-## Tests Missing or Skipped
+## Tests Missing or Still Not Green
 
-- Live LLM real scenarios: 98 skipped.
-- Browser E2E: 21 of 23 skipped.
-- Live channel tests: skipped.
-- Billing webhook closed-loop: absent.
-- Paid marketplace denial/entitlement tests: missing.
-- Docker smoke: image build/container start/health verified via Docker Desktop; clean auth/bootstrap/plugins E2E failed with 401 `PASSWORDLESS_LOCALHOST_ONLY`; default-port PASS was invalidated by a pre-existing server on port 3141.
-- Real-world smoke is present but not clean: 15 pass, 7 fail, 5 blocked.
-- Local closure evidence is present but NO-GO: 17 pass, 6 fail, 1 blocker, plus aborted nested release verifier.
+- Live Discord/channel E2E needs a safe sandbox recipient/channel env.
+- External deployed CORS/cookie/callback-domain smoke requires a real staging target.
+- Broader browser smoke should cover chat/session reload and workflow authoring from the UI.
 
 ## Could Not Verify
 
-- External production deployment behavior; no deploy target URL/platform credentials/config were present in the repo, so only local production-mode and Docker container health were verified.
-- Real provider billing and channel integrations.
-- LLM is only partially verified: default DeepSeek lane worked for some real-world scenarios, but multi-turn memory and tool bridge failed and fallback lane is absent.
-- Live Discord closed-loop delivery: bot token was supplied in chat and must be treated as exposed/rotated; the live test also requires `FRIDAY_DISCORD_SETUP_USER_ID` and a safe sandbox recipient/channel.
-- GitHub branch protection/external CI settings.
-- Production observability/alerting backends.
+- Real external production/staging deployment behavior.
+- Real Discord/channel delivery.
+- Real provider callback domains/OAuth redirects/webhook URLs.
+- External observability/alerting backends.
+- Branch protection/external CI settings.
 
 ## Exact Next 10 Tasks
 
-1. Disable/restrict `/v1/marketplace/purchases/:id/complete`.
-2. Implement billing webhook route with raw body signature verification.
-3. Change unknown billing event mapping to non-success.
-4. Add paid entitlement E2E tests.
-5. Harden production auth bootstrap/local bypass defaults.
-6. Fix full `npm test` missing/reflex and native companion failures.
-7. Fix Docker E2E smoke port isolation and production-like auth path.
-8. Resolve `npm audit` dependency issue.
-9. Fix architecture boundary violation.
-10. Replace or clearly disable stub channel implementations and enable one critical browser E2E smoke.
+1. Rotate the pasted provider keys and Discord token.
+2. Configure safe Discord sandbox recipient/channel env.
+3. Run live Discord/channel E2E.
+4. Provide staging URL/domain/callback config.
+5. Run external deployment CORS/cookie/callback smoke.
+6. Add browser smoke for passphrase auth -> home -> chat -> session reload.
+7. Add workflow UI smoke for create -> publish -> run -> approval.
+8. Add validation/report regression coverage for artifact `result`/summary status shape.
+9. Decide whether npm remains canonical and remove/document the duplicate pnpm lockfile accordingly.
+10. Split hub/bootstrap lifecycle modules incrementally and reduce lint warning backlog.

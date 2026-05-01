@@ -303,15 +303,6 @@ export const REAL_WORLD_SCENARIOS = [
     suites: ["daily", "nightly", "weekly"],
   }),
   uiScenario({
-    id: "l1-marketplace-ui",
-    layer: "L1",
-    productArea: "marketplace",
-    entrySurface: "/marketplace",
-    routeFamily: "surface",
-    execution: { path: "/marketplace", readyText: "Friday" },
-    suites: ["daily", "nightly", "weekly"],
-  }),
-  uiScenario({
     id: "l1-memory-ui",
     layer: "L1",
     productArea: "memory",
@@ -638,18 +629,6 @@ export const REAL_WORLD_SCENARIOS = [
       jsonPathsPresent: ["data.items"],
     },
     suites: ["daily", "nightly", "weekly"],
-  }),
-  httpScenario({
-    id: "l2-marketplace-requests-contract",
-    layer: "L2",
-    productArea: "marketplace",
-    entrySurface: "/v1/marketplace/requests",
-    routeFamily: "contract",
-    execution: {
-      path: "/v1/marketplace/requests",
-      jsonPathsPresent: ["data.items"],
-    },
-    suites: ["nightly", "weekly"],
   }),
   httpScenario({
     id: "l2-plugins-contract",

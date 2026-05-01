@@ -58,11 +58,12 @@ export class FridayClient {
   }
 
   async loginLocal() {
+    if (!this.localPassphrase && !(this.email && this.password)) {
+      throw new Error("Local validation login requires localPassphrase or email/password credentials.");
+    }
     const body = this.localPassphrase
       ? { localPassphrase: this.localPassphrase }
-      : this.email && this.password
-        ? { email: this.email, password: this.password }
-        : { local: true };
+      : { email: this.email, password: this.password };
     const response = await this.request("POST", "/v1/auth/login", {
       body,
       headers: { "Content-Type": "application/json" },
@@ -75,9 +76,7 @@ export class FridayClient {
     this.user = response.json.data.user ?? null;
     this.authSource = this.localPassphrase
       ? "local_passphrase_login"
-      : this.email && this.password
-        ? "email_password_login"
-        : "passwordless_local_login";
+      : "email_password_login";
     this.authDetails = null;
     return response.json.data;
   }

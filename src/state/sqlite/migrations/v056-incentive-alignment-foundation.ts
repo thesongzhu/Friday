@@ -276,11 +276,15 @@ function applyV056IncentiveAlignmentFoundation(db: Database.Database): void {
 }
 
 const V056_CHECKSUM = computeFridayMigrationChecksum(V056_INCENTIVE_ALIGNMENT_FOUNDATION_SQL);
+const V056_LEGACY_ACCEPTED_CHECKSUMS = [
+  "36666c7bc0d6fe25228bd23ab9f8bbc29262c9cd4bb2319c93fd281d0504800c", // pragma: allowlist secret - migration checksum, not a credential.
+] as const;
 
 export const V056_INCENTIVE_ALIGNMENT_FOUNDATION_MIGRATION: FridaySqliteMigration = {
   version: 56,
   name: "v056-incentive-alignment-foundation",
   sql: V056_INCENTIVE_ALIGNMENT_FOUNDATION_SQL,
   checksum: V056_CHECKSUM,
+  acceptedChecksums: V056_LEGACY_ACCEPTED_CHECKSUMS,
   apply: applyV056IncentiveAlignmentFoundation,
 };

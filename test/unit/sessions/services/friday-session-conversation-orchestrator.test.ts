@@ -83,6 +83,33 @@ describe("friday-session-conversation-orchestrator", () => {
     expect(prepared.selectedBlocks.length).toBeGreaterThan(0);
   });
 
+  it("anchors recall questions to a prior 'remember this code phrase' user turn", () => {
+    const prepared = prepareFridayConversationTurn({
+      task: "What code phrase did I ask you to remember? Reply with the phrase only.",
+      focusState: {
+        ...baseFocusState,
+        currentTopicSummary: "Remember this code phrase for this conversation only: amber-cascade-17.",
+        currentTopicStartSequence: 1,
+      },
+      currentUserSequence: 3,
+      historyRecords: [
+        makeMessage({
+          sequence: 1,
+          role: "user",
+          contentText: "Remember this code phrase for this conversation only: amber-cascade-17. Reply with OK only.",
+        }),
+        makeMessage({ sequence: 2, role: "assistant", contentText: "OK" }),
+      ],
+    });
+
+    const historyText = prepared.historyMessages
+      .map((message) => typeof message.content === "string" ? message.content : JSON.stringify(message.content))
+      .join("\n");
+    expect(prepared.turnKind).not.toBe("status_check");
+    expect(historyText).toContain("amber-cascade-17");
+    expect(prepared.taskPrompt).toContain("amber-cascade-17");
+  });
+
   it("drops prior content history for a new topic", () => {
     const prepared = prepareFridayConversationTurn({
       task: "How do I bake sourdough bread?",

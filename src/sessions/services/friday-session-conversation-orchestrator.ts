@@ -348,7 +348,7 @@ function isRecallRequestTask(task: string): boolean {
 }
 
 function establishesRecallableFact(text: string): boolean {
-  return /\b(?:remember|keep|store|save)\s+(?:my\s+|the\s+)?(?:codename|code phrase|passphrase|marker|secret|identifier)\b/iu.test(text)
+  return /\b(?:remember|keep|store|save)\s+(?:(?:my|the|this|that|exact|project|conversation|following)\s+){0,4}(?:codename|code phrase|passphrase|marker|secret|identifier)\b/iu.test(text)
     || /\bmy\s+(?:codename|code phrase|passphrase|marker|secret|identifier)\s+(?:is|=|:)\b/iu.test(text)
     || /\b(?:codename|code phrase|passphrase|marker|secret|identifier)\s+(?:is|=|:)\b/iu.test(text)
     || /(?:记住|保存|记录|暗号是(?!什么|啥|哪)|代号是(?!什么|啥|哪)|口令是(?!什么|啥|哪)|编号是(?!什么|啥|哪)|名字是(?!什么|啥|哪)|名称是(?!什么|啥|哪))/u.test(text);

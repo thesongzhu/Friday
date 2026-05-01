@@ -61,6 +61,7 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   agents_list: "read",
   capabilities: "read",
   task_status: "read",
+  request_tool_pack: "read",
   image_analysis: "read",
   pdf_parse: "read",
   // write

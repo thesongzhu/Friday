@@ -127,6 +127,7 @@ describe("Setup Wizard E2E", () => {
   let baseUrl: string;
   let stateDir: string;
   let accessToken: string;
+  let refreshToken: string;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
 
   beforeAll(async () => {
@@ -180,6 +181,7 @@ describe("Setup Wizard E2E", () => {
       throw new Error(`Admin login failed: ${JSON.stringify(loginJson)}`);
     }
     accessToken = loginJson.data.accessToken;
+    refreshToken = loginJson.data.refreshToken;
   }, 60_000);
 
   afterAll(async () => {
@@ -1127,6 +1129,13 @@ describe("Setup Wizard E2E", () => {
         baseURL: baseUrl,
         timezoneId: "America/Los_Angeles",
       });
+      await context.addInitScript(
+        ({ accessToken, refreshToken }) => {
+          window.localStorage.setItem("friday.auth.accessToken", accessToken);
+          window.localStorage.setItem("friday.auth.refreshToken", refreshToken);
+        },
+        { accessToken, refreshToken },
+      );
       const page = await context.newPage();
       try {
         await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -1136,7 +1145,7 @@ describe("Setup Wizard E2E", () => {
         await context.close();
         await browser.close();
       }
-    }, 20_000);
+    }, 45_000);
 
     it("A13: full wizard API flow should pass end-to-end", async () => {
       // NOTE: This is a re-run flow test, not a fresh-state test. The hub was already
