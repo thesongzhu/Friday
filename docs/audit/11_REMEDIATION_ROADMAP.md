@@ -11,19 +11,23 @@
 7. Fresh and current-config real-world smoke now pass 27/27 with `localPassphrase` auth, DeepSeek primary, and OpenAI fallback.
 8. Multi-turn memory, read-only file tool roundtrip, and current-config v056 checksum startup blockers are fixed.
 9. Unrelated local duplicate/untracked files were quarantined outside the repo; repo-root migration check now passes.
+10. Main branch protection now requires strict status checks, one approval, resolved conversations, and blocks force-push/delete.
+11. `staging-e2e` GitHub Environment exists with Cloud Live E2E secrets seeded.
+12. A Fly staging deployment profile now exists in `fly.toml`.
 
 ## 2. P1 Serious Risks Still Open
 
 1. Configure safe live channel sandbox env and run Discord/channel E2E after rotating the pasted token.
-2. Run external deployment smoke once staging URL/domain/callback provider config exists.
-3. Keep release/package/install smokes serialized or isolate their output dirs.
+2. Create the Fly staging app, set deployment secrets, deploy, and run external deployment smoke once the staging URL/domain/callback provider config exists.
+3. Add the Cloud Live E2E actor/ref guard after GitHub auth has `workflow` scope.
+4. Keep release/package/install smokes serialized or isolate their output dirs.
 
 ## 3. Missing Closed-Loop Tests
 
 1. Browser smoke: passphrase auth -> home -> chat -> session reload from API.
 2. Workflow UI smoke: create/publish/run/approval path.
 3. Live channel smoke: signed inbound -> agent response -> outbound provider message ID.
-4. External webhook smoke for workflow/channel routes with invalid/valid/replay cases.
+4. External webhook smoke for workflow/channel routes with invalid/valid/replay cases against the deployed staging URL.
 5. Regression check for the validation/report helper shape so temporary orchestration cannot confuse artifact `result` with `status`.
 
 ## 4. Architecture Cleanup
@@ -38,4 +42,4 @@
 1. Remove or document the duplicate pnpm lockfile if npm remains canonical.
 2. Add dependency/SBOM tooling.
 3. Add unused export/dead route detection after live smoke lanes stabilize.
-4. Expand operator docs for staging/prod env vars, live channels, secret rotation, deployment smoke, and incident response.
+4. Expand operator docs for live channels, secret rotation, deployment smoke, and incident response.

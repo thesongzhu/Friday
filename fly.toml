@@ -1,0 +1,58 @@
+# Friday staging deployment profile, modeled after the OpenClaw Fly deployment route.
+# Before first deploy, create/choose a unique Fly app name:
+#   fly launch --copy-config --name <your-friday-staging-app>
+# Then set secrets such as FRIDAY_TOKEN_SECRET, FRIDAY_CORS_ORIGINS, provider keys,
+# and FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE with `fly secrets set`.
+
+app = "friday-staging"
+primary_region = "iad"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "docker/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  FRIDAY_STATE_DIR = "/data"
+  FRIDAY_SKILLS_DIR = "/skills"
+  FRIDAY_HOST = "0.0.0.0"
+  FRIDAY_PORT = "3141"
+  FRIDAY_ENABLE_HSTS = "true"
+  FRIDAY_LOG_REQUESTS = "true"
+
+[processes]
+  app = "node dist/cli/friday-cli.js start"
+
+[[mounts]]
+  source = "friday_data"
+  destination = "/data"
+
+[[services]]
+  processes = ["app"]
+  protocol = "tcp"
+  internal_port = 3141
+  auto_start_machines = true
+  auto_stop_machines = false
+  min_machines_running = 1
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 80
+    hard_limit = 100
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/v1/health"
