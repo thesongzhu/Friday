@@ -5,8 +5,8 @@
 | Local first-run auth | start server -> bootstrap passphrase -> login -> `/v1/auth/me` -> logout | temp state dir, local passphrase | Scoped tokens issued; no passwordless bypass | VERIFIED_CLOSED_LOOP locally. |
 | Docker clean auth smoke | build/start container -> health -> bootstrap passphrase -> login -> runtime assertions | unique host port, temp token secret/passphrase | Container proves auth/bootstrap/plugins through published port | VERIFIED_CLOSED_LOOP locally. |
 | Protected dashboard | browser has real token -> home/dashboard queries API | built UI, temp server, passphrase token | Protected routes reject unauthenticated and render authenticated home | PARTIAL: setup/home browser regression passes; broader browser coverage still limited. |
-| Chat with durable session | UI/HTTP run agent -> session/message rows persist -> reload -> messages from API | mock LLM and real SQLite | User and assistant messages durable and scoped | PARTIAL: mock/local pass; real-world smoke still has memory/tool failures. |
-| Provider setup to first chat | setup provider -> encrypted secret stored -> routing configured -> agent call uses provider | staging LLM key | No key leak; successful response stored | PARTIAL: DeepSeek lane partially works; fallback lane absent; latest real-world smoke not green. |
+| Chat with durable session | UI/HTTP run agent -> session/message rows persist -> reload -> messages from API | mock LLM and real SQLite | User and assistant messages durable and scoped | VERIFIED_CLOSED_LOOP locally through Fresh and Current-config real-world smoke; broader browser reload coverage still useful. |
+| Provider setup to first chat | setup provider -> encrypted secret stored -> routing configured -> agent call uses provider | staging LLM key | No key leak; successful response stored | VERIFIED_CLOSED_LOOP locally: DeepSeek primary and OpenAI fallback lanes passed real-world smoke. External deployment/provider callback domains still GRAY. |
 | Workflow lifecycle | create workflow -> publish/version -> run -> approval -> artifact/evidence | workflow graph and skill stub | Run transitions and artifacts persisted | PARTIAL/GREEN locally: backend/API tests pass; browser workflow authoring still needs full smoke. |
 | Workflow public webhook | register webhook trigger -> send invalid/valid/replayed request | path token/secret | Invalid/replay rejected; valid creates exactly one run | PARTIAL: local tests pass; external deployed webhook smoke missing. |
 | Channel message roundtrip | configure sandbox channel -> receive signed webhook/message -> session -> outbound send | sandbox channel credentials and safe recipient | Signature verified; outbound ID from provider | GRAY/FAKE_OR_MOCK_ONLY: live sandbox not configured; several adapters are stub/sandbox-only. |
@@ -17,8 +17,8 @@
 
 ## Minimal Next E2E Tests
 
-1. Real-world smoke triage: make `npm run validate:real-world:smoke` pass with zero failed/blocked scenarios.
-2. Browser smoke: setup/passphrase auth -> home -> chat -> session reload from API.
-3. Workflow UI smoke: create/publish/run/approval path from the browser.
-4. Live Discord/channel sandbox smoke after rotating the pasted token and configuring safe recipient IDs.
-5. External deployment smoke once a staging URL/domain/callback provider config exists.
+1. Browser smoke: setup/passphrase auth -> home -> chat -> session reload from API.
+2. Workflow UI smoke: create/publish/run/approval path from the browser.
+3. Live Discord/channel sandbox smoke after rotating the pasted token and configuring safe recipient IDs.
+4. External deployment smoke once a staging URL/domain/callback provider config exists.
+5. Validation/report regression test for artifact `result` versus summary status shape.

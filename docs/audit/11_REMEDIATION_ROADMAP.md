@@ -8,13 +8,15 @@
 4. `npm audit --omit=dev --audit-level=moderate` passes via patched `axios` override.
 5. Architecture-boundary check passes after removing security -> rules layer import.
 6. Full `npm test` passes after setup browser token injection.
+7. Fresh and current-config real-world smoke now pass 27/27 with `localPassphrase` auth, DeepSeek primary, and OpenAI fallback.
+8. Multi-turn memory, read-only file tool roundtrip, and current-config v056 checksum startup blockers are fixed.
 
 ## 2. P1 Serious Risks Still Open
 
-1. Make `npm run validate:real-world:smoke` pass with zero failed/blocked scenarios.
-2. Configure safe live channel sandbox env and run Discord/channel E2E after rotating the pasted token.
-3. Run external deployment smoke once staging URL/domain/callback provider config exists.
-4. Keep release/package/install smokes serialized or isolate their output dirs.
+1. Configure safe live channel sandbox env and run Discord/channel E2E after rotating the pasted token.
+2. Run external deployment smoke once staging URL/domain/callback provider config exists.
+3. Keep release/package/install smokes serialized or isolate their output dirs.
+4. Clean or quarantine the unrelated untracked duplicate files in the original root worktree.
 
 ## 3. Missing Closed-Loop Tests
 
@@ -22,6 +24,7 @@
 2. Workflow UI smoke: create/publish/run/approval path.
 3. Live channel smoke: signed inbound -> agent response -> outbound provider message ID.
 4. External webhook smoke for workflow/channel routes with invalid/valid/replay cases.
+5. Regression check for the validation/report helper shape so temporary orchestration cannot confuse artifact `result` with `status`.
 
 ## 4. Architecture Cleanup
 

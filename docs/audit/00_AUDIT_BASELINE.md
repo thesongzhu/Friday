@@ -26,5 +26,5 @@ Base commit: `e244899a`
 
 - No blocker remains for the requested local gates on a clean tracked tree: Docker clean passphrase smoke, npm audit, architecture-boundary check, install smoke, contracts, typecheck, and full `npm test` passed after fixes.
 - `npm run check:migrations` fails in this dirty working tree only because of untracked duplicate migration files with spaces in their names; the same check passed in a temporary copy containing only Git-tracked files.
-- Real-world smoke remains partial: 15 passed, 6 failed, 1 partial, 5 blocked in the latest run.
+- Real-world smoke is now green on current code: Fresh state and Current-config copied-state runs both passed 27/27 with `localPassphrase` auth, DeepSeek primary, and OpenAI fallback.
 - Live Discord/channel production delivery remains unverified because no safe sandbox recipient/channel env is configured in the process; the token previously pasted in chat should be treated as exposed and rotated.

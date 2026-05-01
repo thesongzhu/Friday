@@ -1,39 +1,44 @@
 # Phase 6 and 8 - Test and Verification Report
 
+Last updated: 2026-05-01
+
 ## Commands Run
 
 | Command | Result | Duration | Summary |
 | --- | --- | --- | --- |
-| `rg -n "marketplace|/v1/marketplace|FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN|allowLocalBypassLogin|allowPasswordlessLocalLogin|\{ local: true \}|PASSWORDLESS" src ui scripts test package.json .env.example` | PASS | <1s | No active product/test/script references found. |
-| `npm audit --audit-level=moderate --omit=dev` | PASS | <1s | 0 vulnerabilities after `axios` override. |
-| `npm run check:architecture-boundaries` | PASS | <1s | 5 checks passed, 0 failed after security policy regex helper was localized. |
-| `npx vitest run --project default test/unit/security/multi-tenant/engine/policy-engine.test.ts test/unit/rules/engine/condition-evaluator.test.ts` | PASS | not captured | 2 files, 86 tests passed. |
-| `npm run check:audit-integrity` | PASS | not captured | 8 checks passed; targeted audit tests passed. |
-| `npm run typecheck` | PASS | not captured | No TypeScript errors. |
-| Docker clean passphrase smoke with unique port 43142 | PASS | not captured | Image/container health, passphrase bootstrap/login, and runtime/bootstrap/plugins assertions passed. |
-| `npm run test:e2e:ui` | PASS_WITH_SKIPS | ~218s | 10 files passed; 21 tests passed, 2 skipped. |
-| `npm run validate:real-world:smoke` | PARTIAL_FAIL | not captured | Latest report `2026-05-01T00-41-12-583Z-nfz40j`: 22 selected, 15 passed, 6 failed, 1 partial, 5 blocked. |
-| `npm run test:install:smoke` | PASS | ~18s | Packed/install temp project, CLI help, server start, `/v1/health`, passphrase login, bundled UI, clean SIGINT shutdown all passed. |
-| `npm test` | PASS | 267.50s | 775 files passed, 21 skipped; 10301 tests passed, 251 skipped; type errors 0. |
-| `npm run check:migrations` | FAIL_DIRTY_WORKTREE | <1s | Failed only on untracked duplicate migration files with names ending ` 3.ts`. |
-| `node scripts/quality/check-migrations.mjs` in temporary tracked-only copy | PASS | not captured | 75 migrations contiguous; array exactly matches discovered migration files. |
-| `npm run test:contracts:routes` | PASS | 7.54s | 5 files, 12 tests; type errors 0. |
-| `npm run test:contracts:update` | PASS | 9.55s | 5 files, 12 tests; no snapshot changes observed. |
-| `npm run check:ui-bundle-health` | PASS | <1s | Largest JS asset 188.58 KiB; total JS 1652.44 KiB; within threshold. |
-| `npm run release:check` | PASS | not captured | 3141 files packed in dry run; required files present; forbidden env/data/test patterns absent. |
-| `npm run check:enablement-gaps` | FAIL_CONFIG | <1s | Bare process env lacks `.env`, `FRIDAY_TOKEN_SECRET`, and `FRIDAY_DESKTOP_ENABLED=true`. |
-| `FRIDAY_TOKEN_SECRET=<temp-32+> FRIDAY_DESKTOP_ENABLED=true FRIDAY_CHANNELS_JSON='{"instances":[]}' FRIDAY_MCP_SERVERS='[{"id":"local-test","command":"node"}]' FRIDAY_BROWSER_PRESENTATION_MODE=auto npm run check:enablement-gaps` | PASS_WITH_WARNING | <1s | Passed with one warning: `.env` file absent, current process env used. |
-| `git diff --name-only -z \| xargs -0 detect-secrets-hook --baseline .secrets.baseline` | BASELINE_UPDATED | <1s | No full secret values printed; hook updated tracked baseline line numbers for `test/e2e/setup-wizard.e2e.test.ts` after test edits. |
+| `rg -n "marketplace|/v1/marketplace|FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN|allowLocalBypassLogin|allowPasswordlessLocalLogin|\{ local: true \}|passwordless|PASSWORDLESS" src ui scripts test validation package.json .env.example docs/current-source-of-truth.md` | PASS | <1s | No active marketplace or passwordless-bypass references found. |
+| `npm ci` | PASS | not captured | Clean worktree install completed; Node 23 emitted engine warnings only. |
+| `npm audit --audit-level=moderate` | PASS | <1s | 0 vulnerabilities. |
+| `npm run check:architecture-boundaries` | PASS | <1s | 5 checks passed. |
+| `npm run check:migrations` | PASS | <1s | Clean worktree: 75 migrations contiguous and registered. |
+| `npm run check:migrations` | FAIL_DIRTY_WORKTREE | <1s | Original root fails only because unrelated untracked duplicate migration files ending ` 3.ts` are present. |
+| `npm run typecheck` | PASS | not captured | API, operator client, and UI typecheck completed. |
+| `npm run test:contracts:update` | PASS | not captured | 5 files, 12 tests. |
+| `npm run test:contracts:routes` | PASS | not captured | 5 files, 12 tests. |
+| Focused unit tests | PASS | not captured | 4 files, 109 tests: memory recall, tool mutation, operational mode, v056 checksum compatibility. |
+| `npm run build` | PASS | not captured | API TypeScript build and Vite UI production build completed. |
+| `npm run test:docker:e2e-smoke` | PASS | ~111s | Docker runtime/bootstrap/plugins layers passed with unique ports and local passphrase bootstrap/login. |
+| `npm run test:install:smoke` | PASS | ~17s | Packed/install temp project, CLI help, server start, `/v1/health`, passphrase login token, bundled UI, clean SIGINT shutdown. |
+| Fresh real-world smoke | PASS | not captured | `docs/reports/ops/real-world-validation/2026-05-01T21-21-24-003Z-fresh/summary.json`: 27 passed, 0 failed/partial/blocked. |
+| Current-config real-world smoke | PASS | not captured | `docs/reports/ops/real-world-validation/2026-05-01T21-26-47-671Z-current-config/summary.json`: 27 passed, 0 failed/partial/blocked. |
+| New report secret scan | PASS | <1s | No full DeepSeek/OpenAI/Discord token patterns found in copied report directories. |
+| `npm run lint` | PASS_WITH_WARNINGS | ~7s | 0 errors, 1334 existing warnings. |
+| Earlier `npm test` | PASS | 267.50s | 775 files passed, 21 skipped; 10301 tests passed, 251 skipped; type errors 0. |
+| Earlier `npm run test:e2e:ui` | PASS_WITH_SKIPS | ~218s | 10 files passed; 21 tests passed, 2 skipped. |
+| Earlier `npm run check:ui-bundle-health` | PASS | <1s | Largest JS asset 188.58 KiB; total JS 1652.44 KiB; within threshold. |
+| Earlier `npm run release:check` | PASS | not captured | Dry-run package contained required files and excluded forbidden env/data/test patterns. |
 
 ## Fixes Verified By Tests
 
-- Architecture boundary failure fixed without importing rules-layer internals into security layer.
-- Production dependency audit fixed by overriding transitive `axios` to a patched version.
-- Setup wizard browser regression fixed by injecting the real passphrase-login token into the browser context; the test no longer relies on passwordless auto-login.
+- Marketplace and `/v1/marketplace/*` are removed from active source, UI, scripts, tests, validation catalog, and current source-of-truth docs.
+- Passwordless local login and `{ local: true }` validation fallback are removed; Docker/install/E2E auth uses `localPassphrase`.
+- Multi-turn memory recall now handles the current smoke wording and passes against both DeepSeek primary and OpenAI fallback lanes.
+- Read-only tool-pack loading now allows safe `request_tool_pack` so filesystem-read roundtrip passes while write/execute tools remain protected.
+- Current-config copied local state starts successfully with legacy v056 checksum accepted, without destructive migrations.
 
 ## Remaining Verification Gaps
 
-- Real-world LLM smoke is not release-green: UI misroute/loading, environment, LLM behavior, and tool-bridge failures remain.
-- Live channel delivery, including Discord, is unverified without safe sandbox target env.
-- External production deployment/CORS/cookie/callback domains remain unverified because no deployment target URL/provider callback config is present.
-- Dirty local untracked duplicate files should be cleaned outside this branch to prevent local gate confusion.
+- Live channel delivery, including Discord, still needs safe sandbox channel config and token rotation before proof.
+- External production/staging deployment CORS/cookie/callback-domain behavior remains unverified because no target URL/domain/provider callback config was exercised.
+- Original root worktree still contains unrelated untracked duplicate files that can break filesystem-scanning checks outside the clean worktree.
+- Lint passes but reports a large warning backlog: complexity, object-injection warnings, non-literal filesystem paths, and a few console warnings.

@@ -63,6 +63,10 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("capabilities", {})).toBe(false);
   });
 
+  it("classifies request_tool_pack as non-mutating", () => {
+    expect(isMutatingToolCall("request_tool_pack", { pack: "code" })).toBe(false);
+  });
+
   // ─── Conditional: browser ───
 
   it("classifies browser click as mutating", () => {

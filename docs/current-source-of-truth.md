@@ -33,10 +33,7 @@ This document is the current architecture reference for steady-state Friday runt
   - `/v1/satellites/*`
   - `/v1/agent-loop/*`
   - `/v1/skills/*`
-  - `/v1/marketplace/sources*`
-  - `/v1/marketplace/assets*`
   - `/v1/plugins*`
-  - `/v1/marketplace/plugins*`
 - Compatibility-only surfaces are:
   - `/v1/ws` as a thin alias over `/v1/realtime/ws`
   - `/v1/approvals*` as a compatibility alias for `/v1/workflow-approvals*`
@@ -135,42 +132,25 @@ This document is the current architecture reference for steady-state Friday runt
 - `spawn_subagent` defaults to `mode="fresh"`. Explicit `mode="fork"` is rollout-gated by `FRIDAY_SUBAGENT_FORK_MODE_ENABLED`, must fork through the session service lineage, and must not silently degrade back to `fresh`.
 - The rollout order and acceptance commands for these flags live in `docs/ops/friday-agent-orchestration-rollout.md`.
 
-## Skills lifecycle and marketplace sources
+## Skills Lifecycle
 
 - `/v1/skills/*` is the canonical skill lifecycle surface for catalog, detail, install, update, delete, manifest validation, and verification.
 - `GET /v1/skills` is the canonical inventory/discovery snapshot for installed or discovered skills on the current runtime.
 - `GET /v1/skills/catalog` is the canonical external catalog cache surface. An empty response means the runtime has no populated catalog snapshot yet; it does not by itself mean the skills system is broken.
-- `/v1/marketplace/sources*` is the canonical source-management surface for skill marketplace feeds, enablement state, and trust-scored catalog refresh.
-- `/v1/marketplace/sources` empty state means no marketplace sources are configured for the current runtime. UI copy must treat that as a bounded configuration state, not a silent failure.
-- `/v1/marketplace/assets*` is the canonical public catalog and detail read surface for marketplace `skill`, `workflow`, and `agent` assets. It unifies discovery and detail views while keeping the skills lifecycle as the install/verify/enable backbone.
-- `/v1/marketplace/creators*` and `/v1/marketplace/assets/:assetId/support` are the canonical creator-support surfaces for asset-backed support events, creator profiles, and reputation summaries.
 - `/skills` is the operator-facing lifecycle surface for installed skills, updates, verification evidence, source policy, and generated-skill handoff from `/assistant`.
 - Skill verification evidence now includes a canonical `preflight` summary with `ready`, `needs_review`, or `blocked` verdicts plus blocking/warning/advisory checks across manifest, integrity, runtime requirements, permissions, dry-run, and trust.
-- The **skills lifecycle is the primary marketplace backbone**. It remains the canonical trust, verification, install, enable, update, delete, and source-management path for marketplace-delivered capabilities.
-- Public marketplace support for `workflow` and `agent` assets extends this same backbone instead of replacing it with a separate store or commerce-first contract.
-- Public marketplace assets are **declarative-first**. Publicly listed `skill`, `workflow`, and `agent` assets must use framework-owned execution plus explicit permission manifests; arbitrary executable package runtimes are not part of the primary public marketplace contract.
-- Creator support is the primary reward path for public marketplace assets. Friday records support/tip events and creator reputation signals, but the platform itself takes `0%` commission and does not present the ecosystem as a guarantee-backed service marketplace.
-- `/v1/marketplace/requests*` is the canonical connector-only request board for personal `skill`, `workflow`, and `agent` requests. It supports posting requests, collecting responses, and accepting or closing a request without implying escrow, fulfillment guarantees, arbitration, or after-sales support.
-- Public marketplace installs must show explicit permission previews before enablement and require signature/hash verification.
-- Public marketplace monetization is **support-first**. Declarative public assets remain free-first, users may support creators directly, the platform takes `0%` commission on creator support, and creator reputation must be multi-signal rather than star-only.
-- Marketplace closeout evidence for this creator-support direction is archived in [../docs/reports/closeout/marketplace-creator-ecosystem/latest.md](./reports/closeout/marketplace-creator-ecosystem/latest.md).
 - Skill generation is not a terminal leaf product. Generated skills must be able to flow directly into verification, install or enable recommendation, diagnosis, and recovery.
 - Skill verification evidence must remain structured around manifest verdict, package integrity, dependency checks, runtime dry-run, and trust summary.
 - `/v1/skills/catalog` and skill detail responses must expose machine-readable lifecycle guidance for operator surfaces, including trust tier, implementation status, blocked reasons, recommended next action, and first-use prompts. UI surfaces must consume that server-shaped guidance instead of reverse-engineering install state client-side.
 
-## Plugin distribution and marketplace commerce
+## Plugin Distribution
 
-- `/v1/plugins*` and `/v1/marketplace/plugins*` are active plugin distribution surfaces for installed-plugin lifecycle, marketplace browsing, version inspection, and install flows.
-- Plugin distribution is real and test-backed, but it is **not** the same product surface as the canonical skills lifecycle. Docs must not blur `skills lifecycle` and `plugin marketplace/commerce` into one story.
-- Public marketplace evolution remains **skills-first**. Plugin distribution and commerce do not replace the canonical skills lifecycle backbone and must stay documented as a distinct, bounded surface.
-- Legacy executable skills/plugins/packages may still exist for local, operator, or migration scenarios, but they are not the primary public marketplace story and must not appear as ordinary public marketplace assets by default.
-- Marketplace commerce and publisher flows are bounded operator/admin surfaces that may depend on runtime configuration. They are not the primary beginner-first product path, must not be described as universally available consumer commerce unless that configuration is present, and must not override the support-first public marketplace story.
+- `/v1/plugins*` is the active plugin distribution surface for installed-plugin lifecycle, version inspection, and install flows.
+- Plugin distribution is real and test-backed, but it is **not** the same product surface as the canonical skills lifecycle. Docs must not blur `skills lifecycle` and `plugin distribution` into one story.
+- Legacy executable skills/plugins/packages may still exist for local, operator, or migration scenarios, but they are not a public commerce story and must not appear as ordinary public assets by default.
 - User-facing truth must distinguish:
   - skills lifecycle as a validated closed-loop product surface
-  - future workflow and agent marketplace assets as additive extensions of that lifecycle backbone
-  - creator support, creator reputation, and request-style matching as ecosystem layers above the skills/workflow/agent asset backbone
   - plugin distribution as an active bounded surface
-  - marketplace commerce and publisher operations as configured, operator/admin-oriented capabilities
 
 ## Workflow product surfaces
 
@@ -218,7 +198,7 @@ This document is the current architecture reference for steady-state Friday runt
 - Fleet/distributed execution is intentionally bounded to a single-hub trust domain with static peers, registered satellites, and the trust-scored fleet directory as the active discovery baseline.
 - Offline execution is intentionally limited to continuation and recovery of already-dispatched work; richer offline plan generation or offline trigger creation remains deferred.
 - Full multi-hub federation, cross-hub placement, mDNS/relay/Tailscale-native discovery, and richer mesh coordination remain deferred.
-- ML-heavy anomaly detection, natural-language rule authoring, and marketplace-style expansion for acceptance or rules remain deferred.
+- ML-heavy anomaly detection, natural-language rule authoring, and ecosystem-style expansion for acceptance or rules remain deferred.
 
 ## Communication style and adaptive learning
 
@@ -263,9 +243,9 @@ This document is the current architecture reference for steady-state Friday runt
 
 ## Deep link protocol
 
-- `friday://` is the canonical import protocol for provider templates, skill sources, MCP server configs, workflow templates, and marketplace assets.
+- `friday://` is the canonical import protocol for provider templates, skill sources, MCP server configs, and workflow templates.
 - All deep link imports must go through `POST /v1/deeplink/preview` (parse + validate + permission summary) before `POST /v1/deeplink/apply`.
-- `POST /v1/deeplink/apply` currently performs real imports for `provider-template`, `skill-source`, and `workflow-template` bundle URLs. `mcp-server` and `marketplace-asset` payloads remain previewable but return an explicit unsupported apply result until dedicated install/config surfaces are wired.
+- `POST /v1/deeplink/apply` currently performs real imports for `provider-template`, `skill-source`, and `workflow-template` bundle URLs. `mcp-server` payloads remain previewable but return an explicit unsupported apply result until dedicated install/config surfaces are wired.
 - Deep link payloads require `version: 1`, a valid resource type, and type-specific required fields. Incomplete or high-risk payloads are rejected by the validator.
 - Private/localhost URLs in deep link payloads produce warnings. Missing integrity hashes produce advisories.
 - The deep link parser accepts both URI format (`friday://skill-source?url=...`) and JSON payload format for POST bodies.
@@ -328,7 +308,6 @@ Every contract-affecting cleanup batch must pass:
 - `npm run closeout:phase3`
 - `npm run closeout:phase4`
 - `npm run closeout:phase5`
-- `npm run closeout:marketplace`
 - `npm run check:ui-bundle-health`
 - `npm run check:closeout:evidence:freshness`
 - `npm run release:verify:repo`

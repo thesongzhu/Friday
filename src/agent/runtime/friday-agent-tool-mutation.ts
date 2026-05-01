@@ -95,6 +95,7 @@ const READ_ONLY_TOOLS = new Set([
   "mcp",         // MCP servers run in their own sandbox with their own security
   "capabilities",
   "task_status",
+  "request_tool_pack",
   "image_analysis",
 ]);
 

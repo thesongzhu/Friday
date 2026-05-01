@@ -1,6 +1,6 @@
 # Phase 9 - Production Readiness
 
-Overall status: YELLOW for local closed-loop readiness, RED/GRAY for external production readiness until real-world smoke, live channels, and deployed-domain checks are clean.
+Overall status: YELLOW for local closed-loop readiness and GRAY for external production readiness. Real-world local smoke is now green; live channels and deployed-domain checks still need staging/sandbox proof.
 
 ## Build and Startup
 
@@ -28,7 +28,7 @@ Overall status: YELLOW for local closed-loop readiness, RED/GRAY for external pr
 
 - Scheduler, retry, backoff, retention, workflow timeout, approval expiry, native companion release/runtime, install smoke, and Docker smoke passed locally.
 - Avoid running release/package/install smokes concurrently because they share `dist/` and package outputs.
-- Real-world smoke remains the most important reliability gap: latest run was not green.
+- Real-world local smoke is green on current code: Fresh and Current-config copied-state runs both passed 27/27 with real provider lanes.
 
 ## Performance
 
@@ -44,5 +44,5 @@ Overall status: YELLOW for local closed-loop readiness, RED/GRAY for external pr
 
 ## Documentation
 
-- Audit docs now reflect marketplace retirement, passwordless retirement, Docker passphrase pass, npm audit pass, architecture-boundary pass, and full test pass.
-- Need operator docs for staging/prod env profiles, live channel sandbox setup, secret rotation, real-world smoke prerequisites, and external deployment smoke.
+- Audit docs now reflect marketplace retirement, passwordless retirement, Docker passphrase pass, npm audit pass, architecture-boundary pass, full test pass, and green Fresh/Current-config real-world smoke.
+- Need operator docs for staging/prod env profiles, live channel sandbox setup, secret rotation, and external deployment smoke.
