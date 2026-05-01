@@ -14,6 +14,7 @@ Overall status: YELLOW for local closed-loop readiness and GRAY for external pro
 ## Deployment
 
 - Dockerfile is present, non-root, and passed local Docker smoke.
+- Fly staging deployment profile is now present in `fly.toml`, modeled after OpenClaw's route: Docker build, HTTPS, persistent `/data`, production env defaults, and `/v1/health` checks.
 - `check:enablement-gaps` fails in a bare process env because `.env`, `FRIDAY_TOKEN_SECRET`, and `FRIDAY_DESKTOP_ENABLED=true` are absent; it passes with safe temporary env. This means production/staging env provisioning is still required, not that the code gate is broken.
 - External deployed URL, TLS, cookie domain, CORS with real domains, OAuth/provider callback URLs, and reverse-proxy behavior were not verified.
 - Pre-existing untracked duplicate files were quarantined outside the repo; repo-root and clean tracked-tree migration checks now pass.
@@ -22,7 +23,7 @@ Overall status: YELLOW for local closed-loop readiness and GRAY for external pro
 
 - Observability routes, SLOs, alerts, traces, and audit repository tests pass.
 - Expected failure tests still log audit append errors when DB connections are closed; lifecycle drain hardening remains recommended.
-- No external error tracking/metrics backend verification was performed.
+- No external error tracking/metrics backend verification was performed. OpenClaw's OTEL/Grafana route was inspected, but Friday's own observability RFC still marks OTLP export as a future phase.
 
 ## Reliability
 
@@ -39,10 +40,13 @@ Overall status: YELLOW for local closed-loop readiness and GRAY for external pro
 ## CI/CD
 
 - Local gates that should be merge-relevant pass on tracked files.
-- Branch protection/external CI settings were not verified.
+- Branch protection is now verified through GitHub API: required checks are strict, one approving review is required, conversation resolution is enabled, and force-push/delete remains disabled.
+- `staging-e2e` GitHub Environment now exists and stores `OPENAI_API_KEY` plus a generated `FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE` without printing values.
+- Cloud Live E2E still needs an OpenClaw-style actor/ref guard. The local patch could not be pushed because the authenticated GitHub OAuth token lacks `workflow` scope.
 - Recommended CI hygiene: keep migration checks running from a clean checkout/worktree so local untracked artifacts cannot mask branch truth.
 
 ## Documentation
 
 - Audit docs now reflect marketplace retirement, passwordless retirement, Docker passphrase pass, npm audit pass, architecture-boundary pass, full test pass, and green Fresh/Current-config real-world smoke.
-- Need operator docs for staging/prod env profiles, live channel sandbox setup, secret rotation, and external deployment smoke.
+- `docs/audit/14_OPENCLAW_EXTERNAL_VERIFICATION_ROUTE.md` records the adopted OpenClaw route, completed GitHub control-plane changes, and remaining external blockers.
+- Need operator docs for live channel sandbox setup, secret rotation, and external deployment smoke after a real staging URL exists.

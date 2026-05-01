@@ -2,14 +2,14 @@
 
 ## Overall Status
 
-YELLOW: Current local closed-loop readiness is now strong. Marketplace and passwordless local login are retired, Docker/install auth uses real passphrase login, npm audit passes, architecture-boundary check passes, and both Fresh and Current-config real-world smokes passed 27/27 with real DeepSeek primary and OpenAI fallback calls. The project is still not fully production-verified because live channel delivery and external deployed CORS/cookie/callback-domain behavior have not been exercised against a real staging target.
+YELLOW: Current local closed-loop readiness is now strong. Marketplace and passwordless local login are retired, Docker/install auth uses real passphrase login, npm audit passes, architecture-boundary check passes, and both Fresh and Current-config real-world smokes passed 27/27 with real DeepSeek primary and OpenAI fallback calls. The GitHub control plane is now stronger after OpenClaw-style follow-up: branch protection is stricter, `staging-e2e` exists, and a Fly staging profile exists. Cloud Live E2E still needs an actor/ref guard once GitHub auth has `workflow` scope. The project is still not fully production-verified because live channel delivery and external deployed CORS/cookie/callback-domain behavior have not been exercised against a real deployed staging target.
 
 ## Status Model
 
 - GREEN: local health/static UI, install smoke, Docker passphrase smoke, auth/passphrase bootstrap, route contracts, typecheck, build, npm audit, architecture boundary, repo-root/clean migration checks, real-world Fresh smoke, real-world Current-config smoke, marketplace/passwordless residue scan.
-- YELLOW: broader agent/workflow/browser/live coverage, lint warning backlog, hub/runtime maintainability, operational docs.
+- YELLOW: broader agent/workflow/browser/live coverage, lint warning backlog, hub/runtime maintainability, operational docs, Fly staging route present but not deployed.
 - RED: no current local smoke P0/P1 blocker remains.
-- GRAY: external deployment URL/TLS/CORS/cookie/callback provider behavior, branch protection, external observability backends, live channel delivery until sandbox proof exists.
+- GRAY: external deployment URL/TLS/CORS/cookie/callback provider behavior, external observability backends, live channel delivery until sandbox proof exists.
 
 ## Verified Closed-Loop Features
 
@@ -24,13 +24,14 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 - PARTIAL: live channels, because safe sandbox delivery proof is still missing.
 - PARTIAL: external production/staging deployment, because no target URL/domain/callback config was exercised.
 - YELLOW: lint/maintainability, because `npm run lint` passes but reports 1334 warnings.
-- GRAY: external observability/alerting backends and branch protection.
+- PARTIAL: external deployment path, because Fly config and GitHub environment now exist but no Fly app/URL is deployed.
+- GRAY: external observability/alerting backends.
 
 ## P0/P1 Launch Blockers
 
 1. No current local-smoke P0 remains.
 2. P1 for external launch: live Discord/channel delivery needs safe sandbox config and proof.
-3. P1 for external launch: staging/prod deployment smoke needs URL/domain/callback provider config.
+3. P1 for external launch: staging/prod deployment smoke needs a real Fly app, URL/domain, and callback provider config.
 4. P1 security hygiene: rotate the provider keys and Discord token exposed in this conversation.
 
 ## Security Issues That Could Expose Data, Money, Credentials, or Admin Access
@@ -79,17 +80,17 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 - Real Discord/channel delivery.
 - Real provider callback domains/OAuth redirects/webhook URLs.
 - External observability/alerting backends.
-- Branch protection/external CI settings.
+- External CI settings are PARTIAL: branch protection and `staging-e2e` are verified, but Cloud Live E2E has not run against a deployed URL and its actor/ref guard needs a workflow-scope GitHub token.
 
 ## Exact Next 10 Tasks
 
 1. Rotate the pasted provider keys and Discord token.
 2. Configure safe Discord sandbox recipient/channel env.
 3. Run live Discord/channel E2E.
-4. Provide staging URL/domain/callback config.
-5. Run external deployment CORS/cookie/callback smoke.
-6. Add browser smoke for passphrase auth -> home -> chat -> session reload.
-7. Add workflow UI smoke for create -> publish -> run -> approval.
-8. Add validation/report regression coverage for artifact `result`/summary status shape.
-9. Decide whether npm remains canonical and remove/document the duplicate pnpm lockfile accordingly.
+4. Create and deploy the Fly staging app, then record its staging URL/domain/callback config.
+5. Deploy the Fly staging profile and run external deployment CORS/cookie/callback smoke.
+6. Re-auth GitHub with `workflow` scope and add the Cloud Live E2E actor/ref guard.
+7. Add browser smoke for passphrase auth -> home -> chat -> session reload.
+8. Add workflow UI smoke for create -> publish -> run -> approval.
+9. Add validation/report regression coverage for artifact `result`/summary status shape.
 10. Split hub/bootstrap lifecycle modules incrementally and reduce lint warning backlog.
