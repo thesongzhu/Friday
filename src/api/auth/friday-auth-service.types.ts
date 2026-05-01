@@ -43,13 +43,6 @@ export interface CreateFridayAuthServiceDeps {
   tokenSecret: string;
   accessTokenTtlSec: number;
   refreshTokenTtlSec: number;
-  /** When true, allow login with `{}` (no credentials) for local-only user. Default: false. */
-  allowPasswordlessLocalLogin?: boolean;
-  /**
-   * When true, allow `login({ local: true })` to succeed without passphrase checks.
-   * Localhost is always required — this flag only bypasses the passphrase, never the IP trust boundary.
-   */
-  allowLocalBypassLogin?: boolean;
   /** Logger for warnings. Default: console.warn. */
   warn?: (message: string) => void;
   /** Callback to mark an access token as revoked in the in-memory revocation map. */

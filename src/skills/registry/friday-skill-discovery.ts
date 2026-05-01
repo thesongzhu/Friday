@@ -36,7 +36,7 @@ export function resolveFridaySkillDiscoveryRoots(
   // Managed — per §2.7.1: ~/.config/friday/skills/
   roots.push({
     origin: "managed",
-    source: "marketplace",
+    source: "local",
     dir: settings.managedSkillsDir,
   });
 

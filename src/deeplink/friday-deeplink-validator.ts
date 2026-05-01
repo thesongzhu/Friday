@@ -105,9 +105,6 @@ export function validateFridayDeepLink(payload: FridayDeepLinkPayload): FridayDe
     case "workflow-template":
       validateWorkflowTemplate(payload, checks, permissions);
       break;
-    case "marketplace-asset":
-      validateMarketplaceAsset(payload, checks, permissions);
-      break;
   }
 
   const hasBlocking = checks.some((check) => check.level === "blocking");
@@ -204,20 +201,4 @@ function validateWorkflowTemplate(
     checks.push({ id: "workflow-url-private", label: "Template URL", level: "blocking", summary: "Workflow template URL points to a private/local address." });
   }
   permissions.push("Will import a workflow template.");
-}
-
-function validateMarketplaceAsset(
-  payload: FridayDeepLinkPayload,
-  checks: FridayDeepLinkCheck[],
-  permissions: string[],
-): void {
-  const asset = payload.marketplaceAsset;
-  if (!asset) {
-    checks.push({ id: "asset-fields", label: "Asset Fields", level: "blocking", summary: "Marketplace asset data is missing." });
-    return;
-  }
-  if (!asset.assetId) {
-    checks.push({ id: "asset-id", label: "Asset ID", level: "blocking", summary: "Marketplace asset ID is required." });
-  }
-  permissions.push("Will install a marketplace asset.");
 }

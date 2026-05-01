@@ -14,11 +14,6 @@ describe("Friday skill source taxonomy", () => {
       mutableAtRuntime: false,
       requiresSignaturePolicy: false,
     });
-    expect(classifyFridaySkillSource("marketplace")).toMatchObject({
-      distribution: "marketplace",
-      mutableAtRuntime: true,
-      requiresSignaturePolicy: true,
-    });
     expect(FRIDAY_SKILL_SOURCE_TAXONOMY.git.requiresSignaturePolicy).toBe(true);
     expect(FRIDAY_SKILL_SOURCE_TAXONOMY.local.requiresSignaturePolicy).toBe(false);
   });

@@ -1,11 +1,10 @@
 /**
- * Plugin service — orchestrates registry, loader, resolver, marketplace, signatures.
+ * Plugin service — orchestrates registry, loader, resolver, and local trust.
  */
 
 import * as fs from "node:fs";
 
 import { FridayDomainError } from "#errors";
-import { safeDirName } from "#utilities";
 import {
   FRIDAY_CORE_CHANNEL_PLUGIN_IDS,
   FRIDAY_PLUGIN_ERROR_CODES,
@@ -27,11 +26,6 @@ import type {
   FridayPluginService,
 } from "./friday-plugin-service.types.js";
 import { createFridayPluginHealthMonitor } from "./friday-plugin-health-monitor.js";
-import type {
-  FridayMarketplacePluginDetail,
-  FridayMarketplaceSearchQuery,
-  FridayMarketplaceSearchResult,
-} from "./friday-plugin-marketplace-client.js";
 import { buildPluginLocalPackageBytes } from "./friday-plugin-package-bytes.js";
 
 // ─── Factory ───
@@ -43,12 +37,9 @@ export function createFridayPluginService(
     registry,
     resolver,
     loader,
-    marketplace,
     signatureVerifier,
     previewPolicy,
     nowIso,
-    resolveMarketplacePublicKeyPem,
-    pinnedMarketplaceKeyIds,
   } = deps;
 
   const readFileAsBuffer = deps.readFileAsBuffer ?? ((filePath: string): Buffer =>
@@ -254,7 +245,6 @@ export function createFridayPluginService(
         );
       }
 
-      // Determine trust mode and verify
       let trustMode: "signed" | "trust_on_install" = "trust_on_install";
       let signatureVerified = false;
       let trustedFingerprint: string | undefined;
@@ -262,78 +252,32 @@ export function createFridayPluginService(
       let signatureKeyId: string | undefined;
       let signatureValue: string | undefined;
 
-      if (source === "marketplace") {
-        // Marketplace requires signature
-        if (!manifest.signature) {
+      if (!packageBytes) {
+        if (!userApproved) {
           throw new FridayDomainError(
             FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_REQUIRED,
-            `Marketplace plugin "${manifest.id}" must have a signature`,
-            { httpStatus: 400, details: { pluginId: manifest.id } },
+            `Local plugin "${manifest.id}" requires user approval for trust-on-install`,
+            { httpStatus: 403, details: { pluginId: manifest.id } },
           );
         }
-        if (!packageBytes) {
-          throw new FridayDomainError(
-            FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_REQUIRED,
-            `Marketplace plugin "${manifest.id}" requires packageBytes for signature verification`,
-            { httpStatus: 400, details: { pluginId: manifest.id } },
-          );
-        }
-
-        // Compute checksum and verify Ed25519 signature
-        const expectedChecksum = signatureVerifier.computeChecksum(packageBytes);
-        const publicKeyPem = resolveMarketplacePublicKeyPem?.(manifest.signature.keyId, manifest);
-        if (!publicKeyPem || publicKeyPem.trim().length === 0) {
-          throw new FridayDomainError(
-            FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_INVALID,
-            `Marketplace plugin "${manifest.id}" signature key "${manifest.signature.keyId}" is not configured`,
-            { httpStatus: 403, details: { pluginId: manifest.id, keyId: manifest.signature.keyId } },
-          );
-        }
-        const verifyResult = signatureVerifier.verifyMarketplacePackage({
+        const localBytes = buildLocalPackageBytes(installPath, manifest);
+        const result = signatureVerifier.evaluateLocalTrustOnInstall({
+          pluginId: manifest.id,
+          version: manifest.version,
+          packageBytes: localBytes,
+          userApproved: true,
+        });
+        trustedFingerprint = result.fingerprint;
+        signatureVerified = result.verified;
+      } else {
+        const result = signatureVerifier.evaluateLocalTrustOnInstall({
           pluginId: manifest.id,
           version: manifest.version,
           packageBytes,
-          expectedChecksum,
-          signature: manifest.signature,
-          publicKeyPem,
-          pinnedKeyIds: [...(pinnedMarketplaceKeyIds ?? [])],
+          userApproved: userApproved ?? false,
         });
-
-        trustMode = "signed";
-        signatureAlgorithm = manifest.signature.algorithm;
-        signatureKeyId = manifest.signature.keyId;
-        signatureValue = manifest.signature.value;
-        signatureVerified = verifyResult.verified;
-      } else if (source === "local") {
-        // Local install: trust-on-install always enforced
-        if (!packageBytes) {
-          // No package bytes — read manifest + entrypoints from disk to compute fingerprint
-          if (!userApproved) {
-            throw new FridayDomainError(
-              FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_REQUIRED,
-              `Local plugin "${manifest.id}" requires user approval for trust-on-install`,
-              { httpStatus: 403, details: { pluginId: manifest.id } },
-            );
-          }
-          const localBytes = buildLocalPackageBytes(installPath, manifest);
-          const result = signatureVerifier.evaluateLocalTrustOnInstall({
-            pluginId: manifest.id,
-            version: manifest.version,
-            packageBytes: localBytes,
-            userApproved: true,
-          });
-          trustedFingerprint = result.fingerprint;
-          signatureVerified = result.verified;
-        } else {
-          const result = signatureVerifier.evaluateLocalTrustOnInstall({
-            pluginId: manifest.id,
-            version: manifest.version,
-            packageBytes,
-            userApproved: userApproved ?? false,
-          });
-          trustedFingerprint = result.fingerprint;
-          signatureVerified = result.verified;
-        }
+        trustedFingerprint = result.fingerprint;
+        signatureVerified = result.verified;
       }
 
       // Register in database
@@ -512,119 +456,6 @@ export function createFridayPluginService(
 
       registry.remove(pluginId);
       pluginHealthMonitor.reset(pluginId);
-    },
-
-    async searchMarketplace(query: FridayMarketplaceSearchQuery): Promise<FridayMarketplaceSearchResult> {
-      if (!marketplace) {
-        // Degrade gracefully when marketplace is not configured.
-        // This keeps marketplace discovery UI/API paths functional in local mode.
-        return { items: [], total: 0 };
-      }
-      const result = await marketplace.search(query);
-      return {
-        ...result,
-        items: result.items.map((item) => {
-          const manifest = item.previewSdk
-            ? {
-                schemaVersion: "1.0" as const,
-                id: item.id,
-                version: item.version,
-                name: item.name,
-                description: item.description,
-                kinds: [],
-                entrypoints: {},
-                permissions: { grants: [], promptOn: [] },
-                compatibility: { minHubVersion: "0.0.0", apiVersion: "1" as const },
-                previewSdk: item.previewSdk,
-              }
-            : undefined;
-
-          return {
-            ...item,
-            capabilitySummary: manifest
-              ? buildCapabilitySummary(manifest)
-              : item.capabilitySummary,
-            policySummary: manifest
-              ? buildPolicySummary(item.id, manifest)
-              : item.policySummary,
-          };
-        }),
-      };
-    },
-
-    async listMarketplacePluginVersions(pluginId: string) {
-      if (!marketplace) {
-        throw new FridayDomainError(
-          FRIDAY_PLUGIN_ERROR_CODES.DISCOVERY_FAILED,
-          "Marketplace client is not configured",
-          { httpStatus: 503 },
-        );
-      }
-      const versions = await marketplace.listVersions(pluginId);
-      return versions.map((v) => ({
-        version: v.version,
-        releasedAt: v.releasedAt,
-        checksum: v.checksum,
-      }));
-    },
-
-    async getMarketplacePlugin(pluginId: string): Promise<FridayMarketplacePluginDetail> {
-      if (!marketplace) {
-        throw new FridayDomainError(
-          FRIDAY_PLUGIN_ERROR_CODES.DISCOVERY_FAILED,
-          "Marketplace client is not configured",
-          { httpStatus: 503 },
-        );
-      }
-      const detail = await marketplace.getPluginDetail(pluginId);
-      return {
-        ...detail,
-        capabilitySummary: buildCapabilitySummary(detail.manifest),
-        policySummary: buildPolicySummary(detail.id, detail.manifest),
-      };
-    },
-
-    async installFromMarketplace(pluginId: string): Promise<FridayPluginEntity> {
-      if (!marketplace) {
-        throw new FridayDomainError(
-          FRIDAY_PLUGIN_ERROR_CODES.DISCOVERY_FAILED,
-          "Marketplace client is not configured",
-          { httpStatus: 503 },
-        );
-      }
-
-      // Download from marketplace
-      const downloadResult = await marketplace.downloadPackage(pluginId);
-      const { packageBytes, checksum, manifest } = downloadResult;
-
-      // Signature is required for marketplace
-      if (!manifest.signature) {
-        throw new FridayDomainError(
-          FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_REQUIRED,
-          `Marketplace plugin "${pluginId}" must have a signature`,
-          { httpStatus: 400, details: { pluginId } },
-        );
-      }
-
-      // Verify checksum matches
-      const actualChecksum = signatureVerifier.computeChecksum(packageBytes);
-      if (actualChecksum !== checksum) {
-        throw new FridayDomainError(
-          FRIDAY_PLUGIN_ERROR_CODES.SIGNATURE_INVALID,
-          `Checksum mismatch for marketplace plugin "${pluginId}"`,
-          { httpStatus: 400, details: { pluginId, expected: checksum, actual: actualChecksum } },
-        );
-      }
-
-      // Install with marketplace source
-      const installPath = `/plugins/marketplace/${safeDirName(manifest.id)}`;
-
-      return this.installPlugin({
-        manifest,
-        installPath,
-        source: "marketplace",
-        packageBytes,
-      });
     },
   };
 }

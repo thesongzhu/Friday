@@ -430,7 +430,7 @@ async function createLlmTestEnv(): Promise<LlmTestEnv> {
   const hub = await createFridayHub({
     stateDir,
     skillDirs: [bundledSkillsDir, managedSkillsDir],
-    // NOTE: do NOT set tokenSecret explicitly — that disables passwordless local login
+    // Keep tokenSecret omitted so the hub uses its local test defaults.
     port: 0,
     logRequests: false,
   });
@@ -455,7 +455,7 @@ async function createLlmTestEnv(): Promise<LlmTestEnv> {
   const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: "friday-test-local-passphrase-123" }),
   });
   const loginJson = (await loginRes.json()) as {
     ok: boolean;

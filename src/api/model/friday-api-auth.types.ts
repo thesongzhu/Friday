@@ -39,9 +39,6 @@ export type FridayScope =
   | "desktop.read"
   | "desktop.write"
   | "desktop.execute"
-  | "marketplace.read"
-  | "marketplace.write"
-  | "marketplace.admin"
   | "rules.read"
   | "rules.write"
   | "execution.read"
@@ -70,8 +67,6 @@ export type FridayRateLimitPolicyId =
   | "skill_generator.llm"
   | "skill_generator.write"
   | "skill_converter.write"
-  | "marketplace.checkout"
-  | "marketplace.write"
   | "playbook.promote"
   | "playbook.select"
   | "agent.run"
@@ -129,8 +124,6 @@ export interface FridayLoginRequest {
   password?: string;
   localPassphrase?: string;
   rememberMe?: boolean;
-  /** Explicit flag required for dev-mode passwordless login. */
-  local?: boolean;
 }
 
 export interface FridayLoginResponse {
@@ -149,9 +142,6 @@ export interface FridayLoginResponse {
 
 export interface FridayAuthBootstrapStatusResponse {
   bootstrapRequired: boolean;
-  allowPasswordlessLocalLogin: boolean;
-  /** True when no-signin local bypass is enabled for `login({ local: true })`. */
-  allowLocalBypassLogin: boolean;
 }
 
 export interface FridayAuthBootstrapRequest {

@@ -34,6 +34,10 @@ import {
 const itOllama = process.env.E2E_OLLAMA === "1" ? it : it.skip;
 const itReal = process.env.E2E_REAL === "1" ? it : it.skip;
 const itRealOllama = (process.env.E2E_REAL === "1" && process.env.E2E_OLLAMA === "1") ? it : it.skip;
+const LOCAL_PASSPHRASE =
+  process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ??
+  process.env.FRIDAY_LOCAL_PASSPHRASE ??
+  "friday-test-local-passphrase-123";
 
 function resolveUiStaticDir(): string | undefined {
   const uiStaticDir = path.resolve(process.cwd(), "dist/ui");
@@ -75,6 +79,28 @@ function authHeaders(token: string): Record<string, string> {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
+}
+
+async function ensureLocalPassphrase(baseUrl: string): Promise<void> {
+  const statusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const statusJson = (await statusRes.json()) as {
+    ok: boolean;
+    data?: { bootstrapRequired?: boolean };
+  };
+  if (!statusJson.ok) {
+    throw new Error(`Auth bootstrap status failed: ${JSON.stringify(statusJson)}`);
+  }
+  if (statusJson.data?.bootstrapRequired !== true) return;
+
+  const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+  });
+  const bootstrapJson = (await bootstrapRes.json()) as { ok: boolean };
+  if (!bootstrapJson.ok) {
+    throw new Error(`Auth bootstrap failed: ${JSON.stringify(bootstrapJson)}`);
+  }
 }
 
 async function pollUntil<T>(
@@ -140,10 +166,11 @@ describe("Setup Wizard E2E", () => {
     baseUrl = `http://127.0.0.1:${String(port)}`;
 
     // 4. Login as admin → get JWT token
+    await ensureLocalPassphrase(baseUrl);
     const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
     });
     const loginJson = (await loginRes.json()) as {
       ok: boolean;

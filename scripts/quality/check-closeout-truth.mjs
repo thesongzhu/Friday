@@ -93,43 +93,11 @@ const checks = {
       path: "docs/current-source-of-truth.md",
       required: [
         "/v1/skills/*` is the canonical skill lifecycle surface",
-        "/v1/marketplace/sources*` is the canonical source-management surface",
         "Generated skills must be able to flow directly into verification, install or enable recommendation, diagnosis, and recovery.",
-        "/v1/plugins*` and `/v1/marketplace/plugins*` are active plugin distribution surfaces",
-        "/v1/marketplace/requests*` is the canonical connector-only request board",
+        "/v1/plugins*` is the active plugin distribution surface",
       ],
     },
-    // Skills lifecycle and marketplace details moved to docs/current-source-of-truth.md
-  ],
-  marketplace: [
-    // Marketplace contract details moved to docs/current-source-of-truth.md and architecture RFC
-    {
-      path: "docs/current-source-of-truth.md",
-      required: [
-        "The **skills lifecycle is the primary marketplace backbone**.",
-        "Public marketplace support for `workflow` and `agent` assets extends this same backbone",
-        "Public marketplace assets are **declarative-first**.",
-        "creator reputation must be multi-signal rather than star-only.",
-        "`0%` commission on creator support",
-      ],
-    },
-    {
-      path: "docs/ops/friday-capability-matrix.md",
-      required: [
-        "Creator support and request board",
-        "Plugin marketplace and commerce",
-        "Validated but temporary",
-        "Deferred",
-      ],
-    },
-    {
-      path: "docs/architecture/marketplace-commerce-rfc.md",
-      required: [
-        "skills/workflows/agents first, free-first, declarative-first, creator-support oriented, and request-board capable",
-        "bounded operator/admin surface",
-        "Platform commission is fixed at `0%`",
-      ],
-    },
+    // Skills lifecycle details moved to docs/current-source-of-truth.md
   ],
   final: [
     {
@@ -154,7 +122,6 @@ const checks = {
         "What Friday Can Do Today",
         "What Friday Usually Does Only Under Supervision",
         "What Friday does **not** reliably claim today",
-        "Plugin marketplace and commerce",
       ],
     },
     {

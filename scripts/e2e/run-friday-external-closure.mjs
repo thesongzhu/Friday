@@ -15,6 +15,9 @@ const HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEEPSEEK_MODEL = process.env.FRIDAY_EXTERNAL_CLOSURE_MODEL ?? "deepseek-v4-flash";
 const SAMPLE_REPO = process.env.FRIDAY_EXTERNAL_CLOSURE_GITHUB_REPO ?? "https://github.com/modelcontextprotocol/servers.git";
+const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-external-closure-passphrase-123";
 
 function nowIso() {
   return new Date().toISOString();
@@ -127,14 +130,31 @@ async function api(baseUrl, token, method, routePath, body, timeoutMs = DEFAULT_
 }
 
 async function login(baseUrl) {
+  const bootstrapResponse = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const bootstrapStatus = await bootstrapResponse.json();
+  if (!bootstrapResponse.ok || !bootstrapStatus.ok) {
+    throw new Error(`local auth bootstrap status failed: ${JSON.stringify(bootstrapStatus)}`);
+  }
+  if (bootstrapStatus.data?.bootstrapRequired === true) {
+    const initializeResponse = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const initializeBody = await initializeResponse.json();
+    if (!initializeResponse.ok || !initializeBody.ok) {
+      throw new Error(`local passphrase bootstrap failed: ${JSON.stringify(initializeBody)}`);
+    }
+  }
+
   const response = await fetch(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
   });
   const json = await response.json();
   if (!response.ok || !json.ok || !json.data?.accessToken) {
-    throw new Error(`local login failed: ${JSON.stringify(json)}`);
+    throw new Error(`local passphrase login failed: ${JSON.stringify(json)}`);
   }
   return json.data.accessToken;
 }
@@ -273,7 +293,6 @@ async function startFriday(runRoot, skillsDir, managedDir) {
       ...process.env,
       FRIDAY_STATE_DIR: path.join(runRoot, "state"),
       FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS: "true",
-      FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "true",
       FRIDAY_CHANNELS_JSON: process.env.FRIDAY_CHANNELS_JSON ?? JSON.stringify({ enabled: true, instances: [] }),
     },
     stdio: ["ignore", "pipe", "pipe"],

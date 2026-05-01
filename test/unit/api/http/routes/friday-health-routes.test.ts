@@ -102,18 +102,8 @@ describe("createFridayHealthRoutes", () => {
       uptime: 42,
       capabilities: {
         schemaVersion: "1.0",
-        auth: {
-          allowPasswordlessLocalLogin: false,
-          allowLocalBypassLogin: false,
-        },
         plugins: {
           runtimeMode: "stub",
-          marketplaceAvailable: false,
-        },
-        marketplace: {
-          commerceEnabled: false,
-          skillSourceEnabled: false,
-          pluginMarketplaceEnabled: false,
         },
         channels: {
           supportedKinds: [],
@@ -170,18 +160,8 @@ describe("createFridayHealthRoutes", () => {
       getUptimeSeconds: () => 5,
       getCapabilities: () => ({
         schemaVersion: "1.0",
-        auth: {
-          allowPasswordlessLocalLogin: true,
-          allowLocalBypassLogin: true,
-        },
         plugins: {
           runtimeMode: "full",
-          marketplaceAvailable: true,
-        },
-        marketplace: {
-          commerceEnabled: true,
-          skillSourceEnabled: true,
-          pluginMarketplaceEnabled: true,
         },
         channels: {
           supportedKinds: ["discord", "slack"],

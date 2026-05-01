@@ -192,8 +192,6 @@ export class FridayAuthError extends FridayDomainError {
 export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): FridayAuthService {
   const userRepo = createFridayUserRepository();
   const sessionRepo = createFridayAuthSessionRepository();
-  const allowPasswordless = deps.allowPasswordlessLocalLogin ?? false;
-  const allowLocalBypassLogin = deps.allowLocalBypassLogin ?? false;
   const warn = deps.warn ?? console.warn;
   const warnOnce = createWarnOnce(warn);
   const rateLimiter = deps.rateLimiter;
@@ -227,7 +225,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
    */
   function deriveLockoutKey(request: FridayLoginRequest, userId?: string): string {
     if (request.email) return `email:${request.email.toLowerCase().trim()}`;
-    if (request.local || request.localPassphrase) return `local:${userId ?? "local"}`;
+    if (request.localPassphrase) return `local:${userId ?? "local"}`;
     return `local:local`;
   }
 
@@ -390,14 +388,10 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       const localUser = findLocalUser();
       const bootstrapRequired = Boolean(
         localUser &&
-        !localUser.password_hash &&
-        !allowPasswordless &&
-        !allowLocalBypassLogin,
+        !localUser.password_hash,
       );
       return {
         bootstrapRequired,
-        allowPasswordlessLocalLogin: allowPasswordless,
-        allowLocalBypassLogin,
       };
     },
 
@@ -462,7 +456,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       // Resolve the principal early for lockout key derivation.
       // For local auth, look up the local user to get their ID.
       let earlyUserId: string | undefined;
-      if (request.localPassphrase || request.local) {
+      if (request.localPassphrase) {
         const localUser = findLocalUser();
         earlyUserId = localUser?.id;
       }
@@ -515,51 +509,10 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           upgradePasswordHash(user.id, request.password);
         }
       } else {
-        // No explicit credentials provided
-        const requestedLocalBypass = request.local === true && allowLocalBypassLogin;
-        if (!allowPasswordless && !requestedLocalBypass) {
-          throw new FridayAuthError(
-            "AUTH_METHOD_REQUIRED",
-            "No authentication method provided. Supply localPassphrase or email+password.",
-          );
-        }
-        // All local/passwordless logins require localhost — bypass only skips passphrase, not the IP trust boundary.
-        if (!isLocalhostAddress(ip)) {
-          warn(
-            `[friday] SECURITY: Passwordless login attempt rejected from non-localhost IP: ${ip ?? "unknown"}`,
-          );
-          throw new FridayAuthError(
-            "PASSWORDLESS_LOCALHOST_ONLY",
-            "Passwordless login is only allowed from localhost.",
-          );
-        }
-        // Require explicit `local: true` flag to prevent accidental bypass
-        if (!request.local) {
-          throw new FridayAuthError(
-            "LOCAL_FLAG_REQUIRED",
-            "Passwordless login requires { local: true } in the request body.",
-          );
-        }
-        user = findLocalUser();
-        if (!user) {
-          throw new FridayAuthError("USER_NOT_FOUND", "No local user configured");
-        }
-        // In regular passwordless mode, preserve passphrase protection when configured.
-        if (!requestedLocalBypass && user.password_hash) {
-          throw new FridayAuthError(
-            "PASSPHRASE_REQUIRED",
-            "This account has a password configured. Use localPassphrase to authenticate.",
-          );
-        }
-        if (requestedLocalBypass) {
-          if (!suppressExpectedTestWarnings) {
-            warnOnce("[friday] WARNING: Local bypass login used (no-signin mode).");
-          }
-        } else {
-          if (!suppressExpectedTestWarnings) {
-            warnOnce("[friday] WARNING: Passwordless local login used. This is allowed only in dev mode.");
-          }
-        }
+        throw new FridayAuthError(
+          "AUTH_METHOD_REQUIRED",
+          "No authentication method provided. Supply localPassphrase or email+password.",
+        );
       }
 
       // Auth succeeded — reset lockout state

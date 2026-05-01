@@ -35,6 +35,10 @@ const LIVE_PROVIDER_VALIDATE_ENABLED =
 const HAS_LIVE_ANTHROPIC_API_KEY = hasLiveAnthropicApiKey();
 const LIVE_ANTHROPIC_API_KEY_ENV_REF =
   resolveLiveAnthropicApiKeyEnvRef() ?? "$FRIDAY_ANTHROPIC_API_KEY";
+const LOCAL_PASSPHRASE =
+  process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ??
+  process.env.FRIDAY_LOCAL_PASSPHRASE ??
+  "friday-test-local-passphrase-123";
 
 // ─── Helpers ───
 
@@ -60,6 +64,28 @@ function authHeaders(token: string): Record<string, string> {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
+}
+
+async function ensureLocalPassphrase(baseUrl: string): Promise<void> {
+  const statusRes = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const statusJson = (await statusRes.json()) as {
+    ok: boolean;
+    data?: { bootstrapRequired?: boolean };
+  };
+  if (!statusJson.ok) {
+    throw new Error(`Auth bootstrap status failed: ${JSON.stringify(statusJson)}`);
+  }
+  if (statusJson.data?.bootstrapRequired !== true) return;
+
+  const bootstrapRes = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+  });
+  const bootstrapJson = (await bootstrapRes.json()) as { ok: boolean };
+  if (!bootstrapJson.ok) {
+    throw new Error(`Auth bootstrap failed: ${JSON.stringify(bootstrapJson)}`);
+  }
 }
 
 // ─── Tests ───
@@ -113,10 +139,11 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
     baseUrl = `http://127.0.0.1:${String(port)}`;
 
     // 4. Login as admin → get JWT token
+    await ensureLocalPassphrase(baseUrl);
     const loginRes = await fetch(`${baseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
     });
     const loginJson = (await loginRes.json()) as {
       ok: boolean;
@@ -214,7 +241,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       const res = await fetch(`${baseUrl}/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ local: true }),
+        body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
       });
       expect(res.status).toBe(200);
       const json = (await res.json()) as {
@@ -1761,19 +1788,6 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       expect(json.ok).toBe(false);
     });
 
-    it("P3: Search marketplace", async () => {
-      const res = await fetch(`${baseUrl}/v1/marketplace/plugins`, {
-        headers: authHeaders(accessToken),
-      });
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as {
-        ok: boolean;
-        data: { items: Array<Record<string, unknown>>; total: number };
-      };
-      expect(json.ok).toBe(true);
-      expect(Array.isArray(json.data.items)).toBe(true);
-      expect(typeof json.data.total).toBe("number");
-    });
   });
 
   // ────────────────────────────────────────────────────────────────────────

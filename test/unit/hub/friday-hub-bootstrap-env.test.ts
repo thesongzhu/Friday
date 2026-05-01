@@ -135,45 +135,6 @@ describe("resolveFridayHubConfig", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("sets allowPasswordlessLocalLogin=false when tokenSecret is explicit", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const resolved = resolveFridayHubConfig(
-      makeConfig({ tokenSecret: "my-secret" }),
-      emptyEnv(),
-    );
-    expect(resolved.allowPasswordlessLocalLogin).toBe(false);
-  });
-
-  it("sets allowPasswordlessLocalLogin=true in dev mode (no explicit secret, not production)", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
-    expect(resolved.allowPasswordlessLocalLogin).toBe(true);
-  });
-
-  it("sets allowPasswordlessLocalLogin=false in production even without explicit secret", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const resolved = resolveFridayHubConfig(makeConfig(), { NODE_ENV: "production" });
-    expect(resolved.allowPasswordlessLocalLogin).toBe(false);
-  });
-
-  it("sets allowLocalBypassLogin when FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN is enabled", () => {
-    const resolved = resolveFridayHubConfig(
-      makeConfig(),
-      { FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "true" },
-    );
-    expect(resolved.allowLocalBypassLogin).toBe(true);
-  });
-
-  it("enables allowLocalBypassLogin by default in dev mode", () => {
-    const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
-    expect(resolved.allowLocalBypassLogin).toBe(true);
-  });
-
-  it("enables allowLocalBypassLogin by default in production", () => {
-    const resolved = resolveFridayHubConfig(makeConfig(), { NODE_ENV: "production" });
-    expect(resolved.allowLocalBypassLogin).toBe(true);
-  });
-
   it("defaults allowPrivateNetwork=false in dev mode", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
     expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(false);
@@ -195,11 +156,6 @@ describe("resolveFridayHubConfig", () => {
       emptyEnv(),
     );
     expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(true);
-  });
-
-  it("respects explicit FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN=false even in dev mode", () => {
-    const resolved = resolveFridayHubConfig(makeConfig(), { FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "false" });
-    expect(resolved.allowLocalBypassLogin).toBe(false);
   });
 
   // ─── CORS origins ───

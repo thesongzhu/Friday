@@ -2,7 +2,7 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillRepository } from "../../skills/persistence/friday-skill-repository.js";
 import type { FridayAutonomyCanaryStats } from "../model/friday-autonomy-upgrade.types.js";
-import type { FridaySkillEntity } from "../../skills/model/friday-skill-marketplace.types.js";
+import type { FridaySkillEntity } from "../../skills/model/friday-skill-catalog.types.js";
 
 export interface FridaySkillUpgradeLifecycleService {
   registerShadowVersion(input: {

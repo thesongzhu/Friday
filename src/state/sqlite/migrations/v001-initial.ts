@@ -393,31 +393,6 @@ CREATE TABLE IF NOT EXISTS skill_installations (
 CREATE INDEX IF NOT EXISTS idx_skill_installs_sat_status
   ON skill_installations(satellite_id, status);
 
-CREATE TABLE IF NOT EXISTS marketplace_sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  base_url TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  trust_policy TEXT NOT NULL,
-  pinned_key_ids_json TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS marketplace_cache (
-  id TEXT PRIMARY KEY,
-  source_id TEXT NOT NULL REFERENCES marketplace_sources(id),
-  skill_id TEXT NOT NULL,
-  version TEXT NOT NULL,
-  manifest_json TEXT NOT NULL,
-  signature_valid INTEGER NOT NULL,
-  indexed_at TEXT NOT NULL,
-  trust_score REAL NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(source_id, skill_id, version)
-);
-
 CREATE TABLE IF NOT EXISTS provider_profiles (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -657,4 +632,5 @@ export const V001_INITIAL_MIGRATION: FridaySqliteMigration = {
   name: "v001-initial",
   sql: V001_INITIAL_SQL,
   checksum: computeFridayMigrationChecksum(V001_INITIAL_SQL),
+  acceptedChecksums: ["7112f07518cf1832235a246943dad280fd65e721bf85e41b16b29913f759c2af"], // pragma: allowlist secret
 };

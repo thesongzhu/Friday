@@ -12,6 +12,9 @@ const DEFAULT_TARGETS = [
   "http://127.0.0.1:5173",
   "http://127.0.0.1:4173",
 ];
+const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-runtime-doctor-passphrase-123";
 
 function parseArgs(argv) {
   const ports = [];
@@ -313,13 +316,25 @@ async function inspectTarget(baseUrl, timeoutMs) {
   const health = await request(baseUrl, "/v1/health", {}, timeoutMs);
   const bootstrap = await request(baseUrl, "/v1/auth/bootstrap/status", {}, timeoutMs);
   const setupNoAuth = await request(baseUrl, "/v1/setup/status", {}, timeoutMs);
+  if (bootstrap.ok && bootstrap.kind === "json" && bootstrap.json?.ok === true && bootstrap.json.data?.bootstrapRequired === true) {
+    await request(
+      baseUrl,
+      "/v1/auth/bootstrap/local-passphrase",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+      },
+      timeoutMs,
+    );
+  }
   const login = await request(
     baseUrl,
     "/v1/auth/login",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: true }),
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
     },
     timeoutMs,
   );

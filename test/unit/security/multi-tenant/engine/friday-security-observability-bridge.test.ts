@@ -309,7 +309,7 @@ describe("B-010 FridaySecurityObservabilityBridge", () => {
         subjectType: "plugin",
         subjectId: "plugin-weather",
         outcome: "signature_invalid",
-        reason: "Marketplace plugin signature verification failed",
+        reason: "Plugin signature verification failed",
       });
       const converted = bridge.convertTrustDecision(decision)!;
       expect(converted.action).toBe("security.trust.plugin.evaluate");

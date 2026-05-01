@@ -7,10 +7,6 @@ describe("ui truth regressions", () => {
     expect(AVAILABLE_COMMANDS.some((item) => item.path === "/command-center")).toBe(true);
   });
 
-  it("keeps hidden marketplace routes out of available command results", () => {
-    expect(AVAILABLE_COMMANDS.some((item) => item.path === "/marketplace")).toBe(false);
-  });
-
   it("keeps Google setup copy on the HTTP path instead of promising Gemini CLI", () => {
     const recommendation = getProviderBootstrapRecommendation("google");
 

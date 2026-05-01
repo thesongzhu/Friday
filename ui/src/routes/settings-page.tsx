@@ -11,7 +11,7 @@ import { Activity, AlertTriangle, Brain, Cpu, DollarSign, Globe2, KeyRound, Mess
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { localize, type AppLocale } from "@/lib/i18n/localized-text";
-import { HIDE_MARKETPLACE_UI, HIDE_TRUSTED_DEVICE_UI } from "@/lib/feature-flags";
+import { HIDE_TRUSTED_DEVICE_UI } from "@/lib/feature-flags";
 import { useAppLocale } from "@/providers/locale-provider";
 import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
@@ -1319,14 +1319,6 @@ export function SettingsPage() {
                 { name: localize(locale, "插件", "Plugins"), enabled: health.capabilities?.plugins?.runtimeMode === "full" },
                 { name: localize(locale, "系统编排", "System orchestration"), enabled: health.capabilities?.system?.enabled === true },
                 { name: localize(locale, "通道", "Channels"), enabled: (health.capabilities?.channels?.enabledKinds?.length ?? 0) > 0 },
-                ...(
-                  HIDE_MARKETPLACE_UI
-                    ? []
-                    : [
-                        { name: localize(locale, "市场", "Marketplace"), enabled: health.capabilities?.plugins?.marketplaceAvailable === true },
-                        { name: localize(locale, "商务", "Commerce"), enabled: health.capabilities?.marketplace?.commerceEnabled === true },
-                      ]
-                ),
               ].map((tool) => (
                 <div key={tool.name} className="flex items-center justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-sm">
                   <div className="flex items-center gap-2">

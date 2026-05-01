@@ -320,7 +320,7 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("habitual closing offers");
   });
 
-  it("describes cron, subagents, marketplace, and self-learning truthfully", () => {
+  it("describes cron, subagents, skill catalog, and self-learning truthfully", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["cron", "spawn_subagent", "feedback"],
       modelIdentity: "test-model (provider: test)",
@@ -328,14 +328,13 @@ describe("buildFridayAgentSystemPrompt", () => {
       runtimeCapabilities: {
         cronEnabled: false,
         subagentsEnabled: false,
-        marketplaceEnabled: false,
         selfLearningEnabled: false,
       },
     });
 
     expect(prompt).toContain("Scheduled tasks are not enabled in this deployment.");
     expect(prompt).toContain("Sub-agents are not enabled in this deployment.");
-    expect(prompt).toContain("Skill marketplace is not enabled in this deployment.");
+    expect(prompt).toContain("Skill catalog: execute bundled, generated, and local skills");
     expect(prompt).toContain("Self-learning feedback capture is not enabled in this deployment.");
   });
 

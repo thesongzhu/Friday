@@ -31,7 +31,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday real browser onboarding path", () =
     }
   });
 
-  it("reaches /setup from a fresh runtime without seeded onboarding shortcuts", { timeout: 180_000 }, async () => {
+  it("reaches /setup from a fresh runtime with real local-passphrase auth", { timeout: 180_000 }, async () => {
     env = await createFridayRealBrowserE2eEnv();
 
     const setupStatus = await env.apiFetch<{

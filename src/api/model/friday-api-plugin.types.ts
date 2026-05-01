@@ -3,10 +3,7 @@
  */
 
 import type {
-  FridayPluginCapabilitySummary,
   FridayPluginEntity,
-  FridayPluginPolicySummary,
-  FridayPluginSdkPreviewManifest,
 } from "#plugins";
 
 // ─── List Plugins ───
@@ -50,41 +47,6 @@ export interface FridayUninstallPluginResponse {
   uninstalled: true;
 }
 
-// ─── Marketplace Search ───
-
-export interface FridayMarketplaceSearchResponse {
-  items: Array<{
-    id: string;
-    name: string;
-    description: string;
-    version: string;
-    author: string;
-    downloads: number;
-    updatedAt: string;
-    previewSdk?: FridayPluginSdkPreviewManifest;
-    capabilitySummary?: FridayPluginCapabilitySummary;
-    policySummary?: FridayPluginPolicySummary;
-  }>;
-  total: number;
-}
-
-// ─── Marketplace Plugin Detail ───
-
-export interface FridayMarketplacePluginDetailResponse {
-  plugin: {
-    id: string;
-    name: string;
-    description: string;
-    version: string;
-    author: string;
-    downloads: number;
-    updatedAt: string;
-    previewSdk?: FridayPluginSdkPreviewManifest;
-    capabilitySummary?: FridayPluginCapabilitySummary;
-    policySummary?: FridayPluginPolicySummary;
-  };
-}
-
 // ─── Plugin Versions ───
 
 export interface FridayPluginVersionsResponse {
@@ -93,20 +55,4 @@ export interface FridayPluginVersionsResponse {
     installedAt: string;
     status: string;
   }>;
-}
-
-// ─── Marketplace Plugin Versions ───
-
-export interface FridayMarketplacePluginVersionsResponse {
-  versions: Array<{
-    version: string;
-    releasedAt: string;
-    checksum: string;
-  }>;
-}
-
-// ─── Marketplace Install ───
-
-export interface FridayMarketplaceInstallResponse {
-  plugin: FridayPluginEntity;
 }

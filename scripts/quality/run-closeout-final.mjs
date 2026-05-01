@@ -10,7 +10,6 @@ const steps = createPhaseSteps([
   { type: "npm", label: "Phase 3 closeout", script: "closeout:phase3" },
   { type: "npm", label: "Phase 4 closeout", script: "closeout:phase4" },
   { type: "npm", label: "Phase 5 closeout", script: "closeout:phase5" },
-  { type: "npm", label: "Marketplace closeout", script: "closeout:marketplace" },
   { type: "npm", label: "UI bundle health", script: "check:ui-bundle-health" },
   { type: "npm", label: "Final truth audit", script: "check:closeout:truth:final" },
 ]);
@@ -62,7 +61,7 @@ try {
 
   try {
     assertEvidenceFreshness(
-      ["phase1", "phase2", "phase3", "phase4", "phase5", "marketplace", "final"],
+      ["phase1", "phase2", "phase3", "phase4", "phase5", "final"],
       getGitHead(),
     );
   } catch (error) {

@@ -4,7 +4,9 @@ import type { FridaySqliteLayer } from "#state";
 import { createFridaySkillRepository } from "#skills";
 import { createFridaySkillUpgradeLifecycleService } from "../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 
-import { createTestDb, NOW } from "../skills/marketplace/marketplace.helper.js";
+import { createTestDb } from "../satellites/_helpers/create-test-db.helper.js";
+
+const NOW = "2026-04-17T20:00:00.000Z";
 
 describe("createFridaySkillUpgradeLifecycleService", () => {
   let db: FridaySqliteLayer;
@@ -12,10 +14,10 @@ describe("createFridaySkillUpgradeLifecycleService", () => {
   beforeEach(() => {
     db = createTestDb();
     db.withWriteTransaction((conn) => {
-      createFridaySkillRepository().upsertSkillFromMarketplace(conn, {
+      createFridaySkillRepository().upsertSkillFromCatalog(conn, {
         id: "skill-1",
         name: "Skill 1",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         latestVersion: "1.0.0",
         status: "installed",

@@ -19,7 +19,6 @@ describe("parseFridayDeepLinkUri property tests", () => {
       "skill-source",
       "mcp-server",
       "workflow-template",
-      "marketplace-asset",
     ];
 
     fc.assert(
@@ -61,7 +60,6 @@ describe("parseFridayDeepLinkUri property tests", () => {
       "skill-source",
       "mcp-server",
       "workflow-template",
-      "marketplace-asset",
     ]);
 
     fc.assert(

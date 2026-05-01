@@ -29,13 +29,13 @@ describe("closeout evidence freshness", () => {
 
   it("passes when markdown and json both match the expected git head", () => {
     const failures = collectEvidenceFreshnessFailures(
-      "marketplace",
+      "phase5",
       {
         status: "passed",
         gitHead: "4cf0cd7",
       },
       [
-        "# Marketplace Creator Ecosystem",
+        "# Skills Lifecycle Hardening",
         "",
         "- Status: passed",
         "- Git SHA: 4cf0cd7",

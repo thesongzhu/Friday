@@ -20,7 +20,7 @@ const AuthContext = React.createContext<AuthContextValue | null>(null);
 function normalizeAuthError(error: unknown): Error {
   return error instanceof Error
     ? error
-    : new Error("Failed to establish the local Friday session.");
+    : new Error("Failed to restore the Friday session.");
 }
 
 // ─── Provider ───
@@ -30,28 +30,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = React.useState(true);
   const [authError, setAuthError] = React.useState<Error | null>(null);
 
-  const establishLocalSession = React.useCallback(async () => {
-    try {
-      const me = await fetchMe();
-      setUser(me.user);
-      authStorage.setUser(me.user);
-      setAuthError(null);
-      return;
-    } catch {
-      // Fall back to legacy local login for older backends or remote deployments
-      // that have not enabled no-sign-in localhost identity.
-    }
-
-    const response = await loginRequest({ local: true });
-    setUser(response.user);
-    authStorage.setUser(response.user);
+  const restoreExistingSession = React.useCallback(async () => {
+    const me = await fetchMe();
+    setUser(me.user);
+    authStorage.setUser(me.user);
     setAuthError(null);
   }, []);
 
   const retryLocalSession = React.useCallback(async () => {
     setIsLoading(true);
     try {
-      await establishLocalSession();
+      await restoreExistingSession();
     } catch (error) {
       authStorage.clear();
       setUser(null);
@@ -59,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [establishLocalSession]);
+  }, [restoreExistingSession]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -88,19 +77,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
         }
 
-        try {
-          const me = await fetchMe();
-          if (cancelled) return;
-          setUser(me.user);
-          authStorage.setUser(me.user);
-          setAuthError(null);
-        } catch {
-          const response = await loginRequest({ local: true });
-          if (cancelled) return;
-          setUser(response.user);
-          authStorage.setUser(response.user);
-          setAuthError(null);
-        }
+        if (cancelled) return;
+        setAuthError(null);
       } catch (error) {
         if (cancelled) return;
         authStorage.clear();

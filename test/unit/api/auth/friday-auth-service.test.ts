@@ -78,31 +78,10 @@ describe("FridayAuthService", () => {
     expect(validated.principal.tenantId).toBe("test-user");
   });
 
-  it("reports bootstrapRequired when local user has no password and passwordless is disabled", () => {
+  it("reports bootstrapRequired when local user has no password", () => {
     db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
     const status = service.getBootstrapStatus();
     expect(status.bootstrapRequired).toBe(true);
-    expect(status.allowPasswordlessLocalLogin).toBe(false);
-    expect(status.allowLocalBypassLogin).toBe(false);
-  });
-
-  it("does not require bootstrap when localhost bypass is enabled", () => {
-    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
-    const bypassService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-    });
-
-    const status = bypassService.getBootstrapStatus();
-    expect(status.bootstrapRequired).toBe(false);
-    expect(status.allowPasswordlessLocalLogin).toBe(false);
-    expect(status.allowLocalBypassLogin).toBe(true);
-    expect(bypassService.login({ local: true }, "127.0.0.1").user.id).toBe("test-user");
   });
 
   it("bootstraps local passphrase from localhost exactly once", () => {
@@ -300,108 +279,6 @@ describe("FridayAuthService", () => {
     }
   });
 
-  // ─── Dev mode passwordless login (SEC-001 hardening) ───
-
-  it("rejects dev-mode {} login without local:true flag", () => {
-    // Create a no-password user for dev mode
-    db.writer.prepare("DELETE FROM users WHERE id = 'test-user'").run();
-    db.writer.prepare(
-      `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
-       VALUES ('test-user', 'Test User', 'admin', 1, NULL, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
-    ).run();
-
-    const devService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: () => {},
-    });
-
-    expect(() => devService.login({}, "127.0.0.1")).toThrow(FridayAuthError);
-    try {
-      devService.login({}, "127.0.0.1");
-    } catch (err) {
-      expect((err as FridayAuthError).code).toBe("LOCAL_FLAG_REQUIRED");
-    }
-  });
-
-  it("allows dev-mode login with { local: true } when user has no password", () => {
-    // Create a no-password user for dev mode
-    db.writer.prepare("DELETE FROM users WHERE id = 'test-user'").run();
-    db.writer.prepare(
-      `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
-       VALUES ('test-user', 'Test User', 'admin', 1, NULL, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
-    ).run();
-
-    const devService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: () => {},
-    });
-
-    const result = devService.login({ local: true }, "127.0.0.1");
-    expect(result.accessToken).toBeTruthy();
-    expect(result.refreshToken).toBeTruthy();
-    expect(result.expiresInSec).toBe(900);
-    expect(result.user.id).toBe("test-user");
-    expect(result.user.role).toBe("admin");
-  });
-
-  it("rejects dev-mode { local: true } when user has a password configured", () => {
-    // Default test-user already has a password hash
-    const devService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: () => {},
-    });
-
-    expect(() => devService.login({ local: true }, "127.0.0.1")).toThrow(FridayAuthError);
-    try {
-      devService.login({ local: true }, "127.0.0.1");
-    } catch (err) {
-      expect((err as FridayAuthError).code).toBe("PASSPHRASE_REQUIRED");
-    }
-  });
-
-  it("dev mode passwordless login logs a warning", () => {
-    // Create a no-password user for dev mode
-    db.writer.prepare("DELETE FROM users WHERE id = 'test-user'").run();
-    db.writer.prepare(
-      `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
-       VALUES ('test-user', 'Test User', 'admin', 1, NULL, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')`,
-    ).run();
-
-    const warnings: string[] = [];
-    const devService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: (msg) => warnings.push(msg),
-    });
-    devService.login({ local: true }, "127.0.0.1");
-    // P1-SEC-004/005: Now also logs token secret + rate limiter warnings at construction
-    const passwordlessWarning = warnings.find((w) => w.includes("Passwordless"));
-    expect(passwordlessWarning).toBeDefined();
-  });
-
   it("deduplicates construction warnings for the same warn sink", () => {
     const warn = vi.fn();
 
@@ -426,99 +303,6 @@ describe("FridayAuthService", () => {
 
     expect(warn.mock.calls.filter(([message]) => String(message).includes("Token secret is shorter"))).toHaveLength(1);
     expect(warn.mock.calls.filter(([message]) => String(message).includes("Auth rate limiter not configured"))).toHaveLength(1);
-  });
-
-  it("allows no-signin local bypass with { local: true } even when passphrase exists", () => {
-    const warnings: string[] = [];
-    const bypassService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-      warn: (msg) => warnings.push(msg),
-    });
-
-    const result = bypassService.login({ local: true }, "127.0.0.1");
-    expect(result.user.id).toBe("test-user");
-    expect(result.accessToken).toBeTruthy();
-    expect(warnings.some((w) => w.includes("Local bypass login"))).toBe(true);
-  });
-
-  it("deduplicates repeated local bypass and passwordless warnings per service instance", () => {
-    const warnings: string[] = [];
-    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
-
-    const passwordlessService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowPasswordlessLocalLogin: true,
-      warn: (msg) => warnings.push(msg),
-    });
-    passwordlessService.login({ local: true }, "127.0.0.1");
-    passwordlessService.login({ local: true }, "127.0.0.1");
-
-    const bypassService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-      warn: (msg) => warnings.push(msg),
-    });
-    db.writer.prepare("UPDATE users SET password_hash = ? WHERE id = 'test-user'").run(hashPasswordScrypt("any"));
-    bypassService.login({ local: true }, "127.0.0.1");
-    bypassService.login({ local: true }, "127.0.0.1");
-
-    expect(warnings.filter((message) => message.includes("Passwordless local login used"))).toHaveLength(1);
-    expect(warnings.filter((message) => message.includes("Local bypass login used"))).toHaveLength(1);
-  });
-
-  it("rejects local bypass login from remote IP even with allowLocalBypassLogin", () => {
-    const bypassService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-    });
-
-    try {
-      bypassService.login({ local: true }, "203.0.113.20");
-      throw new Error("expected local bypass login to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(FridayAuthError);
-      expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
-    }
-  });
-
-  it("still requires explicit local:true in no-signin bypass mode", () => {
-    const bypassService = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => NOW,
-      tokenSecret: TOKEN_SECRET,
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-    });
-
-    expect(() => bypassService.login({}, "127.0.0.1")).toThrow(FridayAuthError);
-    try {
-      bypassService.login({}, "127.0.0.1");
-    } catch (err) {
-      expect((err as FridayAuthError).code).toBe("AUTH_METHOD_REQUIRED");
-    }
   });
 
   it("throws when me() has no userId", () => {

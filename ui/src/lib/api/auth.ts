@@ -7,7 +7,6 @@ import type {
 } from "./types";
 
 export interface LoginInput {
-  local?: boolean;
   localPassphrase?: string;
   email?: string;
   password?: string;

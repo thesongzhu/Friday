@@ -59,9 +59,9 @@ const knownCoverageGaps = [
     gap: "not every operator surface and transport has been fully live-dogfooded with the same rigor as provider tier1 routes",
   },
   {
-    layer: "Marketplace / Skills / Plugins",
+    layer: "Skills / Plugins",
     currentValidation: "closure local and existing suite coverage",
-    gap: "not every marketplace and plugin path is yet covered by a dedicated live matrix family harness",
+    gap: "not every plugin path is yet covered by a dedicated live matrix family harness",
   },
 ];
 

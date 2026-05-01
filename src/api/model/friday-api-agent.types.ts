@@ -12,7 +12,6 @@ import type { FridayPaginationQuery } from "./friday-api-common.types.js";
 export interface FridayStartAgentRunRequest {
   task: string;
   taskPrompt?: string;
-  marketplaceListingId?: string;
   providerId?: string;
   requestedProviderId?: string;
   model?: string;

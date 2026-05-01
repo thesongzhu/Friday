@@ -26,7 +26,7 @@ describe("skills view models", () => {
         {
           skillId: "skill.alpha",
           name: "Alpha",
-          source: "marketplace",
+          source: "local",
           origin: "managed",
           status: "installed",
           starter: false,
@@ -38,7 +38,7 @@ describe("skills view models", () => {
         {
           skillId: "skill.beta",
           name: "Beta",
-          source: "marketplace",
+          source: "local",
           origin: "managed",
           status: "installed",
           starter: false,
@@ -90,7 +90,7 @@ describe("skills view models", () => {
         {
           skillId: "skill.alpha",
           name: "Alpha",
-          source: "marketplace",
+          source: "local",
           origin: "managed",
           status: "installed",
           starter: false,
@@ -102,7 +102,7 @@ describe("skills view models", () => {
         {
           skillId: "skill.beta",
           name: "Beta",
-          source: "marketplace",
+          source: "local",
           origin: "managed",
           status: "installed",
           starter: false,
@@ -126,7 +126,7 @@ describe("skills view models", () => {
       summarizeSkillVerification({
         skillId: "skill.alpha",
         name: "Alpha",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         status: "installed",
         starter: false,

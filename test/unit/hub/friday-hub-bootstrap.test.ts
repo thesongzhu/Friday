@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
-import { FridayAuthError } from "#api";
 import { resolveStateDir } from "#state";
 import {
   clearAutoDetectProviderEnv,
@@ -142,7 +141,7 @@ describe("createFridayHub", () => {
     }
   });
 
-  it("always emits passwordless admin warning regardless of test security warning suppression", async () => {
+  it("always emits bootstrap admin warning regardless of test security warning suppression", async () => {
     process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -208,17 +207,4 @@ describe("createFridayHub", () => {
     expect(result.stderr).toContain("not found");
   }, 20_000);
 
-  it("does not allow local bypass login from remote IP", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      hub = await createIsolatedHub();
-      hub!.apiRuntime.auth.login({ local: true }, "203.0.113.20");
-      throw new Error("expected local bypass login to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(FridayAuthError);
-      expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
-    } finally {
-      warnSpy.mockRestore();
-    }
-  });
 });

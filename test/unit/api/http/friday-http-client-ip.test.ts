@@ -1,22 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createFridayAuthService, FridayAuthError } from "../../../../src/api/auth/friday-auth-service.js";
+import { describe, expect, it } from "vitest";
 import {
   parseFridayHttpTrustProxyMode,
   resolveFridayClientIp,
 } from "../../../../src/api/http/friday-http-client-ip.js";
-import type { FridaySqliteLayer } from "#state";
-import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 
 describe("Friday HTTP client IP resolution", () => {
-  let db: FridaySqliteLayer | undefined;
-  let idCounter = 0;
-
-  afterEach(() => {
-    db?.close();
-    db = undefined;
-    idCounter = 0;
-  });
-
   it("defaults to off when the env var is unset", () => {
     expect(parseFridayHttpTrustProxyMode(undefined)).toBe("off");
     expect(parseFridayHttpTrustProxyMode("")).toBe("off");
@@ -70,18 +58,7 @@ describe("Friday HTTP client IP resolution", () => {
     })).toBe("127.0.0.1");
   });
 
-  it("does not allow loopback proxies to turn remote clients into localhost auth callers", () => {
-    db = createTestDb();
-    const service = createFridayAuthService({
-      db,
-      idGenerator: () => `id-${String(++idCounter).padStart(4, "0")}`,
-      nowIso: () => "2025-06-15T10:00:00.000Z",
-      tokenSecret: "test-route-secret", // pragma: allowlist secret
-      accessTokenTtlSec: 900,
-      refreshTokenTtlSec: 604800,
-      allowLocalBypassLogin: true,
-    });
-
+  it("resolves loopback-proxied remote clients as remote addresses", () => {
     const clientIp = resolveFridayClientIp({
       socketIp: "127.0.0.1",
       headers: {
@@ -91,12 +68,5 @@ describe("Friday HTTP client IP resolution", () => {
     });
 
     expect(clientIp).toBe("203.0.113.20");
-    try {
-      service.login({ local: true }, clientIp);
-      throw new Error("expected local login to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(FridayAuthError);
-      expect((err as FridayAuthError).code).toBe("PASSWORDLESS_LOCALHOST_ONLY");
-    }
   });
 });

@@ -1,15 +1,15 @@
 import type {
-  FridayMarketplaceTrustPolicy,
   FridaySignatureVerificationResult,
+  FridaySkillTrustPolicy,
   FridayTrustScoreBreakdown,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 
 // ─── Interface ───
 
 export interface FridaySkillTrustScoringService {
   computeScore(input: FridayTrustScoreInput): FridayTrustScoreBreakdown;
   evaluatePolicy(
-    trustPolicy: FridayMarketplaceTrustPolicy,
+    trustPolicy: FridaySkillTrustPolicy,
     breakdown: FridayTrustScoreBreakdown,
     verification: FridaySignatureVerificationResult,
   ): FridayTrustPolicyDecision;
@@ -17,7 +17,7 @@ export interface FridaySkillTrustScoringService {
 
 export interface FridayTrustScoreInput {
   verification: FridaySignatureVerificationResult;
-  trustPolicy: FridayMarketplaceTrustPolicy;
+  trustPolicy: FridaySkillTrustPolicy;
   hasPinnedKeys: boolean;
   keyPinningPassed: boolean;
   publisherInstallCount: number;
@@ -39,7 +39,7 @@ const SCORE_INTEGRITY_VALID = 15;
 const SCORE_KEY_PINNING_CONFIGURED_PASSED = 20;
 const SCORE_KEY_PINNING_NOT_CONFIGURED = 10;
 
-const SCORE_SOURCE_POLICY: Record<FridayMarketplaceTrustPolicy, number> = {
+const SCORE_SOURCE_POLICY: Record<FridaySkillTrustPolicy, number> = {
   strict: 15,
   warn: 10,
   permissive: 5,

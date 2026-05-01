@@ -64,7 +64,7 @@ function makePluginInput(overrides: Partial<PluginTrustInput> = {}): PluginTrust
   return {
     pluginId: "plugin-weather",
     version: "2.0.0",
-    source: "marketplace" as const,
+    source: "local" as const,
     hasSignature: true,
     keyId: "key-1",
     signatureVerified: true,
@@ -262,14 +262,14 @@ describe("B-009 FridayPackageTrustPolicy", () => {
       expect(result.subjectType).toBe("plugin");
     });
 
-    it("trusts marketplace plugin with valid key and verified signature", () => {
+    it("trusts local plugin with valid key and verified signature", () => {
       policy.addTrustedKey(makeKey());
       const result = policy.evaluatePluginTrust(makePluginInput());
       expect(result.allowed).toBe(true);
       expect(result.outcome).toBe("trusted");
     });
 
-    it("rejects marketplace plugin with unverified signature", () => {
+    it("rejects local plugin with unverified signature", () => {
       policy.addTrustedKey(makeKey());
       const result = policy.evaluatePluginTrust(makePluginInput({ signatureVerified: false }));
       expect(result.allowed).toBe(false);
@@ -280,7 +280,7 @@ describe("B-009 FridayPackageTrustPolicy", () => {
       policy.addTrustedKey(makeKey());
       const result = policy.evaluatePluginTrust(makePluginInput({
         source: "local",
-        signatureVerified: false, // local doesn't require marketplace verification
+        signatureVerified: true,
       }));
       expect(result.allowed).toBe(true);
       expect(result.outcome).toBe("trusted");

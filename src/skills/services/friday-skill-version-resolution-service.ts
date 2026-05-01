@@ -2,14 +2,13 @@ import semver from "semver";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySkillVersionRepository } from "../persistence/friday-skill-version-repository.js";
 import type { FridaySkillInstallationRepository } from "../persistence/friday-skill-installation-repository.js";
-import type { FridayMarketplaceCacheRepository } from "../persistence/friday-marketplace-cache-repository.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type {
   FridaySkillSignature,
   FridaySkillVersionEntity,
   FridaySkillVersionResolutionInput,
   FridaySkillVersionResolutionResult,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 import { FridayDomainError } from "#errors";
 
 // ─── Interface ───
@@ -24,7 +23,6 @@ export interface CreateVersionResolutionServiceDeps {
   db: FridaySqliteLayer;
   versionRepo: FridaySkillVersionRepository;
   installationRepo: FridaySkillInstallationRepository;
-  cacheRepo: FridayMarketplaceCacheRepository;
 }
 
 // ─── Factory ───
@@ -88,29 +86,7 @@ export function createFridaySkillVersionResolutionService(
               );
             }
 
-            // For upgrade, look in cache for source info
             let sourceId = input.sourceId ?? "";
-
-            // Search cache broadly for (skill_id, version) to find the source
-            if (!sourceId) {
-              const cacheResults = deps.cacheRepo.listCatalog(conn, {
-                q: input.skillId,
-                limit: 50,
-              });
-              // Find exact skill_id + version match first
-              const exactMatch = cacheResults.find(
-                (c) => c.skillId === input.skillId && c.version === resolved.version,
-              );
-              if (exactMatch) {
-                sourceId = exactMatch.sourceId;
-              } else {
-                // Fall back to any cache entry for this skill
-                const anyMatch = cacheResults.find((c) => c.skillId === input.skillId);
-                if (anyMatch) {
-                  sourceId = anyMatch.sourceId;
-                }
-              }
-            }
 
             return {
               skillId: input.skillId,

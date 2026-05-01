@@ -12,18 +12,8 @@ import type { FridayRuntimeCapabilityMatrix } from "#providers";
 
 export interface FridayHealthCapabilities {
   schemaVersion: "1.0";
-  auth: {
-    allowPasswordlessLocalLogin: boolean;
-    allowLocalBypassLogin: boolean;
-  };
   plugins: {
     runtimeMode: "stub" | "full";
-    marketplaceAvailable: boolean;
-  };
-  marketplace: {
-    commerceEnabled: boolean;
-    skillSourceEnabled: boolean;
-    pluginMarketplaceEnabled: boolean;
   };
   channels: {
     supportedKinds: string[];
@@ -71,18 +61,8 @@ export function createFridayHealthRoutes(
   const startTime = Date.now();
   const defaultCapabilities: FridayHealthCapabilities = {
     schemaVersion: "1.0",
-    auth: {
-      allowPasswordlessLocalLogin: false,
-      allowLocalBypassLogin: false,
-    },
     plugins: {
       runtimeMode: "stub",
-      marketplaceAvailable: false,
-    },
-    marketplace: {
-      commerceEnabled: false,
-      skillSourceEnabled: false,
-      pluginMarketplaceEnabled: false,
     },
     channels: {
       supportedKinds: [],

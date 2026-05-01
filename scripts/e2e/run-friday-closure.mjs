@@ -30,6 +30,9 @@ const CLOUD_ONLY = process.argv.includes("--cloud-only");
 const CLOUD_CLOSURE_ENABLED = process.env.FRIDAY_E2E_CLOUD_ENABLED === "1";
 const SKIP_INSTALL = process.argv.includes("--skip-install") || process.env.FRIDAY_CLOSURE_SKIP_INSTALL === "1";
 const SKIP_BACKSTOP = process.argv.includes("--skip-backstop") || process.env.FRIDAY_CLOSURE_SKIP_BACKSTOP === "1";
+const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
+  ?? process.env.FRIDAY_LOCAL_PASSPHRASE
+  ?? "friday-closure-passphrase-123";
 if (CLOUD_ONLY && !CLOUD_CLOSURE_ENABLED) {
   console.log("Cloud closure is disabled for this local-first Friday build. Set FRIDAY_E2E_CLOUD_ENABLED=1 to run the legacy cloud closure gate.");
   process.exit(0);
@@ -426,14 +429,32 @@ async function waitForHealth(baseUrl, logPath, timeoutMs = 60_000) {
 }
 
 async function loginLocal(baseUrl) {
+  const bootstrapStatusResponse = await fetch(`${baseUrl}/v1/auth/bootstrap/status`);
+  const bootstrapStatus = await bootstrapStatusResponse.json();
+  if (!bootstrapStatusResponse.ok || !bootstrapStatus.ok) {
+    throw new Error(`Local auth bootstrap status failed: ${JSON.stringify(bootstrapStatus)}`);
+  }
+
+  if (bootstrapStatus.data?.bootstrapRequired === true) {
+    const bootstrapResponse = await fetch(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
+    });
+    const bootstrapBody = await bootstrapResponse.json();
+    if (!bootstrapResponse.ok || !bootstrapBody.ok) {
+      throw new Error(`Local passphrase bootstrap failed: ${JSON.stringify(bootstrapBody)}`);
+    }
+  }
+
   const response = await fetch(`${baseUrl}/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local: true }),
+    body: JSON.stringify({ localPassphrase: LOCAL_PASSPHRASE }),
   });
   const body = await response.json();
   if (!response.ok || !body.ok || !body.data?.accessToken) {
-    throw new Error(`Local login failed: ${JSON.stringify(body)}`);
+    throw new Error(`Local passphrase login failed: ${JSON.stringify(body)}`);
   }
   return body.data;
 }
@@ -2047,13 +2068,11 @@ async function runLocalStage(ledger) {
       const enable = await apiFetch(baseUrl, token, "POST", `/v1/plugins/${manifest.id}/enable`, {});
       const disable = await apiFetch(baseUrl, token, "POST", `/v1/plugins/${manifest.id}/disable`, {});
       const uninstall = await apiFetch(baseUrl, token, "DELETE", `/v1/plugins/${manifest.id}`);
-      const marketplaceSearch = await apiFetch(baseUrl, token, "GET", "/v1/marketplace/plugins");
       const responsePath = writeResponseEvidence(ledger.paths, "local-plugins-lifecycle", {
         install: install.json,
         enable: enable.json,
         disable: disable.json,
         uninstall: uninstall.json,
-        marketplaceSearch: marketplaceSearch.json,
       });
       if (install.status !== 200 || !install.json.ok) {
         throw new Error(`Plugin install failed: ${JSON.stringify(install.json)}`);
@@ -2069,141 +2088,6 @@ async function runLocalStage(ledger) {
       }
       return {
         evidence: { responsePath },
-      };
-    });
-
-    await runStep(ledger, {
-      id: "local.marketplace.requests",
-      stage: `${stage}.marketplace`,
-      description: "Exercise marketplace request board and catalog read surfaces",
-    }, async () => {
-      const requestCreate = await apiFetch(baseUrl, token, "POST", "/v1/marketplace/requests", {
-        assetKind: "skill",
-        title: "Need a shell skill",
-        goal: "Create a shell skill that echoes hello",
-        desiredOutcome: "Installable skill package",
-        constraints: ["Use shell only"],
-        budgetSupportIntent: "tip-if-useful",
-        privacy: "public",
-        publishability: "private_only",
-      });
-      if (requestCreate.status !== 200 || !requestCreate.json.ok) {
-        throw new Error(`Marketplace request create failed: ${JSON.stringify(requestCreate.json)}`);
-      }
-      const requestId = requestCreate.json.data.request.id;
-      const responseCreate = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/requests/${requestId}/responses`, {
-        message: "I can deliver this skill.",
-      });
-      const accept = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/requests/${requestId}/accept`, {
-        responseId: responseCreate.json?.data?.responses?.[0]?.id ?? responseCreate.json?.data?.response?.id ?? responseCreate.json?.data?.responses?.at?.(0)?.id,
-      });
-      const close = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/requests/${requestId}/close`, {});
-      const list = await apiFetch(baseUrl, token, "GET", "/v1/marketplace/requests");
-      const assets = await apiFetch(baseUrl, token, "GET", "/v1/marketplace/assets");
-      const creators = await apiFetch(baseUrl, token, "GET", "/v1/marketplace/creators");
-      const responsePath = writeResponseEvidence(ledger.paths, "local-marketplace-requests", {
-        requestCreate: requestCreate.json,
-        responseCreate: responseCreate.json,
-        accept: accept.json,
-        close: close.json,
-        list: list.json,
-        assets: assets.json,
-        creators: creators.json,
-      });
-      if (responseCreate.status !== 200 || !responseCreate.json.ok) {
-        throw new Error(`Marketplace request response failed: ${JSON.stringify(responseCreate.json)}`);
-      }
-      if (accept.status !== 200 || !accept.json.ok) {
-        throw new Error(`Marketplace accept failed: ${JSON.stringify(accept.json)}`);
-      }
-      if (close.status !== 200 || !close.json.ok) {
-        throw new Error(`Marketplace close failed: ${JSON.stringify(close.json)}`);
-      }
-      return {
-        evidence: { responsePath },
-        details: {
-          assetCount: assets.json?.data?.items?.length ?? assets.json?.items?.length ?? 0,
-          creatorCount: creators.json?.data?.items?.length ?? creators.json?.items?.length ?? 0,
-        },
-      };
-    });
-
-    await runStep(ledger, {
-      id: "local.marketplace.support",
-      stage: `${stage}.marketplace`,
-      description: "Seed a public marketplace asset and record creator support through public routes",
-    }, async () => {
-      const publisher = await apiFetch(baseUrl, token, "POST", "/v1/marketplace/publishers", {
-        displayName: "Closure Publisher",
-        contactEmail: "closure@example.com",
-      });
-      if (publisher.status !== 200 || !publisher.json.ok) {
-        throw new Error(`Marketplace publisher create failed: ${JSON.stringify(publisher.json)}`);
-      }
-      const publisherId = publisher.json?.data?.publisher?.id ?? publisher.json?.publisher?.id;
-      const verification = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/publishers/${publisherId}/verification`, {
-        legalName: "Closure Publisher LLC",
-        taxId: "TAX-123",
-        country: "US",
-        payoutMethod: "stripe",
-      });
-      const verificationReview = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/publishers/${publisherId}/verification/review`, {
-        decision: "verified",
-      });
-      const listing = await apiFetch(baseUrl, token, "POST", "/v1/marketplace/listings", {
-        publisherId,
-        slug: `closure-support-${Date.now()}`,
-        assetType: "workflow",
-        title: "Closure Support Asset",
-        description: "Closure support asset",
-        packageName: "closure.support.asset",
-        packageVersion: "1.0.0",
-        pricingPlan: { type: "free" },
-      });
-      if (listing.status !== 200 || !listing.json.ok) {
-        throw new Error(`Marketplace listing create failed: ${JSON.stringify(listing.json)}`);
-      }
-      const listingId = listing.json?.data?.listing?.id ?? listing.json?.listing?.id;
-      const versionId = listing.json?.data?.version?.id ?? listing.json?.version?.id;
-      const submitForReview = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/listings/${listingId}/submit-for-review`, {
-        versionId,
-      });
-      const listingReview = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/listings/${listingId}/review`, {
-        versionId,
-        decision: "approved",
-      });
-      const assets = await apiFetch(baseUrl, token, "GET", "/v1/marketplace/assets");
-      if (assets.status !== 200 || !assets.json.ok) {
-        throw new Error(`Marketplace assets list failed: ${JSON.stringify(assets.json)}`);
-      }
-      const items = assets.json?.data?.items ?? assets.json?.items ?? [];
-      const asset = Array.isArray(items)
-        ? items.find((item) => item.listingId === listingId || item.slug === listing.json?.data?.listing?.slug)
-        : null;
-      const assetId = asset?.assetId ?? asset?.id;
-      if (!assetId) {
-        throw new Error(`Marketplace asset seed did not produce a public asset: ${JSON.stringify(assets.json)}`);
-      }
-      const support = await apiFetch(baseUrl, token, "POST", `/v1/marketplace/assets/${assetId}/support`, {
-        amount: { amount: 500, currency: "USD" },
-        message: "Closure support smoke test",
-      });
-      if (support.status !== 200 || !support.json.ok) {
-        throw new Error(`Marketplace support failed: ${JSON.stringify(support.json)}`);
-      }
-      const responsePath = writeResponseEvidence(ledger.paths, "local-marketplace-support", {
-        publisher: publisher.json,
-        verification: verification.json,
-        verificationReview: verificationReview.json,
-        listing: listing.json,
-        submitForReview: submitForReview.json,
-        listingReview: listingReview.json,
-        assets: assets.json,
-        support: support.json,
-      });
-      return {
-        evidence: { responsePath },
-        details: { assetId, publisherId, listingId },
       };
     });
 

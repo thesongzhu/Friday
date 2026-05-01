@@ -205,7 +205,6 @@ export async function createFridayApiTestEnv(
     tokenSecret: TOKEN_SECRET,
     accessTokenTtlSec: ACCESS_TTL,
     refreshTokenTtlSec: REFRESH_TTL,
-    allowPasswordlessLocalLogin: true, // E2E tests use passwordless login
     providerService,
     memoryService,
     converterService: options.converterService,

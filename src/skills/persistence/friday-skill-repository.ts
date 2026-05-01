@@ -14,12 +14,12 @@ import type {
   FridaySkillEntity,
   FridaySkillRow,
   UUID,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 
 // ─── Interface ───
 
 export interface FridaySkillRepository {
-  upsertSkillFromMarketplace(
+  upsertSkillFromCatalog(
     db: Database.Database,
     input: {
       id: string;
@@ -121,7 +121,7 @@ function requireSkillRow(row: FridaySkillRow | undefined, skillId: string): Frid
 
 export function createFridaySkillRepository(): FridaySkillRepository {
   return {
-    upsertSkillFromMarketplace(db, input) {
+    upsertSkillFromCatalog(db, input) {
       db.prepare(
         `INSERT INTO skills (id, name, source, origin, publisher, latest_version, installed_version, status, current_manifest_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)

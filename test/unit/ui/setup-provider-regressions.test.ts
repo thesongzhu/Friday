@@ -80,14 +80,17 @@ describe("setup provider regressions", () => {
     expect(hubSource).toContain("回复「批准");
   });
 
-  it("recovers setup API calls with the local session instead of surfacing login errors", () => {
+  it("refreshes stored sessions without reviving local no-password login", () => {
     const apiClientSource = readFileSync("ui/src/lib/api/client.ts", "utf8");
+    const authProviderSource = readFileSync("ui/src/providers/auth-provider.tsx", "utf8");
+    const authApiSource = readFileSync("ui/src/lib/api/auth.ts", "utf8");
 
-    expect(apiClientSource).toContain("establishLocalSession");
-    expect(apiClientSource).toContain("establishLocalIdentity");
-    expect(apiClientSource).toContain("\"/v1/auth/me\"");
-    expect(apiClientSource).toContain("JSON.stringify({ local: true })");
-    expect(apiClientSource).toContain("res.status === 401 && retry && canRecoverWithLocalSession(path)");
+    expect(authApiSource).toContain("\"/v1/auth/me\"");
+    expect(authProviderSource).toContain("authStorage.getAccessToken()");
+    expect(authProviderSource).toContain("const me = await fetchMe()");
+    expect(apiClientSource).not.toContain("JSON.stringify({ local:");
+    expect(apiClientSource).not.toContain("local: true");
+    expect(apiClientSource).toContain("res.status === 401 && retry && canRefreshSession(path)");
     expect(apiClientSource).toContain("return apiFetch<T>(path, init, false)");
   });
 

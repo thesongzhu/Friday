@@ -101,7 +101,7 @@ export interface PluginTrustInput {
   /** Plugin version. */
   readonly version: string;
   /** Source of the plugin. */
-  readonly source: "marketplace" | "local" | "bundled";
+  readonly source: "local" | "bundled";
   /** The signing key ID from the plugin signature. */
   readonly keyId?: string;
   /** Whether the plugin has a valid signature. */
@@ -332,9 +332,8 @@ export function createPackageTrustPolicy(
       const keyResult = evaluateKeyTrust(input.keyId, input.hasSignature, input.pluginId, input.version, "plugin");
       if (keyResult) return keyResult;
 
-      // Marketplace plugins must have verified signatures
-      if (input.source === "marketplace" && !input.signatureVerified) {
-        return makeDecision(false, "signature_invalid", "Marketplace plugin signature verification failed", input.pluginId, input.version, "plugin", input.keyId);
+      if (input.source === "local" && input.hasSignature && !input.signatureVerified) {
+        return makeDecision(false, "signature_invalid", "Local plugin signature verification failed", input.pluginId, input.version, "plugin", input.keyId);
       }
 
       return makeDecision(true, "trusted", "Plugin signature verified against trust store", input.pluginId, input.version, "plugin", input.keyId);

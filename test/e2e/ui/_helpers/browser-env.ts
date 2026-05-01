@@ -91,6 +91,19 @@ export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowser
         baseURL: runtime.baseUrl,
         timezoneId: "America/Los_Angeles",
       });
+      await context.addInitScript(
+        ({ accessToken, refreshToken }) => {
+          const writeAuthToken = window.localStorage["setItem"].bind(window.localStorage);
+          writeAuthToken("friday.auth.accessToken", accessToken);
+          if (refreshToken) {
+            writeAuthToken("friday.auth.refreshToken", refreshToken);
+          }
+        },
+        {
+          accessToken: runtime.accessToken,
+          refreshToken: runtime.refreshToken ?? null,
+        },
+      );
       const page = await context.newPage();
 
       return {

@@ -93,11 +93,6 @@ import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-b
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
-import { createFridayMarketplaceCommerceRoutes } from "../http/routes/friday-marketplace-commerce-routes.js";
-import { createFridayMarketplaceAssetRoutes } from "../http/routes/friday-marketplace-asset-routes.js";
-import { createFridayMarketplaceCreatorRoutes } from "../http/routes/friday-marketplace-creator-routes.js";
-import { createFridayMarketplaceRequestRoutes } from "../http/routes/friday-marketplace-request-routes.js";
-import { createFridaySkillMarketplaceRoutes } from "../http/routes/friday-skill-marketplace-routes.js";
 import { createFridayMultiTenantSecurityRoutes } from "../http/routes/friday-multi-tenant-security-routes.js";
 import { createFridayObservabilityRoutes } from "../http/routes/friday-observability-routes.js";
 import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satellite-pairing-routes.js";
@@ -477,8 +472,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     tokenSecret: deps.tokenSecret,
     accessTokenTtlSec,
     refreshTokenTtlSec,
-    allowPasswordlessLocalLogin: deps.allowPasswordlessLocalLogin ?? false,
-    allowLocalBypassLogin: deps.allowLocalBypassLogin ?? false,
     markAccessTokenRevoked,
     registerIssuedAccessToken: (db, input) => {
       tokenRepo.recordAuthAccessToken(db, {
@@ -818,18 +811,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
       return {
         schemaVersion: "1.0" as const,
-        auth: {
-          allowPasswordlessLocalLogin: deps.allowPasswordlessLocalLogin ?? false,
-          allowLocalBypassLogin: deps.allowLocalBypassLogin ?? false,
-        },
         plugins: {
           runtimeMode: deps.pluginRuntimeMode ?? "stub",
-          marketplaceAvailable: deps.pluginMarketplaceAvailable ?? false,
-        },
-        marketplace: {
-          commerceEnabled: deps.marketplaceCommerce !== undefined,
-          skillSourceEnabled: deps.skillMarketplace !== undefined,
-          pluginMarketplaceEnabled: deps.pluginMarketplaceAvailable ?? false,
         },
         channels: {
           supportedKinds: deps.supportedChannelKinds ?? [],
@@ -1455,17 +1438,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register run routes (real service wiring)
   for (const route of createFridayWorkflowRunRoutes({
-    assertListingEntitled: async (listingId, principal) => {
-      if (!deps.marketplaceEntitlementCheck) return;
-      if (!principal?.principalId) {
-        throw new FridayDomainError("UNAUTHORIZED", "Authentication required", { httpStatus: 401 });
-      }
-      await deps.marketplaceEntitlementCheck({
-        listingId,
-        tenantId: resolvePrincipalTenantId(principal) ?? principal.principalId,
-        principalId: principal.principalId,
-      });
-    },
     startRun: async (input, principal) => {
       const runSecurityContext = principal
         ? {
@@ -1996,100 +1968,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register MCP server route surface with stable disabled semantics when absent.
   for (const route of createFridayMcpServerRoutes(deps.mcpServer)) {
     routes.register(route as unknown as Parameters<typeof routes.register>[0]);
-  }
-
-  // Register marketplace commerce routes (optional)
-  if (deps.marketplaceCommerce) {
-    for (const route of createFridayMarketplaceCommerceRoutes(deps.marketplaceCommerce)) {
-      const guardedRoute = route.operationId.startsWith("marketplace.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute as unknown as Parameters<typeof routes.register>[0]);
-    }
-  }
-
-  // Register unified marketplace asset catalog routes (optional)
-  if (deps.marketplaceAssets) {
-    for (const route of createFridayMarketplaceAssetRoutes(deps.marketplaceAssets)) {
-      const guardedRoute = route.operationId.startsWith("marketplace.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute as unknown as Parameters<typeof routes.register>[0]);
-    }
-  }
-
-  // Register marketplace creator support/profile routes (optional)
-  if (deps.marketplaceCreators) {
-    for (const route of createFridayMarketplaceCreatorRoutes(deps.marketplaceCreators)) {
-      const guardedRoute = route.operationId.startsWith("marketplace.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute as unknown as Parameters<typeof routes.register>[0]);
-    }
-  }
-
-  if (deps.marketplaceRequests) {
-    for (const route of createFridayMarketplaceRequestRoutes(deps.marketplaceRequests)) {
-      const guardedRoute = route.operationId.startsWith("marketplace.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute as unknown as Parameters<typeof routes.register>[0]);
-    }
-  }
-
-  // Register skill marketplace control-plane routes (optional)
-  if (deps.skillMarketplace) {
-    for (const route of createFridaySkillMarketplaceRoutes(deps.skillMarketplace)) {
-      const guardedRoute = route.operationId.startsWith("marketplace.")
-        ? {
-          ...route,
-          async handler(ctx: Parameters<typeof route.handler>[0]) {
-            const tenantId = resolveTenantIdFromContext(ctx);
-            if (tenantId) {
-              assertTenantScopedAccess(ctx.principal, tenantId);
-            }
-            return route.handler(ctx);
-          },
-        }
-        : route;
-      routes.register(guardedRoute as unknown as Parameters<typeof routes.register>[0]);
-    }
   }
 
   // Register satellite pairing routes (optional)
@@ -2737,17 +2615,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     });
 
     for (const route of createFridayAgentRoutes({
-      assertListingEntitled: async (listingId, principal) => {
-        if (!deps.marketplaceEntitlementCheck) return;
-        if (!principal?.principalId) {
-          throw new FridayDomainError("UNAUTHORIZED", "Authentication required", { httpStatus: 401 });
-        }
-        await deps.marketplaceEntitlementCheck({
-          listingId,
-          tenantId: resolvePrincipalTenantId(principal) ?? principal.principalId,
-          principalId: principal.principalId,
-        });
-      },
       validateRequestedRoute: async (providerId, model) => {
         await deps.providerService.resolveRoute(model, providerId);
       },

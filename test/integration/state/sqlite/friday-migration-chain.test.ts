@@ -175,8 +175,6 @@ describe("Friday Migration Chain (V001–V024)", () => {
       "skills",
       "skill_versions",
       "skill_installations",
-      "marketplace_sources",
-      "marketplace_cache",
       "provider_profiles",
       "secrets",
       "memory_items",
@@ -229,9 +227,7 @@ describe("Friday Migration Chain (V001–V024)", () => {
     // V008
     expect(tableNames).toContain("plugins");
     expect(tableNames).toContain("plugin_dependencies");
-    expect(tableNames).toContain("plugin_marketplace_sources");
     expect(tableNames).toContain("plugin_versions");
-    expect(tableNames).toContain("plugin_marketplace_cache");
 
     // V009
     expect(tableNames).toContain("workflow_trigger_registrations");

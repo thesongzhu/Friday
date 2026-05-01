@@ -118,7 +118,6 @@ describe("CLI start runtime (http server boot)", () => {
       idGenerator,
       nowIso: () => NOW,
       tokenSecret: TOKEN_SECRET,
-      allowPasswordlessLocalLogin: true, // E2E tests use passwordless login
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604_800,
       providerService,
@@ -173,7 +172,6 @@ describe("CLI start runtime (http server boot)", () => {
       idGenerator,
       nowIso: () => NOW,
       tokenSecret: TOKEN_SECRET,
-      allowPasswordlessLocalLogin: true, // E2E tests use passwordless login
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604_800,
       providerService,
@@ -224,7 +222,6 @@ describe("CLI start runtime (http server boot)", () => {
       idGenerator,
       nowIso: () => NOW,
       tokenSecret: TOKEN_SECRET,
-      allowPasswordlessLocalLogin: true, // E2E tests use passwordless login
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604_800,
       providerService,

@@ -1,5 +1,4 @@
 import type { LocalizedText } from "@/lib/i18n/localized-text";
-import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localizedText } from "@/lib/i18n/localized-text";
 
 export interface AgentOsNavItem {
@@ -134,9 +133,6 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/assistant")) {
     return localizedText("助手", "Assistant");
-  }
-  if (pathname.startsWith("/marketplace")) {
-    return HIDE_MARKETPLACE_UI ? localizedText("助手", "Assistant") : localizedText("资产市场", "Marketplace");
   }
   if (pathname.startsWith("/workflows")) {
     return localizedText("自动化", "Workflows");

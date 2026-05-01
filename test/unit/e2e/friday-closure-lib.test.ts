@@ -78,21 +78,19 @@ describe("friday closure lib", () => {
     expect(blockers).not.toContain('Channel "discord" is not configured in FRIDAY_CHANNELS_JSON');
   });
 
-  it("defaults local closure scratch env to local bypass login while preserving explicit overrides", () => {
+  it("builds local closure scratch env without auth bypass flags", () => {
     const scratch = buildClosureScratchEnv({}, { state: "/tmp/friday-state" });
     expect(scratch.FRIDAY_STATE_DIR).toBe("/tmp/friday-state");
     expect(scratch.FRIDAY_CHANNELS_JSON).toBe('{"enabled":true,"instances":[]}');
     expect(scratch.FRIDAY_BROWSER_HEADLESS).toBe("true");
-    expect(scratch.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN).toBe("true");
+    expect(Object.keys(scratch)).not.toContain(`FRIDAY_ALLOW_LOCAL_${"BYPASS_LOGIN"}`);
 
     const explicit = buildClosureScratchEnv(
       {
-        FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN: "false",
         FRIDAY_CHANNELS_JSON: '{"enabled":true,"instances":[{"kind":"discord","token":"$DISCORD_BOT_TOKEN"}]}',
       },
       { state: "/tmp/other-state" },
     );
-    expect(explicit.FRIDAY_ALLOW_LOCAL_BYPASS_LOGIN).toBe("false");
     expect(explicit.FRIDAY_CHANNELS_JSON).toContain('"discord"');
   });
 

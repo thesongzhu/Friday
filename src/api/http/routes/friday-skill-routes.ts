@@ -197,7 +197,6 @@ export function createFridaySkillRoutes(
       method: "POST",
       path: "/v1/skills/install",
       auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
-      rateLimitPolicyId: "marketplace.write",
       async handler(ctx) {
         const body = asRecord(ctx.body);
         const skillId = asOptionalString(body.skillId, "skillId");
@@ -222,7 +221,6 @@ export function createFridaySkillRoutes(
       method: "POST",
       path: "/v1/skills/:skillId/update",
       auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
-      rateLimitPolicyId: "marketplace.write",
       async handler(ctx) {
         const body = asRecord(ctx.body);
         const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
@@ -242,7 +240,6 @@ export function createFridaySkillRoutes(
       method: "DELETE",
       path: "/v1/skills/:skillId",
       auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
-      rateLimitPolicyId: "marketplace.write",
       async handler(ctx) {
         const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
         return deps.lifecycle!.deleteSkill({

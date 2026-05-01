@@ -89,18 +89,6 @@ describe("Core plugin protection", () => {
     }
   });
 
-  it("rejects upsert of core plugin from marketplace source", () => {
-    expect(() =>
-      registry.upsert(makeInput("friday.channel.discord", { source: "marketplace" })),
-    ).toThrow(FridayDomainError);
-
-    try {
-      registry.upsert(makeInput("friday.channel.discord", { source: "marketplace" }));
-    } catch (err) {
-      expect((err as FridayDomainError).code).toBe("PLUGIN_CORE_PLUGIN_PROTECTED");
-    }
-  });
-
   it("rejects upsert of telegram core plugin from non-bundled source", () => {
     expect(() =>
       registry.upsert(makeInput("friday.channel.telegram", { source: "local" })),
@@ -341,7 +329,7 @@ describe("Multi-source same-ID handling", () => {
 
   it("resolveRuntimePlugins returns one entry per ID", () => {
     registry.upsert(makeInput("friday.test.alpha", { source: "local" }));
-    registry.upsert(makeInput("friday.test.beta", { source: "marketplace" }));
+    registry.upsert(makeInput("friday.test.beta", { source: "bundled" }));
 
     const runtime = registry.resolveRuntimePlugins();
     expect(runtime).toHaveLength(2);

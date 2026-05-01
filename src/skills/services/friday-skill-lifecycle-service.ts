@@ -11,10 +11,10 @@ import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.
 import { safeParseFridaySkillManifestV2 } from "../manifest/friday-skill-manifest.schema.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type {
-  FridayMarketplaceSourceEntity,
   FridaySignatureVerificationResult,
   FridaySkillCatalogItem,
   FridaySkillCatalogQuery,
+  FridaySkillCatalogResult,
   FridaySkillEligibility,
   FridaySkillEntity,
   FridaySkillFailureEvidenceSummary,
@@ -24,19 +24,17 @@ import type {
   FridaySkillInstallResult,
   FridaySkillPermissionPreview,
   FridaySkillRequirementPreview,
+  FridaySkillSourceEntity,
   FridaySkillVerificationStatus,
   FridaySkillVersionEntity,
   FridayTrustScoreBreakdown,
   JsonValue,
-} from "../model/friday-skill-marketplace.types.js";
+} from "../model/friday-skill-catalog.types.js";
 import type { SkillOrigin } from "../model/friday-skill-source.types.js";
-import type { FridayMarketplaceCacheRepository } from "../persistence/friday-marketplace-cache-repository.js";
-import type { FridayMarketplaceSourceRepository } from "../persistence/friday-marketplace-source-repository.js";
 import type { FridaySkillInstallationRepository } from "../persistence/friday-skill-installation-repository.js";
 import type { FridaySkillRepository } from "../persistence/friday-skill-repository.js";
 import type { FridaySkillVersionRepository } from "../persistence/friday-skill-version-repository.js";
 import type { FridayRegisteredSkill, FridaySkillRegistry } from "../registry/friday-skill-registry.types.js";
-import type { FridayMarketplaceDiscoveryService, FridaySkillCatalogResult } from "./friday-marketplace-discovery-service.js";
 import type { FridaySkillInstallationService } from "./friday-skill-installation-service.js";
 import type { FridaySkillPackageInstaller } from "./friday-skill-package-installer.js";
 import type { FridaySkillSignatureVerifier } from "./friday-skill-signature-verifier.js";
@@ -154,7 +152,7 @@ export interface FridaySkillLifecycleSummary {
 }
 
 export interface FridaySkillLifecycleDetail extends FridaySkillLifecycleSummary {
-  sourceDetails?: FridayMarketplaceSourceEntity;
+  sourceDetails?: FridaySkillSourceEntity;
   versions: FridaySkillVersionEntity[];
   installations: FridaySkillInstallationEntity[];
   catalogEntry?: FridaySkillCatalogItem;
@@ -165,7 +163,7 @@ export interface FridaySkillCatalogViewItem extends FridaySkillCatalogItem {
   installed: boolean;
   installedVersion?: string;
   updateAvailable: boolean;
-  sourceDetails?: FridayMarketplaceSourceEntity;
+  sourceDetails?: FridaySkillSourceEntity;
   originType: FridaySkillOriginType;
   maturity: FridaySkillMaturity;
   verificationStatus: FridaySkillVerificationStatus;
@@ -222,7 +220,6 @@ export interface CreateFridaySkillLifecycleServiceDeps {
   hubVersion: string;
   supportedApiVersions: string[];
   registry: FridaySkillRegistry;
-  discovery: FridayMarketplaceDiscoveryService;
   installations: FridaySkillInstallationService;
   packageInstaller: FridaySkillPackageInstaller;
   signatureVerifier: FridaySkillSignatureVerifier;
@@ -230,8 +227,6 @@ export interface CreateFridaySkillLifecycleServiceDeps {
   skillRepo: FridaySkillRepository;
   versionRepo: FridaySkillVersionRepository;
   installationRepo: FridaySkillInstallationRepository;
-  sourceRepo: FridayMarketplaceSourceRepository;
-  cacheRepo: FridayMarketplaceCacheRepository;
   selfHealing?: FridaySelfHealingApiService;
 }
 
@@ -516,13 +511,13 @@ function buildSkillPreflightSummary(input: {
       : input.trustSummary.verdict === "warning"
         ? "warning"
         : "pass",
-    summary: input.trustSummary.verdict === "blocked"
-      ? "Trust policy blocks this skill in its current state."
-      : input.trustSummary.verdict === "warning"
-        ? "Trust policy requires operator review before wider rollout."
-        : input.trustSummary.verdict === "local"
-          ? "Bundled or workspace-managed skill bypasses marketplace trust checks."
-          : "Trust policy checks passed.",
+	    summary: input.trustSummary.verdict === "blocked"
+	      ? "Trust policy blocks this skill in its current state."
+	      : input.trustSummary.verdict === "warning"
+	        ? "Trust policy requires operator review before wider rollout."
+	        : input.trustSummary.verdict === "local"
+	          ? "Bundled or workspace-managed skill uses local trust checks."
+	          : "Trust policy checks passed.",
     details: input.trustSummary.reasons,
   });
 
@@ -567,7 +562,7 @@ function buildSkillPreflightSummary(input: {
 
 function buildVerificationStatus(input: {
   registered: FridayRegisteredSkill | null;
-  source: FridayMarketplaceSourceEntity | undefined;
+  source: FridaySkillSourceEntity | undefined;
   catalogEntry: FridaySkillCatalogItem | null;
 }): FridaySkillVerificationStatus {
   if (input.registered) {
@@ -683,7 +678,7 @@ function buildImplementationStatus(input: {
 
 function buildInstallPlan(input: {
   sourceId?: string;
-  source?: FridayMarketplaceSourceEntity;
+  source?: FridaySkillSourceEntity;
   installedVersion?: string;
   targetVersion?: string;
   requirements: FridaySkillRequirementPreview;
@@ -837,7 +832,7 @@ function persistedToSummary(skill: FridaySkillEntity, catalogEntry: FridaySkillC
 function enrichSummary(input: {
   summary: FridaySkillLifecycleSummary;
   manifest?: SkillManifestV2;
-  source?: FridayMarketplaceSourceEntity;
+  source?: FridaySkillSourceEntity;
   catalogEntry: FridaySkillCatalogItem | null;
   installations: FridaySkillInstallationEntity[];
   registered: FridayRegisteredSkill | null;
@@ -886,28 +881,8 @@ export function createFridaySkillLifecycleService(
   deps: CreateFridaySkillLifecycleServiceDeps,
 ): FridaySkillLifecycleService {
   function getCatalogCandidates(skillId: string): FridaySkillCatalogItem[] {
-    return deps.db.withReadConnection((db) =>
-      deps.cacheRepo.listCatalog(db, {
-        q: skillId,
-        limit: 100,
-        includeStale: true,
-      }),
-    ).filter((item) => item.skillId === skillId).map((item) => {
-      const manifest = item.manifestJson as unknown as SkillManifestV2;
-      return {
-        sourceId: item.sourceId,
-        skillId: item.skillId,
-        skillName: manifest.name ?? item.skillId,
-        publisher: manifest.author?.name,
-        version: item.version,
-        category: manifest.category,
-        releasedAt: item.indexedAt,
-        signatureValid: item.signatureValid,
-        trustScore: item.trustScore,
-        starter: (manifest.tags ?? []).includes("starter"),
-        manifest,
-      };
-    });
+    void skillId;
+    return [];
   }
 
   function getPersistedSkill(skillId: string): FridaySkillEntity | null {
@@ -928,13 +903,9 @@ export function createFridaySkillLifecycleService(
     );
   }
 
-  function getSource(sourceId?: string): FridayMarketplaceSourceEntity | undefined {
-    if (!sourceId) {
-      return undefined;
-    }
-    return deps.db.withReadConnection((db) =>
-      deps.sourceRepo.getSourceById(db, sourceId),
-    ) ?? undefined;
+  function getSource(sourceId?: string): FridaySkillSourceEntity | undefined {
+    void sourceId;
+    return undefined;
   }
 
   function buildSummary(skillId: string): FridaySkillLifecycleSummary | null {
@@ -986,7 +957,7 @@ export function createFridaySkillLifecycleService(
         skillId: catalogEntry.skillId,
         name: catalogEntry.skillName,
         description: catalogEntry.manifest.description,
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         status: "not_installed",
         starter: (catalogEntry.manifest.tags ?? []).includes("starter"),
@@ -1184,7 +1155,7 @@ export function createFridaySkillLifecycleService(
   }
 
   function buildTrustSummary(input: {
-    source: FridayMarketplaceSourceEntity | undefined;
+    source: FridaySkillSourceEntity | undefined;
     catalogEntry: FridaySkillCatalogItem | null;
     verification: FridaySignatureVerificationResult | null;
     score: FridayTrustScoreBreakdown | null;
@@ -1274,7 +1245,8 @@ export function createFridaySkillLifecycleService(
     },
 
     listCatalog(query) {
-      const result = deps.discovery.search(query);
+      void query;
+      const result: FridaySkillCatalogResult = { items: [], total: 0 };
       const items = result.items.map((item) => buildCatalogViewItem(item));
       return {
         ...result,

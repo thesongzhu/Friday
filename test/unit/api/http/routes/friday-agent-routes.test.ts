@@ -632,50 +632,6 @@ describe("FridayAgentRoutes", () => {
       );
     });
 
-    it("checks marketplace entitlement when marketplaceListingId is provided", async () => {
-      const assertListingEntitled = vi.fn().mockResolvedValue(undefined);
-      const routes = createFridayAgentRoutes({
-        ...stubDeps,
-        assertListingEntitled,
-      });
-      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
-      const ctx = {
-        body: { task: "Secure run", marketplaceListingId: "listing-1" },
-        params: {},
-        query: {},
-        headers: {},
-        principal: {
-          principalType: "user",
-          principalId: "principal-1",
-          userId: "user-1",
-          role: "owner",
-          scopes: ["agent.run"],
-          tokenId: "token-1",
-          tokenKind: "access",
-          issuedAt: "2026-01-01T00:00:00.000Z",
-          expiresAt: "2026-01-01T01:00:00.000Z",
-        },
-        requestId: "req-1",
-        receivedAt: "2026-01-01T00:00:00.000Z",
-      };
-      await route.handler(ctx);
-      expect(assertListingEntitled).toHaveBeenCalledWith("listing-1", ctx.principal);
-    });
-
-    it("validates marketplaceListingId is non-empty when provided", async () => {
-      const routes = createFridayAgentRoutes(stubDeps);
-      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
-      const ctx = {
-        body: { task: "Secure run", marketplaceListingId: "   " },
-        params: {},
-        query: {},
-        headers: {},
-        principal: null,
-        requestId: "req-1",
-        receivedAt: "2026-01-01T00:00:00.000Z",
-      };
-      await expect(route.handler(ctx)).rejects.toThrow("marketplaceListingId must be a non-empty string when provided");
-    });
   });
 
   describe("GET /v1/agent/runs handler", () => {

@@ -36,8 +36,6 @@ describe("v001-schema", () => {
     "skills",
     "skill_versions",
     "skill_installations",
-    "marketplace_sources",
-    "marketplace_cache",
     "provider_profiles",
     "secrets",
     "memory_items",

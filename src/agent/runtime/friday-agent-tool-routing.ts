@@ -269,7 +269,7 @@ function classifyFridayToolRoutingProfile(input: {
   if (/\b(workflow|automation|schedule|cron|trigger|dag|pipeline)\b|工作流|自动化|定时|触发器/u.test(text)) {
     return "workflow";
   }
-  if (/\b(skill|skills|plugin|marketplace)\b|技能|插件|市场/u.test(text)) {
+  if (/\b(skill|skills|plugin)\b|技能|插件/u.test(text)) {
     return "skill";
   }
   if (/\b(latest|current|today|news|search|lookup|source|url|https?:\/\/|documentation|docs)\b|最新|今天|最近|新闻|搜索|查一下|资料|来源/u.test(text)) {

@@ -12,12 +12,6 @@ import type {
 import type { FridayPluginRegistryService } from "./friday-plugin-registry-service.js";
 import type { FridayPluginDependencyResolver } from "./friday-plugin-dependency-resolver.js";
 import type { FridayPluginLoader } from "./friday-plugin-loader.js";
-import type {
-  FridayMarketplacePluginDetail,
-  FridayMarketplaceSearchQuery,
-  FridayMarketplaceSearchResult,
-  FridayPluginMarketplaceClient,
-} from "./friday-plugin-marketplace-client.js";
 import type { FridayPluginSignatureVerifier } from "../security/friday-plugin-signature-verifier.js";
 
 // ─── Version Info ───
@@ -26,12 +20,6 @@ export interface FridayPluginVersionInfo {
   version: string;
   installedAt: string;
   status: string;
-}
-
-export interface FridayMarketplacePluginVersionInfo {
-  version: string;
-  releasedAt: string;
-  checksum: string;
 }
 
 // ─── Service Interface ───
@@ -51,20 +39,12 @@ export interface FridayPluginService {
   disablePlugin(pluginId: string): Promise<FridayPluginEntity>;
   /** Uninstall a plugin. */
   uninstallPlugin(pluginId: string, force?: boolean): Promise<void>;
-  /** Search the marketplace. */
-  searchMarketplace(query: FridayMarketplaceSearchQuery): Promise<FridayMarketplaceSearchResult>;
-  /** Get marketplace plugin detail. */
-  getMarketplacePlugin(pluginId: string): Promise<FridayMarketplacePluginDetail>;
-  /** List versions for a marketplace plugin. */
-  listMarketplacePluginVersions(pluginId: string): Promise<FridayMarketplacePluginVersionInfo[]>;
-  /** Install a plugin from the marketplace. */
-  installFromMarketplace(pluginId: string): Promise<FridayPluginEntity>;
 }
 
 export interface FridayPluginInstallInput {
   manifest: FridayPluginManifest;
   installPath: string;
-  source: "local" | "marketplace";
+  source: "local";
   packageBytes?: Buffer;
   userApproved?: boolean;
 }
@@ -84,15 +64,10 @@ export interface CreateFridayPluginServiceDeps {
   registry: FridayPluginRegistryService;
   resolver: FridayPluginDependencyResolver;
   loader: FridayPluginLoader;
-  marketplace?: FridayPluginMarketplaceClient;
   signatureVerifier: FridayPluginSignatureVerifier;
   previewPolicy?: FridayPluginPreviewPolicyConfig;
   nowIso: () => string;
   idGenerator: () => string;
   /** Read a file from disk as a Buffer. Used to compute fingerprints for local installs. */
   readFileAsBuffer?: (filePath: string) => Buffer;
-  /** Resolve a marketplace signature key id to a trusted Ed25519 public key PEM. */
-  resolveMarketplacePublicKeyPem?: (keyId: string, manifest: FridayPluginManifest) => string | undefined;
-  /** Optional pinned marketplace key ids. Empty means no additional pin constraint. */
-  pinnedMarketplaceKeyIds?: readonly string[];
 }

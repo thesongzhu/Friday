@@ -196,7 +196,7 @@ export function StudioPage() {
           <div className="flex flex-wrap gap-2">
             <StatusPill tone="success">{localize(locale, "First-party", "First-party")}</StatusPill>
             <StatusPill tone="success">{localize(locale, "本地优先", "Local-first")}</StatusPill>
-            <StatusPill tone="neutral">{localize(locale, "无 Marketplace", "No marketplace")}</StatusPill>
+            <StatusPill tone="neutral">{localize(locale, "本地运行", "Local runtime")}</StatusPill>
           </div>
         </div>
       </section>

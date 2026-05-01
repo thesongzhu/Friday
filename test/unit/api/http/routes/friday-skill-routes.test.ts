@@ -30,7 +30,7 @@ function makeLifecycle() {
       {
         skillId: "skill.alpha",
         name: "Alpha",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         status: "installed",
         starter: false,
@@ -44,7 +44,7 @@ function makeLifecycle() {
     getSkill: vi.fn((skillId: string) => ({
       skillId,
       name: "Alpha",
-      source: "marketplace",
+      source: "local",
       origin: "managed",
       status: "installed",
       starter: false,
@@ -59,7 +59,7 @@ function makeLifecycle() {
       skill: {
         skillId: input.skillId,
         name: "Alpha",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         status: "installed",
         starter: false,
@@ -90,7 +90,7 @@ function makeLifecycle() {
       skill: {
         skillId: input.skillId,
         name: "Alpha",
-        source: "marketplace",
+        source: "local",
         origin: "managed",
         status: "installed",
         starter: false,

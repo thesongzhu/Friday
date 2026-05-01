@@ -14,7 +14,6 @@ import { useSetupStatusQuery } from "@/hooks/use-setup";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { getBootstrapStatus } from "@/lib/api/auth";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
-import { HIDE_MARKETPLACE_UI } from "@/lib/feature-flags";
 import { localize, localizedText, resolveLocalizedText, type LocalizedText } from "@/lib/i18n/localized-text";
 import { resolveLegacyRedirect } from "@/lib/routes/legacy-routes";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -38,7 +37,6 @@ const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-pag
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
 const WorkflowGeneratorPage = lazy(async () => import("@/routes/workflow-generator-page").then((module) => ({ default: module.WorkflowGeneratorPage })));
 const McpPage = lazy(async () => import("@/routes/mcp-page").then((module) => ({ default: module.McpPage })));
-const MarketplacePage = lazy(async () => import("@/routes/marketplace-page").then((module) => ({ default: module.MarketplacePage })));
 const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) => ({ default: module.UsagePage })));
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
@@ -474,16 +472,6 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载设备集群", "Loading fleet")} detail={localizedText("Friday 正在准备集群管理面板。", "Friday is preparing the fleet control plane.")}>
                 <FleetPage />
-              </RouteSuspense>
-            ),
-          },
-          {
-            path: "marketplace",
-            element: HIDE_MARKETPLACE_UI ? (
-              <Navigate to="/assistant" replace />
-            ) : (
-              <RouteSuspense title={localizedText("加载资产市场", "Loading marketplace")} detail={localizedText("Friday 正在准备资产市场。", "Friday is preparing the marketplace.")}>
-                <MarketplacePage />
               </RouteSuspense>
             ),
           },

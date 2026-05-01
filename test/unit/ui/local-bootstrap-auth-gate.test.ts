@@ -22,15 +22,13 @@ describe("local bootstrap auth gate", () => {
     expect(routerSource).not.toContain("No authentication method provided");
   });
 
-  it("uses localhost identity before falling back to token login", () => {
+  it("restores a stored token without attempting local auto-login", () => {
     const authProviderSource = readFileSync("ui/src/providers/auth-provider.tsx", "utf8");
     const firstIdentityRead = authProviderSource.indexOf("const me = await fetchMe()");
-    const firstLocalLogin = authProviderSource.indexOf("const response = await loginRequest({ local: true })");
 
     expect(firstIdentityRead).toBeGreaterThanOrEqual(0);
-    expect(firstLocalLogin).toBeGreaterThanOrEqual(0);
-    expect(firstIdentityRead).toBeLessThan(firstLocalLogin);
-    expect(authProviderSource).toContain("Fall back to legacy local login");
+    expect(authProviderSource).not.toContain("loginRequest({ local:");
+    expect(authProviderSource).not.toContain("Fall back to legacy local login");
   });
 
   it("allows splash screens to embed the first-run setup form", () => {

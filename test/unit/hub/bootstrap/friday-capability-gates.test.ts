@@ -10,9 +10,6 @@ describe("resolveFridayCapabilityGates", () => {
     expect(gates.systemEnabled).toBe(false);
     expect(gates.discoveryEnabled).toBe(false);
     expect(gates.mcpServerEnabled).toBe(false);
-    expect(gates.marketplaceCommerceEnabled).toBe(false);
-    expect(gates.marketplaceInstallRequired).toBe(false);
-    expect(gates.marketplaceInstallMaterialize).toBe(false);
     expect(gates.heartbeatEnabled).toBe(false);
     expect(gates.heartbeatActiveHoursEnabled).toBe(false);
     expect(gates.autoFixDispatchEnabled).toBe(false);
@@ -24,9 +21,6 @@ describe("resolveFridayCapabilityGates", () => {
       FRIDAY_SYSTEM_ENABLED: "true",
       FRIDAY_DISCOVERY_ENABLED: "true",
       FRIDAY_MCP_SERVER_ENABLED: "true",
-      FRIDAY_MARKETPLACE_COMMERCE_ENABLED: "true",
-      FRIDAY_MARKETPLACE_INSTALL_REQUIRED: "true",
-      FRIDAY_MARKETPLACE_INSTALL_MATERIALIZE: "true",
       FRIDAY_HEARTBEAT_ENABLED: "true",
       FRIDAY_HEARTBEAT_ACTIVE_HOURS_ENABLED: "false",
       FRIDAY_AUTOFIX_DISPATCHER_ENABLED: "true",
@@ -36,9 +30,6 @@ describe("resolveFridayCapabilityGates", () => {
     expect(gates.systemEnabled).toBe(true);
     expect(gates.discoveryEnabled).toBe(true);
     expect(gates.mcpServerEnabled).toBe(true);
-    expect(gates.marketplaceCommerceEnabled).toBe(true);
-    expect(gates.marketplaceInstallRequired).toBe(true);
-    expect(gates.marketplaceInstallMaterialize).toBe(true);
     expect(gates.heartbeatEnabled).toBe(true);
     expect(gates.heartbeatActiveHoursEnabled).toBe(false);
     expect(gates.autoFixDispatchEnabled).toBe(true);

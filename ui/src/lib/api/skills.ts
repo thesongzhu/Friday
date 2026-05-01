@@ -237,56 +237,6 @@ export const skillsApi = {
     return data.evidence;
   },
 
-  async listSources(): Promise<SkillSourceRecord[]> {
-    const data = await apiClient.get<SkillSourceListResponse>("/v1/marketplace/sources");
-    return data.items;
-  },
-
-  async createSource(input: SkillSourceMutationInput): Promise<SkillSourceRecord> {
-    const data = await apiClient.post<SkillSourceMutationInput, SkillSourceResponse>(
-      "/v1/marketplace/sources",
-      input,
-    );
-    return data.source;
-  },
-
-  async updateSource(sourceId: string, input: SkillSourcePatchInput): Promise<SkillSourceRecord> {
-    const data = await apiClient.patch<SkillSourcePatchInput, SkillSourceResponse>(
-      `/v1/marketplace/sources/${encodeURIComponent(sourceId)}`,
-      input,
-    );
-    return data.source;
-  },
-
-  async enableSource(sourceId: string): Promise<SkillSourceRecord> {
-    const data = await apiClient.post<Record<string, never>, SkillSourceResponse>(
-      `/v1/marketplace/sources/${encodeURIComponent(sourceId)}/enable`,
-      {},
-    );
-    return data.source;
-  },
-
-  async disableSource(sourceId: string): Promise<SkillSourceRecord> {
-    const data = await apiClient.post<Record<string, never>, SkillSourceResponse>(
-      `/v1/marketplace/sources/${encodeURIComponent(sourceId)}/disable`,
-      {},
-    );
-    return data.source;
-  },
-
-  async deleteSource(sourceId: string): Promise<{ removed: true; sourceId: string }> {
-    return apiClient.del<{ removed: true; sourceId: string }>(
-      `/v1/marketplace/sources/${encodeURIComponent(sourceId)}`,
-    );
-  },
-
-  async syncSources(input: { sourceId?: string } = {}): Promise<SkillSourceSyncResponse> {
-    return apiClient.post<{ sourceId?: string }, SkillSourceSyncResponse>(
-      "/v1/marketplace/skills/sync",
-      input,
-    );
-  },
-
   // ─── Generator endpoints ───
 
   async startGeneratorSession(

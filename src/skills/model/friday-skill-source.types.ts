@@ -1,6 +1,6 @@
 import { FridayDomainError } from "#errors";
 
-export type SkillSource = "bundled" | "marketplace" | "git" | "local";
+export type SkillSource = "bundled" | "git" | "local";
 
 export type SkillOrigin =
   | "extra"
@@ -21,7 +21,7 @@ export const FRIDAY_SKILL_ORIGIN_PRECEDENCE: SkillOrigin[] = [
 
 export interface FridaySkillSourceTaxonomyEntry {
   source: SkillSource;
-  distribution: "first-party" | "marketplace" | "repository" | "local";
+  distribution: "first-party" | "repository" | "local";
   mutableAtRuntime: boolean;
   requiresSignaturePolicy: boolean;
 }
@@ -32,12 +32,6 @@ export const FRIDAY_SKILL_SOURCE_TAXONOMY: Readonly<Record<SkillSource, FridaySk
     distribution: "first-party",
     mutableAtRuntime: false,
     requiresSignaturePolicy: false,
-  },
-  marketplace: {
-    source: "marketplace",
-    distribution: "marketplace",
-    mutableAtRuntime: true,
-    requiresSignaturePolicy: true,
   },
   git: {
     source: "git",

@@ -675,7 +675,7 @@ function setupInputsForService(service: string, locale: "zh" | "en" = "en"): str
     case "mcp":
       return ["Trusted MCP server command or URL", "Required environment secrets", "Permission review plus discovery/list_tools verification"];
     case "skills":
-      return ["Trusted skill source, marketplace listing, Git URL, or generation goal", "Installation/generation approval", "Registry refresh and optional smoke test"];
+      return ["Trusted skill source, Git URL, or generation goal", "Installation/generation approval", "Registry refresh and optional smoke test"];
     case "custom":
       return ["Exact user goal and expected output", "Chosen path: built-in tool, generated skill/tool, provider, or MCP", "Representative test that proves the capability works"];
     default:

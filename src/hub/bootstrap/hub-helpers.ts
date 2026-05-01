@@ -68,22 +68,6 @@ const FRIDAY_SECRET_DIR = path.join(os.homedir(), ".friday");
 /** File for persisted token secret. */
 const FRIDAY_TOKEN_SECRET_FILE = path.join(FRIDAY_SECRET_DIR, "token.secret");
 
-// ─── Marketplace helpers ───
-
-export function deriveMarketplaceSkillIdCandidates(packageName: string): string[] {
-  const candidates = new Set<string>();
-  const trimmed = packageName.trim();
-  if (trimmed.length > 0) {
-    candidates.add(trimmed);
-    const slashIndex = trimmed.lastIndexOf("/");
-    if (slashIndex >= 0 && slashIndex < trimmed.length - 1) {
-      candidates.add(trimmed.slice(slashIndex + 1));
-    }
-    candidates.add(trimmed.replace(/^@/, "").replace(/\//g, "-"));
-  }
-  return [...candidates];
-}
-
 // ─── Cross-channel identity ───
 
 function normalizeCrossChannelIdentity(raw: string): string | null {
@@ -1614,10 +1598,6 @@ export interface FridayResolvedHubConfig {
   corsOrigins: string[];
   logRequests: boolean;
   pluginRuntimeMode: "stub" | "full";
-  /** Whether passwordless local login is allowed (dev mode only). */
-  allowPasswordlessLocalLogin: boolean;
-  /** Whether loopback UI/app surfaces may bootstrap a local session via `login({ local: true })`. */
-  allowLocalBypassLogin: boolean;
   /** Whether deterministic pipeline execution is globally enabled. */
   pipelineEnabled: boolean;
   /** Deterministic pipeline enforcement mode. */

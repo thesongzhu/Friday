@@ -25,14 +25,6 @@ function createStubPluginService(): FridayPluginService {
     uninstallPlugin: async () => {
       throw new Error("not implemented in e2e stub");
     },
-    searchMarketplace: async () => ({ items: [], total: 0 }),
-    getMarketplacePlugin: async () => {
-      throw new Error("not implemented in e2e stub");
-    },
-    listMarketplacePluginVersions: async () => [],
-    installFromMarketplace: async () => {
-      throw new Error("not implemented in e2e stub");
-    },
   };
 }
 

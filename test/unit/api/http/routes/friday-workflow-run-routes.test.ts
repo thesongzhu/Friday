@@ -190,46 +190,6 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route!.rateLimitPolicyId).toBe("workflow.start_run");
   });
 
-  it("runs.start enforces marketplace entitlement when marketplaceListingId is provided", async () => {
-    const assertListingEntitled = vi.fn().mockResolvedValue(undefined);
-    const startRun = vi.fn().mockResolvedValue({ run: stubRun });
-    const localRoutes = createFridayWorkflowRunRoutes({
-      ...stubDeps,
-      assertListingEntitled,
-      startRun,
-    });
-    const route = localRoutes.find((r) => r.operationId === "runs.start");
-    expect(route).toBeDefined();
-
-    const principal: FridayAuthPrincipal = {
-      principalType: "user",
-      principalId: "tenant-1",
-      userId: "user-1",
-      role: "owner",
-      scopes: ["workflow.run"],
-      tokenId: "token-1",
-      tokenKind: "access",
-      issuedAt: "2025-01-01T00:00:00Z",
-    };
-
-    await route!.handler({
-      params: {},
-      query: {},
-      body: {
-        workflowId: "wf-1",
-        triggerType: "manual",
-        marketplaceListingId: "listing-1",
-      },
-      headers: {},
-      principal,
-      requestId: "req-1",
-      receivedAt: "2025-01-01T00:00:00Z",
-    } as never);
-
-    expect(assertListingEntitled).toHaveBeenCalledWith("listing-1", principal);
-    expect(startRun).toHaveBeenCalled();
-  });
-
   it("GET /v1/workflow-runs/:runId requires workflow.read", () => {
     const route = routes.find((r) => r.operationId === "runs.get");
     expect(route).toBeDefined();
