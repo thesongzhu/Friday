@@ -27,7 +27,7 @@ Mode: targeted remediation plus verification. Product edits were limited to the 
 | `npm audit --audit-level=moderate` | clean worktree | `PASS` | `found 0 vulnerabilities`. |
 | `npm run check:architecture-boundaries` | clean worktree | `PASS` | 5 checks passed. Warning only: modified immutable-doc file was expected in this branch. |
 | `npm run check:migrations` | clean worktree | `PASS` | 75 migrations, contiguous `v001-v075`; migration array matched discovered files. |
-| `npm run check:migrations` | dirty repo root | `FAIL_NON_PRODUCT_LOCAL_POLLUTION` | Failed only because untracked local duplicate migration files ending ` 3.ts` are present in the root worktree. |
+| `npm run check:migrations` | repo root after quarantine | `PASS` | 75 migrations, contiguous `v001-v075`; 30 untracked duplicate/local artifact files were quarantined outside the repo first. |
 | `npm run typecheck` | clean worktree | `PASS` | API, operator client, and UI typecheck completed. |
 | `npm run test:contracts:update` | clean worktree | `PASS` | 5 files, 12 tests. |
 | `npm run test:contracts:routes` | clean worktree | `PASS` | 5 files, 12 tests. |
@@ -112,20 +112,19 @@ Secret leak scan:
 | `l3-multi-turn-memory` failed on default/fallback | `RESOLVED` | Both canonical reports pass all 27 smoke artifacts. |
 | `l4-file-tool-roundtrip` failed in read-only mode | `RESOLVED` | Both canonical reports pass all 27 smoke artifacts. |
 | Current-config v056 checksum startup blocker | `RESOLVED` | Current-config copied state started, authenticated, configured providers, and passed full smoke. |
-| Root `check:migrations` failure | `OPEN_LOCAL_WORKTREE_ONLY` | Clean worktree passes; root still has unrelated untracked duplicate migration files. |
+| Root `check:migrations` failure | `RESOLVED_LOCAL_WORKTREE` | 30 unrelated untracked duplicate/local artifact files were quarantined at `/tmp/friday-audit-quarantine-20260501T220523Z/`; repo-root `check:migrations` now passes. |
 
 ## Verification Status
 
 - `VERIFIED`: clean build, npm audit, architecture boundaries, clean migrations, typecheck, route contracts, focused unit tests, Docker passphrase smoke, install smoke, lint with warnings, Fresh real-world smoke, Current-config real-world smoke, primary/fallback provider lanes, passphrase auth, setup/profile truth, secret scan.
 - `FAILED`: none in the canonical current-code smoke reports.
 - `BLOCKED`: no local product smoke blocker remains.
-- `OPEN_LOCAL_WORKTREE_ONLY`: root migration check remains polluted by unrelated untracked duplicate files.
+- `RESOLVED_LOCAL_WORKTREE`: root migration check now passes after quarantining unrelated untracked duplicate files outside the repo.
 - `GRAY`: external deployed CORS/cookie/callback-domain behavior and live channel delivery remain outside this local smoke proof.
 
 ## Recommended Next Fixes
 
-1. Clean or quarantine untracked local duplicate files in the original worktree so root-level filesystem scans match clean-branch truth.
-2. Rotate provider keys and the Discord token exposed in this conversation.
-3. Run live Discord/channel E2E only against a safe sandbox channel after token rotation.
-4. Run external staging deployment smoke when a real staging URL/domain/callback config exists.
-5. Add a small regression check to prevent the real-world validation helper from misreading artifact `result` as `status` in future local orchestration scripts.
+1. Rotate provider keys and the Discord token exposed in this conversation.
+2. Run live Discord/channel E2E only against a safe sandbox channel after token rotation.
+3. Run external staging deployment smoke when a real staging URL/domain/callback config exists.
+4. Add a small regression check to prevent the real-world validation helper from misreading artifact `result` as `status` in future local orchestration scripts.

@@ -11,7 +11,8 @@ Last updated: 2026-05-01
 | `npm audit --audit-level=moderate` | PASS | <1s | 0 vulnerabilities. |
 | `npm run check:architecture-boundaries` | PASS | <1s | 5 checks passed. |
 | `npm run check:migrations` | PASS | <1s | Clean worktree: 75 migrations contiguous and registered. |
-| `npm run check:migrations` | FAIL_DIRTY_WORKTREE | <1s | Original root fails only because unrelated untracked duplicate migration files ending ` 3.ts` are present. |
+| `npm run check:migrations` | PASS | <1s | Repo root after quarantining 30 untracked duplicate/local artifact files: 75 migrations contiguous and registered. |
+| Untracked duplicate quarantine | PASS | <1s | 30 pre-existing untracked files moved outside the repo to `/tmp/friday-audit-quarantine-20260501T220523Z/`; manifest retained. |
 | `npm run typecheck` | PASS | not captured | API, operator client, and UI typecheck completed. |
 | `npm run test:contracts:update` | PASS | not captured | 5 files, 12 tests. |
 | `npm run test:contracts:routes` | PASS | not captured | 5 files, 12 tests. |
@@ -40,5 +41,5 @@ Last updated: 2026-05-01
 
 - Live channel delivery, including Discord, still needs safe sandbox channel config and token rotation before proof.
 - External production/staging deployment CORS/cookie/callback-domain behavior remains unverified because no target URL/domain/provider callback config was exercised.
-- Original root worktree still contains unrelated untracked duplicate files that can break filesystem-scanning checks outside the clean worktree.
+- Pre-existing unrelated untracked duplicate files were quarantined outside the repo; root filesystem-scanning checks now match clean-branch truth.
 - Lint passes but reports a large warning backlog: complexity, object-injection warnings, non-literal filesystem paths, and a few console warnings.

@@ -10,13 +10,13 @@
 6. Full `npm test` passes after setup browser token injection.
 7. Fresh and current-config real-world smoke now pass 27/27 with `localPassphrase` auth, DeepSeek primary, and OpenAI fallback.
 8. Multi-turn memory, read-only file tool roundtrip, and current-config v056 checksum startup blockers are fixed.
+9. Unrelated local duplicate/untracked files were quarantined outside the repo; repo-root migration check now passes.
 
 ## 2. P1 Serious Risks Still Open
 
 1. Configure safe live channel sandbox env and run Discord/channel E2E after rotating the pasted token.
 2. Run external deployment smoke once staging URL/domain/callback provider config exists.
 3. Keep release/package/install smokes serialized or isolate their output dirs.
-4. Clean or quarantine the unrelated untracked duplicate files in the original root worktree.
 
 ## 3. Missing Closed-Loop Tests
 
@@ -35,8 +35,7 @@
 
 ## 5. Nice-to-Have Cleanup
 
-1. Remove duplicate local untracked files from the working directory.
-2. Remove or document the duplicate pnpm lockfile if npm remains canonical.
-3. Add dependency/SBOM tooling.
-4. Add unused export/dead route detection after live smoke lanes stabilize.
-5. Expand operator docs for staging/prod env vars, live channels, secret rotation, deployment smoke, and incident response.
+1. Remove or document the duplicate pnpm lockfile if npm remains canonical.
+2. Add dependency/SBOM tooling.
+3. Add unused export/dead route detection after live smoke lanes stabilize.
+4. Expand operator docs for staging/prod env vars, live channels, secret rotation, deployment smoke, and incident response.

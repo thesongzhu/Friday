@@ -6,7 +6,7 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 
 ## Status Model
 
-- GREEN: local health/static UI, install smoke, Docker passphrase smoke, auth/passphrase bootstrap, route contracts, typecheck, build, npm audit, architecture boundary, real-world Fresh smoke, real-world Current-config smoke, marketplace/passwordless residue scan.
+- GREEN: local health/static UI, install smoke, Docker passphrase smoke, auth/passphrase bootstrap, route contracts, typecheck, build, npm audit, architecture boundary, repo-root/clean migration checks, real-world Fresh smoke, real-world Current-config smoke, marketplace/passwordless residue scan.
 - YELLOW: broader agent/workflow/browser/live coverage, lint warning backlog, hub/runtime maintainability, operational docs.
 - RED: no current local smoke P0/P1 blocker remains.
 - GRAY: external deployment URL/TLS/CORS/cookie/callback provider behavior, branch protection, external observability backends, live channel delivery until sandbox proof exists.
@@ -53,6 +53,7 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 - `npm audit --audit-level=moderate`
 - `npm run check:architecture-boundaries`
 - `npm run check:migrations` in clean worktree
+- `npm run check:migrations` in repo root after quarantining local duplicate artifacts
 - `npm run typecheck`
 - `npm run test:contracts:update`
 - `npm run test:contracts:routes`
@@ -68,7 +69,6 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 
 ## Tests Missing or Still Not Green
 
-- Root `npm run check:migrations` is not green while unrelated untracked duplicate migration files remain in the original worktree.
 - Live Discord/channel E2E needs a safe sandbox recipient/channel env.
 - External deployed CORS/cookie/callback-domain smoke requires a real staging target.
 - Broader browser smoke should cover chat/session reload and workflow authoring from the UI.
@@ -84,12 +84,12 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 ## Exact Next 10 Tasks
 
 1. Rotate the pasted provider keys and Discord token.
-2. Clean/quarantine unrelated untracked duplicate local files that break root filesystem-scanning checks.
-3. Configure safe Discord sandbox recipient/channel env.
-4. Run live Discord/channel E2E.
-5. Provide staging URL/domain/callback config.
-6. Run external deployment CORS/cookie/callback smoke.
-7. Add browser smoke for passphrase auth -> home -> chat -> session reload.
-8. Add workflow UI smoke for create -> publish -> run -> approval.
-9. Add validation/report regression coverage for artifact `result`/summary status shape.
+2. Configure safe Discord sandbox recipient/channel env.
+3. Run live Discord/channel E2E.
+4. Provide staging URL/domain/callback config.
+5. Run external deployment CORS/cookie/callback smoke.
+6. Add browser smoke for passphrase auth -> home -> chat -> session reload.
+7. Add workflow UI smoke for create -> publish -> run -> approval.
+8. Add validation/report regression coverage for artifact `result`/summary status shape.
+9. Decide whether npm remains canonical and remove/document the duplicate pnpm lockfile accordingly.
 10. Split hub/bootstrap lifecycle modules incrementally and reduce lint warning backlog.

@@ -16,7 +16,7 @@ Overall status: YELLOW for local closed-loop readiness and GRAY for external pro
 - Dockerfile is present, non-root, and passed local Docker smoke.
 - `check:enablement-gaps` fails in a bare process env because `.env`, `FRIDAY_TOKEN_SECRET`, and `FRIDAY_DESKTOP_ENABLED=true` are absent; it passes with safe temporary env. This means production/staging env provisioning is still required, not that the code gate is broken.
 - External deployed URL, TLS, cookie domain, CORS with real domains, OAuth/provider callback URLs, and reverse-proxy behavior were not verified.
-- Current dirty workspace has untracked duplicate files that can break filesystem-scanning gates; clean branch/tracked-tree checks pass.
+- Pre-existing untracked duplicate files were quarantined outside the repo; repo-root and clean tracked-tree migration checks now pass.
 
 ## Observability
 
@@ -40,7 +40,7 @@ Overall status: YELLOW for local closed-loop readiness and GRAY for external pro
 
 - Local gates that should be merge-relevant pass on tracked files.
 - Branch protection/external CI settings were not verified.
-- Recommended CI addition: run migration checks from a clean checkout/worktree to avoid local untracked duplicate artifacts.
+- Recommended CI hygiene: keep migration checks running from a clean checkout/worktree so local untracked artifacts cannot mask branch truth.
 
 ## Documentation
 

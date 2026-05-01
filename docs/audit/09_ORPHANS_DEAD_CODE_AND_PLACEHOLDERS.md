@@ -11,7 +11,7 @@ Search terms included TODO, FIXME, HACK, mock, fake, demo, placeholder, stub, sa
 | P1 | Channel implementations expose stubs as production-looking services. | WhatsApp/Signal/IRC/LINE/Slack/Discord-related tests and services still include stub/sandbox behavior. | Open capability-truth risk. |
 | P1 | Plugin UI/runtime can still be disabled or stub-like. | Plugin tests pass, but UI needs clear capability state. | Open UX/truth risk. |
 | P2 | API/E2E tests still use stubs/mocks in places. | Contract/API/mock hub tests pass, but many live lanes are skipped. | Open evidence-labeling risk. |
-| P2 | Dirty workspace contains duplicate untracked files. | `docs/audit/* 2.md`, `src/state/sqlite/migrations/* 3.ts`, duplicate reflex/workflow files. | Local hygiene issue; not part of branch. |
+| P2 resolved | Dirty workspace contained duplicate untracked files. | `docs/audit/* 2.md`, `src/state/sqlite/migrations/* 3.ts`, duplicate reflex/workflow files; 30 files quarantined at `/tmp/friday-audit-quarantine-20260501T220523Z/`. | Resolved locally; current Git working tree is clean. |
 
 ## Additional Observations
 
@@ -21,7 +21,7 @@ Search terms included TODO, FIXME, HACK, mock, fake, demo, placeholder, stub, sa
 
 ## Recommended Cleanup
 
-1. Remove or quarantine local untracked duplicate files outside this branch.
+1. Keep quarantined local artifacts out of repo worktrees and avoid reintroducing duplicate generated files.
 2. Add a capabilities matrix that labels real, stub, disabled, and sandbox-only channel/plugin modes in API and UI.
 3. Split mock proof from closed-loop proof in CI status names.
 4. Add dead-code/unused export tooling once the live smoke lanes are stable.
