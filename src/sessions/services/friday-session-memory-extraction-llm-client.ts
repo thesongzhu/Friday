@@ -82,7 +82,7 @@ function buildRequestBody(
   temperature: number,
   authMode?: FridayProviderAuthMode,
 ): Record<string, unknown> {
-  const effectiveSystemPrompt = isFridayAnthropicBearerAuthMode(authMode)
+  const effectiveSystemPrompt = api === "anthropic-messages" && isFridayAnthropicBearerAuthMode(authMode)
     ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`
     : systemPrompt;
   const messages = [
@@ -98,15 +98,29 @@ function buildRequestBody(
         temperature,
         response_format: { type: "json_object" },
       };
-    case "openai-responses": {
+    case "openai-responses":
+    case "openai-codex-responses": {
       const input: Array<Record<string, unknown>> = messages.map((m) => ({
         role: m.role,
-        content: m.content,
+        content: api === "openai-codex-responses"
+          ? [{ type: "input_text", text: m.content }]
+          : m.content,
       }));
+      const systemMsg = api === "openai-codex-responses"
+        ? messages.find((m) => m.role === "system")
+        : undefined;
       return {
         model,
-        input,
-        temperature,
+        input: api === "openai-codex-responses"
+          ? input.filter((item) => item.role !== "system")
+          : input,
+        ...(api === "openai-codex-responses"
+          ? {
+              instructions: systemMsg?.content ?? "You are Friday. Return the requested JSON object.",
+              store: false,
+            }
+          : {}),
+        ...(api !== "openai-codex-responses" ? { temperature } : {}),
         text: { format: { type: "json_object" } },
       };
     }
@@ -143,6 +157,8 @@ function buildUrl(api: FridayProviderApi, baseUrl: string, model: string): strin
       return `${base}/v1/chat/completions`;
     case "openai-responses":
       return `${base}/v1/responses`;
+    case "openai-codex-responses":
+      return `${base}/responses`;
     case "anthropic-messages":
       return `${base}/v1/messages`;
     case "google-generative-ai":
@@ -177,6 +193,11 @@ function buildHeaders(
       case "google-generative-ai":
         headers["x-goog-api-key"] = credential;
         break;
+      case "openai-codex-responses":
+        headers["Authorization"] = `Bearer ${credential}`;
+        headers.originator = "friday";
+        headers["User-Agent"] = "friday";
+        break;
       default:
         headers["Authorization"] = `Bearer ${credential}`;
         break;
@@ -197,7 +218,8 @@ function extractTextFromResponse(
         | undefined;
       return choices?.[0]?.message?.content ?? "";
     }
-    case "openai-responses": {
+    case "openai-responses":
+    case "openai-codex-responses": {
       const output = body["output"] as
         | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
         | undefined;

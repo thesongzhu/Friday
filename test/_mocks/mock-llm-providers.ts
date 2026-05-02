@@ -464,7 +464,7 @@ function buildResponse(api: FridayProviderApi, reply: MockLlmReply, isStreaming:
   }
 
   // OpenAI Responses: SSE when streaming, JSON otherwise
-  if (api === "openai-responses") {
+  if (api === "openai-responses" || api === "openai-codex-responses") {
     if (reply.type === "text") {
       if (isStreaming) return sseResponse(buildOpenAIResponsesTextSSE(reply.text), reply.status ?? 200);
       return jsonResponse(buildOpenAIResponsesTextJson(reply.text), reply.status ?? 200);
@@ -597,6 +597,7 @@ export function buildNonStreamingResponse(
         usage: { prompt_tokens: 10, completion_tokens: text.split(" ").length },
       };
     case "openai-responses":
+    case "openai-codex-responses":
       return {
         output: [
           {

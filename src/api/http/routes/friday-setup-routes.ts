@@ -2068,6 +2068,13 @@ export function createFridaySetupRoutes(
               validated = true;
               break;
             }
+            case "openai-codex-responses": {
+              availableModels = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+              defaultModel = "gpt-5.4-mini";
+              validated = false;
+              warnings.push("OpenAI Codex OAuth selected: complete device login before provider validation.");
+              break;
+            }
             case "anthropic-messages": {
               if ((authMode === "oauth" || authMode === "token") && !apiKey) {
                 availableModels = ["claude-opus-4", "claude-sonnet-4", "claude-haiku-3.5"];

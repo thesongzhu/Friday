@@ -37,12 +37,14 @@ function createMockStore(initial?: FridayOAuthCredential | null): FridayOAuthCre
       storedCredential = {
         id: "cred-1",
         providerProfileId: input.providerProfileId,
+        ownerUserId: input.ownerUserId ?? "__global__",
         oauthProvider: input.oauthProvider,
         accessToken: input.tokenSet.accessToken,
         refreshToken: input.tokenSet.refreshToken,
         tokenType: input.tokenSet.tokenType,
         scope: input.tokenSet.scope,
         expiresAt: input.tokenSet.expiresAt,
+        metadata: input.tokenSet.metadata ?? {},
         createdAt: "2026-02-18T10:00:00.000Z",
         updatedAt: "2026-02-18T10:00:00.000Z",
       };
@@ -133,12 +135,14 @@ describe("FridayOAuthTokenManager", () => {
       const storeWithCred = createMockStore({
         id: "cred-1",
         providerProfileId: "prov-1",
+        ownerUserId: "__global__",
         oauthProvider: "anthropic",
         accessToken: "valid-at",
         refreshToken: "rt",
         tokenType: "Bearer",
         scope: "test",
         expiresAt: futureExpiry,
+        metadata: {},
         createdAt: "2026-02-18T10:00:00.000Z",
         updatedAt: "2026-02-18T10:00:00.000Z",
       });
@@ -163,12 +167,14 @@ describe("FridayOAuthTokenManager", () => {
       const storeWithExpired = createMockStore({
         id: "cred-1",
         providerProfileId: "prov-1",
+        ownerUserId: "user-1",
         oauthProvider: "anthropic",
         accessToken: "expired-at",
         refreshToken: "rt-for-refresh",
         tokenType: "Bearer",
         scope: "test",
         expiresAt: pastExpiry,
+        metadata: {},
         createdAt: "2026-02-18T10:00:00.000Z",
         updatedAt: "2026-02-18T10:00:00.000Z",
       });
@@ -182,12 +188,17 @@ describe("FridayOAuthTokenManager", () => {
 
       const result = await mgr.getValidAccessToken({
         providerProfileId: "prov-1",
+        ownerUserId: "user-1",
         oauthProvider: "anthropic",
       });
 
       expect(result).toBe("refreshed-at");
       expect(adapter.refreshAccessToken).toHaveBeenCalledWith("rt-for-refresh");
-      expect(storeWithExpired.upsert).toHaveBeenCalledOnce();
+      expect(storeWithExpired.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        providerProfileId: "prov-1",
+        ownerUserId: "user-1",
+        oauthProvider: "anthropic",
+      }));
     });
 
     it("returns null when adapter not found for refresh", async () => {
@@ -195,12 +206,14 @@ describe("FridayOAuthTokenManager", () => {
       const storeWithExpired = createMockStore({
         id: "cred-1",
         providerProfileId: "prov-1",
+        ownerUserId: "__global__",
         oauthProvider: "anthropic",
         accessToken: "expired-at",
         refreshToken: "rt",
         tokenType: "Bearer",
         scope: "test",
         expiresAt: pastExpiry,
+        metadata: {},
         createdAt: "2026-02-18T10:00:00.000Z",
         updatedAt: "2026-02-18T10:00:00.000Z",
       });

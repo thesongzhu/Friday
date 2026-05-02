@@ -135,6 +135,14 @@ export function getProviderBootstrapRecommendation(kind: ProviderKind): SetupPro
         boundary: "ChatGPT / Codex consumer sessions are intentionally attached later as CLI backends, not reused as HTTP OAuth credentials.",
         operatorNote: "Use Settings after setup if you want to attach Codex CLI for text-only review, analysis, or coding assistance.",
       };
+    case "openai-codex":
+      return {
+        backend: "HTTP Codex Responses",
+        auth: "OpenAI Codex device OAuth",
+        why: "This connects a Friday user to their own ChatGPT/Codex subscription token for routed provider calls.",
+        boundary: "Codex OAuth is per user and should not be shared as a global API key or reused for unrelated OpenAI API billing.",
+        operatorNote: "Complete the Codex device login from Settings or the OAuth API before routing live runs to this provider.",
+      };
     case "anthropic":
       return {
         backend: "HTTP first, Claude CLI optional later",

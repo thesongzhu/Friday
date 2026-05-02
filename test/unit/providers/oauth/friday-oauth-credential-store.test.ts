@@ -52,11 +52,13 @@ describe("FridayOAuthCredentialStore", () => {
       });
 
       expect(credential.providerProfileId).toBe("prov-1");
+      expect(credential.ownerUserId).toBe("__global__");
       expect(credential.oauthProvider).toBe("anthropic");
       expect(credential.accessToken).toBe("at-secret-123");
       expect(credential.refreshToken).toBe("rt-secret-456");
       expect(credential.tokenType).toBe("Bearer");
       expect(credential.expiresAt).toBe("2026-02-18T11:00:00.000Z");
+      expect(credential.metadata).toEqual({});
 
       // Re-read from store
       const retrieved = store.getByProviderProfileId("prov-1");
@@ -126,6 +128,43 @@ describe("FridayOAuthCredentialStore", () => {
       expect(accessEnv).toHaveProperty("ciphertext");
       expect(accessEnv).toHaveProperty("iv");
       expect(accessEnv).toHaveProperty("tag");
+    });
+
+    it("stores independent credentials per owner user for the same provider profile", () => {
+      store.upsert({
+        providerProfileId: "prov-1",
+        ownerUserId: "user-a",
+        oauthProvider: "anthropic",
+        tokenSet: {
+          accessToken: "at-user-a",
+          refreshToken: "rt-user-a",
+          expiresAt: "2026-02-18T11:00:00.000Z",
+          tokenType: "Bearer",
+          scope: "test",
+          metadata: { email: "a@example.test" },
+        },
+      });
+      store.upsert({
+        providerProfileId: "prov-1",
+        ownerUserId: "user-b",
+        oauthProvider: "anthropic",
+        tokenSet: {
+          accessToken: "at-user-b",
+          refreshToken: "rt-user-b",
+          expiresAt: "2026-02-18T11:00:00.000Z",
+          tokenType: "Bearer",
+          scope: "test",
+          metadata: { email: "b@example.test" },
+        },
+      });
+
+      const userA = store.getByProviderProfileId("prov-1", "user-a", "anthropic");
+      const userB = store.getByProviderProfileId("prov-1", "user-b", "anthropic");
+
+      expect(userA?.accessToken).toBe("at-user-a");
+      expect(userA?.metadata).toEqual({ email: "a@example.test" });
+      expect(userB?.accessToken).toBe("at-user-b");
+      expect(userB?.metadata).toEqual({ email: "b@example.test" });
     });
   });
 
