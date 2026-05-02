@@ -59,6 +59,7 @@ export type FridayProviderKind =
 export const FRIDAY_PROVIDER_APIS = [
   "openai-completions",
   "openai-responses",
+  "openai-codex-responses",
   "anthropic-messages",
   "google-generative-ai",
   "ollama",
@@ -200,12 +201,25 @@ export interface FridayProviderValidationState {
 
 // ─── OAuth types ───
 
-export type FridayOAuthProviderId = "anthropic";
+export type FridayOAuthProviderId = "anthropic" | "openai-codex";
+
+export const FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID = "__global__";
 
 export interface FridayOAuthAuthorizationRequest {
   authorizationUrl: string;
   state: string;
   codeVerifier: string;
+  scopes: string[];
+}
+
+export interface FridayOAuthDeviceAuthorizationRequest {
+  providerId: string;
+  oauthProvider: FridayOAuthProviderId;
+  deviceCodeId: string;
+  verificationUrl: string;
+  userCode: string;
+  expiresAt: string;
+  intervalMs: number;
   scopes: string[];
 }
 
@@ -215,17 +229,20 @@ export interface FridayOAuthTokenSet {
   expiresAt: string;
   tokenType: string;
   scope: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FridayOAuthCredential {
   id: string;
   providerProfileId: string;
+  ownerUserId: string;
   oauthProvider: FridayOAuthProviderId;
   accessToken: string;
   refreshToken: string;
   tokenType: string;
   scope: string;
   expiresAt: string;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -233,12 +250,14 @@ export interface FridayOAuthCredential {
 export interface FridayOAuthCredentialRow {
   id: string;
   provider_profile_id: string;
+  owner_user_id: string;
   oauth_provider: string;
   access_token_encrypted: string;
   refresh_token_encrypted: string;
   token_type: string;
   scope: string;
   expires_at: string;
+  metadata_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -255,6 +274,7 @@ export interface FridayOAuthLoginResult {
   expiresAt: string;
   tokenType: string;
   scope: string;
+  metadata?: Record<string, unknown>;
 }
 
 // ─── Structured config (stored as config_json) ───

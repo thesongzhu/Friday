@@ -1,6 +1,7 @@
 import type {
   FridayAuthProfile,
   FridayModelRoutingConfig,
+  FridayOAuthDeviceAuthorizationRequest,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderAttempt,
@@ -26,6 +27,7 @@ import type {
   FridayRuntimeCapabilityId,
 } from "../model/friday-provider.types.js";
 import {
+  FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID,
   isFridayAnthropicBearerAuthMode,
   normalizeFridayModelRoutingConfig,
   normalizeFridayProviderSupportedModels,
@@ -64,6 +66,7 @@ import { createFridayProviderPricingCatalog } from "../cost/friday-provider-pric
 import { createFridayProviderCostRouter } from "../cost/friday-provider-cost-router.js";
 import { createFridayProviderBudgetService } from "../cost/friday-provider-budget-service.js";
 import { createFridayAnthropicOAuthProvider } from "../oauth/friday-anthropic-oauth.js";
+import { createFridayOpenAICodexOAuthProvider } from "../oauth/friday-openai-codex-oauth.js";
 import { createFridayOAuthCredentialStore } from "../oauth/friday-oauth-credential-store.js";
 import { createFridayOAuthProviderRegistry, createFridayOAuthTokenManager } from "../oauth/friday-oauth-token-manager.js";
 import {
@@ -108,6 +111,10 @@ const PROVIDER_CAPABILITY_DOCTOR_CAPABILITIES = new Set<FridayRuntimeCapabilityI
   "tts",
   "custom",
 ]);
+
+function defaultOAuthProviderForKind(kind: FridayProviderProfile["kind"]) {
+  return kind === "openai-codex" ? "openai-codex" as const : "anthropic" as const;
+}
 
 function secretRefKey(providerId: string): string {
   return `provider:${providerId}:apiKey`;
@@ -382,7 +389,11 @@ export function createFridayProviderService(
     fetchImpl: deps.fetchImpl,
     nowMs: deps.nowMs,
   });
-  const oauthProviderRegistry = createFridayOAuthProviderRegistry([anthropicOAuth]);
+  const openAICodexOAuth = createFridayOpenAICodexOAuthProvider({
+    fetchImpl: deps.fetchImpl,
+    nowMs: deps.nowMs,
+  });
+  const oauthProviderRegistry = createFridayOAuthProviderRegistry([anthropicOAuth, openAICodexOAuth]);
   const oauthCredentialStore = createFridayOAuthCredentialStore({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -393,6 +404,11 @@ export function createFridayProviderService(
     providerRegistry: oauthProviderRegistry,
     nowMs: deps.nowMs,
   });
+  const pendingOAuthDeviceAuthorizations = new Map<string, {
+    providerId: string;
+    ownerUserId: string;
+    oauthProvider: string;
+  }>();
 
   // ─── Key source resolution ───
 
@@ -488,12 +504,13 @@ export function createFridayProviderService(
       }
       const accessToken = await oauthTokenManager.getValidAccessToken({
         providerProfileId: profile.id,
+        ownerUserId: tenantContext?.userId ?? FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID,
         oauthProvider,
       });
       if (!accessToken) {
         throw new FridayDomainError(
           "PROVIDER_AUTH_INVALID",
-          "No OAuth credentials found. Run `friday auth login anthropic` to connect.",
+          `No OAuth credentials found for ${oauthProvider}. Complete provider OAuth login to connect.`,
           { httpStatus: 401 },
         );
       }
@@ -576,6 +593,7 @@ export function createFridayProviderService(
 
     const accessToken = await oauthTokenManager.getValidAccessToken({
       providerProfileId: profile.id,
+      ownerUserId: tenantContext?.userId ?? FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID,
       oauthProvider: effectiveOauthProvider,
     });
 
@@ -1476,6 +1494,12 @@ export function createFridayProviderService(
       "Content-Type": "application/json",
       ...(profile.config.headers ?? {}),
       ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
+      ...(profile.config.api === "openai-codex-responses"
+        ? {
+            originator: "friday",
+            "User-Agent": "friday",
+          }
+        : {}),
     };
   }
 
@@ -1587,46 +1611,79 @@ export function createFridayProviderService(
         : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
     }
 
-    if (profile.config.api === "openai-responses") {
+    if (profile.config.api === "openai-responses" || profile.config.api === "openai-codex-responses") {
+      if (profile.config.api === "openai-codex-responses" && capability === "embedding") {
+        return {
+          ok: false,
+          standardized: false,
+          probe: "embedding",
+          message: "OpenAI Codex subscription transport is a Responses runtime path; Friday does not route embeddings through it.",
+        };
+      }
       const endpoint = capability === "embedding" ? `${base}/v1/embeddings` : `${base}/v1/responses`;
       const body = capability === "embedding"
         ? { model, input: "friday capability probe" }
-        : {
-            model,
-            input: isImageCapabilityProbe(capability)
-              ? [
-                  {
-                    role: "user",
-                    content: [
-                      { type: "input_text", text: capabilityProbePrompt(capability) },
-                      { type: "input_image", image_url: capabilityProbeImageDataUrl(capability) },
-                    ],
-                  },
-                ]
-              : capabilityProbePrompt(capability),
-            // Match the openai-completions probe budget so reasoning-first
-            // models can finish reasoning + emit the expected short answer.
-            max_output_tokens: 256,
-            temperature: 0,
-          };
-      const response = await fetchCapabilityProbe(endpoint, {
+        : profile.config.api === "openai-codex-responses"
+            ? {
+                model,
+                instructions: "You are Friday. Follow the user's instruction exactly.",
+                store: false,
+                stream: true,
+                input: [
+                {
+                  role: "user",
+                  content: isImageCapabilityProbe(capability)
+                    ? [
+                        { type: "input_text", text: capabilityProbePrompt(capability) },
+                        { type: "input_image", image_url: capabilityProbeImageDataUrl(capability) },
+                      ]
+                    : [{ type: "input_text", text: capabilityProbePrompt(capability) }],
+                },
+              ],
+            }
+          : {
+              model,
+              input: isImageCapabilityProbe(capability)
+                ? [
+                    {
+                      role: "user",
+                      content: [
+                        { type: "input_text", text: capabilityProbePrompt(capability) },
+                        { type: "input_image", image_url: capabilityProbeImageDataUrl(capability) },
+                      ],
+                    },
+                  ]
+                : capabilityProbePrompt(capability),
+              // Match the openai-completions probe budget so reasoning-first
+              // models can finish reasoning + emit the expected short answer.
+              max_output_tokens: 256,
+              temperature: 0,
+            };
+      const effectiveEndpoint = profile.config.api === "openai-codex-responses" && capability !== "embedding"
+        ? `${base}/responses`
+        : endpoint;
+      const response = await fetchCapabilityProbe(effectiveEndpoint, {
         method: "POST",
         headers: openAiHeaders(profile, credential),
         body: JSON.stringify(body),
       });
       if (!response.ok) {
-        return { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+        return { ok: false, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability, message: await readProbeError(response) };
+      }
+      if (profile.config.api === "openai-codex-responses") {
+        await response.body?.cancel().catch(() => undefined);
+        return { ok: true, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability };
       }
       const json = await readCapabilityProbeJson(response);
       if (capability === "embedding") {
         return embeddingProbeHasVector(json)
-          ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
-          : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: "Embedding probe did not return a vector." };
+          ? { ok: true, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability }
+          : { ok: false, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability, message: "Embedding probe did not return a vector." };
       }
       const validation = validateGenerationProbeOutput(capability, extractOpenAiResponsesProbeText(json));
       return validation.ok
-        ? { ok: true, endpoint, status: response.status, standardized: true, probe: capability }
-        : { ok: false, endpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
+        ? { ok: true, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability }
+        : { ok: false, endpoint: effectiveEndpoint, status: response.status, standardized: true, probe: capability, message: validation.message };
     }
 
     if (profile.config.api === "anthropic-messages") {
@@ -1726,8 +1783,9 @@ export function createFridayProviderService(
     target: { capability: FridayRuntimeCapabilityId; model: string };
     validation: FridayProviderValidationState;
     checkedAt: string;
+    tenantContext?: FridayProviderTenantContext;
   }): Promise<FridayProviderCapabilityDoctorProbeResult> {
-    const { profile, target, validation, checkedAt } = input;
+    const { profile, target, validation, checkedAt, tenantContext } = input;
     if (!profile.enabled) {
       return capabilityDoctorResult({
         profile,
@@ -1817,7 +1875,7 @@ export function createFridayProviderService(
 
     let credential: string | null = null;
     try {
-      credential = await resolveCredential(profile);
+      credential = await resolveCredential(profile, tenantContext);
     } catch (err) {
       return capabilityDoctorResult({
         profile,
@@ -2282,8 +2340,12 @@ export function createFridayProviderService(
       return await buildDoctorReport(profile);
     },
 
-    async runCapabilityDoctor(): Promise<FridayProviderCapabilityDoctorReport> {
+    async runCapabilityDoctor(options): Promise<FridayProviderCapabilityDoctorReport> {
       const checkedAt = deps.nowIso();
+      const tenantContext = options?.tenantContext
+        ?? (options?.ownerUserId
+          ? { hubId: options.ownerUserId, userId: options.ownerUserId }
+          : undefined);
       const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
       const providerValidations: FridayProviderCapabilityDoctorReport["providerValidations"] = [];
       const capabilityResults: FridayProviderCapabilityDoctorProbeResult[] = [];
@@ -2291,7 +2353,7 @@ export function createFridayProviderService(
       for (const provider of providers) {
         let validation: FridayProviderValidationState;
         try {
-          validation = await service.validateProvider(provider.id);
+          validation = await service.validateProvider(provider.id, { tenantContext });
         } catch (err) {
           validation = {
             status: "failed",
@@ -2320,6 +2382,7 @@ export function createFridayProviderService(
             target,
             validation,
             checkedAt,
+            tenantContext,
           });
           providerCapabilityResults.push(result);
           capabilityResults.push(result);
@@ -2388,7 +2451,9 @@ export function createFridayProviderService(
         && Boolean(requiredCapabilities?.length);
 
       if (capabilityFilterRemovedAllCandidates) {
-        await service.runCapabilityDoctor();
+        await service.runCapabilityDoctor({
+          tenantContext: input.tenantContext,
+        });
         currentProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
         pinnedProvider = input.requestedProviderId
           ? assertRequestedProviderAvailable(currentProviders, input.requestedProviderId)
@@ -2542,7 +2607,7 @@ export function createFridayProviderService(
         backendKind,
         deploymentKind: input.deploymentKind ?? preset.deploymentKind,
         regionTag: input.regionTag ?? preset.regionTag,
-        ...(input.authMode === "oauth" ? { oauthProvider: "anthropic" as const } : {}),
+        ...(input.authMode === "oauth" ? { oauthProvider: defaultOAuthProviderForKind(input.kind) } : {}),
         keySource: keySource.kind === "secret-ref" && keyInput.inlineSecret !== null
           ? { kind: "secret-ref", refKey: secretRefKey(id) }
           : keySource,
@@ -2685,8 +2750,8 @@ export function createFridayProviderService(
       // Determine oauthProvider field
       let oauthProvider = existing.config.oauthProvider;
       if (newAuthMode === "oauth") {
-        // Preserve existing or default to "anthropic"
-        oauthProvider = oauthProvider ?? "anthropic";
+        // Preserve existing or default by provider family.
+        oauthProvider = oauthProvider ?? defaultOAuthProviderForKind(existing.kind);
       } else if (oldAuthMode === "oauth") {
         // Switching away from OAuth — clear OAuth credentials and oauthProvider
         oauthTokenManager.clear(providerId);
@@ -2862,7 +2927,7 @@ export function createFridayProviderService(
       }
     },
 
-    async validateProvider(providerId) {
+    async validateProvider(providerId, options) {
       const profile = deps.db.withReadConnection((db) =>
         profileRepo.getById(db, providerId),
       );
@@ -2890,7 +2955,11 @@ export function createFridayProviderService(
         return state;
       }
       try {
-        credential = await resolveCredential(profile);
+        const tenantContext = options?.tenantContext
+          ?? (options?.ownerUserId
+            ? { hubId: options.ownerUserId, userId: options.ownerUserId }
+            : undefined);
+        credential = await resolveCredential(profile, tenantContext);
       } catch (err) {
         const state: FridayProviderValidationState = {
           status: "failed",
@@ -3048,7 +3117,9 @@ export function createFridayProviderService(
         && Boolean(requiredCapabilities?.length);
 
       if (capabilityFilterRemovedAllCandidates) {
-        await service.runCapabilityDoctor();
+        await service.runCapabilityDoctor({
+          tenantContext: params.tenantContext,
+        });
         currentProviders = deps.db.withReadConnection((db) =>
           profileRepo.list(db),
         );
@@ -3266,7 +3337,7 @@ export function createFridayProviderService(
         );
       }
 
-      const oauthProvider = profile.config.oauthProvider ?? "anthropic";
+      const oauthProvider = profile.config.oauthProvider ?? defaultOAuthProviderForKind(profile.kind);
       const adapter = oauthProviderRegistry.get(oauthProvider);
       if (!adapter) {
         throw new FridayDomainError(
@@ -3302,7 +3373,7 @@ export function createFridayProviderService(
         );
       }
 
-      const oauthProvider = profile.config.oauthProvider ?? "anthropic";
+      const oauthProvider = profile.config.oauthProvider ?? defaultOAuthProviderForKind(profile.kind);
       const adapter = oauthProviderRegistry.get(oauthProvider);
       if (!adapter) {
         throw new FridayDomainError(
@@ -3319,6 +3390,7 @@ export function createFridayProviderService(
 
       oauthTokenManager.saveTokenSet({
         providerProfileId: profile.id,
+        ownerUserId: input.ownerUserId ?? FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID,
         oauthProvider,
         tokenSet,
       });
@@ -3356,6 +3428,124 @@ export function createFridayProviderService(
         expiresAt: tokenSet.expiresAt,
         tokenType: tokenSet.tokenType,
         scope: tokenSet.scope,
+        metadata: tokenSet.metadata,
+      };
+    },
+
+    async initiateOAuthDeviceAuthorization(input): Promise<FridayOAuthDeviceAuthorizationRequest> {
+      const profile = deps.db.withReadConnection((db) =>
+        profileRepo.getById(db, input.providerId),
+      );
+      if (!profile) {
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider not found", {
+          httpStatus: 404,
+        });
+      }
+      if (profile.config.authMode !== "oauth") {
+        throw new FridayDomainError(
+          "PROVIDER_AUTH_INVALID",
+          `Provider '${profile.name}' does not use OAuth authentication`,
+          { httpStatus: 400 },
+        );
+      }
+
+      const oauthProvider = profile.config.oauthProvider ?? defaultOAuthProviderForKind(profile.kind);
+      const adapter = oauthProviderRegistry.get(oauthProvider);
+      if (!adapter?.initiateDeviceAuthorization) {
+        throw new FridayDomainError(
+          "UNSUPPORTED_OPERATION",
+          `OAuth adapter '${oauthProvider}' does not support device-code login`,
+          { httpStatus: 400 },
+        );
+      }
+
+      const deviceAuthorization = await adapter.initiateDeviceAuthorization();
+      pendingOAuthDeviceAuthorizations.set(deviceAuthorization.deviceCodeId, {
+        providerId: profile.id,
+        ownerUserId: input.ownerUserId,
+        oauthProvider,
+      });
+      return {
+        ...deviceAuthorization,
+        providerId: profile.id,
+        oauthProvider,
+      };
+    },
+
+    async completeOAuthDeviceAuthorization(input): Promise<FridayOAuthLoginResult> {
+      const pending = pendingOAuthDeviceAuthorizations.get(input.deviceCodeId);
+      if (!pending || pending.providerId !== input.providerId || pending.ownerUserId !== input.ownerUserId) {
+        throw new FridayDomainError(
+          "OAUTH_UNKNOWN_STATE",
+          "No pending device-code OAuth login found for this provider and user",
+          { httpStatus: 400 },
+        );
+      }
+
+      const profile = deps.db.withReadConnection((db) =>
+        profileRepo.getById(db, input.providerId),
+      );
+      if (!profile) {
+        pendingOAuthDeviceAuthorizations.delete(input.deviceCodeId);
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", "Provider not found", {
+          httpStatus: 404,
+        });
+      }
+
+      const oauthProvider = profile.config.oauthProvider ?? defaultOAuthProviderForKind(profile.kind);
+      const adapter = oauthProviderRegistry.get(oauthProvider);
+      if (!adapter?.completeDeviceAuthorization) {
+        throw new FridayDomainError(
+          "UNSUPPORTED_OPERATION",
+          `OAuth adapter '${oauthProvider}' does not support device-code login`,
+          { httpStatus: 400 },
+        );
+      }
+
+      const tokenSet = await adapter.completeDeviceAuthorization({
+        deviceCodeId: input.deviceCodeId,
+      });
+      pendingOAuthDeviceAuthorizations.delete(input.deviceCodeId);
+
+      oauthTokenManager.saveTokenSet({
+        providerProfileId: profile.id,
+        ownerUserId: input.ownerUserId,
+        oauthProvider,
+        tokenSet,
+      });
+
+      try {
+        const validationState = await validator.validate({
+          kind: profile.kind,
+          api: profile.config.api,
+          baseUrl: profile.baseUrl,
+          credential: tokenSet.accessToken,
+          model: profile.defaultModel,
+          authMode: "oauth",
+        });
+        profile.config.validation = validationState;
+      } catch (err) {
+        console.warn("[friday][provider-service] post-device-login validation failed:", err instanceof Error ? err.message : String(err));
+        profile.config.validation = {
+          status: "failed",
+          checkedAt: deps.nowIso(),
+          errorCode: "PROVIDER_UNREACHABLE",
+          errorMessage: "Post-device-login validation failed; token may still be valid",
+        };
+      }
+
+      deps.db.withWriteTransaction((db) => {
+        profileRepo.update(db, profile);
+      });
+
+      return {
+        providerId: profile.id,
+        oauthProvider,
+        connected: true,
+        expiresAt: tokenSet.expiresAt,
+        tokenType: tokenSet.tokenType,
+        scope: tokenSet.scope,
+        metadata: tokenSet.metadata,
       };
     },
   };

@@ -112,11 +112,12 @@ function buildRequestBody(
         temperature: temperature ?? 0,
         response_format: { type: "json_object" },
       };
-    case "openai-responses": {
+    case "openai-responses":
+    case "openai-codex-responses": {
       // OpenAI Responses API uses `input` (array of items), not `messages`
       const input: Array<Record<string, unknown>> = [];
       const systemMsg = messages.find((m) => m.role === "system");
-      if (systemMsg) {
+      if (systemMsg && api !== "openai-codex-responses") {
         input.push({
           role: "system",
           content: systemMsg.content,
@@ -125,13 +126,21 @@ function buildRequestBody(
       for (const m of messages.filter((m) => m.role !== "system")) {
         input.push({
           role: m.role,
-          content: m.content,
+          content: api === "openai-codex-responses"
+            ? [{ type: "input_text", text: m.content }]
+            : m.content,
         });
       }
       return {
         model,
         input,
-        temperature: temperature ?? 0,
+        ...(api === "openai-codex-responses"
+          ? {
+              instructions: systemMsg?.content ?? "You are Friday. Return the requested JSON object.",
+              store: false,
+            }
+          : {}),
+        ...(api !== "openai-codex-responses" ? { temperature: temperature ?? 0 } : {}),
         text: { format: { type: "json_object" } },
       };
     }
@@ -183,9 +192,10 @@ function buildRequestBody(
  */
 function withOAuthSystemPrefix(
   systemPrompt: string,
+  api: FridayProviderApi,
   authMode?: FridayProviderAuthMode,
 ): string {
-  if (!isFridayAnthropicBearerAuthMode(authMode)) return systemPrompt;
+  if (api !== "anthropic-messages" || !isFridayAnthropicBearerAuthMode(authMode)) return systemPrompt;
   return `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`;
 }
 
@@ -198,6 +208,8 @@ function buildUrl(api: FridayProviderApi, baseUrl: string, model: string): strin
       return `${base}/v1/chat/completions`;
     case "openai-responses":
       return `${base}/v1/responses`;
+    case "openai-codex-responses":
+      return `${base}/responses`;
     case "anthropic-messages":
       return `${base}/v1/messages`;
     case "google-generative-ai":
@@ -236,6 +248,11 @@ function buildHeaders(
       case "google-generative-ai":
         headers["x-goog-api-key"] = credential;
         break;
+      case "openai-codex-responses":
+        headers["Authorization"] = `Bearer ${credential}`;
+        headers.originator = "friday";
+        headers["User-Agent"] = "friday";
+        break;
       default:
         headers["Authorization"] = `Bearer ${credential}`;
         break;
@@ -258,7 +275,8 @@ function extractTextFromResponse(
         | undefined;
       return choices?.[0]?.message?.content ?? "";
     }
-    case "openai-responses": {
+    case "openai-responses":
+    case "openai-codex-responses": {
       // Responses API: output[] → find message item → content[] → find text
       const output = body["output"] as
         | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
@@ -303,7 +321,8 @@ function extractRefusalFromResponse(
         ? refusal
         : undefined;
     }
-    case "openai-responses": {
+    case "openai-responses":
+    case "openai-codex-responses": {
       const output = body["output"] as
         | Array<{ type?: string; content?: Array<{ type?: string; refusal?: string }> }>
         | undefined;
@@ -406,7 +425,7 @@ export function createFridayProviderInferenceClient(
                 const authMode = route.provider.config.authMode;
                 const headers = buildHeaders(api, credential, route.provider.config.headers, authMode);
                 const body = buildRequestBody(api, model, [
-                  { role: "system", content: withOAuthSystemPrefix(prompt.system, authMode) },
+                  { role: "system", content: withOAuthSystemPrefix(prompt.system, api, authMode) },
                   { role: "user", content: prompt.user },
                 ], resolvedTaskProfile.temperature);
                 const resp = await fetch(url, {
@@ -473,15 +492,7 @@ export function createFridayProviderInferenceClient(
             authMode,
           );
 
-          // For OAuth on non-Anthropic APIs: prepend required system prefix to the system message.
-          // For Anthropic, the prefix is applied in the cache-hint path below to avoid double-prefixing.
-          const effectiveMessages = (isFridayAnthropicBearerAuthMode(authMode) && api !== "anthropic-messages")
-            ? messages.map((m) =>
-                m.role === "system"
-                  ? { ...m, content: withOAuthSystemPrefix(m.content, authMode) }
-                  : m,
-              )
-            : messages;
+          const effectiveMessages = messages;
           let body = buildRequestBody(api, model, effectiveMessages, resolvedTaskProfile.temperature);
 
           // Apply Anthropic prompt caching when applicable
@@ -508,7 +519,7 @@ export function createFridayProviderInferenceClient(
             };
 
             // Use the OAuth-prefixed system prompt so cache blocks preserve the required prefix
-            const effectiveSystemPrompt = withOAuthSystemPrefix(request.prompt.system, authMode);
+            const effectiveSystemPrompt = withOAuthSystemPrefix(request.prompt.system, api, authMode);
             const cacheResult = cacheAdapter.applyAnthropicCacheHints({
               systemPrompt: effectiveSystemPrompt,
               userPrompt: request.prompt.user,

@@ -219,7 +219,7 @@ export function createFridayAgentLlmClient(
       // Dispatch to the appropriate API handler based on provider api type
       if (api === "ollama") {
         yield* handleOllamaStream(fetchFn, baseUrl ?? "", params);
-      } else if (api === "openai-completions" || api === "openai-responses") {
+      } else if (api === "openai-completions" || api === "openai-responses" || api === "openai-codex-responses") {
         yield* handleOpenAIStream(fetchFn, baseUrl ?? "", apiKey ?? "", api, params);
       } else {
         // Default: anthropic-messages (backwards compatible)
@@ -490,7 +490,7 @@ async function* handleOpenAIStream(
   fetchFn: typeof fetch,
   baseUrl: string,
   apiKey: string,
-  api: "openai-completions" | "openai-responses",
+  api: "openai-completions" | "openai-responses" | "openai-codex-responses",
   params: FridayAgentLlmStreamParams,
 ): AsyncIterable<FridayAgentLlmStreamEvent> {
   const base = baseUrl.replace(/\/+$/, "");
@@ -499,14 +499,26 @@ async function* handleOpenAIStream(
   let url: string;
   let body: Record<string, unknown>;
 
-  if (api === "openai-responses") {
-    url = `${base}/v1/responses`;
-    const input = mapMessagesForOpenAIResponses(params.systemPrompt, params.messages);
+  if (api === "openai-responses" || api === "openai-codex-responses") {
+    url = api === "openai-codex-responses"
+      ? `${base}/responses`
+      : `${base}/v1/responses`;
+    const input = api === "openai-codex-responses"
+      ? params.messages.flatMap((message) => mapMessageForOpenAIResponses(message.role, message.content))
+      : mapMessagesForOpenAIResponses(params.systemPrompt, params.messages);
     body = {
       model: params.model,
-      input,
+      input: input.length > 0
+        ? input
+        : [{ role: "user", content: [{ type: "input_text", text: "Continue." }] }],
       stream: true,
-      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+      ...(api === "openai-codex-responses"
+        ? {
+            instructions: params.systemPrompt || "You are Friday. Follow the user's instruction exactly.",
+            store: false,
+          }
+        : {}),
+      ...(api !== "openai-codex-responses" && params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(openAiTools.length > 0
         ? {
             tools: openAiTools.map((tool) => ({
@@ -554,6 +566,12 @@ async function* handleOpenAIStream(
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
+      ...(api === "openai-codex-responses"
+        ? {
+            originator: "friday",
+            "User-Agent": "friday",
+          }
+        : {}),
     },
     body: JSON.stringify(body),
     signal: params.signal,
@@ -576,7 +594,7 @@ async function* handleOpenAIStream(
     );
   }
 
-  if (api === "openai-responses") {
+  if (api === "openai-responses" || api === "openai-codex-responses") {
     yield* parseOpenAIResponsesSSEStream(response.body);
   } else {
     yield* parseOpenAISSEStream(response.body);

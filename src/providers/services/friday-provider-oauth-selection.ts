@@ -3,6 +3,10 @@ import type { FridayProviderApi, FridayProviderKind, FridayProviderProfile } fro
 import type { FridayProviderService } from "./friday-provider-service.types.js";
 
 const DEFAULT_OAUTH_PROVIDER_KIND: FridayProviderKind = "anthropic";
+const SUPPORTED_OAUTH_PROVIDER_KINDS = new Set<FridayProviderKind>([
+  "anthropic",
+  "openai-codex",
+]);
 
 export interface FridayOAuthProviderSelectionInput {
   providerId?: string;
@@ -175,8 +179,11 @@ function assertOAuthReadyProvider(
     );
   }
   if (provider.kind !== DEFAULT_OAUTH_PROVIDER_KIND) {
+    if (SUPPORTED_OAUTH_PROVIDER_KINDS.has(provider.kind)) {
+      return;
+    }
     throw new FridayDomainError("UNSUPPORTED_OPERATION",
-      `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only. Provider "${provider.id}" is kind "${provider.kind}".`,
+      `OAuth automation currently supports ${[...SUPPORTED_OAUTH_PROVIDER_KINDS].join(", ")} providers only. Provider "${provider.id}" is kind "${provider.kind}".`,
       { httpStatus: 400 },
     );
   }
@@ -184,9 +191,9 @@ function assertOAuthReadyProvider(
 
 function readOAuthProviderKind(kind: FridayProviderKind | undefined): FridayProviderKind {
   const resolved = kind ?? DEFAULT_OAUTH_PROVIDER_KIND;
-  if (resolved !== DEFAULT_OAUTH_PROVIDER_KIND) {
+  if (!SUPPORTED_OAUTH_PROVIDER_KINDS.has(resolved)) {
     throw new FridayDomainError("UNSUPPORTED_OPERATION",
-      `OAuth automation currently supports ${DEFAULT_OAUTH_PROVIDER_KIND} providers only.`,
+      `OAuth automation currently supports ${[...SUPPORTED_OAUTH_PROVIDER_KINDS].join(", ")} providers only.`,
       { httpStatus: 400 },
     );
   }
@@ -210,6 +217,8 @@ function formatProviderCandidate(provider: FridayProviderProfile): string {
 
 function getDefaultOAuthProviderName(kind: FridayProviderKind): string {
   switch (kind) {
+    case "openai-codex":
+      return "OpenAI Codex OAuth";
     case "anthropic":
       return "Claude OAuth";
     default:
@@ -219,6 +228,8 @@ function getDefaultOAuthProviderName(kind: FridayProviderKind): string {
 
 function getDefaultBaseUrl(kind: FridayProviderKind): string {
   switch (kind) {
+    case "openai-codex":
+      return "https://chatgpt.com/backend-api/codex";
     case "openai":
       return "https://api.openai.com";
     case "anthropic":
@@ -234,6 +245,8 @@ function getDefaultBaseUrl(kind: FridayProviderKind): string {
 
 function getDefaultApi(kind: FridayProviderKind): FridayProviderApi {
   switch (kind) {
+    case "openai-codex":
+      return "openai-codex-responses";
     case "openai":
     case "openai-compatible":
       return "openai-completions";
@@ -250,6 +263,8 @@ function getDefaultApi(kind: FridayProviderKind): FridayProviderApi {
 
 function getDefaultModels(kind: FridayProviderKind): string[] {
   switch (kind) {
+    case "openai-codex":
+      return ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"];
     case "openai":
       return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"];
     case "anthropic":

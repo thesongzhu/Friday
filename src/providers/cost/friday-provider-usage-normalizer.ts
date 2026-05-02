@@ -16,6 +16,7 @@ export function createFridayProviderUsageNormalizer(): FridayProviderUsageNormal
         case "openai-completions":
           return normalizeOpenAiCompletions(responseBody);
         case "openai-responses":
+        case "openai-codex-responses":
           return normalizeOpenAiResponses(responseBody);
         case "anthropic-messages":
           return normalizeAnthropicMessages(responseBody);

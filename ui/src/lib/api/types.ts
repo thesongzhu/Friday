@@ -1799,6 +1799,7 @@ export type FridayProviderKind =
 export type FridayProviderApi =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "ollama";
@@ -1943,6 +1944,17 @@ export interface FridayOAuthLoginInitiation {
   scopes: string[];
 }
 
+export interface FridayOAuthDeviceAuthorizationRequest {
+  providerId: string;
+  oauthProvider: string;
+  deviceCodeId: string;
+  verificationUrl: string;
+  userCode: string;
+  expiresAt: string;
+  intervalMs: number;
+  scopes: string[];
+}
+
 export interface FridayOAuthLoginResult {
   providerId: string;
   oauthProvider: string;
@@ -1950,6 +1962,7 @@ export interface FridayOAuthLoginResult {
   expiresAt: string;
   tokenType: string;
   scope: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FridayCliSessionStatus {

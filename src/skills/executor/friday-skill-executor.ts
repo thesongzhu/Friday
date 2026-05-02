@@ -83,6 +83,11 @@ async function runProviderInference(params: {
           case "google-generative-ai":
             headers["x-goog-api-key"] = credential;
             break;
+          case "openai-codex-responses":
+            headers["Authorization"] = `Bearer ${credential}`;
+            headers.originator = "friday";
+            headers["User-Agent"] = "friday";
+            break;
           default:
             headers["Authorization"] = `Bearer ${credential}`;
             break;
@@ -102,6 +107,20 @@ async function runProviderInference(params: {
           body = {
             model,
             input: [{ role: "user", content: params.prompt }],
+          };
+          break;
+        case "openai-codex-responses":
+          url = `${baseUrl}/responses`;
+          body = {
+            model,
+            instructions: "You are Friday. Follow the user's instruction exactly.",
+            store: false,
+            input: [
+              {
+                role: "user",
+                content: [{ type: "input_text", text: params.prompt }],
+              },
+            ],
           };
           break;
         case "anthropic-messages":
@@ -159,6 +178,15 @@ async function runProviderInference(params: {
           break;
         }
         case "openai-responses": {
+          const output = resBody["output"] as
+            | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
+            | undefined;
+          const msgItem = output?.find((item) => item.type === "message");
+          const textPart = msgItem?.content?.find((item) => item.type === "output_text");
+          text = textPart?.text ?? "";
+          break;
+        }
+        case "openai-codex-responses": {
           const output = resBody["output"] as
             | Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
             | undefined;

@@ -52,12 +52,14 @@ export interface FridayOAuthTokenManager {
   /** Stores token set after successful login callback exchange. */
   saveTokenSet(input: {
     providerProfileId: string;
+    ownerUserId?: string;
     oauthProvider: FridayOAuthProviderId;
     tokenSet: FridayOAuthTokenSet;
   }): FridayOAuthCredential;
   /** Resolves valid access token; refreshes and persists if near expiry. */
   getValidAccessToken(input: {
     providerProfileId: string;
+    ownerUserId?: string;
     oauthProvider: FridayOAuthProviderId;
   }): Promise<string | null>;
   /** Deletes stored OAuth credentials for provider profile. */
@@ -96,6 +98,8 @@ export function createFridayOAuthTokenManager(
     async getValidAccessToken(input) {
       const credential = deps.credentialStore.getByProviderProfileId(
         input.providerProfileId,
+        input.ownerUserId,
+        input.oauthProvider,
       );
       if (!credential) return null;
 
@@ -108,7 +112,7 @@ export function createFridayOAuthTokenManager(
       }
 
       // Expired — need to refresh
-      const flightKey = `${input.providerProfileId}:${input.oauthProvider}`;
+      const flightKey = `${input.providerProfileId}:${input.oauthProvider}:${input.ownerUserId ?? ""}`;
       const existing = inflightRefreshes.get(flightKey);
       if (existing) {
         // If the inflight refresh has been pending too long, discard it and retry
@@ -124,6 +128,8 @@ export function createFridayOAuthTokenManager(
           // Double-check: re-read from DB in case another caller already refreshed
           const freshCredential = deps.credentialStore.getByProviderProfileId(
             input.providerProfileId,
+            input.ownerUserId,
+            input.oauthProvider,
           );
           if (freshCredential) {
             const freshExpiresAtMs = new Date(freshCredential.expiresAt).getTime();
@@ -150,6 +156,7 @@ export function createFridayOAuthTokenManager(
 
           deps.credentialStore.upsert({
             providerProfileId: input.providerProfileId,
+            ownerUserId: input.ownerUserId,
             oauthProvider: input.oauthProvider,
             tokenSet: newTokenSet,
           });

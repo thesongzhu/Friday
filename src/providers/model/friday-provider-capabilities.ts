@@ -28,11 +28,13 @@ export interface FridayProviderCapability {
 }
 
 const OPENAI_APIS: readonly FridayProviderApi[] = ["openai-completions", "openai-responses"];
+const OPENAI_CODEX_APIS: readonly FridayProviderApi[] = ["openai-codex-responses"];
 const ANTHROPIC_APIS: readonly FridayProviderApi[] = ["anthropic-messages"];
 const GOOGLE_APIS: readonly FridayProviderApi[] = ["google-generative-ai"];
 const OLLAMA_APIS: readonly FridayProviderApi[] = ["ollama"];
 
 const OPENAI_CLOUD_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "bearer-token"];
+const OPENAI_CODEX_HTTP_AUTH: readonly FridayProviderAuthMode[] = ["oauth", "bearer-token"];
 const OPENAI_PROXY_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "bearer-token", "none"];
 const ANTHROPIC_AUTH: readonly FridayProviderAuthMode[] = ["api-key", "oauth", "token"];
 const GOOGLE_AUTH: readonly FridayProviderAuthMode[] = ["api-key"];
@@ -46,8 +48,8 @@ export const FRIDAY_PROVIDER_CAPABILITIES: Record<FridayProviderKind, FridayProv
     cli: CLI_EXTERNAL_SESSION_AUTH,
     sdk: [],
   }, { defaultCliBackendId: "codex-cli" }),
-  "openai-codex": capability("openai-codex", "openai-compatible", OPENAI_APIS, {
-    http: OPENAI_CLOUD_AUTH,
+  "openai-codex": capability("openai-codex", "openai-compatible", OPENAI_CODEX_APIS, {
+    http: OPENAI_CODEX_HTTP_AUTH,
     cli: CLI_EXTERNAL_SESSION_AUTH,
     sdk: SDK_EXTERNAL_SESSION_AUTH,
   }, { defaultCliBackendId: "codex-cli" }),

@@ -2376,6 +2376,25 @@ describe("FridayProviderService", () => {
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
+    it("creates an OpenAI Codex OAuth provider with the Codex OAuth adapter selected", async () => {
+      const profile = await service.createProvider({
+        kind: "openai-codex",
+        name: "OpenAI Codex OAuth",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        authMode: "oauth",
+        api: "openai-codex-responses",
+        supportedModels: ["gpt-5.4-mini"],
+        defaultModel: "gpt-5.4-mini",
+      });
+
+      expect(profile.config.authMode).toBe("oauth");
+      expect(profile.config.oauthProvider).toBe("openai-codex");
+      expect(profile.config.keySource).toEqual({ kind: "none" });
+      expect(profile.config.validation?.status).toBe("never");
+      expect(profile.config.validation?.errorMessage).toBe("OAuth login required");
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
     it("preserves oauthProvider when updating an OAuth provider", async () => {
       await service.createProvider({
         kind: "anthropic",

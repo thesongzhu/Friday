@@ -3,6 +3,7 @@ import type {
   FridayProviderProfile,
   FridayProviderValidationState,
   FridayModelRoutingConfig,
+  FridayOAuthDeviceAuthorizationRequest,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderKind,
@@ -144,6 +145,10 @@ interface InitiateOAuthResponse {
 
 interface CompleteOAuthResponse {
   oauth: FridayOAuthLoginResult;
+}
+
+interface InitiateDeviceOAuthResponse {
+  oauth: FridayOAuthDeviceAuthorizationRequest;
 }
 
 interface GetProviderDoctorResponse {
@@ -351,6 +356,27 @@ export const providersApi = {
     const data = await apiClient.post<typeof input, CompleteOAuthResponse>(
       "/v1/auth/oauth/anthropic/callback",
       input,
+    );
+    return data.oauth;
+  },
+
+  async initiateOpenAICodexDeviceOAuth(
+    providerId?: string,
+  ): Promise<FridayOAuthDeviceAuthorizationRequest> {
+    const data = await apiClient.post<{ providerId?: string; kind: "openai-codex" }, InitiateDeviceOAuthResponse>(
+      "/v1/auth/oauth/openai-codex/device/initiate",
+      { kind: "openai-codex", ...(providerId ? { providerId } : {}) },
+    );
+    return data.oauth;
+  },
+
+  async completeOpenAICodexDeviceOAuth(input: {
+    providerId?: string;
+    deviceCodeId: string;
+  }): Promise<FridayOAuthLoginResult> {
+    const data = await apiClient.post<typeof input & { kind: "openai-codex" }, CompleteOAuthResponse>(
+      "/v1/auth/oauth/openai-codex/device/complete",
+      { kind: "openai-codex", ...input },
     );
     return data.oauth;
   },

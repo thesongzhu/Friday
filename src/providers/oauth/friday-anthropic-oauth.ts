@@ -8,6 +8,7 @@ import * as crypto from "node:crypto";
 
 import type {
   FridayOAuthAuthorizationRequest,
+  FridayOAuthDeviceAuthorizationRequest,
   FridayOAuthProviderId,
   FridayOAuthTokenSet,
 } from "../model/friday-provider.types.js";
@@ -130,6 +131,12 @@ export interface FridayOAuthProviderAdapter {
   }): Promise<FridayOAuthTokenSet>;
   /** Refreshes an expired/expiring token set. */
   refreshAccessToken(refreshToken: string): Promise<FridayOAuthTokenSet>;
+  /** Optional device-code initiation for headless provider account login. */
+  initiateDeviceAuthorization?(): Promise<FridayOAuthDeviceAuthorizationRequest>;
+  /** Optional device-code completion for headless provider account login. */
+  completeDeviceAuthorization?(input: {
+    deviceCodeId: string;
+  }): Promise<FridayOAuthTokenSet>;
 }
 
 export interface CreateFridayAnthropicOAuthDeps {

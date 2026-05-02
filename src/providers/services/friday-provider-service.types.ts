@@ -3,6 +3,7 @@ import type { FridaySqliteLayer } from "#state";
 import type {
   FridayAuthProfile,
   FridayModelRoutingConfig,
+  FridayOAuthDeviceAuthorizationRequest,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderApi,
@@ -41,7 +42,10 @@ export interface FridayProviderService {
   listAuthProfiles(providerId: string): Promise<FridayAuthProfile[]>;
   activateAuthProfile(providerId: string, profileKey: string): Promise<FridayAuthProfile>;
   doctorProvider(providerId: string): Promise<FridayProviderDoctorReport>;
-  runCapabilityDoctor(): Promise<FridayProviderCapabilityDoctorReport>;
+  runCapabilityDoctor(options?: {
+    tenantContext?: FridayProviderTenantContext;
+    ownerUserId?: string;
+  }): Promise<FridayProviderCapabilityDoctorReport>;
   explainRouting(input: {
     requestedModel?: string;
     requestedProviderId?: string;
@@ -122,7 +126,13 @@ export interface FridayProviderService {
 
   deleteProvider(providerId: string): Promise<void>;
 
-  validateProvider(providerId: string): Promise<FridayProviderValidationState>;
+  validateProvider(
+    providerId: string,
+    options?: {
+      tenantContext?: FridayProviderTenantContext;
+      ownerUserId?: string;
+    },
+  ): Promise<FridayProviderValidationState>;
 
   getRoutingConfig(): Promise<FridayModelRoutingConfig>;
   setRoutingConfig(
@@ -191,6 +201,7 @@ export interface FridayProviderService {
   /** Starts OAuth login by generating authorization URL for a provider profile. */
   initiateOAuthLogin(input: {
     providerId: string;
+    ownerUserId?: string;
   }): Promise<FridayOAuthLoginInitiation>;
 
   /** Completes OAuth login by exchanging code and persisting tokens. */
@@ -198,6 +209,20 @@ export interface FridayProviderService {
     providerId: string;
     authorizationCode: string;
     state?: string;
+    ownerUserId?: string;
+  }): Promise<FridayOAuthLoginResult>;
+
+  /** Starts provider device-code OAuth login for headless/local clients. */
+  initiateOAuthDeviceAuthorization(input: {
+    providerId: string;
+    ownerUserId: string;
+  }): Promise<FridayOAuthDeviceAuthorizationRequest>;
+
+  /** Completes provider device-code OAuth login after the user authorizes. */
+  completeOAuthDeviceAuthorization(input: {
+    providerId: string;
+    ownerUserId: string;
+    deviceCodeId: string;
   }): Promise<FridayOAuthLoginResult>;
 }
 

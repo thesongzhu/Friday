@@ -91,6 +91,61 @@ async function validateOpenAi(
   }
 }
 
+async function validateOpenAiCodex(
+  baseUrl: string,
+  credential: string | null,
+  model?: string,
+): Promise<FridayProviderValidationState> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/responses`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    originator: "friday",
+    "User-Agent": "friday",
+  };
+  if (credential) {
+    headers.Authorization = `Bearer ${credential}`;
+  }
+  const body = JSON.stringify({
+    model: model?.trim() || "gpt-5.4-mini",
+    instructions: "You are Friday. Follow the user's instruction exactly.",
+    store: false,
+    stream: true,
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Reply with OK only." }],
+      },
+    ],
+  });
+  try {
+    const res = await fetchWithTimeout(url, { method: "POST", headers, body });
+    if (res.status === 401 || res.status === 403) {
+      return makeFailedState("PROVIDER_AUTH_INVALID", "Authentication failed", res.status);
+    }
+    if (res.status === 402) {
+      let msg = "OpenAI Codex plan or account is not available for this request";
+      try {
+        const errBody = (await res.json()) as { error?: { message?: string } };
+        if (errBody?.error?.message) msg = errBody.error.message;
+      } catch {
+        // ignore parse errors
+      }
+      return makeFailedState("PROVIDER_PAYMENT_REQUIRED", msg, 402);
+    }
+    if (res.ok || res.status === 429) {
+      await res.body?.cancel().catch(() => undefined);
+      return makeOkState();
+    }
+    return makeFailedState(
+      "PROVIDER_UNREACHABLE",
+      `HTTP ${String(res.status)}${await readValidationErrorSuffix(res)}`,
+      res.status,
+    );
+  } catch (err) {
+    return makeUnreachableState(err);
+  }
+}
+
 async function validateAnthropic(
   baseUrl: string,
   credential: string | null,
@@ -218,6 +273,19 @@ async function validateOpenAiCompatible(
   return validateOpenAi(baseUrl, credential);
 }
 
+async function readValidationErrorSuffix(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const safe = trimmed
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    .replace(/sk-[A-Za-z0-9._-]+/gi, "sk-[REDACTED]")
+    .slice(0, 500);
+  return `: ${safe}`;
+}
+
 // ─── State builders ───
 
 function makeOkState(): FridayProviderValidationState {
@@ -273,6 +341,8 @@ export function createFridayProviderValidator(): FridayProviderValidator {
         case "openai-completions":
         case "openai-responses":
           return validateOpenAiCompatible(params.baseUrl, params.credential);
+        case "openai-codex-responses":
+          return validateOpenAiCodex(params.baseUrl, params.credential, params.model);
         case "anthropic-messages":
           return validateAnthropic(params.baseUrl, params.credential, params.authMode);
         case "google-generative-ai":

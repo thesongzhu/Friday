@@ -5,6 +5,7 @@ import type {
   FridayClearProviderRoutePenaltyResponse,
   FridayCompleteAnthropicOAuthCallbackRequest,
   FridayCompleteAnthropicOAuthCallbackResponse,
+  FridayCompleteOpenAICodexDeviceOAuthResponse,
   FridayCreateProviderRequest,
   FridayCreateProviderResponse,
   FridayDeleteProviderResponse,
@@ -16,6 +17,7 @@ import type {
   FridayGetRoutingConfigResponse,
   FridayInitiateAnthropicOAuthRequest,
   FridayInitiateAnthropicOAuthResponse,
+  FridayInitiateOpenAICodexDeviceOAuthResponse,
   FridayListProviderAuthProfilesResponse,
   FridayListProvidersResponse,
   FridayListProviderTemplatesResponse,
@@ -119,6 +121,16 @@ function providerCreateSchemaDetails(): Record<string, unknown> {
       validateOnSave: true,
     },
   };
+}
+
+function requireOAuthOwnerUserId(principal: { userId?: string } | null): string {
+  const userId = principal?.userId?.trim();
+  if (!userId) {
+    throw new FridayDomainError("UNAUTHORIZED", "A user-scoped principal is required for provider OAuth", {
+      httpStatus: 401,
+    });
+  }
+  return userId;
 }
 
 function pushProviderCreateAliasErrors(body: Record<string, unknown>, errors: string[]): void {
@@ -455,8 +467,10 @@ export function createFridayProviderRoutes(
       path: "/v1/capabilities/doctor",
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.validate",
-      async handler(): Promise<FridayRunCapabilityDoctorResponse> {
-        return deps.providerService.runCapabilityDoctor();
+      async handler(ctx): Promise<FridayRunCapabilityDoctorResponse> {
+        return deps.providerService.runCapabilityDoctor({
+          ownerUserId: ctx.principal?.userId,
+        });
       },
     },
 
@@ -556,7 +570,9 @@ export function createFridayProviderRoutes(
       async handler(ctx): Promise<FridayValidateProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
         const validation =
-          await deps.providerService.validateProvider(providerId);
+          await deps.providerService.validateProvider(providerId, {
+            ownerUserId: ctx.principal?.userId,
+          });
         return { validation };
       },
     },
@@ -740,13 +756,15 @@ export function createFridayProviderRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateAnthropicOAuthResponse> {
+        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
         const body = ctx.body as Record<string, unknown> | null;
         const selection = await resolveOrProvisionOAuthProvider(
           deps.providerService,
-          readOAuthSelectionInput(body),
+          readOAuthSelectionInput(body, "anthropic"),
         );
         const oauth = await deps.providerService.initiateOAuthLogin({
           providerId: selection.provider.id,
+          ownerUserId,
         });
         return { oauth };
       },
@@ -760,6 +778,7 @@ export function createFridayProviderRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteAnthropicOAuthCallbackResponse> {
+        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError(
@@ -777,7 +796,7 @@ export function createFridayProviderRoutes(
         }
         const selection = await resolveExistingOAuthProvider(
           deps.providerService,
-          readOAuthSelectionInput(body),
+          readOAuthSelectionInput(body, "anthropic"),
           "oauth_complete",
         );
         const providerId = selection.provider.id;
@@ -787,6 +806,63 @@ export function createFridayProviderRoutes(
           providerId,
           authorizationCode,
           state,
+          ownerUserId,
+        });
+        return { oauth };
+      },
+    },
+    {
+      operationId: "auth.oauth.openai.codex.device.initiate",
+      method: "POST",
+      path: "/v1/auth/oauth/openai-codex/device/initiate",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayInitiateOpenAICodexDeviceOAuthResponse> {
+        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
+        const body = ctx.body as Record<string, unknown> | null;
+        const selection = await resolveOrProvisionOAuthProvider(
+          deps.providerService,
+          readOAuthSelectionInput(body, "openai-codex"),
+        );
+        const oauth = await deps.providerService.initiateOAuthDeviceAuthorization({
+          providerId: selection.provider.id,
+          ownerUserId,
+        });
+        return { oauth };
+      },
+    },
+    {
+      operationId: "auth.oauth.openai.codex.device.complete",
+      method: "POST",
+      path: "/v1/auth/oauth/openai-codex/device/complete",
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayCompleteOpenAICodexDeviceOAuthResponse> {
+        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        if (typeof body.deviceCodeId !== "string" || body.deviceCodeId.trim() === "") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "deviceCodeId is required and must be a non-empty string",
+            { httpStatus: 400 },
+          );
+        }
+        const selection = await resolveExistingOAuthProvider(
+          deps.providerService,
+          readOAuthSelectionInput(body, "openai-codex"),
+          "oauth_complete",
+        );
+        const oauth = await deps.providerService.completeOAuthDeviceAuthorization({
+          providerId: selection.provider.id,
+          ownerUserId,
+          deviceCodeId: body.deviceCodeId.trim(),
         });
         return { oauth };
       },
@@ -794,9 +870,9 @@ export function createFridayProviderRoutes(
   ];
 }
 
-function readOAuthSelectionInput(body: Record<string, unknown> | null): {
+function readOAuthSelectionInput(body: Record<string, unknown> | null, defaultKind: "anthropic" | "openai-codex"): {
   providerId?: string;
-  kind?: "anthropic";
+  kind?: "anthropic" | "openai-codex";
   name?: string;
   defaultModel?: string;
 } {
@@ -805,8 +881,8 @@ function readOAuthSelectionInput(body: Record<string, unknown> | null): {
       ? body.providerId.trim()
       : undefined,
     kind: typeof body?.kind === "string" && body.kind.trim().length > 0
-      ? body.kind.trim() as "anthropic"
-      : undefined,
+      ? body.kind.trim() as "anthropic" | "openai-codex"
+      : defaultKind,
     name: typeof body?.name === "string" && body.name.trim().length > 0
       ? body.name.trim()
       : undefined,

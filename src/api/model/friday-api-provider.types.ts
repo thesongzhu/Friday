@@ -3,6 +3,7 @@ import type {
   FridayLlmBudgetConfig,
   FridayLlmBudgetStatus,
   FridayModelRoutingConfig,
+  FridayOAuthDeviceAuthorizationRequest,
   FridayOAuthLoginInitiation,
   FridayOAuthLoginResult,
   FridayProviderApi,
@@ -201,5 +202,28 @@ export interface FridayCompleteAnthropicOAuthCallbackRequest {
 }
 
 export interface FridayCompleteAnthropicOAuthCallbackResponse {
+  oauth: FridayOAuthLoginResult;
+}
+
+export interface FridayInitiateOpenAICodexDeviceOAuthRequest {
+  providerId?: string;
+  kind?: "openai-codex";
+  name?: string;
+  defaultModel?: string;
+}
+
+export interface FridayInitiateOpenAICodexDeviceOAuthResponse {
+  oauth: FridayOAuthDeviceAuthorizationRequest;
+}
+
+export interface FridayCompleteOpenAICodexDeviceOAuthRequest {
+  providerId?: string;
+  kind?: "openai-codex";
+  name?: string;
+  defaultModel?: string;
+  deviceCodeId: string;
+}
+
+export interface FridayCompleteOpenAICodexDeviceOAuthResponse {
   oauth: FridayOAuthLoginResult;
 }

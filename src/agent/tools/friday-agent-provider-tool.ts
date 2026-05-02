@@ -92,6 +92,7 @@ const VALID_CLI_BACKEND_IDS = new Set<FridayProviderCliBackendId>(
 const VALID_APIS = new Set<FridayProviderApi>([
   "openai-completions",
   "openai-responses",
+  "openai-codex-responses",
   "anthropic-messages",
   "google-generative-ai",
   "ollama",
@@ -130,7 +131,7 @@ export function createFridayAgentProviderTool(
         kind: {
           type: "string",
           enum: Array.from(VALID_KINDS),
-          description: "Provider kind (required for create; optional for oauth_init/oauth_complete to target an OAuth-capable family, currently anthropic).",
+          description: "Provider kind (required for create; optional for oauth_init/oauth_complete to target an OAuth-capable family).",
         },
         name: {
           type: "string",
@@ -166,7 +167,7 @@ export function createFridayAgentProviderTool(
         api: {
           type: "string",
           enum: Array.from(VALID_APIS),
-          description: "API format: openai-completions, openai-responses, anthropic-messages, google-generative-ai, ollama.",
+          description: "API format: openai-completions, openai-responses, openai-codex-responses, anthropic-messages, google-generative-ai, ollama.",
         },
         apiKey: {
           type: "string",
@@ -591,8 +592,9 @@ export function createFridayAgentProviderTool(
   function getDefaultBaseUrl(kind: FridayProviderKind): string {
     switch (kind) {
       case "openai":
-      case "openai-codex":
         return "https://api.openai.com";
+      case "openai-codex":
+        return "https://chatgpt.com/backend-api/codex";
       case "anthropic":
         return "https://api.anthropic.com";
       case "google":
@@ -607,9 +609,10 @@ export function createFridayAgentProviderTool(
   function getDefaultApi(kind: FridayProviderKind): FridayProviderApi {
     switch (kind) {
       case "openai":
-      case "openai-codex":
       case "openai-compatible":
         return "openai-completions";
+      case "openai-codex":
+        return "openai-codex-responses";
       case "anthropic":
         return "anthropic-messages";
       case "google":
@@ -647,6 +650,9 @@ export function createFridayAgentProviderTool(
     }
     if (kind === "anthropic") {
       return "token";
+    }
+    if (kind === "openai-codex") {
+      return "oauth";
     }
     if (kind === "ollama") {
       return "none";

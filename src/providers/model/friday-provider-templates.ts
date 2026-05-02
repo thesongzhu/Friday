@@ -37,6 +37,22 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
       "Keep HTTP routing as the canonical setup path even if Codex CLI is attached later.",
     ],
   },
+  "openai-codex": {
+    displayName: "OpenAI Codex",
+    description: "ChatGPT/Codex subscription-auth route where each Friday user connects their own OpenAI account.",
+    tier: "official",
+    status: "ready",
+    baseUrlHints: ["https://chatgpt.com/backend-api/codex"],
+    modelDefaults: {
+      recommended: "gpt-5.4-mini",
+      fallback: "gpt-5.4",
+      examples: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+    },
+    reasoningHints: [
+      "Use device-code login for headless/local setup so the connected ChatGPT/Codex plan stays user-owned.",
+      "Keep API-key DeepSeek and OpenAI API providers separate from this subscription-auth route.",
+    ],
+  },
   anthropic: {
     displayName: "Anthropic API",
     description: "Claude HTTP path with support for API keys, OAuth, and setup tokens inside Friday's supervised runtime.",

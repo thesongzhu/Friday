@@ -76,7 +76,7 @@ function localPreset(
 
 export const FRIDAY_PROVIDER_PRESETS: Record<FridayProviderKind, FridayProviderPreset> = {
   openai: hostedPreset("openai", "openai-responses", "bearer-token", "https://api.openai.com"),
-  "openai-codex": hostedPreset("openai-codex", "openai-responses", "bearer-token", "https://api.openai.com"),
+  "openai-codex": hostedPreset("openai-codex", "openai-codex-responses", "oauth", "https://chatgpt.com/backend-api/codex"),
   anthropic: hostedPreset("anthropic", "anthropic-messages", "api-key", "https://api.anthropic.com"),
   google: hostedPreset("google", "google-generative-ai", "api-key", "https://generativelanguage.googleapis.com"),
   "google-vertex": hostedPreset("google-vertex", "google-generative-ai", "api-key", ""),

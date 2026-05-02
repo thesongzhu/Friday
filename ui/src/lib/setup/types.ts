@@ -52,6 +52,7 @@ export type ProviderKind =
 export type ProviderApi =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai"
   | "ollama";

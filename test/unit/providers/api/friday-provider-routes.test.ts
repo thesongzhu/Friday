@@ -44,6 +44,25 @@ describe("FridayProviderRoutes", () => {
     updatedAt: NOW,
   };
 
+  const openAICodexOauthProfile: FridayProviderProfile = {
+    id: "codex-001",
+    kind: "openai-codex",
+    name: "OpenAI Codex OAuth",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    enabled: true,
+    defaultModel: "gpt-5.4-mini",
+    config: {
+      api: "openai-codex-responses",
+      authMode: "oauth",
+      keySource: { kind: "none" },
+      oauthProvider: "openai-codex",
+      supportedModels: ["gpt-5.4-mini"],
+      validation: { status: "never" },
+    },
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
   function makeCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
     return {
       requestId: "req-1",
@@ -59,13 +78,15 @@ describe("FridayProviderRoutes", () => {
 
   function makeMockService(): FridayProviderService {
     return {
-      listProviders: vi.fn(async () => [sampleProfile, anthropicOauthProfile]),
+      listProviders: vi.fn(async () => [sampleProfile, anthropicOauthProfile, openAICodexOauthProfile]),
       getProvider: vi.fn(async (id: string) =>
         id === "prov-001"
           ? sampleProfile
           : id === "anth-001"
             ? anthropicOauthProfile
-            : null,
+            : id === "codex-001"
+              ? openAICodexOauthProfile
+              : null,
       ),
       createProvider: vi.fn(async () => sampleProfile),
       updateProvider: vi.fn(async () => sampleProfile),
@@ -274,14 +295,33 @@ describe("FridayProviderRoutes", () => {
         tokenType: "Bearer",
         scope: "org:create_api_key user:profile user:inference",
       })),
+      initiateOAuthDeviceAuthorization: vi.fn(async () => ({
+        providerId: "codex-001",
+        oauthProvider: "openai-codex" as const,
+        deviceCodeId: "device-code-1",
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "ABCD-EFGH",
+        expiresAt: NOW,
+        intervalMs: 1000,
+        scopes: ["openid", "profile", "email"],
+      })),
+      completeOAuthDeviceAuthorization: vi.fn(async () => ({
+        providerId: "codex-001",
+        oauthProvider: "openai-codex" as const,
+        connected: true as const,
+        expiresAt: NOW,
+        tokenType: "Bearer",
+        scope: "openid profile email",
+        metadata: { email: "codex@example.test" },
+      })),
     };
   }
 
-  it("creates 20 route definitions", () => {
+  it("creates 22 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(20);
+    expect(routes).toHaveLength(22);
   });
 
   it("has correct operation ids", () => {
@@ -307,6 +347,8 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("providers.templates.list");
     expect(operationIds).toContain("providers.templates.get");
     expect(operationIds).toContain("providers.health.list");
+    expect(operationIds).toContain("auth.oauth.openai.codex.device.initiate");
+    expect(operationIds).toContain("auth.oauth.openai.codex.device.complete");
   });
 
   it("all routes require hub.admin scope", () => {
@@ -330,7 +372,7 @@ describe("FridayProviderRoutes", () => {
       const listRoute = routes.find((r) => r.operationId === "providers.list")!;
 
       const result = await listRoute.handler(makeCtx());
-      expect(result).toEqual({ items: [sampleProfile, anthropicOauthProfile] });
+      expect(result).toEqual({ items: [sampleProfile, anthropicOauthProfile, openAICodexOauthProfile] });
     });
 
     it("providers.get returns provider", async () => {
@@ -729,11 +771,12 @@ describe("FridayProviderRoutes", () => {
       )!;
 
       const result = await initiateRoute.handler(
-        makeCtx({ body: { providerId: "anth-001" } }),
+        makeCtx({ principal: { userId: "user-1" } as never, body: { providerId: "anth-001" } }),
       );
 
       expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
         providerId: "anth-001",
+        ownerUserId: "user-1",
       });
       expect(result).toHaveProperty("oauth");
     });
@@ -747,10 +790,11 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "auth.oauth.anthropic.initiate",
       )!;
 
-      const result = await initiateRoute.handler(makeCtx({ body: {} }));
+      const result = await initiateRoute.handler(makeCtx({ principal: { userId: "user-1" } as never, body: {} }));
 
       expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
         providerId: "anth-001",
+        ownerUserId: "user-1",
       });
       expect(result).toHaveProperty("oauth");
     });
@@ -770,6 +814,7 @@ describe("FridayProviderRoutes", () => {
             providerId: "anth-001",
             authorizationCode: "code#state",
           },
+          principal: { userId: "user-1" } as never,
         }),
       );
 
@@ -777,6 +822,7 @@ describe("FridayProviderRoutes", () => {
         providerId: "anth-001",
         authorizationCode: "code#state",
         state: undefined,
+        ownerUserId: "user-1",
       });
       expect(result).toHaveProperty("oauth");
     });
@@ -795,6 +841,7 @@ describe("FridayProviderRoutes", () => {
           body: {
             authorizationCode: "code#state",
           },
+          principal: { userId: "user-1" } as never,
         }),
       );
 
@@ -802,6 +849,7 @@ describe("FridayProviderRoutes", () => {
         providerId: "anth-001",
         authorizationCode: "code#state",
         state: undefined,
+        ownerUserId: "user-1",
       });
       expect(result).toHaveProperty("oauth");
     });
@@ -824,8 +872,58 @@ describe("FridayProviderRoutes", () => {
       )!;
 
       await expect(
-        initiateRoute.handler(makeCtx({ body: {} })),
+        initiateRoute.handler(makeCtx({ principal: { userId: "user-1" } as never, body: {} })),
       ).rejects.toThrow("Multiple anthropic OAuth providers are available. Specify providerId.");
+    });
+
+    it("auth.oauth.openai.codex.device.initiate delegates to device-code service with owner user", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const initiateRoute = routes.find(
+        (r) => r.operationId === "auth.oauth.openai.codex.device.initiate",
+      )!;
+
+      const result = await initiateRoute.handler(
+        makeCtx({
+          principal: { userId: "user-1" } as never,
+          body: { providerId: "codex-001" },
+        }),
+      );
+
+      expect(mockService.initiateOAuthDeviceAuthorization).toHaveBeenCalledWith({
+        providerId: "codex-001",
+        ownerUserId: "user-1",
+      });
+      expect(result).toHaveProperty("oauth.deviceCodeId", "device-code-1");
+    });
+
+    it("auth.oauth.openai.codex.device.complete delegates to device-code service with owner user", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const completeRoute = routes.find(
+        (r) => r.operationId === "auth.oauth.openai.codex.device.complete",
+      )!;
+
+      const result = await completeRoute.handler(
+        makeCtx({
+          principal: { userId: "user-1" } as never,
+          body: {
+            providerId: "codex-001",
+            deviceCodeId: "device-code-1",
+          },
+        }),
+      );
+
+      expect(mockService.completeOAuthDeviceAuthorization).toHaveBeenCalledWith({
+        providerId: "codex-001",
+        ownerUserId: "user-1",
+        deviceCodeId: "device-code-1",
+      });
+      expect(result).toHaveProperty("oauth.connected", true);
     });
   });
 
@@ -863,7 +961,7 @@ describe("FridayProviderRoutes", () => {
       const result = await route.handler(makeCtx());
       const items = (result as { items: Array<{ providerId: string; lane: string; circuitState: string }> }).items;
 
-      expect(items).toHaveLength(2);
+      expect(items).toHaveLength(3);
       expect(items.find((item) => item.providerId === "prov-001")).toMatchObject({
         lane: "fallback",
         circuitState: "cooldown",
@@ -882,6 +980,8 @@ describe("FridayProviderRoutes", () => {
       expect(operationIds).toContain("providers.health.list");
       expect(operationIds).toContain("auth.oauth.anthropic.initiate");
       expect(operationIds).toContain("auth.oauth.anthropic.callback");
+      expect(operationIds).toContain("auth.oauth.openai.codex.device.initiate");
+      expect(operationIds).toContain("auth.oauth.openai.codex.device.complete");
     });
   });
 });
