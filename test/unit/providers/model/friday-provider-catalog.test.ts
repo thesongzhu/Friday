@@ -25,9 +25,9 @@ describe("friday-provider-catalog", () => {
     expect(new Set(FRIDAY_PROVIDER_KINDS).size).toBe(FRIDAY_PROVIDER_KINDS.length);
   });
 
-  it("returns openai-compatible preset for openrouter", () => {
+  it("returns chat-completions OpenAI-compatible preset for openrouter", () => {
     const preset = getFridayProviderPreset("openrouter");
-    expect(preset.api).toBe("openai-responses");
+    expect(preset.api).toBe("openai-completions");
     expect(preset.authMode).toBe("bearer-token");
     expect(preset.baseUrl).toBe("https://openrouter.ai/api");
   });
