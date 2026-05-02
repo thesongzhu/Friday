@@ -79,4 +79,13 @@ describe("friday-provider-templates", () => {
     expect(deepseek?.authModes).toContain("api-key");
     expect(deepseek?.requiredSecrets.some((req) => req.key === "apiKey")).toBe(true);
   });
+
+  it("keeps setup-visible OpenAI-compatible providers on the chat completions runtime path", () => {
+    for (const kind of ["openrouter", "xai", "mistral", "groq", "moonshot", "qwen"] as const) {
+      expect(getFridayProviderTemplate(kind)).toMatchObject({
+        providerKind: kind,
+        api: "openai-completions",
+      });
+    }
+  });
 });

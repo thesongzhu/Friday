@@ -23,7 +23,8 @@ import type {
   ProviderKind,
   SetupStepId,
 } from "@/lib/setup/types";
-import { ActionButton, StatusPill } from "@/components/core/primitives";
+import type { FridayProviderTemplate } from "@/lib/api/types";
+import { ActionButton, ConfirmDialog, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
@@ -38,8 +39,44 @@ import {
   FRIDAY_SETUP_READINESS_SESSION_KEY,
   FridayReadinessSummaryPanel,
 } from "@/components/setup/friday-readiness-summary";
+import {
+  defaultConnectionModeForProvider,
+  resolveKeyAuthMode,
+  supportsKeyConnection,
+  supportsUseMyPlan,
+  type ProviderConnectionMode,
+} from "@/lib/providers/provider-connection";
 
-const SETUP_CHANNEL_KINDS_ORDERED: ChannelKind[] = ["telegram", "discord", "feishu"];
+export const SETUP_CHANNEL_KINDS_ORDERED: ChannelKind[] = ["telegram", "discord", "feishu"];
+const SETUP_KEY_AUTH_MODES: readonly AuthMode[] = ["api-key", "bearer-token", "token"];
+
+export const SETUP_VISIBLE_PROVIDER_KINDS = {
+  international: ["openai", "openai-codex", "anthropic", "openrouter", "xai", "mistral", "groq"],
+  china: ["deepseek", "moonshot", "qwen", "kimi-coding"],
+} as const satisfies Record<"international" | "china", readonly ProviderKind[]>;
+
+function isSetupReadyProviderTemplate(template: FridayProviderTemplate): boolean {
+  const canConnectWithCredential = SETUP_KEY_AUTH_MODES.some((mode) => template.authModes.includes(mode));
+  const canConnectWithPlan = supportsUseMyPlan(template.providerKind, template);
+  return template.status === "ready"
+    && template.baseUrlHints.length > 0
+    && (canConnectWithCredential || canConnectWithPlan);
+}
+
+export function getSetupProviderKindsForRegion(
+  providerTemplates: readonly FridayProviderTemplate[],
+  region: "international" | "china",
+): ProviderKind[] {
+  const preferredKinds = SETUP_VISIBLE_PROVIDER_KINDS[region];
+  if (providerTemplates.length === 0) {
+    return [...preferredKinds];
+  }
+  const templatesByKind = new Map(providerTemplates.map((template) => [template.providerKind, template]));
+  return preferredKinds.filter((kind) => {
+    const template = templatesByKind.get(kind);
+    return template ? isSetupReadyProviderTemplate(template) : false;
+  });
+}
 
 // ─── Provider recommendation helper (unchanged) ───
 
@@ -70,11 +107,55 @@ type ProviderSetupFeedback = {
   warnings: string[];
 };
 
+type OpenAICodexDeviceOAuthState = {
+  status: "idle" | "starting" | "pending" | "completing" | "connected" | "error";
+  providerId?: string;
+  deviceCodeId?: string;
+  verificationUrl?: string;
+  userCode?: string;
+  expiresAt?: string;
+  message?: string;
+};
+
+type PendingDefaultProviderChoice = {
+  providerId: string;
+  providerName: string;
+  defaultModel?: string;
+};
+
 type ChannelTestState = {
   validated: boolean;
   message: string;
   warnings: string[];
 };
+
+type SetupCompletionStepStateInput = {
+  providerValidated: boolean;
+  channelsSaved: boolean;
+  skillsImported: boolean;
+};
+
+export function buildSetupCompletionStepState(input: SetupCompletionStepStateInput): {
+  completedSteps: SetupStepId[];
+  skippedSteps: SetupStepId[];
+} {
+  const completedSteps: SetupStepId[] = [
+    "welcome",
+    "security",
+    ...(input.providerValidated ? (["provider"] as const) : []),
+    ...(input.channelsSaved ? (["channels"] as const) : []),
+    ...(input.skillsImported ? (["skills"] as const) : []),
+    "done",
+  ];
+  const skippedSteps: SetupStepId[] = [
+    "communication",
+    ...(input.providerValidated ? [] : (["provider"] as const)),
+    ...(input.channelsSaved ? [] : (["channels"] as const)),
+    "network",
+    ...(input.skillsImported ? [] : (["skills"] as const)),
+  ];
+  return { completedSteps, skippedSteps };
+}
 
 type FeishuRegistrationState = {
   status: "idle" | "starting" | "pending" | "success" | "failed";
@@ -273,11 +354,17 @@ export function SetupPage() {
   const [providerDefaultModel, setProviderDefaultModel] = useState("");
   const [providerApi, setProviderApi] = useState<ProviderApi>("openai-responses");
   const [providerAuthMode, setProviderAuthMode] = useState<AuthMode>("api-key");
+  const [providerConnectionMode, setProviderConnectionMode] = useState<ProviderConnectionMode>("api-key");
   const [providerValidated, setProviderValidated] = useState(false);
   const [providerFeedback, setProviderFeedback] = useState<ProviderSetupFeedback>({
     status: "idle",
     warnings: [],
   });
+  const [openAICodexOAuth, setOpenAICodexOAuth] = useState<OpenAICodexDeviceOAuthState>({
+    status: "idle",
+  });
+  const [pendingDefaultProviderChoice, setPendingDefaultProviderChoice] = useState<PendingDefaultProviderChoice | null>(null);
+  const [routingUpdatePending, setRoutingUpdatePending] = useState(false);
   const hasSetupDeepLink = Boolean(
     searchParams.get("step")
       ?? searchParams.get("providerKind")
@@ -360,6 +447,12 @@ export function SetupPage() {
     staleTime: 30_000,
   });
 
+  const { data: routingConfig } = useQuery({
+    queryKey: ["setup", "routing-config"],
+    queryFn: () => providersApi.getRouting(),
+    retry: 0,
+  });
+
   // ── Redirects ──
 
   useEffect(() => {
@@ -436,6 +529,14 @@ export function SetupPage() {
     [providerKind, providerTemplates],
   );
 
+  function selectProviderConnectionMode(mode: ProviderConnectionMode): void {
+    setProviderConnectionMode(mode);
+    setProviderAuthMode(mode === "use-my-plan" ? "oauth" : resolveKeyAuthMode(selectedTemplate));
+    setProviderValidated(false);
+    setProviderFeedback({ status: "idle", warnings: [] });
+    setOpenAICodexOAuth({ status: "idle" });
+  }
+
   function applyProviderTemplate(templateId: ProviderKind): void {
     const template = providerTemplates.find((item) => item.providerKind === templateId);
     setProviderKind(templateId);
@@ -447,7 +548,9 @@ export function SetupPage() {
     setProviderName(`${template.displayName} Provider`);
     setProviderBaseUrl(template.baseUrlHints[0] ?? "");
     setProviderApi(template.api);
-    setProviderAuthMode(template.authModes[0] ?? "api-key");
+    const nextConnectionMode = defaultConnectionModeForProvider(templateId, template);
+    setProviderConnectionMode(nextConnectionMode);
+    setProviderAuthMode(nextConnectionMode === "use-my-plan" ? "oauth" : resolveKeyAuthMode(template));
     const modelExamples = template.modelDefaults.examples ?? [];
     setProviderModels(modelExamples);
     setProviderDefaultModel(
@@ -457,6 +560,7 @@ export function SetupPage() {
         ?? "",
     );
     setProviderValidated(false);
+    setOpenAICodexOAuth({ status: "idle" });
   }
 
   function providerDisplayName(kind: ProviderKind): string {
@@ -533,6 +637,129 @@ export function SetupPage() {
       defaultModel: draft.defaultModel,
       fallbackProviderIds: [],
     });
+  }
+
+  async function setProviderAsDefault(providerId: string, defaultModel?: string): Promise<void> {
+    setRoutingUpdatePending(true);
+    try {
+      await providersApi.setRouting({
+        defaultProviderId: providerId,
+        defaultModel,
+        fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
+        enforceRequestedModel: routingConfig?.enforceRequestedModel,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["setup", "routing-config"] }),
+        queryClient.invalidateQueries({ queryKey: ["setup", "providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] }),
+      ]);
+      toast.success(localize(locale, "默认模型提供方已更新", "Default model provider updated"));
+    } finally {
+      setRoutingUpdatePending(false);
+    }
+  }
+
+  async function promptOrSetDefaultProvider(input: PendingDefaultProviderChoice): Promise<void> {
+    if (routingConfig?.defaultProviderId && routingConfig.defaultProviderId !== input.providerId) {
+      setPendingDefaultProviderChoice(input);
+      return;
+    }
+    await setProviderAsDefault(input.providerId, input.defaultModel);
+  }
+
+  async function startOpenAICodexDeviceOAuth(): Promise<void> {
+    setOpenAICodexOAuth({ status: "starting" });
+    setProviderFeedback({ status: "checking", kind: "openai-codex", warnings: [] });
+    try {
+      const existingOAuthProvider = existingProviders.find((provider) =>
+        provider.kind === "openai-codex" && provider.config.authMode === "oauth"
+      );
+      const oauth = await providersApi.initiateOpenAICodexDeviceOAuth(existingOAuthProvider?.id);
+      setProviderAuthMode("oauth");
+      setProviderKind("openai-codex");
+      setOpenAICodexOAuth({
+        status: "pending",
+        providerId: oauth.providerId,
+        deviceCodeId: oauth.deviceCodeId,
+        verificationUrl: oauth.verificationUrl,
+        userCode: oauth.userCode,
+        expiresAt: oauth.expiresAt,
+      });
+      setProviderFeedback({
+        status: "idle",
+        warnings: [],
+      });
+      window.open(oauth.verificationUrl, "_blank", "noopener,noreferrer");
+      toast.success(localize(locale, "请在浏览器中完成 OpenAI 授权", "Complete OpenAI authorization in your browser"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : localize(locale, "无法启动 OpenAI 授权", "Could not start OpenAI authorization");
+      setOpenAICodexOAuth({ status: "error", message });
+      setProviderFeedback({
+        status: "error",
+        kind: "openai-codex",
+        message,
+        warnings: [],
+      });
+      toast.error(message);
+    }
+  }
+
+  async function completeOpenAICodexDeviceOAuth(options: { advance: boolean }): Promise<void> {
+    if (!openAICodexOAuth.deviceCodeId) {
+      toast.error(localize(locale, "请先开始 OpenAI 授权", "Start OpenAI authorization first"));
+      return;
+    }
+    setOpenAICodexOAuth((current) => ({ ...current, status: "completing", message: undefined }));
+    setProviderFeedback({ status: "checking", kind: "openai-codex", warnings: [] });
+    try {
+      const oauth = await providersApi.completeOpenAICodexDeviceOAuth({
+        providerId: openAICodexOAuth.providerId,
+        deviceCodeId: openAICodexOAuth.deviceCodeId,
+      });
+      const provider = existingProviders.find((item) => item.id === oauth.providerId);
+      const connectedProviderName = provider?.name ?? "OpenAI Codex";
+      setProviderValidated(true);
+      setProviderKind("openai-codex");
+      setProviderAuthMode("oauth");
+      setProviderFeedback({
+        status: "saved",
+        kind: "openai-codex",
+        defaultModel: providerDefaultModel,
+        warnings: [],
+      });
+      setOpenAICodexOAuth({
+        status: "connected",
+        providerId: oauth.providerId,
+        deviceCodeId: openAICodexOAuth.deviceCodeId,
+        verificationUrl: openAICodexOAuth.verificationUrl,
+        userCode: openAICodexOAuth.userCode,
+        expiresAt: oauth.expiresAt,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["setup", "providers"] }),
+        queryClient.invalidateQueries({ queryKey: ["setup", "provider-health"] }),
+        queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] }),
+      ]);
+      await promptOrSetDefaultProvider({
+        providerId: oauth.providerId,
+        providerName: connectedProviderName,
+        defaultModel: providerDefaultModel || undefined,
+      });
+      toast.success(localize(locale, "OpenAI 账号已连接", "OpenAI account connected"));
+      if (options.advance && !routingConfig?.defaultProviderId) {
+        goNext();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : localize(locale, "OpenAI 授权未完成", "OpenAI authorization is not complete yet");
+      setOpenAICodexOAuth((current) => ({ ...current, status: "error", message }));
+      setProviderFeedback({
+        status: "error",
+        kind: "openai-codex",
+        message,
+        warnings: [],
+      });
+      toast.error(message);
+    }
   }
 
   // ── Mutations (all kept intact) ──
@@ -1075,21 +1302,11 @@ export function SetupPage() {
 
   const completeSetupMutation = useMutation({
     mutationFn: () => {
-      const starterTaskId = FRIDAY_ASSISTANT_STARTER_TASKS[0]?.id ?? "";
-      const completedSteps: SetupStepId[] = [
-        "welcome",
-        "security",
-        ...(providerValidated ? (["provider"] as const) : []),
-        ...(channelsSaved ? (["channels"] as const) : []),
-        "done",
-      ];
-      const skippedSteps: SetupStepId[] = [
-        "communication",
-        ...(providerValidated ? [] : (["provider"] as const)),
-        ...(channelsSaved ? [] : (["channels"] as const)),
-        "network",
-        "skills",
-      ];
+      const { completedSteps, skippedSteps } = buildSetupCompletionStepState({
+        providerValidated,
+        channelsSaved,
+        skillsImported: (skillImportResult?.importedCount ?? 0) > 0,
+      });
       return setupApi.completeSetup({ completedSteps, skippedSteps });
     },
     onSuccess: async () => {
@@ -1408,34 +1625,28 @@ export function SetupPage() {
   // ─── STEP 2 — Provider ───
 
   function renderStep2() {
-    const internationalKinds: ProviderKind[] = providerTemplates.length > 0
-      ? providerTemplates
-          .filter((t) => (t.tier === "official" || t.tier === "verified") && t.regionTag !== "china")
-          .slice(0, 8)
-          .map((t) => t.providerKind)
-      : ["openai", "anthropic", "google", "ollama", "openai-compatible"];
-
-    // Prioritize the most popular Chinese providers, then show the rest
-    const CHINA_PRIORITY: ProviderKind[] = ["deepseek", "moonshot", "qwen", "glm", "minimax", "volcengine", "qianfan"];
-    const chinaKinds: ProviderKind[] = providerTemplates.length > 0
-      ? (() => {
-          const chinaTemplates = providerTemplates.filter((t) => t.regionTag === "china");
-          const sorted = [...chinaTemplates].sort((a, b) => {
-            const ai = CHINA_PRIORITY.indexOf(a.providerKind as ProviderKind);
-            const bi = CHINA_PRIORITY.indexOf(b.providerKind as ProviderKind);
-            return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-          });
-          return sorted.slice(0, 8).map((t) => t.providerKind);
-        })()
-      : ["deepseek", "moonshot", "qwen", "glm", "minimax"];
+    const internationalKinds = getSetupProviderKindsForRegion(providerTemplates, "international");
+    const chinaKinds = getSetupProviderKindsForRegion(providerTemplates, "china");
 
     const providerKinds = providerRegion === "china" ? chinaKinds : internationalKinds;
     const selectedProviderName = providerDisplayName(providerKind);
     const providerBusy = detectProviderMutation.isPending || saveProviderMutation.isPending;
+    const useMyPlanAvailable = supportsUseMyPlan(providerKind, selectedTemplate);
+    const keyConnectionAvailable = supportsKeyConnection(selectedTemplate);
+    const oauthBusy = openAICodexOAuth.status === "starting" || openAICodexOAuth.status === "completing" || routingUpdatePending;
+    const isUseMyPlanMode = providerConnectionMode === "use-my-plan" && useMyPlanAvailable;
     const providerPrimaryLabel = providerBusy
       ? (detectProviderMutation.isPending
         ? localize(locale, "正在验证", "Validating")
         : localize(locale, "正在保存", "Saving"))
+      : isUseMyPlanMode
+        ? oauthBusy
+          ? (openAICodexOAuth.status === "completing" ? localize(locale, "正在完成授权", "Completing authorization") : localize(locale, "正在连接", "Connecting"))
+          : providerValidated
+            ? localize(locale, "继续下一步", "Continue")
+            : openAICodexOAuth.status === "pending"
+              ? localize(locale, "我已完成授权", "I completed authorization")
+              : localize(locale, "Use my plan", "Use my plan")
       : providerApiKey.trim() && !providerValidated
         ? localize(locale, "验证并保存", "Validate & Save")
         : localize(locale, "继续下一步", "Continue");
@@ -1448,7 +1659,7 @@ export function SetupPage() {
           {localize(locale, "连接 AI 模型", "Connect AI Model")}
         </h1>
         <p className="mt-4 max-w-lg text-lg text-[color:var(--color-text-secondary)]">
-          {localize(locale, "选择你的 AI 提供方并输入密钥", "Choose your AI provider and enter your key")}
+          {localize(locale, "选择你的 AI 提供方和连接方式", "Choose your AI provider and connection method")}
         </p>
 
         {/* Region tabs */}
@@ -1511,20 +1722,91 @@ export function SetupPage() {
           })}
         </div>
 
-        {/* API key input */}
-        <div className="mt-6 w-full max-w-md">
-          <input
-            value={providerApiKey}
-            onChange={(e) => {
-              setProviderApiKey(e.target.value);
-              setProviderValidated(false);
-              setProviderFeedback({ status: "idle", warnings: [] });
-            }}
-            type="password"
-            className="agent-input w-full text-center"
-            placeholder={localize(locale, `粘贴 ${selectedProviderName} API 密钥`, `Paste ${selectedProviderName} API key`)}
-          />
-        </div>
+        {(useMyPlanAvailable && keyConnectionAvailable) ? (
+          <div className="mt-6 flex items-center justify-center gap-1 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-1">
+            <button
+              type="button"
+              onClick={() => selectProviderConnectionMode("api-key")}
+              className={`rounded-full px-5 py-2 text-sm font-medium transition ${
+                providerConnectionMode === "api-key"
+                  ? "bg-[color:var(--color-accent)] text-white"
+                  : "text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+              }`}
+            >
+              {localize(locale, "API 密钥", "API Key")}
+            </button>
+            <button
+              type="button"
+              onClick={() => selectProviderConnectionMode("use-my-plan")}
+              className={`rounded-full px-5 py-2 text-sm font-medium transition ${
+                isUseMyPlanMode
+                  ? "bg-[color:var(--color-accent)] text-white"
+                  : "text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+              }`}
+            >
+              Use my plan
+            </button>
+          </div>
+        ) : null}
+
+        {isUseMyPlanMode ? (
+          <div className="mt-6 w-full max-w-md rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4 text-left">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 h-5 w-5 text-[color:var(--color-accent)]" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                  {localize(locale, "连接你的 OpenAI / ChatGPT 计划", "Connect your OpenAI / ChatGPT plan")}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                  {localize(
+                    locale,
+                    "Friday 会显示一次性 code。你在 OpenAI 页面授权后，Friday 会加密保存这个用户自己的 OAuth token。",
+                    "Friday will show a one-time code. After you authorize on OpenAI, Friday stores this user's OAuth token encrypted.",
+                  )}
+                </p>
+                {openAICodexOAuth.status === "pending" && openAICodexOAuth.userCode ? (
+                  <div className="mt-4 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                    <p className="text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "一次性 code", "One-time code")}</p>
+                    <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.14em] text-[color:var(--color-text-primary)]">{openAICodexOAuth.userCode}</p>
+                    {openAICodexOAuth.verificationUrl ? (
+                      <a
+                        href={openAICodexOAuth.verificationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-[color:var(--color-accent)] hover:underline"
+                      >
+                        {localize(locale, "打开 OpenAI 授权页面", "Open OpenAI authorization page")}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+                {openAICodexOAuth.status === "connected" ? (
+                  <p className="mt-3 text-xs font-medium text-green-700">
+                    {localize(locale, "已连接，可以继续。", "Connected. You can continue.")}
+                  </p>
+                ) : null}
+                {openAICodexOAuth.status === "error" && openAICodexOAuth.message ? (
+                  <p className="mt-3 text-xs font-medium text-red-700">{openAICodexOAuth.message}</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-6 w-full max-w-md">
+            <input
+              value={providerApiKey}
+              onChange={(e) => {
+                setProviderApiKey(e.target.value);
+                setProviderValidated(false);
+                setProviderFeedback({ status: "idle", warnings: [] });
+              }}
+              type="password"
+              className="agent-input w-full text-center"
+              placeholder={localize(locale, `粘贴 ${selectedProviderName} API 密钥`, `Paste ${selectedProviderName} API key`)}
+            />
+          </div>
+        )}
 
         {providerFeedback.status !== "idle" && (
           <div className={`mt-5 w-full max-w-md rounded-2xl border px-4 py-3 text-left shadow-sm ${
@@ -1586,11 +1868,17 @@ export function SetupPage() {
           </div>
         )}
         <p className="mt-2 max-w-md text-center text-xs text-[color:var(--color-text-faint)]">
-          {localize(
-            locale,
-            "Friday 会按当前选择的提供方验证密钥，不会自动跳到其它提供方。",
-            "Friday validates the selected provider and will not switch to another provider automatically.",
-          )}
+          {isUseMyPlanMode
+            ? localize(
+              locale,
+              "OpenAI Codex 会使用当前 Friday 用户自己的计划，不会复用别人的全局 token。",
+              "OpenAI Codex uses this Friday user's own plan and will not reuse someone else's global token.",
+            )
+            : localize(
+              locale,
+              "Friday 会按当前选择的提供方验证密钥，不会自动跳到其它提供方。",
+              "Friday validates the selected provider and will not switch to another provider automatically.",
+            )}
         </p>
 
         {/* Models detected */}
@@ -1606,7 +1894,15 @@ export function SetupPage() {
 
         <ContinueButton
           onClick={() => {
-            if (providerApiKey.trim() && !providerValidated) {
+            if (isUseMyPlanMode) {
+              if (providerValidated) {
+                goNext();
+              } else if (openAICodexOAuth.status === "pending") {
+                void completeOpenAICodexDeviceOAuth({ advance: false });
+              } else {
+                void startOpenAICodexDeviceOAuth();
+              }
+            } else if (providerApiKey.trim() && !providerValidated) {
               detectProviderThenSave({ advance: false });
             } else if (providerValidated) {
               goNext();
@@ -1615,9 +1911,30 @@ export function SetupPage() {
             }
           }}
           label={providerPrimaryLabel}
-          disabled={providerBusy}
+          disabled={providerBusy || oauthBusy}
         />
         <SkipLink onClick={goNext} />
+        <ConfirmDialog
+          open={pendingDefaultProviderChoice !== null}
+          title={localize(locale, "设为默认模型提供方？", "Set as default model provider?")}
+          description={localize(
+            locale,
+            `${pendingDefaultProviderChoice?.providerName ?? "OpenAI Codex"} 已连接。是否把它设为默认路由？`,
+            `${pendingDefaultProviderChoice?.providerName ?? "OpenAI Codex"} is connected. Use it as the default route?`,
+          )}
+          confirmLabel={localize(locale, "设为默认", "Set default")}
+          cancelLabel={localize(locale, "保留当前默认", "Keep current")}
+          tone="primary"
+          loading={routingUpdatePending}
+          onCancel={() => setPendingDefaultProviderChoice(null)}
+          onConfirm={() => {
+            const pending = pendingDefaultProviderChoice;
+            if (!pending) return;
+            void setProviderAsDefault(pending.providerId, pending.defaultModel).then(() => {
+              setPendingDefaultProviderChoice(null);
+            });
+          }}
+        />
         <BottomDots />
       </StepContainer>
     );
@@ -2442,6 +2759,12 @@ export function SetupPage() {
     if (discoveryScanned) {
       summaryItems.push(
         localize(locale, `${discoveryProgramCount} 个程序`, `${discoveryProgramCount} programs`),
+      );
+    }
+    const importedSkillCount = skillImportResult?.importedCount ?? 0;
+    if (importedSkillCount > 0) {
+      summaryItems.push(
+        localize(locale, `${importedSkillCount} 个技能`, `${importedSkillCount} skills`),
       );
     }
     if (channelsSaved && enabledChannels.size > 0) {

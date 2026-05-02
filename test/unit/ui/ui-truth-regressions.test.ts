@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { listFridayProviderTemplates } from "#providers";
 import { AVAILABLE_COMMANDS } from "../../../ui/src/components/core/command-palette";
-import { getProviderBootstrapRecommendation } from "../../../ui/src/routes/setup-page";
+import {
+  SETUP_CHANNEL_KINDS_ORDERED,
+  buildSetupCompletionStepState,
+  getProviderBootstrapRecommendation,
+  getSetupProviderKindsForRegion,
+} from "../../../ui/src/routes/setup-page";
 
 describe("ui truth regressions", () => {
   it("keeps operator console discoverable in the command palette", () => {
@@ -13,5 +19,49 @@ describe("ui truth regressions", () => {
     expect(recommendation.backend).toBe("HTTP only");
     expect(recommendation.boundary).not.toContain("Gemini CLI");
     expect(recommendation.operatorNote).not.toContain("Gemini CLI");
+  });
+
+  it("only shows setup provider choices that have a first-run closed-loop path", () => {
+    const templates = listFridayProviderTemplates();
+
+    expect(getSetupProviderKindsForRegion(templates, "international")).toEqual([
+      "openai",
+      "openai-codex",
+      "anthropic",
+      "openrouter",
+      "xai",
+      "mistral",
+      "groq",
+    ]);
+    expect(getSetupProviderKindsForRegion(templates, "china")).toEqual([
+      "deepseek",
+      "moonshot",
+      "qwen",
+      "kimi-coding",
+    ]);
+  });
+
+  it("keeps setup channels limited to verified first-run control routes", () => {
+    expect(SETUP_CHANNEL_KINDS_ORDERED).toEqual(["telegram", "discord", "feishu"]);
+  });
+
+  it("records imported skills as completed setup work", () => {
+    expect(buildSetupCompletionStepState({
+      providerValidated: true,
+      channelsSaved: true,
+      skillsImported: true,
+    })).toEqual({
+      completedSteps: ["welcome", "security", "provider", "channels", "skills", "done"],
+      skippedSteps: ["communication", "network"],
+    });
+
+    expect(buildSetupCompletionStepState({
+      providerValidated: false,
+      channelsSaved: false,
+      skillsImported: false,
+    })).toEqual({
+      completedSteps: ["welcome", "security", "done"],
+      skippedSteps: ["communication", "provider", "channels", "network", "skills"],
+    });
   });
 });
