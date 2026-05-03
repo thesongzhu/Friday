@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,29 +8,156 @@ import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const describeIfDarwin = process.platform === "darwin" ? describe : describe.skip;
+const releaseCommandTimeoutMs = 170_000;
 
 type ExecFailure = Error & {
-  code?: number;
+  code?: number | string;
+  signal?: NodeJS.Signals | null;
   stdout?: string;
   stderr?: string;
 };
+
+type ReleaseTestContext = {
+  env: Record<string, string>;
+  releaseRecordJson: string;
+  releaseRecordMd: string;
+};
+
+type PackageJson = {
+  name: string;
+  version: string;
+};
+
+function npmPackTarballName(packageName: string, version: string): string {
+  const normalizedName = packageName.startsWith("@")
+    ? packageName.slice(1).replaceAll("/", "-")
+    : packageName;
+  return `${normalizedName}-${version}.tgz`;
+}
 
 async function runReleaseScript(
   scriptPath: string,
   envOverrides: Record<string, string>,
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync("bash", [scriptPath, process.cwd()], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      ...envOverrides,
-    },
-    maxBuffer: 10 * 1024 * 1024,
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", [scriptPath, process.cwd()], {
+      cwd: process.cwd(),
+      detached: true,
+      env: {
+        ...process.env,
+        ...envOverrides,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let sigkillTimer: NodeJS.Timeout | undefined;
+
+    const terminateProcessGroup = (signal: NodeJS.Signals) => {
+      if (child.pid === undefined) {
+        child.kill(signal);
+        return;
+      }
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      terminateProcessGroup("SIGTERM");
+      sigkillTimer = setTimeout(() => terminateProcessGroup("SIGKILL"), 2_000);
+      sigkillTimer.unref();
+    }, releaseCommandTimeoutMs);
+    timeoutTimer.unref();
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timeoutTimer);
+      if (sigkillTimer) {
+        clearTimeout(sigkillTimer);
+      }
+      const failure = error as ExecFailure;
+      failure.stdout = stdout;
+      failure.stderr = stderr;
+      reject(failure);
+    });
+
+    child.on("close", (code, signal) => {
+      clearTimeout(timeoutTimer);
+      if (sigkillTimer) {
+        clearTimeout(sigkillTimer);
+      }
+      if (!timedOut && code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      const failure = new Error(
+        timedOut
+          ? `Command timed out after ${releaseCommandTimeoutMs}ms: ${scriptPath}`
+          : `Command failed with exit code ${code ?? "signal"}: ${scriptPath}`,
+      ) as ExecFailure;
+      failure.code = timedOut ? "ETIMEDOUT" : code ?? undefined;
+      failure.signal = signal;
+      failure.stdout = stdout;
+      failure.stderr = stderr;
+      reject(failure);
+    });
   });
 }
 
 describeIfDarwin("Friday native companion release workflow", () => {
+  async function createReleaseTestContext(prefix: string): Promise<ReleaseTestContext> {
+    const repoRoot = process.cwd();
+    const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-runtime-`));
+    const manifestRoot = path.join(runtimeRoot, "manifest-root");
+    const releasesRoot = path.join(manifestRoot, "dist", "releases");
+    const macosOutputDir = path.join(releasesRoot, "macos");
+    const sourceOutputDir = path.join(runtimeRoot, "source");
+    const releaseRecordDir = path.join(runtimeRoot, "records");
+    const manifestJsonPath = path.join(releasesRoot, "Friday.release-manifest.json");
+    const manifestMdPath = path.join(releasesRoot, "Friday.release-manifest.md");
+    const homebrewCaskPath = path.join(releasesRoot, "homebrew", "Casks", "friday.rb");
+
+    await fs.mkdir(path.join(manifestRoot, "packaging", "homebrew", "Casks"), { recursive: true });
+    await fs.copyFile(path.join(repoRoot, "package.json"), path.join(manifestRoot, "package.json"));
+    await fs.copyFile(
+      path.join(repoRoot, "packaging", "homebrew", "Casks", "friday.rb.template"),
+      path.join(manifestRoot, "packaging", "homebrew", "Casks", "friday.rb.template"),
+    );
+
+    return {
+      env: {
+        FRIDAY_MACOS_RELEASE_LOCK_DIR: path.join(runtimeRoot, "locks", "macos-release.lock"),
+        FRIDAY_SYSTEM_COMPANION_DIST_DIR: path.join(runtimeRoot, "macos-build"),
+        FRIDAY_SYSTEM_COMPANION_RELEASE_RECORD_DIR: releaseRecordDir,
+        FRIDAY_MACOS_RELEASE_OUTPUT_DIR: macosOutputDir,
+        FRIDAY_SOURCE_RELEASE_OUTPUT_DIR: sourceOutputDir,
+        FRIDAY_RELEASE_REPO_ROOT: manifestRoot,
+        FRIDAY_RELEASE_CHANNELS_DIR: path.join(releasesRoot, "channels"),
+        FRIDAY_SYSTEM_COMPANION_RELEASE_MANIFEST_JSON_PATH: manifestJsonPath,
+        FRIDAY_SYSTEM_COMPANION_RELEASE_MANIFEST_MD_PATH: manifestMdPath,
+        FRIDAY_SYSTEM_COMPANION_HOMEBREW_CASK_PATH: homebrewCaskPath,
+        FRIDAY_SYSTEM_COMPANION_SPARKLE_APPCAST_PATH: path.join(macosOutputDir, "appcast.xml"),
+        FRIDAY_SYSTEM_SOURCE_RELEASE_GLOB: path.join(sourceOutputDir, "*.tgz"),
+      },
+      releaseRecordJson: path.join(releaseRecordDir, "FridayCompanion.release.json"),
+      releaseRecordMd: path.join(releaseRecordDir, "FridayCompanion.release.md"),
+    };
+  }
+
   async function createRejectingHomebrewTap(prefix: string): Promise<string> {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
     const workRepo = path.join(tempRoot, "tap-work");
@@ -56,9 +183,11 @@ describeIfDarwin("Friday native companion release workflow", () => {
 
   it("runs the local release workflow and verifies the packaged app", async () => {
     const repoRoot = process.cwd();
+    const releaseTest = await createReleaseTestContext("friday-release-local");
     const releaseEnv = await runReleaseScript(
       path.join(repoRoot, "scripts/ops/check-friday-companion-release-env.sh"),
       {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
       },
     );
@@ -68,13 +197,14 @@ describeIfDarwin("Friday native companion release workflow", () => {
     const releaseResult = await runReleaseScript(
       path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
       {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
       },
     );
     const appDir = releaseResult.stdout.trim();
     const appBinary = path.join(appDir, "Contents", "MacOS", "FridayCompanion");
-    const releaseRecordJson = path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json");
-    const releaseRecordMd = path.join(repoRoot, "dist", "macos", "FridayCompanion.release.md");
+    const releaseRecordJson = releaseTest.releaseRecordJson;
+    const releaseRecordMd = releaseTest.releaseRecordMd;
 
     await expect(fs.access(appBinary)).resolves.toBeUndefined();
     expect(releaseResult.stderr).toContain("running local verification");
@@ -112,7 +242,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
     const caskPath = releaseRecord.homebrewCaskPath!;
     const manifest = JSON.parse(await fs.readFile(manifestJsonPath, "utf8")) as {
       channels: Record<string, { availability: string }>;
-      platforms: Array<{ platform: string; artifacts: Array<{ kind: string }> }>;
+      platforms: Array<{ platform: string; artifacts: Array<{ kind: string; fileName: string }> }>;
     };
 
     await expect(fs.access(releaseRecord.dmgReleasePath!)).resolves.toBeUndefined();
@@ -120,7 +250,9 @@ describeIfDarwin("Friday native companion release workflow", () => {
     await expect(fs.access(manifestMarkdownPath)).resolves.toBeUndefined();
     await expect(fs.access(caskPath)).resolves.toBeUndefined();
     expect(manifest.channels.homebrew.availability).toBe("generated");
-    expect(manifest.platforms.find((entry) => entry.platform === "macos")?.artifacts.some((artifact) => artifact.kind === "dmg")).toBe(true);
+    expect(manifest.platforms.find((entry) => entry.platform === "macos")?.artifacts.some((artifact) =>
+      artifact.kind === "dmg" && artifact.fileName === path.basename(releaseRecord.dmgReleasePath!),
+    )).toBe(true);
 
     const verifyResult = await runReleaseScript(
       path.join(repoRoot, "scripts/ops/verify-friday-companion-app.sh"),
@@ -136,6 +268,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
 
   it("generates a Sparkle appcast when update credentials are configured", async () => {
     const repoRoot = process.cwd();
+    const releaseTest = await createReleaseTestContext("friday-release-sparkle");
     const keyDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-sparkle-keys-"));
 
     const generatedKeys = await runReleaseScript(
@@ -154,6 +287,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
     const releaseResult = await runReleaseScript(
       path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
       {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
         FRIDAY_MACOS_SPARKLE_PRIVATE_KEY: privateKeyPath,
         FRIDAY_MACOS_SPARKLE_PUBLIC_KEY: publicKey,
@@ -164,7 +298,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
     expect(releaseResult.stderr).toContain("generating Sparkle appcast");
 
     const releaseRecord = JSON.parse(
-      await fs.readFile(path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json"), "utf8"),
+      await fs.readFile(releaseTest.releaseRecordJson, "utf8"),
     ) as {
       sparkleAppcastPath: string | null;
       manifestJsonPath: string | null;
@@ -185,13 +319,16 @@ describeIfDarwin("Friday native companion release workflow", () => {
 
   it("serializes concurrent local release invocations with a shared lock", async () => {
     const repoRoot = process.cwd();
+    const releaseTest = await createReleaseTestContext("friday-release-concurrent");
     const scriptPath = path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh");
 
     const [first, second] = await Promise.all([
       runReleaseScript(scriptPath, {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
       }),
       runReleaseScript(scriptPath, {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
       }),
     ]);
@@ -218,25 +355,27 @@ describeIfDarwin("Friday native companion release workflow", () => {
   it("excludes prior source release artifacts from subsequent npm/source builds", async () => {
     const repoRoot = process.cwd();
     const scriptPath = path.join(repoRoot, "scripts/ops/build-friday-source-distribution.sh");
-    const packageVersion = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")) as {
-      version: string;
-    };
-    const sourceArtifactEntry = `package/dist/releases/source/friday-${packageVersion.version}.tgz`;
-    const sourceMetadataEntry = `${sourceArtifactEntry}.artifact.json`;
+    const packageJson = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")) as PackageJson;
+    const expectedArtifactFileName = npmPackTarballName(packageJson.name, packageJson.version);
 
     const firstBuild = await runReleaseScript(scriptPath, {});
     const firstArtifactPath = firstBuild.stdout.trim();
+    const firstArtifactEntry = `package/${path.relative(repoRoot, firstArtifactPath).replaceAll(path.sep, "/")}`;
+    const firstMetadataEntry = `${firstArtifactEntry}.artifact.json`;
     const firstListing = await execFileAsync("tar", ["-tzf", firstArtifactPath], {
       cwd: repoRoot,
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
     });
 
-    expect(firstListing.stdout).not.toContain(sourceArtifactEntry);
-    expect(firstListing.stdout).not.toContain(sourceMetadataEntry);
+    expect(path.basename(firstArtifactPath)).toBe(expectedArtifactFileName);
+    expect(firstListing.stdout).not.toContain(firstArtifactEntry);
+    expect(firstListing.stdout).not.toContain(firstMetadataEntry);
 
     const secondBuild = await runReleaseScript(scriptPath, {});
     const secondArtifactPath = secondBuild.stdout.trim();
+    const secondArtifactEntry = `package/${path.relative(repoRoot, secondArtifactPath).replaceAll(path.sep, "/")}`;
+    const secondMetadataEntry = `${secondArtifactEntry}.artifact.json`;
     const secondListing = await execFileAsync("tar", ["-tzf", secondArtifactPath], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -244,16 +383,18 @@ describeIfDarwin("Friday native companion release workflow", () => {
     });
 
     expect(secondArtifactPath).toBe(firstArtifactPath);
-    expect(secondListing.stdout).not.toContain(sourceArtifactEntry);
-    expect(secondListing.stdout).not.toContain(sourceMetadataEntry);
+    expect(secondListing.stdout).not.toContain(secondArtifactEntry);
+    expect(secondListing.stdout).not.toContain(secondMetadataEntry);
   }, 180_000);
 
   it("degrades to generated Homebrew metadata when tap publication fails", async () => {
     const repoRoot = process.cwd();
+    const releaseTest = await createReleaseTestContext("friday-release-homebrew-fallback");
     const remoteRepo = await createRejectingHomebrewTap("friday-release-homebrew-fallback-");
     const releaseResult = await runReleaseScript(
       path.join(repoRoot, "scripts/ops/release-friday-companion-app.sh"),
       {
+        ...releaseTest.env,
         FRIDAY_MACOS_RELEASE_MODE: "local",
         FRIDAY_HOMEBREW_TAP_REPO: remoteRepo,
         FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN: "local-test-token",
@@ -265,7 +406,7 @@ describeIfDarwin("Friday native companion release workflow", () => {
     expect(releaseResult.stderr).toContain("Homebrew cask publication failed; continuing with generated cask only");
 
     const releaseRecord = JSON.parse(
-      await fs.readFile(path.join(repoRoot, "dist", "macos", "FridayCompanion.release.json"), "utf8"),
+      await fs.readFile(releaseTest.releaseRecordJson, "utf8"),
     ) as {
       manifestJsonPath: string | null;
     };
