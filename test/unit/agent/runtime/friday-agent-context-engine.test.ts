@@ -23,6 +23,7 @@ describe("FridayAgentContextEngine", () => {
   it("assembles prompt fragments from the default workspace context loader", async () => {
     await fs.mkdir(path.join(tmpDir, "context"), { recursive: true });
     await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "Follow the repo contract.");
+    await fs.writeFile(path.join(tmpDir, "context", "BELIEFS.md"), "No claim without working code.");
     await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "User prefers concise answers.");
 
     const engine = createFridayWorkspaceContextEngine({
@@ -35,6 +36,8 @@ describe("FridayAgentContextEngine", () => {
 
     expect(resolved.promptFragment).toContain("AGENTS.md");
     expect(resolved.promptFragment).toContain("Follow the repo contract.");
+    expect(resolved.promptFragment).toContain("BELIEFS.md");
+    expect(resolved.promptFragment).toContain("No claim without working code.");
     expect(resolved.promptFragment).toContain("USER.md");
   });
 
