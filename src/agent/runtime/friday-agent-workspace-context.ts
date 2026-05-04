@@ -87,8 +87,9 @@ function isMissingFsError(err: unknown): boolean {
 /** Identity files are always injected when present. */
 const IDENTITY_WORKSPACE_FILES = [
   "context/AGENTS.md",
+  "context/BELIEFS.md",
   "context/SOUL.md",
- ] as const;
+] as const;
 
 /** Candidate files are injected only when relevant to the current turn. */
 const CANDIDATE_WORKSPACE_FILES = [

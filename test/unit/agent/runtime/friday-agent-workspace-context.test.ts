@@ -1,6 +1,6 @@
 /**
- * Workspace context loader tests — verifies that AGENTS.md, SOUL.md,
- * USER.md, MEMORY.md, daily memory files, and exported memory items
+ * Workspace context loader tests — verifies that AGENTS.md, BELIEFS.md,
+ * SOUL.md, USER.md, MEMORY.md, daily memory files, and exported memory items
  * are correctly loaded and injected into the system prompt.
  *
  * Also verifies the memory feedback loop: memory_store → SQLite →
@@ -34,6 +34,15 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.promptFragment).toContain("Do X, Y, Z.");
     });
 
+    it("loads BELIEFS.md as an identity block when present", async () => {
+      await fs.writeFile(path.join(tmpDir, "context", "BELIEFS.md"), "# Engineering Principles\nNo claim without working code.");
+      const ctx = await loadFridayWorkspaceContext(tmpDir);
+      const beliefsFile = ctx.files.find((file) => file.name === "context/BELIEFS.md");
+      expect(beliefsFile).toMatchObject({ missing: false, kind: "identity" });
+      expect(ctx.promptFragment).toContain("BELIEFS.md");
+      expect(ctx.promptFragment).toContain("No claim without working code.");
+    });
+
     it("loads SOUL.md when present", async () => {
       await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "# Personality\nBe helpful and concise.");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
@@ -62,7 +71,15 @@ describe("loadFridayWorkspaceContext", () => {
         expect(ctx.promptFragment).toBe("");
         // All files should be marked missing
         const missing = ctx.files.filter((f) => f.missing);
-        expect(missing.length).toBeGreaterThanOrEqual(4);
+        expect(missing.length).toBeGreaterThanOrEqual(6);
+        expect(missing.map((file) => file.name)).toEqual(expect.arrayContaining([
+          "context/AGENTS.md",
+          "context/BELIEFS.md",
+          "context/SOUL.md",
+          "context/USER.md",
+          "context/MEMORY.md",
+          "context/memory.md",
+        ]));
         expect(warnSpy).not.toHaveBeenCalled();
       } finally {
         warnSpy.mockRestore();
@@ -71,16 +88,20 @@ describe("loadFridayWorkspaceContext", () => {
 
     it("loads multiple files in injection order", async () => {
       await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "agents-content");
+      await fs.writeFile(path.join(tmpDir, "context", "BELIEFS.md"), "beliefs-content");
       await fs.writeFile(path.join(tmpDir, "context", "SOUL.md"), "soul-content");
       await fs.writeFile(path.join(tmpDir, "context", "USER.md"), "user-content");
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
       const agentsIdx = ctx.promptFragment.indexOf("agents-content");
+      const beliefsIdx = ctx.promptFragment.indexOf("beliefs-content");
       const soulIdx = ctx.promptFragment.indexOf("soul-content");
       const userIdx = ctx.promptFragment.indexOf("user-content");
 
-      // AGENTS.md should come before SOUL.md, which comes before USER.md
+      // Identity blocks load before candidate blocks in documented order.
       expect(agentsIdx).toBeLessThan(soulIdx);
+      expect(agentsIdx).toBeLessThan(beliefsIdx);
+      expect(beliefsIdx).toBeLessThan(soulIdx);
       expect(soulIdx).toBeLessThan(userIdx);
     });
 
