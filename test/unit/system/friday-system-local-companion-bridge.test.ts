@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { createFridaySystemLocalCompanionBridge } from "../../../src/system/companion/friday-system-local-companion-bridge.js";
+import {
+  createFridaySystemLocalCompanionBridge,
+  createFridaySystemUnavailableCompanionBridge,
+} from "../../../src/system/companion/friday-system-local-companion-bridge.js";
 
 function createNowIso() {
   let tick = 0;
@@ -129,5 +132,49 @@ describe("createFridaySystemLocalCompanionBridge", () => {
     expect(bridge.isConnected()).toBe(false);
     expect(status.connected).toBe(false);
     expect(status.runtimeKind).toBe("embedded");
+  });
+
+  it("fails closed instead of returning no-op runtime success when unavailable", async () => {
+    const bridge = createFridaySystemUnavailableCompanionBridge({
+      id: "companion-unavailable",
+      platform: "darwin",
+      nowIso: createNowIso(),
+      launchAtLoginEnabled: true,
+      panicHotkey: "cmd+shift+escape",
+      menuBarEnabled: true,
+      overlayEnabled: true,
+      unavailableReason: "socket path blocked",
+    });
+
+    const status = await bridge.getStatus();
+
+    expect(bridge.isConnected()).toBe(false);
+    expect(status.connected).toBe(false);
+    expect(status.transport.authenticated).toBe(false);
+    expect(Object.values(status.capabilities.actions)).toEqual(
+      expect.arrayContaining(["unsupported"]),
+    );
+    expect(Object.values(status.capabilities.actions).every((value) => value === "unsupported")).toBe(true);
+    expect(Object.values(status.capabilities.surfaces).every((value) => value === false)).toBe(true);
+    await expect(bridge.captureSnapshot()).rejects.toThrow("socket path blocked");
+    await expect(bridge.listNotifications()).rejects.toThrow("socket path blocked");
+    await expect(bridge.setOverlayVisible(false)).rejects.toThrow("socket path blocked");
+    await expect(bridge.showGuideOverlay({
+      id: "overlay-1",
+      sessionId: "session-1",
+      mode: "blocked",
+      surface: "native_desktop",
+      message: "Unavailable companion must not fake overlay success.",
+      avatar: {
+        kind: "default_f",
+        sizePx: 40,
+      },
+      tone: "blocked",
+      focusColor: "blue",
+      dimBackground: false,
+      clickThrough: true,
+      bubbleControlsEnabled: true,
+      createdAt: "2026-03-06T12:00:00.000Z",
+    })).rejects.toThrow("socket path blocked");
   });
 });

@@ -7,6 +7,7 @@ import {
   createFridaySystemIntentMutatingActionRequest,
   signFridayCanonicalApproval,
 } from "../../../src/security/friday-mutating-action-gate.js";
+import { createFridaySystemUnavailableCompanionBridge } from "../../../src/system/companion/friday-system-local-companion-bridge.js";
 import type { FridaySystemCompanionBridge } from "../../../src/system/companion/friday-system-companion.types.js";
 import type { FridaySystemRemoteAuthAdapter } from "../../../src/system/auth/friday-system-remote-auth.js";
 import type { FridaySystemExecResult } from "../../../src/system/engine/friday-system-service.js";
@@ -328,7 +329,7 @@ describe("createFridaySystemService", () => {
     const events = fixture.service.listEvents();
 
     expect(session.mode).toBe("agent_os");
-    expect(session.remoteMode).toBe("trusted_private_network");
+    expect(session.remoteMode).toBe("disabled");
     expect(state.apps[0]?.name).toBe("Finder");
     expect(state.health.status).toBe("degraded");
     expect(events.map((event) => event.event)).toContain("system.session.started");
@@ -854,7 +855,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("registers and revokes remote devices", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -871,7 +872,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("registers a passkey and requires an assertion before opening a remote session", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -930,7 +931,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("clears a trusted-device passkey and closes active remote sessions", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -981,7 +982,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("opens, heartbeats, and closes trusted remote sessions", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -1029,7 +1030,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("rejects remote sessions from public networks when trusted-private mode is enabled", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -1066,7 +1067,7 @@ describe("createFridaySystemService", () => {
   });
 
   it("revoking a device closes its active remote sessions", async () => {
-    const fixture = await createServiceFixture();
+    const fixture = await createServiceFixtureWithOptions({ remoteMode: "trusted_private_network" });
     allocatedDbs.push(fixture.db);
 
     const device = fixture.service.registerRemoteDevice({
@@ -1328,5 +1329,32 @@ describe("createFridaySystemService", () => {
     expect(events.map((event) => event.event)).toContain("system.task.updated");
     expect(events.map((event) => event.event)).toContain("system.safe_mode.entered");
     expect(events.map((event) => event.event)).toContain("system.safe_mode.exited");
+  });
+
+  it("does not report recover_ui completed when the companion bridge is unavailable", async () => {
+    const companionBridge = createFridaySystemUnavailableCompanionBridge({
+      id: "companion-unavailable",
+      platform: "darwin",
+      nowIso: createNowIso(),
+      launchAtLoginEnabled: false,
+      panicHotkey: "cmd+shift+escape",
+      menuBarEnabled: false,
+      overlayEnabled: false,
+      unavailableReason: "companion socket blocked",
+    });
+    const fixture = await createServiceFixtureWithOptions({ companionBridge });
+    allocatedDbs.push(fixture.db);
+
+    const result = await fixture.service.executeIntent({
+      action: "recover_ui",
+      actorId: "agent-1",
+      actorKind: "agent",
+    });
+    const events = fixture.service.listEvents();
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toBe("companion socket blocked");
+    expect(events.map((event) => event.event)).toContain("system.intent.failed");
+    expect(events.map((event) => event.event)).not.toContain("system.safe_mode.exited");
   });
 });

@@ -18,12 +18,17 @@ export interface ResolveFridaySystemCompanionAuthTokenInput {
   workspaceRoot: string;
   explicitToken?: string;
   explicitTokenFilePath?: string;
+  forceRotate?: boolean;
   randomBytes?: typeof crypto.randomBytes;
 }
 
 function normalizeNonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveDefaultAuthTokenFilePath(workspaceRoot: string): string {
+  return path.join(workspaceRoot, ".friday", "run", "system-companion.auth.token");
 }
 
 export function resolveFridaySystemCompanionServerMode(
@@ -58,7 +63,44 @@ export function resolveFridaySystemCompanionAuthTokenFilePath(
 ): string {
   return explicitTokenFilePath
     ? path.resolve(explicitTokenFilePath)
-    : path.join(workspaceRoot, ".friday", "run", "system-companion.auth.token");
+    : resolveDefaultAuthTokenFilePath(workspaceRoot);
+}
+
+async function ensurePrivateRunDirectory(dirPath: string): Promise<void> {
+  await fs.mkdir(dirPath, { recursive: true, mode: 0o700 });
+  await fs.chmod(dirPath, 0o700).catch((error: unknown) => {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  });
+}
+
+async function readExistingPrivateToken(tokenFilePath: string): Promise<string | undefined> {
+  const existing = await fs.readFile(tokenFilePath, "utf8").catch(() => "");
+  const normalizedExisting = normalizeNonEmpty(existing);
+  if (!normalizedExisting) {
+    return undefined;
+  }
+  await fs.chmod(tokenFilePath, 0o600).catch((error: unknown) => {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  });
+  return normalizedExisting;
+}
+
+async function writePrivateToken(
+  tokenFilePath: string,
+  token: string,
+  input: { ensureParentDirectory: boolean },
+): Promise<void> {
+  if (input.ensureParentDirectory) {
+    await ensurePrivateRunDirectory(path.dirname(tokenFilePath));
+  }
+  await fs.writeFile(tokenFilePath, token, { encoding: "utf8", mode: 0o600 });
+  await fs.chmod(tokenFilePath, 0o600);
 }
 
 export async function resolveFridaySystemCompanionAuthToken(
@@ -69,28 +111,33 @@ export async function resolveFridaySystemCompanionAuthToken(
     input.workspaceRoot,
     input.explicitTokenFilePath,
   );
+  const usesDefaultRunTokenPath = tokenFilePath === resolveDefaultAuthTokenFilePath(input.workspaceRoot);
+  if (usesDefaultRunTokenPath) {
+    await ensurePrivateRunDirectory(path.dirname(tokenFilePath));
+  }
   if (explicitToken) {
-    await fs.mkdir(path.dirname(tokenFilePath), { recursive: true });
-    await fs.writeFile(tokenFilePath, explicitToken, { encoding: "utf8", mode: 0o600 });
+    await writePrivateToken(tokenFilePath, explicitToken, {
+      ensureParentDirectory: usesDefaultRunTokenPath,
+    });
     return {
       token: explicitToken,
       tokenFilePath,
     };
   }
 
-  const existing = await fs.readFile(tokenFilePath, "utf8").catch(() => "");
-  const normalizedExisting = normalizeNonEmpty(existing);
-  if (normalizedExisting) {
+  const existing = input.forceRotate ? undefined : await readExistingPrivateToken(tokenFilePath);
+  if (existing) {
     return {
-      token: normalizedExisting,
+      token: existing,
       tokenFilePath,
     };
   }
 
   const randomBytes = input.randomBytes ?? crypto.randomBytes;
   const generated = randomBytes(32).toString("hex");
-  await fs.mkdir(path.dirname(tokenFilePath), { recursive: true });
-  await fs.writeFile(tokenFilePath, generated, { encoding: "utf8", mode: 0o600 });
+  await writePrivateToken(tokenFilePath, generated, {
+    ensureParentDirectory: usesDefaultRunTokenPath,
+  });
   return {
     token: generated,
     tokenFilePath,

@@ -7,7 +7,7 @@ describe("resolveFridayCapabilityGates", () => {
     const gates = resolveFridayCapabilityGates({});
 
     expect(gates.desktopEnabled).toBe(false);
-    expect(gates.systemEnabled).toBe(false);
+    expect(gates.systemEnabled).toBe(true);
     expect(gates.discoveryEnabled).toBe(false);
     expect(gates.mcpServerEnabled).toBe(false);
     expect(gates.heartbeatEnabled).toBe(false);
@@ -33,6 +33,14 @@ describe("resolveFridayCapabilityGates", () => {
     expect(gates.heartbeatEnabled).toBe(true);
     expect(gates.heartbeatActiveHoursEnabled).toBe(false);
     expect(gates.autoFixDispatchEnabled).toBe(true);
+  });
+
+  it("allows system runtime to be explicitly disabled", () => {
+    const gates = resolveFridayCapabilityGates({
+      FRIDAY_SYSTEM_ENABLED: "false",
+    });
+
+    expect(gates.systemEnabled).toBe(false);
   });
 
   it("allows heartbeat to be explicitly disabled", () => {

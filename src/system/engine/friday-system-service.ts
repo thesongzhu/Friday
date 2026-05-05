@@ -386,7 +386,7 @@ export async function createFridaySystemService(
   const listeners = new Set<FridaySystemEventListener>();
   const execCommand = deps.execCommand ?? defaultExecCommand;
   const mode = deps.mode ?? "agent_os";
-  const remoteMode = deps.remoteMode ?? "trusted_private_network";
+  const remoteMode = deps.remoteMode ?? "disabled";
   const cloudPlanningMode = deps.cloudPlanningMode ?? "opt_in";
   const leaseTtlMs = deps.defaultLeaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
   const companionHeartbeatStaleMs = deps.companionHeartbeatStaleMs ?? DEFAULT_COMPANION_HEARTBEAT_STALE_MS;

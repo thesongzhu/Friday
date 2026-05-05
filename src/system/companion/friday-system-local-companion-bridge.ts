@@ -2,6 +2,13 @@ import type {
   FridaySystemCompanionBridge,
 } from "./friday-system-companion.types.js";
 import {
+  FRIDAY_SYSTEM_COMPANION_ACTIONS,
+  type FridaySystemCompanionActionCapabilities,
+  type FridaySystemCompanionStatus,
+  type FridaySystemCompanionSurfaceCapabilities,
+} from "../model/friday-system.types.js";
+import {
+  buildFridaySystemCompanionStatus,
   createFridaySystemCompanionRuntimeController,
   type FridaySystemCompanionRuntimeOptions,
 } from "./friday-system-companion-runtime.js";
@@ -100,5 +107,68 @@ export function createFridaySystemLocalCompanionBridge(
       lastHeartbeatAt = options.nowIso();
       return controller.clearGuideOverlay();
     },
+  };
+}
+
+export function createFridaySystemUnavailableCompanionBridge(
+  options: CreateFridaySystemLocalCompanionBridgeOptions & { unavailableReason?: string },
+): FridaySystemCompanionBridge {
+  const unavailableMessage = options.unavailableReason ?? "System companion is unavailable";
+  const fail = async (): Promise<never> => {
+    throw new Error(unavailableMessage);
+  };
+  const unsupportedActions = Object.fromEntries(
+    FRIDAY_SYSTEM_COMPANION_ACTIONS.map((action) => [action, "unsupported"]),
+  ) as FridaySystemCompanionActionCapabilities;
+  const unsupportedSurfaces: FridaySystemCompanionSurfaceCapabilities = {
+    launchAtLogin: false,
+    menuBar: false,
+    overlay: false,
+    globalHotkey: false,
+    windowInventory: false,
+    notificationIntake: false,
+    screenCapture: false,
+  };
+  const buildUnavailableStatus = async (): Promise<FridaySystemCompanionStatus> => {
+    const status = await buildFridaySystemCompanionStatus(options, {
+      connected: false,
+      authenticated: false,
+      transportMode: "unix_socket",
+      lastHeartbeatAt: options.nowIso(),
+    });
+    return {
+      ...status,
+      capabilities: {
+        surfaces: unsupportedSurfaces,
+        actions: unsupportedActions,
+      },
+    };
+  };
+
+  const unavailableOperation = async (): Promise<never> => {
+    throw new Error(unavailableMessage);
+  };
+
+  return {
+    connect: fail,
+    async disconnect(): Promise<void> {},
+    isConnected(): boolean {
+      return false;
+    },
+    ping: fail,
+    async getStatus() {
+      return buildUnavailableStatus();
+    },
+    captureSnapshot: unavailableOperation,
+    arrangeWindows: unavailableOperation,
+    launchApp: unavailableOperation,
+    focusTarget: unavailableOperation,
+    openUrl: unavailableOperation,
+    openProject: unavailableOperation,
+    listNotifications: unavailableOperation,
+    actOnNotification: unavailableOperation,
+    setOverlayVisible: unavailableOperation,
+    showGuideOverlay: unavailableOperation,
+    clearGuideOverlay: unavailableOperation,
   };
 }

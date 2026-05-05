@@ -309,6 +309,7 @@ import {
   createFridaySystemLocalCompanionBridge,
   createFridaySystemNamedPipeBridge,
   createFridaySystemService,
+  createFridaySystemUnavailableCompanionBridge,
   createFridaySystemUnixSocketBridge,
   createFridaySystemUnixSocketCompanionServer,
   resolveFridaySystemCompanionAuthToken,
@@ -1579,9 +1580,9 @@ export async function createFridayHub(
         ? process.platform
         : "unknown");
     const systemRemoteMode: FridaySystemRemoteMode =
-      process.env.FRIDAY_SYSTEM_REMOTE_MODE === "disabled"
-        ? "disabled"
-        : "trusted_private_network";
+      process.env.FRIDAY_SYSTEM_REMOTE_MODE === "trusted_private_network"
+        ? "trusted_private_network"
+        : "disabled";
     const systemCloudPlanningMode = process.env.FRIDAY_SYSTEM_CLOUD_PLANNING === "local_only"
       ? "local_only"
       : process.env.FRIDAY_SYSTEM_CLOUD_PLANNING === "hybrid"
@@ -1632,11 +1633,6 @@ export async function createFridayHub(
       explicitServerMode: process.env.FRIDAY_SYSTEM_COMPANION_SERVER_MODE,
       nativeCompanionMode,
     });
-    const { token: companionAuthToken } = await resolveFridaySystemCompanionAuthToken({
-      workspaceRoot,
-      explicitToken: process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN,
-      explicitTokenFilePath: process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE,
-    });
     const configuredExternalCompanionRuntimeKind = process.env.FRIDAY_SYSTEM_COMPANION_RUNTIME_KIND === "swift_app"
       ? "swift_app"
       : process.env.FRIDAY_SYSTEM_COMPANION_RUNTIME_KIND === "dotnet_winui_app"
@@ -1668,9 +1664,32 @@ export async function createFridayHub(
       }));
     };
 
-    if (transportMode === "unix_socket") {
-      if (companionServerMode === "embedded") {
-        systemCompanionServer = createFridaySystemUnixSocketCompanionServer({
+    try {
+      const { token: companionAuthToken } = await resolveFridaySystemCompanionAuthToken({
+        workspaceRoot,
+        explicitToken: process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN,
+        explicitTokenFilePath: process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE,
+        forceRotate: process.env.FRIDAY_SYSTEM_COMPANION_ROTATE_TOKEN === "true",
+      });
+
+      if (transportMode === "unix_socket") {
+        if (companionServerMode === "embedded") {
+          systemCompanionServer = createFridaySystemUnixSocketCompanionServer({
+            id: companionId,
+            platform: detectedSystemPlatform,
+            nowIso,
+            runtimeKind: configuredCompanionRuntimeKind,
+            launchAtLoginEnabled,
+            panicHotkey,
+            socketPath,
+            authToken: companionAuthToken,
+            menuBarEnabled: true,
+            overlayEnabled: true,
+            permissionCollector,
+          });
+          await systemCompanionServer.start();
+        }
+        systemCompanionBridge = createFridaySystemUnixSocketBridge({
           id: companionId,
           platform: detectedSystemPlatform,
           nowIso,
@@ -1683,37 +1702,39 @@ export async function createFridayHub(
           overlayEnabled: true,
           permissionCollector,
         });
-        await systemCompanionServer.start();
+      } else if (transportMode === "named_pipe") {
+        systemCompanionBridge = createFridaySystemNamedPipeBridge({
+          id: companionId,
+          platform: detectedSystemPlatform,
+          nowIso,
+          runtimeKind: configuredCompanionRuntimeKind,
+          launchAtLoginEnabled,
+          panicHotkey,
+          pipeName,
+          authToken: companionAuthToken,
+          menuBarEnabled: true,
+          overlayEnabled: true,
+          permissionCollector,
+        });
+      } else {
+        systemCompanionBridge = createFridaySystemLocalCompanionBridge({
+          id: companionId,
+          platform: detectedSystemPlatform,
+          nowIso,
+          runtimeKind: configuredCompanionRuntimeKind,
+          launchAtLoginEnabled,
+          panicHotkey,
+          socketPath,
+          menuBarEnabled: true,
+          overlayEnabled: true,
+          permissionCollector,
+        });
       }
-      systemCompanionBridge = createFridaySystemUnixSocketBridge({
-        id: companionId,
-        platform: detectedSystemPlatform,
-        nowIso,
-        runtimeKind: configuredCompanionRuntimeKind,
-        launchAtLoginEnabled,
-        panicHotkey,
-        socketPath,
-        authToken: companionAuthToken,
-        menuBarEnabled: true,
-        overlayEnabled: true,
-        permissionCollector,
-      });
-    } else if (transportMode === "named_pipe") {
-      systemCompanionBridge = createFridaySystemNamedPipeBridge({
-        id: companionId,
-        platform: detectedSystemPlatform,
-        nowIso,
-        runtimeKind: configuredCompanionRuntimeKind,
-        launchAtLoginEnabled,
-        panicHotkey,
-        pipeName,
-        authToken: companionAuthToken,
-        menuBarEnabled: true,
-        overlayEnabled: true,
-        permissionCollector,
-      });
-    } else {
-      systemCompanionBridge = createFridaySystemLocalCompanionBridge({
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[friday] Agent OS system companion unavailable during startup setup; continuing with unavailable runtime: ${message}`);
+      systemCompanionServer = undefined;
+      systemCompanionBridge = createFridaySystemUnavailableCompanionBridge({
         id: companionId,
         platform: detectedSystemPlatform,
         nowIso,
@@ -1724,6 +1745,7 @@ export async function createFridayHub(
         menuBarEnabled: true,
         overlayEnabled: true,
         permissionCollector,
+        unavailableReason: message,
       });
     }
 
@@ -2393,7 +2415,7 @@ export async function createFridayHub(
     warning?: string;
   }> = async () => {
     const remoteMode: "trusted_private_network" | "disabled" | "unavailable" = systemEnabled
-      ? (process.env.FRIDAY_SYSTEM_REMOTE_MODE === "disabled" ? "disabled" : "trusted_private_network")
+      ? (process.env.FRIDAY_SYSTEM_REMOTE_MODE === "trusted_private_network" ? "trusted_private_network" : "disabled")
       : "unavailable";
     if (!systemEnabled) {
       return {

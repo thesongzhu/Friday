@@ -196,6 +196,88 @@ describe("FridayHub Bootstrap Integration", () => {
     expect(hub.workflowRuntime.approval).toBeDefined();
   });
 
+
+  it("defaults local system runtime on while keeping remote disabled", async () => {
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousRemote = process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+    delete process.env.FRIDAY_SYSTEM_ENABLED;
+    delete process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.session.get");
+
+      expect(route).toBeDefined();
+      const response = await route!.handler({
+        requestId: "req-system-session-default-on",
+        receivedAt: new Date().toISOString(),
+        params: {},
+        query: {},
+        body: {},
+        headers: {},
+        principal: null,
+      } as never) as { session: { remoteMode: string; companion: { connected: boolean; transport: { authenticated: boolean } } } };
+
+      expect(response.session.remoteMode).toBe("disabled");
+      expect(response.session.companion.connected).toBe(true);
+      expect(response.session.companion.transport.authenticated).toBe(true);
+      expect(fs.statSync(path.join(lastStateDir ?? "", ".friday", "run", "system-companion.auth.token")).mode & 0o777)
+        .toBe(0o600);
+    } finally {
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousRemote === undefined) {
+        delete process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+      } else {
+        process.env.FRIDAY_SYSTEM_REMOTE_MODE = previousRemote;
+      }
+    }
+  });
+
+  it("keeps hub booting with system runtime unavailable when companion socket setup fails closed", async () => {
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousSocketPath = process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
+    delete process.env.FRIDAY_SYSTEM_ENABLED;
+    const blockedSocketPath = path.join(makeTmpDir(), "system-companion.sock");
+    fs.writeFileSync(blockedSocketPath, "not a socket");
+    process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH = blockedSocketPath;
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.session.get");
+
+      expect(route).toBeDefined();
+      const response = await route!.handler({
+        requestId: "req-system-session-unavailable",
+        receivedAt: new Date().toISOString(),
+        params: {},
+        query: {},
+        body: {},
+        headers: {},
+        principal: null,
+      } as never) as { session: { health: { status: string; reasons: string[] }; companion: { connected: boolean } } };
+
+      expect(response.session.companion.connected).toBe(false);
+      expect(response.session.health.status).toBe("unavailable");
+      expect(response.session.health.reasons).toContain("companion_disconnected");
+      expect(fs.readFileSync(blockedSocketPath, "utf8")).toBe("not a socket");
+    } finally {
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousSocketPath === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH = previousSocketPath;
+      }
+    }
+  });
+
   it("blocks legacy system approval-rule mutation route in the live hub", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
