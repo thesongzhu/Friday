@@ -150,6 +150,43 @@ export function resolveFridayChannelDisabledToolNames(_channelKind: string): str
   return [];
 }
 
+function normalizeFridayChannelApprovalPrincipalSegment(raw: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized.length > 0 ? normalized : "unknown";
+}
+
+export function resolveFridayChannelApprovalPrincipalId(input: {
+  channelKind: string;
+  chatId: string;
+  senderId: string;
+}): string {
+  return [
+    "channel",
+    normalizeFridayChannelApprovalPrincipalSegment(input.channelKind),
+    normalizeFridayChannelApprovalPrincipalSegment(input.chatId),
+    "sender",
+    normalizeFridayChannelApprovalPrincipalSegment(input.senderId),
+  ].join(":");
+}
+
+export function canResolveFridayChannelApprovalFromMessage(input: {
+  route: {
+    channelKind: string;
+    chatId: string;
+    senderId: string;
+  };
+  message: Pick<FridayChannelMessage, "channelKind" | "chatId" | "senderId">;
+}): boolean {
+  return input.route.channelKind === input.message.channelKind
+    && input.route.chatId === input.message.chatId
+    && input.route.senderId === input.message.senderId;
+}
+
 export interface FridayChannelTerminalTextInput {
   status: "completed" | "failed" | "cancelled";
   response: string;

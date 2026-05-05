@@ -34,6 +34,7 @@ import type {
   FridayAgentPromptProfile,
   FridayAgentToolRoutingDecision,
 } from "./friday-agent-tool-routing.js";
+import type { FridayMutatingActionRisk } from "../../security/friday-mutating-action-gate.js";
 
 export interface FridayAgentExecutionContext {
   surface?: string;
@@ -403,7 +404,23 @@ export interface CreateFridayAgentRuntimeDeps {
     toolCallId: string;
     params: Record<string, unknown>;
     reason: string;
-  }) => Promise<{ approved: boolean; reason?: string }>;
+    canonicalActionDigest?: string;
+    canonicalAction?: string;
+    canonicalRisk?: FridayMutatingActionRisk;
+    canonicalMutating?: boolean;
+    canonicalResourceType?: string;
+    canonicalResourceId?: string;
+  }) => Promise<{
+    approved: boolean;
+    reason?: string;
+    decidedByPrincipalId?: string;
+    decidedByPrincipalType?: string;
+    approvalSurface?: string;
+  }>;
+  /** Enforce the canonical mutating action gate for tool calls before side effects. */
+  canonicalMutatingActionGate?: boolean;
+  /** Server-owned secret used to sign canonical approvals passed to downstream runtimes. */
+  canonicalApprovalSecret?: string;
   /** Optional policy extensions evaluated before tool execution. Extensions can only deny, never allow what core denied. */
   policyExtensions?: Array<{ name: string; evaluate: (context: { principalId: string; resource: string; action: string; resourceId?: string }) => "pass" | "deny" | "abstain" }>;
 }

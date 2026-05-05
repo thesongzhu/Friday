@@ -2,9 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestDb, createTestIdGenerator } from "../../helpers/friday-test-db.helper.js";
 import { createFridaySystemService } from "../../../src/system/engine/friday-system-service.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridaySystemIntentMutatingActionRequest,
+  signFridayCanonicalApproval,
+} from "../../../src/security/friday-mutating-action-gate.js";
 import type { FridaySystemCompanionBridge } from "../../../src/system/companion/friday-system-companion.types.js";
 import type { FridaySystemRemoteAuthAdapter } from "../../../src/system/auth/friday-system-remote-auth.js";
 import type { FridaySystemExecResult } from "../../../src/system/engine/friday-system-service.js";
+import type { FridaySystemIntentInput } from "../../../src/system/model/friday-system.types.js";
 import type { FridaySqliteLayer } from "#state";
 
 const WORKSPACE_ROOT = "/tmp/friday-system-test-workspace";
@@ -261,6 +267,8 @@ async function createServiceFixtureWithOptions(options?: {
   companionState?: CompanionTestState;
   companionReconnectIntervalMs?: number;
   warn?: (message: string) => void;
+  canonicalMutationGate?: boolean;
+  canonicalApprovalSecret?: string;
 }) {
   const db = options?.db ?? createTestDb();
   const fixtureId = ++fixtureSequence;
@@ -284,6 +292,8 @@ async function createServiceFixtureWithOptions(options?: {
     companionBridge: options?.companionBridge ?? createCompanionBridge(options?.companionState),
     execCommand,
     remoteMode: options?.remoteMode,
+    canonicalMutationGate: options?.canonicalMutationGate,
+    canonicalApprovalSecret: options?.canonicalApprovalSecret,
     remoteAuthAdapter: options?.remoteAuthAdapter ?? createRemoteAuthAdapter(),
     companionReconnectIntervalMs: options?.companionReconnectIntervalMs,
     warn: options?.warn,
@@ -662,6 +672,185 @@ describe("createFridaySystemService", () => {
       textPreview: "clipboard text",
     });
     expect(fixture.execCommand).toHaveBeenCalledWith("pbpaste", []);
+  });
+
+  it("blocks system mutations before side effects when canonical gate is enabled", async () => {
+    const fixture = await createServiceFixtureWithOptions({ canonicalMutationGate: true });
+    allocatedDbs.push(fixture.db);
+
+    const result = await fixture.service.executeIntent({
+      action: "clipboard_write",
+      actorId: "agent-1",
+      actorKind: "agent",
+      value: "hello",
+      idempotencyKey: "intent-1",
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.message).toContain("Canonical approval required");
+    expect(fixture.execCommand).not.toHaveBeenCalledWith("bash", expect.any(Array));
+  });
+
+  it("allows system mutations with a matching canonical approval ticket", async () => {
+    const fixture = await createServiceFixtureWithOptions({
+      canonicalMutationGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+    });
+    allocatedDbs.push(fixture.db);
+    const input: FridaySystemIntentInput = {
+      action: "clipboard_write",
+      actorId: "agent-1",
+      actorKind: "agent",
+      value: "hello",
+      idempotencyKey: "intent-1",
+    };
+    const actionDigest = createFridayMutatingActionDigest(
+      createFridaySystemIntentMutatingActionRequest(input, {
+        surface: "system",
+        defaultActorKind: "agent",
+        defaultActorId: "agent-1",
+      }),
+    );
+
+    const result = await fixture.service.executeIntent({
+      ...input,
+      canonicalApproval: signFridayCanonicalApproval(
+        {
+          decision: "approved",
+          approvalId: "approval-1",
+          decidedByPrincipalId: "user-1",
+          actionDigest,
+          expiresAt: "2026-03-06T12:10:00.000Z",
+        },
+        "test-canonical-secret",
+      ),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(fixture.execCommand).toHaveBeenCalledWith("bash", ["-lc", `printf %s "$1" | pbcopy`, "--", "hello"]);
+  });
+
+  it("does not execute twice with the same canonical approval", async () => {
+    const fixture = await createServiceFixtureWithOptions({
+      canonicalMutationGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+    });
+    allocatedDbs.push(fixture.db);
+    const input: FridaySystemIntentInput = {
+      action: "clipboard_write",
+      actorId: "agent-1",
+      actorKind: "agent",
+      value: "hello",
+      idempotencyKey: "intent-1",
+    };
+    const actionDigest = createFridayMutatingActionDigest(
+      createFridaySystemIntentMutatingActionRequest(input, {
+        surface: "system",
+        defaultActorKind: "agent",
+        defaultActorId: "agent-1",
+      }),
+    );
+    const canonicalApproval = signFridayCanonicalApproval(
+      {
+        decision: "approved",
+        approvalId: "approval-1",
+        decidedByPrincipalId: "user-1",
+        actionDigest,
+        expiresAt: "2026-03-06T12:10:00.000Z",
+      },
+      "test-canonical-secret",
+    );
+
+    const first = await fixture.service.executeIntent({ ...input, canonicalApproval });
+    const second = await fixture.service.executeIntent({ ...input, canonicalApproval });
+
+    expect(first.status).toBe("completed");
+    expect(second.status).toBe("blocked");
+    expect(second.message).toContain("canonical_approval_already_used");
+    expect(fixture.execCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks direct approval-rule mutators when canonical gate is enabled", async () => {
+    const fixture = await createServiceFixtureWithOptions({ canonicalMutationGate: true });
+    allocatedDbs.push(fixture.db);
+
+    expect(() => fixture.service.upsertApprovalRule({
+      action: "clipboard_read",
+      riskLevel: "high",
+      decision: "allow",
+      rationale: "legacy bypass",
+    })).toThrow("System approval rule mutations must go through the canonical approval gate.");
+  });
+
+  it("rejects forged canonical approvals when the server approval secret is configured", async () => {
+    const fixture = await createServiceFixtureWithOptions({
+      canonicalMutationGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+    });
+    allocatedDbs.push(fixture.db);
+    const input: FridaySystemIntentInput = {
+      action: "clipboard_write",
+      actorId: "agent-1",
+      actorKind: "agent",
+      value: "hello",
+      idempotencyKey: "intent-1",
+    };
+    const actionDigest = createFridayMutatingActionDigest(
+      createFridaySystemIntentMutatingActionRequest(input, {
+        surface: "system",
+        defaultActorKind: "agent",
+        defaultActorId: "agent-1",
+      }),
+    );
+
+    const result = await fixture.service.executeIntent({
+      ...input,
+      canonicalApproval: {
+        decision: "approved",
+        approvalId: "approval-1",
+        decidedByPrincipalId: "user-1",
+        actionDigest,
+        expiresAt: "2026-03-06T12:10:00.000Z",
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.message).toContain("canonical_approval_signature_invalid");
+    expect(fixture.execCommand).not.toHaveBeenCalledWith("bash", expect.any(Array));
+  });
+
+  it("rejects approved canonical approvals when canonical gate has no signing secret", async () => {
+    const fixture = await createServiceFixtureWithOptions({ canonicalMutationGate: true });
+    allocatedDbs.push(fixture.db);
+    const input: FridaySystemIntentInput = {
+      action: "clipboard_write",
+      actorId: "agent-1",
+      actorKind: "agent",
+      value: "hello",
+      idempotencyKey: "intent-1",
+    };
+    const actionDigest = createFridayMutatingActionDigest(
+      createFridaySystemIntentMutatingActionRequest(input, {
+        surface: "system",
+        defaultActorKind: "agent",
+        defaultActorId: "agent-1",
+      }),
+    );
+
+    const result = await fixture.service.executeIntent({
+      ...input,
+      canonicalApproval: {
+        decision: "approved",
+        approvalId: "approval-1",
+        decidedByPrincipalId: "user-1",
+        actionDigest,
+        expiresAt: "2026-03-06T12:10:00.000Z",
+      },
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.message).toContain("canonical_approval_signature_invalid");
+    expect(fixture.execCommand).not.toHaveBeenCalledWith("bash", expect.any(Array));
   });
 
   it("registers and revokes remote devices", async () => {

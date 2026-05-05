@@ -8,11 +8,14 @@ import {
   createFridayAgentRuntime,
   createFridayAgentEventEmitter,
   createFridayAgentFileTools,
+  createFridayAgentSystemTool,
   createFridayAgentRunRepository,
   createFridayAgentReviewGate,
   createFridayAgentRunEventRepository,
   createFridayAgentSelfFixService,
 } from "#agent";
+import { createFridaySystemService } from "../../../../src/system/engine/friday-system-service.js";
+import type { FridaySystemCompanionBridge } from "../../../../src/system/companion/friday-system-companion.types.js";
 import type {
   FridayAgentLlmClient,
   FridayAgentMessage,
@@ -345,6 +348,81 @@ describe("FridayAgentRuntime", () => {
           }),
         };
       },
+    };
+  }
+
+  function createConnectedSystemCompanionBridge(
+    launchApp: ReturnType<typeof vi.fn>,
+  ): FridaySystemCompanionBridge {
+    const now = NOW;
+    const status = {
+      id: "companion-test",
+      platform: "darwin" as const,
+      runtimeKind: "embedded" as const,
+      connected: true,
+      transport: { mode: "in_process" as const, protocol: "jsonrpc-2.0" as const, authenticated: true },
+      launchAtLoginEnabled: false,
+      panicHotkey: "Control+Option+Command+F",
+      safeMode: false,
+      overlayVisible: false,
+      lastHeartbeatAt: now,
+      capabilities: {
+        surfaces: {
+          launchAtLogin: true,
+          menuBar: true,
+          overlay: true,
+          globalHotkey: true,
+          windowInventory: true,
+          notificationIntake: true,
+          screenCapture: true,
+        },
+        actions: {
+          snapshot: "supported" as const,
+          launch_app: "supported" as const,
+          focus: "supported" as const,
+          open_url: "supported" as const,
+          open_project: "supported" as const,
+          handoff_to_browser: "supported" as const,
+          handoff_to_terminal: "supported" as const,
+          arrange_windows: "supported" as const,
+          notification_list: "supported" as const,
+          read_notification: "supported" as const,
+          notification_act: "supported" as const,
+          recover_ui: "supported" as const,
+        },
+      },
+      permissions: [],
+    };
+
+    return {
+      connect: vi.fn(async () => {}),
+      disconnect: vi.fn(async () => {}),
+      isConnected: vi.fn(() => true),
+      ping: vi.fn(async () => ({ ok: true, serverTime: now })),
+      getStatus: vi.fn(async () => status),
+      captureSnapshot: vi.fn(async () => ({
+        apps: [],
+        windows: [],
+        notifications: [],
+      })),
+      arrangeWindows: vi.fn(async (layout = "single_focus") => ({
+        arrangedWindowIds: [],
+        layout,
+        arrangedAt: now,
+      })),
+      launchApp,
+      focusTarget: vi.fn(async (input) => ({
+        ...input,
+        focused: true,
+        focusedAt: now,
+      })),
+      openUrl: vi.fn(async (url) => ({ url, openedAt: now })),
+      openProject: vi.fn(async (projectPath) => ({ projectPath, openedAt: now })),
+      listNotifications: vi.fn(async () => []),
+      actOnNotification: vi.fn(async () => null),
+      setOverlayVisible: vi.fn(async (visible) => ({ visible, changedAt: now })),
+      showGuideOverlay: vi.fn(async (command) => ({ visible: true, changedAt: now, guideOverlay: command })),
+      clearGuideOverlay: vi.fn(async () => ({ visible: false, changedAt: now })),
     };
   }
 
@@ -3143,6 +3221,11 @@ describe("FridayAgentRuntime", () => {
 
   it("blocks app-launch tool calls for desktop content inspection tasks and retries with read-only evidence", async () => {
     const systemSpy = vi.fn();
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
     const llmClient = createMockLlmClient([
       [
         {
@@ -3167,12 +3250,6 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
       ],
     ]);
-
-    const emitter = createFridayAgentEventEmitter();
-    const toolEndEvents: Array<Record<string, unknown>> = [];
-    emitter.on("agent.run.tool_end", (payload) => {
-      toolEndEvents.push(payload as Record<string, unknown>);
-    });
 
     const runtime = createFridayAgentRuntime({
       db,
@@ -3239,6 +3316,247 @@ describe("FridayAgentRuntime", () => {
     expect(systemSpy).toHaveBeenCalledTimes(1);
     expect(systemSpy.mock.calls[0]?.[0]).toMatchObject({ action: "open", appIdentifier: "codex app" });
     expect(result.response).toContain("已打开 Codex");
+  });
+
+  it("blocks mutating system tool calls at the canonical gate when no approval resolver is available", async () => {
+    const systemSpy = vi.fn();
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-open",
+          name: "system",
+          input: { action: "open", appIdentifier: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "需要用户确认后才能打开 Codex。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+    });
+
+    const result = await runtime.executeRun({
+      task: "打开 codex app",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(systemSpy).not.toHaveBeenCalled();
+    expect(toolEndEvents[0]?.isError).toBe(true);
+    expect(toolEndEvents[0]?.routeId).toBe("agent.execute.tool.canonical_gate");
+  });
+
+  it("blocks approved mutating tool calls when canonical approval signing is not configured", async () => {
+    const systemSpy = vi.fn();
+    const resolver = vi.fn(async () => ({ approved: true, decidedByPrincipalId: "user-approver-1" }));
+    const emitter = createFridayAgentEventEmitter();
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_end", (payload) => {
+      toolEndEvents.push(payload as Record<string, unknown>);
+    });
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-open",
+          name: "system",
+          input: { action: "open", appIdentifier: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "没有签名密钥时不能执行系统 mutation。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+      toolApprovalResolver: resolver,
+    });
+
+    const result = await runtime.executeRun({
+      task: "打开 codex app",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
+      canonicalAction: "system.open",
+      canonicalActionDigest: expect.any(String),
+    }));
+    expect(systemSpy).not.toHaveBeenCalled();
+    expect(toolEndEvents[0]?.isError).toBe(true);
+    expect(toolEndEvents[0]?.routeId).toBe("agent.execute.tool.canonical_gate");
+  });
+
+  it("injects a digest-bound canonical approval for approved mutating system tool calls", async () => {
+    const systemSpy = vi.fn();
+    const resolver = vi.fn(async () => ({ approved: true, decidedByPrincipalId: "user-approver-1" }));
+    const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_start", (payload) => {
+      toolStartEvents.push(payload as Record<string, unknown>);
+    });
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-open",
+          name: "system",
+          input: { action: "open", appIdentifier: "codex app" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "已打开 Codex。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createSystemTool(systemSpy)],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+      toolApprovalResolver: resolver,
+    });
+
+    const result = await runtime.executeRun({
+      task: "打开 codex app",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
+      canonicalAction: "system.open",
+      canonicalActionDigest: expect.any(String),
+      canonicalMutating: true,
+      canonicalRisk: "medium",
+    }));
+    expect(systemSpy).toHaveBeenCalledWith(expect.objectContaining({
+      action: "open",
+      canonicalActorId: "agent-runtime",
+      canonicalActorKind: "agent",
+      idempotencyKey: "test-id-0001:call-open",
+      canonicalApproval: expect.objectContaining({
+        decision: "approved",
+        decidedByPrincipalId: "user-approver-1",
+        actionDigest: expect.any(String),
+        issuer: "friday_canonical_gate",
+        signature: expect.any(String),
+      }),
+    }));
+    expect(toolStartEvents.at(-1)?.params).toMatchObject({
+      canonicalApproval: {
+        redacted: true,
+        decision: "approved",
+        actionDigest: expect.any(String),
+        issuer: "friday_canonical_gate",
+      },
+    });
+    expect(JSON.stringify(toolStartEvents)).not.toContain("signature");
+  });
+
+  it("executes an approved system tool call through the real system service canonical gate", async () => {
+    const resolver = vi.fn(async () => ({ approved: true, decidedByPrincipalId: "user-approver-1" }));
+    const launchApp = vi.fn(async (appIdentifier: string) => ({
+      appIdentifier,
+      launchedAt: NOW,
+    }));
+    const systemService = await createFridaySystemService({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      workspaceRoot: process.cwd(),
+      companionBridge: createConnectedSystemCompanionBridge(launchApp),
+      execCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+      canonicalMutationGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+      companionReconnectIntervalMs: 60_000,
+      warn: vi.fn(),
+    });
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "call-launch",
+          name: "system",
+          input: {
+            action: "launch_app",
+            appIdentifier: "Codex",
+            actorId: "model-supplied-actor",
+            actorKind: "remote",
+            approvalId: "model-supplied-approval",
+            riskLevel: "critical",
+          },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
+      ],
+      [
+        { type: "text_delta", text: "System launch completed." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 6, outputTokens: 4 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createFridayAgentSystemTool({ systemService })],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: "test-canonical-secret",
+      toolApprovalResolver: resolver,
+    });
+
+    const result = await runtime.executeRun({
+      task: "打开 Codex app",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toContain("System launch completed");
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
+      canonicalAction: "system.launch_app",
+      canonicalActionDigest: expect.any(String),
+    }));
+    expect(launchApp).toHaveBeenCalledWith("Codex");
   });
 
   it("blocks file-search tool calls for desktop content inspection tasks and retries with snapshot evidence", async () => {

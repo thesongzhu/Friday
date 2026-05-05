@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 import { assertSafeAppleScriptIdentifier } from "../friday-applescript.js";
+import {
+  createFridayMutatingActionGate,
+  createFridaySystemIntentMutatingActionRequest,
+  isFridaySystemIntentMutatingAction,
+} from "../../security/friday-mutating-action-gate.js";
+import type { FridayMutatingActionTicket } from "../../security/friday-mutating-action-gate.js";
 
 import type { DesktopSessionManager } from "../../desktop/engine/session-manager.js";
 import type {
@@ -159,6 +165,8 @@ export interface CreateFridaySystemServiceDeps {
   execCommand?: (command: string, args: string[]) => Promise<FridaySystemExecResult>;
   mode?: FridaySystemMode;
   remoteMode?: FridaySystemRemoteMode;
+  canonicalMutationGate?: boolean;
+  canonicalApprovalSecret?: string;
   cloudPlanningMode?: FridaySystemCloudPlanningMode;
   defaultLeaseTtlMs?: number;
   companionHeartbeatStaleMs?: number;
@@ -390,6 +398,14 @@ export async function createFridaySystemService(
   const remoteAuthRpId = deps.remoteAuth?.rpId ?? "localhost";
   const remoteAuthChallengeTtlMs = deps.remoteAuth?.challengeTtlMs ?? DEFAULT_REMOTE_AUTH_CHALLENGE_TTL_MS;
   const remoteAssertionTtlMs = deps.remoteAuth?.assertionTtlMs ?? DEFAULT_REMOTE_ASSERTION_TTL_MS;
+  const canonicalMutationGate = deps.canonicalMutationGate
+    ? createFridayMutatingActionGate({
+        nowIso: deps.nowIso,
+        ticketIdGenerator: () => deps.idGenerator(),
+        approvalSignatureSecret: deps.canonicalApprovalSecret,
+        requireApprovalSignature: true,
+      })
+    : null;
   const sessionId = deps.idGenerator();
   const startedAt = deps.nowIso();
   const lastTaskEvent = deps.db.withReadConnection((db) =>
@@ -885,8 +901,12 @@ export async function createFridaySystemService(
   function assertApprovalAllowed(
     action: FridaySystemIntentAction,
     appIdentifier?: string,
+    options: { canonicalGateSatisfied?: boolean } = {},
   ): FridaySystemApprovalRule | null {
     if (!HIGH_RISK_INTENTS.has(action)) {
+      return null;
+    }
+    if (options.canonicalGateSatisfied) {
       return null;
     }
     const existing = deps.db.withReadConnection((db) =>
@@ -906,6 +926,63 @@ export async function createFridaySystemService(
       }),
     );
     return existing;
+  }
+
+  async function evaluateSystemCanonicalGate(
+    input: FridaySystemIntentInput,
+    inheritedSatisfied: boolean,
+  ): Promise<{
+    satisfied: boolean;
+    ticket?: FridayMutatingActionTicket;
+    blocked?: FridaySystemIntentResult;
+  }> {
+    if (
+      inheritedSatisfied
+      || !canonicalMutationGate
+      || !isFridaySystemIntentMutatingAction(input.action)
+    ) {
+      return { satisfied: inheritedSatisfied };
+    }
+
+    const gateRequest = createFridaySystemIntentMutatingActionRequest(input, {
+      surface: "system",
+      defaultActorKind: input.actorKind ?? "api",
+      defaultActorId: input.actorId ?? `${input.actorKind ?? "api"}:system-intent`,
+    });
+    const gateResult = canonicalMutationGate.evaluate({
+      ...gateRequest,
+      canonicalApproval: input.canonicalApproval,
+    });
+
+    if (gateResult.decision === "allow") {
+      return {
+        satisfied: true,
+        ticket: gateResult.ticket,
+      };
+    }
+
+    await emitEvent("system.intent.blocked", {
+      action: input.action,
+      reason: gateResult.reason,
+      actionDigest: gateResult.actionDigest,
+      riskLevel: gateResult.risk,
+      approvalRequired: gateResult.approvalRequired,
+      deniedBy: gateResult.deniedBy,
+    });
+
+    return {
+      satisfied: false,
+      blocked: buildIntentResult(
+        input,
+        "blocked",
+        gateResult.decision === "requires_approval"
+          ? `Canonical approval required for ${input.action}`
+          : `Canonical gate denied ${input.action}: ${gateResult.reason}`,
+        {
+          canonicalGate: gateResult.evidenceRecord,
+        },
+      ),
+    };
   }
 
   async function ensureControlLease(
@@ -1051,11 +1128,24 @@ export async function createFridaySystemService(
   const listApprovalRules = (filters?: FridaySystemApprovalRuleFilters): FridaySystemApprovalRule[] =>
     deps.db.withReadConnection((db) => repository.listApprovalRules(db, filters));
 
+  function assertLegacyApprovalRuleMutationAllowed(): void {
+    if (!canonicalMutationGate) {
+      return;
+    }
+
+    throw new FridayDomainError(
+      "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+      "System approval rule mutations must go through the canonical approval gate.",
+      { httpStatus: 403 },
+    );
+  }
+
   const updateApprovalRule = (
     id: UUID,
     patch: Partial<Pick<FridaySystemApprovalRule, "decision" | "rationale" | "lastUsedAt">>,
-  ): FridaySystemApprovalRule | null =>
-    deps.db.withWriteTransaction((db) =>
+  ): FridaySystemApprovalRule | null => {
+    assertLegacyApprovalRuleMutationAllowed();
+    return deps.db.withWriteTransaction((db) =>
       repository.updateApprovalRule(db, id, {
         decision: patch.decision,
         rationale: patch.rationale,
@@ -1063,6 +1153,7 @@ export async function createFridaySystemService(
         updatedAt: deps.nowIso(),
       }),
     );
+  };
 
   function ensureDefaultApprovalRules(): void {
     const now = deps.nowIso();
@@ -1094,6 +1185,7 @@ export async function createFridaySystemService(
     decision: FridaySystemApprovalDecision;
     rationale?: string;
   }): FridaySystemApprovalRule => {
+    assertLegacyApprovalRuleMutationAllowed();
     const now = deps.nowIso();
     const existing = deps.db.withReadConnection((db) =>
       repository.findMatchingApprovalRule(db, {
@@ -1734,13 +1826,21 @@ export async function createFridaySystemService(
     };
   };
 
-  const executeIntent = async (
+  const executeIntentInternal = async (
     input: FridaySystemIntentInput,
+    inheritedCanonicalGateSatisfied = false,
   ): Promise<FridaySystemIntentResult> => {
-      const controlLease = await ensureControlLease(input);
-      const companion = await deps.companionBridge.getStatus();
-
+      let controlLease: FridaySystemControlLease | null = null;
+      let canonicalGateSatisfied = inheritedCanonicalGateSatisfied;
       try {
+        const canonicalGateResult = await evaluateSystemCanonicalGate(input, inheritedCanonicalGateSatisfied);
+        if (canonicalGateResult.blocked) {
+          return canonicalGateResult.blocked;
+        }
+        canonicalGateSatisfied = canonicalGateResult.satisfied;
+        controlLease = await ensureControlLease(input);
+        const companion = await deps.companionBridge.getStatus();
+
         switch (input.action) {
           case "snapshot": {
             const snapshot = await buildSnapshot();
@@ -1851,7 +1951,9 @@ export async function createFridaySystemService(
 
           case "close_app": {
             const appIdentifier = requireNonEmpty(input.appIdentifier ?? input.target, "appIdentifier");
-            const approval = assertApprovalAllowed("close_app", appIdentifier);
+            const approval = assertApprovalAllowed("close_app", appIdentifier, {
+              canonicalGateSatisfied,
+            });
             const payload = await runDesktopAction({
               type: "close_app",
               appIdentifier,
@@ -1944,16 +2046,16 @@ export async function createFridaySystemService(
 
           case "open": {
             if (input.targetKind === "url" || input.url || (input.target?.startsWith("http://") ?? false) || (input.target?.startsWith("https://") ?? false)) {
-              return executeIntent({ ...input, action: "open_url" });
+              return executeIntentInternal({ ...input, action: "open_url" }, canonicalGateSatisfied);
             }
             if (input.targetKind === "project" || input.projectPath || input.target?.includes("/") || input.target?.startsWith(".") || false) {
-              return executeIntent({ ...input, action: "open_project" });
+              return executeIntentInternal({ ...input, action: "open_project" }, canonicalGateSatisfied);
             }
-            return executeIntent({
+            return executeIntentInternal({
               ...input,
               action: "launch_app",
               appIdentifier: input.appIdentifier ?? input.target,
-            });
+            }, canonicalGateSatisfied);
           }
 
           case "focus": {
@@ -1978,11 +2080,11 @@ export async function createFridaySystemService(
                   controlLease?.id,
                 );
               }
-              return executeIntent({
+              return executeIntentInternal({
                 ...input,
                 action: "launch_app",
                 appIdentifier: safeAppIdentifier,
-              });
+              }, canonicalGateSatisfied);
             }
             await emitEvent("system.intent.completed", {
               action: input.action,
@@ -1994,7 +2096,7 @@ export async function createFridaySystemService(
           case "handoff_to_browser": {
             const targetUrl = input.url ?? input.target;
             if (targetUrl) {
-              return executeIntent({ ...input, action: "open_url", url: targetUrl });
+              return executeIntentInternal({ ...input, action: "open_url", url: targetUrl }, canonicalGateSatisfied);
             }
             const companionPayload = await launchAppViaCompanion("Safari");
             const payload = companionPayload
@@ -2018,11 +2120,13 @@ export async function createFridaySystemService(
 
           case "handoff_to_terminal": {
             const terminal = input.appIdentifier ?? input.target ?? "Terminal";
-            return executeIntent({ ...input, action: "launch_app", appIdentifier: terminal });
+            return executeIntentInternal({ ...input, action: "launch_app", appIdentifier: terminal }, canonicalGateSatisfied);
           }
 
           case "clipboard_read": {
-            const approval = assertApprovalAllowed("clipboard_read", input.appIdentifier);
+            const approval = assertApprovalAllowed("clipboard_read", input.appIdentifier, {
+              canonicalGateSatisfied,
+            });
             const payload = deps.desktopSessionManager
               ? await runDesktopAction({ type: "clipboard", operation: "read" })
               : await execCommand("pbpaste", []);
@@ -2108,7 +2212,9 @@ export async function createFridaySystemService(
           }
 
           case "notification_act": {
-            const approval = assertApprovalAllowed("notification_act", input.appIdentifier);
+            const approval = assertApprovalAllowed("notification_act", input.appIdentifier, {
+              canonicalGateSatisfied,
+            });
             const notificationId = requireNonEmpty(input.notificationId, "notificationId");
             const action = (input.notificationAction ?? "open") as FridaySystemNotificationAction;
             if (readCompanionActionAvailability(companion, "notification_act") === "unsupported") {
@@ -2277,6 +2383,10 @@ export async function createFridaySystemService(
         return buildIntentResult(input, "failed", message, undefined, undefined, controlLease?.id);
       }
     };
+
+  const executeIntent = async (
+    input: FridaySystemIntentInput,
+  ): Promise<FridaySystemIntentResult> => executeIntentInternal(input);
 
   return {
     getSession,

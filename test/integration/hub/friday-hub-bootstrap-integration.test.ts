@@ -196,6 +196,42 @@ describe("FridayHub Bootstrap Integration", () => {
     expect(hub.workflowRuntime.approval).toBeDefined();
   });
 
+  it("blocks legacy system approval-rule mutation route in the live hub", async () => {
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
+    process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.approvals.update");
+
+      expect(route).toBeDefined();
+      await expect(route!.handler({
+        requestId: "req-system-approval-1",
+        receivedAt: new Date().toISOString(),
+        params: { approvalId: "approval-1" },
+        query: {},
+        body: { decision: "allow", idempotencyKey: "approval-update-1" },
+        headers: {},
+        principal: null,
+      } as never)).rejects.toMatchObject({
+        code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+      });
+    } finally {
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousTransport === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = previousTransport;
+      }
+    }
+  });
+
   // ─── start() transitions to running ───
 
   it("transitions to 'running' after start()", async () => {

@@ -197,7 +197,12 @@ export interface CreateFridayApiRuntimeDeps {
     runId: string,
     toolCallId: string,
     approved: boolean,
-    reason?: string,
+    options: {
+      reason?: string;
+      approverPrincipalId: string;
+      approverPrincipalType?: string;
+      approvalSurface?: string;
+    },
   ) => { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" };
   /** Optional: learning event sink used by runtime-originated automation signals. */
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;

@@ -1,4 +1,6 @@
 import type { FridayDesktopPlatform, FridayDesktopRiskLevel } from "../../desktop/model/friday-desktop.types.js";
+import type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
+export type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
 
 /** Lightweight stand-in types replacing the removed @simplewebauthn/server dependency. */
 export type PublicKeyCredentialCreationOptionsJSON = Record<string, unknown>;
@@ -462,6 +464,8 @@ export interface FridaySystemIntentInput {
   leaseTtlMs?: number;
   layout?: FridaySystemWindowLayout;
   assertionToken?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridaySystemIntentResult {

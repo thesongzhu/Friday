@@ -1,5 +1,6 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import type { FridaySystemService } from "../../system/engine/friday-system-service.js";
+import type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
 import {
   errorResult,
   jsonResult,
@@ -10,6 +11,16 @@ import {
 
 export interface CreateFridayAgentSystemToolOptions {
   systemService: FridaySystemService;
+}
+
+function readCanonicalApprovalParam(
+  args: Record<string, unknown>,
+): FridayCanonicalApprovalResolution | undefined {
+  const value = args.canonicalApproval;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as FridayCanonicalApprovalResolution;
 }
 
 type SystemAction =
@@ -33,9 +44,7 @@ type SystemAction =
   | "clipboard_read"
   | "clipboard_write"
   | "request_control"
-  | "release_control"
-  | "approve"
-  | "deny";
+  | "release_control";
 
 const VALID_ACTIONS = new Set<SystemAction>([
   "snapshot",
@@ -59,8 +68,6 @@ const VALID_ACTIONS = new Set<SystemAction>([
   "clipboard_write",
   "request_control",
   "release_control",
-  "approve",
-  "deny",
 ]);
 
 export function createFridayAgentSystemTool(
@@ -74,19 +81,13 @@ export function createFridayAgentSystemTool(
       "High-level local computer orchestration for Friday Agent OS. " +
       "Actions: snapshot, open, focus, arrange_windows, launch_app, close_app, open_url, open_project, " +
       "search_file, handoff_to_browser, handoff_to_terminal, read_notification, notification_list, notification_act, " +
-      "triage_notifications, resume_task, recover_ui, clipboard_read, clipboard_write, request_control, release_control, approve, deny.",
+      "triage_notifications, resume_task, recover_ui, clipboard_read, clipboard_write, request_control, release_control.",
     parameters: {
       properties: {
         action: {
           type: "string",
           enum: Array.from(VALID_ACTIONS),
           description: "System action to execute.",
-        },
-        actorId: { type: "string", description: "Optional logical caller ID for control lease ownership." },
-        actorKind: {
-          type: "string",
-          enum: ["agent", "api", "remote", "system"],
-          description: "Caller kind for control lease ownership.",
         },
         target: { type: "string", description: "Generic target string (app, URL, project path, task label)." },
         targetKind: {
@@ -105,13 +106,7 @@ export function createFridayAgentSystemTool(
           enum: ["open", "dismiss", "mark_read"],
           description: "Notification action for notification_act.",
         },
-        approvalId: { type: "string", description: "Approval rule identifier for approve/deny." },
         deviceId: { type: "string", description: "Remote device identifier." },
-        riskLevel: {
-          type: "string",
-          enum: ["none", "low", "medium", "high", "critical"],
-          description: "Risk level when creating or updating an approval rule.",
-        },
         reason: { type: "string", description: "Human-readable reason, rationale, or lease note." },
         force: { type: "boolean", description: "Force a close_app action." },
         leaseTtlMs: { type: "number", description: "Optional lease lifetime in milliseconds." },
@@ -136,10 +131,14 @@ export function createFridayAgentSystemTool(
       }
 
       try {
+        const canonicalApproval = readCanonicalApprovalParam(args);
+        const canonicalActorId = canonicalApproval
+          ? readStringParam(args, "canonicalActorId") ?? "agent-runtime"
+          : "agent-runtime";
         const result = await systemService.executeIntent({
           action,
-          actorId: readStringParam(args, "actorId"),
-          actorKind: readStringParam(args, "actorKind") as "agent" | "api" | "remote" | "system" | undefined,
+          actorId: canonicalActorId,
+          actorKind: "agent",
           target: readStringParam(args, "target"),
           targetKind: readStringParam(args, "targetKind") as "app" | "url" | "project" | undefined,
           appIdentifier: readStringParam(args, "appIdentifier"),
@@ -149,19 +148,13 @@ export function createFridayAgentSystemTool(
           value: readStringParam(args, "value"),
           notificationId: readStringParam(args, "notificationId"),
           notificationAction: readStringParam(args, "notificationAction") as "open" | "dismiss" | "mark_read" | undefined,
-          approvalId: readStringParam(args, "approvalId"),
           deviceId: readStringParam(args, "deviceId"),
-          riskLevel: readStringParam(args, "riskLevel") as
-            | "none"
-            | "low"
-            | "medium"
-            | "high"
-            | "critical"
-            | undefined,
           reason: readStringParam(args, "reason"),
           force: readBooleanParam(args, "force") ?? undefined,
           leaseTtlMs: readNumberParam(args, "leaseTtlMs"),
           layout: readStringParam(args, "layout") as "single_focus" | "dual_pane" | "triad" | undefined,
+          idempotencyKey: readStringParam(args, "idempotencyKey"),
+          canonicalApproval,
         });
         return jsonResult(result);
       } catch (error) {

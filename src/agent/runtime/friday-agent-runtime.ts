@@ -12,6 +12,16 @@ import type {
 
 import { evaluatePolicyExtensionChain } from "../../security/policy-extension-chain.js";
 import type { PolicyExtension } from "../../security/policy-extension-chain.js";
+import {
+  createFridayMutatingActionGate,
+  createFridaySystemIntentMutatingActionRequest,
+  signFridayCanonicalApproval,
+} from "../../security/friday-mutating-action-gate.js";
+import type {
+  FridayCanonicalApprovalResolution,
+  FridayMutatingActionRequest,
+  FridayMutatingActionRisk,
+} from "../../security/friday-mutating-action-gate.js";
 
 import {
   FRIDAY_AGENT_COMPACTION_KEEP_RECENT,
@@ -256,9 +266,21 @@ function describeAbortReason(reason: unknown): string {
 }
 
 function awaitToolApprovalDecision(params: {
-  approval: Promise<{ approved: boolean; reason?: string }>;
+  approval: Promise<{
+    approved: boolean;
+    reason?: string;
+    decidedByPrincipalId?: string;
+    decidedByPrincipalType?: string;
+    approvalSurface?: string;
+  }>;
   signal: AbortSignal;
-}): Promise<{ approved: boolean; reason?: string }> {
+}): Promise<{
+  approved: boolean;
+  reason?: string;
+  decidedByPrincipalId?: string;
+  decidedByPrincipalType?: string;
+  approvalSurface?: string;
+}> {
   if (params.signal.aborted) {
     return Promise.resolve({
       approved: false,
@@ -282,6 +304,167 @@ function awaitToolApprovalDecision(params: {
     params.signal.addEventListener("abort", onAbort, { once: true });
     params.approval.then(finish(resolve), finish(reject));
   });
+}
+
+function resolveCanonicalAgentToolRisk(
+  toolName: string,
+  args: Record<string, unknown>,
+  approvalRequiredReason: string | null,
+): FridayMutatingActionRisk {
+  if (toolName === "exec" && typeof args.command === "string") {
+    const shellRisk = classifyShellRisk(args.command).level;
+    if (shellRisk === "blocked" || shellRisk === "destructive") return "critical";
+    if (shellRisk === "guarded") return "medium";
+  }
+
+  if (approvalRequiredReason) {
+    return "high";
+  }
+
+  if (toolName === "system" || toolName === "desktop" || toolName === "browser") {
+    return "medium";
+  }
+
+  return "medium";
+}
+
+function buildCanonicalAgentToolGateRequest(input: {
+  toolUse: FridayAgentToolUseBlock;
+  runId: string;
+  principalId?: string;
+  surface?: string;
+  isMutating: boolean;
+  approvalRequiredReason: string | null;
+}): FridayMutatingActionRequest {
+  const actorId = input.principalId ?? "agent-runtime";
+  const toolInput = input.toolUse.name === "system"
+    ? sanitizeCanonicalSystemToolInput(input.toolUse.input)
+    : input.toolUse.input;
+  const localClaims = input.approvalRequiredReason
+    ? [{
+        guardId: "agent-tool-risk",
+        decision: "requires_approval" as const,
+        risk: "high" as const,
+        reason: input.approvalRequiredReason,
+      }]
+    : [];
+
+  if (input.toolUse.name === "system") {
+    return createFridaySystemIntentMutatingActionRequest(
+      {
+        ...toolInput,
+        actorId,
+        actorKind: "agent",
+        idempotencyKey: `${input.runId}:${input.toolUse.id}`,
+      },
+      {
+        surface: "system",
+        defaultActorKind: "agent",
+        defaultActorId: actorId,
+        localClaims,
+      },
+    );
+  }
+
+  return {
+    action: `agent.tool.${input.toolUse.name}`,
+    actor: {
+      kind: "agent",
+      id: actorId,
+      principalId: actorId,
+    },
+    surface: input.surface ?? "agent",
+    resource: {
+      type: "agent_tool",
+      id: input.toolUse.name,
+    },
+    mutating: input.isMutating,
+    risk: resolveCanonicalAgentToolRisk(
+      input.toolUse.name,
+      toolInput,
+      input.approvalRequiredReason,
+    ),
+    parameters: toolInput,
+    idempotencyKey: `${input.runId}:${input.toolUse.id}`,
+    localClaims,
+  };
+}
+
+function attachCanonicalApprovalToToolUse(
+  toolUse: FridayAgentToolUseBlock,
+  approval: FridayCanonicalApprovalResolution,
+  canonicalActorId: string,
+  idempotencyKey: string | undefined,
+): FridayAgentToolUseBlock {
+  if (toolUse.name !== "system") {
+    return toolUse;
+  }
+
+  const safeInput = sanitizeCanonicalSystemToolInput(toolUse.input);
+  return {
+    ...toolUse,
+    input: {
+      ...safeInput,
+      canonicalActorId,
+      canonicalActorKind: "agent",
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      canonicalApproval: approval,
+    },
+  };
+}
+
+function redactCanonicalApprovalForAudit(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const approval = value as Partial<FridayCanonicalApprovalResolution>;
+  return {
+    redacted: true,
+    decision: approval.decision,
+    approvalId: approval.approvalId,
+    actionDigest: approval.actionDigest,
+    issuer: approval.issuer,
+  };
+}
+
+function redactToolInputForAudit(input: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(input, "canonicalApproval")) {
+    return input;
+  }
+
+  return {
+    ...input,
+    canonicalApproval: redactCanonicalApprovalForAudit(input.canonicalApproval),
+  };
+}
+
+function sanitizeCanonicalSystemToolInput(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const key of [
+    "action",
+    "target",
+    "targetKind",
+    "appIdentifier",
+    "url",
+    "projectPath",
+    "query",
+    "value",
+    "notificationId",
+    "notificationAction",
+    "deviceId",
+    "reason",
+    "force",
+    "leaseTtlMs",
+    "layout",
+  ]) {
+    if (input[key] !== undefined) {
+      sanitized[key] = input[key];
+    }
+  }
+  return sanitized;
 }
 
 // ─── Factory ───
@@ -318,6 +501,14 @@ export function createFridayAgentRuntime(
     compactionBridge,
     compactionMemorySink,
   } = deps;
+  const canonicalMutatingActionGate = deps.canonicalMutatingActionGate
+    ? createFridayMutatingActionGate({
+        nowIso,
+        ticketIdGenerator: () => idGenerator(),
+        approvalSignatureSecret: deps.canonicalApprovalSecret,
+        requireApprovalSignature: true,
+      })
+    : null;
 
   // Clone the tools array so registerTool does not mutate the caller's array.
   const tools = [...depsTools];
@@ -2466,7 +2657,9 @@ export function createFridayAgentRuntime(
               }
             }
 
-            if (isReadOnly && isMutatingToolCall(toolUse.name, toolUse.input)) {
+            const toolCallIsMutating = isMutatingToolCall(toolUse.name, toolUse.input);
+
+            if (isReadOnly && toolCallIsMutating) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
                 runId,
@@ -2498,6 +2691,169 @@ export function createFridayAgentRuntime(
             }
 
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
+            if (canonicalMutatingActionGate) {
+              const gateRequest = buildCanonicalAgentToolGateRequest({
+                toolUse,
+                runId,
+                principalId,
+                surface: executionContext?.surface,
+                isMutating: toolCallIsMutating,
+                approvalRequiredReason,
+              });
+              const gateResult = canonicalMutatingActionGate.evaluate(gateRequest);
+              if (gateResult.decision === "deny") {
+                handleTrackedEvent("agent.run.capability_grant_denied", {
+                  runId,
+                  grantId: `canonical-deny-${toolUse.id}`,
+                  toolCallId: toolUse.id,
+                  toolName: toolUse.name,
+                  reason: gateResult.reason,
+                  deniedBy: gateResult.deniedBy,
+                  actionDigest: gateResult.actionDigest,
+                  riskLevel: gateResult.risk,
+                  principalId,
+                  sessionKey,
+                });
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
+                  runId,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                  routeId: "agent.execute.tool.canonical_gate",
+                  correlationId: runId,
+                  message: `Tool '${toolUse.name}' denied by canonical gate. ${gateResult.reason}`,
+                }));
+                continue;
+              }
+
+              if (gateResult.decision === "requires_approval") {
+                const grantId = `capgrant:${runId}:${toolUse.id}`;
+                const expiresAt = new Date(Date.parse(nowIso()) + 15 * 60 * 1000).toISOString();
+                const approvalScopes = scopes ?? [];
+                const reason = approvalRequiredReason
+                  ?? `Canonical approval required for ${gateRequest.action}`;
+                if (deps.toolApprovalResolver) {
+                  handleTrackedEvent("agent.run.awaiting_tool_approval", {
+                    runId,
+                    status: "awaiting_tool_approval" as const,
+                    grantId,
+                    toolName: toolUse.name,
+                    toolCallId: toolUse.id,
+                    params: redactToolInputForAudit(toolUse.input),
+                    reason,
+                    expiresAt,
+                    actionDigest: gateResult.actionDigest,
+                    riskLevel: gateResult.risk,
+                    canonicalAction: gateRequest.action,
+                    ...(principalId ? { principalId } : {}),
+                    ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                    ...(sessionKey ? { sessionKey } : {}),
+                    ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
+                  });
+                  const decision = await awaitToolApprovalDecision({
+                    approval: deps.toolApprovalResolver({
+                      runId,
+                      ...(sessionKey ? { sessionKey } : {}),
+                      ...(principalId ? { principalId } : {}),
+                      ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                      ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
+                      grantId,
+                      expiresAt,
+                      toolName: toolUse.name,
+                      toolCallId: toolUse.id,
+                      params: redactToolInputForAudit(toolUse.input),
+                      reason,
+                      canonicalActionDigest: gateResult.actionDigest,
+                      canonicalAction: gateRequest.action,
+                      canonicalRisk: gateResult.risk,
+                      canonicalMutating: gateRequest.mutating,
+                      canonicalResourceType: gateRequest.resource.type,
+                      canonicalResourceId: gateRequest.resource.id,
+                    }),
+                    signal: runAbortController.signal,
+                  });
+                  if (runAbortController.signal.aborted) {
+                    break;
+                  }
+                  if (decision.approved && !decision.decidedByPrincipalId) {
+                    toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                      toolUse,
+                      runId,
+                      nowIso,
+                      emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                      routeId: "agent.execute.tool.canonical_gate",
+                      correlationId: runId,
+                      message: `Tool '${toolUse.name}' rejected by canonical gate. approver principal is required`,
+                    }));
+                    continue;
+                  }
+                  const unsignedCanonicalApproval: FridayCanonicalApprovalResolution = {
+                    decision: decision.approved ? "approved" : "denied",
+                    approvalId: grantId,
+                    decidedByPrincipalId: decision.decidedByPrincipalId ?? principalId ?? "operator",
+                    actionDigest: gateResult.actionDigest,
+                    ...(decision.reason ? { reason: decision.reason } : {}),
+                    expiresAt,
+                  };
+                  const canonicalApproval = decision.approved && deps.canonicalApprovalSecret
+                    ? signFridayCanonicalApproval(unsignedCanonicalApproval, deps.canonicalApprovalSecret)
+                    : unsignedCanonicalApproval;
+                  const approvedGateResult = canonicalMutatingActionGate.evaluate({
+                    ...gateRequest,
+                    canonicalApproval,
+                  });
+                  if (approvedGateResult.decision === "allow" && approvedGateResult.ticket) {
+                    handleTrackedEvent("agent.run.capability_grant_used", {
+                      runId,
+                      grantId,
+                      toolCallId: toolUse.id,
+                      toolName: toolUse.name,
+                      actionDigest: approvedGateResult.actionDigest,
+                      ticketId: approvedGateResult.ticket.ticketId,
+                      riskLevel: approvedGateResult.risk,
+                      ...(principalId ? { principalId } : {}),
+                      ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
+                      ...(sessionKey ? { sessionKey } : {}),
+                      ...(executionContext?.surface ? { surface: executionContext.surface } : {}),
+                    });
+                    executableToolUses.push({
+                      index: toolIndex,
+                      toolUse: attachCanonicalApprovalToToolUse(
+                        toolUse,
+                        canonicalApproval,
+                        gateRequest.actor.id,
+                        gateRequest.idempotencyKey,
+                      ),
+                    });
+                    continue;
+                  }
+                  toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                    toolUse,
+                    runId,
+                    nowIso,
+                    emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                    routeId: "agent.execute.tool.canonical_gate",
+                    correlationId: runId,
+                    message: `Tool '${toolUse.name}' rejected by canonical gate. ${approvedGateResult.reason}`,
+                  }));
+                  continue;
+                }
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
+                  runId,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                  routeId: "agent.execute.tool.canonical_gate",
+                  correlationId: runId,
+                  message: `Tool '${toolUse.name}' blocked pending canonical approval. ${reason}`,
+                }));
+                continue;
+              }
+
+              executableToolUses.push({ index: toolIndex, toolUse });
+              continue;
+            }
+
             if (approvalRequiredReason) {
               const grantId = `capgrant:${runId}:${toolUse.id}`;
               const expiresAt = new Date(Date.parse(nowIso()) + 15 * 60 * 1000).toISOString();
@@ -2513,7 +2869,7 @@ export function createFridayAgentRuntime(
                   grantId,
                   toolName: toolUse.name,
                   toolCallId: toolUse.id,
-                  params: toolUse.input,
+                  params: redactToolInputForAudit(toolUse.input),
                   reason: approvalRequiredReason,
                   expiresAt,
                   ...(shellRisk ? { riskLevel: shellRisk } : {}),
@@ -2533,7 +2889,7 @@ export function createFridayAgentRuntime(
                     expiresAt,
                     toolName: toolUse.name,
                     toolCallId: toolUse.id,
-                    params: toolUse.input,
+                    params: redactToolInputForAudit(toolUse.input),
                     reason: approvalRequiredReason,
                   }),
                   signal: runAbortController.signal,
@@ -6399,6 +6755,7 @@ function emitImmediateToolCallResult(params: {
   message: string;
   errorCode?: string;
 }): FridayAgentToolCallRecord {
+  const auditInput = redactToolInputForAudit(params.toolUse.input);
   const result = {
     content: params.message,
     isError: true,
@@ -6408,7 +6765,7 @@ function emitImmediateToolCallResult(params: {
     runId: params.runId,
     toolName: params.toolUse.name,
     toolCallId: params.toolUse.id,
-    params: params.toolUse.input,
+    params: auditInput,
   });
 
   params.emitRunEvent("agent.run.tool_end", {
@@ -6426,7 +6783,7 @@ function emitImmediateToolCallResult(params: {
   return {
     toolCallId: params.toolUse.id,
     toolName: params.toolUse.name,
-    args: params.toolUse.input,
+    args: auditInput,
     result,
     durationMs: 0,
     startedAt: params.nowIso(),
@@ -6440,6 +6797,7 @@ async function executeToolCall(
   const routeId = "agent.execute.tool";
   const correlationId = runId;
   const startedAt = Date.now();
+  const auditInput = redactToolInputForAudit(toolUse.input);
   const toolArgs = augmentToolArgsForRuntime({
     toolName: toolUse.name,
     input: toolUse.input,
@@ -6452,7 +6810,7 @@ async function executeToolCall(
     runId,
     toolName: toolUse.name,
     toolCallId: toolUse.id,
-    params: toolUse.input,
+    params: auditInput,
   });
 
   const touchedPaths = extractFilePaths(toolUse.name, toolUse.input);
@@ -6486,7 +6844,7 @@ async function executeToolCall(
         return {
           toolCallId: toolUse.id,
           toolName: toolUse.name,
-          args: toolUse.input,
+          args: auditInput,
           result,
           durationMs,
           startedAt: nowIso(),
@@ -6519,7 +6877,7 @@ async function executeToolCall(
     return {
       toolCallId: toolUse.id,
       toolName: toolUse.name,
-      args: toolUse.input,
+      args: auditInput,
       result,
       durationMs,
       startedAt: nowIso(),
@@ -6553,7 +6911,7 @@ async function executeToolCall(
     return {
       toolCallId: toolUse.id,
       toolName: toolUse.name,
-      args: toolUse.input,
+      args: auditInput,
       result,
       durationMs,
       startedAt: nowIso(),
@@ -6636,7 +6994,7 @@ async function executeToolCall(
       result,
       routeId,
       correlationId,
-      toolCallSummary: summarizeToolCall(toolUse.name, toolUse.input, result, 0, 0),
+      toolCallSummary: summarizeToolCall(toolUse.name, auditInput, result, 0, 0),
     }));
 
     if (!result.isError && params.fileVersionTracker && touchedPaths.length > 0) {
@@ -6648,7 +7006,7 @@ async function executeToolCall(
     return {
       toolCallId: toolUse.id,
       toolName: toolUse.name,
-      args: toolUse.input,
+      args: auditInput,
       result,
       durationMs,
       startedAt: nowIso(),
@@ -6673,7 +7031,7 @@ async function executeToolCall(
     return {
       toolCallId: toolUse.id,
       toolName: toolUse.name,
-      args: toolUse.input,
+      args: auditInput,
       result,
       durationMs,
       startedAt: nowIso(),

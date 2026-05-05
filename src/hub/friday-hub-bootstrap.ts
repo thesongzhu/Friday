@@ -339,6 +339,7 @@ import { createFridayProviderBackedTtsService } from "../media/friday-provider-b
 import {
   buildFridayChannelDeliveryFailureText,
   buildFridayChannelMessageTooLongText,
+  canResolveFridayChannelApprovalFromMessage,
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
@@ -352,6 +353,7 @@ import {
   resolveBrowserHostConfigFromEnv,
   resolveBrowserPresentationModeFromEnv,
   resolveChannelInitConfigWithSecretPolicy,
+  resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveFridayChannelTerminalText,
@@ -362,7 +364,9 @@ import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gate
 
 // Re-export public API for backward compatibility with `#hub` barrel.
 export {
+  canResolveFridayChannelApprovalFromMessage,
   parseFridayChannelIdentityMap,
+  resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveTokenSecret,
@@ -1736,10 +1740,12 @@ export async function createFridayHub(
           ...diagnostics,
           browserTarget: diagnostics.targetBrowser,
         };
-      },
-      mode: "agent_os",
-      remoteMode: systemRemoteMode,
-      cloudPlanningMode: systemCloudPlanningMode,
+	      },
+	      mode: "agent_os",
+	      remoteMode: systemRemoteMode,
+	      canonicalMutationGate: true,
+	      canonicalApprovalSecret: tokenSecret,
+	      cloudPlanningMode: systemCloudPlanningMode,
       remoteAuth: {
         rpName: systemRemoteAuthRpName,
         rpId: systemRemoteAuthRpId,
@@ -1783,17 +1789,12 @@ export async function createFridayHub(
             nextCursor: items.length > 0 ? items[items.length - 1]!.updatedAt : undefined,
           };
         },
-        update: (approvalId, req) => {
-          const approval = systemService!.updateApprovalRule(approvalId, {
-            decision: req.decision,
-            rationale: req.rationale,
-          });
-          if (!approval) {
-            throw new FridayDomainError("SYSTEM_APPROVAL_NOT_FOUND", "Approval rule not found", {
-              httpStatus: 404,
-            });
-          }
-          return { approval };
+        update: (_approvalId, _req) => {
+          throw new FridayDomainError(
+            "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+            "System approval rule mutations must go through the canonical approval gate.",
+            { httpStatus: 403 },
+          );
         },
       },
       events: {
@@ -3435,19 +3436,31 @@ export async function createFridayHub(
   // Shared promise map for tool-level approval flow.
   // The agent runtime awaits the resolver; the API routes resolve/reject the promise.
   const toolApprovalGates = new Map<string, Map<string, {
-    resolve: (v: { approved: boolean; reason?: string }) => void;
+    resolve: (v: {
+      approved: boolean;
+      reason?: string;
+      decidedByPrincipalId?: string;
+      decidedByPrincipalType?: string;
+      approvalSurface?: string;
+    }) => void;
     prompt: {
       grantId: string;
       expiresAt: string;
       toolName: string;
       toolCallId: string;
       reason: string;
-      principalId?: string;
-      scopes?: string[];
-      sessionKey?: string;
-      surface?: string;
-    };
-  }>>();
+	      principalId?: string;
+	      scopes?: string[];
+	      sessionKey?: string;
+	      surface?: string;
+	      canonicalActionDigest?: string;
+	      canonicalAction?: string;
+	      canonicalRisk?: string;
+	      canonicalMutating?: boolean;
+	      canonicalResourceType?: string;
+	      canonicalResourceId?: string;
+	    };
+	  }>>();
 
   type FridayChannelApprovalRoute = {
     channelKind: string;
@@ -3455,6 +3468,7 @@ export async function createFridayHub(
     chatType: "direct" | "group";
     senderId: string;
     messageId: string;
+    sessionKey: string;
   };
   type FridayChannelToolApprovalCommand = {
     approved: boolean;
@@ -3474,11 +3488,16 @@ export async function createFridayHub(
     toolName: string;
     shortId: string;
     reason: string;
-    expiresAt: string;
-    params: Record<string, unknown>;
-    route: FridayChannelApprovalRoute;
-  };
+	    expiresAt: string;
+	    params: Record<string, unknown>;
+	    route: FridayChannelApprovalRoute;
+	    canonicalActionDigest?: string;
+	    canonicalAction?: string;
+	    canonicalRisk?: string;
+	  };
   const channelApprovalRoutesBySession = new Map<string, FridayChannelApprovalRoute>();
+  const channelApprovalRoutesByRun = new Map<string, FridayChannelApprovalRoute>();
+  const channelApprovalRoutesBySessionPrincipal = new Map<string, FridayChannelApprovalRoute>();
   const channelToolApprovalSessions = new Map<string, FridayPendingChannelToolApproval>();
   const sensitiveApprovalParamKeyPattern =
     /(api[-_ ]?key|authorization|cookie|credential|password|secret|token)/i;
@@ -3490,6 +3509,9 @@ export async function createFridayHub(
 
   const channelToolApprovalKey = (sessionKey: string, shortId: string): string =>
     `${sessionKey}:${shortId.toLowerCase()}`;
+
+  const channelApprovalSessionPrincipalKey = (sessionKey: string, principalId: string): string =>
+    `${sessionKey}:${principalId}`;
 
   const createChannelToolApprovalShortId = (runId: string, toolCallId: string): string => {
     const source = `${runId}:${toolCallId}`.replace(/[^a-z0-9]/gi, "");
@@ -3616,43 +3638,58 @@ export async function createFridayHub(
   const buildChannelToolApprovalPrompt = (pending: FridayPendingChannelToolApproval): string => {
     const paramsPreview = buildChannelToolApprovalParamsPreview(pending.params);
     return [
-      `需要确认敏感操作 ${pending.shortId}`,
-      `工具: ${pending.toolName}`,
-      `原因: ${pending.reason}`,
-      paramsPreview ? `参数:\n${paramsPreview}` : undefined,
+	      `需要确认敏感操作 ${pending.shortId}`,
+	      `工具: ${pending.toolName}`,
+	      pending.canonicalAction ? `动作: ${pending.canonicalAction}` : undefined,
+	      pending.canonicalRisk ? `风险: ${pending.canonicalRisk}` : undefined,
+	      `原因: ${pending.reason}`,
+	      paramsPreview ? `参数:\n${paramsPreview}` : undefined,
       `回复「批准 ${pending.shortId}」继续，或「拒绝 ${pending.shortId}」停止。`,
       `过期时间: ${pending.expiresAt}`,
     ].filter((line): line is string => typeof line === "string" && line.length > 0).join("\n");
   };
 
-  const notifyChannelToolApprovalRequest = (prompt: {
-    runId: string;
-    sessionKey?: string;
-    grantId: string;
+	  const notifyChannelToolApprovalRequest = (prompt: {
+	    runId: string;
+	    sessionKey?: string;
+	    principalId?: string;
+	    grantId: string;
     expiresAt: string;
     toolName: string;
     toolCallId: string;
-    params: Record<string, unknown>;
-    reason: string;
-    surface?: string;
-  }): void => {
+	    params: Record<string, unknown>;
+	    reason: string;
+	    surface?: string;
+	    canonicalActionDigest?: string;
+	    canonicalAction?: string;
+	    canonicalRisk?: string;
+	  }): void => {
     if (prompt.surface !== "channel" || !prompt.sessionKey) return;
-    const route = channelApprovalRoutesBySession.get(prompt.sessionKey);
+    const route = channelApprovalRoutesByRun.get(prompt.runId)
+      ?? (prompt.principalId
+        ? channelApprovalRoutesBySessionPrincipal.get(
+            channelApprovalSessionPrincipalKey(prompt.sessionKey, prompt.principalId),
+          )
+        : undefined);
     if (!route) return;
     const shortId = createChannelToolApprovalShortId(prompt.runId, prompt.toolCallId);
+    const approvalSessionKey = route.sessionKey;
     const pending: FridayPendingChannelToolApproval = {
       runId: prompt.runId,
-      sessionKey: prompt.sessionKey,
+      sessionKey: approvalSessionKey,
       grantId: prompt.grantId,
       toolCallId: prompt.toolCallId,
       toolName: prompt.toolName,
       shortId,
       reason: prompt.reason,
-      expiresAt: prompt.expiresAt,
-      params: prompt.params,
-      route,
-    };
-    channelToolApprovalSessions.set(channelToolApprovalKey(prompt.sessionKey, shortId), pending);
+	      expiresAt: prompt.expiresAt,
+	      params: prompt.params,
+	      route,
+	      canonicalActionDigest: prompt.canonicalActionDigest,
+	      canonicalAction: prompt.canonicalAction,
+	      canonicalRisk: prompt.canonicalRisk,
+	    };
+    channelToolApprovalSessions.set(channelToolApprovalKey(approvalSessionKey, shortId), pending);
     const paramsPreview = buildChannelToolApprovalParamsPreview(pending.params);
     channelRegistry.send(route.channelKind, {
       chatId: route.chatId,
@@ -3661,10 +3698,13 @@ export async function createFridayHub(
         shortId: pending.shortId,
         toolName: pending.toolName,
         reason: pending.reason,
-        expiresAt: pending.expiresAt,
-        chatType: pending.route.chatType,
-        ...(paramsPreview ? { paramsPreview } : {}),
-      },
+	        expiresAt: pending.expiresAt,
+	        chatType: pending.route.chatType,
+	        ...(pending.canonicalActionDigest ? { actionDigest: pending.canonicalActionDigest } : {}),
+	        ...(pending.canonicalAction ? { canonicalAction: pending.canonicalAction } : {}),
+	        ...(pending.canonicalRisk ? { canonicalRisk: pending.canonicalRisk } : {}),
+	        ...(paramsPreview ? { paramsPreview } : {}),
+	      },
       replyTo: route.messageId,
     }).catch((err) => {
       warnHubBootstrapOnce(`[friday] channel-tool-approval-notify: ${err instanceof Error ? err.message : String(err)}`);
@@ -3707,16 +3747,29 @@ export async function createFridayHub(
     reason: string;
     denialReason?: string;
     principalId?: string;
-    scopes?: string[];
-    sessionKey?: string;
-    surface?: string;
-    expiresAt?: string;
-  }): void => {
+    approvedByPrincipalId?: string;
+    approvedByPrincipalType?: string;
+    approvalSurface?: string;
+	    scopes?: string[];
+	    sessionKey?: string;
+	    surface?: string;
+	    canonicalActionDigest?: string;
+	    canonicalAction?: string;
+	    canonicalRisk?: string;
+	    canonicalMutating?: boolean;
+	    canonicalResourceType?: string;
+	    canonicalResourceId?: string;
+	    expiresAt?: string;
+	  }): void => {
     appendFridayAuditLog(auditLogPath, {
       id: idGenerator(),
       ts: nowIso(),
-      actorType: input.principalId ? "user" : "service",
-      ...(input.principalId ? { actorId: input.principalId } : {}),
+      actorType: input.approvedByPrincipalId ? "user" : input.principalId ? "user" : "service",
+      ...(input.approvedByPrincipalId
+        ? { actorId: input.approvedByPrincipalId }
+        : input.principalId
+          ? { actorId: input.principalId }
+          : {}),
       action: input.decision === "issued"
         ? "agent.capability_grant.issue"
         : "agent.capability_grant.deny",
@@ -3732,13 +3785,23 @@ export async function createFridayHub(
         runId: input.runId,
         toolCallId: input.toolCallId,
         toolName: input.toolName,
-        approvalReason: input.reason,
-        denialReason: input.denialReason,
-        expiresAt: input.expiresAt,
-        sessionKey: input.sessionKey,
-        surface: input.surface,
-        scopes: input.scopes,
-      },
+	        approvalReason: input.reason,
+	        denialReason: input.denialReason,
+	        runPrincipalId: input.principalId,
+	        approvedByPrincipalId: input.approvedByPrincipalId,
+	        approvedByPrincipalType: input.approvedByPrincipalType,
+	        approvalSurface: input.approvalSurface,
+	        expiresAt: input.expiresAt,
+	        sessionKey: input.sessionKey,
+	        surface: input.surface,
+	        scopes: input.scopes,
+	        canonicalActionDigest: input.canonicalActionDigest,
+	        canonicalAction: input.canonicalAction,
+	        canonicalRisk: input.canonicalRisk,
+	        canonicalMutating: input.canonicalMutating,
+	        canonicalResourceType: input.canonicalResourceType,
+	        canonicalResourceId: input.canonicalResourceId,
+	      },
     }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
   };
 
@@ -3750,17 +3813,35 @@ export async function createFridayHub(
     surface?: string;
     grantId: string;
     expiresAt: string;
-    toolName: string;
-    toolCallId: string;
-    params: Record<string, unknown>;
-    reason: string;
-  }): Promise<{ approved: boolean; reason?: string }> => {
+	    toolName: string;
+	    toolCallId: string;
+	    params: Record<string, unknown>;
+	    reason: string;
+	    canonicalActionDigest?: string;
+	    canonicalAction?: string;
+	    canonicalRisk?: string;
+	    canonicalMutating?: boolean;
+	    canonicalResourceType?: string;
+	    canonicalResourceId?: string;
+	  }): Promise<{
+    approved: boolean;
+    reason?: string;
+    decidedByPrincipalId?: string;
+    decidedByPrincipalType?: string;
+    approvalSurface?: string;
+  }> => {
     let runMap = toolApprovalGates.get(prompt.runId);
     if (!runMap) {
       runMap = new Map();
       toolApprovalGates.set(prompt.runId, runMap);
     }
-    return new Promise<{ approved: boolean; reason?: string }>((resolve) => {
+    return new Promise<{
+      approved: boolean;
+      reason?: string;
+      decidedByPrincipalId?: string;
+      decidedByPrincipalType?: string;
+      approvalSurface?: string;
+    }>((resolve) => {
       runMap!.set(prompt.toolCallId, {
         resolve,
         prompt: {
@@ -3770,11 +3851,17 @@ export async function createFridayHub(
           toolCallId: prompt.toolCallId,
           reason: prompt.reason,
           ...(prompt.principalId ? { principalId: prompt.principalId } : {}),
-          ...(prompt.scopes?.length ? { scopes: prompt.scopes } : {}),
-          ...(prompt.sessionKey ? { sessionKey: prompt.sessionKey } : {}),
-          ...(prompt.surface ? { surface: prompt.surface } : {}),
-        },
-      });
+	          ...(prompt.scopes?.length ? { scopes: prompt.scopes } : {}),
+	          ...(prompt.sessionKey ? { sessionKey: prompt.sessionKey } : {}),
+	          ...(prompt.surface ? { surface: prompt.surface } : {}),
+	          ...(prompt.canonicalActionDigest ? { canonicalActionDigest: prompt.canonicalActionDigest } : {}),
+	          ...(prompt.canonicalAction ? { canonicalAction: prompt.canonicalAction } : {}),
+	          ...(prompt.canonicalRisk ? { canonicalRisk: prompt.canonicalRisk } : {}),
+	          ...(prompt.canonicalMutating !== undefined ? { canonicalMutating: prompt.canonicalMutating } : {}),
+	          ...(prompt.canonicalResourceType ? { canonicalResourceType: prompt.canonicalResourceType } : {}),
+	          ...(prompt.canonicalResourceId ? { canonicalResourceId: prompt.canonicalResourceId } : {}),
+	        },
+	      });
       notifyChannelToolApprovalRequest(prompt);
     });
   };
@@ -3783,12 +3870,18 @@ export async function createFridayHub(
     runId: string,
     toolCallId: string,
     approved: boolean,
-    reason?: string,
+    options: {
+      reason?: string;
+      approverPrincipalId: string;
+      approverPrincipalType?: string;
+      approvalSurface?: string;
+    },
   ): { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" } => {
     const runMap = toolApprovalGates.get(runId);
     if (!runMap) return { resolved: false };
     const gate = runMap.get(toolCallId);
     if (!gate) return { resolved: false };
+    const reason = options.reason;
     const grantPayloadBase = {
       runId,
       grantId: gate.prompt.grantId,
@@ -3796,11 +3889,20 @@ export async function createFridayHub(
       toolName: gate.prompt.toolName,
       reason: gate.prompt.reason,
       expiresAt: gate.prompt.expiresAt,
+      approvedByPrincipalId: options.approverPrincipalId,
+      ...(options.approverPrincipalType ? { approvedByPrincipalType: options.approverPrincipalType } : {}),
+      ...(options.approvalSurface ? { approvalSurface: options.approvalSurface } : {}),
       ...(gate.prompt.principalId ? { principalId: gate.prompt.principalId } : {}),
-      ...(gate.prompt.scopes?.length ? { scopes: gate.prompt.scopes } : {}),
-      ...(gate.prompt.sessionKey ? { sessionKey: gate.prompt.sessionKey } : {}),
-      ...(gate.prompt.surface ? { surface: gate.prompt.surface } : {}),
-    };
+	      ...(gate.prompt.scopes?.length ? { scopes: gate.prompt.scopes } : {}),
+	      ...(gate.prompt.sessionKey ? { sessionKey: gate.prompt.sessionKey } : {}),
+	      ...(gate.prompt.surface ? { surface: gate.prompt.surface } : {}),
+	      ...(gate.prompt.canonicalActionDigest ? { canonicalActionDigest: gate.prompt.canonicalActionDigest } : {}),
+	      ...(gate.prompt.canonicalAction ? { canonicalAction: gate.prompt.canonicalAction } : {}),
+	      ...(gate.prompt.canonicalRisk ? { canonicalRisk: gate.prompt.canonicalRisk } : {}),
+	      ...(gate.prompt.canonicalMutating !== undefined ? { canonicalMutating: gate.prompt.canonicalMutating } : {}),
+	      ...(gate.prompt.canonicalResourceType ? { canonicalResourceType: gate.prompt.canonicalResourceType } : {}),
+	      ...(gate.prompt.canonicalResourceId ? { canonicalResourceId: gate.prompt.canonicalResourceId } : {}),
+	    };
     if (approved) {
       appendAgentRunEventOutsideRuntime(runId, "agent.run.capability_grant_issued", {
         ...grantPayloadBase,
@@ -3821,7 +3923,13 @@ export async function createFridayHub(
         denialReason: reason,
       });
     }
-    gate.resolve({ approved, reason });
+    gate.resolve({
+      approved,
+      reason,
+      decidedByPrincipalId: options.approverPrincipalId,
+      ...(options.approverPrincipalType ? { decidedByPrincipalType: options.approverPrincipalType } : {}),
+      ...(options.approvalSurface ? { approvalSurface: options.approvalSurface } : {}),
+    });
     runMap.delete(toolCallId);
     deleteChannelToolApprovalSessionsForRun(runId, toolCallId);
     if (runMap.size === 0) toolApprovalGates.delete(runId);
@@ -4004,9 +4112,11 @@ export async function createFridayHub(
         costUsd: usage.costUsd ?? 0,
         metadata: { source: "agent-runtime" },
       });
-    },
-    toolApprovalResolver,
-    learnedLessons: () => {
+	    },
+	    toolApprovalResolver,
+	    canonicalMutatingActionGate: true,
+	    canonicalApprovalSecret: tokenSecret,
+	    learnedLessons: () => {
       try {
         const repo = createFridayLearnedLessonRepository();
         return stateRuntime!.sqlite.withReadConnection((db) =>
@@ -4047,6 +4157,7 @@ export async function createFridayHub(
       toolApprovalGates.delete(runId);
     }
     deleteChannelToolApprovalSessionsForRun(runId);
+    channelApprovalRoutesByRun.delete(runId);
   };
   agentEventEmitter.on("agent.run.completed", (payload) => {
     if (payload && typeof payload === "object" && "runId" in payload) {
@@ -4249,6 +4360,9 @@ export async function createFridayHub(
             metadata: { source: "agent-runtime" },
           });
         },
+        toolApprovalResolver,
+        canonicalMutatingActionGate: true,
+        canonicalApprovalSecret: tokenSecret,
       });
       childRuntimeRef = childRuntime;
 
@@ -4275,7 +4389,47 @@ export async function createFridayHub(
       });
       childRuntime.registerTool(childSkillImportTool);
 
-      return childRuntime;
+      const executeChildRun = childRuntime.executeRun.bind(childRuntime);
+      return {
+        executeRun: async (runParams) => {
+          const childRunId = runParams.runId;
+          const rootRoute = params.rootRunId ? channelApprovalRoutesByRun.get(params.rootRunId) : undefined;
+          if (childRunId && rootRoute) {
+            channelApprovalRoutesByRun.set(childRunId, rootRoute);
+          }
+          if (runParams.sessionKey && runParams.principalId && rootRoute) {
+            channelApprovalRoutesBySessionPrincipal.set(
+              channelApprovalSessionPrincipalKey(runParams.sessionKey, runParams.principalId),
+              rootRoute,
+            );
+          }
+          try {
+            return await executeChildRun({
+              ...runParams,
+              ...(rootRoute
+                ? {
+                    executionContext: {
+                      surface: "channel" as const,
+                      interactive: true,
+                      channelKind: rootRoute.channelKind,
+                      channelChatType: rootRoute.chatType,
+                      channelControlRoute: "full_agent" as const,
+                    },
+                  }
+                : {}),
+            });
+          } finally {
+            if (childRunId) {
+              channelApprovalRoutesByRun.delete(childRunId);
+            }
+            if (runParams.sessionKey && runParams.principalId) {
+              channelApprovalRoutesBySessionPrincipal.delete(
+                channelApprovalSessionPrincipalKey(runParams.sessionKey, runParams.principalId),
+              );
+            }
+          }
+        },
+      };
     },
     eventEmitter: agentEventEmitter,
     idGenerator,
@@ -7269,9 +7423,10 @@ export async function createFridayHub(
             channelKind: msg.channelKind,
             chatId: msg.chatId,
             chatType: msg.chatType,
-            senderId: msg.senderId,
-            messageId: msg.id,
-          });
+	            senderId: msg.senderId,
+	            messageId: msg.id,
+	            sessionKey,
+	          });
 
           if (text.length > FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH) {
             channelRegistry
@@ -7497,22 +7652,39 @@ export async function createFridayHub(
                   });
                 });
 
-                let ackText: string;
-                if (pendingApprovalForCommand) {
-                  const resolution = resolveToolApproval(
-                    pendingApprovalForCommand.runId,
-                    pendingApprovalForCommand.toolCallId,
-                    approvalCommand.approved,
-                    approvalCommand.reason,
-                  );
-                  if (resolution.resolved) {
-                    ackText = approvalCommand.approved
-                      ? `已批准 ${pendingApprovalForCommand.shortId}，Friday 会继续执行。`
-                      : `已拒绝 ${pendingApprovalForCommand.shortId}，Friday 不会执行该敏感操作。`;
-                  } else {
-                    ackText = `审批 ${pendingApprovalForCommand.shortId} 已经结束，不需要重复处理。`;
-                  }
-                } else if (pendingApprovalsForCommand.length > 1 && !approvalCommand.shortId) {
+	                let ackText: string;
+	                if (pendingApprovalForCommand) {
+	                  const senderAuthorized = canResolveFridayChannelApprovalFromMessage({
+	                    route: pendingApprovalForCommand.route,
+	                    message: msg,
+	                  });
+	                  if (!senderAuthorized) {
+	                    ackText = `审批 ${pendingApprovalForCommand.shortId} 只能由原请求者确认。`;
+	                  } else {
+	                    const resolution = resolveToolApproval(
+	                      pendingApprovalForCommand.runId,
+	                      pendingApprovalForCommand.toolCallId,
+	                      approvalCommand.approved,
+	                      {
+	                        reason: approvalCommand.reason,
+	                        approverPrincipalId: resolveFridayChannelApprovalPrincipalId({
+	                          channelKind: msg.channelKind,
+	                          chatId: msg.chatId,
+	                          senderId: msg.senderId,
+	                        }),
+	                        approverPrincipalType: "channel",
+	                        approvalSurface: "channel",
+	                      },
+	                    );
+	                    if (resolution.resolved) {
+	                      ackText = approvalCommand.approved
+	                        ? `已批准 ${pendingApprovalForCommand.shortId}，Friday 会继续执行。`
+	                        : `已拒绝 ${pendingApprovalForCommand.shortId}，Friday 不会执行该敏感操作。`;
+	                    } else {
+	                      ackText = `审批 ${pendingApprovalForCommand.shortId} 已经结束，不需要重复处理。`;
+	                    }
+	                  }
+	                } else if (pendingApprovalsForCommand.length > 1 && !approvalCommand.shortId) {
                   const ids = pendingApprovalsForCommand.map((pending) => pending.shortId).join(", ");
                   ackText = `当前有多个待审批操作：${ids}。请回复「批准 <编号>」或「拒绝 <编号>」。`;
                 } else {
@@ -7576,9 +7748,28 @@ export async function createFridayHub(
           const progressReceipt = createChannelProgressReceipt(msg, taskText, logChannelIssue);
           progressReceipt.start();
 
-          void (async () => {
-            const runId = idGenerator();
-            wakeUiForChannelMessage(msg, runId);
+	          void (async () => {
+	            const runId = idGenerator();
+	            channelApprovalRoutesByRun.set(runId, {
+	              channelKind: msg.channelKind,
+	              chatId: msg.chatId,
+	              chatType: msg.chatType,
+	              senderId: msg.senderId,
+	              messageId: msg.id,
+	              sessionKey,
+	            });
+	            channelApprovalRoutesBySessionPrincipal.set(
+	              channelApprovalSessionPrincipalKey(sessionKey, msg.senderId),
+	              {
+	                channelKind: msg.channelKind,
+	                chatId: msg.chatId,
+	                chatType: msg.chatType,
+	                senderId: msg.senderId,
+	                messageId: msg.id,
+	                sessionKey,
+	              },
+	            );
+	            wakeUiForChannelMessage(msg, runId);
             const channelEntryAdapter = createFridayChannelEntryAdapter({
               engine: channelOrchestrationEngine,
               idGenerator: () => runId,
