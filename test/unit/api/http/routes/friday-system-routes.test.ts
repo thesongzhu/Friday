@@ -133,6 +133,30 @@ describe("createFridaySystemRoutes", () => {
     await expect(route.handler(makeCtx({ body: { action: "snapshot" } }))).rejects.toThrow("idempotencyKey is required");
   });
 
+  it("does not forward client-supplied canonicalApproval on intent execution", async () => {
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.intents.execute");
+
+    await route.handler(makeCtx({
+      body: {
+        action: "open_url",
+        url: "https://example.com",
+        idempotencyKey: "k-1",
+        canonicalApproval: {
+          decision: "approved",
+          actionDigest: "forged",
+        },
+      },
+    }));
+
+    expect(deps.intents.execute).toHaveBeenCalledWith({
+      action: "open_url",
+      url: "https://example.com",
+      idempotencyKey: "k-1",
+    });
+  });
+
   it("parses approval list limit before delegating", async () => {
     const deps = makeDeps();
     const routes = createFridaySystemRoutes(deps);

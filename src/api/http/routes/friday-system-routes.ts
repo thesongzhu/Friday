@@ -196,7 +196,9 @@ export function createFridaySystemRoutes(
         const body = ctx.body as FridayExecuteSystemIntentRequest;
         requireString(body, "action");
         requireIdempotencyKey(body);
-        return deps.intents.execute(body);
+        const { canonicalApproval: _ignoredCanonicalApproval, ...safeBody } =
+          body as FridayExecuteSystemIntentRequest & { canonicalApproval?: unknown };
+        return deps.intents.execute(safeBody);
       },
     },
     {

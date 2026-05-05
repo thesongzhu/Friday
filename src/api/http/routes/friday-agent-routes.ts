@@ -100,6 +100,26 @@ function isUserVisibleAgentRun(run: FridayAgentRunRecord): boolean {
   return !isInternalAutonomousRun(run) && !isSubagentChildRun(run);
 }
 
+function requireToolApprovalPrincipal(principal: FridayAuthPrincipal | null): {
+  approverPrincipalId: string;
+  approverPrincipalType?: string;
+  approvalSurface: string;
+} {
+  if (!principal?.principalId) {
+    throw new FridayDomainError(
+      "AGENT_APPROVER_PRINCIPAL_REQUIRED",
+      "Tool approval requires an authenticated approver principal.",
+      { httpStatus: 401 },
+    );
+  }
+
+  return {
+    approverPrincipalId: principal.principalId,
+    approverPrincipalType: principal.principalType,
+    approvalSurface: "api",
+  };
+}
+
 function filterVisibleAgentRuns(runs: FridayAgentRunRecord[]): FridayAgentRunRecord[] {
   return runs.filter(isUserVisibleAgentRun);
 }
@@ -205,7 +225,12 @@ export interface FridayAgentRoutesDeps {
     runId: string,
     toolCallId: string,
     approved: boolean,
-    reason?: string,
+    options: {
+      reason?: string;
+      approverPrincipalId: string;
+      approverPrincipalType?: string;
+      approvalSurface?: string;
+    },
   ) => { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" };
   rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
@@ -289,6 +314,18 @@ export function createFridayAgentRoutes(
       );
     }
     return sanitizeUserVisibleRun(run);
+  }
+
+  function getToolApprovalTargetRunOrThrow(runId: string): FridayAgentRunRecord {
+    const run = deps.getRun(runId);
+    if (!run || isInternalAutonomousRun(run)) {
+      throw new FridayDomainError(
+        "AGENT_RUN_NOT_FOUND",
+        "Agent run not found",
+        { httpStatus: 404 },
+      );
+    }
+    return run;
   }
 
   function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
@@ -779,8 +816,8 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        getVisibleRunOrThrow(runId);
-        return deps.resolveToolApproval(runId, toolCallId, true);
+        getToolApprovalTargetRunOrThrow(runId);
+        return deps.resolveToolApproval(runId, toolCallId, true, requireToolApprovalPrincipal(ctx.principal));
       },
     },
 
@@ -801,8 +838,11 @@ export function createFridayAgentRoutes(
             { httpStatus: 400 },
           );
         }
-        getVisibleRunOrThrow(runId);
-        return deps.resolveToolApproval(runId, toolCallId, false, body?.reason);
+        getToolApprovalTargetRunOrThrow(runId);
+        return deps.resolveToolApproval(runId, toolCallId, false, {
+          ...requireToolApprovalPrincipal(ctx.principal),
+          reason: body?.reason,
+        });
       },
     },
 

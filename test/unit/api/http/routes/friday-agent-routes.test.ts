@@ -3,6 +3,7 @@ import { createFridayAgentRoutes } from "#api";
 import type { FridayAgentRoutesDeps } from "#api";
 import type { FridayAgentEventEmitter } from "#agent";
 import type { FridayAgentRunRecord, FridayAgentRuntimeResult, FridayAgentAutomationService } from "#agent";
+import type { FridayAuthPrincipal } from "#api";
 
 function createStubEventEmitter(): FridayAgentEventEmitter {
   return {
@@ -47,6 +48,18 @@ function createStubResult(overrides?: Partial<FridayAgentRuntimeResult>): Friday
     durationMs: 1000,
     usageInput: 100,
     usageOutput: 50,
+    ...overrides,
+  };
+}
+
+function createStubPrincipal(overrides?: Partial<FridayAuthPrincipal>): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-approver-1",
+    scopes: ["agent.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -122,6 +135,77 @@ describe("FridayAgentRoutes", () => {
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/agent/runs/:runId/cancel");
     expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.write", "workflow.run"] });
+  });
+
+  it("POST /v1/agent/runs/:runId/approve-tool accepts subagent child run approval targets", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      id: "child-run-1",
+      sessionKey: "subagent:agent:run:parent-run-1:child-run-1",
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.approve.tool")!;
+
+    const result = await route.handler({
+      body: { toolCallId: "tool-call-1" },
+      params: { runId: "child-run-1" },
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    }) as { resolved: boolean };
+
+    expect(result.resolved).toBe(true);
+    expect(stubDeps.resolveToolApproval).toHaveBeenCalledWith(
+      "child-run-1",
+      "tool-call-1",
+      true,
+      {
+        approverPrincipalId: "user-approver-1",
+        approverPrincipalType: "user",
+        approvalSurface: "api",
+      },
+    );
+  });
+
+  it("POST /v1/agent/runs/:runId/approve-tool requires an approver principal", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.approve.tool")!;
+
+    await expect(route.handler({
+      body: { toolCallId: "tool-call-1" },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "AGENT_APPROVER_PRINCIPAL_REQUIRED",
+    });
+    expect(stubDeps.resolveToolApproval).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/agent/runs/:runId/reject-tool keeps autonomous internal runs hidden", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      id: "internal-run-1",
+      sessionKey: "autonomous:goal-1",
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.reject.tool")!;
+
+    await expect(route.handler({
+      body: { toolCallId: "tool-call-1", reason: "no" },
+      params: { runId: "internal-run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "AGENT_RUN_NOT_FOUND",
+    });
+    expect(stubDeps.resolveToolApproval).not.toHaveBeenCalled();
   });
 
   it("GET /v1/agent/runs/:runId/events requires agent.read scope with workflow.run compatibility", () => {

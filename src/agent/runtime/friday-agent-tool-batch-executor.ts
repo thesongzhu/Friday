@@ -45,6 +45,44 @@ export interface FridayToolBatchGroup {
   tools: FridayToolUseBlock[];
 }
 
+function redactCanonicalApprovalForBatchRecord(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const approval = value as {
+    decision?: unknown;
+    approvalId?: unknown;
+    actionDigest?: unknown;
+    issuer?: unknown;
+  };
+  return {
+    redacted: true,
+    decision: approval.decision,
+    approvalId: approval.approvalId,
+    actionDigest: approval.actionDigest,
+    issuer: approval.issuer,
+  };
+}
+
+function redactToolArgsForBatchRecord(args: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(args, "canonicalApproval")) {
+    return args;
+  }
+
+  return {
+    ...args,
+    canonicalApproval: redactCanonicalApprovalForBatchRecord(args.canonicalApproval),
+  };
+}
+
+function redactToolCallResultForBatchRecord(result: FridayToolCallResult): FridayToolCallResult {
+  return {
+    ...result,
+    args: redactToolArgsForBatchRecord(result.args),
+  };
+}
+
 // ─── Path extraction ───
 
 /**
@@ -148,7 +186,7 @@ export async function executeToolBatch(
     if (group.tools.length === 1) {
       // Single tool — no need for Promise.allSettled overhead
       const result = await executor(group.tools[0]!);
-      results.push(result);
+      results.push(redactToolCallResultForBatchRecord(result));
     } else {
       // Parallel execution within group
       const settled = await Promise.allSettled(
@@ -159,13 +197,13 @@ export async function executeToolBatch(
         const outcome = settled[i]!;
         const toolUse = group.tools[i]!;
         if (outcome.status === "fulfilled") {
-          results.push(outcome.value);
+          results.push(redactToolCallResultForBatchRecord(outcome.value));
         } else {
           // Rejected — synthesize error result
           results.push({
             toolCallId: toolUse.id,
             toolName: toolUse.name,
-            args: toolUse.input,
+            args: redactToolArgsForBatchRecord(toolUse.input),
             result: {
               content: `Tool execution failed: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
               isError: true,

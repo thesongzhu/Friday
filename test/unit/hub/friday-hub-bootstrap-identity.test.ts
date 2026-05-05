@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  canResolveFridayChannelApprovalFromMessage,
   parseFridayChannelIdentityMap,
+  resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
 } from "#hub";
@@ -71,5 +73,38 @@ describe("cross-channel identity mapping", () => {
     expect(resolveFridayChannelDisabledToolNames("discord")).toEqual([]);
     expect(resolveFridayChannelDisabledToolNames("webchat")).toEqual([]);
     expect(resolveFridayChannelDisabledToolNames("telegram")).toEqual([]);
+  });
+
+  it("builds channel approval principals from the actual sender", () => {
+    expect(resolveFridayChannelApprovalPrincipalId({
+      channelKind: "Discord",
+      chatId: "Room 1",
+      senderId: "User 9",
+    })).toBe("channel:discord:room-1:sender:user-9");
+  });
+
+  it("allows channel approval resolution only from the original sender", () => {
+    const route = {
+      channelKind: "discord",
+      chatId: "group-1",
+      senderId: "user-1",
+    };
+
+    expect(canResolveFridayChannelApprovalFromMessage({
+      route,
+      message: makeMessage({
+        chatType: "group",
+        chatId: "group-1",
+        senderId: "user-1",
+      }),
+    })).toBe(true);
+    expect(canResolveFridayChannelApprovalFromMessage({
+      route,
+      message: makeMessage({
+        chatType: "group",
+        chatId: "group-1",
+        senderId: "user-2",
+      }),
+    })).toBe(false);
   });
 });

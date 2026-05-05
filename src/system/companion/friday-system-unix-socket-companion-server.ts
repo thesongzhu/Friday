@@ -41,8 +41,16 @@ export interface FridaySystemUnixSocketCompanionServer {
 async function removeUnixSocketIfPresent(socketPath: string): Promise<void> {
   try {
     const stat = await fs.lstat(socketPath);
-    if (stat.isSocket() || stat.isFile()) {
+    if (stat.isSocket()) {
       await fs.unlink(socketPath);
+      return;
+    }
+    if (stat.isFile()) {
+      throw new FridayDomainError(
+        "SYSTEM_COMPANION_SOCKET_PATH_BLOCKED",
+        `Refusing to remove non-socket file at companion socket path: ${socketPath}`,
+        { httpStatus: 500 },
+      );
     }
   } catch (error) {
     const err = error as NodeJS.ErrnoException;

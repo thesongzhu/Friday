@@ -193,6 +193,27 @@ describe("Friday system unix socket companion transport", () => {
     await server.stop();
   });
 
+  it("fails closed instead of deleting a non-socket file at the socket path", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
+    cleanupPaths.push(tempDir);
+    const socketPath = path.join(tempDir, "companion.sock");
+    await fs.writeFile(socketPath, "not a socket", "utf8");
+    const server = createFridaySystemUnixSocketCompanionServer({
+      id: "companion-socket",
+      platform: "darwin",
+      nowIso: createNowIso(),
+      authToken: "expected-token",
+      socketPath,
+      launchAtLoginEnabled: true,
+      panicHotkey: "cmd+shift+escape",
+    });
+
+    await expect(server.start()).rejects.toMatchObject({
+      code: "SYSTEM_COMPANION_SOCKET_PATH_BLOCKED",
+    });
+    await expect(fs.readFile(socketPath, "utf8")).resolves.toBe("not a socket");
+  });
+
   it("deduplicates repeated captureSnapshot warnings for the same transport error", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-system-socket-"));
     cleanupPaths.push(tempDir);

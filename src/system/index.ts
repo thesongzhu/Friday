@@ -19,7 +19,10 @@ export type {
 } from "./companion/friday-system-companion-runtime.js";
 export { createFridaySystemCompanionRuntimeController } from "./companion/friday-system-companion-runtime.js";
 export type { CreateFridaySystemLocalCompanionBridgeOptions } from "./companion/friday-system-local-companion-bridge.js";
-export { createFridaySystemLocalCompanionBridge } from "./companion/friday-system-local-companion-bridge.js";
+export {
+  createFridaySystemLocalCompanionBridge,
+  createFridaySystemUnavailableCompanionBridge,
+} from "./companion/friday-system-local-companion-bridge.js";
 export type {
   CreateFridaySystemUnixSocketCompanionServerOptions,
   FridaySystemUnixSocketCompanionServer,

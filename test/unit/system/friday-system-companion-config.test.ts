@@ -88,6 +88,11 @@ describe("Friday system companion runtime config", () => {
     expect(first.token).toHaveLength(64);
     expect(second.token).toBe(first.token);
     await expect(fs.readFile(tokenFilePath, "utf8")).resolves.toBe(first.token);
+    await expect(fs.stat(path.dirname(tokenFilePath))).resolves.toMatchObject({
+      mode: expect.any(Number),
+    });
+    expect((await fs.stat(path.dirname(tokenFilePath))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(tokenFilePath)).mode & 0o777).toBe(0o600);
   });
 
   it("persists an explicit auth token to the shared token file", async () => {
@@ -101,5 +106,58 @@ describe("Friday system companion runtime config", () => {
 
     expect(resolved.token).toBe("manual-secret");
     await expect(fs.readFile(resolved.tokenFilePath, "utf8")).resolves.toBe("manual-secret");
+    expect((await fs.stat(resolved.tokenFilePath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("repairs token file mode when reusing an existing token", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-companion-config-"));
+    cleanupPaths.push(workspaceRoot);
+    const tokenFilePath = resolveFridaySystemCompanionAuthTokenFilePath(workspaceRoot);
+    await fs.mkdir(path.dirname(tokenFilePath), { recursive: true, mode: 0o755 });
+    await fs.chmod(path.dirname(tokenFilePath), 0o755);
+    await fs.writeFile(tokenFilePath, "existing-token", { encoding: "utf8", mode: 0o644 });
+    await fs.chmod(tokenFilePath, 0o644);
+
+    const resolved = await resolveFridaySystemCompanionAuthToken({ workspaceRoot });
+
+    expect(resolved.token).toBe("existing-token");
+    expect((await fs.stat(path.dirname(tokenFilePath))).mode & 0o777).toBe(0o700);
+    expect((await fs.stat(tokenFilePath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("rotates the companion token only when explicitly requested", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-companion-config-"));
+    cleanupPaths.push(workspaceRoot);
+    const tokenFilePath = resolveFridaySystemCompanionAuthTokenFilePath(workspaceRoot);
+    await fs.mkdir(path.dirname(tokenFilePath), { recursive: true });
+    await fs.writeFile(tokenFilePath, "old-token", { encoding: "utf8", mode: 0o600 });
+
+    const resolved = await resolveFridaySystemCompanionAuthToken({
+      workspaceRoot,
+      forceRotate: true,
+      randomBytes: () => Buffer.from("b".repeat(64), "hex"),
+    });
+
+    expect(resolved.token).not.toBe("old-token");
+    expect(resolved.token).toBe("b".repeat(64));
+    await expect(fs.readFile(tokenFilePath, "utf8")).resolves.toBe("b".repeat(64));
+  });
+
+  it("does not chmod an explicit token file parent directory as a private run directory", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-companion-config-"));
+    const externalTokenDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-companion-external-token-"));
+    cleanupPaths.push(workspaceRoot, externalTokenDir);
+    await fs.chmod(externalTokenDir, 0o755);
+    const explicitTokenFilePath = path.join(externalTokenDir, "companion.token");
+
+    const resolved = await resolveFridaySystemCompanionAuthToken({
+      workspaceRoot,
+      explicitToken: "external-token",
+      explicitTokenFilePath,
+    });
+
+    expect(resolved.tokenFilePath).toBe(explicitTokenFilePath);
+    expect((await fs.stat(externalTokenDir)).mode & 0o777).toBe(0o755);
+    expect((await fs.stat(explicitTokenFilePath)).mode & 0o777).toBe(0o600);
   });
 });
