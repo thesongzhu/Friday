@@ -13,11 +13,11 @@ The detailed machine-readable ledger is `16_phase3_wip_ledger.csv`. This Markdow
 ## Current Git State
 
 - Branch: `codex/friday-lego-closure-repair`
-- Staged diff: none at preflight time.
-- Tracked dirty files: 74.
-- Untracked files visible to Git: 31 before adding Phase 3.0 files.
-- Phase 3 status: not complete, not staged, not committed.
-- Phase 3.0 outputs present: `15_phase3_execution_protocol.md`, `16_phase3_wip_ledger.md`, and `16_phase3_wip_ledger.csv`.
+- Staged diff: none at latest ledger reconciliation time.
+- Tracked dirty files: 83.
+- Untracked files visible to Git: 32.
+- Phase 3 status: not complete, not staged, and not committed.
+- Phase 3.0 outputs were committed in `3b84b376`; `16_phase3_wip_ledger.md` and `16_phase3_wip_ledger.csv` are currently tracked dirty because this ledger is being reconciled for Phase 3.1 staging readiness.
 
 ## Classification Rules
 
@@ -30,9 +30,9 @@ The detailed machine-readable ledger is `16_phase3_wip_ledger.csv`. This Markdow
 
 ## Phase 3.0 Protocol Files
 
-- `docs/audit/friday-lego-closure-audit-2026-05-04/15_phase3_execution_protocol.md` — `phase3_protocol`; approved Phase 3.0 protocol output.
-- `docs/audit/friday-lego-closure-audit-2026-05-04/16_phase3_wip_ledger.md` — `phase3_protocol`; approved Phase 3.0 Markdown ledger output.
-- `docs/audit/friday-lego-closure-audit-2026-05-04/16_phase3_wip_ledger.csv` — `phase3_protocol`; approved Phase 3.0 CSV ledger output.
+- `docs/audit/friday-lego-closure-audit-2026-05-04/15_phase3_execution_protocol.md` — `phase3_protocol`; committed Phase 3.0 protocol output.
+- `docs/audit/friday-lego-closure-audit-2026-05-04/16_phase3_wip_ledger.md` — `phase3_protocol`; committed Phase 3.0 Markdown ledger output, currently tracked dirty for Phase 3.1 ledger reconciliation.
+- `docs/audit/friday-lego-closure-audit-2026-05-04/16_phase3_wip_ledger.csv` — `phase3_protocol`; committed Phase 3.0 CSV ledger output, currently tracked dirty for Phase 3.1 ledger reconciliation.
 
 ## Audit Artifacts
 
@@ -95,6 +95,7 @@ These files appear related to Phase 3 external Lego lifecycle, availability trut
 - `src/agent/tools/friday-agent-skills-list-tool.ts`
 - `src/agent/tools/friday-agent-tool-registry.ts`
 - `src/api/http/routes/friday-autonomy-routes.ts`
+- `src/api/http/routes/friday-deeplink-routes.ts`
 - `src/api/http/routes/friday-scan-migrate-routes.ts`
 - `src/api/http/routes/friday-skill-converter-routes.ts`
 - `src/api/http/routes/friday-skill-routes.ts`
@@ -118,11 +119,13 @@ These files appear related to Phase 3 external Lego lifecycle, availability trut
 - `src/sessions/services/friday-deterministic-dispatch.ts`
 - `src/skills/converter/index.ts`
 - `src/skills/converter/services/friday-skill-candidate-store.ts`
+- `src/skills/converter/services/friday-skill-staging-approval.ts`
 - `src/skills/converter/services/friday-skill-converter-service.ts`
 - `src/skills/converter/services/friday-skill-converter-service.types.ts`
 - `src/skills/executor/friday-skill-executor.ts`
 - `src/skills/executor/friday-skill-executor.types.ts`
 - `test/e2e/friday-real-scenarios-e2e.test.ts`
+- `test/e2e/api/friday-api-skills-routes.test.ts`
 - `test/e2e/live/friday-generator-maintenance-live.e2e.test.ts`
 - `test/e2e/live/friday-real-journeys.e2e.test.ts`
 - `test/e2e/live/friday-self-upgrade-channel-adapter-live.e2e.test.ts`
@@ -133,6 +136,8 @@ These files appear related to Phase 3 external Lego lifecycle, availability trut
 - `test/e2e/plugins/friday-plugin-local-lifecycle.test.ts`
 - `test/e2e/setup-wizard.e2e.test.ts`
 - `test/integration/hub/friday-hub-bootstrap-integration.test.ts`
+- `test/contracts/api/friday-api-route-contract.snapshot.test.ts`
+- `test/contracts/api/friday-converter-format-parity.contract.test.ts`
 - `test/unit/agent/runtime/friday-agent-answer-alignment.test.ts`
 - `test/unit/agent/runtime/friday-agent-evidence-blocks.test.ts`
 - `test/unit/agent/runtime/friday-agent-system-prompt-builder.test.ts`
@@ -141,6 +146,7 @@ These files appear related to Phase 3 external Lego lifecycle, availability trut
 - `test/unit/api/http/routes/friday-autonomy-routes.test.ts`
 - `test/unit/api/http/routes/friday-scan-migrate-routes.test.ts`
 - `test/unit/api/http/routes/friday-skill-converter-routes.test.ts`
+- `test/unit/api/http/routes/friday-skill-routes.test.ts`
 - `test/unit/api/runtime/friday-deep-link-apply-service.test.ts`
 - `test/unit/autonomy/friday-channel-adapter-upgrade-lifecycle-service.test.ts`
 - `test/unit/autonomy/friday-controlled-autonomy-services.test.ts`
@@ -157,6 +163,8 @@ These files appear related to Phase 3 external Lego lifecycle, availability trut
 - `ui/src/components/core/skill-scanner-panel.tsx`
 - `ui/src/components/deeplink/deeplink-preview-dialog.tsx`
 - `ui/src/lib/api/scan-migrate.ts`
+- `ui/src/lib/api/skills.ts`
+- `ui/src/lib/api/types.ts`
 - `ui/src/routes/setup-page.tsx`
 
 ## Needs Confirmation
