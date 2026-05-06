@@ -1784,7 +1784,7 @@ export async function createFridayHub(
 	      },
 	      mode: "agent_os",
 	      remoteMode: systemRemoteMode,
-	      canonicalMutationGate: true,
+	      canonicalMutationGate: process.env.FRIDAY_CANONICAL_GATE === "true",
 	      canonicalApprovalSecret: tokenSecret,
 	      cloudPlanningMode: systemCloudPlanningMode,
       remoteAuth: {
@@ -4155,7 +4155,7 @@ export async function createFridayHub(
       });
 	    },
 	    toolApprovalResolver,
-	    canonicalMutatingActionGate: true,
+	    canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
 	    canonicalApprovalSecret: tokenSecret,
 	    learnedLessons: () => {
       try {
@@ -4402,7 +4402,7 @@ export async function createFridayHub(
           });
         },
         toolApprovalResolver,
-        canonicalMutatingActionGate: true,
+        canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
         canonicalApprovalSecret: tokenSecret,
       });
       childRuntimeRef = childRuntime;

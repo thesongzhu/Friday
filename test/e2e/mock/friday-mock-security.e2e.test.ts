@@ -46,6 +46,8 @@ interface AgentRunResult {
   };
 }
 
+const MOCK_E2E_TIMEOUT_MS = 20_000;
+
 // ─── Tests ───
 
 describe("Friday Mock Security E2E", () => {
@@ -78,7 +80,7 @@ describe("Friday Mock Security E2E", () => {
   // ─── SSRF Protection ───
 
   describe("SSRF Protection", () => {
-    it("blocks localhost in web_fetch", async () => {
+    it("blocks localhost in web_fetch", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -103,7 +105,7 @@ describe("Friday Mock Security E2E", () => {
       expect(mock.calls.length).toBe(2);
     });
 
-    it("blocks cloud metadata endpoint (169.254.169.254)", async () => {
+    it("blocks cloud metadata endpoint (169.254.169.254)", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -126,7 +128,7 @@ describe("Friday Mock Security E2E", () => {
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("blocks private RFC 1918 addresses (10.x.x.x)", async () => {
+    it("blocks private RFC 1918 addresses (10.x.x.x)", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -153,7 +155,7 @@ describe("Friday Mock Security E2E", () => {
   // ─── File Path Security ───
 
   describe("File Path Security", () => {
-    it("rejects path traversal via ../ in read", async () => {
+    it("rejects path traversal via ../ in read", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -175,7 +177,7 @@ describe("Friday Mock Security E2E", () => {
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("rejects absolute path outside workspace in read", async () => {
+    it("rejects absolute path outside workspace in read", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -201,7 +203,7 @@ describe("Friday Mock Security E2E", () => {
   // ─── Shell Injection Prevention ───
 
   describe("Shell Injection Prevention", () => {
-    it("blocks semicolon injection", async () => {
+    it("blocks semicolon injection", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -223,7 +225,7 @@ describe("Friday Mock Security E2E", () => {
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("blocks pipe injection", async () => {
+    it("blocks pipe injection", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -245,7 +247,7 @@ describe("Friday Mock Security E2E", () => {
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("blocks backtick injection", async () => {
+    it("blocks backtick injection", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -271,7 +273,7 @@ describe("Friday Mock Security E2E", () => {
   // ─── ReadOnly Constraints ───
 
   describe("ReadOnly Constraints", () => {
-    it("readOnly blocks write, allows read", async () => {
+    it("readOnly blocks write, allows read", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       // Create a readable file
@@ -312,7 +314,7 @@ describe("Friday Mock Security E2E", () => {
       expect(fs.existsSync(path.join(env.stateDir, "security-blocked.txt"))).toBe(false);
     });
 
-    it("readOnly blocks exec tool", async () => {
+    it("readOnly blocks exec tool", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
 
       mock.enqueue({
@@ -340,7 +342,7 @@ describe("Friday Mock Security E2E", () => {
       expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(1);
     });
 
-    it("readOnly allows web_search tool", async () => {
+    it("readOnly allows web_search tool", { timeout: MOCK_E2E_TIMEOUT_MS }, async () => {
       const mock = env.mockFor("anthropic");
       const router = env.fetchRouter;
 

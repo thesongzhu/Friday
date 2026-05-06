@@ -695,7 +695,7 @@ describe("createFridaySystemService", () => {
   it("allows system mutations with a matching canonical approval ticket", async () => {
     const fixture = await createServiceFixtureWithOptions({
       canonicalMutationGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
     });
     allocatedDbs.push(fixture.db);
     const input: FridaySystemIntentInput = {
@@ -734,7 +734,7 @@ describe("createFridaySystemService", () => {
   it("does not execute twice with the same canonical approval", async () => {
     const fixture = await createServiceFixtureWithOptions({
       canonicalMutationGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
     });
     allocatedDbs.push(fixture.db);
     const input: FridaySystemIntentInput = {
@@ -786,7 +786,7 @@ describe("createFridaySystemService", () => {
   it("rejects forged canonical approvals when the server approval secret is configured", async () => {
     const fixture = await createServiceFixtureWithOptions({
       canonicalMutationGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
     });
     allocatedDbs.push(fixture.db);
     const input: FridaySystemIntentInput = {

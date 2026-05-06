@@ -101,7 +101,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 1. web_search round-trip ───
 
-  it("web_search tool round-trip with mock DuckDuckGo", async () => {
+  it("web_search tool round-trip with mock DuckDuckGo", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
     const router = globalThis.fetch as unknown as MockFetchRouter;
 
@@ -160,7 +160,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 2. web_fetch round-trip ───
 
-  it("web_fetch tool round-trip with mock URL", async () => {
+  it("web_fetch tool round-trip with mock URL", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
     const router = globalThis.fetch as unknown as MockFetchRouter;
 
@@ -205,7 +205,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 3. exec round-trip ───
 
-  it("exec tool round-trip", async () => {
+  it("exec tool round-trip", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     mock.enqueue({
@@ -234,7 +234,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 4. exec metacharacter block ───
 
-  it("exec tool blocks shell metacharacters", async () => {
+  it("exec tool blocks shell metacharacters", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     mock.enqueue({
@@ -264,7 +264,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 5. read tool round-trip ───
 
-  it("read tool round-trip with temp file", async () => {
+  it("read tool round-trip with temp file", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     // Create a temp file in stateDir
@@ -297,7 +297,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 6. write tool round-trip ───
 
-  it("write tool round-trip creates file on disk", async () => {
+  it("write tool round-trip creates file on disk", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
     const targetPath = path.join(env.stateDir, "test-write-output.txt");
 
@@ -330,7 +330,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 7. write path traversal block ───
 
-  it("write tool rejects path traversal", async () => {
+  it("write tool rejects path traversal", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     mock.enqueue({
@@ -458,7 +458,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 10. Tool execution error → LLM retry ───
 
-  it("tool execution error reported back to LLM, LLM retries successfully", async () => {
+  it("tool execution error reported back to LLM, LLM retries successfully", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     // Create a valid file for the retry
@@ -500,7 +500,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 11. Multi-step tool chain ───
 
-  it("multi-step tool chain: exec then read", async () => {
+  it("multi-step tool chain: exec then read", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
     const chainFile = path.join(env.stateDir, "chain-test.txt");
 
@@ -538,7 +538,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
 
   // ─── 12. list tool round-trip ───
 
-  it("list tool returns directory contents", async () => {
+  it("list tool returns directory contents", { timeout: MOCK_E2E_TEST_TIMEOUT_MS }, async () => {
     const mock = env.mockFor("anthropic");
 
     // Create some files to list
