@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -61,6 +61,10 @@ describe("detectSourceProtocol", () => {
   it("detects zip archives", () => {
     expect(detectSourceProtocol("/path/to/repo.zip")).toBe("archive");
     expect(detectSourceProtocol("/path/REPO.ZIP")).toBe("archive");
+  });
+
+  it("detects archive URLs with query strings without treating them as local paths", () => {
+    expect(detectSourceProtocol("https://example.com/repo.zip?token=archive-secret-token")).toBe("archive");
   });
 
   it("detects tar.gz archives", () => {
@@ -182,6 +186,20 @@ describe("materializeFridayCodeRepoSource (local)", () => {
     expect(() =>
       materializeFridayCodeRepoSource("/non/existent/path"),
     ).toThrow("not found");
+  });
+
+  it("redacts token-bearing URL sources from materializer warnings and errors", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const tokenBearingUri = "https://example.com/source.txt?token=materializer-secret-token";
+
+    try {
+      expect(() => materializeFridayCodeRepoSource(tokenBearingUri)).toThrow("https://example.com/source.txt?redacted=1");
+      const logged = warnSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logged).not.toContain(tokenBearingUri);
+      expect(logged).not.toContain("materializer-secret-token");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("throws for file (not directory) path", () => {

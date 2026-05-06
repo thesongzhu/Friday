@@ -74,6 +74,16 @@ export function createFridayAgentSkillTool(
 
       const registeredSkill = deps.skillRegistry?.get(skillId);
       if (registeredSkill) {
+        if (registeredSkill.status !== "installed") {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            code: "SKILL_NOT_AVAILABLE",
+            lifecycleStatus: registeredSkill.status,
+            blockers: ["Skill is not available until it is installed and promoted."],
+          });
+        }
         const requiredInputs = (registeredSkill.manifest.inputs ?? [])
           .filter((field) =>
             field.required !== false

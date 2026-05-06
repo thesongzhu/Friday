@@ -100,6 +100,7 @@ import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satell
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridayStudioService } from "../../studio/index.js";
+import { createFridayMutatingActionGate } from "../../security/friday-mutating-action-gate.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -368,6 +369,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
   const serverVersion = deps.serverVersion ?? "1.0.0";
   const stateDir = deps.stateDir ?? ".";
+  const canonicalMutationGate = createFridayMutatingActionGate({
+    nowIso: deps.nowIso,
+    ticketIdGenerator: () => deps.idGenerator(),
+    approvalSignatureSecret: deps.tokenSecret,
+    requireApprovalSignature: true,
+  });
 
   // Auth
   const tokenRepo = createFridayApiTokenRepository();
@@ -692,6 +699,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     providerService: deps.providerService,
     converterService: deps.converterService,
     workflowImportExport: builderRuntime.importExport,
+    canonicalMutationGate,
   });
   const skillRepo = createFridaySkillRepository();
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
@@ -1887,7 +1895,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register deep link routes (always available)
   for (const route of createFridayDeepLinkRoutes({
-    applyDeepLink: (payload) => deepLinkApplyService.apply(payload),
+    applyDeepLink: (payload, options) => deepLinkApplyService.apply(payload, options),
   })) {
     routes.register(route);
   }
@@ -2090,6 +2098,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   if (deps.converterService) {
     for (const route of createFridaySkillConverterRoutes({
       converterService: deps.converterService,
+      canonicalMutationGate,
     })) {
       routes.register(route);
     }

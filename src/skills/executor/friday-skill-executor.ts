@@ -498,6 +498,23 @@ export function createFridaySkillExecutor(
         };
       }
 
+      if (registered.status !== "installed") {
+        return {
+          runId,
+          result: Promise.resolve({
+            runId,
+            status: "failed",
+            output: {
+              code: "SKILL_NOT_AVAILABLE",
+              status: registered.status,
+            },
+            stdout: "",
+            stderr: `Skill '${request.skillId}' is not available until it is installed and promoted.`,
+            durationMs: 0,
+          }),
+        };
+      }
+
       const controller = new AbortController();
       activeRuns.set(runId, { cancelled: false, controller });
 

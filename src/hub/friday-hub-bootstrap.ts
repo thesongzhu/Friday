@@ -77,6 +77,7 @@ import {
   createLinuxProgramScanner,
   createWin32ProgramScanner,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
+  redactFridaySkillSourceText,
   type FridaySkillInstallTarget,
   type FridaySkillSourceFormat,
 } from "#skills/converter";
@@ -1125,14 +1126,15 @@ export async function createFridayHub(
   const converterInstaller = createFridaySkillImportInstaller();
   const converterArchiver = createFridaySkillPackageArchiver();
   const converterSkillRepo = createFridaySkillRepository();
+  const managedSkillsDir = config.skillDirs[1] ?? "managed-skills";
 
   const converterService = createFridaySkillConverterService({
     registry: converterRegistry,
     installer: converterInstaller,
     archiver: converterArchiver,
     context: {
-      workspaceDir: config.stateDir ?? ".",
-      managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
+      workspaceDir: stateRuntime.stateDir,
+      managedSkillsDir,
       nowIso,
     },
     hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
@@ -1153,6 +1155,23 @@ export async function createFridayHub(
         });
         converterSkillRepo.setInstalledVersion(conn, manifest.id, manifest.version, manifest, persistedAt);
       });
+    },
+    onSkillCandidateStaged: async ({ candidate, draft }) => {
+      const manifest = draft.manifest;
+      const persistedAt = candidate.stagedAt;
+      stateRuntime.sqlite.withWriteTransaction((conn) => {
+        converterSkillRepo.upsertSkillFromCatalog(conn, {
+          id: manifest.id,
+          name: manifest.name,
+          source: resolveImportedSkillSource(candidate.sourceProvenance.redactedUri),
+          origin: "managed",
+          latestVersion: manifest.version,
+          status: "not_installed",
+          currentManifest: manifest,
+          nowIso: persistedAt,
+        });
+      });
+      await memoryState.updateSkillStatus(manifest.id, "not_installed");
     },
     onRegistryRefresh: async () => {
       await registry.refresh();
@@ -6055,19 +6074,25 @@ export async function createFridayHub(
   const scanMigrateRoutes = createFridayScanMigrateRoutes({
     scanLocal: scanLocalSkills,
     getCommunitySkills: getCommunitySkillCatalog,
-    importSkill: async (sourcePath, formatHint) => {
+    convertSkill: async (sourcePath, formatHint) => {
       try {
-        const result = await converterService.import({
+        const result = await converterService.convert({
           source: { uri: sourcePath },
           formatHint: (formatHint ?? "auto") as FridaySkillSourceFormat | "auto",
-          target: "managed",
-          replace: false,
-          refreshRegistry: true,
+          dryRun: true,
         });
-        const firstImport = result.imports[0];
-        return { success: firstImport?.installed ?? false, skillId: firstImport?.skillId };
+        const firstDraft = result.drafts[0];
+        return {
+          success: true,
+          skillId: firstDraft?.manifest.id,
+          mode: "preview" as const,
+        };
       } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : "Import failed" };
+        const rawMessage = err instanceof Error ? err.message : "Conversion preview failed";
+        return {
+          success: false,
+          error: redactFridaySkillSourceText(rawMessage, { uri: sourcePath }),
+        };
       }
     },
   });

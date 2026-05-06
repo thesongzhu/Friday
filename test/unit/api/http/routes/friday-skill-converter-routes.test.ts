@@ -1,9 +1,27 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridaySkillConverterRoutes } from "#api";
+import { FridayDomainError } from "#errors";
 import type { FridaySkillConverterService } from "#hub";
 import type { FridayHttpContext } from "#api";
+import {
+  createFridaySkillStageMutatingActionRequest,
+} from "#skills/converter";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  signFridayCanonicalApproval,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
+import type { FridayApiImportRequest } from "../../../../../src/api/model/friday-api-skill-converter.types.js";
 
 const NOW = "2026-02-17T10:00:00.000Z";
+const PRINCIPAL = {
+  principalType: "user" as const,
+  principalId: "user-1",
+  scopes: ["skill.write" as const],
+  tokenId: "token-1",
+  tokenKind: "access" as const,
+  issuedAt: NOW,
+};
 const DESKTOP_RECORDING_BASE64_FIXTURE = Buffer.from(JSON.stringify({
   id: "rec-1",
   name: "Test",
@@ -60,18 +78,35 @@ function makeMockConverterService(): FridaySkillConverterService {
       drafts: [],
       validation: [],
     })),
+    getCandidate: vi.fn(() => null),
     import: vi.fn(async () => ({
       converterId: "clawdbot-skill-md",
       detectedFormat: "clawdbot-skill-md" as const,
-      imports: [
+      candidates: [
         {
+          candidateId: "test-skill-1.0.0-candidate",
+          shadowVersionId: "test-skill-1.0.0-candidate",
           skillId: "test-skill",
-          skillDir: "/tmp/skills/test-skill",
-          installed: true,
-          issues: [],
+          version: "1.0.0",
+          converterId: "clawdbot-skill-md",
+          detectedFormat: "clawdbot-skill-md" as const,
+          sourceProvenance: {
+            sourceKind: "uri",
+            sourceDigest: "source-digest-1",
+            redactedUri: "local-path:source-digest-1",
+          },
+          candidateDir: "/tmp/candidates/test-skill",
+          filesDir: "/tmp/candidates/test-skill/files",
+          stagedAt: NOW,
+          validation: {
+            ok: true,
+            issues: [],
+            verifiedAt: NOW,
+          },
         },
       ],
-      registryRefreshed: true,
+      validation: [{ skillId: "test-skill", ok: true, issues: [] }],
+      registryRefreshed: false,
     })),
     pack: vi.fn(async () => ({
       packageFile: "/tmp/test-skill-1.0.0.friday.tgz",
@@ -83,8 +118,81 @@ function makeMockConverterService(): FridaySkillConverterService {
 describe("FridaySkillConverterRoutes", () => {
   function createRoutes() {
     const converterService = makeMockConverterService();
-    const routes = createFridaySkillConverterRoutes({ converterService });
+    const canonicalMutationGate = createFridayMutatingActionGate({
+      nowIso: () => NOW,
+      ticketIdGenerator: () => "ticket-1",
+    });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate });
     return { routes, converterService };
+  }
+
+  function createRoutesWithSignedGate(secret: string) {
+    const converterService = makeMockConverterService();
+    const canonicalMutationGate = createFridayMutatingActionGate({
+      nowIso: () => NOW,
+      ticketIdGenerator: () => "signed-ticket-1",
+      approvalSignatureSecret: secret,
+    });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate });
+    return { routes, converterService };
+  }
+
+  function withCanonicalApproval(body: FridayApiImportRequest): FridayApiImportRequest {
+    const request = createFridaySkillStageMutatingActionRequest({
+      source: body.source,
+      formatHint: body.formatHint,
+      target: body.target,
+      replace: body.replace,
+      refreshRegistry: body.refreshRegistry,
+      options: body.options,
+      actor: {
+        kind: PRINCIPAL.principalType,
+        id: PRINCIPAL.principalId,
+        principalId: PRINCIPAL.principalId,
+      },
+      surface: "api:/v1/skills/import",
+      idempotencyKey: body.idempotencyKey,
+      planDigest: body.planDigest,
+    });
+    return {
+      ...body,
+      canonicalApproval: {
+        decision: "approved",
+        approvalId: "approval-1",
+        decidedByPrincipalId: PRINCIPAL.principalId,
+        actionDigest: createFridayMutatingActionDigest(request),
+        expiresAt: "2026-02-17T11:00:00.000Z",
+      },
+    };
+  }
+
+  function withSignedCanonicalApproval(body: FridayApiImportRequest, secret: string): FridayApiImportRequest {
+    const request = createFridaySkillStageMutatingActionRequest({
+      source: body.source,
+      formatHint: body.formatHint,
+      target: body.target,
+      replace: body.replace,
+      refreshRegistry: body.refreshRegistry,
+      options: body.options,
+      actor: {
+        kind: PRINCIPAL.principalType,
+        id: PRINCIPAL.principalId,
+        principalId: PRINCIPAL.principalId,
+      },
+      surface: "api:/v1/skills/import",
+      idempotencyKey: body.idempotencyKey,
+      planDigest: body.planDigest,
+    });
+    return {
+      ...body,
+      canonicalApproval: signFridayCanonicalApproval({
+        decision: "approved",
+        approvalId: "approval-signed-1",
+        decidedByPrincipalId: PRINCIPAL.principalId,
+        actionDigest: createFridayMutatingActionDigest(request),
+        expiresAt: "2026-02-17T11:00:00.000Z",
+      }, secret),
+    };
   }
 
   it("creates 4 route definitions", () => {
@@ -273,6 +381,86 @@ describe("FridaySkillConverterRoutes", () => {
       expect(result.quality.issueCounts.error).toBe(1);
     });
 
+    it("redacts token-bearing source material from convert preview responses", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.convert")!;
+      const tokenBearingUri = "https://example.com/skill-repo?token=route-preview-secret-token";
+      (converterService.convert as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        converterId: "clawdbot-skill-md",
+        detectedFormat: "clawdbot-skill-md",
+        drafts: [{
+          manifest: { id: "preview-skill" },
+          uiSchema: {},
+          files: [{
+            path: "conversion.report.json",
+            content: JSON.stringify({ sourceRef: tokenBearingUri }),
+          }],
+          warnings: [`review source ${tokenBearingUri}`],
+          conversionReport: {
+            sourceFormat: "clawdbot-skill-md",
+            sourceRef: tokenBearingUri,
+            convertedAt: NOW,
+            converterId: "clawdbot-skill-md",
+          },
+        }],
+        validation: [{
+          skillId: "preview-skill",
+          ok: false,
+          issues: [{
+            stage: "manifest",
+            severity: "warning",
+            code: "SOURCE_WARNING",
+            message: `source needs review: ${tokenBearingUri}`,
+          }],
+        }],
+      });
+
+      const result = await route.handler(makeCtx({
+        body: {
+          source: { uri: tokenBearingUri },
+        },
+      }));
+
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(tokenBearingUri);
+      expect(serialized).not.toContain("route-preview-secret-token");
+      expect(serialized).toContain("https://example.com/skill-repo?redacted=1");
+    });
+
+    it("redacts token-bearing source material from convert preview errors", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.convert")!;
+      const tokenBearingUri = "https://example.com/skill-repo?token=route-error-secret-token";
+      (converterService.convert as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new FridayDomainError(
+          "CONVERTER_SOURCE_FAILED",
+          `Failed to read ${tokenBearingUri}`,
+          {
+            httpStatus: 422,
+            details: { source: tokenBearingUri },
+          },
+        ),
+      );
+
+      try {
+        await route.handler(makeCtx({
+          body: {
+            source: { uri: tokenBearingUri },
+          },
+        }));
+        throw new Error("Expected convert route to fail");
+      } catch (err) {
+        expect(err).toBeInstanceOf(FridayDomainError);
+        const serialized = JSON.stringify({
+          message: err instanceof Error ? err.message : String(err),
+          details: err instanceof FridayDomainError ? err.details : undefined,
+        });
+        expect(serialized).not.toContain(tokenBearingUri);
+        expect(serialized).not.toContain("route-error-secret-token");
+        expect(serialized).toContain("https://example.com/skill-repo?redacted=1");
+      }
+    });
+
     it("accepts contentBase64 as source", async () => {
       const { routes, converterService } = createRoutes();
       const route = routes.find((r) => r.operationId === "skills.convert")!;
@@ -401,45 +589,205 @@ describe("FridaySkillConverterRoutes", () => {
       ).rejects.toThrow("replace must be a boolean");
     });
 
-    it("calls import with valid body (managed target)", async () => {
+    it("requires canonical approval before staging candidates", async () => {
       const { routes, converterService } = createRoutes();
       const route = routes.find((r) => r.operationId === "skills.import")!;
+
+      await expect(
+        route.handler(
+          makeCtx({
+            principal: PRINCIPAL,
+            body: {
+              source: { uri: "/path/to/skill.md" },
+              idempotencyKey: "stage-without-approval",
+            },
+          }),
+        ),
+      ).rejects.toThrow("requires canonical approval");
+      expect(converterService.import).not.toHaveBeenCalled();
+    });
+
+    it("stages candidates instead of installing external skills outside lifecycle", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const body = withCanonicalApproval({
+        source: { uri: "/path/to/skill.md" },
+        target: "managed",
+        replace: true,
+        refreshRegistry: true,
+        idempotencyKey: "stage-managed-1",
+      });
 
       const result = await route.handler(
         makeCtx({
-          body: {
-            source: { uri: "/path/to/skill.md" },
-            target: "managed",
-            replace: true,
-            refreshRegistry: true,
-          },
+          principal: PRINCIPAL,
+          body,
         }),
-      ) as { converterId: string; imports: unknown[]; registryRefreshed: boolean };
+      ) as { candidates: Array<{ skillId: string; candidateId: string }>; registryRefreshed: boolean };
 
-      expect(converterService.import).toHaveBeenCalledOnce();
-      expect(result.converterId).toBe("clawdbot-skill-md");
-      expect(result.imports).toHaveLength(1);
-      expect(result.registryRefreshed).toBe(true);
+      expect(converterService.import).toHaveBeenCalledWith(expect.objectContaining({
+        source: { uri: "/path/to/skill.md" },
+        formatHint: undefined,
+        target: "managed",
+        replace: true,
+        refreshRegistry: true,
+        options: undefined,
+        canonicalApprovalTicket: expect.objectContaining({
+          action: "skills.import.stage_candidate",
+          approvalId: "approval-1",
+          ticketId: "ticket-1",
+        }),
+      }));
+      expect(result.candidates).toEqual([
+        expect.objectContaining({ skillId: "test-skill", candidateId: "test-skill-1.0.0-candidate" }),
+      ]);
+      expect(result.registryRefreshed).toBe(false);
     });
 
-    it("calls import with custom path target", async () => {
+    it("accepts production-signed canonical approval and passes the issued ticket to import", async () => {
+      const secret = "route-production-secret";
+      const { routes, converterService } = createRoutesWithSignedGate(secret);
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const body = withSignedCanonicalApproval({
+        source: { uri: "/path/to/skill.md" },
+        idempotencyKey: "stage-signed-1",
+      }, secret);
+
+      await route.handler(makeCtx({
+        principal: PRINCIPAL,
+        body,
+      }));
+
+      expect(converterService.import).toHaveBeenCalledWith(expect.objectContaining({
+        canonicalApprovalTicket: expect.objectContaining({
+          ticketId: "signed-ticket-1",
+          approvalId: "approval-signed-1",
+          action: "skills.import.stage_candidate",
+        }),
+      }));
+    });
+
+    it("does not return raw token-bearing source material in staged candidate responses", async () => {
+      const { routes } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const tokenBearingUri = "https://example.com/skill-repo?token=route-secret-token";
+      const body = withCanonicalApproval({
+        source: { uri: tokenBearingUri },
+        idempotencyKey: "stage-redacted-source-1",
+      });
+
+      const result = await route.handler(
+        makeCtx({
+          principal: PRINCIPAL,
+          body,
+        }),
+      );
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(tokenBearingUri);
+      expect(serialized).not.toContain("route-secret-token");
+      expect(serialized).not.toContain("\"source\"");
+      expect(serialized).toContain("sourceProvenance");
+    });
+
+    it("redacts token-bearing source material from successful import validation issues", async () => {
       const { routes, converterService } = createRoutes();
       const route = routes.find((r) => r.operationId === "skills.import")!;
+      const tokenBearingUri = "https://example.com/skill-repo?token=route-validation-secret-token";
+      (converterService.import as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        converterId: "clawdbot-skill-md",
+        detectedFormat: "clawdbot-skill-md",
+        candidates: [],
+        validation: [{
+          skillId: "test-skill",
+          ok: false,
+          issues: [{
+            stage: "manifest",
+            severity: "warning",
+            code: "SOURCE_WARNING",
+            message: `source needs review: ${tokenBearingUri}`,
+          }],
+        }],
+        registryRefreshed: false,
+      });
+      const body = withCanonicalApproval({
+        source: { uri: tokenBearingUri },
+        idempotencyKey: "stage-redacted-validation-source-1",
+      });
 
-      await route.handler(
-        makeCtx({
-          body: {
-            source: { uri: "/path/to/skill" },
-            target: { path: "/custom/install/dir" },
+      const result = await route.handler(makeCtx({
+        principal: PRINCIPAL,
+        body,
+      }));
+
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(tokenBearingUri);
+      expect(serialized).not.toContain("route-validation-secret-token");
+      expect(serialized).toContain("https://example.com/skill-repo?redacted=1");
+    });
+
+    it("redacts token-bearing source material from import errors", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const tokenBearingUri = "https://example.com/skill-repo?token=route-error-secret-token";
+      (converterService.import as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new FridayDomainError(
+          "CONVERTER_GIT_CLONE_FAILED",
+          `Failed to clone git repository: ${tokenBearingUri}`,
+          {
+            httpStatus: 422,
+            details: {
+              sourceUri: tokenBearingUri,
+              nested: { stderr: `fatal: could not read from ${tokenBearingUri}` },
+            },
           },
-        }),
+        ),
       );
+      const body = withCanonicalApproval({
+        source: { uri: tokenBearingUri },
+        idempotencyKey: "stage-redacted-error-source-1",
+      });
 
-      expect(converterService.import).toHaveBeenCalledWith(
-        expect.objectContaining({
-          target: { path: "/custom/install/dir" },
+      let thrown: unknown;
+      try {
+        await route.handler(
+          makeCtx({
+            principal: PRINCIPAL,
+            body,
+          }),
+        );
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).message).not.toContain(tokenBearingUri);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).not.toContain(tokenBearingUri);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).not.toContain("route-error-secret-token");
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("sourceProvenance");
+    });
+
+    it("validates custom path shape but still only stages candidates", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const body = withCanonicalApproval({
+        source: { uri: "/path/to/skill" },
+        target: { path: "/custom/install/dir" },
+        idempotencyKey: "stage-custom-path-1",
+      });
+
+      const result = await route.handler(
+        makeCtx({
+          principal: PRINCIPAL,
+          body,
         }),
-      );
+      ) as { candidates: Array<{ skillId: string }>; registryRefreshed: boolean };
+
+      expect(converterService.import).toHaveBeenCalledWith(expect.objectContaining({
+        source: { uri: "/path/to/skill" },
+        target: { path: "/custom/install/dir" },
+      }));
+      expect(result.candidates[0]?.skillId).toBe("test-skill");
+      expect(result.registryRefreshed).toBe(false);
     });
   });
 

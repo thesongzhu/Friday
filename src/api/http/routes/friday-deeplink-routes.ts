@@ -11,9 +11,12 @@ import type {
 } from "../../../deeplink/index.js";
 
 import type { FridayDeepLinkPayload } from "../../../deeplink/index.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
+import type { FridayCanonicalApprovalResolution, FridayMutatingActionActor } from "../../../security/friday-mutating-action-gate.js";
+import type { FridayDeepLinkApplyOptions } from "../../runtime/friday-deep-link-apply-service.js";
 
 export interface FridayDeepLinkRoutesDeps {
-  applyDeepLink?: (payload: FridayDeepLinkPayload) => Promise<FridayDeepLinkApplyResult>;
+  applyDeepLink?: (payload: FridayDeepLinkPayload, options: FridayDeepLinkApplyOptions) => Promise<FridayDeepLinkApplyResult>;
 }
 
 interface FridayDeepLinkPreviewRequest {
@@ -29,10 +32,32 @@ interface FridayDeepLinkApplyRequest {
   uri?: string;
   payload?: unknown;
   confirmed: boolean;
+  idempotencyKey?: string;
+  planDigest?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 interface FridayDeepLinkApplyResponse {
   result: FridayDeepLinkApplyResult;
+}
+
+function createActorFromPrincipal(
+  principal: FridayAuthPrincipal | null,
+  fallbackId: string,
+): FridayMutatingActionActor {
+  if (!principal) {
+    return {
+      kind: "api",
+      id: fallbackId,
+      principalId: fallbackId,
+    };
+  }
+
+  return {
+    kind: principal.principalType,
+    id: principal.principalId,
+    principalId: principal.principalId,
+  };
 }
 
 export function createFridayDeepLinkRoutes(
@@ -78,7 +103,7 @@ export function createFridayDeepLinkRoutes(
       method: "POST",
       path: "/v1/deeplink/apply",
       auth: { public: false, anyOfScopes: ["hub.admin"] },
-      async handler(ctx: { body: unknown }): Promise<FridayDeepLinkApplyResponse> {
+      async handler(ctx): Promise<FridayDeepLinkApplyResponse> {
         const body = ctx.body as FridayDeepLinkApplyRequest;
 
         if (!body.confirmed) {
@@ -131,7 +156,13 @@ export function createFridayDeepLinkRoutes(
           };
         }
 
-        const result = await deps.applyDeepLink(parsed.payload);
+        const result = await deps.applyDeepLink(parsed.payload, {
+          actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+          surface: "api:/v1/deeplink/apply",
+          idempotencyKey: body.idempotencyKey,
+          planDigest: body.planDigest,
+          canonicalApproval: body.canonicalApproval,
+        });
         return { result };
       },
     },

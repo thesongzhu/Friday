@@ -382,10 +382,12 @@ const stubConverterService: FridaySkillConverterService = {
     drafts: [],
     validation: [],
   }),
+  getCandidate: () => null,
   import: async () => ({
     converterId: "stub",
     detectedFormat: "openai-gpt-action",
-    imports: [],
+    candidates: [],
+    validation: [],
     registryRefreshed: false,
   }),
   pack: async () => ({

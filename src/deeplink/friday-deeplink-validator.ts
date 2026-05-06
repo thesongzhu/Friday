@@ -17,6 +17,7 @@ import {
   createFridayAgentSsrfGuard,
   FridaySsrfBlockedError,
 } from "../agent/security/friday-agent-ssrf-guard.js";
+import { redactFridaySkillCandidateSourceUri } from "../skills/converter/services/friday-skill-candidate-store.js";
 
 const REDACTED_SECRET_VALUE = "[redacted]";
 const deepLinkPreviewSsrfGuard = createFridayAgentSsrfGuard();
@@ -38,17 +39,23 @@ function isValidSha256(hash: string): boolean {
 }
 
 function sanitizeDeepLinkPayloadForPreview(payload: FridayDeepLinkPayload): FridayDeepLinkPayload {
-  if (!payload.providerTemplate?.apiKey) {
-    return payload;
-  }
+  const sanitized: FridayDeepLinkPayload = { ...payload };
 
-  return {
-    ...payload,
-    providerTemplate: {
+  if (payload.providerTemplate?.apiKey) {
+    sanitized.providerTemplate = {
       ...payload.providerTemplate,
       apiKey: REDACTED_SECRET_VALUE,
-    },
-  };
+    };
+  }
+
+  if (payload.skillSource?.url) {
+    sanitized.skillSource = {
+      ...payload.skillSource,
+      url: redactFridaySkillCandidateSourceUri(payload.skillSource.url),
+    };
+  }
+
+  return sanitized;
 }
 
 export function validateFridayDeepLink(payload: FridayDeepLinkPayload): FridayDeepLinkPreviewResult {

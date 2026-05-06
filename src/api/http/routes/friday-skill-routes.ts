@@ -361,6 +361,7 @@ export function createFridaySkillRoutes(
         ? principalRecord.tenantId.trim()
         : principalId;
       const lifecycleSkill = deps.lifecycle?.getSkill(skillId) as {
+        status?: string;
         currentManifest?: { kind?: string; runtime?: { kind?: string } };
         catalogEntry?: { manifest?: { kind?: string; runtime?: { kind?: string } } };
       } | null | undefined;
@@ -386,7 +387,39 @@ export function createFridaySkillRoutes(
       const runtimeKind = registeredSkill?.manifest.runtime.kind
         ?? lifecycleSkill?.currentManifest?.runtime?.kind
         ?? lifecycleSkill?.catalogEntry?.manifest?.runtime?.kind;
+      const lifecycleStatus = typeof lifecycleSkill?.status === "string"
+        ? lifecycleSkill.status
+        : undefined;
+      if (lifecycleSkill && lifecycleStatus && lifecycleStatus !== "installed" && skillId !== "ai-inference") {
+        throw new FridayDomainError(
+          "SKILL_NOT_AVAILABLE",
+          `Skill "${skillId}" is not available until it is installed and promoted.`,
+          {
+            httpStatus: 409,
+            details: {
+              skillId,
+              status: lifecycleStatus,
+            },
+          },
+        );
+      }
       if (registeredSkill) {
+        const registeredStatus = typeof registeredSkill.status === "string"
+          ? registeredSkill.status
+          : undefined;
+        if (registeredStatus && registeredStatus !== "installed") {
+          throw new FridayDomainError(
+            "SKILL_NOT_AVAILABLE",
+            `Skill "${skillId}" is not available until it is installed and promoted.`,
+            {
+              httpStatus: 409,
+              details: {
+                skillId,
+                status: registeredStatus,
+              },
+            },
+          );
+        }
         const readiness = evaluateFridaySkillExecutionReadiness({
           manifest: registeredSkill.manifest,
           ...getFridayLocalSkillExecutionContext(),

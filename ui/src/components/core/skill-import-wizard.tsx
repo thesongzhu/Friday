@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Code2,
   Globe,
@@ -11,7 +11,7 @@ import { ActionButton, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { skillsApi } from "@/lib/api/skills";
-import type { ConverterInfo, ConvertResponse, ImportResponse } from "@/lib/api/types";
+import type { ConverterInfo, ConvertResponse, SkillSourceFormat } from "@/lib/api/types";
 
 // ─── Props ───
 
@@ -63,12 +63,10 @@ function qualityTone(score: number): "success" | "warning" | "danger" {
 
 export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
   const { locale } = useAppLocale();
-  const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [selectedConverterId, setSelectedConverterId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [convertResult, setConvertResult] = useState<ConvertResponse | null>(null);
-  const [importResult, setImportResult] = useState<ImportResponse | null>(null);
 
   // ─── Queries / Mutations ───
 
@@ -82,25 +80,18 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
     mutationFn: () =>
       skillsApi.convert({
         source: { uri: inputValue },
-        formatHint: (selectedConverterId ?? "auto") as "auto",
+        formatHint: selectedSourceFormat(),
+        dryRun: true,
       }),
     onSuccess: (data) => {
       setConvertResult(data);
     },
   });
 
-  const importMutation = useMutation({
-    mutationFn: () =>
-      skillsApi.import({
-        source: { uri: inputValue },
-        formatHint: (selectedConverterId ?? "auto") as "auto",
-        refreshRegistry: true,
-      }),
-    onSuccess: (data) => {
-      setImportResult(data);
-      void queryClient.invalidateQueries({ queryKey: ["skills"] });
-    },
-  });
+  function selectedSourceFormat(): SkillSourceFormat | "auto" {
+    const converter = (convertersQuery.data ?? []).find((item) => item.id === selectedConverterId);
+    return converter?.sourceFormats.find((format) => format !== "unknown") ?? "auto";
+  }
 
   // ─── Navigation helpers ───
 
@@ -109,9 +100,7 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
     setSelectedConverterId(null);
     setInputValue("");
     setConvertResult(null);
-    setImportResult(null);
     convertMutation.reset();
-    importMutation.reset();
   }
 
   function handleClose() {
@@ -146,8 +135,6 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
       convertMutation.reset();
     } else if (step === 3) {
       setStep(2);
-      setImportResult(null);
-      importMutation.reset();
     }
   }
 
@@ -372,85 +359,36 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
   }
 
   function renderStep3() {
-    if (importMutation.isPending) {
-      return (
-        <div className="space-y-4">
-          <h3 className="text-base font-semibold text-[color:var(--color-text-primary)]">
-            {localize(locale, "安装中", "Installing")}
-          </h3>
-          <p className="text-sm text-[color:var(--color-text-tertiary)]">
-            {localize(locale, "正在安装技能...", "Installing skills...")}
-          </p>
-        </div>
-      );
-    }
-
-    if (importMutation.isError) {
-      return (
-        <div className="space-y-4">
-          <h3 className="text-base font-semibold text-[color:var(--color-text-primary)]">
-            {localize(locale, "安装失败", "Installation Failed")}
-          </h3>
-          <p className="text-sm text-[color:var(--color-text-danger)]">
-            {importMutation.error instanceof Error
-              ? importMutation.error.message
-              : localize(locale, "未知错误", "Unknown error")}
-          </p>
-        </div>
-      );
-    }
-
-    if (importResult) {
-      const installed = importResult.imports.filter((i) => i.installed);
-      return (
-        <div className="space-y-4">
-          <h3 className="text-base font-semibold text-[color:var(--color-text-primary)]">
-            {localize(locale, "安装完成", "Installation Complete")}
-          </h3>
-          <div className="space-y-2">
-            {installed.map((imp) => (
-              <div
-                key={imp.skillId}
-                className="flex items-center gap-2 rounded-xl border border-[color:var(--color-border-success)] bg-[color:var(--color-bg-success-subtle)] px-3 py-2"
-              >
-                <StatusPill tone="success">
-                  {localize(locale, "已安装", "installed")}
-                </StatusPill>
-                <span className="text-sm text-[color:var(--color-text-primary)]">{imp.skillId}</span>
-              </div>
-            ))}
-            {installed.length === 0 && (
-              <p className="text-sm text-[color:var(--color-text-warning)]">
-                {localize(locale, "没有技能被安装", "No skills were installed")}
-              </p>
-            )}
-          </div>
-          <p className="text-xs text-[color:var(--color-text-tertiary)]">
-            {localize(locale, "点击关闭或等待自动关闭", "Click close or wait for auto-close")}
-          </p>
-        </div>
-      );
-    }
-
-    // Not yet submitted - show install button
     return (
       <div className="space-y-4">
         <h3 className="text-base font-semibold text-[color:var(--color-text-primary)]">
-          {localize(locale, "确认并安装", "Confirm & Install")}
+          {localize(locale, "预览完成", "Preview Complete")}
         </h3>
         <p className="text-sm text-[color:var(--color-text-secondary)]">
           {localize(
             locale,
-            `将从 "${inputValue}" 导入 ${convertResult?.drafts.length ?? 0} 个技能。`,
-            `Import ${convertResult?.drafts.length ?? 0} skill(s) from "${inputValue}".`,
+            `已预览出 ${convertResult?.drafts.length ?? 0} 个草稿。Phase 3.1 中，UI 不签发 canonical approval，所以不会暂存、安装或暴露给 agent。`,
+            `Previewed ${convertResult?.drafts.length ?? 0} draft(s). In Phase 3.1, the UI does not issue canonical approvals, so it will not stage, install, or expose them to agents.`,
           )}
         </p>
+        <div className="space-y-2">
+          {(convertResult?.drafts ?? []).map((draft) => (
+            <div
+              key={draft.manifest.id}
+              className="flex items-center gap-2 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-3 py-2"
+            >
+              <StatusPill tone="warning">
+                {localize(locale, "候选", "candidate")}
+              </StatusPill>
+              <span className="text-sm text-[color:var(--color-text-primary)]">{draft.manifest.id}</span>
+            </div>
+          ))}
+        </div>
         <ActionButton
-          tone="primary"
-          onClick={() => importMutation.mutate()}
-          disabled={importMutation.isPending}
+          tone="secondary"
+          onClick={handleClose}
         >
-          {localize(locale, "安装", "Install")}
+          {localize(locale, "关闭", "Close")}
         </ActionButton>
       </div>
     );
@@ -512,12 +450,7 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
                 {localize(locale, "下一步", "Next")}
               </ActionButton>
             )}
-            {step === 3 && importResult && (
-              <ActionButton tone="primary" onClick={handleClose}>
-                {localize(locale, "关闭", "Close")}
-              </ActionButton>
-            )}
-            {step === 3 && !importResult && !importMutation.isPending && (
+            {step === 3 && (
               <ActionButton tone="secondary" onClick={handleBack}>
                 {localize(locale, "上一步", "Back")}
               </ActionButton>

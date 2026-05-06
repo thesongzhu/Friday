@@ -315,6 +315,52 @@ describe("createFridaySkillRoutes", () => {
     expect(result).toHaveProperty("status", "completed");
   });
 
+  it("blocks lifecycle-visible skills that are staged but not installed", async () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.getSkill.mockReturnValueOnce({
+      skillId: "skill.staged",
+      name: "Staged",
+      source: "external",
+      origin: "managed",
+      status: "not_installed",
+      starter: false,
+      tags: [],
+      updateAvailable: false,
+      managed: true,
+      registryLoaded: false,
+      currentManifest: {
+        kind: "conversation",
+        runtime: { kind: "shell" },
+      },
+      versions: [],
+      installations: [],
+    });
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => null),
+      } as never,
+      lifecycle: lifecycle as never,
+      skillExecutor: executor as never,
+    });
+
+    await expect(
+      routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "skill.staged" },
+        body: { input: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+      httpStatus: 409,
+      details: {
+        skillId: "skill.staged",
+        status: "not_installed",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
   it("returns CAPABILITY_DISABLED for node-runtime skill execution when the gate is off", async () => {
     const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
     delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];

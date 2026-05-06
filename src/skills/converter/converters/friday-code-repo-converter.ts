@@ -21,6 +21,10 @@ import { cleanupTempWorkspace, detectSourceProtocol, materializeFridayCodeRepoSo
 import { detectFridayCodeRepoLanguages } from "../code-repo/friday-language-detector.js";
 import { extractFridayCodeRepoCapabilities } from "../code-repo/friday-capability-extractor.js";
 import { compileFridayCodeRepoDraftPlan } from "../code-repo/friday-capability-to-draft-compiler.js";
+import {
+  redactFridaySkillCandidateSourceUri,
+  redactFridaySkillSourceText,
+} from "../services/friday-skill-candidate-store.js";
 
 const CONVERTER_ID = "code-repo";
 const CONVERTER_DISPLAY_NAME = "Code Repository Analyzer";
@@ -54,7 +58,7 @@ export function createFridayCodeRepoConverter(): FridaySkillConverter {
           converterId: CONVERTER_ID,
           format: "code-repo",
           confidence: 0.85,
-          reasons: [`Git repository URL detected (${source.uri.split("/").slice(-2).join("/")})`],
+          reasons: ["Git repository URL detected"],
         };
       }
 
@@ -93,7 +97,7 @@ export function createFridayCodeRepoConverter(): FridaySkillConverter {
           ],
         };
       } catch (err) {
-      console.warn("[friday][code-repo-converter] operation failed:", err instanceof Error ? err.message : String(err));
+        console.warn("[friday][code-repo-converter] operation failed:", redactCodeRepoSourceError(err, source.uri));
         return null;
       }
     },
@@ -120,7 +124,7 @@ export function createFridayCodeRepoConverter(): FridaySkillConverter {
         if (err instanceof FridayDomainError) throw err;
         throw new FridayDomainError(
           "CONVERTER_MATERIALIZATION_FAILED",
-          `Failed to materialize ${protocol} source: ${source.uri}`,
+          `Failed to materialize ${protocol} source: ${redactFridaySkillCandidateSourceUri(source.uri)}`,
           { httpStatus: 422, cause: err },
         );
       }
@@ -184,3 +188,7 @@ function sanitizeRepoName(name: string): string {
     .slice(0, 40) || "repo";
 }
 
+function redactCodeRepoSourceError(err: unknown, sourceUri: string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return redactFridaySkillSourceText(message, { uri: sourceUri });
+}

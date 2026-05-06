@@ -60,6 +60,10 @@ interface ImportInput {
   target?: "managed" | "workspace" | { path: string };
   replace?: boolean;
   refreshRegistry?: boolean;
+  options?: {
+    splitOperations?: boolean;
+    skillIdPrefix?: string;
+  };
 }
 
 interface PackInput {

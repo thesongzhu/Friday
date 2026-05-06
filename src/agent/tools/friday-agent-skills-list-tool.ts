@@ -124,7 +124,9 @@ export function createFridayAgentSkillsListTool(
               skill.manifest.runtime.kind === "node"
               && !allowBundledSystemNodeSkill
               && !isFridayUnisolatedNodeSkillsEnabled();
+            const lifecycleBlocked = skill.status !== "installed";
             const blockers = [
+              ...(lifecycleBlocked ? ["Skill is not available until it is installed and promoted."] : []),
               ...mcpReadiness.blockers,
               ...runtimeReadiness.blockers,
               ...(nodeRuntimeBlocked ? [getFridayUnisolatedNodeSkillsDisabledMessage()] : []),

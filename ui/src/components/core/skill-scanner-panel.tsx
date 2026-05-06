@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, StatusPill } from "@/components/core/primitives";
@@ -74,8 +74,6 @@ function formatFileSize(bytes: number): string {
 
 export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
   const { locale } = useAppLocale();
-  const queryClient = useQueryClient();
-
   const [activeTab, setActiveTab] = useState<"local" | "friday">("local");
 
   // ── Local scan state ──
@@ -105,16 +103,16 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
     enabled: open && activeTab === "friday",
   });
 
-  const importMutation = useMutation({
+  const convertMutation = useMutation({
     mutationFn: (items: Array<{ sourcePath: string; formatHint?: string }>) =>
-      scanMigrateApi.importBatch(items),
+      scanMigrateApi.convertBatch(items),
     onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+      const convertedCount = data.convertedCount;
       toast.success(
         localize(
           locale,
-          `成功导入 ${data.importedCount} 项${data.failedCount > 0 ? `，${data.failedCount} 项失败` : ""}`,
-          `Imported ${data.importedCount} item(s)${data.failedCount > 0 ? `, ${data.failedCount} failed` : ""}`,
+          `已预览 ${convertedCount} 个候选草稿${data.failedCount > 0 ? `，${data.failedCount} 项失败` : ""}`,
+          `Previewed ${convertedCount} draft candidate(s)${data.failedCount > 0 ? `, ${data.failedCount} failed` : ""}`,
         ),
       );
       if (data.failedCount === 0) {
@@ -179,7 +177,7 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
     setShowAllLocal(false);
     setFridaySearch("");
     scanMutation.reset();
-    importMutation.reset();
+    convertMutation.reset();
     onClose();
   }
 
@@ -206,13 +204,13 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
       .filter((i) => selectedLocalIds.has(i.id) && i.convertible)
       .map((i) => ({ sourcePath: i.sourcePath, formatHint: i.converterHint }));
     if (items.length === 0) return;
-    importMutation.mutate(items);
+    convertMutation.mutate(items);
   }
 
   const selectedCount = activeTab === "local" ? selectedLocalIds.size : 0;
 
-  // ── Import error details ──
-  const importErrors = importMutation.data?.results.filter((r) => !r.success) ?? [];
+  // ── Draft staging error details ──
+  const importErrors = convertMutation.data?.results.filter((r) => !r.success) ?? [];
 
   if (!open) return null;
 
@@ -318,8 +316,8 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
                     </div>
                     <p className="mt-0.5 line-clamp-1 text-xs text-[color:var(--color-text-tertiary)]">
                       {item.description || (item.convertible
-                        ? localize(locale, "可导入到 Friday。", "Can be imported into Friday.")
-                        : localize(locale, "这个条目已经在当前 Friday 工作区里，不需要再次导入。", "This entry already belongs to the current Friday workspace and does not need to be imported again."))}
+                        ? localize(locale, "可转换为候选草稿。", "Can be converted to a draft candidate.")
+                        : localize(locale, "这个条目已经在当前 Friday 工作区里，不需要再次预览。", "This entry already belongs to the current Friday workspace and does not need to be previewed again."))}
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-[color:var(--color-text-tertiary)]">
@@ -478,7 +476,7 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
           )}
         </div>
 
-        {/* Bottom bar - only show import button on local tab */}
+        {/* Bottom bar - only show draft button on local tab */}
         {activeTab === "local" && (
           <div className="flex items-center justify-between border-t border-[color:var(--color-border-soft)] px-6 py-4">
             <span className="text-sm text-[color:var(--color-text-tertiary)]">
@@ -487,14 +485,14 @@ export function SkillScannerPanel({ open, onClose }: SkillScannerPanelProps) {
             <ActionButton
               tone="primary"
               onClick={handleImport}
-              disabled={selectedCount === 0 || importMutation.isPending}
+              disabled={selectedCount === 0 || convertMutation.isPending}
             >
-              {importMutation.isPending
-                ? localize(locale, "导入中...", "Importing...")
+              {convertMutation.isPending
+                ? localize(locale, "预览中...", "Previewing...")
                 : localize(
                     locale,
-                    `导入选中 (${selectedCount})`,
-                    `Import Selected (${selectedCount})`,
+                    `预览候选 (${selectedCount})`,
+                    `Preview Candidates (${selectedCount})`,
                   )}
             </ActionButton>
           </div>

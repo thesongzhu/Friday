@@ -11,7 +11,7 @@
  *   friday run         <skill-id> [--input k=v ...] [--skills-dir <path>] — run a skill
  *   friday runs        backfill-pack-context [--dry-run|--apply] [--json]
  *   friday status                                           — show hub status
- *   friday import      <source> [--from <format>] [--target <path>] [--replace] [--dry-run]
+ *   friday import      <source> [--from <format>]                — preview conversion only
  *   friday convert     <source> --out <dir> [--from <format>]
  *   friday converters                                       — list converters
  *   friday pack        <skill-dir> --out <file.tgz>
@@ -50,6 +50,11 @@ import {
   encryptSecret,
   getMasterKey,
 } from "#providers";
+import {
+  redactFridaySkillCandidateSourceUri,
+  redactFridaySkillSourceText,
+  redactFridaySkillSourceValue,
+} from "#skills/converter";
 import { parseFridayHttpTrustProxyMode } from "#api";
 import { resolveFridayDbPath } from "#state";
 import { resolveSafePath, safeJsonParse } from "#utilities";
@@ -506,7 +511,7 @@ Show daemon/runtime status summary for the current state directory.
     console.log(`
 friday import <source> [--from <format>] [--target <path>] [--replace] [--dry-run] [--no-refresh]
 
-Detect, convert, validate, install, and refresh registry for a skill source.
+Preview conversion only. Candidate staging now requires canonical approval through the lifecycle surface.
     `.trim());
     return;
   }
@@ -608,7 +613,7 @@ Usage:
       Show hub status (running / stopped).
 
   friday import <source> [--from <format>] [--target <path>] [--replace] [--dry-run] [--no-refresh]
-      Detect, convert, validate, install, and refresh registry for a skill source.
+      Preview conversion only. Candidate staging now requires canonical approval through the lifecycle surface.
 
   friday convert <source> --out <dir> [--from <format>] [--split-operations] [--skill-id-prefix <prefix>]
       Convert a skill source to Friday package(s) without installing.
@@ -643,20 +648,20 @@ Options:
   --host <addr>         Bind address (default: 127.0.0.1). Use 0.0.0.0 for network access.
   --input key=value     Input parameter for skill execution (repeatable).
   --from <format>       Source format hint (auto, clawdbot-skill-md, n8n-node, openai-gpt-action, code-repo, undocumented-api, friday-package).
-  --target <path>       Install target (managed, workspace, or a custom path).
+  --target <path>       Retired for \`friday import\`; direct install targets require lifecycle promotion.
   --out <path>          Output directory or file path.
   --template <kind>     Template runtime for \`friday skills init\` (node or shell).
   --manifest <path>     Custom phase manifest path for \`friday phases\`.
   --json                Emit machine-readable JSON for supported phase/status commands.
-  --replace             Overwrite existing skill on collision.
-  --dry-run             Preview conversion without installing.
+  --replace             Retired for \`friday import\`; replacement happens through shadow/canary promotion.
+  --dry-run             Preview conversion; \`friday import\` is always draft-only.
   --apply               Apply a one-time maintenance command instead of previewing it.
   --prepare-next        After a successful promotion, mark the next phase as implementing.
   --no-prepare-next     Do not auto-unlock the next phase after promotion.
   --split-operations    Create one skill per OpenAPI operation (default).
   --no-split-operations Combine all OpenAPI operations into one skill.
   --skill-id-prefix <s> Prefix for generated skill IDs.
-  --no-refresh          Skip registry refresh after import.
+  --no-refresh          Retired for \`friday import\`; registry refresh only follows lifecycle promotion.
 `.trim());
 }
 
@@ -1676,50 +1681,32 @@ async function cmdImport(parsed: ParsedArgs): Promise<void> {
     return;
   }
 
-  console.log(`📦 Importing skill from: ${parsed.source}`);
+  console.log(`📦 Previewing skill source before candidate staging: ${redactFridaySkillCandidateSourceUri(parsed.source)}`);
   console.log(`   Format hint: ${parsed.from ?? "auto"}`);
-  console.log(`   Target: ${parsed.target ?? "managed"}`);
-  if (parsed.replace) console.log("   Replace: yes");
-  if (parsed.dryRun) console.log("   Dry run: yes");
-  if (parsed.noRefresh) console.log("   Refresh: no");
+  console.log("   Candidate staging requires canonical approval; no files will be written.");
 
   const config = buildConfig(parsed);
   const hub = await createFridayHub(config);
   await hub.start();
 
   try {
-    // Resolve target
-    let target: "managed" | "workspace" | { path: string } = "managed";
-    if (parsed.target === "managed" || parsed.target === "workspace") {
-      target = parsed.target;
-    } else if (parsed.target) {
-      target = { path: parsed.target };
+    const result = await convertWithRedactedCliSourceErrors(hub, parsed, true);
+
+    console.log(`\n🔒 Candidate staging blocked — converter: ${result.converterId}, format: ${result.detectedFormat}`);
+    console.log("   This CLI entrypoint does not issue canonical approvals in Phase 3.1.");
+    console.log("   No candidate was written, installed, promoted, or made available.");
+    console.log("   Use the canonical-approved lifecycle route/UI flow to stage this source.");
+    for (const draft of result.drafts) {
+      const validation = result.validation.find((entry) => entry.skillId === draft.manifest.id);
+      const status = validation?.ok ? "validated" : "needs review";
+      console.log(`   ${draft.manifest.id}: preview draft ${draft.manifest.version} (${status})`);
     }
-
-    const result = await hub.converterService.import({
-      source: { uri: parsed.source },
-      formatHint: (parsed.from as "auto" | undefined) ?? "auto",
-      target,
-      replace: parsed.replace,
-      refreshRegistry: !parsed.noRefresh,
-      dryRun: parsed.dryRun,
-      options: {
-        ...(parsed.splitOperations !== undefined ? { splitOperations: parsed.splitOperations } : {}),
-        ...(parsed.skillIdPrefix ? { skillIdPrefix: parsed.skillIdPrefix } : {}),
-      },
-    });
-
-    console.log(`\n✅ Import complete — converter: ${result.converterId}, format: ${result.detectedFormat}`);
-    for (const imp of result.imports) {
-      const status = imp.installed ? "✅ installed" : "❌ not installed";
-      console.log(`   ${imp.skillId}: ${status} → ${imp.skillDir || "(none)"}`);
-      for (const issue of imp.issues) {
+    for (const validation of result.validation) {
+      for (const issue of validation.issues) {
         console.log(`      ${issue.severity}: ${issue.message}`);
       }
     }
-    if (result.registryRefreshed) {
-      console.log("   Registry refreshed.");
-    }
+    process.exitCode = 1;
   } finally {
     await hub.stop();
   }
@@ -1738,7 +1725,7 @@ async function cmdConvert(parsed: ParsedArgs): Promise<void> {
     return;
   }
 
-  console.log(`🔄 Converting skill from: ${parsed.source}`);
+  console.log(`🔄 Converting skill from: ${redactFridaySkillCandidateSourceUri(parsed.source)}`);
   console.log(`   Output: ${parsed.out}`);
   console.log(`   Format hint: ${parsed.from ?? "auto"}`);
 
@@ -1747,15 +1734,7 @@ async function cmdConvert(parsed: ParsedArgs): Promise<void> {
   await hub.start();
 
   try {
-    const result = await hub.converterService.convert({
-      source: { uri: parsed.source },
-      formatHint: (parsed.from as "auto" | undefined) ?? "auto",
-      dryRun: parsed.dryRun,
-      options: {
-        ...(parsed.splitOperations !== undefined ? { splitOperations: parsed.splitOperations } : {}),
-        ...(parsed.skillIdPrefix ? { skillIdPrefix: parsed.skillIdPrefix } : {}),
-      },
-    });
+    const result = await convertWithRedactedCliSourceErrors(hub, parsed, parsed.dryRun);
 
     console.log(`\n✅ Conversion complete — converter: ${result.converterId}, format: ${result.detectedFormat}`);
     console.log(`   ${result.drafts.length} draft(s) generated.`);
@@ -1783,6 +1762,29 @@ async function cmdConvert(parsed: ParsedArgs): Promise<void> {
     }
   } finally {
     await hub.stop();
+  }
+}
+
+async function convertWithRedactedCliSourceErrors(
+  hub: Awaited<ReturnType<typeof createFridayHub>>,
+  parsed: ParsedArgs,
+  dryRun: boolean,
+) {
+  const source = parsed.source ?? "";
+  try {
+    const result = await hub.converterService.convert({
+      source: { uri: source },
+      formatHint: (parsed.from as "auto" | undefined) ?? "auto",
+      dryRun,
+      options: {
+        ...(parsed.splitOperations !== undefined ? { splitOperations: parsed.splitOperations } : {}),
+        ...(parsed.skillIdPrefix ? { skillIdPrefix: parsed.skillIdPrefix } : {}),
+      },
+    });
+    return redactFridaySkillSourceValue(result, { uri: source }) as typeof result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(redactFridaySkillSourceText(message, { uri: source }));
   }
 }
 

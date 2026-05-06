@@ -787,10 +787,12 @@ export interface SkillManifestValidationOutcome {
 export type SkillSourceFormat =
   | "friday-package"
   | "clawdbot-skill-md"
+  | "adk-skill"
   | "n8n-node"
   | "openai-gpt-action"
   | "code-repo"
   | "undocumented-api"
+  | "desktop-recording"
   | "unknown";
 
 export interface SkillConversionSource {
@@ -837,13 +839,30 @@ export interface ConvertResponse {
   }>;
 }
 
+export interface ExternalSkillCandidate {
+  candidateId: string;
+  shadowVersionId: string;
+  skillId: string;
+  version: string;
+  converterId: string;
+  detectedFormat: SkillSourceFormat;
+  candidateDir: string;
+  filesDir: string;
+  stagedAt: string;
+  validation: {
+    ok: boolean;
+    issues: SkillValidationIssue[];
+    verifiedAt: string;
+  };
+}
+
 export interface ImportResponse {
   converterId: string;
   detectedFormat: SkillSourceFormat;
-  imports: Array<{
+  candidates: ExternalSkillCandidate[];
+  validation: Array<{
     skillId: string;
-    skillDir: string;
-    installed: boolean;
+    ok: boolean;
     issues: SkillValidationIssue[];
   }>;
   registryRefreshed: boolean;

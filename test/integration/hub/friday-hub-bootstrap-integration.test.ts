@@ -5,6 +5,10 @@ import * as path from "node:path";
 import Database from "better-sqlite3";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
+import {
+  createFridaySkillStageMutatingActionRequest,
+  type FridaySkillImportInput,
+} from "#skills/converter";
 import { initializeFridayState } from "#state";
 import {
   createFridayAgentRunRepository,
@@ -17,6 +21,49 @@ import {
   restoreAutoDetectProviderEnv,
   type FridayAutoDetectProviderEnvSnapshot,
 } from "../../_helpers/auto-detect-provider-env.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+} from "../../../src/security/friday-mutating-action-gate.js";
+
+const CANONICAL_STAGE_NOW = "2026-02-17T12:00:00.000Z";
+
+function makeCanonicalStageTicket(input: FridaySkillImportInput) {
+  const actor = {
+    kind: "test",
+    id: "hub-integration-test",
+    principalId: "hub-integration-test",
+  };
+  const request = createFridaySkillStageMutatingActionRequest({
+    source: input.source,
+    formatHint: input.formatHint,
+    target: input.target,
+    replace: input.replace,
+    refreshRegistry: input.refreshRegistry,
+    options: input.options,
+    actor,
+    surface: "test:hub-integration",
+    idempotencyKey: "hub-stage-1",
+  });
+  const gate = createFridayMutatingActionGate({
+    nowIso: () => CANONICAL_STAGE_NOW,
+    ticketIdGenerator: () => "ticket-1",
+  });
+  const result = gate.evaluate({
+    ...request,
+    canonicalApproval: {
+      decision: "approved",
+      approvalId: "approval-1",
+      decidedByPrincipalId: actor.principalId,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-02-17T13:00:00.000Z",
+    },
+  });
+  if (!result.ticket) {
+    throw new Error(`failed to create canonical stage ticket: ${result.reason}`);
+  }
+  return result.ticket;
+}
 
 describe("FridayHub Bootstrap Integration", () => {
   const tmpDirs: string[] = [];
@@ -274,6 +321,116 @@ describe("FridayHub Bootstrap Integration", () => {
         delete process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
       } else {
         process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH = previousSocketPath;
+      }
+    }
+  });
+
+  it("stores external skill candidates under the resolved state dir when no input stateDir is provided", async () => {
+    const previousHome = process.env.HOME;
+    const previousFridayStateDir = process.env.FRIDAY_STATE_DIR;
+    const previousXdgStateHome = process.env.XDG_STATE_HOME;
+    const previousCwd = process.cwd();
+    const homeDir = makeTmpDir();
+    const cwdDir = makeTmpDir();
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const expectedStateDir = process.platform === "darwin"
+      ? path.join(homeDir, "Library", "Application Support", "Friday", "state")
+      : process.platform === "win32"
+        ? path.join(homeDir, "AppData", "Local", "Friday", "state")
+        : path.join(homeDir, ".local", "state", "friday");
+
+    fs.writeFileSync(path.join(sourceDir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: "resolved-state-candidate-skill",
+      name: "Resolved State Candidate Skill",
+      description: "Verifies candidate storage path.",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Test" },
+      tags: ["test"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: {
+        userInvocable: true,
+        modelInvocable: true,
+        priority: 50,
+        modes: ["intent"],
+      },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "skill.ui.json"), JSON.stringify({
+      schemaVersion: "1.0",
+      title: "Resolved State Candidate Skill",
+      sections: [],
+      fields: [],
+      outputs: [],
+      actions: [],
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "run.sh"), "#!/usr/bin/env bash\necho '{}'\n");
+
+    try {
+      process.env.HOME = homeDir;
+      delete process.env.FRIDAY_STATE_DIR;
+      delete process.env.XDG_STATE_HOME;
+      process.chdir(cwdDir);
+
+      const hub = await createFridayHub({
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+      });
+      hubs.push(hub);
+
+      await expect(hub.converterService.import({
+        source: { uri: sourceDir },
+        formatHint: "friday-package",
+      })).rejects.toThrow("canonical approval ticket");
+
+      const importInput = {
+        source: { uri: sourceDir },
+        formatHint: "friday-package" as const,
+      };
+      const result = await hub.converterService.import({
+        ...importInput,
+        canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+      });
+      const candidate = result.candidates[0]!;
+
+      expect(candidate.candidateDir.startsWith(path.join(expectedStateDir, "skill-candidates"))).toBe(true);
+      expect(candidate.candidateDir.startsWith(path.join(cwdDir, "skill-candidates"))).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousFridayStateDir === undefined) {
+        delete process.env.FRIDAY_STATE_DIR;
+      } else {
+        process.env.FRIDAY_STATE_DIR = previousFridayStateDir;
+      }
+      if (previousXdgStateHome === undefined) {
+        delete process.env.XDG_STATE_HOME;
+      } else {
+        process.env.XDG_STATE_HOME = previousXdgStateHome;
       }
     }
   });
