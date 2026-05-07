@@ -180,8 +180,11 @@ describe("Friday mock subagent canonical gate E2E", () => {
   let env: MockHubEnv;
   let providerId: string;
   let model: string;
+  let previousCanonicalGate: string | undefined;
 
   beforeAll(async () => {
+    previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
     env = await createMockHubEnv({ providerKinds: ["anthropic"] });
     const provider = env.providers["anthropic"]!;
     providerId = provider.providerId;
@@ -190,6 +193,11 @@ describe("Friday mock subagent canonical gate E2E", () => {
 
   afterAll(async () => {
     if (env) await env.cleanup();
+    if (previousCanonicalGate === undefined) {
+      delete process.env.FRIDAY_CANONICAL_GATE;
+    } else {
+      process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+    }
   }, 15_000);
 
   beforeEach(() => {
@@ -291,8 +299,11 @@ describe("Friday mock subagent canonical gate E2E", () => {
 describe("Friday live-channel canonical approval adversarial E2E", () => {
   let env: MockHubEnv;
   const channel = createTestChannelHarness();
+  let previousCanonicalGate: string | undefined;
 
   beforeAll(async () => {
+    previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
     env = await createMockHubEnv({
       providerKinds: ["anthropic"],
       channels: {
@@ -309,6 +320,11 @@ describe("Friday live-channel canonical approval adversarial E2E", () => {
 
   afterAll(async () => {
     if (env) await env.cleanup();
+    if (previousCanonicalGate === undefined) {
+      delete process.env.FRIDAY_CANONICAL_GATE;
+    } else {
+      process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+    }
   }, 15_000);
 
   beforeEach(() => {

@@ -267,7 +267,7 @@ describe("friday mutating action gate", () => {
     const gate = createFridayMutatingActionGate({
       nowIso: () => NOW,
       ticketIdGenerator: () => "ticket-1",
-      approvalSignatureSecret: "server-secret",
+      approvalSignatureSecret: "server-secret", // pragma: allowlist secret
     });
 
     expect(gate.evaluate({
@@ -307,7 +307,7 @@ describe("friday mutating action gate", () => {
     const gate = createFridayMutatingActionGate({
       nowIso: () => NOW,
       ticketIdGenerator: () => "ticket-1",
-      approvalSignatureSecret: "server-secret",
+      approvalSignatureSecret: "server-secret", // pragma: allowlist secret
     });
 
     expect(gate.evaluate({

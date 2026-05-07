@@ -281,8 +281,10 @@ describe("FridayHub Bootstrap Integration", () => {
   it("blocks legacy system approval-rule mutation route in the live hub", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
     process.env.FRIDAY_SYSTEM_ENABLED = "true";
     process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
+    process.env.FRIDAY_CANONICAL_GATE = "true";
     try {
       const hub = await createIsolatedHub();
       const route = hub.apiRuntime.routes.getRoutes()
@@ -310,6 +312,11 @@ describe("FridayHub Bootstrap Integration", () => {
         delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
       } else {
         process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = previousTransport;
+      }
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
       }
     }
   });

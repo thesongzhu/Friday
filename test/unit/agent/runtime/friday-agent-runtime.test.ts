@@ -3451,7 +3451,7 @@ describe("FridayAgentRuntime", () => {
       idGenerator,
       nowIso: () => NOW,
       canonicalMutatingActionGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
       toolApprovalResolver: resolver,
     });
 
@@ -3504,7 +3504,7 @@ describe("FridayAgentRuntime", () => {
       companionBridge: createConnectedSystemCompanionBridge(launchApp),
       execCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
       canonicalMutationGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
       companionReconnectIntervalMs: 60_000,
       warn: vi.fn(),
     });
@@ -3542,7 +3542,7 @@ describe("FridayAgentRuntime", () => {
       idGenerator,
       nowIso: () => NOW,
       canonicalMutatingActionGate: true,
-      canonicalApprovalSecret: "test-canonical-secret",
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
       toolApprovalResolver: resolver,
     });
 
