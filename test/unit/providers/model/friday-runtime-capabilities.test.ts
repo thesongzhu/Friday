@@ -209,6 +209,25 @@ describe("friday-runtime-capabilities", () => {
     expect(filterFridayProviderRoutesByRequiredCapabilities(routes, ["text"])).toEqual([]);
   });
 
+  it("does not expose shadow or canary provider capabilities as available", () => {
+    const provider = makeProvider({
+      promotionChannel: "shadow",
+      config: {
+        runtimeCapabilities: [
+          { capability: "text", model: "gpt-4o", status: "verified", verifiedAt: NOW },
+        ],
+      },
+    });
+    const matrix = buildFridayRuntimeCapabilityMatrix({
+      nowIso: NOW,
+      providers: [provider],
+    });
+    const routes: FridayResolvedProviderRoute[] = [{ provider, model: "gpt-4o" }];
+
+    expect(getCapability(matrix, "text").state).toBe("configured_but_unverified");
+    expect(filterFridayProviderRoutesByRequiredCapabilities(routes, ["text"])).toEqual([]);
+  });
+
   it("treats failed capability doctor declarations as blockers", () => {
     const provider = makeProvider({
       config: {

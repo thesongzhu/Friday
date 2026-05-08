@@ -832,6 +832,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     providerProfileRepo,
     nowIso: deps.nowIso,
+    stateDir,
+    validateProvider: deps.providerService
+      ? (providerId, options) => deps.providerService!.validateProvider(providerId, options)
+      : undefined,
+    canonicalMutationGate,
   });
   const pluginUpgradeLifecycle = createFridayPluginUpgradeLifecycleService({
     db: deps.db,
@@ -1164,26 +1169,50 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           providerProfileUpgradeLifecycle.recordCanaryResult({
             providerId: input.providerId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            tenantContext: input.tenantContext,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           providerProfileUpgradeLifecycle.promote({
             providerId: input.providerId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           providerProfileUpgradeLifecycle.rollback({
             providerId: input.providerId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (providerId) => autonomyUpgradeStatus.get("provider_profile", providerId),
+        getEvidence: (input) =>
+          providerProfileUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     mcpServerActions: mcpServerUpgradeLifecycle

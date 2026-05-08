@@ -94,6 +94,21 @@ describe("FridayProviderService", () => {
     });
   }
 
+  function setProviderLifecycle(providerId: string, promotionChannel: string): void {
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE provider_profiles
+            SET promotion_channel = ?, shadow_version_id = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run(
+        promotionChannel,
+        promotionChannel === "none" ? null : `${providerId}@shadow`,
+        NOW,
+        providerId,
+      );
+    });
+  }
+
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
@@ -1118,6 +1133,37 @@ describe("FridayProviderService", () => {
 
       await expect(service.resolveRoute(undefined, "test-id-0002")).rejects.toMatchObject({
         code: "PROVIDER_DISABLED",
+      });
+    });
+
+    it("rejects normal routing for providers still in shadow or canary lifecycle", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      await service.resolveRoute();
+      setProviderLifecycle("test-id-0001", "shadow");
+
+      await expect(service.resolveRoute(undefined, "test-id-0001")).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+      await expect(service.resolveRoute()).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+
+      setProviderLifecycle("test-id-0001", "active");
+      await expect(service.resolveRoute(undefined, "test-id-0001")).resolves.toMatchObject({
+        provider: { id: "test-id-0001" },
       });
     });
 

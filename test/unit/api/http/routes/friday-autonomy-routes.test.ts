@@ -6,6 +6,9 @@ import {
   createFridaySkillLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import {
+  createFridayProviderProfileLifecycleMutatingActionRequest,
+} from "../../../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
@@ -18,12 +21,25 @@ const principal = {
   role: "admin" as const,
   scopes: ["hub.admin"] as const,
 };
+const PROVIDER_PLAN_DIGEST = "provider-plan-1";
 
 function makeContext(body: Record<string, unknown>) {
   return {
     requestId: "req-1",
     receivedAt: "2026-05-07T18:00:00.000Z",
     params: { skillId: "skill-1" },
+    query: {},
+    body,
+    headers: {},
+    principal,
+  };
+}
+
+function makeProviderContext(body: Record<string, unknown>) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: { providerId: "provider-1" },
     query: {},
     body,
     headers: {},
@@ -68,6 +84,38 @@ function makeApproval(input: {
   };
 }
 
+function makeProviderApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  shadowVersionId?: string;
+  runtimeVersion?: string;
+  planDigest?: string;
+}): FridayCanonicalApprovalResolution {
+  const planDigest = input.planDigest ?? PROVIDER_PLAN_DIGEST;
+  const request = createFridayProviderProfileLifecycleMutatingActionRequest({
+    action: input.action,
+    providerId: "provider-1",
+    shadowVersionId: input.shadowVersionId ?? "provider-1@shadow",
+    runtimeVersion: input.runtimeVersion ?? "runtime-v1",
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: `api:/v1/autonomy/providers/${input.action}`,
+    planDigest,
+    rollback: input.action === "rollback"
+      ? { planned: true, planDigest, actions: ["providers.lifecycle.promote"] }
+      : undefined,
+  });
+  return {
+    decision: "approved",
+    approvalId: `provider-${input.action}-approval`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-05-07T19:00:00.000Z",
+  };
+}
+
 function createRoutes() {
   const evidence = {
     candidateId: "candidate-1",
@@ -94,6 +142,69 @@ function createRoutes() {
       recordCanary,
       promote: vi.fn(async () => ({ skillId: "skill-1", status: "installed", tags: [] })),
       rollback: vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] })),
+      getStatus: () => null,
+      getEvidence: vi.fn(() => evidence),
+    },
+  });
+  return { routes, registerShadow, recordCanary };
+}
+
+function createProviderRoutes() {
+  const evidence = {
+    providerId: "provider-1",
+    stage: "shadow",
+    canarySuccessCount: 0,
+    canaryFailureCount: 0,
+  };
+  const registerShadow = vi.fn(async () => ({
+    id: "provider-1",
+    kind: "anthropic",
+    name: "Anthropic",
+    enabled: true,
+    promotionChannel: "shadow",
+    compatibilityStatus: "adaptation_required",
+    shadowVersionId: "provider-1@shadow",
+    config: { validation: { status: "ok" } },
+  }));
+  const recordCanary = vi.fn(async () => ({
+    id: "provider-1",
+    kind: "anthropic",
+    name: "Anthropic",
+    enabled: true,
+    promotionChannel: "canary",
+    compatibilityStatus: "compatible",
+    shadowVersionId: "provider-1@shadow",
+    config: { validation: { status: "ok" } },
+    canaryStats: {
+      sampleSize: 1,
+      successCount: 1,
+      failureCount: 0,
+      rollbackCount: 0,
+    },
+  }));
+  const routes = createFridayAutonomyRoutes({
+    listUpgradeStatus: () => ({ items: [] }),
+    providerProfileActions: {
+      registerShadow,
+      recordCanary,
+      promote: vi.fn(async () => ({
+        id: "provider-1",
+        kind: "anthropic",
+        name: "Anthropic",
+        enabled: true,
+        promotionChannel: "active",
+        compatibilityStatus: "compatible",
+        config: { validation: { status: "ok" } },
+      })),
+      rollback: vi.fn(async () => ({
+        id: "provider-1",
+        kind: "anthropic",
+        name: "Anthropic",
+        enabled: true,
+        promotionChannel: "rolled_back",
+        compatibilityStatus: "adaptation_required",
+        config: { validation: { status: "ok" } },
+      })),
       getStatus: () => null,
       getEvidence: vi.fn(() => evidence),
     },
@@ -146,5 +257,74 @@ describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
     }))).rejects.toMatchObject({ code: "SKILL_CANARY_RUNTIME_PROOF_REQUIRED" });
 
     expect(recordCanary).not.toHaveBeenCalled();
+  });
+});
+
+describe("createFridayAutonomyRoutes provider lifecycle approval", () => {
+  it("requires canonical approval before provider shadow can mutate", async () => {
+    const { routes, registerShadow } = createProviderRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.providers.shadow")!;
+
+    await expect(route.handler(makeProviderContext({
+      shadowVersionId: "provider-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: PROVIDER_PLAN_DIGEST,
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+    expect(registerShadow).not.toHaveBeenCalled();
+  });
+
+  it("passes canonical approval metadata into provider shadow and returns evidence", async () => {
+    const { routes, registerShadow } = createProviderRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.providers.shadow")!;
+
+    const result = await route.handler(makeProviderContext({
+      shadowVersionId: "provider-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: PROVIDER_PLAN_DIGEST,
+      canonicalApproval: makeProviderApproval({ action: "shadow" }),
+    }));
+
+    expect(registerShadow).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: "provider-1",
+      shadowVersionId: "provider-1@shadow",
+      canonicalApproval: expect.objectContaining({ approvalId: "provider-shadow-approval" }),
+      actor: expect.objectContaining({ principalId: "user-1" }),
+      surface: "api:/v1/autonomy/providers/shadow",
+      planDigest: PROVIDER_PLAN_DIGEST,
+    }));
+    expect(result).toHaveProperty("evidence.stage", "shadow");
+  });
+
+  it("rejects caller-supplied provider canary success because validation must run internally", async () => {
+    const { routes, recordCanary } = createProviderRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.providers.canary")!;
+
+    await expect(route.handler(makeProviderContext({
+      runtimeVersion: "runtime-v1",
+      success: true,
+      planDigest: PROVIDER_PLAN_DIGEST,
+      canonicalApproval: makeProviderApproval({ action: "canary" }),
+    }))).rejects.toMatchObject({ code: "PROVIDER_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+    expect(recordCanary).not.toHaveBeenCalled();
+  });
+
+  it("passes principal tenant context into provider canary validation", async () => {
+    const { routes, recordCanary } = createProviderRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.providers.canary")!;
+
+    await route.handler(makeProviderContext({
+      runtimeVersion: "runtime-v1",
+      planDigest: PROVIDER_PLAN_DIGEST,
+      canonicalApproval: makeProviderApproval({ action: "canary" }),
+    }));
+
+    expect(recordCanary).toHaveBeenCalledWith(expect.objectContaining({
+      tenantContext: {
+        hubId: "user-1",
+        userId: "user-1",
+      },
+    }));
   });
 });

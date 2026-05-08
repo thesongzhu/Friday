@@ -6,6 +6,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
 import { apiFetch, createAnthropicProvider } from "./_helpers/api.js";
 import {
+  createFridayProviderProfileLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
@@ -14,6 +22,10 @@ import {
 } from "./_helpers/deep-proof-env.js";
 
 const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
+const PROVIDER_LIFECYCLE_PLAN_DIGEST = "provider-profile-live-proof-plan";
+const PROVIDER_LIFECYCLE_SIGNING_MATERIAL =
+  "provider-profile-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface RuntimeVersionEnvelope {
   ok: boolean;
@@ -146,6 +158,39 @@ async function getRuntimeVersion(env: RealHubEnv): Promise<string> {
   return response.json.data.version;
 }
 
+function makeProviderLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  providerId: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST, actions: ["providers.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayProviderProfileLifecycleMutatingActionRequest({
+    action: input.action,
+    providerId: input.providerId,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: LIVE_ANTHROPIC_MODEL,
+    actor: {
+      kind: "user",
+      id: LOCAL_LIVE_PRINCIPAL_ID,
+      principalId: LOCAL_LIVE_PRINCIPAL_ID,
+    },
+    surface: `api:/v1/autonomy/providers/${input.action}`,
+    planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `provider-profile-live-${input.action}`,
+    decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-05-07T00:00:00.000Z",
+  }, PROVIDER_LIFECYCLE_SIGNING_MATERIAL);
+}
+
 async function getProvider(env: RealHubEnv, providerId: string): Promise<ProviderEnvelope["data"]> {
   const response = await apiFetch<ProviderEnvelope>(
     env.baseUrl,
@@ -175,7 +220,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
   let env: RealHubEnv;
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
+    env = await createFridayDeepProofHubEnv({
+      hubConfig: {
+        tokenSecret: PROVIDER_LIFECYCLE_SIGNING_MATERIAL,
+      },
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -235,6 +284,13 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
           shadowVersionId: firstShadowId,
           runtimeVersion,
           providerModel: LIVE_ANTHROPIC_MODEL,
+          planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeProviderLifecycleApproval({
+            action: "shadow",
+            providerId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+          }),
         },
       );
       expect(shadowRes.status).toBe(200);
@@ -249,7 +305,15 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         "POST",
         `/v1/autonomy/providers/${encodeURIComponent(providerId)}/canary`,
         {
-          success: true,
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+          planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeProviderLifecycleApproval({
+            action: "canary",
+            providerId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+          }),
         },
       );
       expect(canaryRes.status).toBe(200);
@@ -266,6 +330,13 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         {
           runtimeVersion,
           providerModel: LIVE_ANTHROPIC_MODEL,
+          planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeProviderLifecycleApproval({
+            action: "promote",
+            providerId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+          }),
         },
       );
       expect(promoteRes.status).toBe(200);
@@ -273,35 +344,6 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
       expect(promoteRes.json.data.provider.promotionChannel).toBe("active");
       expect(promoteRes.json.data.status?.promotionChannel).toBe("active");
       expect(promoteRes.json.data.status?.derivedCompatibilityStatus).toBe("compatible");
-
-      const secondShadowId = `${providerId}@shadow-rollback`;
-      const shadowRollbackRes = await apiFetch<ProviderActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/providers/${encodeURIComponent(providerId)}/shadow`,
-        {
-          shadowVersionId: secondShadowId,
-          runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
-        },
-      );
-      expect(shadowRollbackRes.status).toBe(200);
-      expect(shadowRollbackRes.json.ok).toBe(true);
-
-      const failedCanaryRes = await apiFetch<ProviderActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/providers/${encodeURIComponent(providerId)}/canary`,
-        {
-          success: false,
-        },
-      );
-      expect(failedCanaryRes.status).toBe(200);
-      expect(failedCanaryRes.json.ok).toBe(true);
-      expect(failedCanaryRes.json.data.provider.canaryStats?.sampleSize).toBe(2);
-      expect(failedCanaryRes.json.data.provider.canaryStats?.failureCount).toBe(1);
 
       const rollbackRes = await apiFetch<ProviderActionEnvelope>(
         env.baseUrl,
@@ -311,28 +353,36 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         {
           runtimeVersion,
           providerModel: LIVE_ANTHROPIC_MODEL,
+          planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
+          reason: "live provider lifecycle rollback proof",
+          canonicalApproval: makeProviderLifecycleApproval({
+            action: "rollback",
+            providerId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+          }),
         },
       );
       expect(rollbackRes.status).toBe(200);
       expect(rollbackRes.json.ok).toBe(true);
-      expect(rollbackRes.json.data.provider.promotionChannel).toBe("rolled_back");
-      expect(rollbackRes.json.data.status?.promotionChannel).toBe("rolled_back");
+      expect(rollbackRes.json.data.provider.promotionChannel).toBe("none");
+      expect(rollbackRes.json.data.status?.promotionChannel).toBe("none");
 
       const providerRow = readProviderRow(env.stateDir!, providerId);
       expect(providerRow).not.toBeNull();
-      expect(providerRow?.promotionChannel).toBe("rolled_back");
+      expect(providerRow?.promotionChannel).toBe("none");
       expect(providerRow?.shadowVersionId).toBeNull();
-      expect(providerRow?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
-      expect(providerRow?.lastVerifiedProviderModel).toBe(LIVE_ANTHROPIC_MODEL);
+      expect(providerRow?.lastVerifiedRuntimeVersion).toBeNull();
+      expect(providerRow?.lastVerifiedProviderModel).toBeNull();
       const canaryStats = JSON.parse(providerRow?.canaryStatsJson ?? "{}") as {
         sampleSize?: number;
         successCount?: number;
         failureCount?: number;
         rollbackCount?: number;
       };
-      expect(canaryStats.sampleSize).toBe(2);
-      expect(canaryStats.successCount).toBe(1);
-      expect(canaryStats.failureCount).toBe(1);
+      expect(canaryStats.sampleSize).toBe(0);
+      expect(canaryStats.successCount).toBe(0);
+      expect(canaryStats.failureCount).toBe(0);
       expect(canaryStats.rollbackCount).toBe(1);
       const config = JSON.parse(providerRow?.configJson ?? "{}") as {
         validation?: { status?: string };
@@ -340,8 +390,8 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
       expect(config.validation?.status).toBe("ok");
 
       const finalStatus = await getUpgradeStatus(env, providerId);
-      expect(finalStatus.promotionChannel).toBe("rolled_back");
-      expect(finalStatus.recordedCompatibilityStatus).toBe("adaptation_required");
+      expect(finalStatus.promotionChannel).toBe("none");
+      expect(finalStatus.recordedCompatibilityStatus).toBe("unknown");
     },
   );
 });

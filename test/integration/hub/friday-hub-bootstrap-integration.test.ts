@@ -31,11 +31,15 @@ import {
   createFridaySkillLifecycleCanaryInputDigest,
   createFridaySkillLifecycleMutatingActionRequest,
 } from "../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import {
+  createFridayProviderProfileLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
 import { createFridaySkillRunMutatingActionRequest } from "../../../src/api/http/routes/friday-skill-routes.js";
 
 const CANONICAL_STAGE_NOW = "2026-02-17T12:00:00.000Z";
 const PHASE32_TOKEN_SECRET = "phase32-token-secret";
 const PHASE32_PLAN_DIGEST = "phase32a-plan-digest";
+const PHASE32B_PROVIDER_PLAN_DIGEST = "phase32b-provider-plan-digest";
 
 function makeCanonicalStageTicket(input: FridaySkillImportInput) {
   const actor = {
@@ -130,6 +134,38 @@ function makeSignedSkillRunApproval(input: {
   return signFridayCanonicalApproval({
     decision: "approved",
     approvalId: "phase32-run-approval",
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
+}
+
+function makeSignedProviderLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  providerId: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: PHASE32B_PROVIDER_PLAN_DIGEST, actions: ["providers.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayProviderProfileLifecycleMutatingActionRequest({
+    action: input.action,
+    providerId: input.providerId,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: `api:/v1/autonomy/providers/${input.action}`,
+    planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `phase32b-provider-${input.action}-approval`,
     decidedByPrincipalId: "phase32-user",
     actionDigest: createFridayMutatingActionDigest(request),
     expiresAt: "2027-02-17T13:00:00.000Z",
@@ -676,6 +712,178 @@ describe("FridayHub Bootstrap Integration", () => {
     await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
       code: "SKILL_NOT_AVAILABLE",
     });
+  });
+
+  it("drives provider profile lifecycle through canonical-approved autonomy routes and survives restart", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [{ id: "phase32b-model" }] }), { status: 200 })) as typeof fetch;
+    try {
+      const stateDir = makeTmpDir();
+      lastStateDir = stateDir;
+      const bundledSkillsDir = makeTmpDir();
+      const managedSkillsDir = makeTmpDir();
+      const runtimeVersion = "phase32b-runtime";
+      const hub = await createFridayHub({
+        stateDir,
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+        tokenSecret: PHASE32_TOKEN_SECRET,
+      });
+      hubs.push(hub);
+
+      const provider = await hub.providerService.createProvider({
+        kind: "openai-compatible",
+        name: "Phase 3.2B Provider",
+        baseUrl: "https://example.com",
+        authMode: "none",
+        api: "openai-completions",
+        supportedModels: ["phase32b-model"],
+        defaultModel: "phase32b-model",
+        enabled: true,
+        validateOnSave: false,
+      });
+      const validation = await hub.providerService.validateProvider(provider.id);
+      expect(validation.status).toBe("ok");
+      await hub.providerService.setRoutingConfig({
+        defaultProviderId: provider.id,
+        fallbackProviderIds: [],
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      const principal = {
+        principalType: "user" as const,
+        principalId: "phase32-user",
+        userId: "phase32-user",
+        role: "admin" as const,
+        scopes: ["hub.admin"] as const,
+      };
+      const shadowVersionId = `${provider.id}@shadow`;
+      const invokeProviderRoute = async (operationId: string, body: Record<string, unknown>) => {
+        const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === operationId);
+        expect(route).toBeDefined();
+        return route!.handler({
+          requestId: `${operationId}:req`,
+          receivedAt: new Date().toISOString(),
+          params: { providerId: provider.id },
+          query: {},
+          body,
+          headers: {},
+          principal,
+        });
+      };
+
+      await expect(invokeProviderRoute("autonomy.providers.shadow", {
+        shadowVersionId,
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+      })).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+      await invokeProviderRoute("autonomy.providers.shadow", {
+        shadowVersionId,
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "shadow",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+
+      await expect(invokeProviderRoute("autonomy.providers.canary", {
+        runtimeVersion,
+        success: true,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "canary",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      })).rejects.toMatchObject({ code: "PROVIDER_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+      await invokeProviderRoute("autonomy.providers.canary", {
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "canary",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+
+      const promoteResult = await invokeProviderRoute("autonomy.providers.promote", {
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "promote",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      }) as {
+        provider: { promotionChannel?: string };
+        evidence?: { stage?: string };
+      };
+      expect(promoteResult.provider.promotionChannel).toBe("active");
+      expect(promoteResult.evidence?.stage).toBe("active");
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      await hub.stop();
+      const restarted = await createFridayHub({
+        stateDir,
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+        tokenSecret: PHASE32_TOKEN_SECRET,
+      });
+      hubs.push(restarted);
+      const restartedProvider = await restarted.providerService.getProvider(provider.id);
+      expect(restartedProvider?.promotionChannel).toBe("active");
+      expect(restartedProvider?.config.validation?.status).toBe("ok");
+      await expect(restarted.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      const rollbackRoute = restarted.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "autonomy.providers.rollback");
+      expect(rollbackRoute).toBeDefined();
+      const rollbackResult = await rollbackRoute!.handler({
+        requestId: "autonomy.providers.rollback:req",
+        receivedAt: new Date().toISOString(),
+        params: { providerId: provider.id },
+        query: {},
+        body: {
+          runtimeVersion,
+          planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+          reason: "integration rollback proof",
+          canonicalApproval: makeSignedProviderLifecycleApproval({
+            action: "rollback",
+            providerId: provider.id,
+            shadowVersionId,
+            runtimeVersion,
+          }),
+        },
+        headers: {},
+        principal,
+      }) as {
+        provider: { promotionChannel?: string };
+        evidence?: { stage?: string };
+      };
+      expect(rollbackResult.provider.promotionChannel).toBe("none");
+      expect(rollbackResult.evidence?.stage).toBe("rolled_back");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("blocks legacy system approval-rule mutation route in the live hub", async () => {

@@ -114,21 +114,34 @@ export interface FridayRegisterProviderProfileShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordProviderProfileCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteProviderProfileUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackProviderProfileUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterMcpServerShadowRequest {
@@ -252,6 +265,7 @@ export interface FridayProviderProfileUpgradeActionResponse {
     validationStatus?: string;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayMcpServerUpgradeActionResponse {

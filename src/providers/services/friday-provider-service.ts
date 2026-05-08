@@ -132,6 +132,9 @@ function describeRoutingReference(
   if (!provider.enabled) {
     return `${label} "${providerId}" is disabled`;
   }
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    return `${label} "${providerId}" is in ${provider.promotionChannel} lifecycle and is not promoted`;
+  }
   if (!isProviderValidationOkForRouting(provider)) {
     return `${label} "${providerId}" ${describeProviderValidationForRouting(provider)}`;
   }
@@ -148,8 +151,14 @@ function isProviderValidationOkForRouting(provider: FridayProviderProfile): bool
   return providerValidationStatusForRouting(provider) === "ok";
 }
 
+function isProviderLifecycleAvailableForRouting(provider: FridayProviderProfile): boolean {
+  const promotionChannel = provider.promotionChannel ?? "none";
+  return promotionChannel === "none" || promotionChannel === "active";
+}
+
 function shouldAutoValidateProviderForRouting(provider: FridayProviderProfile): boolean {
-  return provider.enabled && providerValidationStatusForRouting(provider) === "never";
+  return provider.enabled && isProviderLifecycleAvailableForRouting(provider)
+    && providerValidationStatusForRouting(provider) === "never";
 }
 
 function describeProviderValidationForRouting(provider: FridayProviderProfile): string {
@@ -314,6 +323,13 @@ function assertRequestedProviderAvailable(
       httpStatus: 400,
     });
   }
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    throw new FridayDomainError(
+      "PROVIDER_LIFECYCLE_UNPROMOTED",
+      `Provider "${requestedProviderId}" is in ${provider.promotionChannel} lifecycle and is not promoted for normal routing`,
+      { httpStatus: 409 },
+    );
+  }
   return provider;
 }
 
@@ -321,6 +337,9 @@ function explainPinnedProviderNoCandidates(
   provider: FridayProviderProfile,
   requestedModel?: string,
 ): string {
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    return `Provider "${provider.id}" is in ${provider.promotionChannel} lifecycle and is not promoted for normal routing.`;
+  }
   if (!isProviderValidationOkForRouting(provider)) {
     return `Provider "${provider.id}" ${describeProviderValidationForRouting(provider)}. Validate the provider before routing.`;
   }
@@ -2327,7 +2346,7 @@ export function createFridayProviderService(
           : input.routing,
         providers: input.providers,
         requestedModel: input.requestedModel,
-      }),
+      }).filter((route) => isProviderLifecycleAvailableForRouting(route.provider)),
       input.pinnedProvider,
     );
   }

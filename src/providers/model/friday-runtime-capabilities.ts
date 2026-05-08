@@ -309,6 +309,9 @@ export function fridayProviderRouteSupportsCapability(
   route: FridayResolvedProviderRoute,
   capability: FridayRuntimeCapabilityId,
 ): boolean {
+  if (!isProviderLifecycleAvailableForRuntime(route.provider)) {
+    return false;
+  }
   if (route.provider.config.validation?.status !== "ok") {
     return false;
   }
@@ -347,6 +350,7 @@ function buildProviderSources(
       continue;
     }
     const providerValidationStatus = provider.config.validation?.status ?? "never";
+    const lifecycleAvailable = isProviderLifecycleAvailableForRuntime(provider);
     const models = provider.config.supportedModels.length > 0
       ? provider.config.supportedModels
       : provider.defaultModel
@@ -356,7 +360,10 @@ function buildProviderSources(
     for (const model of models) {
       const textExplicitStatus = explicitProviderCapabilityStatus(provider, "text", model);
       const textStatus = textExplicitStatus
-        ? providerValidatedSourceStatus(providerValidationStatus, explicitStatusToSourceStatus(textExplicitStatus.status))
+        ? providerValidatedSourceStatus(
+            providerValidationStatus,
+            lifecycleAvailable ? explicitStatusToSourceStatus(textExplicitStatus.status) : "unverified",
+          )
         : providerValidationStatus === "failed"
           ? "failed"
           : "unverified";
@@ -369,7 +376,9 @@ function buildProviderSources(
           model,
           providerValidatedSourceStatus(
             providerValidationStatus,
-            visionStatus ? explicitStatusToSourceStatus(visionStatus.status) : "inferred",
+            lifecycleAvailable
+              ? visionStatus ? explicitStatusToSourceStatus(visionStatus.status) : "inferred"
+              : "unverified",
           ),
           visionStatus,
         ));
@@ -381,7 +390,9 @@ function buildProviderSources(
           model,
           providerValidatedSourceStatus(
             providerValidationStatus,
-            embeddingStatus ? explicitStatusToSourceStatus(embeddingStatus.status) : "inferred",
+            lifecycleAvailable
+              ? embeddingStatus ? explicitStatusToSourceStatus(embeddingStatus.status) : "inferred"
+              : "unverified",
           ),
           embeddingStatus,
         ));
@@ -392,7 +403,10 @@ function buildProviderSources(
           push(capability, providerSource(
             provider,
             model,
-            providerValidatedSourceStatus(providerValidationStatus, explicitStatusToSourceStatus(explicitStatus.status)),
+            providerValidatedSourceStatus(
+              providerValidationStatus,
+              lifecycleAvailable ? explicitStatusToSourceStatus(explicitStatus.status) : "unverified",
+            ),
             explicitStatus,
           ));
         }
@@ -400,6 +414,11 @@ function buildProviderSources(
     }
   }
   return byCapability;
+}
+
+function isProviderLifecycleAvailableForRuntime(provider: FridayProviderProfile): boolean {
+  const promotionChannel = provider.promotionChannel ?? "none";
+  return promotionChannel === "none" || promotionChannel === "active";
 }
 
 function providerValidatedSourceStatus(
