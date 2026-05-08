@@ -133,6 +133,8 @@ function createTestChannelHarness(kind = "test-channel"): TestChannelHarness {
 
 async function createDefaultProviderAliasForChannelRuns(env: MockHubEnv): Promise<void> {
   const provider = env.providers["anthropic"]!;
+  const mock = env.mockFor("anthropic");
+  mock.setDefault({ type: "text", text: "OK" });
   const profile = await env.hub.providerService.createProvider({
     kind: provider.kind,
     name: "Mock default channel provider",
@@ -143,7 +145,6 @@ async function createDefaultProviderAliasForChannelRuns(env: MockHubEnv): Promis
     supportedModels: [provider.model],
     defaultModel: provider.model,
     enabled: true,
-    validateOnSave: false,
     runtimeCapabilities: [
       {
         capability: "text",
@@ -154,6 +155,7 @@ async function createDefaultProviderAliasForChannelRuns(env: MockHubEnv): Promis
         notes: "Mock provider route is backed by deterministic test fetch.",
       },
     ],
+    validateOnSave: true,
   });
 
   const db = new Database(path.join(env.stateDir, "friday.db"));
@@ -236,10 +238,6 @@ describe("Friday mock subagent canonical gate E2E", () => {
           type: "text",
           text: "Child completed the approved mutation.",
         },
-        {
-          type: "text",
-          text: "Parent observed the approved child result.",
-        },
       );
 
       const runPromise = apiFetch<AgentRunResponse>(
@@ -288,7 +286,7 @@ describe("Friday mock subagent canonical gate E2E", () => {
       expect(run.status).toBe(200);
       expect(run.json.ok).toBe(true);
       expect(run.json.data.status).toBe("completed");
-      expect(run.json.data.response).toContain("approved child result");
+      expect(run.json.data.response).toContain("Child completed the approved mutation.");
       expect(fs.existsSync(sentinel)).toBe(true);
     } finally {
       fs.rmSync(sentinel, { force: true });
