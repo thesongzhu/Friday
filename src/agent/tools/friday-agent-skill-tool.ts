@@ -154,6 +154,15 @@ export function createFridayAgentSkillTool(
             },
           });
         }
+        if (registeredSkill.origin === "managed" && registeredSkill.source !== "bundled") {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            code: "SKILL_RUN_APPROVAL_REQUIRED",
+            blockers: ["External skill execution requires canonical approval after promotion."],
+          });
+        }
         const blockers = [
           ...mcpReadiness.blockers,
           ...runtimeReadiness.blockers,

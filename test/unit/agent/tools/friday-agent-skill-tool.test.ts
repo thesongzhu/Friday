@@ -232,6 +232,58 @@ describe("FridayAgentSkillTool", () => {
     });
   });
 
+  it("blocks managed external skills instead of letting the agent bypass the approval gate", async () => {
+    const executor = mockExecutor(makeResult());
+    const registry = mockRegistry();
+    vi.mocked(registry.get).mockImplementation((skillId: string) => {
+      if (skillId !== "secure-skill") {
+        return null;
+      }
+      const manifest = makeManifest({ id: "secure-skill" });
+      return {
+        manifest,
+        skillDir: "/tmp/secure-skill",
+        source: "local",
+        origin: "managed",
+        status: "installed",
+        loaded: {
+          skillDir: "/tmp/secure-skill",
+          manifest,
+          loadMode: "manifest-v2",
+          declaredFiles: [],
+        },
+        validation: { ok: true, issues: [] },
+        trust: {
+          trustTier: "personal",
+          executionMode: "isolated",
+          sandboxPolicy: {
+            trustTier: "personal",
+            defaultExecutionMode: "isolated",
+            allowedExecutionModes: ["isolated"],
+          },
+        },
+      } as never;
+    });
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      skillRegistry: registry,
+    });
+
+    const result = await tool.execute(
+      { skillId: "secure-skill", input: {} },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content)).toMatchObject({
+      skillId: "secure-skill",
+      status: "blocked",
+      ready: false,
+      code: "SKILL_RUN_APPROVAL_REQUIRED",
+    });
+  });
+
   it("returns a clear error when required skill inputs are missing", async () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({

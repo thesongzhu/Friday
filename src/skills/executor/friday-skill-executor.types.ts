@@ -3,6 +3,12 @@ import type { FridaySkillRunStore } from "#ledger";
 import type { FridayBrowserManager } from "#browser";
 import type { FridayProviderAuthMode, FridayProviderTenantContext } from "#providers";
 import type {
+  FridayCanonicalApprovalResolution,
+  FridayMutatingActionGate,
+  FridayMutatingActionRequest,
+  FridayMutatingActionTicket,
+} from "../../security/friday-mutating-action-gate.js";
+import type {
   FridayChannelCapabilityContract,
   FridayChannelRegistry,
   FridayChannelStatus,
@@ -170,6 +176,21 @@ export interface FridaySkillExecuteRequest {
   channel: string;
   tenantContext?: FridayProviderTenantContext;
   timeoutMs?: number;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+  canonicalApprovalRequest?: FridayMutatingActionRequest;
+}
+
+export interface FridaySkillLifecycleCanaryExecuteRequest extends FridaySkillExecuteRequest {
+  lifecycleCanary: {
+    skillDir: string;
+    artifactDigest: string;
+    candidateId: string;
+    runtimeVersion: string;
+    providerModel?: string;
+    canaryInputDigest: string;
+  };
+  canonicalApproval: FridayCanonicalApprovalResolution;
+  canonicalApprovalRequest: FridayMutatingActionRequest;
 }
 
 export type FridaySkillExecuteStatus = "completed" | "failed" | "cancelled" | "timeout";
@@ -181,6 +202,7 @@ export interface FridaySkillExecuteResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  canonicalTicket?: FridayMutatingActionTicket;
 }
 
 export interface FridaySkillExecuteHandle {
@@ -190,6 +212,7 @@ export interface FridaySkillExecuteHandle {
 
 export interface FridaySkillExecutor {
   execute(request: FridaySkillExecuteRequest): FridaySkillExecuteHandle;
+  executeLifecycleCanary(request: FridaySkillLifecycleCanaryExecuteRequest): FridaySkillExecuteHandle;
   cancel(runId: string): void;
 }
 
@@ -204,6 +227,7 @@ export interface CreateFridaySkillExecutorDeps {
   getSelfHealingService?: () => FridaySkillReadonlySelfHealingServiceLike | undefined;
   getBrowserManager?: () => FridayBrowserManager | undefined;
   getChannelRegistry?: () => FridayChannelRegistry | undefined;
+  canonicalMutationGate?: FridayMutatingActionGate;
 }
 
 /**

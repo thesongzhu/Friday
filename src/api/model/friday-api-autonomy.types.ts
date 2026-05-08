@@ -9,6 +9,7 @@ import type {
   FridayAutonomyCompatibilityStatus,
   FridayAutonomyPromotionChannel,
 } from "../../autonomy/model/friday-autonomy-upgrade.types.js";
+import type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
 import type { FridayUpgradeImpactFinding } from "../../autonomy/model/friday-autonomy-impact.types.js";
 import type {
   FridayAgendaItem,
@@ -69,14 +70,23 @@ export interface FridayRecordWorkflowCanaryRequest {
 }
 
 export interface FridayRegisterSkillShadowRequest {
-  shadowVersionId: string;
+  candidateId: string;
+  shadowVersionId?: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordSkillCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  candidateId: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  input?: Record<string, unknown>;
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterPluginShadowRequest {
@@ -164,13 +174,22 @@ export interface FridayRollbackChannelAdapterUpgradeRequest {
 }
 
 export interface FridayPromoteSkillUpgradeRequest {
+  candidateId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackSkillUpgradeRequest {
+  candidateId: string;
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteWorkflowUpgradeRequest {
@@ -202,6 +221,7 @@ export interface FridaySkillUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayPluginUpgradeActionResponse {

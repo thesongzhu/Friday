@@ -5,6 +5,7 @@ import type {
   FridaySkillExecuteRequest,
   FridaySkillExecuteResult,
   FridaySkillExecutor,
+  FridaySkillLifecycleCanaryExecuteRequest,
 } from "./friday-skill-executor.types.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type { SkillExecutionMode } from "../model/friday-skill-trust.types.js";
@@ -34,8 +35,22 @@ import {
   resolveFridayPythonCommand,
 } from "./friday-runtime-probe.js";
 import { createFridaySkillReadonlyRuntimeContext } from "./friday-skill-runtime-bridge.js";
+import { createFridaySkillRunMutatingActionRequest } from "./friday-skill-run-approval.js";
 import { compileFridaySkillSchemas } from "../validation/friday-skill-schema-compiler.js";
-import { isAbsolute, relative, resolve } from "node:path";
+import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.js";
+import { validateFridaySkillPackage } from "../validation/friday-skill-validation-pipeline.js";
+import { enforceFridaySkillTrust } from "../trust/friday-skill-trust-enforcer.js";
+import {
+  createFridayMutatingActionDigest,
+  type FridayMutatingActionTicket,
+} from "../../security/friday-mutating-action-gate.js";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+
+type InternalFridaySkillExecuteRequest = FridaySkillExecuteRequest & {
+  lifecycleCanary?: FridaySkillLifecycleCanaryExecuteRequest["lifecycleCanary"];
+};
 
 function defaultTenantContext(request: FridaySkillExecuteRequest) {
   return request.tenantContext ?? {
@@ -43,6 +58,149 @@ function defaultTenantContext(request: FridaySkillExecuteRequest) {
     userId: request.userId,
     channelKind: request.channel,
   };
+}
+
+function isManagedExternalSkill(registered: FridayRegisteredSkill): boolean {
+  return registered.origin === "managed" && registered.source !== "bundled";
+}
+
+function evaluateExternalSkillRunGate(input: {
+  request: FridaySkillExecuteRequest;
+  deps: CreateFridaySkillExecutorDeps;
+}): { allowed: true } | { allowed: false; code: string; message: string; details?: Record<string, unknown> } {
+  const approvalRequest = input.request.canonicalApprovalRequest;
+  if (!approvalRequest) {
+    return {
+      allowed: false,
+      code: "SKILL_RUN_APPROVAL_REQUIRED",
+      message: "External skill run requires canonical approval after promotion.",
+    };
+  }
+  if (!input.deps.canonicalMutationGate) {
+    return {
+      allowed: false,
+      code: "SKILL_RUN_GATE_UNAVAILABLE",
+      message: "External skill runs require the canonical approval gate.",
+    };
+  }
+  const expectedRequest = createFridaySkillRunMutatingActionRequest({
+    skillId: input.request.skillId,
+    input: input.request.input,
+    timeoutMs: input.request.timeoutMs,
+    channel: input.request.channel,
+    sessionId: input.request.sessionId,
+    actor: approvalRequest.actor,
+    surface: approvalRequest.surface,
+    idempotencyKey: approvalRequest.idempotencyKey,
+  });
+  const expectedDigest = createFridayMutatingActionDigest(expectedRequest);
+  const actualDigest = createFridayMutatingActionDigest(approvalRequest);
+  if (expectedDigest !== actualDigest) {
+    return {
+      allowed: false,
+      code: "SKILL_RUN_APPROVAL_DENIED",
+      message: "External skill run approval request does not match the requested execution.",
+      details: { expectedDigest, actualDigest },
+    };
+  }
+  const gateResult = input.deps.canonicalMutationGate.evaluate({
+    ...approvalRequest,
+    canonicalApproval: input.request.canonicalApproval,
+  });
+  if (gateResult.decision !== "allow") {
+    return {
+      allowed: false,
+      code: gateResult.decision === "requires_approval"
+        ? "SKILL_RUN_APPROVAL_REQUIRED"
+        : "SKILL_RUN_APPROVAL_DENIED",
+      message: gateResult.decision === "requires_approval"
+        ? "External skill runs require canonical approval after promotion."
+        : `External skill run was blocked by the canonical approval gate: ${gateResult.reason}`,
+      details: {
+        actionDigest: gateResult.actionDigest,
+        approvalRequired: gateResult.approvalRequired,
+        reason: gateResult.reason,
+      },
+    };
+  }
+  return { allowed: true };
+}
+
+function evaluateLifecycleCanaryGate(input: {
+  request: FridaySkillLifecycleCanaryExecuteRequest;
+  deps: CreateFridaySkillExecutorDeps;
+}): { allowed: true; ticket: FridayMutatingActionTicket } | { allowed: false; code: string; message: string; details?: Record<string, unknown> } {
+  if (!input.deps.canonicalMutationGate) {
+    return {
+      allowed: false,
+      code: "SKILL_LIFECYCLE_CANARY_GATE_UNAVAILABLE",
+      message: "Skill lifecycle canary requires the canonical approval gate.",
+    };
+  }
+  const approvalRequest = input.request.canonicalApprovalRequest;
+  const validationError = validateLifecycleCanaryApprovalRequest(input.request);
+  if (validationError) {
+    return {
+      allowed: false,
+      code: "SKILL_LIFECYCLE_CANARY_APPROVAL_DENIED",
+      message: validationError,
+    };
+  }
+  const gateResult = input.deps.canonicalMutationGate.evaluate({
+    ...approvalRequest,
+    canonicalApproval: input.request.canonicalApproval,
+  });
+  if (gateResult.decision !== "allow" || !gateResult.ticket) {
+    return {
+      allowed: false,
+      code: gateResult.decision === "requires_approval"
+        ? "SKILL_LIFECYCLE_CANARY_APPROVAL_REQUIRED"
+        : "SKILL_LIFECYCLE_CANARY_APPROVAL_DENIED",
+      message: gateResult.decision === "requires_approval"
+        ? "Skill lifecycle canary requires canonical approval before execution."
+        : `Skill lifecycle canary was blocked by the canonical approval gate: ${gateResult.reason}`,
+      details: {
+        actionDigest: gateResult.actionDigest,
+        approvalRequired: gateResult.approvalRequired,
+        reason: gateResult.reason,
+      },
+    };
+  }
+  return { allowed: true, ticket: gateResult.ticket };
+}
+
+function validateLifecycleCanaryApprovalRequest(request: FridaySkillLifecycleCanaryExecuteRequest): string | null {
+  const approvalRequest = request.canonicalApprovalRequest;
+  const attributes = approvalRequest.resource.attributes ?? {};
+  const parameters = approvalRequest.parameters ?? {};
+  if (approvalRequest.action !== "skills.lifecycle.canary") {
+    return "Skill lifecycle canary approval must authorize skills.lifecycle.canary.";
+  }
+  if (approvalRequest.resource.type !== "external_skill_lifecycle" || approvalRequest.resource.id !== request.skillId) {
+    return "Skill lifecycle canary approval resource does not match the requested skill.";
+  }
+  if (
+    attributes.skillId !== request.skillId
+    || attributes.candidateId !== request.lifecycleCanary.candidateId
+    || attributes.lifecycleAction !== "canary"
+    || attributes.canaryInputDigest !== request.lifecycleCanary.canaryInputDigest
+  ) {
+    return "Skill lifecycle canary approval attributes do not match the requested execution.";
+  }
+  if (
+    parameters.skillId !== request.skillId
+    || parameters.candidateId !== request.lifecycleCanary.candidateId
+    || parameters.shadowVersionId !== request.lifecycleCanary.candidateId
+    || parameters.runtimeVersion !== request.lifecycleCanary.runtimeVersion
+    || parameters.providerModel !== request.lifecycleCanary.providerModel
+    || parameters.canaryInputDigest !== request.lifecycleCanary.canaryInputDigest
+  ) {
+    return "Skill lifecycle canary approval parameters do not match the requested execution.";
+  }
+  if (createFridayMutatingActionDigest(approvalRequest) !== request.canonicalApproval.actionDigest) {
+    return "Skill lifecycle canary approval digest does not match the requested execution.";
+  }
+  return null;
 }
 
 async function runProviderInference(params: {
@@ -410,6 +568,166 @@ function resolveSkillRuntimeEntrypoint(skill: FridayRegisteredSkill): string {
   return entrypoint;
 }
 
+function hashDirectory(dir: string): string {
+  const root = resolve(dir);
+  const hash = createHash("sha256");
+  for (const filePath of listFiles(root)) {
+    const rel = relative(root, filePath).split(sep).join("/");
+    const stat = statSync(filePath);
+    hash.update(rel);
+    hash.update(String(stat.mode & 0o777));
+    hash.update(readFileSync(filePath));
+  }
+  return hash.digest("hex");
+}
+
+function listFiles(dir: string): string[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const files: string[] = [];
+  for (const entry of readdirSync(dir).sort()) {
+    const entryPath = join(dir, entry);
+    const stat = statSync(entryPath);
+    if (stat.isDirectory()) {
+      files.push(...listFiles(entryPath));
+    } else if (stat.isFile()) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function loadLifecycleCanarySkill(request: FridaySkillLifecycleCanaryExecuteRequest): {
+  registered?: FridayRegisteredSkill;
+  error?: FridaySkillExecuteResult;
+} {
+  const canary = request.lifecycleCanary;
+
+  const start = Date.now();
+  if (!existsSync(canary.skillDir)) {
+    return {
+      error: {
+        runId: "",
+        status: "failed",
+        output: {
+          code: "SKILL_LIFECYCLE_CANARY_ARTIFACT_MISSING",
+          artifactDigest: canary.artifactDigest,
+          approvalId: request.canonicalApproval.approvalId,
+        },
+        stdout: "",
+        stderr: "Lifecycle canary artifact is missing.",
+        durationMs: Date.now() - start,
+      },
+    };
+  }
+  const actualDigest = hashDirectory(canary.skillDir);
+  if (actualDigest !== canary.artifactDigest) {
+    return {
+      error: {
+        runId: "",
+        status: "failed",
+        output: {
+          code: "SKILL_LIFECYCLE_CANARY_ARTIFACT_MISMATCH",
+          expectedDigest: canary.artifactDigest,
+          actualDigest,
+          approvalId: request.canonicalApproval.approvalId,
+        },
+        stdout: "",
+        stderr: "Lifecycle canary artifact digest does not match the approved shadow.",
+        durationMs: Date.now() - start,
+      },
+    };
+  }
+  const loaded = loadFridaySkillPackage({
+    skillDir: canary.skillDir,
+    workspaceDir: canary.skillDir,
+  });
+  if (!loaded.ok) {
+    return {
+      error: {
+        runId: "",
+        status: "failed",
+        output: {
+          code: "SKILL_LIFECYCLE_CANARY_LOAD_FAILED",
+          artifactDigest: canary.artifactDigest,
+          approvalId: request.canonicalApproval.approvalId,
+        },
+        stdout: "",
+        stderr: loaded.error.message,
+        durationMs: Date.now() - start,
+      },
+    };
+  }
+
+  if (loaded.value.manifest.id !== request.skillId) {
+    return {
+      error: {
+        runId: "",
+        status: "failed",
+        output: {
+          code: "SKILL_LIFECYCLE_CANARY_SKILL_MISMATCH",
+          expectedSkillId: request.skillId,
+          actualSkillId: loaded.value.manifest.id,
+          artifactDigest: canary.artifactDigest,
+          approvalId: request.canonicalApproval.approvalId,
+        },
+        stdout: "",
+        stderr: `Lifecycle canary manifest id '${loaded.value.manifest.id}' does not match '${request.skillId}'.`,
+        durationMs: Date.now() - start,
+      },
+    };
+  }
+
+  const validation = validateFridaySkillPackage({
+    loaded: loaded.value,
+    workspaceDir: canary.skillDir,
+    hubVersion: "1.0.0",
+    supportedApiVersions: ["1"],
+  });
+  const trust = enforceFridaySkillTrust({
+    manifest: loaded.value.manifest,
+    origin: "managed",
+    requestedExecutionMode: "isolated",
+    securityProfile: {},
+  });
+  const trustErrors = trust.issues.filter((issue) => issue.severity === "error");
+  if (!validation.ok || !trust.decision || trustErrors.length > 0) {
+    const issues = [
+      ...validation.issues.filter((issue) => issue.severity === "error").map((issue) => issue.message),
+      ...trustErrors.map((issue) => issue.message),
+    ];
+    return {
+      error: {
+        runId: "",
+        status: "failed",
+        output: {
+          code: "SKILL_LIFECYCLE_CANARY_VALIDATION_FAILED",
+          issues,
+          artifactDigest: canary.artifactDigest,
+          approvalId: request.canonicalApproval.approvalId,
+        },
+        stdout: "",
+        stderr: issues.join(" "),
+        durationMs: Date.now() - start,
+      },
+    };
+  }
+
+  return {
+    registered: {
+      manifest: loaded.value.manifest,
+      skillDir: canary.skillDir,
+      source: "local",
+      origin: "managed",
+      status: "installed",
+      loaded: loaded.value,
+      validation,
+      trust: trust.decision,
+    },
+  };
+}
+
 /**
  * Creates the main skill executor that routes to the correct runtime executor
  * (shell / node) based on the manifest's `runtime.kind`, and tracks run state
@@ -422,10 +740,9 @@ export function createFridaySkillExecutor(
   const nodeExecutor = createFridayNodeExecutor();
   const activeRuns = new Map<string, { cancelled: boolean; controller: AbortController }>();
 
-  return {
-    execute(
-      request: FridaySkillExecuteRequest,
-    ): FridaySkillExecuteHandle {
+  function executeInternal(
+    request: InternalFridaySkillExecuteRequest,
+  ): FridaySkillExecuteHandle {
       const runId = deps.idGenerator();
 
       // ─── ai-inference shortcut: route through provider service ───
@@ -482,8 +799,41 @@ export function createFridaySkillExecutor(
         return { runId, result };
       }
 
-      // Look up skill in registry — return early handle with resolved promise on failure
-      const registered = deps.registry.get(request.skillId);
+      const lifecycleCanaryGate = request.lifecycleCanary
+        ? evaluateLifecycleCanaryGate({ request: request as FridaySkillLifecycleCanaryExecuteRequest, deps })
+        : undefined;
+      if (lifecycleCanaryGate && !lifecycleCanaryGate.allowed) {
+        return {
+          runId,
+          result: Promise.resolve({
+            runId,
+            status: "failed",
+            output: {
+              code: lifecycleCanaryGate.code,
+              ...(lifecycleCanaryGate.details ? { details: lifecycleCanaryGate.details } : {}),
+            },
+            stdout: "",
+            stderr: lifecycleCanaryGate.message,
+            durationMs: 0,
+          }),
+        };
+      }
+
+      // Look up skill in registry, or load a lifecycle-only shadow artifact for canary proof.
+      const lifecycleCanary = request.lifecycleCanary
+        ? loadLifecycleCanarySkill(request as FridaySkillLifecycleCanaryExecuteRequest)
+        : {};
+      if (lifecycleCanary.error) {
+        return {
+          runId,
+          result: Promise.resolve({
+            ...lifecycleCanary.error,
+            runId,
+            ...(lifecycleCanaryGate?.allowed ? { canonicalTicket: lifecycleCanaryGate.ticket } : {}),
+          }),
+        };
+      }
+      const registered = lifecycleCanary.registered ?? deps.registry.get(request.skillId);
       if (!registered) {
         return {
           runId,
@@ -513,6 +863,27 @@ export function createFridaySkillExecutor(
             durationMs: 0,
           }),
         };
+      }
+
+      if (!request.lifecycleCanary && isManagedExternalSkill(registered)) {
+        const gateResult = evaluateExternalSkillRunGate({ request, deps });
+        if (!gateResult.allowed) {
+          return {
+            runId,
+            result: Promise.resolve({
+              runId,
+              status: "failed",
+              output: {
+                code: gateResult.code,
+                status: registered.status,
+                ...(gateResult.details ? { details: gateResult.details } : {}),
+              },
+              stdout: "",
+              stderr: gateResult.message,
+              durationMs: 0,
+            }),
+          };
+        }
       }
 
       const controller = new AbortController();
@@ -963,10 +1334,32 @@ export function createFridaySkillExecutor(
           },
         });
 
-        return finalResult;
+        return lifecycleCanaryGate?.allowed
+          ? { ...finalResult, canonicalTicket: lifecycleCanaryGate.ticket }
+          : finalResult;
       })();
 
       return { runId, result };
+  }
+
+  return {
+    execute(
+      request: FridaySkillExecuteRequest,
+    ): FridaySkillExecuteHandle {
+      if ("lifecycleCanary" in request && (request as { lifecycleCanary?: unknown }).lifecycleCanary !== undefined) {
+        throw new FridayDomainError(
+          "SKILL_LIFECYCLE_CANARY_INTERNAL_ONLY",
+          "Lifecycle canary execution must use the internal lifecycle executor entrypoint.",
+          { httpStatus: 403 },
+        );
+      }
+      return executeInternal(request);
+    },
+
+    executeLifecycleCanary(
+      request: FridaySkillLifecycleCanaryExecuteRequest,
+    ): FridaySkillExecuteHandle {
+      return executeInternal(request);
     },
 
     cancel(runId: string): void {

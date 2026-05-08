@@ -24,9 +24,18 @@ import {
 import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
 } from "../../../src/security/friday-mutating-action-gate.js";
+import {
+  createFridaySkillLifecycleCanaryInputDigest,
+  createFridaySkillLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import { createFridaySkillRunMutatingActionRequest } from "../../../src/api/http/routes/friday-skill-routes.js";
 
 const CANONICAL_STAGE_NOW = "2026-02-17T12:00:00.000Z";
+const PHASE32_TOKEN_SECRET = "phase32-token-secret";
+const PHASE32_PLAN_DIGEST = "phase32a-plan-digest";
 
 function makeCanonicalStageTicket(input: FridaySkillImportInput) {
   const actor = {
@@ -63,6 +72,68 @@ function makeCanonicalStageTicket(input: FridaySkillImportInput) {
     throw new Error(`failed to create canonical stage ticket: ${result.reason}`);
   }
   return result.ticket;
+}
+
+function makeSignedLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  skillId: string;
+  candidateId: string;
+  runtimeVersion: string;
+  canaryInput?: Record<string, unknown>;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: PHASE32_PLAN_DIGEST, actions: ["skills.lifecycle.promote"] }
+    : undefined;
+  const request = createFridaySkillLifecycleMutatingActionRequest({
+    action: input.action,
+    skillId: input.skillId,
+    candidateId: input.candidateId,
+    shadowVersionId: input.candidateId,
+    runtimeVersion: input.runtimeVersion,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: `api:/v1/autonomy/skills/${input.action}`,
+    planDigest: PHASE32_PLAN_DIGEST,
+    rollback,
+    canaryInputDigest: input.action === "canary"
+      ? createFridaySkillLifecycleCanaryInputDigest(input.canaryInput)
+      : undefined,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `phase32-${input.action}-approval`,
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
+}
+
+function makeSignedSkillRunApproval(input: {
+  skillId: string;
+  runInput: Record<string, unknown>;
+}): FridayCanonicalApprovalResolution {
+  const request = createFridaySkillRunMutatingActionRequest({
+    skillId: input.skillId,
+    input: input.runInput,
+    channel: "api",
+    sessionId: `api-skill-run:${input.skillId}`,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: "api:/v1/skills/:skillId/run",
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: "phase32-run-approval",
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
 }
 
 describe("FridayHub Bootstrap Integration", () => {
@@ -433,6 +504,178 @@ describe("FridayHub Bootstrap Integration", () => {
         process.env.XDG_STATE_HOME = previousXdgStateHome;
       }
     }
+  });
+
+  it("drives external skill candidate through shadow, real canary, promote, run, and rollback via autonomy routes", async () => {
+    const stateDir = makeTmpDir();
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const skillId = "phase32-skill";
+    const runtimeVersion = "runtime-phase32";
+
+    fs.writeFileSync(path.join(sourceDir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: skillId,
+      name: "Phase 3.2 Skill",
+      description: "External lifecycle closure fixture",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Friday Test" },
+      tags: ["phase32"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: { userInvocable: true, modelInvocable: true, priority: 50, modes: ["intent"] },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string", description: "Result" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "SKILL.md"), "# Phase 3.2 Skill\n");
+    fs.writeFileSync(path.join(sourceDir, "skill.ui.json"), JSON.stringify({
+      schemaVersion: "1.0",
+      title: "Phase 3.2 Skill",
+      sections: [],
+      fields: [],
+      outputs: [],
+      actions: [],
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "run.sh"), "#!/usr/bin/env bash\necho '{\"result\":\"phase32-ok\"}'\n");
+    fs.chmodSync(path.join(sourceDir, "run.sh"), 0o755);
+
+    const hub = await createFridayHub({
+      stateDir,
+      skillDirs: [bundledSkillsDir, managedSkillsDir],
+      tokenSecret: PHASE32_TOKEN_SECRET,
+    });
+    hubs.push(hub);
+
+    const importInput = {
+      source: { uri: sourceDir },
+      formatHint: "friday-package" as const,
+    };
+    const importResult = await hub.converterService.import({
+      ...importInput,
+      canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+    });
+    const candidate = importResult.candidates[0]!;
+
+    const principal = {
+      principalType: "user" as const,
+      principalId: "phase32-user",
+      userId: "phase32-user",
+      role: "admin" as const,
+      scopes: ["hub.admin"] as const,
+    };
+	    const invokeRoute = async (operationId: string, body: Record<string, unknown>) => {
+	      const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === operationId);
+	      expect(route).toBeDefined();
+	      return route!.handler({
+        requestId: `${operationId}:req`,
+        receivedAt: new Date().toISOString(),
+        params: { skillId },
+        query: {},
+        body,
+        headers: {},
+	        principal,
+	      });
+	    };
+
+	    await expect(invokeRoute("skills.install", { skillId, sourceId: "legacy-source" }))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(invokeRoute("skills.update", { version: "2.0.0" }))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(invokeRoute("skills.delete", {}))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+
+	    await invokeRoute("autonomy.skills.shadow", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "shadow",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, ".shadow", skillId, candidate.candidateId, "skill.manifest.json"))).toBe(true);
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(false);
+
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+    });
+
+    await invokeRoute("autonomy.skills.canary", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      input: {},
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "canary",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+        canaryInput: {},
+      }),
+    });
+
+    await invokeRoute("autonomy.skills.promote", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "promote",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(true);
+
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_RUN_APPROVAL_REQUIRED",
+    });
+    const runResult = await invokeRoute("skills.run", {
+      input: {},
+      canonicalApproval: makeSignedSkillRunApproval({ skillId, runInput: {} }),
+    }) as {
+      status: string;
+      output: { result?: string };
+    };
+    expect(runResult.status).toBe("completed");
+    expect(runResult.output.result).toBe("phase32-ok");
+
+    await invokeRoute("autonomy.skills.rollback", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      reason: "integration rollback proof",
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "rollback",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(false);
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+    });
   });
 
   it("blocks legacy system approval-rule mutation route in the live hub", async () => {

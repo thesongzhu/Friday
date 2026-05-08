@@ -1,6 +1,6 @@
 import { FridayDomainError } from "#errors";
 
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayAgendaItemResponse,
   FridayAgendaRunResponse,
@@ -57,6 +57,13 @@ import type { FridaySkillLifecycleDetail } from "#skills";
 import type { FridayPluginEntity } from "../../../plugins/model/friday-plugin.types.js";
 import type { FridayProviderProfile } from "../../../providers/model/friday-provider.types.js";
 import { FRIDAY_RUNTIME_CAPABILITY_IDS, type FridayRuntimeCapabilityId } from "#providers";
+import {
+  type FridaySkillLifecycleApprovalRequestInput,
+} from "../../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import {
+  type FridayCanonicalApprovalResolution,
+  type FridayMutatingActionGate,
+} from "../../../security/friday-mutating-action-gate.js";
 
 const AUTONOMY_SUBJECT_KINDS: ReadonlySet<FridayAutonomySubjectKind> = new Set([
   "skill",
@@ -76,6 +83,7 @@ export interface FridayAutonomyRoutesDeps {
   policyService?: FridayAutonomyPolicyService;
   acquisitionService?: FridayCapabilityAcquisitionService;
   standingAgendaService?: FridayStandingAgendaService;
+  canonicalMutationGate?: FridayMutatingActionGate;
   workflowActions?: {
     registerShadow: (
       input: { workflowId: string } & FridayRegisterWorkflowShadowRequest,
@@ -93,18 +101,19 @@ export interface FridayAutonomyRoutesDeps {
   };
   skillActions?: {
     registerShadow: (
-      input: { skillId: string } & FridayRegisterSkillShadowRequest,
+      input: { skillId: string; actor: FridaySkillLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRegisterSkillShadowRequest,
     ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
     recordCanary: (
-      input: { skillId: string } & FridayRecordSkillCanaryRequest,
+      input: { skillId: string; actor: FridaySkillLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRecordSkillCanaryRequest,
     ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
     promote: (
-      input: { skillId: string } & FridayPromoteSkillUpgradeRequest,
+      input: { skillId: string; actor: FridaySkillLifecycleApprovalRequestInput["actor"]; surface: string } & FridayPromoteSkillUpgradeRequest,
     ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
     rollback: (
-      input: { skillId: string } & FridayRollbackSkillUpgradeRequest,
+      input: { skillId: string; actor: FridaySkillLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRollbackSkillUpgradeRequest,
     ) => FridaySkillLifecycleDetail | Promise<FridaySkillLifecycleDetail>;
     getStatus: (skillId: string) => FridaySkillUpgradeActionResponse["status"];
+    getEvidence: (input: { skillId: string; candidateId: string }) => FridaySkillUpgradeActionResponse["evidence"] | null;
   };
   pluginActions?: {
     registerShadow: (
@@ -182,6 +191,75 @@ function buildSkillUpgradeActionPayload(
     shadowVersionId: status?.shadowVersionId,
     canaryStats: status?.canaryStats,
   };
+}
+
+function createActorFromPrincipal(
+  principal: FridayAuthPrincipal | null,
+  fallbackId: string,
+): FridaySkillLifecycleApprovalRequestInput["actor"] {
+  if (!principal) {
+    return {
+      kind: "api",
+      id: fallbackId,
+      principalId: fallbackId,
+    };
+  }
+  return {
+    kind: principal.principalType,
+    id: principal.principalId,
+    principalId: principal.principalId,
+  };
+}
+
+function readCanonicalApproval(value: unknown): FridayCanonicalApprovalResolution | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as FridayCanonicalApprovalResolution;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "canonicalApproval must be an object", { httpStatus: 400 });
+}
+
+function requireSkillLifecycleCanonicalApproval(
+  action: FridaySkillLifecycleApprovalRequestInput["action"],
+  canonicalApproval: FridayCanonicalApprovalResolution | undefined,
+): FridayCanonicalApprovalResolution {
+  if (!canonicalApproval) {
+    throw new FridayDomainError(
+      "CANONICAL_APPROVAL_REQUIRED",
+      `Skill lifecycle ${action} requires canonical approval before any mutation.`,
+      { httpStatus: 403 },
+    );
+  }
+  return canonicalApproval;
+}
+
+function requireSkillLifecycleEvidence(input: {
+  deps: FridayAutonomyRoutesDeps;
+  skillId: string;
+  candidateId: string;
+  expectedStage: string;
+}): Record<string, unknown> {
+  const evidence = input.deps.skillActions!.getEvidence({ skillId: input.skillId, candidateId: input.candidateId });
+  if (!evidence) {
+    throw new FridayDomainError(
+      "SKILL_LIFECYCLE_EVIDENCE_MISSING",
+      `Skill lifecycle ${input.expectedStage} completed without readable lifecycle evidence.`,
+      { httpStatus: 500, details: { skillId: input.skillId, candidateId: input.candidateId, stage: input.expectedStage } },
+    );
+  }
+  return evidence;
+}
+
+function readOptionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", `${field} must be an object`, { httpStatus: 400 });
 }
 
 function buildPluginUpgradeActionPayload(
@@ -639,14 +717,36 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const candidateId = requireNonEmptyString(body.candidateId, "candidateId");
+          const shadowVersionId = typeof body.shadowVersionId === "string" && body.shadowVersionId.trim().length > 0
+            ? body.shadowVersionId.trim()
+            : candidateId;
+          const runtimeVersion = requireNonEmptyString(body.runtimeVersion, "runtimeVersion");
+          const providerModel = typeof body.providerModel === "string" ? body.providerModel : undefined;
+          const planDigest = typeof body.planDigest === "string" ? body.planDigest : undefined;
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireSkillLifecycleCanonicalApproval(
+            "shadow",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const skill = await deps.skillActions!.registerShadow({
             skillId,
-            shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
-            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
-            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            candidateId,
+            shadowVersionId,
+            runtimeVersion,
+            providerModel,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/skills/shadow",
           });
           const status = deps.skillActions!.getStatus(skillId);
-          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+          return {
+            skill: buildSkillUpgradeActionPayload(skill, status),
+            status,
+            evidence: requireSkillLifecycleEvidence({ deps, skillId, candidateId, expectedStage: "shadow" }),
+          };
         },
       },
       {
@@ -657,18 +757,40 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
-          if (typeof body.success !== "boolean") {
-            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
-              httpStatus: 400,
-            });
+          if (body.success !== undefined || body.evaluatedAt !== undefined) {
+            throw new FridayDomainError(
+              "SKILL_CANARY_RUNTIME_PROOF_REQUIRED",
+              "Skill canary results cannot be supplied by the caller; the lifecycle runtime must execute the canary.",
+              { httpStatus: 400 },
+            );
           }
+          const candidateId = requireNonEmptyString(body.candidateId, "candidateId");
+          const runtimeVersion = requireNonEmptyString(body.runtimeVersion, "runtimeVersion");
+          const providerModel = typeof body.providerModel === "string" ? body.providerModel : undefined;
+          const planDigest = typeof body.planDigest === "string" ? body.planDigest : undefined;
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireSkillLifecycleCanonicalApproval(
+            "canary",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const skill = await deps.skillActions!.recordCanary({
             skillId,
-            success: body.success,
-            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+            candidateId,
+            runtimeVersion,
+            providerModel,
+            input: readOptionalRecord(body.input, "input"),
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/skills/canary",
           });
           const status = deps.skillActions!.getStatus(skillId);
-          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+          return {
+            skill: buildSkillUpgradeActionPayload(skill, status),
+            status,
+            evidence: requireSkillLifecycleEvidence({ deps, skillId, candidateId, expectedStage: "canary" }),
+          };
         },
       },
       {
@@ -679,13 +801,32 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const candidateId = requireNonEmptyString(body.candidateId, "candidateId");
+          const runtimeVersion = requireNonEmptyString(body.runtimeVersion, "runtimeVersion");
+          const providerModel = typeof body.providerModel === "string" ? body.providerModel : undefined;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireSkillLifecycleCanonicalApproval(
+            "promote",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const skill = await deps.skillActions!.promote({
             skillId,
-            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
-            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            candidateId,
+            runtimeVersion,
+            providerModel,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/skills/promote",
           });
           const status = deps.skillActions!.getStatus(skillId);
-          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+          return {
+            skill: buildSkillUpgradeActionPayload(skill, status),
+            status,
+            evidence: requireSkillLifecycleEvidence({ deps, skillId, candidateId, expectedStage: "active" }),
+          };
         },
       },
       {
@@ -696,13 +837,33 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const candidateId = requireNonEmptyString(body.candidateId, "candidateId");
+          const runtimeVersion = requireNonEmptyString(body.runtimeVersion, "runtimeVersion");
+          const providerModel = typeof body.providerModel === "string" ? body.providerModel : undefined;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireSkillLifecycleCanonicalApproval(
+            "rollback",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const skill = await deps.skillActions!.rollback({
             skillId,
-            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
-            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            candidateId,
+            runtimeVersion,
+            providerModel,
+            reason: typeof body.reason === "string" ? body.reason : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/skills/rollback",
           });
           const status = deps.skillActions!.getStatus(skillId);
-          return { skill: buildSkillUpgradeActionPayload(skill, status), status };
+          return {
+            skill: buildSkillUpgradeActionPayload(skill, status),
+            status,
+            evidence: requireSkillLifecycleEvidence({ deps, skillId, candidateId, expectedStage: "rolled_back" }),
+          };
         },
       },
     );

@@ -35,8 +35,8 @@ import type {
 import type { FridaySkillPackageArchiver } from "./friday-skill-package-archive.js";
 import {
   createFridaySkillCandidateStore,
-  redactFridaySkillSourceValue,
   type FridayExternalSkillCandidate,
+  redactFridaySkillSourceValue,
 } from "./friday-skill-candidate-store.js";
 import { summarizeFridaySkillConversionQuality } from "./friday-skill-converter-quality.js";
 import { createFridaySkillStageMutatingActionRequest } from "./friday-skill-staging-approval.js";

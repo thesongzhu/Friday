@@ -44,6 +44,7 @@ import { buildOpenBrowserUrlCommand, isFridayTestSecurityWarningSuppressed, safe
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
+import { createFridayMutatingActionGate } from "../security/friday-mutating-action-gate.js";
 import {
   buildFridayRuntimeCapabilityMatrix,
   createFridayProviderCostCalculator,
@@ -77,9 +78,9 @@ import {
   createLinuxProgramScanner,
   createWin32ProgramScanner,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
-  redactFridaySkillSourceText,
   type FridaySkillInstallTarget,
   type FridaySkillSourceFormat,
+  redactFridaySkillSourceText,
 } from "#skills/converter";
 import { createFridaySkillRunStore } from "#ledger";
 import type { FridayLearningEventAppendInput } from "#ledger";
@@ -960,6 +961,12 @@ export async function createFridayHub(
 
   let browserManager: FridayBrowserManager | undefined;
   const channelRegistry: FridayChannelRegistry = createFridayChannelRegistry();
+  const skillRunCanonicalMutationGate = createFridayMutatingActionGate({
+    nowIso,
+    ticketIdGenerator: () => idGenerator(),
+    approvalSignatureSecret: tokenSecret,
+    requireApprovalSignature: true,
+  });
 
   // 7. Create executor with providerService injected for ai-inference BYOK path
   const executor = createFridaySkillExecutor({
@@ -973,6 +980,7 @@ export async function createFridayHub(
     getSelfHealingService: () => selfHealingApiService,
     getBrowserManager: () => browserManager,
     getChannelRegistry: () => channelRegistry,
+    canonicalMutationGate: skillRunCanonicalMutationGate,
   });
 
   const rulesRepository = createFridayRulesRepository();
@@ -5703,6 +5711,7 @@ export async function createFridayHub(
     workflowGenerator,
     skillRegistry: registry,
     skillExecutor: executor,
+    updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
     tokenSecret,
     pluginRuntimeMode,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],

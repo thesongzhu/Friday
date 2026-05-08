@@ -131,7 +131,7 @@ import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js
 import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
-import { createFridaySkillRepository } from "#skills";
+import { createFridaySkillRepository, type FridaySkillLifecycleDetail } from "#skills";
 import { createFridayPluginRepository } from "#plugins";
 import { createFridayWorkflowRepository } from "#workflows";
 import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
@@ -740,7 +740,94 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     skillRepo,
     nowIso: deps.nowIso,
+    managedSkillsDir: deps.managedSkillsDir,
+    resolveCandidate: deps.converterService
+      ? (input) => deps.converterService!.getCandidate(input)
+      : undefined,
+    skillExecutor: deps.skillExecutor,
+    canonicalMutationGate,
+    refreshRegistry: deps.skillRegistry
+      ? () => deps.skillRegistry!.refresh()
+      : undefined,
+    updateSkillStatus: deps.updateSkillStatus,
   });
+  const getSkillLifecycleDetail = (skillId: string): FridaySkillLifecycleDetail | null => {
+    const lifecycleDetail = deps.skillLifecycle?.getSkill(skillId);
+    if (lifecycleDetail) {
+      return lifecycleDetail;
+    }
+    const registeredSkill = deps.skillRegistry?.get(skillId);
+    const persistedSkill = skillRepo.getSkillById(deps.db.writer, skillId);
+    if (!registeredSkill && !persistedSkill) {
+      return null;
+    }
+    const manifest = registeredSkill?.manifest ?? persistedSkill?.currentManifest;
+    const status = persistedSkill?.status ?? registeredSkill?.status ?? "not_installed";
+    const latestVersion = persistedSkill?.latestVersion ?? manifest?.version;
+    const installedVersion = persistedSkill?.installedVersion
+      ?? (status === "installed" ? manifest?.version : undefined);
+    const requirementPreview = {
+      bins: [] as string[],
+      env: [] as string[],
+      config: [] as string[],
+      supportedOs: [],
+      requiredCapabilities: [] as string[],
+      missingBins: [] as string[],
+      missingEnv: [] as string[],
+      unresolvedConfig: [] as string[],
+      unsupportedOs: false,
+    };
+    const permissionPreview = {
+      required: [] as string[],
+      optional: [] as string[],
+      promptOn: [] as string[],
+      grants: [],
+    };
+    const eligibility = {
+      verdict: "eligible" as const,
+      installable: status !== "installed",
+      reviewRequired: status !== "installed",
+      reasons: [],
+    };
+    return {
+      skillId,
+      name: persistedSkill?.name ?? manifest?.name ?? skillId,
+      description: manifest?.description,
+      source: persistedSkill?.source ?? registeredSkill?.source ?? "local",
+      origin: persistedSkill?.origin ?? registeredSkill?.origin ?? "managed",
+      status,
+      starter: (manifest?.tags ?? []).includes("starter"),
+      category: manifest?.category,
+      tags: manifest?.tags ?? [],
+      publisher: persistedSkill?.publisher ?? manifest?.author?.name,
+      latestVersion,
+      installedVersion,
+      updateAvailable: false,
+      managed: (persistedSkill?.origin ?? registeredSkill?.origin) === "managed",
+      registryLoaded: Boolean(registeredSkill),
+      currentManifest: manifest,
+      originType: "generated",
+      maturity: status === "installed" ? "stable" : "draft",
+      verificationStatus: registeredSkill ? "local" : "unverified",
+      requirementPreview,
+      permissionPreview,
+      eligibility,
+      installPlan: {
+        strategy: installedVersion ? "update" : "install",
+        targetVersion: latestVersion,
+        targetCount: 1,
+        verificationStatus: registeredSkill ? "local" : "unverified",
+        eligibility,
+        requirements: requirementPreview,
+        permissions: permissionPreview,
+      },
+      versions: [],
+      installations: [],
+    };
+  };
+  const skillLifecycleActionsAvailable = Boolean(
+    deps.skillLifecycle || (deps.converterService && deps.skillExecutor && deps.managedSkillsDir),
+  );
   const providerProfileUpgradeLifecycle = createFridayProviderProfileUpgradeLifecycleService({
     db: deps.db,
     providerProfileRepo,
@@ -915,6 +1002,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     listUpgradeStatus: (query) => ({
       items: autonomyUpgradeStatus.list(query),
     }),
+    canonicalMutationGate,
     policyService: autonomyPolicyService,
     acquisitionService: capabilityAcquisitionService,
     standingAgendaService,
@@ -948,16 +1036,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }),
       getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
     },
-    skillActions: deps.skillLifecycle
+    skillActions: skillLifecycleActionsAvailable
       ? {
-        registerShadow: (input) => {
-          skillUpgradeLifecycle.registerShadowVersion({
+        registerShadow: async (input) => {
+          await skillUpgradeLifecycle.registerShadowVersion({
             skillId: input.skillId,
+            candidateId: input.candidateId,
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -965,27 +1059,20 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           }
           return detail;
         },
-        recordCanary: (input) => {
-          skillUpgradeLifecycle.recordCanaryResult({
+        recordCanary: async (input) => {
+          await skillUpgradeLifecycle.recordCanaryResult({
             skillId: input.skillId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
-          });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
-          if (!detail) {
-            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
-              httpStatus: 404,
-            });
-          }
-          return detail;
-        },
-        promote: (input) => {
-          skillUpgradeLifecycle.promote({
-            skillId: input.skillId,
+            candidateId: input.candidateId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            canaryInput: input.input,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -993,13 +1080,40 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           }
           return detail;
         },
-        rollback: (input) => {
-          skillUpgradeLifecycle.rollback({
+        promote: async (input) => {
+          await skillUpgradeLifecycle.promote({
             skillId: input.skillId,
+            candidateId: input.candidateId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        rollback: async (input) => {
+          await skillUpgradeLifecycle.rollback({
+            skillId: input.skillId,
+            candidateId: input.candidateId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
+          });
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -1008,6 +1122,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return detail;
         },
         getStatus: (skillId) => autonomyUpgradeStatus.get("skill", skillId),
+        getEvidence: (input) =>
+          skillUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     pluginActions: deps.pluginService
@@ -2064,8 +2180,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       skillRegistry: deps.skillRegistry,
       lifecycle: deps.skillLifecycle,
       skillExecutor: deps.skillExecutor,
-      managedSkillsDir: deps.managedSkillsDir,
-    })) {
+	      managedSkillsDir: deps.managedSkillsDir,
+	      getSkillLifecycleStatus: (skillId) => skillRepo.getSkillById(deps.db.writer, skillId)?.status,
+	      canonicalMutationGate,
+	      registerRetiredLegacySkillMutationRoutes: !deps.skillLifecycle && skillLifecycleActionsAvailable,
+	    })) {
       routes.register(route);
     }
   }

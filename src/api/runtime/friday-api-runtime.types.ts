@@ -23,7 +23,13 @@ import type {
 import type { FridayProviderService } from "#providers";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
-import type { FridaySkillExecutor, FridaySkillGeneratorService, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
+import type {
+  FridaySkillExecutor,
+  FridaySkillGeneratorService,
+  FridaySkillLifecycleService,
+  FridaySkillRegistry,
+  SkillLifecycleStatus,
+} from "#skills";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
 import type { FridayWorkflowGeneratorService } from "#workflows";
@@ -286,6 +292,8 @@ export interface CreateFridayApiRuntimeDeps {
   mcpServer?: FridayMcpServerRoutesDeps;
   /** Optional: canonical skills lifecycle service. */
   skillLifecycle?: FridaySkillLifecycleService;
+  /** Optional: writes runtime-visible skill status before registry refresh after external lifecycle changes. */
+  updateSkillStatus?: (skillId: string, status: SkillLifecycleStatus) => Promise<void> | void;
   /** Optional: satellite pairing/handshake route surface. */
   satellitePairing?: FridaySatellitePairingRoutesDeps;
   /** Optional: satellite runtime sync/command route surface. */
