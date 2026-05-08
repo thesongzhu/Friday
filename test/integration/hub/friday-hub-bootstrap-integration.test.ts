@@ -284,6 +284,83 @@ describe("FridayHub Bootstrap Integration", () => {
     };
   }
 
+  function makeSkillActionGraph(
+    workflowId: string,
+    versionId: string,
+    skillId: string,
+  ): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: versionId,
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "action1",
+            type: "action",
+            label: "Skill Action",
+            config: { skillId },
+          },
+        ],
+        edges: [
+          { id: "e1", sourceNodeId: "trigger", targetNodeId: "action1" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+  }
+
+  function writeShellSkillFixture(input: {
+    dir: string;
+    skillId: string;
+    name: string;
+    result: string;
+    sideEffectFile?: string;
+  }): void {
+    fs.mkdirSync(input.dir, { recursive: true });
+    fs.writeFileSync(path.join(input.dir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: input.skillId,
+      name: input.name,
+      description: "Workflow availability fixture",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Friday Test" },
+      tags: ["workflow-availability"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: { userInvocable: true, modelInvocable: true, priority: 50, modes: ["workflow"] },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string", description: "Result" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(input.dir, "SKILL.md"), `# ${input.name}\n`);
+    const sideEffectLine = input.sideEffectFile
+      ? `echo ran > '${input.sideEffectFile.replace(/'/g, "'\\''")}'\n`
+      : "";
+    fs.writeFileSync(path.join(input.dir, "run.sh"), `#!/usr/bin/env bash\n${sideEffectLine}echo '{"result":"${input.result}"}'\n`);
+    fs.chmodSync(path.join(input.dir, "run.sh"), 0o755);
+  }
+
   async function waitForWorkflowRunStable(
     hub: FridayHub,
     runId: string,
@@ -712,6 +789,87 @@ describe("FridayHub Bootstrap Integration", () => {
     await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
       code: "SKILL_NOT_AVAILABLE",
     });
+  });
+
+  it("blocks workflow skill execution when persisted lifecycle status is unavailable", async () => {
+    const stateDir = makeTmpDir();
+    lastStateDir = stateDir;
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const skillId = "workflow-status-proof";
+    const sideEffectFile = path.join(stateDir, "workflow-skill-ran.txt");
+
+    writeShellSkillFixture({
+      dir: path.join(bundledSkillsDir, skillId),
+      skillId,
+      name: "Workflow Status Proof",
+      result: "bundled-ran",
+      sideEffectFile,
+    });
+    writeShellSkillFixture({
+      dir: sourceDir,
+      skillId,
+      name: "Workflow Status Proof Candidate",
+      result: "candidate-ran",
+    });
+
+    const hub = await createFridayHub({
+      stateDir,
+      skillDirs: [bundledSkillsDir, managedSkillsDir],
+      tokenSecret: PHASE32_TOKEN_SECRET,
+    });
+    hubs.push(hub);
+    await hub.start();
+
+    expect(hub.skills.get(skillId)?.status).toBe("installed");
+
+    const importInput = {
+      source: { uri: sourceDir },
+      formatHint: "friday-package" as const,
+    };
+    await hub.converterService.import({
+      ...importInput,
+      canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+    });
+    await hub.skills.refresh();
+
+    expect(hub.skills.get(skillId)?.status).toBe("installed");
+
+    const skillListRoute = hub.apiRuntime.routes.getRoutes()
+      .find((entry) => entry.operationId === "skills.list");
+    expect(skillListRoute).toBeDefined();
+    const skillList = await skillListRoute!.handler({
+      requestId: "workflow-status-proof:list",
+      receivedAt: new Date().toISOString(),
+      params: {},
+      query: {},
+      body: {},
+      headers: {},
+      principal: null,
+    } as never) as { items: Array<{ skillId: string; status: string }> };
+    expect(skillList.items.find((item) => item.skillId === skillId)?.status).toBe("not_installed");
+
+    const workflow = hub.workflowRuntime.crud.createWorkflow({
+      slug: "workflow-status-proof",
+      name: "Workflow Status Proof",
+    });
+    const version = hub.workflowRuntime.crud.createVersion(
+      workflow.id,
+      makeSkillActionGraph(workflow.id, "placeholder", skillId),
+    );
+    hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await hub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      startedByUserId: "admin-001",
+    });
+
+    const finalStatus = await waitForWorkflowRunStable(hub, run.id, 10_000);
+    expect(finalStatus).toBe("failed");
+    expect(fs.existsSync(sideEffectFile)).toBe(false);
   });
 
   it("drives provider profile lifecycle through canonical-approved autonomy routes and survives restart", async () => {

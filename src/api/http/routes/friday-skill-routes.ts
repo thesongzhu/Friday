@@ -292,22 +292,25 @@ export function createFridaySkillRoutes(
             httpStatus: 503,
           });
         }
-        const items = deps.skillRegistry.list().map((skill) => ({
-          skillId: skill.manifest.id,
-          name: skill.manifest.name,
-          source: skill.source,
-          origin: skill.origin,
-          status: skill.status,
-          category: skill.manifest.category,
-          starter: (skill.manifest.tags ?? []).includes("starter"),
-          tags: skill.manifest.tags ?? [],
-          latestVersion: skill.manifest.version,
-          installedVersion: skill.manifest.version,
-          updateAvailable: false,
-          managed: skill.origin === "managed",
-          registryLoaded: true,
-          currentManifest: skill.manifest,
-        })).map((item) => toLegacyCompatibleListItem(item));
+        const items = deps.skillRegistry.list().map((skill) => {
+          const effectiveStatus = deps.getSkillLifecycleStatus?.(skill.manifest.id) ?? skill.status;
+          return {
+            skillId: skill.manifest.id,
+            name: skill.manifest.name,
+            source: skill.source,
+            origin: skill.origin,
+            status: effectiveStatus,
+            category: skill.manifest.category,
+            starter: (skill.manifest.tags ?? []).includes("starter"),
+            tags: skill.manifest.tags ?? [],
+            latestVersion: skill.manifest.version,
+            installedVersion: effectiveStatus === "installed" ? skill.manifest.version : undefined,
+            updateAvailable: false,
+            managed: skill.origin === "managed",
+            registryLoaded: true,
+            currentManifest: skill.manifest,
+          };
+        }).map((item) => toLegacyCompatibleListItem(item));
         return { items };
       },
     },
@@ -627,27 +630,7 @@ export function createFridaySkillRoutes(
       const runtimeKind = registeredSkill?.manifest.runtime.kind
         ?? lifecycleSkill?.currentManifest?.runtime?.kind
         ?? lifecycleSkill?.catalogEntry?.manifest?.runtime?.kind;
-      if (!skill && persistedLifecycleStatus) {
-        if (persistedLifecycleStatus !== "installed" && skillId !== "ai-inference") {
-          throw new FridayDomainError(
-            "SKILL_NOT_AVAILABLE",
-            `Skill "${skillId}" is not available until it is installed and promoted.`,
-            {
-              httpStatus: 409,
-              details: {
-                skillId,
-                status: persistedLifecycleStatus,
-              },
-            },
-          );
-        }
-      }
-      if (
-        lifecycleSkill
-        && persistedLifecycleStatus
-        && persistedLifecycleStatus !== "installed"
-        && skillId !== "ai-inference"
-      ) {
+      if (persistedLifecycleStatus && persistedLifecycleStatus !== "installed" && skillId !== "ai-inference") {
         throw new FridayDomainError(
           "SKILL_NOT_AVAILABLE",
           `Skill "${skillId}" is not available until it is installed and promoted.`,

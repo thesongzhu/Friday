@@ -780,11 +780,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   };
 
+  const skillRepo = createFridaySkillRepository();
+
   // ─── Builder runtime ───
   const builderRuntime = createFridayWorkflowBuilderRuntime({
     db: deps.db,
     crudService: workflowRuntime.crud,
     skillRegistry: deps.skillRegistry,
+    skillRepo,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
     computeChecksum: deps.computeChecksum,
@@ -806,7 +809,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     workflowImportExport: builderRuntime.importExport,
     canonicalMutationGate,
   });
-  const skillRepo = createFridaySkillRepository();
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
   const pluginRepo = createFridayPluginRepository();

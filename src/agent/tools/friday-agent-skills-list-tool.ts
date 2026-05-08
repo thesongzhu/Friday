@@ -6,6 +6,7 @@ import {
   type FridaySkillRegistry,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
+  type SkillLifecycleStatus,
 } from "#skills";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
@@ -19,9 +20,10 @@ import {
 export interface CreateFridayAgentSkillsListToolDeps {
   skillRegistry: FridaySkillRegistry;
   listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
 }
 
-function scoreSkill(skill: FridayRegisteredSkill): number {
+function scoreSkill(skill: FridayRegisteredSkill, lifecycleStatus: SkillLifecycleStatus): number {
   const tags = skill.manifest.tags ?? [];
   let score = 0;
   if (tags.includes("starter")) score += 100;
@@ -36,7 +38,7 @@ function scoreSkill(skill: FridayRegisteredSkill): number {
   if (tags.includes("starter.devops")) score += 10;
   if (tags.includes("cli-backed")) score += 8;
   if (tags.includes("skill.stabilized")) score += 6;
-  if (skill.status === "installed") score += 10;
+  if (lifecycleStatus === "installed") score += 10;
   if (skill.origin === "bundled") score += 5;
   return score;
 }
@@ -81,32 +83,36 @@ export function createFridayAgentSkillsListTool(
         const mcpServers = deps.listMcpServerReadiness?.() ?? [];
 
         const skills = deps.skillRegistry.list()
-          .filter((skill) => !installedOnly || skill.status === "installed")
-          .filter((skill) => !origin || skill.origin.toLowerCase() === origin)
-          .filter((skill) => !tag || (skill.manifest.tags ?? []).some((value) => value.toLowerCase() === tag))
-          .filter((skill) => {
+          .map((skill) => ({
+            skill,
+            lifecycleStatus: deps.getSkillLifecycleStatus?.(skill.manifest.id) ?? skill.status,
+          }))
+          .filter((entry) => !installedOnly || entry.lifecycleStatus === "installed")
+          .filter((entry) => !origin || entry.skill.origin.toLowerCase() === origin)
+          .filter((entry) => !tag || (entry.skill.manifest.tags ?? []).some((value) => value.toLowerCase() === tag))
+          .filter((entry) => {
             if (!query) return true;
             const searchable = [
-              skill.manifest.id,
-              skill.manifest.name,
-              skill.manifest.description,
-              ...(skill.manifest.tags ?? []),
-              ...(skill.manifest.triggers.intents ?? []),
-              ...(skill.manifest.triggers.phrases ?? []),
+              entry.skill.manifest.id,
+              entry.skill.manifest.name,
+              entry.skill.manifest.description,
+              ...(entry.skill.manifest.tags ?? []),
+              ...(entry.skill.manifest.triggers.intents ?? []),
+              ...(entry.skill.manifest.triggers.phrases ?? []),
             ].join(" ").toLowerCase();
             return searchable.includes(query);
           })
           .sort((left, right) => {
-            const scoreDiff = scoreSkill(right) - scoreSkill(left);
+            const scoreDiff = scoreSkill(right.skill, right.lifecycleStatus) - scoreSkill(left.skill, left.lifecycleStatus);
             if (scoreDiff !== 0) {
               return scoreDiff;
             }
-            return left.manifest.name.localeCompare(right.manifest.name);
+            return left.skill.manifest.name.localeCompare(right.skill.manifest.name);
           });
 
         return jsonResult({
           count: skills.length,
-          skills: skills.map((skill) => {
+          skills: skills.map(({ skill, lifecycleStatus }) => {
             const mcpReadiness = evaluateFridaySkillMcpReadiness({
               manifest: skill.manifest,
               servers: mcpServers,
@@ -124,7 +130,7 @@ export function createFridayAgentSkillsListTool(
               skill.manifest.runtime.kind === "node"
               && !allowBundledSystemNodeSkill
               && !isFridayUnisolatedNodeSkillsEnabled();
-            const lifecycleBlocked = skill.status !== "installed";
+            const lifecycleBlocked = lifecycleStatus !== "installed";
             const blockers = [
               ...(lifecycleBlocked ? ["Skill is not available until it is installed and promoted."] : []),
               ...mcpReadiness.blockers,
@@ -140,7 +146,7 @@ export function createFridayAgentSkillsListTool(
               skillId: skill.manifest.id,
               name: skill.manifest.name,
               description: skill.manifest.description,
-              status: skill.status,
+              status: lifecycleStatus,
               source: skill.source,
               origin: skill.origin,
               starter: (skill.manifest.tags ?? []).includes("starter"),

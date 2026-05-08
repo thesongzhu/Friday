@@ -9,7 +9,7 @@ import { createFridayWorkflowBuilderDraftService } from "#workflows";
 import { createFridayWorkflowBuilderCollaborationService } from "#workflows";
 import { getFridayBuiltinWorkflowTemplates } from "#workflows";
 import { createFridaySkillRepository } from "#skills";
-import type { FridaySkillRepository } from "#skills";
+import type { FridayRegisteredSkill, FridaySkillRegistry } from "#skills";
 import type { SkillManifestV2 } from "#skills";
 import { listFridayCrossBorderWorkflowTemplateIds } from "../../../../src/packs/cross-border/friday-cross-border-workflow-catalog";
 import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
@@ -251,7 +251,7 @@ describe("FridayWorkflowBuilderTemplateService", () => {
     } as SkillManifestV2;
   }
 
-  function createServiceWithSkills() {
+  function createServiceWithSkills(skillRegistry?: FridaySkillRegistry) {
     const idGen = createTestIdGenerator();
     const lockRepo = createFridayWorkflowBuilderLockRepository();
     const skillRepo = createFridaySkillRepository();
@@ -277,6 +277,7 @@ describe("FridayWorkflowBuilderTemplateService", () => {
         draftService,
         builtinTemplates: getFridayBuiltinWorkflowTemplates(),
         skillRepo,
+        skillRegistry,
         idGenerator: idGen,
         nowIso: () => NOW,
       }),
@@ -408,6 +409,91 @@ describe("FridayWorkflowBuilderTemplateService", () => {
 
     const templates = service.listTemplates();
     expect(templates.find((t) => t.name === "Intent Only")).toBeUndefined();
+  });
+
+  it("excludes repo skills that are no longer installed", () => {
+    const { service, skillRepo } = createServiceWithSkills();
+    const manifest = createMinimalManifest({
+      id: "disabled-wf-skill",
+      name: "Disabled Workflow Skill",
+    });
+
+    db.withWriteTransaction((writerDb) => {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
+        id: "disabled-wf-skill",
+        name: "Disabled Workflow Skill",
+        source: "local",
+        origin: "workspace",
+        status: "installed",
+        currentManifest: manifest,
+        nowIso: NOW,
+      });
+      skillRepo.setInstalledVersion(writerDb, "disabled-wf-skill", "1.0.0", manifest, NOW);
+      skillRepo.updateLifecycleStatus(writerDb, "disabled-wf-skill", "disabled", NOW);
+    });
+
+    const templates = service.listTemplates();
+    expect(templates.find((t) => t.sourceSkillId === "disabled-wf-skill")).toBeUndefined();
+  });
+
+  it("excludes registry skills that are not installed", () => {
+    const candidateManifest = createMinimalManifest({
+      id: "candidate-wf-skill",
+      name: "Candidate Workflow Skill",
+    });
+    const candidateSkill = {
+      manifest: candidateManifest,
+      skillDir: "/tmp/candidate-wf-skill",
+      source: "local",
+      origin: "managed",
+      status: "not_installed",
+      loaded: {} as FridayRegisteredSkill["loaded"],
+      validation: { ok: true, issues: [] },
+      trust: {} as FridayRegisteredSkill["trust"],
+    } as FridayRegisteredSkill;
+    const skillRegistry = {
+      list: () => [candidateSkill],
+    } as FridaySkillRegistry;
+    const { service } = createServiceWithSkills(skillRegistry);
+
+    const templates = service.listTemplates();
+    expect(templates.find((t) => t.sourceSkillId === "candidate-wf-skill")).toBeUndefined();
+  });
+
+  it("keeps persisted unavailable status authoritative over registry templates", () => {
+    const manifest = createMinimalManifest({
+      id: "candidate-wf-skill",
+      name: "Candidate Workflow Skill",
+    });
+    const registrySkill = {
+      manifest,
+      skillDir: "/tmp/candidate-wf-skill",
+      source: "local",
+      origin: "managed",
+      status: "installed",
+      loaded: {} as FridayRegisteredSkill["loaded"],
+      validation: { ok: true, issues: [] },
+      trust: {} as FridayRegisteredSkill["trust"],
+    } as FridayRegisteredSkill;
+    const skillRegistry = {
+      list: () => [registrySkill],
+    } as FridaySkillRegistry;
+    const { service, skillRepo } = createServiceWithSkills(skillRegistry);
+
+    db.withWriteTransaction((writerDb) => {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
+        id: "candidate-wf-skill",
+        name: "Candidate Workflow Skill",
+        source: "local",
+        origin: "managed",
+        status: "not_installed",
+        currentManifest: manifest,
+        nowIso: NOW,
+      });
+    });
+
+    const templates = service.listTemplates();
+    expect(templates.find((t) => t.sourceSkillId === "candidate-wf-skill")).toBeUndefined();
   });
 
   it("getTemplate finds skill-derived template by id", () => {

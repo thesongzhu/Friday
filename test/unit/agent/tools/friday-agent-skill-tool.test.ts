@@ -284,6 +284,31 @@ describe("FridayAgentSkillTool", () => {
     });
   });
 
+  it("blocks persisted non-installed skills even when the registry says installed", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      skillRegistry: mockRegistry(),
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "secure-skill" ? "not_installed" : undefined,
+    });
+
+    const result = await tool.execute(
+      { skillId: "secure-skill", input: {} },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content)).toMatchObject({
+      skillId: "secure-skill",
+      status: "blocked",
+      ready: false,
+      code: "SKILL_NOT_AVAILABLE",
+      lifecycleStatus: "not_installed",
+    });
+  });
+
   it("returns a clear error when required skill inputs are missing", async () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({

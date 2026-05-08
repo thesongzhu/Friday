@@ -180,6 +180,32 @@ describe("createFridaySkillRoutes", () => {
     expect(result).toHaveProperty("items.0.version", "1.0.0");
   });
 
+  it("uses persisted lifecycle status over registry status in GET /v1/skills fallback", async () => {
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [{
+          manifest: {
+            id: "skill.alpha",
+            name: "Alpha",
+            version: "1.0.0",
+            category: "utility",
+            tags: [],
+          },
+          source: "local",
+          origin: "workspace",
+          status: "installed",
+        } as never],
+      } as never,
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "skill.alpha" ? "not_installed" : undefined,
+    });
+
+    const route = routes.find((item) => item.operationId === "skills.list");
+    const result = await route!.handler(makeCtx());
+    expect(result).toHaveProperty("items.0.skillId", "skill.alpha");
+    expect(result).toHaveProperty("items.0.status", "not_installed");
+  });
+
 	  it("registers lifecycle routes when the lifecycle service is provided", () => {
 	    const routes = createFridaySkillRoutes({
 	      skillRegistry: { list: () => [] } as never,
@@ -432,6 +458,46 @@ describe("createFridaySkillRoutes", () => {
       httpStatus: 409,
       details: {
         skillId: "skill.staged",
+        status: "not_installed",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("blocks registry-visible skills when persisted lifecycle status is unavailable", async () => {
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => ({
+          status: "installed",
+          manifest: {
+            id: "skill.alpha",
+            kind: "conversation",
+            runtime: { kind: "shell" },
+            requirements: { bins: [], env: [], config: [], os: [] },
+            executionTargets: {
+              allowedSatelliteTypes: ["desktop"],
+              requiredCapabilities: [],
+            },
+          },
+        })),
+      } as never,
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "skill.alpha" ? "not_installed" : undefined,
+      skillExecutor: executor as never,
+    });
+
+    await expect(
+      routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "skill.alpha" },
+        body: { input: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+      httpStatus: 409,
+      details: {
+        skillId: "skill.alpha",
         status: "not_installed",
       },
     });

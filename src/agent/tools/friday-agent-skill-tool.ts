@@ -8,6 +8,7 @@ import {
   type FridaySkillRegistry,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
+  type SkillLifecycleStatus,
 } from "#skills";
 import { FRIDAY_AGENT_TOOL_TIMEOUT_MS } from "../friday-agent.constants.js";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
@@ -24,6 +25,7 @@ export interface CreateFridayAgentSkillToolDeps {
   skillExecutor: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
   listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
 }
 
 // ─── Factory ───
@@ -72,15 +74,27 @@ export function createFridayAgentSkillTool(
         timeoutMs,
       };
 
+      const persistedLifecycleStatus = deps.getSkillLifecycleStatus?.(skillId);
       const registeredSkill = deps.skillRegistry?.get(skillId);
+      if (persistedLifecycleStatus && persistedLifecycleStatus !== "installed") {
+        return jsonResult({
+          skillId,
+          status: "blocked",
+          ready: false,
+          code: "SKILL_NOT_AVAILABLE",
+          lifecycleStatus: persistedLifecycleStatus,
+          blockers: ["Skill is not available until it is installed and promoted."],
+        });
+      }
       if (registeredSkill) {
-        if (registeredSkill.status !== "installed") {
+        const lifecycleStatus = persistedLifecycleStatus ?? registeredSkill.status;
+        if (lifecycleStatus !== "installed") {
           return jsonResult({
             skillId,
             status: "blocked",
             ready: false,
             code: "SKILL_NOT_AVAILABLE",
-            lifecycleStatus: registeredSkill.status,
+            lifecycleStatus,
             blockers: ["Skill is not available until it is installed and promoted."],
           });
         }

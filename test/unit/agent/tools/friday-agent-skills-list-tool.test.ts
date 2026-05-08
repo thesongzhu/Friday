@@ -271,6 +271,54 @@ describe("createFridayAgentSkillsListTool", () => {
     expect(parsed.skills[0]?.skillId).toBe("repo-health-check");
   });
 
+  it("treats persisted non-installed lifecycle status as authoritative", async () => {
+    const tool = createFridayAgentSkillsListTool({
+      skillRegistry: createRegistry([
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "repo-health-check",
+            name: "Repo Health Check",
+            description: "Inspect repo health",
+            tags: ["starter", "starter.devops"],
+          }),
+          status: "installed",
+        }),
+        buildRegisteredSkill({
+          manifest: buildManifest({
+            id: "candidate-skill",
+            name: "Candidate Skill",
+            description: "Not promoted yet",
+            tags: ["candidate"],
+          }),
+          origin: "managed",
+          status: "installed",
+        }),
+      ]),
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "candidate-skill" ? "not_installed" : undefined,
+    });
+
+    const installedOnlyResult = await tool.execute(
+      { installedOnly: true },
+      new AbortController().signal,
+    );
+    const installedOnly = JSON.parse(installedOnlyResult.content) as {
+      count: number;
+      skills: Array<Record<string, unknown>>;
+    };
+    expect(installedOnly.count).toBe(1);
+    expect(installedOnly.skills[0]?.skillId).toBe("repo-health-check");
+
+    const allResult = await tool.execute({}, new AbortController().signal);
+    const all = JSON.parse(allResult.content) as { skills: Array<Record<string, unknown>> };
+    const candidate = all.skills.find((skill) => skill.skillId === "candidate-skill");
+    expect(candidate).toMatchObject({
+      status: "not_installed",
+      ready: false,
+    });
+    expect(candidate?.blockers).toContain("Skill is not available until it is installed and promoted.");
+  });
+
   it("prioritizes CLI-backed starter skills for local repo and ops work", async () => {
     const tool = createFridayAgentSkillsListTool({
       skillRegistry: createRegistry([

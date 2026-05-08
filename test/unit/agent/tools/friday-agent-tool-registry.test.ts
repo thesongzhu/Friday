@@ -264,6 +264,43 @@ describe("createFridayAgentToolRegistry", () => {
     expect(parsed.skills[0]?.blockers).toContain('Required MCP server "filesystem" is not configured for this deployment.');
   });
 
+  it("passes persisted skill lifecycle status into agent skill tools", async () => {
+    const execute = vi.fn().mockReturnValue({
+      runId: "run-1",
+      result: Promise.resolve({
+        runId: "run-1",
+        status: "completed",
+        output: {},
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      }),
+    });
+    const tools = createFridayAgentToolRegistry({
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      } as never,
+      skillRegistry: stubMcpRequiredSkillRegistry(),
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "mcp-skill" ? "not_installed" : undefined,
+    });
+
+    const skillsList = tools.find((tool) => tool.name === "skills_list")!;
+    const listResult = await skillsList.execute({ installedOnly: true }, new AbortController().signal);
+    expect(JSON.parse(listResult.content)).toMatchObject({ count: 0 });
+
+    const skillRun = tools.find((tool) => tool.name === "skill_run")!;
+    const runResult = await skillRun.execute({ skillId: "mcp-skill", input: {} }, new AbortController().signal);
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.parse(runResult.content)).toMatchObject({
+      status: "blocked",
+      ready: false,
+      code: "SKILL_NOT_AVAILABLE",
+      lifecycleStatus: "not_installed",
+    });
+  });
+
   it("always includes exec, file, web_fetch tools", () => {
     const tools = createFridayAgentToolRegistry({});
     const names = tools.map((t) => t.name);

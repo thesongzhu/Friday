@@ -64,7 +64,7 @@ import {
   FridaySkillRegistryImpl,
   safeParseFridaySkillManifestV2,
 } from "#skills";
-import type { SkillOrigin, SkillSource } from "#skills";
+import type { SkillLifecycleStatus, SkillOrigin, SkillSource } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
@@ -1109,6 +1109,22 @@ export async function createFridayHub(
     nodeId: string,
     payload: Record<string, unknown>,
   ): Promise<unknown> => {
+    const persistedStatus = getPersistedSkillLifecycleStatus(skillId);
+    if (persistedStatus && persistedStatus !== "installed") {
+      throw new FridayDomainError(
+        "SKILL_NOT_AVAILABLE",
+        `Skill "${skillId}" is not available until it is installed and promoted.`,
+        {
+          httpStatus: 409,
+          details: {
+            skillId,
+            status: persistedStatus,
+            runId,
+            nodeId,
+          },
+        },
+      );
+    }
     const policy = await evaluateRules({
       resource: "skill",
       action: "execute",
@@ -1172,6 +1188,21 @@ export async function createFridayHub(
   const converterArchiver = createFridaySkillPackageArchiver();
   const converterSkillRepo = createFridaySkillRepository();
   const managedSkillsDir = config.skillDirs[1] ?? "managed-skills";
+  const getPersistedSkillLifecycleStatus = (skillId: string): SkillLifecycleStatus | undefined =>
+    stateRuntime.sqlite.withReadConnection((db) =>
+      converterSkillRepo.getSkillById(db, skillId)?.status,
+    );
+  const resolveWorkflowSkill = (skillId: string) => {
+    const persistedStatus = getPersistedSkillLifecycleStatus(skillId);
+    if (persistedStatus && persistedStatus !== "installed") {
+      return null;
+    }
+    const skill = registry.get(skillId);
+    if (!skill || skill.status !== "installed") {
+      return null;
+    }
+    return skill;
+  };
 
   const converterService = createFridaySkillConverterService({
     registry: converterRegistry,
@@ -1391,10 +1422,7 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
     computeChecksum,
-    resolveSkill: (skillId) => {
-      const skill = registry.get(skillId);
-      return skill ?? null;
-    },
+    resolveSkill: resolveWorkflowSkill,
     invokeSkill: invokeSkillForWorkflow,
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
@@ -1426,6 +1454,8 @@ export async function createFridayHub(
   const workflowBuilderRuntime = createFridayWorkflowBuilderRuntime({
     db: stateRuntime!.sqlite,
     crudService: workflowRuntime.crud,
+    skillRegistry: registry,
+    skillRepo: converterSkillRepo,
     idGenerator,
     nowIso,
     computeChecksum,
@@ -2589,6 +2619,7 @@ export async function createFridayHub(
     workdir: workspaceRoot,
     skillExecutor: executor,
     skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
     listLearnedFacts: (input) =>
@@ -4366,6 +4397,7 @@ export async function createFridayHub(
         workdir: workspaceRoot,
         skillExecutor: executor,
         skillRegistry: registry,
+        getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
         listLearnedFacts: (input) =>

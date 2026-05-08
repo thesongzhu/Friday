@@ -1,4 +1,4 @@
-import type { FridaySkillExecutor, FridaySkillRegistry } from "#skills";
+import type { FridaySkillExecutor, FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 import type { FridayWorkflowExecutionService } from "#workflows";
 import type { FridayMemoryService } from "#memory";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
@@ -71,6 +71,7 @@ export interface CreateFridayAgentToolRegistryOptions {
   workdir?: string;
   skillExecutor?: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
   listLearnedFacts?: (input: { userId: string; limit: number }) => FridayLearnedFactView[];
@@ -189,12 +190,14 @@ export function createFridayAgentToolRegistry(
         ? [createFridayAgentSkillsListTool({
           skillRegistry: options.skillRegistry,
           listMcpServerReadiness,
+          getSkillLifecycleStatus: options.getSkillLifecycleStatus,
         })]
         : []),
       createFridayAgentSkillTool({
         skillExecutor: options.skillExecutor,
         skillRegistry: options.skillRegistry,
         listMcpServerReadiness,
+        getSkillLifecycleStatus: options?.getSkillLifecycleStatus,
       }),
     );
   }

@@ -9,7 +9,7 @@ import type {
 } from "../model/friday-workflow-builder-validation.types.js";
 import type { FridayWorkflowCompiler } from "../../compiler/friday-workflow-compiler.js";
 import type { FridayWorkflowValidator } from "../../compiler/friday-workflow-validator.js";
-import type { FridaySkillRepository } from "#skills";
+import type { FridaySkillRegistry, FridaySkillRepository } from "#skills";
 import {
   getFridayWorkflowStepIdFormatMessage,
   isFridayWorkflowStepIdExpressionSafe,
@@ -30,6 +30,7 @@ export interface CreateValidationServiceDeps {
   validator: FridayWorkflowValidator;
   db?: FridaySqliteLayer;
   skillRepo?: FridaySkillRepository;
+  skillRegistry?: FridaySkillRegistry;
   nowIso: () => string;
   idGenerator: () => string;
 }
@@ -266,22 +267,35 @@ function validateTests(spec: FridayWorkflowSpecV1): FridayWorkflowBuilderValidat
 
 function validateSkillRefs(
   spec: FridayWorkflowSpecV1,
-  db: FridaySqliteLayer,
-  skillRepo: FridaySkillRepository,
+  db?: FridaySqliteLayer,
+  skillRepo?: FridaySkillRepository,
+  skillRegistry?: FridaySkillRegistry,
 ): FridayWorkflowBuilderValidationIssue[] {
   const issues: FridayWorkflowBuilderValidationIssue[] = [];
 
   for (const step of spec.steps) {
     if ((step.type === "skill_call" || step.type === "tool_call") && step.ref) {
-      const skill = db.withReadConnection((readerDb) =>
-        skillRepo.getSkillById(readerDb, step.ref!),
-      );
-      if (!skill) {
+      const persistedSkill = db && skillRepo
+        ? db.withReadConnection((readerDb) =>
+          skillRepo.getSkillById(readerDb, step.ref!),
+        )
+        : null;
+      const registeredSkill = persistedSkill ? null : (skillRegistry?.get(step.ref) ?? null);
+      const status = persistedSkill?.status ?? registeredSkill?.status;
+      if (!status) {
         issues.push({
           code: "SKILL_REF_NOT_FOUND",
           stage: "skill_refs",
           severity: "error",
           message: `Step '${step.id}' references unknown skill '${step.ref}'`,
+          stepId: step.id,
+        });
+      } else if (status !== "installed") {
+        issues.push({
+          code: "SKILL_REF_NOT_AVAILABLE",
+          stage: "skill_refs",
+          severity: "error",
+          message: `Step '${step.id}' references skill '${step.ref}' before it is installed and promoted`,
           stepId: step.id,
         });
       }
@@ -387,8 +401,8 @@ export function createFridayWorkflowBuilderValidationService(
       }
 
       // Stage 4: skill_refs — verify referenced skills exist
-      if (deps.db && deps.skillRepo) {
-        issues.push(...validateSkillRefs(spec, deps.db, deps.skillRepo));
+      if ((deps.db && deps.skillRepo) || deps.skillRegistry) {
+        issues.push(...validateSkillRefs(spec, deps.db, deps.skillRepo, deps.skillRegistry));
       }
 
       // Stage 5: expressions — validate step conditions and edge conditions
