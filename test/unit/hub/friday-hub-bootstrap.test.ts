@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
+import type { FridayChannelMessage, FridayChannelPlugin } from "#channels";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { resolveStateDir } from "#state";
@@ -12,6 +13,31 @@ import {
   type FridayAutoDetectProviderEnvSnapshot,
 } from "../../_helpers/auto-detect-provider-env.js";
 import * as hubAuditWriterModule from "../../../src/hub/services/friday-hub-audit-log-writer.js";
+
+function createTestChannelPlugin(kind = "testchannel"): {
+  plugin: FridayChannelPlugin;
+  getStartedHandler: () => ((msg: FridayChannelMessage) => void) | null;
+  sentMessages: string[];
+} {
+  let startedHandler: ((msg: FridayChannelMessage) => void) | null = null;
+  const sentMessages: string[] = [];
+  return {
+    sentMessages,
+    getStartedHandler: () => startedHandler,
+    plugin: {
+      kind,
+      init: vi.fn(async () => {}),
+      start: vi.fn(async (onMessage) => {
+        startedHandler = onMessage;
+      }),
+      stop: vi.fn(async () => {}),
+      send: vi.fn(async (options) => {
+        sentMessages.push(options.text);
+        return { messageId: `sent-${String(sentMessages.length)}` };
+      }),
+    },
+  };
+}
 
 describe("createFridayHub", () => {
   let hub: FridayHub | null = null;
@@ -205,6 +231,80 @@ describe("createFridayHub", () => {
     const result = await handle.result;
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("not found");
+  }, 20_000);
+
+  it("routes channel high-impact preference commands to Review Center confirmation", async () => {
+    hub = await createIsolatedHub();
+    const channel = createTestChannelPlugin();
+    hub.channelRegistry.register(channel.plugin);
+
+    await hub.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    onMessage!({
+      id: "msg-reflex-policy-1",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-1",
+      chatType: "direct",
+      text: "以后允许 live llm 测试",
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("Review Center 待确认"))).toBe(true);
+    });
+
+    const candidatesRoute = hub.apiRuntime.routes
+      .getRoutes()
+      .find((route) => route.operationId === "reflex.candidates.list");
+    const preferencesRoute = hub.apiRuntime.routes
+      .getRoutes()
+      .find((route) => route.operationId === "reflex.preferences.list");
+    expect(candidatesRoute).toBeDefined();
+    expect(preferencesRoute).toBeDefined();
+
+    const principal = {
+      principalType: "user",
+      principalId: "admin-001",
+      userId: "admin-001",
+      scopes: ["agent.run"],
+      tokenId: "tok-1",
+      tokenKind: "access",
+      issuedAt: "2026-04-30T12:00:00.000Z",
+    };
+    const candidates = await candidatesRoute!.handler({
+      params: {},
+      query: { kind: "preference", status: "ready_for_review" },
+      body: null,
+      headers: {},
+      principal,
+    } as never) as { items: Array<{ payload: Record<string, unknown>; evidence: Record<string, unknown> }> };
+    const preferences = await preferencesRoute!.handler({
+      params: {},
+      query: {},
+      body: null,
+      headers: {},
+      principal,
+    } as never) as { items: Array<{ category: string; key: string; value: unknown }> };
+
+    expect(candidates.items).toContainEqual(expect.objectContaining({
+      payload: expect.objectContaining({
+        category: "reflex",
+        key: "testing.live_llm_policy",
+        value: "allowed_with_cost_notice",
+      }),
+      evidence: expect.objectContaining({
+        requiresExplicitConfirmation: true,
+        sourceSurface: "channel",
+      }),
+    }));
+    expect(preferences.items).not.toContainEqual(expect.objectContaining({
+      category: "reflex",
+      key: "testing.live_llm_policy",
+    }));
   }, 20_000);
 
 });

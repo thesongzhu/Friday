@@ -3712,19 +3712,26 @@ export async function createFridayHub(
   const applyChannelReflexExplicitPreferences = (input: {
     userId: string;
     text: string;
-  }): number => {
-    if (!reflexService) return 0;
+  }): { applied: number; pendingConfirmation: number } => {
+    if (!reflexService) return { applied: 0, pendingConfirmation: 0 };
     const writes = parseFridayReflexExplicitPreferenceMessage(input.text);
+    let applied = 0;
+    let pendingConfirmation = 0;
     for (const write of writes) {
-      reflexService.updatePreference({
+      const result = reflexService.requestPreferenceUpdate({
         userId: input.userId,
         category: write.category,
         key: write.key,
         value: write.value,
         sourceSurface: "channel",
       });
+      if (result.requiresConfirmation) {
+        pendingConfirmation += 1;
+      } else {
+        applied += 1;
+      }
     }
-    return writes.length;
+    return { applied, pendingConfirmation };
   };
 
   const listPendingChannelToolApprovalsForSession = (
@@ -7694,11 +7701,11 @@ export async function createFridayHub(
             return;
           }
 
-          const reflexPreferenceWriteCount = applyChannelReflexExplicitPreferences({
+          const reflexPreferenceResult = applyChannelReflexExplicitPreferences({
             userId: learningDefaultUserId,
             text,
           });
-          if (reflexPreferenceWriteCount > 0) {
+          if (reflexPreferenceResult.applied > 0 || reflexPreferenceResult.pendingConfirmation > 0) {
             void (async () => {
               await hubSessionService.addMessage(sessionKey, {
                 role: "user",
@@ -7718,7 +7725,14 @@ export async function createFridayHub(
                   error: err,
                 });
               });
-              const ackText = `已更新 ${String(reflexPreferenceWriteCount)} 条 Friday 偏好，会在所有绑定渠道生效。你可以在 Review Center 撤销。`;
+              const ackText = reflexPreferenceResult.pendingConfirmation > 0
+                ? [
+                    reflexPreferenceResult.applied > 0
+                      ? `已更新 ${String(reflexPreferenceResult.applied)} 条普通 Friday 偏好。`
+                      : null,
+                    `有 ${String(reflexPreferenceResult.pendingConfirmation)} 条会影响安全、执行、自动化、记忆或测试策略的设置，我已放到 Review Center 待确认；你确认一次后才会长期生效。`,
+                  ].filter(Boolean).join(" ")
+                : `已更新 ${String(reflexPreferenceResult.applied)} 条 Friday 偏好，会在所有绑定渠道生效。你可以在 Review Center 撤销。`;
               const delivery = await channelRegistry.send(msg.channelKind, {
                 chatId: msg.chatId,
                 text: ackText,

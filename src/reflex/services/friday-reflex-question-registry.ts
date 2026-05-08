@@ -66,7 +66,7 @@ export const FRIDAY_REFLEX_ONBOARDING_QUESTIONS: readonly FridayReflexQuestion[]
     scenario: "你明确说“记住这个”“以后都这样”时，Friday 可以把它变成长期偏好。",
     prompt: "这类明确指令应该怎么处理？",
     options: [
-      { value: "save_immediately", label: "直接记住", description: "立即成为明确偏好，Review Center 可撤销。" },
+      { value: "save_immediately", label: "直接记住", description: "先进入待确认设置；确认后长期生效。" },
       { value: "confirm_first", label: "先给我确认", description: "Friday 会在写入长期记忆前确认。" },
       { value: "session_only", label: "只在当前会话记住", description: "不写入长期记忆。" },
     ],

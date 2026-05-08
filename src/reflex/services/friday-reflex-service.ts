@@ -28,6 +28,7 @@ import {
   isFridayReflexPreferenceKey,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./friday-reflex-preference-resolver.js";
+import { requiresFridayReflexPreferenceConfirmation } from "./friday-reflex-preference-sensitivity.js";
 
 const REFLEX_INTERNAL_CHANNEL = "reflex";
 const REFLEX_RECIPE_NAMESPACE = "reflex.recipes";
@@ -111,6 +112,13 @@ export interface FridayReflexService {
     value: JsonValue;
     sourceSurface?: FridayReflexSurface;
   }): FridayPreferenceWriteResult;
+  requestPreferenceUpdate(input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+    sourceSurface?: FridayReflexSurface;
+  }): FridayPreferenceRequestResult;
   revokePreference(input: {
     userId: string;
     preferenceId: string;
@@ -135,6 +143,15 @@ export interface FridayPreferenceWriteResult {
   };
   skippedBecauseExplicit?: boolean;
 }
+
+export type FridayPreferenceRequestResult =
+  | ({ requiresConfirmation: false } & FridayPreferenceWriteResult)
+  | {
+      requiresConfirmation: true;
+      candidate: FridayReflexCandidate;
+    };
+
+type FridayReflexDb = Parameters<FridayReflexCandidateRepository["list"]>[0];
 
 export interface FridayPreferenceRevokeResult {
   revoked: true;
@@ -348,6 +365,73 @@ export function createFridayReflexService(
     return result;
   }
 
+  function findPendingPreferenceConfirmation(db: FridayReflexDb, input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+  }): FridayReflexCandidate | null {
+    return deps.candidateRepo.list(db, {
+      userId: input.userId,
+      kind: "preference",
+      limit: 200,
+    }).find((candidate) =>
+      (candidate.status === "proposed" || candidate.status === "ready_for_review" || candidate.status === "testing")
+      && candidate.evidence.requiresExplicitConfirmation === true
+      && candidate.payload.category === input.category
+      && candidate.payload.key === input.key
+      && JSON.stringify(candidate.payload.value) === JSON.stringify(input.value),
+    ) ?? null;
+  }
+
+  function createPreferenceConfirmationCandidate(db: FridayReflexDb, input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+    sourceSurface?: FridayReflexSurface;
+    origin?: FridayReflexCandidate["origin"];
+    evidence?: Record<string, JsonValue>;
+  }): FridayReflexCandidate {
+    if (!candidatesEnabled) {
+      throw new FridayDomainError(
+        "REFLEX_CANDIDATES_DISABLED",
+        "Reflex candidates are disabled in this runtime.",
+        { httpStatus: 503 },
+      );
+    }
+    const existing = findPendingPreferenceConfirmation(db, input);
+    if (existing) return existing;
+    const now = deps.nowIso();
+    return deps.candidateRepo.insert(db, {
+      userId: input.userId,
+      kind: "preference",
+      origin: input.origin ?? (input.sourceSurface === "channel" ? "channel" : "operate"),
+      status: "ready_for_review",
+      title: `Confirm Friday setting: ${input.key}`,
+      summary:
+        "This preference affects safety, execution, automation, memory, or test behavior. Review once before it becomes a durable Friday setting.",
+      payload: {
+        category: input.category,
+        key: input.key,
+        value: input.value,
+        source: "explicit",
+        sourceSurface: input.sourceSurface ?? "operate",
+      },
+      evidence: {
+        requiresExplicitConfirmation: true,
+        reason: "high_impact_reflex_preference",
+        requestedAt: now,
+        sourceSurface: input.sourceSurface ?? "operate",
+        ...(input.evidence ?? {}),
+      },
+      confidence: 1,
+      riskTier: 2,
+      id: deps.idGenerator(),
+      nowIso: now,
+    });
+  }
+
   function loadOnboardingSnapshot(userId: string): FridayReflexOnboardingSnapshot {
     assertPrincipal(userId);
     return deps.db.withReadConnection((db) => {
@@ -456,6 +540,23 @@ export function createFridayReflexService(
           answer: input.answer,
         })) {
           assertPreferenceTarget(write);
+          if (requiresFridayReflexPreferenceConfirmation({
+            category: write.category,
+            key: write.key,
+          })) {
+            createPreferenceConfirmationCandidate(db, {
+              userId: input.userId,
+              category: write.category,
+              key: write.key,
+              value: write.value,
+              sourceSurface: input.sourceSurface,
+              origin: "onboarding",
+              evidence: {
+                onboardingQuestionId: input.questionId,
+              },
+            });
+            continue;
+          }
           const existingPreference = deps.preferenceRepo
             .listByPrincipal(db, { principalId: input.userId, category: write.category })
             .find((preference) => preference.key === write.key);
@@ -890,15 +991,21 @@ export function createFridayReflexService(
             category,
             key,
             value,
-            source: "implicit",
-            confidence: candidate.confidence,
-            preserveExplicit: true,
+            source: candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true
+              ? "explicit"
+              : "implicit",
+            confidence: candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true
+              ? 1
+              : candidate.confidence,
+            preserveExplicit: !(candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true),
             sourceSurface: "review_center",
           });
           evidence = {
             ...evidence,
             preferenceId: result.preference.id,
             skippedBecauseExplicit: result.skippedBecauseExplicit ?? false,
+            explicitPreferenceConfirmed: candidate.payload.source === "explicit"
+              || candidate.evidence.requiresExplicitConfirmation === true,
           };
         } else if (candidate.kind === "skill" || candidate.kind === "workflow") {
           evidence = { ...evidence, ...(await approveGeneratedCandidate(candidate)) };
@@ -955,11 +1062,51 @@ export function createFridayReflexService(
     },
 
     updatePreference(input) {
+      assertPrincipal(input.userId);
+      assertPreferenceTarget(input);
+      if (requiresFridayReflexPreferenceConfirmation({
+        category: input.category,
+        key: input.key,
+      })) {
+        throw new FridayDomainError(
+          "REFLEX_PREFERENCE_REQUIRES_CONFIRMATION",
+          `Preference '${input.key}' requires Review Center confirmation.`,
+          { httpStatus: 409 },
+        );
+      }
       return writePreference({
         ...input,
         source: "explicit",
         confidence: 1,
       });
+    },
+
+    requestPreferenceUpdate(input) {
+      assertPrincipal(input.userId);
+      assertPreferenceTarget(input);
+      if (requiresFridayReflexPreferenceConfirmation({
+        category: input.category,
+        key: input.key,
+      })) {
+        return {
+          requiresConfirmation: true,
+          candidate: deps.db.withWriteTransaction((db) => createPreferenceConfirmationCandidate(db, {
+            userId: input.userId,
+            category: input.category,
+            key: input.key,
+            value: input.value,
+            sourceSurface: input.sourceSurface,
+          })),
+        };
+      }
+      return {
+        requiresConfirmation: false,
+        ...writePreference({
+          ...input,
+          source: "explicit",
+          confidence: 1,
+        }),
+      };
     },
 
     revokePreference(input) {

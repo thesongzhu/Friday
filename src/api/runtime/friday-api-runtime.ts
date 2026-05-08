@@ -2887,7 +2887,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const reflexUserId = input.tenantContext?.userId?.trim();
       if (deps.reflexService && reflexUserId) {
         for (const write of parseFridayReflexExplicitPreferenceMessage(input.task)) {
-          deps.reflexService.updatePreference({
+          deps.reflexService.requestPreferenceUpdate({
             userId: reflexUserId,
             category: write.category,
             key: write.key,

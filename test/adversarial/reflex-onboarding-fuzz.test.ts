@@ -82,13 +82,17 @@ describe("Reflex adversarial invariants", () => {
 
   it("keeps explicit opposite memory instructions above inferred candidates", async () => {
     const service = createService();
-    service.updatePreference({
+    const explicit = service.requestPreferenceUpdate({
       userId: "user-adv",
       category: "reflex",
       key: "memory.explicit_instruction_policy",
       value: "session_only",
       sourceSurface: "operate",
     });
+    expect(explicit.requiresConfirmation).toBe(true);
+    if (explicit.requiresConfirmation) {
+      await service.approveCandidate({ userId: "user-adv", candidateId: explicit.candidate.id });
+    }
     const candidate = service.createCandidate({
       userId: "user-adv",
       kind: "preference",

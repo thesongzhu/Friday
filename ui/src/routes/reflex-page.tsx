@@ -494,7 +494,7 @@ export function ReflexPage() {
           ) : (
             <EmptyState
               title={localize(locale, "当前没有待回答问题", "No active question")}
-              description={localize(locale, "如果还没开始，可以点击开始；如果已经完成，偏好会显示在快照里。", "Start onboarding if needed; completed answers appear as durable preferences.")}
+              description={localize(locale, "如果还没开始，可以点击开始；普通偏好会显示在快照里，需要确认的设置会先进入审核候选。", "Start onboarding if needed; ordinary preferences appear in the snapshot, while settings that need confirmation appear as review candidates first.")}
             />
           )}
         </ShellCard>
@@ -510,7 +510,7 @@ export function ReflexPage() {
           ) : preferences.length === 0 ? (
             <EmptyState
               title={localize(locale, "还没有 Reflex 偏好", "No Reflex preferences yet")}
-              description={localize(locale, "完成引导或让 Friday 记录明确偏好后，这里会显示可复用设置。", "Complete onboarding or ask Friday to record a preference to populate reusable settings.")}
+              description={localize(locale, "完成引导或让 Friday 记录普通偏好后，这里会显示可复用设置；需要确认的设置会先进入审核候选。", "Complete onboarding or ask Friday to record ordinary preferences to populate reusable settings; settings that need confirmation appear as review candidates first.")}
             />
           ) : (
             <div className="divide-y divide-[color:var(--color-border-soft)]">

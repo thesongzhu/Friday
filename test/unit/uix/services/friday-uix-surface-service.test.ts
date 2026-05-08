@@ -227,6 +227,57 @@ describe("createFridayUixSurfaceService", () => {
       })).toThrowError(FridayDomainError);
   });
 
+  it("blocks high-impact reflex preference writes through the generic UIX API", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: () => "pref-reflex-1",
+      nowIso: () => "2026-04-08T17:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    expect(() =>
+      service.updatePreferences({
+        userId: "user-1",
+        request: {
+          preferences: [
+            { category: "reflex", key: "testing.live_llm_policy", value: "allowed_with_cost_notice" },
+          ],
+        },
+      })).toThrowError(FridayDomainError);
+    expect(persistence.preferenceRepo.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still allows ordinary reflex preferences through the generic UIX API", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: () => "pref-reflex-ordinary",
+      nowIso: () => "2026-04-08T17:00:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const result = service.updatePreferences({
+      userId: "user-1",
+      request: {
+        preferences: [
+          { category: "reflex", key: "communication.language_policy", value: "zh" },
+        ],
+      },
+    });
+
+    expect(result.created).toBe(1);
+    expect(service.listPreferences({ userId: "user-1", category: "reflex" }).items).toEqual([
+      expect.objectContaining({ category: "reflex", key: "communication.language_policy", value: "zh" }),
+    ]);
+  });
+
   it("writes harness focus for wizard clarification continuations", async () => {
     const sessionService = {
       getOrCreateSession: vi.fn(async () => ({ key: "ui:assistant:assistant-shell" })),

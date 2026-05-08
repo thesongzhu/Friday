@@ -35,7 +35,7 @@ const PREFERENCE_CATEGORIES = new Set<FridayUserPreferenceCategory>([
   "reflex",
 ]);
 
-const SURFACES = new Set<FridayReflexSurface>(["channel", "operate", "review_center"]);
+const SURFACES = new Set<FridayReflexSurface>(["channel", "operate"]);
 
 export interface CreateFridayAgentReflexToolsOptions {
   reflexService?: FridayReflexService;
@@ -79,7 +79,7 @@ function readSurface(args: Record<string, unknown>): FridayReflexSurface {
   const surface = readStringParam(args, "sourceSurface");
   if (!surface) return "operate";
   if (!SURFACES.has(surface as FridayReflexSurface)) {
-    throw new Error("sourceSurface must be channel, operate, or review_center");
+    throw new Error("sourceSurface must be channel or operate");
   }
   return surface as FridayReflexSurface;
 }
@@ -222,7 +222,7 @@ export function createFridayAgentReflexTools(
           sourceSurface: {
             type: "string",
             enum: [...SURFACES],
-            description: "Surface where the explicit preference was stated.",
+            description: "Surface where the explicit preference was stated. Review Center confirmation is handled by candidate approval.",
           },
         },
         required: ["category", "key", "value"],
@@ -230,7 +230,7 @@ export function createFridayAgentReflexTools(
       async execute(args) {
         const reflexService = getReflexService();
         const userId = resolveUserId(args, defaultUserId);
-        return jsonResult(reflexService.updatePreference({
+        return jsonResult(reflexService.requestPreferenceUpdate({
           userId,
           category: readPreferenceCategory(args),
           key: readStringParam(args, "key", { required: true }),

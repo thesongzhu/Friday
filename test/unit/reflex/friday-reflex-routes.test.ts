@@ -108,4 +108,29 @@ describe("Friday Reflex routes", () => {
     expect(revoked.revoked).toBe(true);
     expect(service.listPreferences("user-1")).toEqual([]);
   });
+
+  it("returns a review candidate for high-impact preferences even if the caller claims Review Center", async () => {
+    const service = createService();
+    const routes = createFridayReflexRoutes({ service });
+    const updateRoute = routes.find((route) => route.operationId === "reflex.preferences.update");
+
+    const pending = await updateRoute!.handler(ctx({
+      params: { key: "testing.live_llm_policy" },
+      body: {
+        category: "reflex",
+        value: "allowed_with_cost_notice",
+        sourceSurface: "review_center",
+      },
+    })) as { requiresConfirmation: true; candidate: { status: string; payload: Record<string, unknown> } };
+
+    expect(pending.requiresConfirmation).toBe(true);
+    expect(pending.candidate.status).toBe("ready_for_review");
+    expect(pending.candidate.payload).toMatchObject({
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+    });
+    expect(service.listPreferences("user-1")
+      .find((pref) => pref.key === "testing.live_llm_policy")).toBeUndefined();
+  });
 });

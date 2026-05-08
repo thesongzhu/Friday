@@ -106,7 +106,7 @@ describe("Friday Reflex service", () => {
     expect(active.session?.primaryChannelKind).toBe("telegram");
   });
 
-  it("answers and skips questions while persisting explicit preferences", () => {
+  it("answers and skips questions while persisting ordinary explicit preferences", () => {
     const service = createService();
     service.startOnboarding({ userId: "user-1", primaryChannelKind: "slack" });
 
@@ -146,6 +146,53 @@ describe("Friday Reflex service", () => {
       .toBe("Wenxin");
   });
 
+  it("turns high-impact onboarding answers into review candidates without blocking progress", () => {
+    const service = createService();
+    service.startOnboarding({ userId: "user-1", primaryChannelKind: "slack" });
+    for (const [questionId, value] of [
+      ["O1", "follow_input"],
+      ["O2", "none"],
+      ["O3", "concise"],
+      ["O4", "compact"],
+      ["O5", "ask_first"],
+    ] as const) {
+      service.answerOnboarding({
+        userId: "user-1",
+        questionId,
+        answer: { value },
+        sourceSurface: "channel",
+      });
+    }
+
+    const afterO6 = service.answerOnboarding({
+      userId: "user-1",
+      questionId: "O6",
+      answer: { value: "save_immediately" },
+      sourceSurface: "channel",
+    });
+
+    expect(afterO6.activeQuestion?.id).toBe("O7");
+    expect(service.listPreferences("user-1")
+      .find((pref) => pref.category === "reflex" && pref.key === "memory.explicit_instruction_policy"))
+      .toBeUndefined();
+    expect(service.listCandidates({ userId: "user-1", kind: "preference" })).toEqual([
+      expect.objectContaining({
+        kind: "preference",
+        origin: "onboarding",
+        status: "ready_for_review",
+        payload: expect.objectContaining({
+          category: "reflex",
+          key: "memory.explicit_instruction_policy",
+          value: "save_immediately",
+        }),
+        evidence: expect.objectContaining({
+          requiresExplicitConfirmation: true,
+          onboardingQuestionId: "O6",
+        }),
+      }),
+    ]);
+  });
+
   it("does not let approved preference candidates overwrite explicit preferences", async () => {
     const service = createService();
     service.updatePreference({
@@ -177,6 +224,72 @@ describe("Friday Reflex service", () => {
       .toBe("concise");
   });
 
+  it("applies ordinary preference requests immediately", () => {
+    const service = createService();
+    const result = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "communication",
+      key: "persona.verbosity",
+      value: "concise",
+      sourceSurface: "operate",
+    });
+
+    expect(result.requiresConfirmation).toBe(false);
+    if (!result.requiresConfirmation) {
+      expect(result.preference.value).toBe("concise");
+    }
+    expect(service.listCandidates({ userId: "user-1", kind: "preference" })).toEqual([]);
+  });
+
+  it("turns high-impact preference requests into one-tap review candidates", async () => {
+    const service = createService();
+    const result = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+      sourceSurface: "operate",
+    });
+
+    expect(result.requiresConfirmation).toBe(true);
+    if (result.requiresConfirmation) {
+      expect(result.candidate.status).toBe("ready_for_review");
+      expect(result.candidate.kind).toBe("preference");
+      expect(result.candidate.payload).toMatchObject({
+        category: "reflex",
+        key: "testing.live_llm_policy",
+        value: "allowed_with_cost_notice",
+        source: "explicit",
+      });
+      expect(result.candidate.evidence.requiresExplicitConfirmation).toBe(true);
+    }
+    expect(service.listPreferences("user-1").find((pref) => pref.key === "testing.live_llm_policy"))
+      .toBeUndefined();
+
+    const duplicate = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+      sourceSurface: "review_center",
+    });
+    expect(duplicate.requiresConfirmation).toBe(true);
+    if (result.requiresConfirmation && duplicate.requiresConfirmation) {
+      expect(duplicate.candidate.id).toBe(result.candidate.id);
+      const approved = await service.approveCandidate({
+        userId: "user-1",
+        candidateId: result.candidate.id,
+      });
+      expect(approved.status).toBe("approved");
+      expect(approved.evidence.explicitPreferenceConfirmed).toBe(true);
+    }
+
+    const pref = service.listPreferences("user-1")
+      .find((item) => item.category === "reflex" && item.key === "testing.live_llm_policy");
+    expect(pref?.source).toBe("explicit");
+    expect(pref?.value).toBe("allowed_with_cost_notice");
+  });
+
   it("enforces candidate state transitions and principal binding", () => {
     const service = createService();
     expect(() => service.updatePreference({
@@ -186,6 +299,13 @@ describe("Friday Reflex service", () => {
       value: "balanced",
       sourceSurface: "operate",
     })).toThrow(/bound Friday user/);
+    expect(() => service.updatePreference({
+      userId: "user-1",
+      category: "reflex",
+      key: "automation.conservatism",
+      value: "balanced",
+      sourceSurface: "operate",
+    })).toThrow(/Review Center confirmation/);
 
     const candidate = service.createCandidate({
       userId: "user-1",
@@ -223,8 +343,8 @@ describe("Friday Reflex service", () => {
     const written = service.updatePreference({
       userId: "user-1",
       category: "reflex",
-      key: "automation.conservatism",
-      value: "balanced",
+      key: "communication.language_policy",
+      value: "zh",
       sourceSurface: "operate",
     });
 
@@ -234,7 +354,7 @@ describe("Friday Reflex service", () => {
       sourceSurface: "review_center",
     });
     expect(revoked.revoked).toBe(true);
-    expect(revoked.preference.key).toBe("automation.conservatism");
+    expect(revoked.preference.key).toBe("communication.language_policy");
     expect(service.listPreferences("user-1")).toEqual([]);
     expect(() => service.revokePreference({
       userId: "user-1",
