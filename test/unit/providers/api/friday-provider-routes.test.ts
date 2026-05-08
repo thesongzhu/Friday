@@ -564,6 +564,22 @@ describe("FridayProviderRoutes", () => {
       });
     });
 
+    it("capabilities.doctor rejects an explicit empty providerIds list", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const doctorRoute = routes.find(
+        (r) => r.operationId === "capabilities.doctor",
+      )!;
+
+      await expect(doctorRoute.handler(makeCtx({ body: { providerIds: [] } }))).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        message: "providerIds must contain at least one provider id when provided",
+      });
+      expect(mockService.runCapabilityDoctor).not.toHaveBeenCalled();
+    });
+
     it("providers.routing.explain delegates query and principal context", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({

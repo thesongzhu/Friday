@@ -78,7 +78,13 @@ function parseCapabilityDoctorProviderIds(body: unknown): string[] | undefined {
     }
     return providerId.trim();
   });
-  return [...new Set(normalizedProviderIds)];
+  const uniqueProviderIds = [...new Set(normalizedProviderIds)];
+  if (uniqueProviderIds.length === 0) {
+    throw new FridayDomainError("VALIDATION_ERROR", "providerIds must contain at least one provider id when provided", {
+      httpStatus: 400,
+    });
+  }
+  return uniqueProviderIds;
 }
 
 const PROVIDER_CREATE_ACCEPTED_FIELDS = [
