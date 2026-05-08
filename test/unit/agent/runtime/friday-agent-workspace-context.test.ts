@@ -175,7 +175,7 @@ describe("loadFridayWorkspaceContext", () => {
   });
 
   describe("memory export feedback loop", () => {
-    it("loads prompt-safe exported memory items from .friday/exports/memory/", async () => {
+    it("skips exported compaction memory items because context replay owns compaction recovery", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -204,13 +204,13 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("deployment wiring was already validated");
-      expect(ctx.promptFragment).toContain("rollback path was tested");
-      expect(ctx.promptFragment).toContain("[compaction, summary]");
-      expect(ctx.promptFragment).toContain("stored-memories");
+      expect(ctx.promptFragment).not.toContain("deployment wiring was already validated");
+      expect(ctx.promptFragment).not.toContain("rollback path was tested");
+      expect(ctx.promptFragment).not.toContain("[compaction, summary]");
+      expect(ctx.promptFragment).not.toContain("stored-memories");
     });
 
-    it("loads multiple prompt-safe memory export files", async () => {
+    it("skips multiple exported compaction memory files", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -227,11 +227,11 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(path.join(exportDir, "ns2_def.json"), JSON.stringify(ns2));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Compaction memory from export 1");
-      expect(ctx.promptFragment).toContain("Compaction memory from export 2");
+      expect(ctx.promptFragment).not.toContain("Compaction memory from export 1");
+      expect(ctx.promptFragment).not.toContain("Compaction memory from export 2");
     });
 
-    it("skips non-compaction exported memories so durable user facts stay behind memory_search", async () => {
+    it("skips all exported memories so durable user facts stay behind explicit memory APIs", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -258,7 +258,7 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Visible exported memory");
+      expect(ctx.promptFragment).not.toContain("Visible exported memory");
       expect(ctx.promptFragment).not.toContain("MemoryAuditName-leak");
     });
 
@@ -276,7 +276,7 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Valid memory");
+      expect(ctx.promptFragment).not.toContain("Valid memory");
     });
 
     it("skips items without contentText or value", async () => {
@@ -294,7 +294,7 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(path.join(exportDir, "test.json"), JSON.stringify(exported));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Has content");
+      expect(ctx.promptFragment).not.toContain("Has content");
     });
 
     it("returns empty when no exports directory exists", async () => {
@@ -327,9 +327,9 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      // Should have at most 100 items
+      // Should have no exported memory prompt items while the allowlist is empty.
       const lines = ctx.promptFragment.split("\n").filter((l) => l.startsWith("- Memory item number"));
-      expect(lines.length).toBeLessThanOrEqual(100);
+      expect(lines.length).toBe(0);
     });
   });
 
@@ -411,7 +411,7 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.promptFragment).not.toContain("dark mode in editors");
     });
 
-    it("uses selected session blocks to pull in relevant stored memory for generic follow-ups", async () => {
+    it("does not use selected session blocks to pull exported compaction memory into generic follow-ups", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
       await fs.writeFile(
@@ -451,11 +451,11 @@ describe("loadFridayWorkspaceContext", () => {
         selectedBlocks,
       });
 
-      expect(ctx.promptFragment).toContain("browser not connected");
+      expect(ctx.promptFragment).not.toContain("browser not connected");
       expect(ctx.promptFragment).not.toContain("sourdough hydration");
     });
 
-    it("matches simple singular/plural variants when selecting stored memories", async () => {
+    it("does not select exported compaction memory through singular/plural matching", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
       await fs.writeFile(
@@ -477,7 +477,7 @@ describe("loadFridayWorkspaceContext", () => {
         task: "What drink do I like?",
       });
 
-      expect(ctx.promptFragment).toContain("matcha drinks");
+      expect(ctx.promptFragment).not.toContain("matcha drinks");
     });
 
     it("includes all candidate blocks when no task-aware filtering input is provided", async () => {

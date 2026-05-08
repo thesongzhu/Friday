@@ -499,7 +499,7 @@ export function createFridayAgentRuntime(
     decisionEngine,
     starterSkillRouting,
     compactionBridge,
-    compactionMemorySink,
+    compactionContextReplaySink,
   } = deps;
   const canonicalMutatingActionGate = deps.canonicalMutatingActionGate
     ? createFridayMutatingActionGate({
@@ -1853,8 +1853,8 @@ export function createFridayAgentRuntime(
               if (bridgeResult.compacted) {
                 messages.splice(0, messages.length, ...bridgeResult.messages);
 
-                // Non-blocking: persist structured summary to memory for cross-session retrieval
-                if (compactionMemorySink && bridgeResult.summary) {
+                // Non-blocking: persist structured summary as unconfirmed context replay evidence.
+                if (compactionContextReplaySink && bridgeResult.summary) {
                   handleTrackedEvent("agent.run.compaction_persist_scheduled", {
                     runId,
                     sessionKey: params.sessionKey ?? runId,
@@ -1862,7 +1862,7 @@ export function createFridayAgentRuntime(
                     blockCount: bridgeResult.blocks?.length ?? 0,
                     droppedMessageCount: bridgeResult.droppedMessageCount,
                   });
-                  void compactionMemorySink.persist({
+                  void compactionContextReplaySink.persist({
                     sessionKey: params.sessionKey ?? runId,
                     runId,
                     summary: bridgeResult.summary,

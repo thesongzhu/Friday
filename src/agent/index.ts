@@ -22,15 +22,22 @@ export {
 
 export type { FridayAgentCompactionBridge, FridayAgentCompactionBridgeResult } from "./runtime/friday-agent-compaction-bridge.js";
 export { createFridayAgentCompactionBridge } from "./runtime/friday-agent-compaction-bridge.js";
-export type { FridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
-export { createFridayCompactionMemorySink } from "./runtime/friday-agent-compaction-memory-sink.js";
+export type { FridayCompactionContextReplaySink } from "./runtime/friday-agent-compaction-context-replay-sink.js";
+export { createFridayCompactionContextReplaySink } from "./runtime/friday-agent-compaction-context-replay-sink.js";
 export type {
   FridayCompactionContextLoader,
   FridayCompactionContextLoadResult,
 } from "./runtime/friday-agent-compaction-context-loader.js";
 export { createFridayCompactionContextLoader } from "./runtime/friday-agent-compaction-context-loader.js";
 export { verifyCompactionSummary } from "./runtime/friday-agent-compaction-verifier.js";
-export { groupCompactionMemoryItems, formatCompactionContextForPrompt } from "./runtime/friday-agent-compaction-context-formatter.js";
+export { groupCompactionContextReplayRecords, formatCompactionContextForPrompt } from "./runtime/friday-agent-compaction-context-formatter.js";
+export type {
+  FridayAgentContextReplayKind,
+  FridayAgentContextReplayRecord,
+  FridayAgentContextReplayRepository,
+  FridayAgentContextReplayTrustLevel,
+} from "./persistence/friday-agent-context-replay-repository.js";
+export { createFridayAgentContextReplayRepository } from "./persistence/friday-agent-context-replay-repository.js";
 export type { FridayPreferenceInjector } from "./runtime/friday-agent-preference-injector.js";
 export { createFridayPreferenceInjector } from "./runtime/friday-agent-preference-injector.js";
 

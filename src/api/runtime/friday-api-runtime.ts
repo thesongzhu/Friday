@@ -119,7 +119,7 @@ import {
   createFridayAgentPlanningGateService,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
-  createFridayCompactionMemorySink,
+  createFridayCompactionContextReplaySink,
 } from "#agent";
 import type {
   FridayAgentAutomationService,
@@ -2682,13 +2682,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       nowIso: deps.nowIso,
     })
     : undefined;
-  const engineCompactionMemorySink = deps.memoryService
-    ? createFridayCompactionMemorySink({
-      memoryService: deps.memoryService,
-      idGenerator: deps.idGenerator,
-      nowIso: deps.nowIso,
-    })
-    : undefined;
+  const engineCompactionContextReplaySink = createFridayCompactionContextReplaySink({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+  });
 
   const orchestrationEngine = deps.agentRuntime
     ? createFridayOrchestrationEngine({
@@ -2701,9 +2699,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         classifyExecution: classifyFridayExecution,
         capabilitySnapshotGetter: deps.capabilitySnapshotGetter as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
         taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
-        persistCompactionEvidence: engineCompactionMemorySink
+        persistCompactionEvidence: engineCompactionContextReplaySink
           ? async (input) => {
-            await engineCompactionMemorySink.persist({
+            await engineCompactionContextReplaySink.persist({
               sessionKey: input.sessionKey,
               runId: input.runId,
               summary: input.summary,

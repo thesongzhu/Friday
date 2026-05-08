@@ -170,7 +170,7 @@ import {
   createFridayAgentToolRegistry,
   createFridayAgentWorkflowGeneratorTool,
   createFridayCompactionContextLoader,
-  createFridayCompactionMemorySink,
+  createFridayCompactionContextReplaySink,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
@@ -4119,12 +4119,14 @@ export async function createFridayHub(
       }
     },
   });
-  const agentCompactionMemorySink = memoryService
-    ? createFridayCompactionMemorySink({ memoryService, idGenerator, nowIso })
-    : undefined;
-  const agentCompactionContextLoader = memoryService
-    ? createFridayCompactionContextLoader({ memoryService })
-    : undefined;
+  const agentCompactionContextReplaySink = createFridayCompactionContextReplaySink({
+    db: stateRuntime!.sqlite,
+    idGenerator,
+    nowIso,
+  });
+  const agentCompactionContextLoader = createFridayCompactionContextLoader({
+    db: stateRuntime!.sqlite,
+  });
 
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
@@ -4141,7 +4143,7 @@ export async function createFridayHub(
     selfTestService: agentSelfTestService,
     selfFixService: agentSelfFixService,
     compactionBridge: agentCompactionBridge,
-    compactionMemorySink: agentCompactionMemorySink,
+    compactionContextReplaySink: agentCompactionContextReplaySink,
     sessionMirror: async (sessionKey, message) => {
       await hubSessionService.addMessage(sessionKey, message);
     },
@@ -4435,7 +4437,7 @@ export async function createFridayHub(
         selfTestService: agentSelfTestService,
         selfFixService: createFridayAgentSelfFixService(),
         compactionBridge: agentCompactionBridge,
-        compactionMemorySink: agentCompactionMemorySink,
+        compactionContextReplaySink: agentCompactionContextReplaySink,
         sessionMirror: async (sessionKey, message) => {
           await hubSessionService.addMessage(sessionKey, message);
         },
@@ -7227,9 +7229,9 @@ export async function createFridayHub(
           classifyExecution: classifyFridayExecution,
           capabilitySnapshotGetter: getAgentCapabilitySnapshot as unknown as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
           taskStatusSnapshotGetter: getAgentTaskStatusSnapshot as unknown as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
-          persistCompactionEvidence: agentCompactionMemorySink
+          persistCompactionEvidence: agentCompactionContextReplaySink
             ? async (input) => {
-              await agentCompactionMemorySink.persist({
+              await agentCompactionContextReplaySink.persist({
                 sessionKey: input.sessionKey,
                 runId: input.runId,
                 summary: input.summary,

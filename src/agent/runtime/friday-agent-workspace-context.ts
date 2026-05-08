@@ -3,12 +3,9 @@
  * (AGENTS.md, SOUL.md, USER.md, MEMORY.md, etc.) and injects
  * their contents into the agent system prompt.
  *
- * Also reads prompt-safe exported memory items from `.friday/exports/memory/`
- * (currently limited to compaction summaries) so session continuity can
- * survive restarts without turning durable user facts into hidden prompt state.
- *
- * Durable user facts and preferences must stay behind explicit
- * memory surfaces such as `memory_search` or public memory APIs.
+ * Durable user facts, preferences, and compaction summaries must stay behind
+ * explicit memory/context-replay surfaces instead of silently entering the
+ * workspace prompt through exported memory files.
  *
  * Files are read fresh on each agent run so edits take effect
  * immediately without restart.
@@ -104,11 +101,9 @@ const MAX_FILE_SIZE_CHARS = 32_000;
 /** Maximum total workspace context size (64 KB). */
 const MAX_TOTAL_CONTEXT_CHARS = 64_000;
 
-/** Maximum memory items to include from exported JSON files. */
+/** Maximum memory items to scan from exported JSON files. No namespace is prompt-safe by default. */
 const MAX_MEMORY_EXPORT_ITEMS = 100;
-const WORKSPACE_CONTEXT_ALLOWED_MEMORY_EXPORT_NAMESPACES = new Set([
-  "compaction.summary",
-]);
+const WORKSPACE_CONTEXT_ALLOWED_MEMORY_EXPORT_NAMESPACES = new Set<string>();
 
 /** Maximum candidate blocks to inject when task-aware selection is active. */
 const MAX_SELECTED_CANDIDATE_BLOCKS = 3;
@@ -511,7 +506,9 @@ export async function loadFridayWorkspaceContext(
     }
   }
 
-  // Load exported memory items from .friday/exports/memory/ (feedback loop)
+  // Scan exported memory items only through an explicit allowlist.
+  // Phase 4A.2 keeps the allowlist empty so compaction summaries cannot
+  // re-enter the prompt through durable memory exports.
   const memoryExportCandidates = await loadMemoryExports(resolvedDir);
   for (const memoryExportCandidate of memoryExportCandidates) {
     files.push({
@@ -580,10 +577,9 @@ export async function loadFridayWorkspaceContext(
 }
 
 /**
- * Loads exported memory items from .friday/exports/memory/*.json.
- * These files are written by the memory file sync service when the
- * agent uses `memory_store`. This closes the feedback loop so stored
- * memories appear in the next run's system prompt.
+ * Loads exported memory items from .friday/exports/memory/*.json only when a
+ * namespace is explicitly prompt-safe. The default allowlist is empty because
+ * memory and context replay have separate read paths.
  */
 async function loadMemoryExports(workspaceDir: string): Promise<FridayStoredMemoryCandidate[]> {
   const memoryDir = path.join(workspaceDir, FRIDAY_MEMORY_FILE_SYNC_EXPORT_DIR, "memory");

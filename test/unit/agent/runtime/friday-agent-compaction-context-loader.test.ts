@@ -1,57 +1,58 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { FridayMemoryItem } from "../../../../src/memory/model/friday-memory.types.js";
+import type { FridaySqliteLayer } from "../../../../src/state/sqlite/friday-sqlite.types.js";
 import { createFridayCompactionContextLoader } from "../../../../src/agent/runtime/friday-agent-compaction-context-loader.js";
+import { createFridayAgentContextReplayRepository } from "../../../../src/agent/persistence/friday-agent-context-replay-repository.js";
+import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 
 const NOW = "2026-04-16T19:00:00.000Z";
 
 describe("FridayCompactionContextLoader", () => {
-  it("returns only compaction blocks for the current session", async () => {
-    const items: FridayMemoryItem[] = [
-      {
-        id: "item-1",
-        namespace: "compaction.summary",
-        key: "summary:run-1",
-        content: "User already validated Discord routing.",
-        source: "compaction:session-a:run-1",
-        tags: ["compaction", "auto", "session-a"],
-        metadata: { compactedAt: NOW },
+  let db: FridaySqliteLayer;
+
+  beforeEach(() => {
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("returns only context replay blocks for the current session", async () => {
+    const repo = createFridayAgentContextReplayRepository();
+    db.withWriteTransaction((writer) => {
+      repo.appendCompactionSummary(writer, {
+        entryId: "replay-1",
+        sessionKey: "session-a",
+        runId: "run-1",
+        summary: {
+          summaryText: "User already validated Discord routing.",
+          decisions: [],
+          todos: ["Re-run self-healing after config patch."],
+          openQuestions: [],
+          toolFailures: [],
+          fileOperations: [],
+        },
+        compactedAt: NOW,
         createdAt: NOW,
-        updatedAt: NOW,
-      },
-      {
-        id: "item-2",
-        namespace: "compaction.todos",
-        key: "todos:run-1",
-        content: "Re-run self-healing after config patch.",
-        source: "compaction:session-a:run-1",
-        tags: ["compaction", "auto", "session-a"],
-        metadata: { compactedAt: NOW },
+      });
+      repo.appendCompactionSummary(writer, {
+        entryId: "replay-2",
+        sessionKey: "session-b",
+        runId: "run-2",
+        summary: {
+          summaryText: "This belongs to another session.",
+          decisions: [],
+          todos: [],
+          openQuestions: [],
+          toolFailures: [],
+          fileOperations: [],
+        },
+        compactedAt: NOW,
         createdAt: NOW,
-        updatedAt: NOW,
-      },
-      {
-        id: "item-3",
-        namespace: "compaction.summary",
-        key: "summary:run-2",
-        content: "This belongs to another session.",
-        source: "compaction:session-b:run-2",
-        tags: ["compaction", "auto", "session-b"],
-        metadata: { compactedAt: NOW },
-        createdAt: NOW,
-        updatedAt: NOW,
-      },
-    ];
-    const loader = createFridayCompactionContextLoader({
-      memoryService: {
-        store: vi.fn(),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(async () => items),
-        delete: vi.fn(),
-        prune: vi.fn(),
-      } as never,
+      });
     });
+    const loader = createFridayCompactionContextLoader({ db, repository: repo });
 
     const result = await loader.loadContext({ sessionKey: "session-a" });
 
@@ -59,20 +60,13 @@ describe("FridayCompactionContextLoader", () => {
     expect(result.fragment).toContain("Discord routing");
     expect(result.fragment).toContain("self-healing");
     expect(result.fragment).not.toContain("another session");
-    expect(result.sources).toEqual(["compaction:session-a:run-1"]);
+    expect(result.fragment).toContain("[Unconfirmed Context Replay");
+    expect(result.fragment).toContain("not user-confirmed memory");
+    expect(result.sources).toEqual(["context_replay:replay-1"]);
   });
 
   it("returns an empty fragment when sessionKey is missing", async () => {
-    const loader = createFridayCompactionContextLoader({
-      memoryService: {
-        store: vi.fn(),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(async () => []),
-        delete: vi.fn(),
-        prune: vi.fn(),
-      } as never,
-    });
+    const loader = createFridayCompactionContextLoader({ db });
 
     const result = await loader.loadContext({});
 

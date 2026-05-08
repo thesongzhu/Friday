@@ -42,11 +42,13 @@ interface CompactionEventRow {
   payloadJson: string;
 }
 
-interface MemoryRow {
-  namespace: string;
-  content: string;
-  source: string;
-  tagsJson: string;
+interface ContextReplayRow {
+  entryId: string;
+  sessionKey: string;
+  runId: string;
+  kind: string;
+  trustLevel: string;
+  summaryJson: string;
   createdAt: string;
 }
 
@@ -78,16 +80,23 @@ function readCompactionEvents(dbPath: string, createdAfterIso: string): Compacti
   }
 }
 
-function readCompactionMemoryRows(dbPath: string, createdAfterIso: string): MemoryRow[] {
+function readCompactionContextReplayRows(dbPath: string, createdAfterIso: string, sessionKey: string): ContextReplayRow[] {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     return db.prepare(
-      `SELECT namespace, content_text AS content, source, tags_json AS tagsJson, created_at AS createdAt
-         FROM memory_items
+      `SELECT entry_id AS entryId,
+              session_key AS sessionKey,
+              run_id AS runId,
+              kind,
+              trust_level AS trustLevel,
+              summary_json AS summaryJson,
+              created_at AS createdAt
+         FROM friday_agent_context_replay_entries
         WHERE created_at >= ?
-          AND namespace LIKE 'compaction.%'
-        ORDER BY updated_at DESC`,
-    ).all(createdAfterIso) as MemoryRow[];
+          AND session_key = ?
+          AND kind = 'compaction_summary'
+        ORDER BY compacted_at DESC, created_at DESC`,
+    ).all(createdAfterIso, sessionKey) as ContextReplayRow[];
   } finally {
     db.close();
   }
@@ -332,14 +341,13 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
       expect(resultPayload).toBeTruthy();
       expect(resultPayload?.summaryPresent).toBe(true);
 
-      const compactionRows = await pollUntil(
-        async () => readCompactionMemoryRows(dbPath, createdAfterIso),
-        (rows) => rows.some((row) => row.namespace === "compaction.summary"),
+      const contextReplayRows = await pollUntil(
+        async () => readCompactionContextReplayRows(dbPath, createdAfterIso, sessionKey),
+        (rows) => rows.some((row) => row.kind === "compaction_summary"),
         { intervalMs: 500, maxMs: 30_000 },
       );
-      const namespaces = new Set(compactionRows.map((row) => row.namespace));
-      expect(namespaces.has("compaction.summary")).toBe(true);
-      expect(compactionRows.some((row) => row.content.includes(evidenceToken))).toBe(true);
+      expect(contextReplayRows.some((row) => row.trustLevel === "unconfirmed_summary")).toBe(true);
+      expect(contextReplayRows.some((row) => row.summaryJson.includes(evidenceToken))).toBe(true);
 
       const resetRes = await apiFetch<{ ok: boolean }>(
         env.baseUrl,
@@ -397,7 +405,7 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
             controlSessionKey,
             evidenceToken,
             compactionEvents,
-            compactionRows,
+            contextReplayRows,
             controlRun: controlRun.json,
             recallRun: recallRun.json,
           }, null, 2),
