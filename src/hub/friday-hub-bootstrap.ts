@@ -1584,6 +1584,11 @@ export async function createFridayHub(
     sessionManager: xhsSessionManager,
     artifactDir: path.join(workspaceRoot, ".friday", "artifacts", "xhs"),
   });
+  const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
+  const guideLensPreferencePrincipalId = process.env.FRIDAY_GUIDE_LENS_PRINCIPAL_ID?.trim() || "local-guide-lens";
+  const guideLensPreferenceKey = "guide_lens.preferences";
+  const isGuideLensPreferencePatch = (value: unknown): value is Partial<FridayGuideLensPreferences> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
 
   // Optional desktop runtime (opt-in)
   const desktopEnabled = capabilityGates.desktopEnabled;
@@ -2008,6 +2013,30 @@ export async function createFridayHub(
           kind: "default_f",
           initials: "F",
           sizePx: 56,
+        },
+      },
+      preferenceStore: {
+        load: () => {
+          const persisted = stateRuntime!.sqlite.withReadConnection((db) =>
+            uixUserPreferenceRepository.listByPrincipal(db, {
+              principalId: guideLensPreferencePrincipalId,
+              category: "uix",
+            }).find((preference) => preference.key === guideLensPreferenceKey));
+          return isGuideLensPreferencePatch(persisted?.value) ? persisted.value : undefined;
+        },
+        save: (preferences) => {
+          stateRuntime!.sqlite.withWriteTransaction((db) => {
+            uixUserPreferenceRepository.upsert(db, {
+              id: idGenerator(),
+              principalId: guideLensPreferencePrincipalId,
+              category: "uix",
+              key: guideLensPreferenceKey,
+              value: JSON.parse(JSON.stringify(preferences)),
+              source: "explicit",
+              confidence: 1,
+              nowIso: nowIso(),
+            });
+          });
         },
       },
     });
@@ -3509,7 +3538,6 @@ export async function createFridayHub(
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
   // always have access to learned preferences — no startup window gap.
   const _learningContextRef = selfLearningRuntime.context;
-  const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
   const uixGuidedContextRepository = createFridayUixGuidedContextRepository();
   const buildMergedPreferenceContext = (input: { userId: string; nowIso: string }) => {
     const learned = _learningContextRef?.buildContext(input) ?? { preferences: {} };

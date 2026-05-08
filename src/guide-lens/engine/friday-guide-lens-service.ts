@@ -35,6 +35,12 @@ export interface CreateFridayGuideLensServiceDeps {
   >;
   parserAdapter?: FridayGuideLensParserAdapter;
   defaultPreferences?: Partial<FridayGuideLensPreferences>;
+  preferenceStore?: FridayGuideLensPreferenceStore;
+}
+
+export interface FridayGuideLensPreferenceStore {
+  load(): Partial<FridayGuideLensPreferences> | undefined;
+  save(preferences: FridayGuideLensPreferences): void;
 }
 
 const DEFAULT_AVATAR: FridayGuideLensAvatarPreference = {
@@ -145,7 +151,10 @@ function joinTextParts(...parts: Array<string | undefined>): string | undefined 
 export function createFridayGuideLensService(
   deps: CreateFridayGuideLensServiceDeps,
 ): FridayGuideLensService {
-  let preferences = mergePreferences(DEFAULT_PREFERENCES, deps.defaultPreferences);
+  let preferences = mergePreferences(
+    mergePreferences(DEFAULT_PREFERENCES, deps.defaultPreferences),
+    deps.preferenceStore?.load(),
+  );
   assertSupportedPreferences(preferences);
   let activeSessionId: string | undefined;
   let sessions: FridayGuideLensSession[] = [];
@@ -299,18 +308,22 @@ export function createFridayGuideLensService(
     updatePreferences(patch) {
       const next = mergePreferences(preferences, patch);
       assertSupportedPreferences(next);
+      deps.preferenceStore?.save(next);
       preferences = next;
       return preferences;
     },
 
     updateAvatar(avatar) {
-      preferences = mergePreferences(preferences, {
+      const next = mergePreferences(preferences, {
         avatar: {
           ...preferences.avatar,
           ...avatar,
           sizePx: avatar.sizePx ?? preferences.avatar.sizePx,
         },
       });
+      assertSupportedPreferences(next);
+      deps.preferenceStore?.save(next);
+      preferences = next;
       return preferences.avatar;
     },
 

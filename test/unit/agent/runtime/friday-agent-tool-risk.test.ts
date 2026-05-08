@@ -232,6 +232,12 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("provider", { action: "oauth_complete", providerId: "prov-1" })).toContain("approval");
     });
 
+    it("blocks Guide Lens preference mutations", () => {
+      expect(getApprovalRequiredReasonForToolCall("guide_lens", { action: "update_preferences" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("guide_lens", { action: "update_avatar" })).toContain("approval");
+      expect(getApprovalRequiredReasonForToolCall("guide_lens", { action: "snapshot" })).toBeNull();
+    });
+
     it("allows safe tool calls", () => {
       expect(getApprovalRequiredReasonForToolCall("read", { path: "file.txt" })).toBeNull();
       expect(getApprovalRequiredReasonForToolCall("web_fetch", { url: "https://example.com" })).toBeNull();

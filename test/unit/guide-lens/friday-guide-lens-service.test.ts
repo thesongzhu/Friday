@@ -165,6 +165,39 @@ describe("createFridayGuideLensService", () => {
     expect(() => service.assertReadOnlyAction("click the Continue button")).toThrow("only observe and guide");
   });
 
+  it("loads and saves Guide Lens preferences through the UI preference store", () => {
+    let persisted: unknown;
+    const first = createFridayGuideLensService({
+      idGenerator: idGenerator(),
+      nowIso,
+      preferenceStore: {
+        load: () => undefined,
+        save: (preferences) => {
+          persisted = structuredClone(preferences);
+        },
+      },
+    });
+
+    first.updateAvatar({ kind: "local_image", localPath: "/tmp/alice.png", sizePx: 72 });
+
+    const second = createFridayGuideLensService({
+      idGenerator: idGenerator(),
+      nowIso,
+      preferenceStore: {
+        load: () => persisted as never,
+        save: (preferences) => {
+          persisted = structuredClone(preferences);
+        },
+      },
+    });
+
+    expect(second.getState().preferences.avatar).toEqual(expect.objectContaining({
+      kind: "local_image",
+      localPath: "/tmp/alice.png",
+      sizePx: 72,
+    }));
+  });
+
   it("runs optional parser adapters with redacted snapshot input", async () => {
     const parserKey = ["sk", "parsersecretvalue1234567890"].join("-");
     const parse = vi.fn().mockResolvedValue({

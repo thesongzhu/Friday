@@ -145,6 +145,14 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("gateway", { action: "config_set" })).toBe(true);
   });
 
+  it("classifies Guide Lens observation as read-only and preference writes as mutating", () => {
+    expect(isMutatingToolCall("guide_lens", { action: "state" })).toBe(false);
+    expect(isMutatingToolCall("guide_lens", { action: "snapshot" })).toBe(false);
+    expect(isMutatingToolCall("guide_lens", { action: "show_overlay" })).toBe(false);
+    expect(isMutatingToolCall("guide_lens", { action: "update_preferences" })).toBe(true);
+    expect(isMutatingToolCall("guide_lens", { action: "update_avatar" })).toBe(true);
+  });
+
   // ─── Conditional: xhs ───
 
   it("classifies xhs publish_note as mutating", () => {

@@ -70,6 +70,10 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     const action = typeof args.action === "string" ? args.action : "";
     return action !== "status" && action !== "config_get";
   },
+  guide_lens: (args) => {
+    const action = typeof args.action === "string" ? args.action : "";
+    return action === "update_preferences" || action === "update_avatar";
+  },
   // MCP servers run in their own sandbox with their own security.
   // Agent readOnly should not block MCP tool calls.
   // skill_run is now in READ_ONLY_TOOLS — skills run in their own sandbox
