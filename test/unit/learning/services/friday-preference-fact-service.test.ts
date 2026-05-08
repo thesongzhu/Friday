@@ -169,6 +169,123 @@ describe("FridayPreferenceFactService", () => {
     expect(active[0]!.key).toBe("pref:a");
   });
 
+  it("records first inferred preference below active context threshold", () => {
+    const updated = service.applySignals({
+      event: makeEvent({ kind: "user_message" }),
+      signals: [makeSignal({ kind: "preference", key: "persona.verbosity", value: "concise", confidence: 0.65 })],
+      nowIso: NOW,
+    });
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]!.confidence).toBeLessThan(0.60);
+
+    const active = service.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0.60,
+      limit: 100,
+    });
+    expect(active).toHaveLength(0);
+  });
+
+  it("promotes repeated inferred preferences into active context", () => {
+    service.applySignals({
+      event: makeEvent({ eventId: "evt-001", kind: "user_message" }),
+      signals: [makeSignal({ kind: "preference", key: "persona.verbosity", value: "concise", confidence: 0.65 })],
+      nowIso: NOW,
+    });
+    const updated = service.applySignals({
+      event: makeEvent({ eventId: "evt-002", kind: "user_message" }),
+      signals: [
+        makeSignal({
+          signalId: "sig-002",
+          kind: "preference",
+          key: "persona.verbosity",
+          value: "concise",
+          confidence: 0.65,
+          sourceEventId: "evt-002",
+        }),
+      ],
+      nowIso: NOW,
+    });
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]!.evidenceCount).toBe(2);
+    expect(updated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+
+    const active = service.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0.60,
+      limit: 100,
+    });
+    expect(active).toHaveLength(1);
+    expect(active[0]!.key).toBe("persona.verbosity");
+    expect(active[0]!.value).toBe("concise");
+  });
+
+  it("downgrades conflicting inferred preferences back below active context threshold", () => {
+    service.applySignals({
+      event: makeEvent({ eventId: "evt-001", kind: "user_message" }),
+      signals: [makeSignal({ kind: "preference", key: "persona.verbosity", value: "concise", confidence: 0.65 })],
+      nowIso: NOW,
+    });
+    service.applySignals({
+      event: makeEvent({ eventId: "evt-002", kind: "user_message" }),
+      signals: [
+        makeSignal({
+          signalId: "sig-002",
+          kind: "preference",
+          key: "persona.verbosity",
+          value: "concise",
+          confidence: 0.65,
+          sourceEventId: "evt-002",
+        }),
+      ],
+      nowIso: NOW,
+    });
+
+    const conflicted = service.applySignals({
+      event: makeEvent({ eventId: "evt-003", kind: "user_message" }),
+      signals: [
+        makeSignal({
+          signalId: "sig-003",
+          kind: "preference",
+          key: "persona.verbosity",
+          value: "detailed",
+          confidence: 0.65,
+          sourceEventId: "evt-003",
+        }),
+      ],
+      nowIso: NOW,
+    });
+
+    expect(conflicted[0]!.value).toBe("detailed");
+    expect(conflicted[0]!.confidence).toBeLessThan(0.60);
+    expect(service.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0.60,
+      limit: 100,
+    })).toHaveLength(0);
+  });
+
+  it("keeps high-confidence explicit user preferences active on first evidence", () => {
+    const updated = service.applySignals({
+      event: makeEvent({ kind: "user_message" }),
+      signals: [makeSignal({ kind: "preference", key: "pref:display_name", value: "Captain", confidence: 0.80 })],
+      nowIso: NOW,
+    });
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+
+    const active = service.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0.60,
+      limit: 100,
+    });
+    expect(active).toHaveLength(1);
+    expect(active[0]!.key).toBe("pref:display_name");
+  });
+
   it("deleteFact removes a fact", () => {
     service.applySignals({
       event: makeEvent(),

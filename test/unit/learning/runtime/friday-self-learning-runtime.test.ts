@@ -178,6 +178,59 @@ describe("FridaySelfLearningRuntime", () => {
     expect(ctx.preferences).toHaveProperty("pref:editor", "nvim");
   });
 
+  it("pipeline end-to-end: explicit user-message preference is active on first evidence", () => {
+    const result = runtime.pipeline.processEvent({
+      eventId: "evt-001",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_message",
+      payload: { text: "call me Captain" },
+    });
+
+    expect(result.factsUpdated).toHaveLength(1);
+    expect(result.factsUpdated[0]!.key).toBe("pref:display_name");
+    expect(result.factsUpdated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+
+    const ctx = runtime.context.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+    expect(ctx.preferences).toHaveProperty("pref:display_name", "Captain");
+  });
+
+  it("pipeline end-to-end: inferred persona preference requires repeated evidence before context use", () => {
+    const first = runtime.pipeline.processEvent({
+      eventId: "evt-001",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_message",
+      payload: { text: "Can you be more concise in your answers?" },
+    });
+
+    expect(first.factsUpdated).toHaveLength(1);
+    expect(first.factsUpdated[0]!.key).toBe("persona.verbosity");
+    expect(first.factsUpdated[0]!.confidence).toBeLessThan(0.60);
+    expect(runtime.context.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    }).preferences).not.toHaveProperty("persona.verbosity");
+
+    const second = runtime.pipeline.processEvent({
+      eventId: "evt-002",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_message",
+      payload: { text: "please be more concise" },
+    });
+
+    expect(second.factsUpdated).toHaveLength(1);
+    expect(second.factsUpdated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+    expect(runtime.context.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    }).preferences).toHaveProperty("persona.verbosity", "concise");
+  });
+
   it("pipeline end-to-end: error → incident → diagnosis (Phase 7: no lesson at ingestion)", () => {
     const result = runtime.pipeline.processEvent({
       eventId: "evt-err-001",

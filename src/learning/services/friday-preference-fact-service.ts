@@ -38,6 +38,9 @@ export interface CreatePreferenceFactServiceDeps {
   minConfidenceFloor?: number;
 }
 
+const FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP = 0.55;
+const EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR = 0.8;
+
 /**
  * Recompute confidence using the scoring model from the plan:
  *   existingDecayed = existingConfidence * exp(-ln(2) * daysSinceLastConfirmed / halfLifeDays)
@@ -113,13 +116,18 @@ export function createFridayPreferenceFactService(
             nowIso,
             halfLifeDays,
           );
+          const gatedConfidence = !existing
+            && signal.kind === "preference"
+            && signal.confidence < EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR
+            ? Math.min(newConfidence, FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP)
+            : newConfidence;
 
           const entity = deps.factRepo.upsert(db, {
             factId: existing?.factId ?? deps.idGenerator(),
             userId: event.userId,
             key: signal.key,
             value: signal.value,
-            confidence: newConfidence,
+            confidence: gatedConfidence,
             evidenceCountDelta: 1,
             lastConfirmedAt: nowIso,
             sourceEventId: event.eventId,
