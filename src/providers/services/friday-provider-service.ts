@@ -1443,6 +1443,17 @@ export function createFridayProviderService(
     );
   }
 
+  function normalizeUserDeclaredRuntimeCapabilities(
+    declarations: FridayProviderRuntimeCapabilityDeclaration[] | undefined,
+  ): FridayProviderRuntimeCapabilityDeclaration[] | undefined {
+    return declarations?.map((declaration) => ({
+      ...declaration,
+      verified: declaration.status === "failed" ? false : undefined,
+      status: declaration.status === "failed" ? "failed" : "declared",
+      verifiedAt: undefined,
+    }));
+  }
+
   function listCapabilityDoctorTargets(
     profile: FridayProviderProfile,
   ): Array<{ capability: FridayRuntimeCapabilityId; model: string }> {
@@ -2507,7 +2518,22 @@ export function createFridayProviderService(
         ?? (options?.ownerUserId
           ? { hubId: options.ownerUserId, userId: options.ownerUserId }
           : undefined);
-      const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const requestedProviderIds = new Set(
+        (options?.providerIds ?? [])
+          .map((providerId) => providerId.trim())
+          .filter((providerId) => providerId.length > 0),
+      );
+      const allProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const providers = requestedProviderIds.size > 0
+        ? allProviders.filter((provider) => requestedProviderIds.has(provider.id))
+        : allProviders;
+      if (providers.length !== requestedProviderIds.size && requestedProviderIds.size > 0) {
+        const foundProviderIds = new Set(providers.map((provider) => provider.id));
+        const missingProviderId = [...requestedProviderIds].find((providerId) => !foundProviderIds.has(providerId));
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", `Provider "${missingProviderId ?? "unknown"}" not found`, {
+          httpStatus: 404,
+        });
+      }
       const providerValidations: FridayProviderCapabilityDoctorReport["providerValidations"] = [];
       const capabilityResults: FridayProviderCapabilityDoctorProbeResult[] = [];
 
@@ -2768,7 +2794,7 @@ export function createFridayProviderService(
           : keySource,
         supportedModels: normalizeFridayProviderSupportedModels(input.supportedModels),
         headers: input.headers,
-        runtimeCapabilities: input.runtimeCapabilities,
+        runtimeCapabilities: normalizeUserDeclaredRuntimeCapabilities(input.runtimeCapabilities),
         httpConfig: backendKind === "http" ? { headersPolicy: "custom" } : undefined,
         cliConfig: backendKind === "cli" ? input.cliConfig : undefined,
         validation: { status: "never" },
@@ -2925,7 +2951,9 @@ export function createFridayProviderService(
           patch.supportedModels ?? existing.config.supportedModels,
         ),
         headers: patch.headers ?? existing.config.headers,
-        runtimeCapabilities: patch.runtimeCapabilities ?? existing.config.runtimeCapabilities,
+        runtimeCapabilities: patch.runtimeCapabilities !== undefined
+          ? normalizeUserDeclaredRuntimeCapabilities(patch.runtimeCapabilities)
+          : existing.config.runtimeCapabilities,
         httpConfig: nextBackendKind === "http"
           ? existing.config.httpConfig ?? { headersPolicy: "custom" }
           : undefined,

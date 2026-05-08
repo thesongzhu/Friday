@@ -45,6 +45,7 @@ export interface FridayProviderService {
   runCapabilityDoctor(options?: {
     tenantContext?: FridayProviderTenantContext;
     ownerUserId?: string;
+    providerIds?: string[];
   }): Promise<FridayProviderCapabilityDoctorReport>;
   explainRouting(input: {
     requestedModel?: string;

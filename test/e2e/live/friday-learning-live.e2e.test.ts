@@ -5,11 +5,18 @@ import * as path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { apiFetch, createOpenAiProvider } from "./_helpers/api.js";
+import {
+  apiFetch,
+  createDeepSeekProvider,
+  createOpenAiProvider,
+  verifyProviderTextCapability,
+} from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
   cleanupRealHubEnv,
   createRealHubEnv,
+  DEEPSEEK_API_KEY_ENV,
+  DEEPSEEK_BASE_URL,
   E2E_GATED,
   FAST_MODEL,
   LIVE_PROVIDER_KIND,
@@ -18,7 +25,8 @@ import {
   type RealHubEnv,
 } from "./_helpers/real-env.js";
 
-const OPENAI_PROOF_GATED = E2E_GATED && LIVE_PROVIDER_KIND === "openai";
+const LEARNING_PROOF_GATED = E2E_GATED && (LIVE_PROVIDER_KIND === "openai" || LIVE_PROVIDER_KIND === "deepseek");
+const LIVE_PROVIDER_LABEL = LIVE_PROVIDER_KIND === "deepseek" ? "DeepSeek" : "OpenAI";
 const LIVE_MODEL = FAST_MODEL;
 
 interface SessionRunResponse {
@@ -38,6 +46,11 @@ interface SessionRunResponse {
 }
 
 interface CompactionEventRow {
+  eventName: string;
+  payloadJson: string;
+}
+
+interface AgentRunEventRow {
   eventName: string;
   payloadJson: string;
 }
@@ -80,7 +93,22 @@ function readCompactionEvents(dbPath: string, createdAfterIso: string): Compacti
   }
 }
 
-function readCompactionContextReplayRows(dbPath: string, createdAfterIso: string, sessionKey: string): ContextReplayRow[] {
+function readAgentRunEvents(dbPath: string, createdAfterIso: string, eventName: string): AgentRunEventRow[] {
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return db.prepare(
+      `SELECT event_name AS eventName, payload_json AS payloadJson
+         FROM friday_agent_run_events
+        WHERE created_at >= ?
+          AND event_name = ?
+        ORDER BY created_at ASC, seq ASC`,
+    ).all(createdAfterIso, eventName) as AgentRunEventRow[];
+  } finally {
+    db.close();
+  }
+}
+
+function readCompactionContextReplayRowByEntryId(dbPath: string, entryId: string): ContextReplayRow | null {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     return db.prepare(
@@ -92,11 +120,9 @@ function readCompactionContextReplayRows(dbPath: string, createdAfterIso: string
               summary_json AS summaryJson,
               created_at AS createdAt
          FROM friday_agent_context_replay_entries
-        WHERE created_at >= ?
-          AND session_key = ?
-          AND kind = 'compaction_summary'
-        ORDER BY compacted_at DESC, created_at DESC`,
-    ).all(createdAfterIso, sessionKey) as ContextReplayRow[];
+        WHERE entry_id = ?
+          AND kind = 'compaction_summary'`,
+    ).get(entryId) as ContextReplayRow | undefined ?? null;
   } finally {
     db.close();
   }
@@ -129,17 +155,27 @@ function readWorldModelEvidence(dbPath: string, userId: string, taskToken: strin
   }
 }
 
-async function ensureOpenAiLearningProvider(
+async function ensureLiveLearningProvider(
   env: RealHubEnv,
   name: string,
 ): Promise<string> {
-  return createOpenAiProvider(env.baseUrl, env.accessToken, {
-    name,
-    openAiBaseUrl: OPENAI_BASE_URL,
-    models: [LIVE_MODEL],
-    defaultModel: LIVE_MODEL,
-    apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
-  });
+  const providerId = LIVE_PROVIDER_KIND === "deepseek"
+    ? await createDeepSeekProvider(env.baseUrl, env.accessToken, {
+        name,
+        deepSeekBaseUrl: DEEPSEEK_BASE_URL,
+        models: [LIVE_MODEL],
+        defaultModel: LIVE_MODEL,
+        apiKeyEnvRef: `$${DEEPSEEK_API_KEY_ENV}`,
+      })
+    : await createOpenAiProvider(env.baseUrl, env.accessToken, {
+        name,
+        openAiBaseUrl: OPENAI_BASE_URL,
+        models: [LIVE_MODEL],
+        defaultModel: LIVE_MODEL,
+        apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
+      });
+  await verifyProviderTextCapability(env.baseUrl, env.accessToken, providerId, LIVE_MODEL);
+  return providerId;
 }
 
 async function readAuthenticatedUserId(env: RealHubEnv): Promise<string> {
@@ -157,13 +193,13 @@ async function readAuthenticatedUserId(env: RealHubEnv): Promise<string> {
   return response.json.data.user.id.trim();
 }
 
-describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", () => {
+describe.skipIf(!LEARNING_PROOF_GATED)(`Friday Learning Live (${LIVE_PROVIDER_LABEL} API key)`, () => {
   let env: RealHubEnv;
   let providerId: string;
 
   beforeAll(async () => {
     env = await createRealHubEnv();
-    providerId = await ensureOpenAiLearningProvider(env, "Learning Live OpenAI");
+    providerId = await ensureLiveLearningProvider(env, `Learning Live ${LIVE_PROVIDER_LABEL}`);
   }, 60_000);
 
   afterAll(async () => {
@@ -312,8 +348,8 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
         `/v1/sessions/${encodeURIComponent(sessionKey)}/run`,
         {
           task:
-            "Summarize the prior retention proof discussion in one short sentence, " +
-            "including the exact canonical evidence token.",
+            "Please pull together all recommendations and recap the full retention proof discussion. " +
+            "Include the exact canonical evidence token once.",
           providerId,
           model: LIVE_MODEL,
           timeoutMs: 90_000,
@@ -341,13 +377,37 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
       expect(resultPayload).toBeTruthy();
       expect(resultPayload?.summaryPresent).toBe(true);
 
-      const contextReplayRows = await pollUntil(
-        async () => readCompactionContextReplayRows(dbPath, createdAfterIso, sessionKey),
-        (rows) => rows.some((row) => row.kind === "compaction_summary"),
+      const compactionPersistedEvents = await pollUntil(
+        async () => readCompactionEvents(dbPath, createdAfterIso),
+        (rows) => rows.some((row) =>
+          row.eventName === "agent.run.compaction_persisted"
+          || row.eventName === "agent.run.compaction_persist_skipped"
+          || row.eventName === "agent.run.compaction_persist_failed"),
         { intervalMs: 500, maxMs: 30_000 },
       );
-      expect(contextReplayRows.some((row) => row.trustLevel === "unconfirmed_summary")).toBe(true);
-      expect(contextReplayRows.some((row) => row.summaryJson.includes(evidenceToken))).toBe(true);
+      const persistedPayload = compactionPersistedEvents
+        .filter((row) => row.eventName === "agent.run.compaction_persisted")
+        .map((row) => JSON.parse(row.payloadJson) as Record<string, unknown>)
+        .find((payload) => payload.trustLevel === "unconfirmed_summary");
+      expect(persistedPayload).toEqual(expect.objectContaining({
+        evidenceTier: "audit_replay_evidence",
+        trustLevel: "unconfirmed_summary",
+      }));
+      const replayEntryId = persistedPayload?.entryId;
+      const canonicalSessionKey = persistedPayload?.sessionKey;
+      expect(typeof replayEntryId).toBe("string");
+      expect(typeof canonicalSessionKey).toBe("string");
+
+      const contextReplayRow = await pollUntil(
+        async () => typeof replayEntryId === "string"
+          ? readCompactionContextReplayRowByEntryId(dbPath, replayEntryId)
+          : null,
+        (row) => row?.kind === "compaction_summary",
+        { intervalMs: 500, maxMs: 30_000 },
+      );
+      expect(contextReplayRow?.sessionKey).toBe(canonicalSessionKey);
+      expect(contextReplayRow?.trustLevel).toBe("unconfirmed_summary");
+      expect(contextReplayRow?.summaryJson.includes(evidenceToken)).toBe(true);
 
       const resetRes = await apiFetch<{ ok: boolean }>(
         env.baseUrl,
@@ -366,7 +426,7 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
       const controlEnv = await createRealHubEnv();
       let controlProviderId = "";
       try {
-        controlProviderId = await ensureOpenAiLearningProvider(controlEnv, "Learning Live Control OpenAI");
+        controlProviderId = await ensureLiveLearningProvider(controlEnv, `Learning Live Control ${LIVE_PROVIDER_LABEL}`);
 
         const controlRun = await apiFetch<SessionRunResponse>(
           controlEnv.baseUrl,
@@ -402,10 +462,11 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
           path.join(proofDir, "trace.json"),
           JSON.stringify({
             sessionKey,
+            canonicalSessionKey,
             controlSessionKey,
             evidenceToken,
             compactionEvents,
-            contextReplayRows,
+            contextReplayRow,
             controlRun: controlRun.json,
             recallRun: recallRun.json,
           }, null, 2),
@@ -415,6 +476,21 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
         expect(recallRun.json.data.run.status).toBe("completed");
         expect(controlRun.json.data.run.response.includes(evidenceToken)).toBe(false);
         expect(recallRun.json.data.run.response).toContain(evidenceToken);
+
+        const replayLoadedEvents = await pollUntil(
+          async () => readAgentRunEvents(dbPath, createdAfterIso, "agent.run.context_replay_loaded"),
+          (rows) => rows.length > 0,
+          { intervalMs: 500, maxMs: 30_000 },
+        );
+        const loadedPayload = replayLoadedEvents
+          .map((row) => JSON.parse(row.payloadJson) as Record<string, unknown>)
+          .find((payload) => payload.sessionKey === canonicalSessionKey);
+        expect(loadedPayload).toEqual(expect.objectContaining({
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          source: "context_replay",
+          memoryBoundary: "not_user_confirmed_memory",
+        }));
       } finally {
         await cleanupRealHubEnv(controlEnv);
       }
@@ -432,8 +508,8 @@ describe.skipIf(!OPENAI_PROOF_GATED)("Friday Learning Live (OpenAI API key)", ()
       const isolatedEnv = await createRealHubEnv();
       const controlEnv = await createRealHubEnv();
       try {
-        const isolatedProviderId = await ensureOpenAiLearningProvider(isolatedEnv, "Learning World Model OpenAI");
-        const controlProviderId = await ensureOpenAiLearningProvider(controlEnv, "Learning World Model Control OpenAI");
+        const isolatedProviderId = await ensureLiveLearningProvider(isolatedEnv, `Learning World Model ${LIVE_PROVIDER_LABEL}`);
+        const controlProviderId = await ensureLiveLearningProvider(controlEnv, `Learning World Model Control ${LIVE_PROVIDER_LABEL}`);
         const principalUserId = await readAuthenticatedUserId(isolatedEnv);
 
         const createSeedSession = await apiFetch<{

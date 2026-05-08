@@ -66,6 +66,7 @@ import type {
 } from "./friday-agent-llm-client.types.js";
 import type {
   CreateFridayAgentRuntimeDeps,
+  FridayAgentCompactionContextBuildResult,
   FridayAgentConversationContext,
   FridayAgentExecutionContext,
   FridayAgentRuntime,
@@ -217,6 +218,18 @@ function shouldInjectPrivateActiveMemoryContext(
   }
   const chatType = executionContext.channelChatType;
   return chatType === "direct" || chatType === "dm" || chatType === "private";
+}
+
+function normalizeCompactionContextBuildResult(
+  result: string | FridayAgentCompactionContextBuildResult | null | undefined,
+): FridayAgentCompactionContextBuildResult | null {
+  if (typeof result === "string") {
+    return result.trim().length > 0 ? { fragment: result } : null;
+  }
+  if (!result || typeof result.fragment !== "string" || result.fragment.trim().length === 0) {
+    return null;
+  }
+  return result;
 }
 
 function isFridayValidationJudgeTask(task: string): boolean {
@@ -1676,13 +1689,25 @@ export function createFridayAgentRuntime(
         const skipSupplementalContext = toolRouting.promptProfile === "minimal";
         if (!skipSupplementalContext && privateActiveMemoryContext && deps.compactionContextBuilder && params.sessionKey) {
           try {
-            const fragment = await deps.compactionContextBuilder({
+            const loadedContext = normalizeCompactionContextBuildResult(await deps.compactionContextBuilder({
               userId: principalId,
               sessionKey: params.sessionKey,
               nowIso: nowIso(),
-            });
-            if (fragment && fragment.trim().length > 0) {
-              effectiveSystemPrompt += `\n\n${fragment.trim()}`;
+            }));
+            if (loadedContext) {
+              const fragment = loadedContext.fragment.trim();
+              effectiveSystemPrompt += `\n\n${fragment}`;
+              handleTrackedEvent("agent.run.context_replay_loaded", {
+                runId,
+                sessionKey: loadedContext.sessionKey ?? params.sessionKey,
+                evidenceTier: "audit_replay_evidence",
+                trustLevel: loadedContext.trustLevel ?? "unconfirmed_summary",
+                source: "context_replay",
+                sourceCount: loadedContext.sources?.length ?? 0,
+                blockCount: loadedContext.blockCount ?? 0,
+                fragmentCharCount: fragment.length,
+                memoryBoundary: "not_user_confirmed_memory",
+              });
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1868,7 +1893,37 @@ export function createFridayAgentRuntime(
                     summary: bridgeResult.summary,
                     blocks: bridgeResult.blocks,
                     compactedAt: nowIso(),
-                  }).catch(() => {/* swallow — must never block agent loop */});
+                  }).then((result) => {
+                    if (result.persisted) {
+                      handleTrackedEvent("agent.run.compaction_persisted", {
+                        runId,
+                        sessionKey: result.sessionKey,
+                        entryId: result.entryId,
+                        evidenceTier: result.evidenceTier,
+                        trustLevel: result.trustLevel,
+                        blockCount: result.blockCount,
+                        redactionApplied: result.redactionApplied,
+                        redactionCount: result.redactionCount,
+                      });
+                      return;
+                    }
+                    handleTrackedEvent("agent.run.compaction_persist_skipped", {
+                      runId,
+                      sessionKey: result.sessionKey,
+                      skippedReason: result.skippedReason,
+                      evidenceTier: result.evidenceTier,
+                      trustLevel: result.trustLevel,
+                      blockCount: result.blockCount,
+                    });
+                  }).catch((err: unknown) => {
+                    handleTrackedEvent("agent.run.compaction_persist_failed", {
+                      runId,
+                      sessionKey: params.sessionKey ?? runId,
+                      errorName: err instanceof Error ? err.name : "Error",
+                      evidenceTier: "audit_replay_evidence",
+                      trustLevel: "unconfirmed_summary",
+                    });
+                  });
                 }
               }
             } catch {

@@ -74,6 +74,10 @@ export interface FridaySetBudgetConfigRequest {
   monthlyLimitUsd: number;
 }
 
+export interface FridayRunCapabilityDoctorRequest {
+  providerIds?: string[];
+}
+
 // ─── Response types ───
 
 export interface FridayListProvidersResponse {

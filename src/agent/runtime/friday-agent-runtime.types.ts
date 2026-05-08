@@ -163,6 +163,14 @@ export interface FridayAgentSystemPromptBuildResult {
   contextCostSummary?: FridayAgentContextCostSummary;
 }
 
+export interface FridayAgentCompactionContextBuildResult {
+  fragment: string;
+  blockCount?: number;
+  sources?: string[];
+  sessionKey?: string;
+  trustLevel?: "unconfirmed_summary";
+}
+
 // ─── Runtime interface ───
 
 export interface FridayAgentRuntime {
@@ -356,7 +364,11 @@ export interface CreateFridayAgentRuntimeDeps {
     userId?: string;
     sessionKey?: string;
     nowIso: string;
-  }) => string | null | Promise<string | null>;
+  }) =>
+    | string
+    | FridayAgentCompactionContextBuildResult
+    | null
+    | Promise<string | FridayAgentCompactionContextBuildResult | null>;
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null | Promise<string | null>;
   /** Optional deterministic delegation hook for top-level coordinator runs. */

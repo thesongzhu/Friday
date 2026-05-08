@@ -503,6 +503,41 @@ describe("FridayProviderService", () => {
         }),
       ]);
     });
+
+    it("downgrades update-time user verified runtime capabilities to declared", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      const updated = await service.updateProvider("test-id-0001", {
+        runtimeCapabilities: [
+          {
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          },
+        ],
+        validateOnSave: false,
+      });
+
+      expect(updated.config.runtimeCapabilities).toEqual([
+        {
+          capability: "text",
+          model: "gpt-4o",
+          status: "declared",
+          verified: undefined,
+          verifiedAt: undefined,
+        },
+      ]);
+    });
   });
 
   describe("deleteProvider", () => {
@@ -2665,6 +2700,39 @@ describe("FridayProviderService", () => {
   });
 
   describe("runCapabilityDoctor", () => {
+    it("downgrades create-time user verified runtime capabilities to declared", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        runtimeCapabilities: [
+          {
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          },
+        ],
+        validateOnSave: false,
+      });
+
+      const created = await service.getProvider("test-id-0001");
+      expect(created?.config.runtimeCapabilities).toEqual([
+        {
+          capability: "text",
+          model: "gpt-4o",
+          status: "declared",
+          verified: undefined,
+          verifiedAt: undefined,
+        },
+      ]);
+    });
+
     it("runs live capability probes and persists verified runtime capabilities", async () => {
       process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
       installCapabilityDoctorFetchMock();
@@ -2746,6 +2814,53 @@ describe("FridayProviderService", () => {
             verifiedAt: NOW,
           }),
         ]));
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
+    });
+
+    it("limits capability doctor writes to requested provider ids", async () => {
+      process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
+      installCapabilityDoctorFetchMock();
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI Scoped",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI Untouched",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        const report = await service.runCapabilityDoctor({ providerIds: ["test-id-0001"] });
+        const scoped = await service.getProvider("test-id-0001");
+        const untouched = await service.getProvider("test-id-0002");
+
+        expect(report.providerValidations.map((entry) => entry.providerId)).toEqual(["test-id-0001"]);
+        expect(report.capabilityResults.every((entry) => entry.providerId === "test-id-0001")).toBe(true);
+        expect(scoped?.config.runtimeCapabilities).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o-mini",
+            status: "verified",
+            verified: true,
+          }),
+        ]));
+        expect(untouched?.config.runtimeCapabilities ?? []).toEqual([]);
       } finally {
         delete process.env.OPENAI_API_KEY;
       }

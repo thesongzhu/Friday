@@ -26,7 +26,20 @@ export interface FridayCompactionContextReplaySink {
     summary: FridayContextCompactionSummary;
     blocks?: FridayContextCompactionBlockSummary[];
     compactedAt: string;
-  }): Promise<void>;
+  }): Promise<FridayCompactionContextReplayPersistResult>;
+}
+
+export interface FridayCompactionContextReplayPersistResult {
+  persisted: boolean;
+  skippedReason?: "empty_summary";
+  entryId?: string;
+  sessionKey: string;
+  runId: string;
+  blockCount: number;
+  evidenceTier: "audit_replay_evidence";
+  trustLevel: "unconfirmed_summary";
+  redactionApplied: boolean;
+  redactionCount: number;
 }
 
 export interface CreateFridayCompactionContextReplaySinkDeps {
@@ -106,8 +119,19 @@ export function createFridayCompactionContextReplaySink(
 
   return {
     async persist(params) {
+      const blockCount = params.blocks?.length ?? 0;
       if (!hasCompactionSummaryContent(params.summary)) {
-        return;
+        return {
+          persisted: false,
+          skippedReason: "empty_summary",
+          sessionKey: params.sessionKey,
+          runId: params.runId,
+          blockCount,
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          redactionApplied: false,
+          redactionCount: 0,
+        };
       }
 
       const redactedSummary = redactCompactionSummary(params.summary);
@@ -120,10 +144,12 @@ export function createFridayCompactionContextReplaySink(
           ...redactedBlock.summary,
         };
       });
+      const redactionCount = redactedSummary.redactionCount + blockRedactionCount;
+      const entryId = deps.idGenerator();
 
       deps.db.withWriteTransaction((db) => {
         repository.appendCompactionSummary(db, {
-          entryId: deps.idGenerator(),
+          entryId,
           sessionKey: params.sessionKey,
           runId: params.runId,
           summary: redactedSummary.summary,
@@ -131,13 +157,25 @@ export function createFridayCompactionContextReplaySink(
           metadata: {
             evidenceTier: "audit_replay_evidence",
             trustLevel: "unconfirmed_summary",
-            redactionApplied: redactedSummary.redactionCount + blockRedactionCount > 0,
-            redactionCount: redactedSummary.redactionCount + blockRedactionCount,
+            redactionApplied: redactionCount > 0,
+            redactionCount,
           },
           compactedAt: params.compactedAt,
           createdAt: deps.nowIso(),
         });
       });
+
+      return {
+        persisted: true,
+        entryId,
+        sessionKey: params.sessionKey,
+        runId: params.runId,
+        blockCount,
+        evidenceTier: "audit_replay_evidence",
+        trustLevel: "unconfirmed_summary",
+        redactionApplied: redactionCount > 0,
+        redactionCount,
+      };
     },
   };
 }

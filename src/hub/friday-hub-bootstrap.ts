@@ -4166,7 +4166,13 @@ export async function createFridayHub(
     compactionContextBuilder: async (input) => {
       if (!agentCompactionContextLoader) return null;
       const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
-      return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
+      return loaded.fragment.trim().length > 0 ? {
+        fragment: loaded.fragment,
+        blockCount: loaded.blockCount,
+        sources: loaded.sources,
+        sessionKey: loaded.sessionKey,
+        trustLevel: "unconfirmed_summary",
+      } : null;
     },
     communicationPromptBuilder: async (input) => {
       const fragments: string[] = [];
@@ -4457,7 +4463,13 @@ export async function createFridayHub(
         compactionContextBuilder: async (input) => {
           if (!agentCompactionContextLoader) return null;
           const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
-          return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
+          return loaded.fragment.trim().length > 0 ? {
+            fragment: loaded.fragment,
+            blockCount: loaded.blockCount,
+            sources: loaded.sources,
+            sessionKey: loaded.sessionKey,
+            trustLevel: "unconfirmed_summary",
+          } : null;
         },
         communicationPromptBuilder: async (input) => {
           const fragments: string[] = [];

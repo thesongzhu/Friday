@@ -22,6 +22,7 @@ import type {
   FridayListProvidersResponse,
   FridayListProviderTemplatesResponse,
   FridayPinProviderRouteResponse,
+  FridayRunCapabilityDoctorRequest,
   FridayRunCapabilityDoctorResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
@@ -54,6 +55,31 @@ const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "
 const VALID_DEPLOYMENT_KINDS = new Set(["hosted", "local", "self-hosted", "consumer-cli"]);
 const VALID_REGION_TAGS = new Set(["global", "us", "china", "local", "custom"]);
 const VALID_RUNTIME_CAPABILITIES = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
+
+function parseCapabilityDoctorProviderIds(body: unknown): string[] | undefined {
+  if (body == null) {
+    return undefined;
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "Request body must be an object", { httpStatus: 400 });
+  }
+  const { providerIds } = body as FridayRunCapabilityDoctorRequest;
+  if (providerIds == null) {
+    return undefined;
+  }
+  if (!Array.isArray(providerIds)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "providerIds must be an array", { httpStatus: 400 });
+  }
+  const normalizedProviderIds = providerIds.map((providerId) => {
+    if (typeof providerId !== "string" || providerId.trim().length === 0) {
+      throw new FridayDomainError("VALIDATION_ERROR", "providerIds must contain non-empty strings", {
+        httpStatus: 400,
+      });
+    }
+    return providerId.trim();
+  });
+  return [...new Set(normalizedProviderIds)];
+}
 
 const PROVIDER_CREATE_ACCEPTED_FIELDS = [
   "kind",
@@ -471,8 +497,10 @@ export function createFridayProviderRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<FridayRunCapabilityDoctorResponse> {
+        const providerIds = parseCapabilityDoctorProviderIds(ctx.body);
         return deps.providerService.runCapabilityDoctor({
           ownerUserId: ctx.principal?.userId,
+          providerIds,
         });
       },
     },

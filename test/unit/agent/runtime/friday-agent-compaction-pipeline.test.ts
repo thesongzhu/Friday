@@ -368,12 +368,22 @@ describe("Compaction Pipeline Integration", () => {
       };
 
       try {
-        await sink.persist({
+        const persistResult = await sink.persist({
           sessionKey: "session-abc",
           runId: "run-123",
           summary,
           compactedAt: NOW,
         });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: true,
+          entryId: expect.any(String),
+          sessionKey: "session-abc",
+          runId: "run-123",
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          redactionApplied: false,
+          redactionCount: 0,
+        }));
 
         const rows = createFridayAgentContextReplayRepository().listCompactionSummariesBySession(
           db.writer,
@@ -404,7 +414,7 @@ describe("Compaction Pipeline Integration", () => {
       });
 
       try {
-        await sink.persist({
+        const persistResult = await sink.persist({
           sessionKey: "session-empty",
           runId: "run-empty",
           summary: {
@@ -417,6 +427,12 @@ describe("Compaction Pipeline Integration", () => {
           },
           compactedAt: NOW,
         });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: false,
+          skippedReason: "empty_summary",
+          sessionKey: "session-empty",
+          runId: "run-empty",
+        }));
 
         const count = db.writer.prepare(
           "SELECT COUNT(*) AS count FROM friday_agent_context_replay_entries",
@@ -436,7 +452,7 @@ describe("Compaction Pipeline Integration", () => {
       });
 
       try {
-        await sink.persist({
+        const persistResult = await sink.persist({
           sessionKey: "session-redact",
           runId: "run-redact",
           summary: {
@@ -451,6 +467,11 @@ describe("Compaction Pipeline Integration", () => {
           },
           compactedAt: NOW,
         });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: true,
+          redactionApplied: true,
+          redactionCount: 2,
+        }));
 
         const rows = createFridayAgentContextReplayRepository().listCompactionSummariesBySession(
           db.writer,

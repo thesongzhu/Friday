@@ -3,7 +3,7 @@
  *
  * Gated by:
  *   FRIDAY_E2E_TARGET=cloud
- *   and (FRIDAY_E2E_LIVE_OPENAI=1 or FRIDAY_E2E_LIVE_OLLAMA=1)
+ *   and (FRIDAY_E2E_LIVE_OPENAI=1, FRIDAY_E2E_LIVE_DEEPSEEK=1, or FRIDAY_E2E_LIVE_OLLAMA=1)
  *
  * Designed for shared environments:
  * - All created resources are prefixed with an isolated run namespace
@@ -14,6 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   CODE_MODEL,
+  DEEPSEEK_API_KEY_ENV,
+  DEEPSEEK_BASE_URL,
   E2E_GATED,
   FAST_MODEL,
   LIVE_PROVIDER_KIND,
@@ -27,6 +29,7 @@ import {
 } from "./_helpers/real-env.js";
 import {
   apiFetch,
+  ensureDeepSeekProviders,
   ensureOllamaProviders,
   ensureOpenAiProviders,
   setModelRouting,
@@ -47,7 +50,7 @@ function normalizeNamespaceSegment(input: string, maxLength = 32): string {
 }
 
 describe.skipIf(!CLOUD_GATED)(
-  `Friday Cloud Journeys E2E (${LIVE_PROVIDER_KIND === "openai" ? "OpenAI" : "Ollama"})`,
+  `Friday Cloud Journeys E2E (${LIVE_PROVIDER_KIND === "openai" ? "OpenAI" : LIVE_PROVIDER_KIND === "deepseek" ? "DeepSeek" : "Ollama"})`,
   () => {
     let env: RealHubEnv;
     let runPrefix = "cloud-e2e";
@@ -217,6 +220,16 @@ describe.skipIf(!CLOUD_GATED)(
           FAST_MODEL,
           CODE_MODEL,
           `$${OPENAI_API_KEY_ENV}`,
+          { namePrefix: runPrefix },
+        );
+      } else if (LIVE_PROVIDER_KIND === "deepseek") {
+        await ensureDeepSeekProviders(
+          env.baseUrl,
+          env.accessToken,
+          DEEPSEEK_BASE_URL,
+          FAST_MODEL,
+          CODE_MODEL,
+          `$${DEEPSEEK_API_KEY_ENV}`,
           { namePrefix: runPrefix },
         );
       } else {
