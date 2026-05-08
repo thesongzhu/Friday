@@ -70,6 +70,30 @@ describe("FridayProviderService", () => {
     }) as typeof fetch;
   }
 
+  function markProviderValidated(providerId: string): void {
+    const row = db.withReadConnection((conn) =>
+      conn.prepare(
+        `SELECT config_json FROM provider_profiles WHERE id = ?`,
+      ).get(providerId) as { config_json: string } | undefined,
+    );
+    expect(row).toBeTruthy();
+    const config = JSON.parse(row!.config_json) as Record<string, unknown>;
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE provider_profiles
+            SET config_json = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run(
+        JSON.stringify({
+          ...config,
+          validation: { status: "ok", checkedAt: NOW },
+        }),
+        NOW,
+        providerId,
+      );
+    });
+  }
+
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
@@ -914,6 +938,11 @@ describe("FridayProviderService", () => {
       const route = await service.resolveRoute();
       expect(route.provider.id).toBe("test-id-0001");
       expect(route.model).toBe("gpt-4o");
+      await expect(service.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "ok" },
+        },
+      });
     });
 
     it("uses requested model override", async () => {
@@ -1181,6 +1210,8 @@ describe("FridayProviderService", () => {
         defaultProviderId: "test-id-0001",
         fallbackProviderIds: ["test-id-0002"],
       });
+      markProviderValidated("test-id-0001");
+      markProviderValidated("test-id-0002");
 
       const explain = await service.explainRouting({
         requestedModel: "gpt-5.4",
@@ -1247,6 +1278,9 @@ describe("FridayProviderService", () => {
         defaultProviderId: hosted.id,
         fallbackProviderIds: [local.id, cli.id],
       });
+      markProviderValidated(hosted.id);
+      markProviderValidated(local.id);
+      markProviderValidated(cli.id);
 
       const confidentialLongContext = await service.explainRouting({
         routingContext: {
@@ -1318,6 +1352,8 @@ describe("FridayProviderService", () => {
         defaultProviderId: primary.id,
         fallbackProviderIds: [pinned.id],
       });
+      markProviderValidated(primary.id);
+      markProviderValidated(pinned.id);
       await service.pinRoute({
         userId: "test-user",
         taskProfileId: "review",
@@ -1393,6 +1429,38 @@ describe("FridayProviderService", () => {
           run: async () => "test",
         }),
       ).rejects.toThrow("No model routing configured");
+    });
+
+    it("fails closed before execution when automatic provider validation fails", async () => {
+      globalThis.fetch = vi.fn(() =>
+        Promise.resolve(new Response("{}", { status: 401 })),
+      ) as typeof fetch;
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-invalid-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(service.runWithFallback({ run })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+      expect(run).not.toHaveBeenCalled();
+      await expect(service.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "failed" },
+        },
+      });
     });
 
     it("runs with credential from env-ref", async () => {
@@ -2344,11 +2412,16 @@ describe("FridayProviderService", () => {
       expect(tenantA.result).toBe("tenant-a:alice:secret");
       expect(tenantB.result).toBe("tenant-b:bob:secret");
       expect(tenantA.result).not.toBe(tenantB.result);
+      expect(credentialResolver.resolve).toHaveBeenCalledTimes(3);
       expect(credentialResolver.resolve).toHaveBeenNthCalledWith(1, "test-id-0001", {
         hubId: "tenant-a",
         userId: "alice",
       });
       expect(credentialResolver.resolve).toHaveBeenNthCalledWith(2, "test-id-0001", {
+        hubId: "tenant-a",
+        userId: "alice",
+      });
+      expect(credentialResolver.resolve).toHaveBeenNthCalledWith(3, "test-id-0001", {
         hubId: "tenant-b",
         userId: "bob",
       });

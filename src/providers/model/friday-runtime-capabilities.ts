@@ -309,7 +309,7 @@ export function fridayProviderRouteSupportsCapability(
   route: FridayResolvedProviderRoute,
   capability: FridayRuntimeCapabilityId,
 ): boolean {
-  if (route.provider.config.validation?.status === "failed") {
+  if (route.provider.config.validation?.status !== "ok") {
     return false;
   }
   switch (capability) {
@@ -408,6 +408,9 @@ function providerValidatedSourceStatus(
 ): FridayRuntimeCapabilitySourceStatus {
   if (providerValidationStatus === "failed") {
     return "failed";
+  }
+  if (providerValidationStatus !== "ok") {
+    return "unverified";
   }
   return sourceStatus;
 }

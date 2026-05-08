@@ -377,6 +377,7 @@ export function createFridayProviderRoutes(
         const reasons = Array.from(new Set([
           ...doctor.reasons,
           ...(validationStatus === "failed" ? ["validation_failed"] : []),
+          ...(validationStatus !== "ok" && validationStatus !== "failed" ? ["validation_unverified"] : []),
         ]));
         const suggestedAction = !provider.enabled
           ? "Enable the provider before using it for routing."
@@ -384,6 +385,8 @@ export function createFridayProviderRoutes(
             ? "Wait for cooldown to expire or route around this provider for now."
             : validationStatus === "failed"
               ? "Re-validate credentials or base URL before promoting this provider."
+              : validationStatus !== "ok"
+                ? "Validate this provider before using it for routing."
               : doctor.routingEligible
                 ? lane === "primary"
                   ? "Keep this provider healthy; it is the current default lane."

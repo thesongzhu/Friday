@@ -142,6 +142,10 @@ export interface FridayProviderService {
   resolveRoute(
     requestedModel?: string,
     requestedProviderId?: string,
+    options?: {
+      tenantContext?: FridayProviderTenantContext;
+      autoValidate?: boolean;
+    },
   ): Promise<FridayResolvedProviderRoute>;
 
   runWithFallback<T>(params: {

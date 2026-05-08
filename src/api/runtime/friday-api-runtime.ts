@@ -2743,8 +2743,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     });
 
     for (const route of createFridayAgentRoutes({
-      validateRequestedRoute: async (providerId, model) => {
-        await deps.providerService.resolveRoute(model, providerId);
+      validateRequestedRoute: async (providerId, model, tenantContext) => {
+        await deps.providerService.resolveRoute(model, providerId, {
+          tenantContext,
+          autoValidate: true,
+        });
       },
       startRun,
       getRun: (runId) => {

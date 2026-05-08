@@ -2980,7 +2980,9 @@ export async function createFridayHub(
   // ─── Resolve provider identity at boot for system prompt ───
   let agentModelIdentity = "an AI model";
   try {
-    const defaultRoute = await providerService.resolveRoute(undefined);
+    const defaultRoute = await providerService.resolveRoute(undefined, undefined, {
+      autoValidate: false,
+    });
     const providerKind = defaultRoute.provider.kind; // e.g. "anthropic"
     const modelName = defaultRoute.model;            // e.g. "claude-opus-4-5-20251101"
     agentModelIdentity = `${modelName} (provider: ${providerKind})`;
