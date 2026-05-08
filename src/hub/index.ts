@@ -29,6 +29,7 @@ export {
   canResolveFridayChannelApprovalFromMessage,
   createFridayHub,
   parseFridayChannelIdentityMap,
+  resolveFridayCanonicalMutatingActionGate,
   resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,

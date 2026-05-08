@@ -929,6 +929,56 @@ describe("FridayHub Bootstrap Integration", () => {
     }
   });
 
+  it("enforces canonical system mutation gate by default in production profile", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.NODE_ENV = "production";
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
+    process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
+    delete process.env.FRIDAY_CANONICAL_GATE;
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.approvals.update");
+
+      expect(route).toBeDefined();
+      await expect(route!.handler({
+        requestId: "req-system-approval-production-default",
+        receivedAt: new Date().toISOString(),
+        params: { approvalId: "approval-1" },
+        query: {},
+        body: { decision: "allow", idempotencyKey: "approval-update-production-default" },
+        headers: {},
+        principal: null,
+      } as never)).rejects.toMatchObject({
+        code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+      });
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousNodeEnv;
+      }
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousTransport === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = previousTransport;
+      }
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
+
   // ─── start() transitions to running ───
 
   it("transitions to 'running' after start()", async () => {

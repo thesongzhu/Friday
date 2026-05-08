@@ -429,6 +429,8 @@ const FRIDAY_HUB_SKILL_COMPAT_VERSION = "1.0.0";
 const FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH = 4000;
 const FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT = Number(process.env.FRIDAY_SESSION_HISTORY_LIMIT) || 24;
 const FRIDAY_WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
+const FRIDAY_CANONICAL_GATE_TRUE_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
+const FRIDAY_CANONICAL_GATE_FALSE_VALUES = new Set(["0", "false", "no", "off", "disabled"]);
 
 function createDiscoveryScannerForPlatform(platform: NodeJS.Platform) {
   switch (platform) {
@@ -736,6 +738,7 @@ export function resolveFridayHubConfig(
   const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "full";
   const pluginRuntimeMode = pluginRuntimeModeRaw === "stub" ? "stub" : "full";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
+  const canonicalMutatingActionGate = resolveFridayCanonicalMutatingActionGate(env);
 
   // Private-network access must be explicitly enabled. Local/self-hosted
   // deployments that need loopback providers such as Ollama should opt in via
@@ -762,8 +765,40 @@ export function resolveFridayHubConfig(
     pluginRuntimeMode,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
+    canonicalMutatingActionGate,
     ssrfPolicy: { allowPrivateNetwork },
   };
+}
+
+function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV?.trim().toLowerCase() === "production"
+    || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+}
+
+export function resolveFridayCanonicalMutatingActionGate(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const explicit = env.FRIDAY_CANONICAL_GATE?.trim().toLowerCase();
+  const protectedProfile = isFridayCanonicalGateProtectedProfile(env);
+  if (explicit) {
+    if (FRIDAY_CANONICAL_GATE_TRUE_VALUES.has(explicit)) {
+      return true;
+    }
+    if (FRIDAY_CANONICAL_GATE_FALSE_VALUES.has(explicit)) {
+      if (protectedProfile) {
+        throw new Error(
+          "[friday] FRIDAY_CANONICAL_GATE cannot be disabled in production/release profiles. " +
+            "Use a development or test profile for mock lanes.",
+        );
+      }
+      return false;
+    }
+    throw new Error(
+      `[friday] Invalid FRIDAY_CANONICAL_GATE value "${env.FRIDAY_CANONICAL_GATE}". ` +
+        "Use true or false.",
+    );
+  }
+  return protectedProfile;
 }
 
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
@@ -927,6 +962,7 @@ export async function createFridayHub(
   const nowIso = () => new Date().toISOString();
   const tokenSecretResult = resolveTokenSecret(config.tokenSecret);
   const tokenSecret = tokenSecretResult.secret;
+  const canonicalMutatingActionGateEnabled = resolveFridayCanonicalMutatingActionGate(process.env);
 
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
@@ -1793,7 +1829,7 @@ export async function createFridayHub(
 	      },
 	      mode: "agent_os",
 	      remoteMode: systemRemoteMode,
-	      canonicalMutationGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+	      canonicalMutationGate: canonicalMutatingActionGateEnabled,
 	      canonicalApprovalSecret: tokenSecret,
 	      cloudPlanningMode: systemCloudPlanningMode,
       remoteAuth: {
@@ -4183,7 +4219,7 @@ export async function createFridayHub(
       });
 	    },
 	    toolApprovalResolver,
-	    canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+	    canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
 	    canonicalApprovalSecret: tokenSecret,
 	    learnedLessons: () => {
       try {
@@ -4431,7 +4467,7 @@ export async function createFridayHub(
           });
         },
         toolApprovalResolver,
-        canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+        canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
         canonicalApprovalSecret: tokenSecret,
       });
       childRuntimeRef = childRuntime;

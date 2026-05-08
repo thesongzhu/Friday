@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "node:module";
-import { resolveFridayHubConfig } from "#hub";
+import { resolveFridayCanonicalMutatingActionGate, resolveFridayHubConfig } from "#hub";
 import type { FridayHubConfig } from "#hub";
 
 // ─── Helpers ───
@@ -278,5 +278,40 @@ describe("resolveFridayHubConfig", () => {
     });
     expect(resolved.pipelineEnabled).toBe(false);
     expect(resolved.pipelineMode).toBe("shadow");
+  });
+
+  // ─── Canonical mutating action gate ───
+
+  it("keeps canonical mutating action gate off by default for dev/test lanes", () => {
+    expect(resolveFridayCanonicalMutatingActionGate(emptyEnv())).toBe(false);
+    expect(resolveFridayHubConfig(makeConfig(), emptyEnv()).canonicalMutatingActionGate).toBe(false);
+    expect(resolveFridayCanonicalMutatingActionGate({ NODE_ENV: "test" })).toBe(false);
+  });
+
+  it("enables canonical mutating action gate when explicitly requested", () => {
+    expect(resolveFridayCanonicalMutatingActionGate({ FRIDAY_CANONICAL_GATE: "true" })).toBe(true);
+    expect(resolveFridayHubConfig(makeConfig(), { FRIDAY_CANONICAL_GATE: "1" }).canonicalMutatingActionGate).toBe(true);
+  });
+
+  it("enables canonical mutating action gate by default for production and release profiles", () => {
+    expect(resolveFridayCanonicalMutatingActionGate({ NODE_ENV: "production" })).toBe(true);
+    expect(resolveFridayCanonicalMutatingActionGate({ FRIDAY_RELEASE_TAG: "v1.2.3" })).toBe(true);
+  });
+
+  it("fails closed when production or release profiles explicitly disable canonical gate", () => {
+    expect(() => resolveFridayCanonicalMutatingActionGate({
+      NODE_ENV: "production",
+      FRIDAY_CANONICAL_GATE: "false",
+    })).toThrow(/cannot be disabled/);
+    expect(() => resolveFridayCanonicalMutatingActionGate({
+      FRIDAY_RELEASE_TAG: "v1.2.3",
+      FRIDAY_CANONICAL_GATE: "off",
+    })).toThrow(/cannot be disabled/);
+  });
+
+  it("rejects invalid canonical gate env values", () => {
+    expect(() => resolveFridayCanonicalMutatingActionGate({
+      FRIDAY_CANONICAL_GATE: "sometimes",
+    })).toThrow(/Invalid FRIDAY_CANONICAL_GATE/);
   });
 });
