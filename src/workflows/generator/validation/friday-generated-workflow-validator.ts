@@ -1,4 +1,4 @@
-import type { FridaySkillRegistry } from "#skills";
+import type { FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 import type {
   FridayCompiledWorkflowGraphV2,
   FridayWorkflowCompiler,
@@ -32,6 +32,7 @@ export interface CreateFridayGeneratedWorkflowValidatorDeps {
   compiler: FridayWorkflowCompiler;
   workflowValidator: FridayWorkflowValidator;
   skillRegistry: FridaySkillRegistry;
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
   idGenerator: () => string;
 }
 
@@ -147,6 +148,17 @@ export function createFridayGeneratedWorkflowValidator(
               stage: "skill_refs",
               severity: "error",
               message: `Step "${step.id}" references unknown skill "${step.ref}"`,
+              stepId: step.id,
+            });
+            continue;
+          }
+          const lifecycleStatus = deps.getSkillLifecycleStatus?.(step.ref) ?? skill.status ?? "installed";
+          if (lifecycleStatus !== "installed") {
+            issues.push({
+              code: "SKILL_REF_NOT_AVAILABLE",
+              stage: "skill_refs",
+              severity: "error",
+              message: `Step "${step.id}" references unavailable skill "${step.ref}"`,
               stepId: step.id,
             });
           }

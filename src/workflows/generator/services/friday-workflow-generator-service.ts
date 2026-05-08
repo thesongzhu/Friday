@@ -423,6 +423,7 @@ export function createFridayWorkflowGeneratorService(
       compiler,
       workflowValidator,
       skillRegistry: deps.skillRegistry,
+      getSkillLifecycleStatus: deps.getSkillLifecycleStatus,
       idGenerator: deps.idGenerator,
     });
 
@@ -863,20 +864,25 @@ export function createFridayWorkflowGeneratorService(
 
   function buildAvailableSkillContext(): FridayWorkflowGeneratorSkillContext[] {
     const skills = deps.skillRegistry.list();
-    return skills.map((s) => ({
-      id: s.manifest.id,
-      name: s.manifest.name,
-      description: s.manifest.description,
-      inputs: s.manifest.inputs.map((inp) => ({
-        key: inp.key,
-        type: inp.type,
-        required: inp.required,
-      })),
-      outputs: s.manifest.outputs.map((out) => ({
-        key: out.key,
-        type: out.type,
-      })),
-    }));
+    return skills
+      .filter((skill) => {
+        const lifecycleStatus = deps.getSkillLifecycleStatus?.(skill.manifest.id) ?? skill.status ?? "installed";
+        return lifecycleStatus === "installed";
+      })
+      .map((s) => ({
+        id: s.manifest.id,
+        name: s.manifest.name,
+        description: s.manifest.description,
+        inputs: s.manifest.inputs.map((inp) => ({
+          key: inp.key,
+          type: inp.type,
+          required: inp.required,
+        })),
+        outputs: s.manifest.outputs.map((out) => ({
+          key: out.key,
+          type: out.type,
+        })),
+      }));
   }
 
   function slugify(text: string): string {

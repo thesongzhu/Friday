@@ -1469,6 +1469,7 @@ export async function createFridayHub(
     providerService,
     workflowCrud: workflowRuntime.crud,
     skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
     idGenerator,
     nowIso,
     computeChecksum,
