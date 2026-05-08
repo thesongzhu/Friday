@@ -93,21 +93,40 @@ export interface FridayRegisterPluginShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordPluginCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromotePluginUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackPluginUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+}
+
+export interface FridayReviewEnablePluginRequest {
+  runtimeVersion?: string;
+  providerModel?: string;
+  idempotencyKey?: string;
 }
 
 export interface FridayRegisterProviderProfileShadowRequest {
@@ -262,6 +281,7 @@ export interface FridayPluginUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayProviderProfileUpgradeActionResponse {

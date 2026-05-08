@@ -4,7 +4,7 @@ import { AlertTriangle, PackagePlus, Power, PowerOff, ShieldCheck, Trash2 } from
 import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, EmptyState, FieldLabel, ShellCard, SkeletonCard, StatusPill } from "@/components/core/primitives";
 import { healthApi } from "@/lib/api/health";
-import { pluginsApi, type FridayPluginEntity } from "@/lib/api/plugins";
+import { pluginsApi, type FridayPluginEntity, type FridayPluginLifecycleEvidence } from "@/lib/api/plugins";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -33,18 +33,43 @@ function pluginTone(status: FridayPluginEntity["status"]): "neutral" | "success"
   }
 }
 
+function pluginRequiresLifecycleReview(plugin: FridayPluginEntity): boolean {
+  if (plugin.source !== "local") {
+    return false;
+  }
+  return !(plugin.promotionChannel === "active" && plugin.compatibilityStatus === "compatible");
+}
+
+function lifecycleTone(plugin: FridayPluginEntity): "neutral" | "success" | "warning" | "danger" {
+  if (plugin.promotionChannel === "active" && plugin.compatibilityStatus === "compatible") {
+    return "success";
+  }
+  if (plugin.promotionChannel === "canary" || plugin.promotionChannel === "shadow") {
+    return "warning";
+  }
+  if (plugin.compatibilityStatus === "blocked" || plugin.status === "error") {
+    return "danger";
+  }
+  return "neutral";
+}
+
 function PluginInventoryCard(props: {
   plugin: FridayPluginEntity;
-  onEnable: (pluginId: string) => void;
+  lifecycleEvidence?: FridayPluginLifecycleEvidence;
+  onEnable: (plugin: FridayPluginEntity) => void;
   onDisable: (pluginId: string) => void;
   onUninstall: (pluginId: string) => void;
   busyPluginId: string | null;
 }) {
   const { locale } = useAppLocale();
-  const { plugin, busyPluginId } = props;
+  const { plugin, lifecycleEvidence, busyPluginId } = props;
   const isBusy = busyPluginId === plugin.id;
   const permissionCount = plugin.manifest.permissions.grants.length;
   const requiredCapabilities = plugin.manifest.requiredCapabilities ?? [];
+  const requiresLifecycleReview = pluginRequiresLifecycleReview(plugin);
+  const lifecycleLabel = plugin.promotionChannel
+    ? `${plugin.promotionChannel}${plugin.compatibilityStatus ? ` / ${plugin.compatibilityStatus}` : ""}`
+    : localize(locale, "未审查", "not reviewed");
 
   return (
     <div className="rounded-[28px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 shadow-[var(--shadow-card)]">
@@ -55,6 +80,9 @@ function PluginInventoryCard(props: {
             <StatusPill tone={pluginTone(plugin.status)}>{plugin.status}</StatusPill>
             <StatusPill tone={plugin.signatureVerified ? "success" : "neutral"}>
               {plugin.signatureVerified ? localize(locale, "签名已验证", "signature verified") : localize(locale, "未验证签名", "unsigned or unverified")}
+            </StatusPill>
+            <StatusPill tone={lifecycleTone(plugin)}>
+              {lifecycleLabel}
             </StatusPill>
           </div>
           <p className="mt-1 text-xs text-[color:var(--color-text-tertiary)]">{plugin.id}</p>
@@ -67,9 +95,15 @@ function PluginInventoryCard(props: {
               {localize(locale, "停用", "Disable")}
             </ActionButton>
           ) : (
-            <ActionButton tone="secondary" disabled={isBusy || plugin.status === "uninstalled"} onClick={() => props.onEnable(plugin.id)}>
-              <Power className="mr-2 h-4 w-4" />
-              {localize(locale, "启用", "Enable")}
+            <ActionButton tone="secondary" disabled={isBusy || plugin.status === "uninstalled"} onClick={() => props.onEnable(plugin)}>
+              {requiresLifecycleReview ? (
+                <ShieldCheck className="mr-2 h-4 w-4" />
+              ) : (
+                <Power className="mr-2 h-4 w-4" />
+              )}
+              {requiresLifecycleReview
+                ? localize(locale, "审查并启用", "Review & Enable")
+                : localize(locale, "启用", "Enable")}
             </ActionButton>
           )}
           <ActionButton tone="danger" disabled={isBusy} onClick={() => props.onUninstall(plugin.id)}>
@@ -101,6 +135,7 @@ function PluginInventoryCard(props: {
       <div className="mt-4 space-y-2 text-xs text-[color:var(--color-text-secondary)]">
         <p><span className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "安装目录", "Install path")}:</span> {plugin.installPath}</p>
         <p><span className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "信任模式", "Trust mode")}:</span> {plugin.trustMode}</p>
+        <p><span className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "生命周期", "Lifecycle")}:</span> {lifecycleLabel}</p>
         <p><span className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "必需宿主能力", "Required host capabilities")}:</span> {requiredCapabilities.join(", ") || localize(locale, "无", "none")}</p>
       </div>
 
@@ -115,6 +150,22 @@ function PluginInventoryCard(props: {
           </div>
         </div>
       ) : null}
+
+      {lifecycleEvidence ? (
+        <div className="mt-4 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3 text-xs text-[color:var(--color-text-secondary)]">
+          <p className="font-medium text-[color:var(--color-text-primary)]">
+            {localize(locale, "最近生命周期证据", "Latest lifecycle evidence")}
+          </p>
+          <p className="mt-1">
+            {localize(locale, "阶段", "Stage")}: {lifecycleEvidence.stage ?? "—"}
+            {" · "}
+            {localize(locale, "Canary", "Canary")}: {lifecycleEvidence.canarySuccessCount ?? 0}/{lifecycleEvidence.canaryFailureCount ?? 0}
+          </p>
+          <p className="mt-1 break-all">
+            {localize(locale, "父审批票据", "Parent approval ticket")}: {lifecycleEvidence.parentLifecycleTicketId ?? "—"}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -127,6 +178,7 @@ export function PluginsPage() {
   const [installTrustOnInstall, setInstallTrustOnInstall] = useState(false);
   const [pendingUninstallId, setPendingUninstallId] = useState<string | null>(null);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
+  const [latestLifecycleEvidence, setLatestLifecycleEvidence] = useState<Record<string, FridayPluginLifecycleEvidence>>({});
 
   const healthQuery = useQuery({
     queryKey: ["health", "plugins-page"],
@@ -174,12 +226,22 @@ export function PluginsPage() {
   });
 
   const enableMutation = useMutation({
-    mutationFn: async (pluginId: string) => {
-      setBusyPluginId(pluginId);
-      return pluginsApi.enable(pluginId);
+    mutationFn: async (plugin: FridayPluginEntity) => {
+      setBusyPluginId(plugin.id);
+      if (pluginRequiresLifecycleReview(plugin)) {
+        return pluginsApi.reviewEnable(plugin.id);
+      }
+      return { plugin: await pluginsApi.enable(plugin.id) };
     },
-    onSuccess: (plugin) => {
-      toast.success(locale === "zh" ? `已启用 ${plugin.name}` : `Enabled ${plugin.name}`);
+    onSuccess: (result) => {
+      const { plugin, evidence } = result;
+      if (evidence) {
+        setLatestLifecycleEvidence((current) => ({ ...current, [plugin.id]: evidence }));
+      }
+      const evidenceSuffix = evidence
+        ? ` · ${evidence.stage ?? "lifecycle"} ${evidence.canarySuccessCount ?? 0}/${evidence.canaryFailureCount ?? 0}`
+        : "";
+      toast.success(locale === "zh" ? `已启用 ${plugin.name}${evidenceSuffix}` : `Enabled ${plugin.name}${evidenceSuffix}`);
       void queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
     onError: (error) => {
@@ -353,8 +415,9 @@ export function PluginsPage() {
                 <PluginInventoryCard
                   key={plugin.id}
                   plugin={plugin}
+                  lifecycleEvidence={latestLifecycleEvidence[plugin.id]}
                   busyPluginId={busyPluginId}
-                  onEnable={(pluginId) => enableMutation.mutate(pluginId)}
+                  onEnable={(pluginToEnable) => enableMutation.mutate(pluginToEnable)}
                   onDisable={(pluginId) => disableMutation.mutate(pluginId)}
                   onUninstall={(pluginId) => setPendingUninstallId(pluginId)}
                 />

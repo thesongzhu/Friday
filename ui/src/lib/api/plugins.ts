@@ -2,6 +2,17 @@ import { apiClient } from "./client";
 
 export type FridayPluginKind = "channel" | "provider" | "skill" | "storage" | "integration";
 export type FridayPluginSource = "bundled" | "local";
+export type FridayPluginCompatibilityStatus =
+  | "unknown"
+  | "compatible"
+  | "adaptation_required"
+  | "blocked";
+export type FridayPluginPromotionChannel =
+  | "none"
+  | "shadow"
+  | "canary"
+  | "active"
+  | "rolled_back";
 export type FridayPluginStatus =
   | "not_installed"
   | "installed"
@@ -32,6 +43,14 @@ interface FridayPluginPolicySummary {
   installAllowed: boolean;
   enableAllowed: boolean;
   reasons: string[];
+}
+
+interface FridayPluginCanaryStats {
+  sampleSize: number;
+  successCount: number;
+  failureCount: number;
+  rollbackCount: number;
+  lastEvaluatedAt?: string;
 }
 
 interface FridayPluginPermissionGrant {
@@ -74,8 +93,25 @@ export interface FridayPluginEntity {
   updatedAt: string;
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
+  compatibilityStatus?: FridayPluginCompatibilityStatus;
+  promotionChannel?: FridayPluginPromotionChannel;
+  shadowVersionId?: string | null;
+  canaryStats?: FridayPluginCanaryStats;
   capabilitySummary?: FridayPluginCapabilitySummary;
   policySummary?: FridayPluginPolicySummary;
+}
+
+export interface FridayPluginLifecycleEvidence {
+  pluginId?: string;
+  shadowVersionId?: string;
+  stage?: string;
+  lastEventAt?: string;
+  canarySuccessCount?: number;
+  canaryFailureCount?: number;
+  rollbackPointerAvailable?: boolean;
+  pluginArtifactDigest?: string;
+  parentLifecycleTicketId?: string;
+  planDigest?: string;
 }
 
 interface FridayListPluginsResponse {
@@ -86,8 +122,17 @@ interface FridayInstallPluginResponse {
   plugin: FridayPluginEntity;
 }
 
+interface FridayGetPluginResponse {
+  plugin: FridayPluginEntity;
+}
+
 interface FridayEnablePluginResponse {
   plugin: FridayPluginEntity;
+}
+
+interface FridayReviewEnablePluginResponse {
+  plugin: FridayPluginEntity;
+  evidence?: FridayPluginLifecycleEvidence;
 }
 
 interface FridayDisablePluginResponse {
@@ -136,6 +181,13 @@ export const pluginsApi = {
       {},
     );
     return data.plugin;
+  },
+
+  async reviewEnable(pluginId: string): Promise<FridayReviewEnablePluginResponse> {
+    return apiClient.post<Record<string, never>, FridayReviewEnablePluginResponse>(
+      `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/review-enable`,
+      {},
+    );
   },
 
   async disable(pluginId: string): Promise<FridayPluginEntity> {

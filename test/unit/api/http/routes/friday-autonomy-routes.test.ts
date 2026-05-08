@@ -12,6 +12,9 @@ import {
   createFridayMcpServerLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
 import {
+  createFridayPluginLifecycleMutatingActionRequest,
+} from "../../../../../src/autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
@@ -26,6 +29,7 @@ const principal = {
 };
 const PROVIDER_PLAN_DIGEST = "provider-plan-1";
 const MCP_PLAN_DIGEST = "mcp-plan-1";
+const PLUGIN_PLAN_DIGEST = "plugin-plan-1";
 
 function makeContext(body: Record<string, unknown>) {
   return {
@@ -56,6 +60,18 @@ function makeMcpContext(body: Record<string, unknown>) {
     requestId: "req-1",
     receivedAt: "2026-05-07T18:00:00.000Z",
     params: { serverId: "mcp-1" },
+    query: {},
+    body,
+    headers: {},
+    principal,
+  };
+}
+
+function makePluginContext(body: Record<string, unknown>) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: { pluginId: "plugin-1" },
     query: {},
     body,
     headers: {},
@@ -158,6 +174,38 @@ function makeMcpApproval(input: {
   return {
     decision: "approved",
     approvalId: `mcp-${input.action}-approval`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-05-07T19:00:00.000Z",
+  };
+}
+
+function makePluginApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  shadowVersionId?: string;
+  runtimeVersion?: string;
+  planDigest?: string;
+}): FridayCanonicalApprovalResolution {
+  const planDigest = input.planDigest ?? PLUGIN_PLAN_DIGEST;
+  const request = createFridayPluginLifecycleMutatingActionRequest({
+    action: input.action,
+    pluginId: "plugin-1",
+    shadowVersionId: input.shadowVersionId ?? "plugin-1@shadow",
+    runtimeVersion: input.runtimeVersion ?? "runtime-v1",
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: `api:/v1/autonomy/plugins/${input.action}`,
+    planDigest,
+    rollback: input.action === "rollback"
+      ? { planned: true, planDigest, actions: ["plugins.lifecycle.promote"] }
+      : undefined,
+  });
+  return {
+    decision: "approved",
+    approvalId: `plugin-${input.action}-approval`,
     decidedByPrincipalId: "user-1",
     actionDigest: createFridayMutatingActionDigest(request),
     expiresAt: "2026-05-07T19:00:00.000Z",
@@ -296,6 +344,93 @@ function createMcpRoutes() {
     },
   });
   return { routes, registerShadow, recordCanary };
+}
+
+function createPluginRoutes() {
+  const evidence = {
+    pluginId: "plugin-1",
+    stage: "shadow",
+    canarySuccessCount: 0,
+    canaryFailureCount: 0,
+  };
+  const registerShadow = vi.fn(async () => ({
+    id: "plugin-1",
+    name: "Plugin",
+    description: "Plugin",
+    version: "1.0.0",
+    source: "local",
+    status: "installed",
+    enabled: false,
+    trustMode: "trust_on_install",
+    installPath: "/tmp/plugin",
+    kinds: ["skill"],
+    manifest: {
+      schemaVersion: "1.0",
+      id: "plugin-1",
+      version: "1.0.0",
+      name: "Plugin",
+      description: "Plugin",
+      kinds: ["skill"],
+      entrypoints: { skill: "./dist/index.js" },
+      permissions: { grants: [], promptOn: [] },
+      compatibility: { minHubVersion: "0.1.0", apiVersion: "1" },
+    },
+    signatureAlgorithm: null,
+    signatureKeyId: null,
+    signatureValue: null,
+    signatureVerified: true,
+    trustedFingerprintSha256: "abc",
+    promotionChannel: "shadow",
+    compatibilityStatus: "adaptation_required",
+    shadowVersionId: "plugin-1@shadow",
+    installedAt: "2026-05-07T18:00:00.000Z",
+    updatedAt: "2026-05-07T18:00:00.000Z",
+    lastErrorCode: null,
+    lastErrorMessage: null,
+  }));
+  const recordCanary = vi.fn(async () => ({
+    ...(await registerShadow()),
+    promotionChannel: "canary",
+    compatibilityStatus: "compatible",
+    canaryStats: {
+      sampleSize: 1,
+      successCount: 1,
+      failureCount: 0,
+      rollbackCount: 0,
+    },
+  }));
+  const reviewEnable = vi.fn(async () => ({
+    ...(await registerShadow()),
+    status: "running",
+    enabled: true,
+    promotionChannel: "active",
+    compatibilityStatus: "compatible",
+  }));
+  const routes = createFridayAutonomyRoutes({
+    listUpgradeStatus: () => ({ items: [] }),
+    pluginActions: {
+      registerShadow,
+      recordCanary,
+      promote: vi.fn(async () => ({
+        ...(await registerShadow()),
+        status: "running",
+        enabled: true,
+        promotionChannel: "active",
+        compatibilityStatus: "compatible",
+      })),
+      rollback: vi.fn(async () => ({
+        ...(await registerShadow()),
+        status: "installed",
+        enabled: false,
+        promotionChannel: "rolled_back",
+        compatibilityStatus: "adaptation_required",
+      })),
+      reviewEnable,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => evidence),
+    },
+  });
+  return { routes, registerShadow, recordCanary, reviewEnable };
 }
 
 describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
@@ -463,5 +598,78 @@ describe("createFridayAutonomyRoutes MCP lifecycle approval", () => {
     }))).rejects.toMatchObject({ code: "MCP_SERVER_CANARY_RUNTIME_PROOF_REQUIRED" });
 
     expect(recordCanary).not.toHaveBeenCalled();
+  });
+});
+
+describe("createFridayAutonomyRoutes plugin lifecycle approval", () => {
+  it("requires canonical approval before plugin shadow can mutate", async () => {
+    const { routes, registerShadow } = createPluginRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.plugins.shadow")!;
+
+    await expect(route.handler(makePluginContext({
+      shadowVersionId: "plugin-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: PLUGIN_PLAN_DIGEST,
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+    expect(registerShadow).not.toHaveBeenCalled();
+  });
+
+  it("passes canonical approval metadata into plugin shadow and returns evidence", async () => {
+    const { routes, registerShadow } = createPluginRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.plugins.shadow")!;
+
+    const result = await route.handler(makePluginContext({
+      shadowVersionId: "plugin-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: PLUGIN_PLAN_DIGEST,
+      canonicalApproval: makePluginApproval({ action: "shadow" }),
+    }));
+
+    expect(registerShadow).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: "plugin-1",
+      shadowVersionId: "plugin-1@shadow",
+      canonicalApproval: expect.objectContaining({ approvalId: "plugin-shadow-approval" }),
+      actor: expect.objectContaining({ principalId: "user-1" }),
+      surface: "api:/v1/autonomy/plugins/shadow",
+      planDigest: PLUGIN_PLAN_DIGEST,
+    }));
+    expect(result).toHaveProperty("evidence.stage", "shadow");
+  });
+
+  it("rejects caller-supplied plugin canary success because proof must run internally", async () => {
+    const { routes, recordCanary } = createPluginRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.plugins.canary")!;
+
+    await expect(route.handler(makePluginContext({
+      runtimeVersion: "runtime-v1",
+      success: true,
+      planDigest: PLUGIN_PLAN_DIGEST,
+      canonicalApproval: makePluginApproval({ action: "canary" }),
+    }))).rejects.toMatchObject({ code: "PLUGIN_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+    expect(recordCanary).not.toHaveBeenCalled();
+  });
+
+  it("passes principal context into plugin review-enable so backend can issue canonical child approvals", async () => {
+    const { routes, reviewEnable } = createPluginRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.plugins.review.enable")!;
+
+    const result = await route.handler(makePluginContext({
+      runtimeVersion: "runtime-v1",
+      providerModel: "model-v1",
+      idempotencyKey: "review-enable-key",
+    }));
+
+    expect(reviewEnable).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: "plugin-1",
+      runtimeVersion: "runtime-v1",
+      providerModel: "model-v1",
+      idempotencyKey: "review-enable-key",
+      actor: expect.objectContaining({ principalId: "user-1" }),
+      surface: "api:/v1/autonomy/plugins/review-enable",
+    }));
+    expect(result).toHaveProperty("plugin.promotionChannel", "active");
+    expect(result).toHaveProperty("evidence.pluginId", "plugin-1");
   });
 });

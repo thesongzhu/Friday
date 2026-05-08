@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
 import type { FridaySqliteLayer } from "#state";
@@ -100,7 +102,15 @@ import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satell
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridayStudioService } from "../../studio/index.js";
-import { createFridayMutatingActionGate } from "../../security/friday-mutating-action-gate.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  type FridayCanonicalApprovalResolution,
+  type FridayMutatingActionActor,
+  type FridayMutatingActionRequest,
+  type FridayMutatingActionTicket,
+  signFridayCanonicalApproval,
+} from "../../security/friday-mutating-action-gate.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -132,7 +142,7 @@ import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
 import { createFridaySkillRepository, type FridaySkillLifecycleDetail } from "#skills";
-import { createFridayPluginRepository } from "#plugins";
+import { createFridayPluginRepository, type FridayPluginEntity } from "#plugins";
 import { createFridayWorkflowRepository } from "#workflows";
 import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
 import { createFridayAutonomyImpactCensusService } from "../../autonomy/services/friday-autonomy-impact-census-service.js";
@@ -141,7 +151,11 @@ import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/service
 import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
 import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
-import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import {
+  createFridayPluginLifecycleMutatingActionRequest,
+  createFridayPluginUpgradeLifecycleService,
+  type FridayPluginLifecycleApprovalRequestInput,
+} from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
 import { createFridayAutonomySubjectUpgradeStateRepository } from "../../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import { createFridayMcpServerUpgradeLifecycleService } from "../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
 import { createFridayChannelAdapterUpgradeLifecycleService } from "../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
@@ -163,6 +177,97 @@ const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 const CURRENT_EPOCH = 1;
 const SESSION_CONTEXT_HISTORY_LIMIT = 24;
 const WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
+
+function createFridayPluginReviewEnablePlanDigest(input: {
+  plugin: FridayPluginEntity;
+  runtimeVersion: string;
+  providerModel?: string;
+}): string {
+  return createHash("sha256").update(stableStringify({
+    schemaVersion: "friday.plugin.review_enable.phase3.2D.v1",
+    pluginId: input.plugin.id,
+    version: input.plugin.version,
+    installPath: input.plugin.installPath,
+    manifest: input.plugin.manifest,
+    signatureVerified: input.plugin.signatureVerified,
+    trustedFingerprintSha256: input.plugin.trustedFingerprintSha256,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: input.providerModel,
+  })).digest("hex");
+}
+
+function createFridayPluginReviewEnableShadowVersionId(input: {
+  plugin: FridayPluginEntity;
+  planDigest: string;
+}): string {
+  return `${input.plugin.id}@${input.plugin.version}-${input.planDigest.slice(0, 12)}`;
+}
+
+function createFridayPluginReviewEnableParentRequest(input: {
+  plugin: FridayPluginEntity;
+  runtimeVersion: string;
+  providerModel?: string;
+  actor: FridayMutatingActionActor;
+  surface: string;
+  planDigest: string;
+  shadowVersionId: string;
+  idempotencyKey?: string;
+}): FridayMutatingActionRequest {
+  return {
+    action: "plugins.lifecycle.review_enable",
+    actor: input.actor,
+    surface: input.surface,
+    resource: {
+      type: "external_plugin_lifecycle",
+      id: input.plugin.id,
+      digest: input.planDigest,
+      attributes: {
+        pluginId: input.plugin.id,
+        version: input.plugin.version,
+        shadowVersionId: input.shadowVersionId,
+      },
+    },
+    mutating: true,
+    risk: "high",
+    parameters: {
+      pluginId: input.plugin.id,
+      version: input.plugin.version,
+      runtimeVersion: input.runtimeVersion,
+      providerModel: input.providerModel,
+      shadowVersionId: input.shadowVersionId,
+      childActions: ["plugins.lifecycle.shadow", "plugins.lifecycle.canary", "plugins.lifecycle.promote"],
+    },
+    planDigest: input.planDigest,
+    idempotencyKey: input.idempotencyKey,
+    localClaims: [
+      {
+        guardId: "plugin_review_enable_lifecycle_guard",
+        decision: "requires_approval",
+        risk: "high",
+        reason: "plugin_review_enable_requires_canonical_lifecycle_approval",
+        evidence: {
+          pluginId: input.plugin.id,
+          version: input.plugin.version,
+          shadowVersionId: input.shadowVersionId,
+        },
+      },
+    ],
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
 
 function readStringListQuery(
   value: unknown,
@@ -842,6 +947,37 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     pluginRepo,
     nowIso: deps.nowIso,
+    stateDir,
+    pluginRuntime: deps.pluginService,
+    canonicalMutationGate,
+    rollbackSnapshotSecret: deps.tokenSecret,
+  });
+  const signCanonicalApprovalForRequest = (
+    request: FridayMutatingActionRequest,
+    input: {
+      approvalIdPrefix: string;
+      childOfLifecycleTicketId?: string;
+    },
+  ): FridayCanonicalApprovalResolution => {
+    const evaluatedAtMs = Date.parse(deps.nowIso());
+    const expiresAt = new Date(
+      (Number.isFinite(evaluatedAtMs) ? evaluatedAtMs : Date.now()) + 10 * 60 * 1000,
+    ).toISOString();
+    return signFridayCanonicalApproval({
+      decision: "approved",
+      approvalId: `${input.approvalIdPrefix}-${deps.idGenerator()}`,
+      decidedByPrincipalId: request.actor.principalId ?? request.actor.id,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt,
+      childOfLifecycleTicketId: input.childOfLifecycleTicketId,
+    }, deps.tokenSecret);
+  };
+  const signPluginLifecycleApproval = (
+    input: FridayPluginLifecycleApprovalRequestInput,
+    options: { childOfLifecycleTicketId?: string } = {},
+  ) => signCanonicalApprovalForRequest(createFridayPluginLifecycleMutatingActionRequest(input), {
+    approvalIdPrefix: `plugin-review-enable-${input.action}`,
+    childOfLifecycleTicketId: options.childOfLifecycleTicketId,
   });
   const mcpServerUpgradeLifecycle = deps.mcpAdapter
       ? createFridayMcpServerUpgradeLifecycleService({
@@ -1141,26 +1277,152 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           pluginUpgradeLifecycle.recordCanaryResult({
             pluginId: input.pluginId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           pluginUpgradeLifecycle.promote({
             pluginId: input.pluginId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           pluginUpgradeLifecycle.rollback({
             pluginId: input.pluginId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
+        reviewEnable: async (input) => {
+          const plugin = deps.pluginService!.getPlugin(input.pluginId);
+          if (!plugin) {
+            throw new FridayDomainError("PLUGIN_NOT_FOUND", `Plugin ${input.pluginId} not found`, {
+              httpStatus: 404,
+            });
+          }
+          const runtimeVersion = input.runtimeVersion ?? serverVersion;
+          const planDigest = createFridayPluginReviewEnablePlanDigest({
+            plugin,
+            runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const shadowVersionId = createFridayPluginReviewEnableShadowVersionId({ plugin, planDigest });
+          const parentRequest = createFridayPluginReviewEnableParentRequest({
+            plugin,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest,
+            shadowVersionId,
+            idempotencyKey: input.idempotencyKey,
+          });
+          const parentGate = canonicalMutationGate.evaluate({
+            ...parentRequest,
+            canonicalApproval: signCanonicalApprovalForRequest(parentRequest, {
+              approvalIdPrefix: "plugin-review-enable-parent",
+            }),
+          });
+          if (parentGate.decision !== "allow" || !parentGate.ticket) {
+            throw new FridayDomainError(
+              parentGate.decision === "requires_approval"
+                ? "PLUGIN_REVIEW_ENABLE_CANONICAL_APPROVAL_REQUIRED"
+                : "PLUGIN_REVIEW_ENABLE_CANONICAL_APPROVAL_DENIED",
+              parentGate.decision === "requires_approval"
+                ? "Plugin review-enable requires canonical approval before lifecycle child actions can run."
+                : `Plugin review-enable was blocked by the canonical approval gate: ${parentGate.reason}`,
+              {
+                httpStatus: parentGate.decision === "requires_approval" ? 403 : 409,
+                details: {
+                  pluginId: input.pluginId,
+                  actionDigest: parentGate.actionDigest,
+                  reason: parentGate.reason,
+                },
+              },
+            );
+          }
+          const parentTicket: FridayMutatingActionTicket = parentGate.ticket;
+          const childIdempotencyKey = (action: FridayPluginLifecycleApprovalRequestInput["action"]) =>
+            input.idempotencyKey ? `${input.idempotencyKey}:${action}` : undefined;
+          const buildLifecycleApprovalInput = (
+            action: FridayPluginLifecycleApprovalRequestInput["action"],
+          ): FridayPluginLifecycleApprovalRequestInput => ({
+            action,
+            pluginId: input.pluginId,
+            shadowVersionId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/${action}`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey(action),
+          });
+
+          pluginUpgradeLifecycle.registerShadowVersion({
+            pluginId: input.pluginId,
+            shadowVersionId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/shadow`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("shadow"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("shadow"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+          await pluginUpgradeLifecycle.recordCanaryResult({
+            pluginId: input.pluginId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/canary`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("canary"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("canary"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+          return pluginUpgradeLifecycle.promote({
+            pluginId: input.pluginId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/promote`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("promote"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("promote"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+        },
         getStatus: (pluginId) => autonomyUpgradeStatus.get("plugin", pluginId),
+        getEvidence: (input) =>
+          pluginUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     providerProfileActions: deps.providerService
