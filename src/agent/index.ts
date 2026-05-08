@@ -355,7 +355,11 @@ export { createFridayAgentMemoryExtractTool } from "./tools/friday-agent-memory-
 
 // ─── MCP tool ───
 
-export type { CreateFridayAgentMcpToolOptions } from "./tools/friday-agent-mcp-tool.js";
+export type {
+  CreateFridayAgentMcpToolOptions,
+  FridayMcpServerAvailability,
+  FridayMcpServerAvailabilityResolver,
+} from "./tools/friday-agent-mcp-tool.js";
 export { createFridayAgentMcpTool } from "./tools/friday-agent-mcp-tool.js";
 
 // ─── System tool ───

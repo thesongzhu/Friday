@@ -9,6 +9,9 @@ import {
   createFridayProviderProfileLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
 import {
+  createFridayMcpServerLifecycleMutatingActionRequest,
+} from "../../../../../src/autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
+import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
@@ -22,6 +25,7 @@ const principal = {
   scopes: ["hub.admin"] as const,
 };
 const PROVIDER_PLAN_DIGEST = "provider-plan-1";
+const MCP_PLAN_DIGEST = "mcp-plan-1";
 
 function makeContext(body: Record<string, unknown>) {
   return {
@@ -40,6 +44,18 @@ function makeProviderContext(body: Record<string, unknown>) {
     requestId: "req-1",
     receivedAt: "2026-05-07T18:00:00.000Z",
     params: { providerId: "provider-1" },
+    query: {},
+    body,
+    headers: {},
+    principal,
+  };
+}
+
+function makeMcpContext(body: Record<string, unknown>) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: { serverId: "mcp-1" },
     query: {},
     body,
     headers: {},
@@ -110,6 +126,38 @@ function makeProviderApproval(input: {
   return {
     decision: "approved",
     approvalId: `provider-${input.action}-approval`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-05-07T19:00:00.000Z",
+  };
+}
+
+function makeMcpApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  shadowVersionId?: string;
+  runtimeVersion?: string;
+  planDigest?: string;
+}): FridayCanonicalApprovalResolution {
+  const planDigest = input.planDigest ?? MCP_PLAN_DIGEST;
+  const request = createFridayMcpServerLifecycleMutatingActionRequest({
+    action: input.action,
+    serverId: "mcp-1",
+    shadowVersionId: input.shadowVersionId ?? "mcp-1@shadow",
+    runtimeVersion: input.runtimeVersion ?? "runtime-v1",
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: `api:/v1/autonomy/mcp-servers/${input.action}`,
+    planDigest,
+    rollback: input.action === "rollback"
+      ? { planned: true, planDigest, actions: ["mcp_servers.lifecycle.promote"] }
+      : undefined,
+  });
+  return {
+    decision: "approved",
+    approvalId: `mcp-${input.action}-approval`,
     decidedByPrincipalId: "user-1",
     actionDigest: createFridayMutatingActionDigest(request),
     expiresAt: "2026-05-07T19:00:00.000Z",
@@ -206,6 +254,44 @@ function createProviderRoutes() {
         config: { validation: { status: "ok" } },
       })),
       getStatus: () => null,
+      getEvidence: vi.fn(() => evidence),
+    },
+  });
+  return { routes, registerShadow, recordCanary };
+}
+
+function createMcpRoutes() {
+  const evidence = {
+    serverId: "mcp-1",
+    stage: "shadow",
+    canarySuccessCount: 0,
+    canaryFailureCount: 0,
+  };
+  const registerShadow = vi.fn(async () => undefined);
+  const recordCanary = vi.fn(async () => undefined);
+  const routes = createFridayAutonomyRoutes({
+    listUpgradeStatus: () => ({ items: [] }),
+    mcpServerActions: {
+      registerShadow,
+      recordCanary,
+      promote: vi.fn(async () => undefined),
+      rollback: vi.fn(async () => undefined),
+      getStatus: () => ({
+        kind: "mcp_server",
+        id: "mcp-1",
+        displayName: "mcp-1",
+        status: "configured",
+        compatibilityStatus: "compatible",
+        promotionChannel: "shadow",
+        recordedCompatibilityStatus: "compatible",
+        derivedCompatibilityStatus: "compatible",
+        requiresAdaptation: false,
+        statusDrift: false,
+        findings: [],
+        strategy: "noop",
+        nextStage: "promoted",
+        reasons: [],
+      }),
       getEvidence: vi.fn(() => evidence),
     },
   });
@@ -326,5 +412,56 @@ describe("createFridayAutonomyRoutes provider lifecycle approval", () => {
         userId: "user-1",
       },
     }));
+  });
+});
+
+describe("createFridayAutonomyRoutes MCP lifecycle approval", () => {
+  it("requires canonical approval before MCP shadow can mutate", async () => {
+    const { routes, registerShadow } = createMcpRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.mcp.servers.shadow")!;
+
+    await expect(route.handler(makeMcpContext({
+      shadowVersionId: "mcp-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: MCP_PLAN_DIGEST,
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+    expect(registerShadow).not.toHaveBeenCalled();
+  });
+
+  it("passes canonical approval metadata into MCP shadow and returns evidence", async () => {
+    const { routes, registerShadow } = createMcpRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.mcp.servers.shadow")!;
+
+    const result = await route.handler(makeMcpContext({
+      shadowVersionId: "mcp-1@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: MCP_PLAN_DIGEST,
+      canonicalApproval: makeMcpApproval({ action: "shadow" }),
+    }));
+
+    expect(registerShadow).toHaveBeenCalledWith(expect.objectContaining({
+      serverId: "mcp-1",
+      shadowVersionId: "mcp-1@shadow",
+      canonicalApproval: expect.objectContaining({ approvalId: "mcp-shadow-approval" }),
+      actor: expect.objectContaining({ principalId: "user-1" }),
+      surface: "api:/v1/autonomy/mcp-servers/shadow",
+      planDigest: MCP_PLAN_DIGEST,
+    }));
+    expect(result).toHaveProperty("evidence.stage", "shadow");
+  });
+
+  it("rejects caller-supplied MCP canary success because proof must run internally", async () => {
+    const { routes, recordCanary } = createMcpRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.mcp.servers.canary")!;
+
+    await expect(route.handler(makeMcpContext({
+      runtimeVersion: "runtime-v1",
+      success: true,
+      planDigest: MCP_PLAN_DIGEST,
+      canonicalApproval: makeMcpApproval({ action: "canary" }),
+    }))).rejects.toMatchObject({ code: "MCP_SERVER_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+    expect(recordCanary).not.toHaveBeenCalled();
   });
 });

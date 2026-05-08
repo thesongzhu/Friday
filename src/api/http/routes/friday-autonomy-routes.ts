@@ -63,6 +63,9 @@ import {
 import type {
   FridayProviderProfileLifecycleApprovalRequestInput,
 } from "../../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import type {
+  FridayMcpServerLifecycleApprovalRequestInput,
+} from "../../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
 import {
   type FridayCanonicalApprovalResolution,
   type FridayMutatingActionGate,
@@ -168,18 +171,35 @@ export interface FridayAutonomyRoutesDeps {
   };
   mcpServerActions?: {
     registerShadow: (
-      input: { serverId: string } & FridayRegisterMcpServerShadowRequest,
+      input: {
+        serverId: string;
+        actor: FridayMcpServerLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRegisterMcpServerShadowRequest,
     ) => void | Promise<void>;
     recordCanary: (
-      input: { serverId: string } & FridayRecordMcpServerCanaryRequest,
+      input: {
+        serverId: string;
+        actor: FridayMcpServerLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRecordMcpServerCanaryRequest,
     ) => void | Promise<void>;
     promote: (
-      input: { serverId: string } & FridayPromoteMcpServerUpgradeRequest,
+      input: {
+        serverId: string;
+        actor: FridayMcpServerLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayPromoteMcpServerUpgradeRequest,
     ) => void | Promise<void>;
     rollback: (
-      input: { serverId: string } & FridayRollbackMcpServerUpgradeRequest,
+      input: {
+        serverId: string;
+        actor: FridayMcpServerLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRollbackMcpServerUpgradeRequest,
     ) => void | Promise<void>;
     getStatus: (serverId: string) => FridayMcpServerUpgradeActionResponse["status"];
+    getEvidence?: (input: { serverId: string }) => FridayMcpServerUpgradeActionResponse["evidence"] | null;
   };
   channelAdapterActions?: {
     registerShadow: (
@@ -282,6 +302,20 @@ function requireProviderProfileLifecycleCanonicalApproval(
   return canonicalApproval;
 }
 
+function requireMcpServerLifecycleCanonicalApproval(
+  action: FridayMcpServerLifecycleApprovalRequestInput["action"],
+  canonicalApproval: FridayCanonicalApprovalResolution | undefined,
+): FridayCanonicalApprovalResolution {
+  if (!canonicalApproval) {
+    throw new FridayDomainError(
+      "CANONICAL_APPROVAL_REQUIRED",
+      `MCP server lifecycle ${action} requires canonical approval before any mutation.`,
+      { httpStatus: 403 },
+    );
+  }
+  return canonicalApproval;
+}
+
 function requireSkillLifecycleEvidence(input: {
   deps: FridayAutonomyRoutesDeps;
   skillId: string;
@@ -294,6 +328,22 @@ function requireSkillLifecycleEvidence(input: {
       "SKILL_LIFECYCLE_EVIDENCE_MISSING",
       `Skill lifecycle ${input.expectedStage} completed without readable lifecycle evidence.`,
       { httpStatus: 500, details: { skillId: input.skillId, candidateId: input.candidateId, stage: input.expectedStage } },
+    );
+  }
+  return evidence;
+}
+
+function requireMcpServerLifecycleEvidence(input: {
+  deps: FridayAutonomyRoutesDeps;
+  serverId: string;
+  expectedStage: string;
+}): Record<string, unknown> {
+  const evidence = input.deps.mcpServerActions!.getEvidence?.({ serverId: input.serverId });
+  if (!evidence) {
+    throw new FridayDomainError(
+      "MCP_SERVER_LIFECYCLE_EVIDENCE_MISSING",
+      `MCP server lifecycle ${input.expectedStage} completed without readable lifecycle evidence.`,
+      { httpStatus: 500, details: { serverId: input.serverId, stage: input.expectedStage } },
     );
   }
   return evidence;
@@ -1166,14 +1216,29 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireMcpServerLifecycleCanonicalApproval(
+            "shadow",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.mcpServerActions!.registerShadow({
             serverId,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/mcp-servers/shadow",
           });
           const status = deps.mcpServerActions!.getStatus(serverId);
-          return { server: buildMcpServerUpgradeActionPayload(status), status };
+          return {
+            server: buildMcpServerUpgradeActionPayload(status),
+            status,
+            evidence: requireMcpServerLifecycleEvidence({ deps, serverId, expectedStage: "shadow" }),
+          };
         },
       },
       {
@@ -1184,18 +1249,33 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
-          if (typeof body.success !== "boolean") {
-            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
+          if ("success" in body || "evaluatedAt" in body) {
+            throw new FridayDomainError("MCP_SERVER_CANARY_RUNTIME_PROOF_REQUIRED", "MCP server canary success must be produced by Friday's read-only runtime smoke, not supplied by the caller.", {
               httpStatus: 400,
             });
           }
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireMcpServerLifecycleCanonicalApproval(
+            "canary",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.mcpServerActions!.recordCanary({
             serverId,
-            success: body.success,
-            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/mcp-servers/canary",
           });
           const status = deps.mcpServerActions!.getStatus(serverId);
-          return { server: buildMcpServerUpgradeActionPayload(status), status };
+          return {
+            server: buildMcpServerUpgradeActionPayload(status),
+            status,
+            evidence: requireMcpServerLifecycleEvidence({ deps, serverId, expectedStage: "canary" }),
+          };
         },
       },
       {
@@ -1206,13 +1286,28 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireMcpServerLifecycleCanonicalApproval(
+            "promote",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.mcpServerActions!.promote({
             serverId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/mcp-servers/promote",
           });
           const status = deps.mcpServerActions!.getStatus(serverId);
-          return { server: buildMcpServerUpgradeActionPayload(status), status };
+          return {
+            server: buildMcpServerUpgradeActionPayload(status),
+            status,
+            evidence: requireMcpServerLifecycleEvidence({ deps, serverId, expectedStage: "active" }),
+          };
         },
       },
       {
@@ -1223,13 +1318,29 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireMcpServerLifecycleCanonicalApproval(
+            "rollback",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.mcpServerActions!.rollback({
             serverId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            reason: typeof body.reason === "string" ? body.reason : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/mcp-servers/rollback",
           });
           const status = deps.mcpServerActions!.getStatus(serverId);
-          return { server: buildMcpServerUpgradeActionPayload(status), status };
+          return {
+            server: buildMcpServerUpgradeActionPayload(status),
+            status,
+            evidence: requireMcpServerLifecycleEvidence({ deps, serverId, expectedStage: "rolled_back" }),
+          };
         },
       },
     );

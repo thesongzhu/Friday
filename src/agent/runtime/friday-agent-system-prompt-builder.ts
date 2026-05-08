@@ -80,8 +80,11 @@ export function buildFridayAgentSystemPrompt(
     });
   }
 
-  const toolList = toolNames.join(", ");
-  const toolSet = new Set(toolNames);
+  const visibleToolNames = runtimeCapabilities?.mcpEnabled === false
+    ? toolNames.filter((name) => name !== "mcp")
+    : toolNames;
+  const toolList = visibleToolNames.join(", ");
+  const toolSet = new Set(visibleToolNames);
   const hasTool = (name: string) => toolSet.has(name);
   const hasDesktopTool = hasTool("desktop");
   const hasSystemTool = hasTool("system");

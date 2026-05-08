@@ -844,11 +844,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
   const mcpServerUpgradeLifecycle = deps.mcpAdapter
-    ? createFridayMcpServerUpgradeLifecycleService({
+      ? createFridayMcpServerUpgradeLifecycleService({
         db: deps.db,
         stateRepo: subjectUpgradeStateRepo,
         mcpAdapter: deps.mcpAdapter,
         nowIso: deps.nowIso,
+        stateDir,
+        canonicalMutationGate,
       })
     : undefined;
   const channelAdapterUpgradeLifecycle = deps.channels?.registry
@@ -1223,26 +1225,49 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           mcpServerUpgradeLifecycle.recordCanaryResult({
             serverId: input.serverId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           mcpServerUpgradeLifecycle.promote({
             serverId: input.serverId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           mcpServerUpgradeLifecycle.rollback({
             serverId: input.serverId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (serverId) => autonomyUpgradeStatus.get("mcp_server", serverId),
+        getEvidence: (input) =>
+          mcpServerUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     channelAdapterActions: channelAdapterUpgradeLifecycle

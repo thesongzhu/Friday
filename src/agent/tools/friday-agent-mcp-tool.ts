@@ -34,17 +34,29 @@ const VALID_ACTIONS = new Set<McpAction>([
 
 export interface CreateFridayAgentMcpToolOptions {
   mcpAdapter: FridayMcpAdapter;
+  getServerAvailability?: FridayMcpServerAvailabilityResolver;
 }
+
+export interface FridayMcpServerAvailability {
+  available: boolean;
+  reason?: string;
+  promotionChannel?: string;
+  compatibilityStatus?: string;
+}
+
+export type FridayMcpServerAvailabilityResolver = (serverId: string) => FridayMcpServerAvailability;
+
+const MCP_SERVER_NOT_PROMOTED = "MCP_SERVER_NOT_PROMOTED";
 
 export function createFridayAgentMcpTool(
   options: CreateFridayAgentMcpToolOptions,
 ): FridayAgentToolDefinition {
-  const { mcpAdapter } = options;
+  const { mcpAdapter, getServerAvailability } = options;
 
   return {
     name: "mcp",
     description:
-      "Bridge to external MCP servers. " +
+      "Bridge to promoted external MCP servers. " +
       "Actions: list_servers, list_server_states, list_tools, search_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt.",
     parameters: {
       type: "object",
@@ -154,16 +166,24 @@ export function createFridayAgentMcpTool(
   };
 
   function handleListServers(): FridayAgentToolResult {
-    const servers = mcpAdapter.listServers().map((server) => ({
-      id: server.id,
-      transport: server.transport ?? "stdio",
-      command: server.command,
-      args: server.args ?? [],
-      cwd: server.cwd ?? null,
-      url: server.url ?? null,
-      timeoutMs: server.timeoutMs ?? null,
-      policy: server.policy ?? null,
-    }));
+    const servers = mcpAdapter.listServers().map((server) => {
+      const availability = resolveAvailability(server.id);
+      return {
+        id: server.id,
+        transport: server.transport ?? "stdio",
+        availability,
+        ...(availability.available
+          ? {
+              command: server.command,
+              args: server.args ?? [],
+              cwd: server.cwd ?? null,
+              url: server.url ?? null,
+              timeoutMs: server.timeoutMs ?? null,
+              policy: server.policy ?? null,
+            }
+          : {}),
+      };
+    });
 
     return jsonResult({
       count: servers.length,
@@ -172,9 +192,13 @@ export function createFridayAgentMcpTool(
   }
 
   function handleListServerStates(): FridayAgentToolResult {
+    const states = mcpAdapter.listServerStates().map((state) => ({
+      ...state,
+      availability: resolveAvailability(state.serverId),
+    }));
     return jsonResult({
-      count: mcpAdapter.listServerStates().length,
-      items: mcpAdapter.listServerStates(),
+      count: states.length,
+      items: states,
     });
   }
 
@@ -183,7 +207,13 @@ export function createFridayAgentMcpTool(
     signal: AbortSignal,
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId");
-    const tools = await mcpAdapter.listTools({ serverId, signal });
+    const targets = resolveTargetServers(serverId);
+    if (targets instanceof Error) {
+      return unavailableResult(targets.message, serverId);
+    }
+    const tools = serverId
+      ? await mcpAdapter.listTools({ serverId, signal })
+      : (await Promise.all(targets.map((target) => mcpAdapter.listTools({ serverId: target, signal })))).flat();
     return jsonResult({
       count: tools.length,
       items: tools,
@@ -196,7 +226,13 @@ export function createFridayAgentMcpTool(
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId");
     const query = readStringParam(args, "query", { required: true });
-    const tools = await mcpAdapter.searchTools({ query, serverId, signal });
+    const targets = resolveTargetServers(serverId);
+    if (targets instanceof Error) {
+      return unavailableResult(targets.message, serverId);
+    }
+    const tools = serverId
+      ? await mcpAdapter.searchTools({ query, serverId, signal })
+      : (await Promise.all(targets.map((target) => mcpAdapter.searchTools({ query, serverId: target, signal })))).flat();
     return jsonResult({
       count: tools.length,
       items: tools,
@@ -209,6 +245,10 @@ export function createFridayAgentMcpTool(
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId", { required: true });
     const toolName = readStringParam(args, "toolName", { required: true });
+    const availability = resolveAvailability(serverId);
+    if (!availability.available) {
+      return unavailableResult(buildUnavailableMessage(serverId, availability), serverId);
+    }
     const callArgs = readArgs(args);
     if (callArgs instanceof Error) {
       return errorResult(callArgs.message);
@@ -243,7 +283,13 @@ export function createFridayAgentMcpTool(
     signal: AbortSignal,
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId");
-    const resources = await mcpAdapter.listResources({ serverId, signal });
+    const targets = resolveTargetServers(serverId);
+    if (targets instanceof Error) {
+      return unavailableResult(targets.message, serverId);
+    }
+    const resources = serverId
+      ? await mcpAdapter.listResources({ serverId, signal })
+      : (await Promise.all(targets.map((target) => mcpAdapter.listResources({ serverId: target, signal })))).flat();
     return jsonResult({
       count: resources.length,
       items: resources,
@@ -256,6 +302,10 @@ export function createFridayAgentMcpTool(
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId", { required: true });
     const uri = readStringParam(args, "uri", { required: true });
+    const availability = resolveAvailability(serverId);
+    if (!availability.available) {
+      return unavailableResult(buildUnavailableMessage(serverId, availability), serverId);
+    }
     const result = await mcpAdapter.readResource({
       serverId,
       uri,
@@ -275,7 +325,13 @@ export function createFridayAgentMcpTool(
     signal: AbortSignal,
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId");
-    const prompts = await mcpAdapter.listPrompts({ serverId, signal });
+    const targets = resolveTargetServers(serverId);
+    if (targets instanceof Error) {
+      return unavailableResult(targets.message, serverId);
+    }
+    const prompts = serverId
+      ? await mcpAdapter.listPrompts({ serverId, signal })
+      : (await Promise.all(targets.map((target) => mcpAdapter.listPrompts({ serverId: target, signal })))).flat();
     return jsonResult({
       count: prompts.length,
       items: prompts,
@@ -288,6 +344,10 @@ export function createFridayAgentMcpTool(
   ): Promise<FridayAgentToolResult> {
     const serverId = readStringParam(args, "serverId", { required: true });
     const name = readStringParam(args, "promptName", { required: true });
+    const availability = resolveAvailability(serverId);
+    if (!availability.available) {
+      return unavailableResult(buildUnavailableMessage(serverId, availability), serverId);
+    }
     const promptArgs = readArgs(args);
     if (promptArgs instanceof Error) {
       return errorResult(promptArgs.message);
@@ -305,6 +365,42 @@ export function createFridayAgentMcpTool(
       name,
       content: result.content,
       raw: result.raw,
+    });
+  }
+
+  function resolveAvailability(serverId: string): FridayMcpServerAvailability {
+    return getServerAvailability?.(serverId) ?? {
+      available: false,
+      promotionChannel: "none",
+      compatibilityStatus: "unknown",
+      reason: "MCP server lifecycle availability gate is unavailable.",
+    };
+  }
+
+  function resolveTargetServers(serverId: string | undefined): string[] | Error {
+    if (serverId) {
+      const availability = resolveAvailability(serverId);
+      return availability.available
+        ? [serverId]
+        : new Error(buildUnavailableMessage(serverId, availability));
+    }
+    return mcpAdapter
+      .listServers()
+      .map((server) => server.id)
+      .filter((id) => resolveAvailability(id).available);
+  }
+
+  function buildUnavailableMessage(serverId: string, availability: FridayMcpServerAvailability): string {
+    return `MCP server "${serverId}" is not available to the agent because it has not completed lifecycle promote` +
+      (availability.promotionChannel ? ` (promotionChannel=${availability.promotionChannel})` : "") +
+      (availability.reason ? `: ${availability.reason}` : ".");
+  }
+
+  function unavailableResult(message: string, serverId?: string): FridayAgentToolResult {
+    return errorResult(message, {
+      errorCode: MCP_SERVER_NOT_PROMOTED,
+      routeId: "mcp.agent.lifecycle_availability",
+      correlationId: serverId ? `mcp.agent:${serverId}:not_promoted` : "mcp.agent:not_promoted",
     });
   }
 }

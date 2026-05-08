@@ -257,6 +257,7 @@ import {
   createFridaySatelliteRuntime,
 } from "#satellites";
 import { createFridaySatelliteNodesService } from "../nodes/friday-satellite-nodes-service.js";
+import { createFridayAutonomySubjectUpgradeStateRepository } from "../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import {
   createFridayAgentLoopRepository,
   createFridayAgentLoopService,
@@ -2011,6 +2012,24 @@ export async function createFridayHub(
   if (mcpAdapter) {
     console.log(`[friday] MCP adapter enabled with ${String(mcpServers.length)} server(s)`);
   }
+  const mcpServerUpgradeStateRepoForAgent = createFridayAutonomySubjectUpgradeStateRepository();
+  const getMcpServerAvailability = (serverId: string) => {
+    const state = stateRuntime!.sqlite.withReadConnection((db) =>
+      mcpServerUpgradeStateRepoForAgent.get(db, "mcp_server", serverId));
+    const available = state?.promotionChannel === "active" && state.compatibilityStatus === "compatible";
+    return {
+      available,
+      promotionChannel: state?.promotionChannel ?? "none",
+      compatibilityStatus: state?.compatibilityStatus ?? "unknown",
+      reason: available ? undefined : "MCP server must complete lifecycle promote before agent use.",
+    };
+  };
+  const listAgentAvailableMcpServers = () =>
+    (mcpAdapter?.listServers() ?? []).filter((server) => getMcpServerAvailability(server.id).available);
+  const listAgentAvailableMcpServerStates = () => {
+    const availableIds = new Set(listAgentAvailableMcpServers().map((server) => server.id));
+    return (mcpAdapter?.listServerStates() ?? []).filter((state) => availableIds.has(state.serverId));
+  };
   const explicitSearchProvider = process.env.FRIDAY_SEARCH_PROVIDER?.trim().toLowerCase();
   const inferredSearchProvider = explicitSearchProvider && explicitSearchProvider !== "auto"
     ? explicitSearchProvider
@@ -2150,8 +2169,8 @@ export async function createFridayHub(
       ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
       : [];
     const mcpServers = listFridayMcpServerReadiness({
-      servers: mcpAdapter?.listServers() ?? [],
-      serverStates: mcpAdapter?.listServerStates() ?? [],
+      servers: listAgentAvailableMcpServers(),
+      serverStates: listAgentAvailableMcpServerStates(),
     });
     const verifiedMcpServerCount = mcpServers.filter((server) => server.connected).length;
     const providers = await providerService.listProviders()
@@ -2171,8 +2190,8 @@ export async function createFridayHub(
         kinds: messagingKinds,
       },
       mcp: {
-        enabled: mcpServers.length > 0,
-        serverCount: mcpServers.length,
+        enabled: verifiedMcpServerCount > 0,
+        serverCount: verifiedMcpServerCount,
         servers: mcpServers.map((server) => ({
           name: server.name,
           connected: server.connected,
@@ -2532,6 +2551,7 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     agentRuntimeGetter,
     mcpAdapter,
+    getMcpServerAvailability,
     providerService,
     ttsService,
     webSearchProvider: configuredSearchProvider,
@@ -3348,10 +3368,8 @@ export async function createFridayHub(
           ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
           : [],
         mcpEnabled: input.toolNames.includes("mcp")
-          && typeof mcpAdapter !== "undefined"
-          && !!mcpAdapter
-          && mcpAdapter.listServers().length > 0,
-        mcpServerCount: mcpAdapter?.listServers().length ?? 0,
+          && listAgentAvailableMcpServers().length > 0,
+        mcpServerCount: listAgentAvailableMcpServers().length,
         cronEnabled: input.toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
         subagentsEnabled: input.toolNames.includes("spawn_subagent"),
         selfLearningEnabled: input.toolNames.includes("feedback"),
@@ -4326,6 +4344,7 @@ export async function createFridayHub(
         schedulerRepository: schedulerRepo,
         schedulerService: jobScheduler,
         mcpAdapter,
+        getMcpServerAvailability,
         extractionService: sessionExtractionService,
         providerService,
         ttsService,
