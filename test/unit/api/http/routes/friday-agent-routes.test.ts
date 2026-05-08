@@ -88,8 +88,8 @@ describe("FridayAgentRoutes", () => {
       listRuns: vi.fn().mockReturnValue([]),
       listRunEvents: vi.fn().mockReturnValue([]),
       cancelRun: vi.fn(),
-      approvePlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult()),
-      rejectPlan: vi.fn<[string], Promise<FridayAgentRuntimeResult>>().mockResolvedValue(createStubResult({ status: "cancelled" })),
+      approvePlan: vi.fn().mockResolvedValue(createStubResult()),
+      rejectPlan: vi.fn().mockResolvedValue(createStubResult({ status: "cancelled" })),
       resolveToolApproval: vi.fn().mockReturnValue({ resolved: true }),
       eventEmitter: createStubEventEmitter(),
       automationService: createStubAutomationService(),
@@ -251,7 +251,7 @@ describe("FridayAgentRoutes", () => {
       receivedAt: "2026-01-01T00:00:00.000Z",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       runId: "run-1",
       events: [
         {
@@ -267,7 +267,264 @@ describe("FridayAgentRoutes", () => {
           payload: { goalId: "goal-1", runId: "run-1" },
         },
       ],
+      decisionTrace: {
+        evidenceTier: "audit_replay_evidence",
+        source: "friday_agent_run_events",
+        run: {
+          runId: "run-1",
+        },
+        traceCompleteness: {
+          hasPlanReview: false,
+          hasPlanDecision: false,
+          toolStartCount: 0,
+          toolEndCount: 0,
+          unpairedToolStartCount: 0,
+          hasTerminalEvent: false,
+        },
+      },
     });
+  });
+
+  it("GET /v1/agent/runs/:runId/audit returns a decision trace with plan, approval, action, evidence, and rollback pointers", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      status: "completed",
+      completedAt: "2026-01-01T00:00:05.000Z",
+      rollbackAvailable: true,
+      planReview: {
+        plan: {
+          task: "Build the workflow",
+          stepCount: 2,
+          description: "Plan summary",
+        },
+        gate: {
+          kind: "generate_workflow",
+          state: "approved",
+        },
+        decision: {
+          approved: true,
+          mode: "manual-approve",
+          reason: "Approved by user",
+          reviewedAt: "2026-01-01T00:00:02.000Z",
+        },
+      },
+    }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        eventName: "agent.run.plan_ready",
+        emittedAt: "2026-01-01T00:00:01.000Z",
+        payload: { runId: "run-1", planKind: "generate_workflow" },
+      },
+      {
+        seq: 2,
+        eventName: "agent.run.plan_approved",
+        emittedAt: "2026-01-01T00:00:02.000Z",
+        payload: { runId: "run-1", approvedAt: "2026-01-01T00:00:02.000Z" },
+      },
+      {
+        seq: 3,
+        eventName: "agent.run.awaiting_tool_approval",
+        emittedAt: "2026-01-01T00:00:03.000Z",
+        payload: {
+          runId: "run-1",
+          grantId: "grant-1",
+          toolCallId: "call-1",
+          toolName: "shell",
+          params: { command: "npm test" },
+          reason: "Needs approval for shell command",
+          expiresAt: "2026-01-01T00:05:00.000Z",
+          riskLevel: "guarded",
+        },
+      },
+      {
+        seq: 4,
+        eventName: "agent.run.capability_grant_used",
+        emittedAt: "2026-01-01T00:00:03.500Z",
+        payload: { runId: "run-1", grantId: "grant-1", toolCallId: "call-1", toolName: "shell" },
+      },
+      {
+        seq: 5,
+        eventName: "agent.run.tool_start",
+        emittedAt: "2026-01-01T00:00:04.000Z",
+        payload: { runId: "run-1", toolCallId: "call-1", toolName: "shell", params: { command: "npm test" } },
+      },
+      {
+        seq: 6,
+        eventName: "agent.run.tool_end",
+        emittedAt: "2026-01-01T00:00:05.000Z",
+        payload: {
+          runId: "run-1",
+          toolCallId: "call-1",
+          toolName: "shell",
+          durationMs: 1000,
+          isError: false,
+          summary: "tests passed",
+          routeId: "route-1",
+          correlationId: "corr-1",
+        },
+      },
+      {
+        seq: 7,
+        eventName: "agent.run.completed",
+        emittedAt: "2026-01-01T00:00:05.000Z",
+        payload: { runId: "run-1" },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      runId: "run-1",
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          seq: 5,
+          payload: expect.not.objectContaining({
+            params: expect.anything(),
+          }),
+        }),
+        expect.objectContaining({
+          seq: 6,
+          payload: expect.not.objectContaining({
+            summary: expect.anything(),
+          }),
+        }),
+        expect.objectContaining({
+          seq: 3,
+          payload: expect.objectContaining({
+            hasParams: true,
+            hasReason: true,
+          }),
+        }),
+        expect.objectContaining({
+          seq: 3,
+          payload: expect.not.objectContaining({
+            params: expect.anything(),
+            reason: expect.anything(),
+          }),
+        }),
+      ]),
+      decisionTrace: {
+        evidenceTier: "audit_replay_evidence",
+        source: "friday_agent_run_events",
+        plan: {
+          reviewPointer: { kind: "agent_run_plan_review", runId: "run-1" },
+          state: "approved",
+          planKind: "generate_workflow",
+          stepCount: 2,
+          eventPointers: [
+            { kind: "agent_run_event", runId: "run-1", seq: 1 },
+            { kind: "agent_run_event", runId: "run-1", seq: 2 },
+          ],
+          decision: {
+            approved: true,
+            eventPointer: { kind: "agent_plan_decision_event", runId: "run-1", seq: 2 },
+          },
+        },
+        approvals: {
+          plan: {
+            state: "approved",
+            eventPointer: { kind: "agent_plan_decision_event", runId: "run-1", seq: 2 },
+          },
+          toolRequests: [
+            {
+              toolCallId: "call-1",
+              toolName: "shell",
+              eventPointer: { kind: "agent_tool_approval_request_event", runId: "run-1", seq: 3 },
+            },
+          ],
+          grants: [
+            {
+              state: "used",
+              grantId: "grant-1",
+              toolCallId: "call-1",
+              toolName: "shell",
+              eventPointer: { kind: "agent_capability_grant_event", runId: "run-1", seq: 4 },
+            },
+          ],
+        },
+        actions: [
+          {
+            toolCallId: "call-1",
+            toolName: "shell",
+            status: "completed",
+            inputPointer: { kind: "agent_tool_input_event", runId: "run-1", seq: 5 },
+            outputPointer: { kind: "agent_tool_output_event", runId: "run-1", seq: 6 },
+            evidencePointer: { kind: "agent_tool_evidence_event", runId: "run-1", seq: 6 },
+            routeId: "route-1",
+            correlationId: "corr-1",
+          },
+        ],
+        rollback: {
+          available: true,
+          pointer: { kind: "agent_runtime_rollback_checkpoint", runId: "run-1" },
+        },
+        traceCompleteness: {
+          hasPlanReview: true,
+          hasPlanDecision: true,
+          toolStartCount: 1,
+          toolEndCount: 1,
+          unpairedToolStartCount: 0,
+          hasTerminalEvent: true,
+        },
+      },
+    });
+  });
+
+  it("GET /v1/agent/runs/:runId/audit does not claim a plan decision without a durable decision event", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      status: "completed",
+      planReview: {
+        plan: {
+          task: "Build the workflow",
+          stepCount: 2,
+          description: "Plan summary",
+        },
+        gate: {
+          kind: "generate_workflow",
+          state: "approved",
+        },
+        decision: {
+          approved: true,
+          mode: "manual-approve",
+          reason: "Approved by user",
+          reviewedAt: "2026-01-01T00:00:02.000Z",
+        },
+      },
+    }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        eventName: "agent.run.plan_ready",
+        emittedAt: "2026-01-01T00:00:01.000Z",
+        payload: { runId: "run-1", planKind: "generate_workflow" },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    }) as { decisionTrace: { plan: { decision?: unknown }; approvals: { plan?: unknown }; traceCompleteness: { hasPlanDecision: boolean } } };
+
+    expect(result.decisionTrace.plan.decision).toBeUndefined();
+    expect(result.decisionTrace.approvals.plan).toBeUndefined();
+    expect(result.decisionTrace.traceCompleteness.hasPlanDecision).toBe(false);
   });
 
   // ─── Handler tests ───
@@ -1177,8 +1434,8 @@ describe("FridayAgentRoutes", () => {
 
       await route.handler(ctx);
 
-      // Should subscribe to 27 event types (18 run events + 2 subagent events + 7 autonomous events)
-      expect(emitter.on).toHaveBeenCalledTimes(27);
+      // Should subscribe to 29 event types (20 run events + 2 subagent events + 7 autonomous events)
+      expect(emitter.on).toHaveBeenCalledTimes(29);
       // Should register close handler
       expect(mockRes.on).toHaveBeenCalledWith("close", expect.any(Function));
     });
@@ -1233,7 +1490,7 @@ describe("FridayAgentRoutes", () => {
       expect(mockRes.write).toHaveBeenCalledWith(
         expect.stringContaining('"replayed":true'),
       );
-      expect(emitter.on).toHaveBeenCalledTimes(27);
+      expect(emitter.on).toHaveBeenCalledTimes(29);
     });
   });
 
@@ -1253,7 +1510,10 @@ describe("FridayAgentRoutes", () => {
 
       const result = await route.handler(ctx);
 
-      expect(stubDeps.approvePlan).toHaveBeenCalledWith("run-1");
+      expect(stubDeps.approvePlan).toHaveBeenCalledWith({
+        runId: "run-1",
+        executionContext: { surface: "api", interactive: true },
+      });
       expect(result).toEqual(createStubResult());
     });
 
@@ -1272,8 +1532,57 @@ describe("FridayAgentRoutes", () => {
 
       const result = await route.handler(ctx);
 
-      expect(stubDeps.rejectPlan).toHaveBeenCalledWith("run-1");
+      expect(stubDeps.rejectPlan).toHaveBeenCalledWith({
+        runId: "run-1",
+        executionContext: { surface: "api", interactive: true },
+      });
       expect(result).toEqual(createStubResult({ status: "cancelled" }));
+    });
+
+    it("forwards principal context for plan approval evidence", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.approve.plan")!;
+      const ctx = {
+        body: {},
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: createStubPrincipal({ principalId: "planner-1", scopes: ["agent.write", "agent.run"] }),
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.approvePlan).toHaveBeenCalledWith({
+        runId: "run-1",
+        principalId: "planner-1",
+        scopes: ["agent.write", "agent.run"],
+        executionContext: { surface: "api", interactive: true },
+      });
+    });
+
+    it("forwards principal context for plan rejection evidence", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.reject.plan")!;
+      const ctx = {
+        body: {},
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: createStubPrincipal({ principalId: "planner-2", scopes: ["agent.write", "agent.run"] }),
+        requestId: "req-1",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.rejectPlan).toHaveBeenCalledWith({
+        runId: "run-1",
+        principalId: "planner-2",
+        scopes: ["agent.write", "agent.run"],
+        executionContext: { surface: "api", interactive: true },
+      });
     });
   });
 

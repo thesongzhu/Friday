@@ -3086,11 +3086,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           agentAbortControllers.delete(runId);
         }
       },
-      approvePlan: async (runId) => {
+      approvePlan: async (input) => {
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
-        const result = await agentPlanningGate.approvePlan({ runId });
+        const result = await agentPlanningGate.approvePlan(input);
+        const { runId } = input;
         const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
         if (run?.sessionKey) {
           await sessionService.addMessage(run.sessionKey, {
@@ -3121,11 +3122,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
         return result;
       },
-      rejectPlan: async (runId) => {
+      rejectPlan: async (input) => {
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
-        const result = agentPlanningGate.rejectPlan({ runId });
+        const result = agentPlanningGate.rejectPlan(input);
+        const { runId } = input;
         const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
         if (run?.sessionKey) {
           await sessionService.addMessage(run.sessionKey, {
