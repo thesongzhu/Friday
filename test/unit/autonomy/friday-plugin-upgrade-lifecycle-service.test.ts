@@ -168,7 +168,7 @@ describe("createFridayPluginUpgradeLifecycleService", () => {
           nowIso: () => NOW,
           ticketIdGenerator: () => "ticket-1",
         }),
-        rollbackSnapshotSecret: "fixture-rollback-snapshot-key",
+        rollbackSnapshotSecret: "fixture-rollback-snapshot-key", // pragma: allowlist secret
       }),
     };
   }

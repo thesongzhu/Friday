@@ -645,7 +645,7 @@ describe("FridaySkillConverterRoutes", () => {
     });
 
     it("accepts production-signed canonical approval and passes the issued ticket to import", async () => {
-      const secret = "route-production-secret";
+      const secret = "route-production-secret"; // pragma: allowlist secret
       const { routes, converterService } = createRoutesWithSignedGate(secret);
       const route = routes.find((r) => r.operationId === "skills.import")!;
       const body = withSignedCanonicalApproval({

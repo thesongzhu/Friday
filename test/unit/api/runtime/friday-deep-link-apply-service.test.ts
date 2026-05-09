@@ -383,7 +383,7 @@ describe("createFridayDeepLinkApplyService", () => {
 
   it("accepts production-signed canonical approval and passes the issued ticket to import", async () => {
     const converterService = makeConverterService();
-    const secret = "deeplink-production-secret";
+    const secret = "deeplink-production-secret"; // pragma: allowlist secret
     const service = createFridayDeepLinkApplyService({
       idGenerator: () => "id-1",
       providerService: makeProviderService(),

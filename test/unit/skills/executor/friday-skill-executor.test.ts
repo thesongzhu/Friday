@@ -149,7 +149,7 @@ describe("FridaySkillExecutor", () => {
     return createFridayMutatingActionGate({
       nowIso: () => "2025-01-15T10:00:00.000Z",
       ticketIdGenerator: () => "ticket-skill-run",
-      approvalSignatureSecret: "skill-run-test-secret",
+      approvalSignatureSecret: "skill-run-test-secret", // pragma: allowlist secret
       requireApprovalSignature: true,
     });
   }
