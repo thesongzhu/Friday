@@ -27,6 +27,7 @@ pnpm-debug.log*
 .vscode/
 .idea/
 .openclaw/
+/openclaw/
 .friday/
 screenshots/
 managed-skills/**/conversion.report.json
