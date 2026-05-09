@@ -47,6 +47,12 @@ export interface FridayReflexCandidateRepository {
     evidence?: Record<string, unknown>;
     nowIso: string;
   }): FridayReflexCandidate | null;
+  updateEvidence(db: Database.Database, input: {
+    userId: string;
+    id: string;
+    evidence: Record<string, unknown>;
+    nowIso: string;
+  }): FridayReflexCandidate | null;
 }
 
 const TERMINAL_STATUSES = new Set<FridayReflexCandidateStatus>([
@@ -176,6 +182,23 @@ export function createFridayReflexCandidateRepository(): FridayReflexCandidateRe
         JSON.stringify(evidence),
         input.nowIso,
         TERMINAL_STATUSES.has(input.status) ? input.nowIso : current.decidedAt ?? null,
+        input.userId,
+        input.id,
+      );
+      return this.getById(db, { userId: input.userId, id: input.id });
+    },
+
+    updateEvidence(db, input) {
+      const current = this.getById(db, { userId: input.userId, id: input.id });
+      if (!current) return null;
+      const evidence = { ...current.evidence, ...input.evidence };
+      db.prepare(
+        `UPDATE friday_reflex_candidates
+         SET evidence_json = ?, updated_at = ?
+         WHERE user_id = ? AND id = ?`,
+      ).run(
+        JSON.stringify(evidence),
+        input.nowIso,
         input.userId,
         input.id,
       );

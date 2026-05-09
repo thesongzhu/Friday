@@ -405,4 +405,133 @@ describe("Friday Reflex service", () => {
     expect(workflow?.evidence.draftWorkflowId).toBe("draft-workflow-1");
     expect(approveAndSave).not.toHaveBeenCalled();
   });
+
+  it("adds curator review metadata without approving generated candidates", async () => {
+    const approveAndSave = vi.fn();
+    const service = createService({
+      workflowGenerator: {
+        startSession: vi.fn(async () => ({
+          mode: "new",
+          session: { sessionId: "workflow-session-1" },
+        })),
+        submitTurn: vi.fn(),
+        getSession: vi.fn(),
+        generateDraft: vi.fn(async () => ({
+          spec: { workflowId: "draft-workflow-1", name: "Draft repeated report workflow" },
+          validation: { ok: true },
+        })),
+        getQaVerdict: vi.fn(async () => null),
+        getHarnessSummary: vi.fn(async () => null),
+        approveAndSave,
+        cancelSession: vi.fn(),
+      } as never,
+    });
+
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-1",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-2",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+
+    const curated = service.curateCandidates({ userId: "user-1" });
+    const workflow = service.listCandidates({ userId: "user-1", kind: "workflow" })[0];
+
+    expect(curated.some((candidate) => candidate.id === workflow?.id)).toBe(true);
+    expect(workflow?.status).toBe("ready_for_review");
+    expect(workflow?.evidence.curator).toMatchObject({
+      version: 1,
+      curatedBy: "friday_reflex_curator",
+      recommendedAction: "review",
+      tested: true,
+      safetyBoundary: "review_center_required_before_activation",
+    });
+    expect(approveAndSave).not.toHaveBeenCalled();
+  });
+
+  it("supersedes only exact duplicate candidates while keeping distinct candidates reviewable", () => {
+    const service = createService();
+    const first = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "A reusable report path.",
+      payload: { content: "step one\nstep two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+    const duplicate = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "Same candidate repeated.",
+      payload: { content: "step one\nstep two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+    const distinct = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "Same title with different payload.",
+      payload: { content: "step one\nstep three" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+
+    service.curateCandidates({ userId: "user-1" });
+
+    expect(service.getCandidate({ userId: "user-1", candidateId: first.id }).status).toBe("proposed");
+    expect(service.getCandidate({ userId: "user-1", candidateId: distinct.id }).status).toBe("proposed");
+    expect(service.getCandidate({ userId: "user-1", candidateId: duplicate.id })).toMatchObject({
+      status: "superseded",
+      evidence: expect.objectContaining({
+        duplicateOf: first.id,
+        curator: expect.objectContaining({
+          recommendedAction: "superseded",
+          duplicateOf: first.id,
+        }),
+      }),
+    });
+  });
+
+  it("marks stale candidates for review without deleting or approving them", () => {
+    let now = "2026-04-01T12:00:00.000Z";
+    const service = createService({
+      nowIso: () => now,
+    });
+    const candidate = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Old reusable path",
+      summary: "An old candidate that still needs a user decision.",
+      payload: { content: "old step one\nold step two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+
+    now = "2026-04-30T12:00:00.000Z";
+    service.curateCandidates({ userId: "user-1" });
+    const refreshed = service.getCandidate({ userId: "user-1", candidateId: candidate.id });
+
+    expect(refreshed.status).toBe("proposed");
+    expect(refreshed.evidence.curator).toMatchObject({
+      recommendedAction: "review_or_dismiss",
+      stale: true,
+      ageDays: 29,
+      safetyBoundary: "review_center_required_before_activation",
+    });
+  });
 });

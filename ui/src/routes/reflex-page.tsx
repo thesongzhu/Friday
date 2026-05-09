@@ -72,6 +72,12 @@ function metadataValue(value: unknown): string | null {
   return null;
 }
 
+function metadataRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function candidateSourceSummary(candidate: ReflexCandidate, locale: "zh" | "en"): Array<{ label: string; value: string }> {
   const items: Array<{ label: string; value: string }> = [
     { label: localize(locale, "来源", "Origin"), value: candidate.origin },
@@ -114,6 +120,21 @@ function candidateImpact(candidate: ReflexCandidate, locale: "zh" | "en"): strin
   return localize(locale, "批准后更新测试策略", "Approval updates test policy");
 }
 
+function curatorSummary(candidate: ReflexCandidate, locale: "zh" | "en"): Array<{ label: string; value: string }> {
+  const curator = metadataRecord(candidate.evidence.curator);
+  if (!curator) return [];
+  const items: Array<{ label: string; value: string }> = [];
+  const action = metadataValue(curator.recommendedAction);
+  const priority = metadataValue(curator.priority);
+  const stale = curator.stale === true;
+  const reason = metadataValue(curator.reviewReason);
+  if (action) items.push({ label: localize(locale, "下一步", "Next"), value: action });
+  if (priority) items.push({ label: localize(locale, "优先级", "Priority"), value: priority });
+  items.push({ label: localize(locale, "过期", "Stale"), value: stale ? localize(locale, "是", "Yes") : localize(locale, "否", "No") });
+  if (reason) items.push({ label: localize(locale, "推荐原因", "Why"), value: reason });
+  return items;
+}
+
 function candidateTestSummary(candidate: ReflexCandidate, locale: "zh" | "en"): string {
   const completed = metadataValue(candidate.evidence.testCompletedAt);
   const failed = metadataValue(candidate.evidence.testFailedAt);
@@ -138,6 +159,7 @@ function ReflexCandidateCard(props: {
   const canReview = props.candidate.status === "ready_for_review"
     || props.candidate.status === "proposed"
     || props.candidate.status === "failed";
+  const curatorItems = curatorSummary(props.candidate, locale);
 
   return (
     <article className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
@@ -176,6 +198,16 @@ function ReflexCandidateCard(props: {
               {candidateTestSummary(props.candidate, locale)}
             </p>
           </div>
+          {curatorItems.length > 0 ? (
+            <div className="mt-3 grid gap-2 text-xs text-[color:var(--color-text-secondary)] md:grid-cols-2">
+              {curatorItems.map((item) => (
+                <p key={`${item.label}:${item.value}`} className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 py-2">
+                  <span className="font-medium text-[color:var(--color-text-faint)]">{item.label}: </span>
+                  {item.value}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
           <ActionButton
