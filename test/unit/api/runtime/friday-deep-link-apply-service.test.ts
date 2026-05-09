@@ -255,9 +255,13 @@ describe("createFridayDeepLinkApplyService", () => {
         apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
         model: "gpt-4o-mini",
       },
-    }, makeProviderTemplateApprovalOptions());
+    });
 
-    expect(result.applied).toBe(false);
+    expect(result).toEqual({
+      applied: false,
+      resourceType: "provider-template",
+      message: "Provider template OpenAI API is preview-only until provider lifecycle staging, validation, and promotion are wired.",
+    });
     expect(providerService.createProvider).not.toHaveBeenCalled();
   });
 

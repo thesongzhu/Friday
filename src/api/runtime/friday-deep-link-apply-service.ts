@@ -21,7 +21,6 @@ import type {
   FridayDeepLinkApplyResult,
   FridayDeepLinkPayload,
 } from "../../deeplink/index.js";
-import { createFridayProviderSetupMutatingActionRequest } from "../http/routes/friday-provider-routes.js";
 import { fetchWithFridayAgentSsrfGuard } from "../../agent/security/friday-agent-fetch-guard.js";
 import {
   createFridayAgentSsrfGuard,
@@ -107,64 +106,6 @@ async function applyProviderTemplateDeepLink(
     resourceType: payload.type,
     message: `Provider template ${template.displayName} is preview-only until provider lifecycle staging, validation, and promotion are wired.`,
   };
-}
-
-function assertProviderTemplateCanonicalApproval(input: {
-  deps: CreateFridayDeepLinkApplyServiceDeps;
-  options: FridayDeepLinkApplyOptions | undefined;
-  parameters: Record<string, unknown>;
-}): void {
-  if (input.deps.providerMutationGateRequired === false) {
-    return;
-  }
-  if (!input.deps.canonicalMutationGate) {
-    throw new FridayDomainError(
-      "PROVIDER_TEMPLATE_DEEPLINK_CANONICAL_GATE_UNAVAILABLE",
-      "Provider-template deeplink apply requires the canonical approval gate.",
-      { httpStatus: 503 },
-    );
-  }
-  if (!input.options?.planDigest) {
-    throw new FridayDomainError(
-      "PROVIDER_TEMPLATE_DEEPLINK_PLAN_DIGEST_REQUIRED",
-      "Provider-template deeplink apply requires an approved plan digest before any provider is written.",
-      { httpStatus: 403 },
-    );
-  }
-  const actor = input.options.actor ?? {
-    kind: "api",
-    id: "api:deeplink",
-    principalId: "api:deeplink",
-  };
-  const request = createFridayProviderSetupMutatingActionRequest({
-    action: "providers.create",
-    actor,
-    surface: input.options.surface ?? "api:/v1/deeplink/apply",
-    parameters: input.parameters,
-    planDigest: input.options.planDigest,
-    idempotencyKey: input.options.idempotencyKey,
-  });
-  const gateResult = input.deps.canonicalMutationGate.evaluate({
-    ...request,
-    canonicalApproval: input.options.canonicalApproval,
-  });
-  if (gateResult.decision !== "allow" || !gateResult.ticket) {
-    throw new FridayDomainError(
-      gateResult.decision === "requires_approval"
-        ? "CANONICAL_APPROVAL_REQUIRED"
-        : "CANONICAL_APPROVAL_DENIED",
-      gateResult.decision === "requires_approval"
-        ? "Provider-template deeplink apply requires canonical approval before any provider is written."
-        : `Provider-template deeplink apply was blocked by the canonical approval gate: ${gateResult.reason}`,
-      {
-        httpStatus: 403,
-        details: {
-          canonicalGate: gateResult.evidenceRecord,
-          actionDigest: gateResult.actionDigest,
-        },
-      },
-    );
-  }
 }
 
 async function applySkillSourceDeepLink(
