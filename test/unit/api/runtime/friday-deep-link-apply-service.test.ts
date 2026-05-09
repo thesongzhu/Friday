@@ -255,7 +255,7 @@ describe("createFridayDeepLinkApplyService", () => {
         apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
         model: "gpt-4o-mini",
       },
-    });
+    }, makeProviderTemplateApprovalOptions());
 
     expect(result.applied).toBe(false);
     expect(providerService.createProvider).not.toHaveBeenCalled();

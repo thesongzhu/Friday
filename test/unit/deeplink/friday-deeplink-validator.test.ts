@@ -89,6 +89,18 @@ describe("validateFridayDeepLink", () => {
       expect(result.payload.skillSource?.url).toBe("https://example.com/skill-repo?redacted=1");
     });
 
+    it("redacts token-bearing skill source URLs from preview payloads", () => {
+      const rawUrl = "https://example.com/skill-repo?token=deeplink-preview-secret-token";
+      const result = validateFridayDeepLink(makePayload({
+        type: "skill-source",
+        skillSource: { url: rawUrl },
+      }));
+
+      expect(result.payload.skillSource?.url).not.toBe(rawUrl);
+      expect(result.payload.skillSource?.url).not.toContain("deeplink-preview-secret-token");
+      expect(result.payload.skillSource?.url).toBe("https://example.com/skill-repo?redacted=1");
+    });
+
     it("warns on private URL", () => {
       const result = validateFridayDeepLink(makePayload({
         type: "skill-source",
