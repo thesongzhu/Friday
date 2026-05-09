@@ -306,6 +306,54 @@ function buildAgentRunDecisionTrace(
         eventPointer: eventPointer(event, "agent_capability_grant_event"),
       };
     });
+  const contextReplayReads = auditEvents
+    .filter((event) => event.eventName === "agent.run.context_replay_loaded")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_read_event"),
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+        memoryBoundary: readStringField(payload, "memoryBoundary") ?? "not_user_confirmed_memory",
+        ...(typeof payload?.sourceCount === "number" ? { sourceCount: payload.sourceCount } : {}),
+        ...(typeof payload?.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+        ...(typeof payload?.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+        ...(typeof payload?.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
+      };
+    });
+  const contextReplayWrites = auditEvents
+    .filter((event) => event.eventName === "agent.run.compaction_persisted")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_write_event"),
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        ...(readStringField(payload, "entryId") ? { entryId: readStringField(payload, "entryId") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+        ...(typeof payload?.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+        ...(typeof payload?.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+        ...(typeof payload?.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
+      };
+    });
+  const contextReplayExceptions = auditEvents
+    .filter((event) =>
+      event.eventName === "agent.run.compaction_persist_skipped"
+      || event.eventName === "agent.run.compaction_persist_failed")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      const kind: "skipped" | "failed" = event.eventName === "agent.run.compaction_persist_skipped" ? "skipped" : "failed";
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_exception_event"),
+        kind,
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        ...(readStringField(payload, "skippedReason") ? { reason: readStringField(payload, "skippedReason") } : {}),
+        ...(readStringField(payload, "errorName") ? { errorName: readStringField(payload, "errorName") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+      };
+    });
 
   return {
     evidenceTier: "audit_replay_evidence",
@@ -356,6 +404,12 @@ function buildAgentRunDecisionTrace(
         ? { pointer: { kind: "agent_runtime_rollback_checkpoint", runId: run.id } }
         : {}),
     },
+    contextReplay: {
+      reads: contextReplayReads,
+      writes: contextReplayWrites,
+      exceptions: contextReplayExceptions,
+      boundary: "Context replay is audit evidence and unconfirmed summary input; it is not durable memory or user-confirmed preference.",
+    },
     traceCompleteness: {
       hasPlanReview: Boolean(run.planReview),
       hasPlanDecision: Boolean(planDecisionFromEvent),
@@ -363,6 +417,9 @@ function buildAgentRunDecisionTrace(
       toolEndCount: endByToolCallId.size,
       unpairedToolStartCount: actions.filter((action) => action.status === "started").length,
       hasTerminalEvent: auditEvents.some((event) => TERMINAL_EVENT_NAMES.has(event.eventName)),
+      contextReplayReadCount: contextReplayReads.length,
+      contextReplayWriteCount: contextReplayWrites.length,
+      contextReplayExceptionCount: contextReplayExceptions.length,
     },
   };
 }
@@ -414,6 +471,27 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(readStringField(payload, "riskLevel") ? { riskLevel: readStringField(payload, "riskLevel") } : {}),
       hasParams: typeof payload.params === "object" && payload.params !== null,
       hasReason: typeof payload.reason === "string" && payload.reason.length > 0,
+    };
+  }
+  if (
+    event.eventName === "agent.run.context_replay_loaded"
+    || event.eventName === "agent.run.compaction_persisted"
+    || event.eventName === "agent.run.compaction_persist_skipped"
+    || event.eventName === "agent.run.compaction_persist_failed"
+  ) {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+      ...(readStringField(payload, "entryId") ? { entryId: readStringField(payload, "entryId") } : {}),
+      ...(readStringField(payload, "evidenceTier") ? { evidenceTier: readStringField(payload, "evidenceTier") } : {}),
+      ...(readStringField(payload, "trustLevel") ? { trustLevel: readStringField(payload, "trustLevel") } : {}),
+      ...(readStringField(payload, "memoryBoundary") ? { memoryBoundary: readStringField(payload, "memoryBoundary") } : {}),
+      ...(readStringField(payload, "skippedReason") ? { skippedReason: readStringField(payload, "skippedReason") } : {}),
+      ...(readStringField(payload, "errorName") ? { errorName: readStringField(payload, "errorName") } : {}),
+      ...(typeof payload.sourceCount === "number" ? { sourceCount: payload.sourceCount } : {}),
+      ...(typeof payload.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+      ...(typeof payload.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+      ...(typeof payload.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
     };
   }
   return event.payload;
@@ -551,6 +629,39 @@ interface FridayAgentAuditDecisionTrace {
     available: boolean;
     pointer?: FridayAgentAuditPointer;
   };
+  contextReplay: {
+    reads: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      sessionKey?: string;
+      evidenceTier: string;
+      trustLevel: string;
+      memoryBoundary: string;
+      sourceCount?: number;
+      blockCount?: number;
+      redactionApplied?: boolean;
+      redactionCount?: number;
+    }>;
+    writes: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      sessionKey?: string;
+      entryId?: string;
+      evidenceTier: string;
+      trustLevel: string;
+      blockCount?: number;
+      redactionApplied?: boolean;
+      redactionCount?: number;
+    }>;
+    exceptions: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      kind: "skipped" | "failed";
+      sessionKey?: string;
+      reason?: string;
+      errorName?: string;
+      evidenceTier: string;
+      trustLevel: string;
+    }>;
+    boundary: string;
+  };
   traceCompleteness: {
     hasPlanReview: boolean;
     hasPlanDecision: boolean;
@@ -558,6 +669,9 @@ interface FridayAgentAuditDecisionTrace {
     toolEndCount: number;
     unpairedToolStartCount: number;
     hasTerminalEvent: boolean;
+    contextReplayReadCount: number;
+    contextReplayWriteCount: number;
+    contextReplayExceptionCount: number;
   };
 }
 
@@ -1056,6 +1170,10 @@ export function createFridayAgentRoutes(
           "agent.run.capability_grant_denied",
           "agent.run.capability_grant_used",
           "agent.run.capability_grant_revoked",
+          "agent.run.context_replay_loaded",
+          "agent.run.compaction_persisted",
+          "agent.run.compaction_persist_skipped",
+          "agent.run.compaction_persist_failed",
           "agent.run.completed",
           "agent.run.failed",
           "agent.run.cancelled",

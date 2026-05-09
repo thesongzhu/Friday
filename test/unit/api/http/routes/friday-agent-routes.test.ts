@@ -365,6 +365,50 @@ describe("FridayAgentRoutes", () => {
       },
       {
         seq: 7,
+        eventName: "agent.run.context_replay_loaded",
+        emittedAt: "2026-01-01T00:00:05.500Z",
+        payload: {
+          runId: "run-1",
+          sessionKey: "session-1",
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          sourceCount: 1,
+          blockCount: 2,
+          memoryBoundary: "not_user_confirmed_memory",
+          redactionApplied: true,
+          redactionCount: 1,
+          replayEntryIds: ["entry-1"],
+        },
+      },
+      {
+        seq: 8,
+        eventName: "agent.run.compaction_persisted",
+        emittedAt: "2026-01-01T00:00:05.700Z",
+        payload: {
+          runId: "run-1",
+          sessionKey: "session-1",
+          entryId: "entry-2",
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          blockCount: 1,
+          redactionApplied: false,
+          redactionCount: 0,
+        },
+      },
+      {
+        seq: 9,
+        eventName: "agent.run.compaction_persist_skipped",
+        emittedAt: "2026-01-01T00:00:05.800Z",
+        payload: {
+          runId: "run-1",
+          sessionKey: "session-1",
+          skippedReason: "empty_summary",
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+        },
+      },
+      {
+        seq: 10,
         eventName: "agent.run.completed",
         emittedAt: "2026-01-01T00:00:05.000Z",
         payload: { runId: "run-1" },
@@ -410,6 +454,21 @@ describe("FridayAgentRoutes", () => {
           payload: expect.not.objectContaining({
             params: expect.anything(),
             reason: expect.anything(),
+          }),
+        }),
+        expect.objectContaining({
+          seq: 7,
+          payload: expect.objectContaining({
+            sessionKey: "session-1",
+            evidenceTier: "audit_replay_evidence",
+            redactionApplied: true,
+            redactionCount: 1,
+          }),
+        }),
+        expect.objectContaining({
+          seq: 7,
+          payload: expect.not.objectContaining({
+            replayEntryIds: expect.anything(),
           }),
         }),
       ]),
@@ -468,6 +527,43 @@ describe("FridayAgentRoutes", () => {
           available: true,
           pointer: { kind: "agent_runtime_rollback_checkpoint", runId: "run-1" },
         },
+        contextReplay: {
+          reads: [
+            {
+              eventPointer: { kind: "agent_context_replay_read_event", runId: "run-1", seq: 7 },
+              sessionKey: "session-1",
+              evidenceTier: "audit_replay_evidence",
+              trustLevel: "unconfirmed_summary",
+              memoryBoundary: "not_user_confirmed_memory",
+              sourceCount: 1,
+              blockCount: 2,
+              redactionApplied: true,
+              redactionCount: 1,
+            },
+          ],
+          writes: [
+            {
+              eventPointer: { kind: "agent_context_replay_write_event", runId: "run-1", seq: 8 },
+              sessionKey: "session-1",
+              entryId: "entry-2",
+              evidenceTier: "audit_replay_evidence",
+              trustLevel: "unconfirmed_summary",
+              blockCount: 1,
+              redactionApplied: false,
+              redactionCount: 0,
+            },
+          ],
+          exceptions: [
+            {
+              eventPointer: { kind: "agent_context_replay_exception_event", runId: "run-1", seq: 9 },
+              kind: "skipped",
+              sessionKey: "session-1",
+              reason: "empty_summary",
+              evidenceTier: "audit_replay_evidence",
+              trustLevel: "unconfirmed_summary",
+            },
+          ],
+        },
         traceCompleteness: {
           hasPlanReview: true,
           hasPlanDecision: true,
@@ -475,6 +571,9 @@ describe("FridayAgentRoutes", () => {
           toolEndCount: 1,
           unpairedToolStartCount: 0,
           hasTerminalEvent: true,
+          contextReplayReadCount: 1,
+          contextReplayWriteCount: 1,
+          contextReplayExceptionCount: 1,
         },
       },
     });
