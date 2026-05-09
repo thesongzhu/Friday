@@ -7540,7 +7540,13 @@ describe("FridayAgentRuntime", () => {
         blockCount: 1,
         sources: ["context_replay:entry-1"],
         sessionKey: "session-ctx-1",
+        evidenceTier: "audit_replay_evidence",
         trustLevel: "unconfirmed_summary",
+        source: "context_replay",
+        memoryBoundary: "not_user_confirmed_memory",
+        redactionApplied: true,
+        redactionCount: 1,
+        replayEntryIds: ["entry-1"],
       });
     const eventRepo = createFridayAgentRunEventRepository();
 
@@ -7580,6 +7586,9 @@ describe("FridayAgentRuntime", () => {
             sourceCount: 1,
             blockCount: 1,
             memoryBoundary: "not_user_confirmed_memory",
+            redactionApplied: true,
+            redactionCount: 1,
+            replayEntryIds: ["entry-1"],
           }),
         }),
       ]),

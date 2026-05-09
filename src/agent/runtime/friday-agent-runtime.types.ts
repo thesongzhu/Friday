@@ -168,7 +168,13 @@ export interface FridayAgentCompactionContextBuildResult {
   blockCount?: number;
   sources?: string[];
   sessionKey?: string;
+  evidenceTier?: "audit_replay_evidence";
   trustLevel?: "unconfirmed_summary";
+  source?: "context_replay";
+  memoryBoundary?: "not_user_confirmed_memory";
+  redactionApplied?: boolean;
+  redactionCount?: number;
+  replayEntryIds?: string[];
 }
 
 // ─── Runtime interface ───

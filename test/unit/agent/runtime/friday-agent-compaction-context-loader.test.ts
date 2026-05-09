@@ -33,6 +33,12 @@ describe("FridayCompactionContextLoader", () => {
           toolFailures: [],
           fileOperations: [],
         },
+        metadata: {
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          redactionApplied: true,
+          redactionCount: 2,
+        },
         compactedAt: NOW,
         createdAt: NOW,
       });
@@ -63,6 +69,13 @@ describe("FridayCompactionContextLoader", () => {
     expect(result.fragment).toContain("[Unconfirmed Context Replay");
     expect(result.fragment).toContain("not user-confirmed memory");
     expect(result.sources).toEqual(["context_replay:replay-1"]);
+    expect(result.evidenceTier).toBe("audit_replay_evidence");
+    expect(result.trustLevel).toBe("unconfirmed_summary");
+    expect(result.source).toBe("context_replay");
+    expect(result.memoryBoundary).toBe("not_user_confirmed_memory");
+    expect(result.redactionApplied).toBe(true);
+    expect(result.redactionCount).toBe(2);
+    expect(result.replayEntryIds).toEqual(["replay-1"]);
   });
 
   it("returns an empty fragment when sessionKey is missing", async () => {

@@ -1700,13 +1700,16 @@ export function createFridayAgentRuntime(
               handleTrackedEvent("agent.run.context_replay_loaded", {
                 runId,
                 sessionKey: loadedContext.sessionKey ?? params.sessionKey,
-                evidenceTier: "audit_replay_evidence",
+                evidenceTier: loadedContext.evidenceTier ?? "audit_replay_evidence",
                 trustLevel: loadedContext.trustLevel ?? "unconfirmed_summary",
-                source: "context_replay",
+                source: loadedContext.source ?? "context_replay",
                 sourceCount: loadedContext.sources?.length ?? 0,
                 blockCount: loadedContext.blockCount ?? 0,
                 fragmentCharCount: fragment.length,
-                memoryBoundary: "not_user_confirmed_memory",
+                memoryBoundary: loadedContext.memoryBoundary ?? "not_user_confirmed_memory",
+                redactionApplied: loadedContext.redactionApplied ?? false,
+                redactionCount: loadedContext.redactionCount ?? 0,
+                replayEntryIds: loadedContext.replayEntryIds ?? [],
               });
             }
           } catch (err) {

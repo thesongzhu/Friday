@@ -4208,7 +4208,13 @@ export async function createFridayHub(
         blockCount: loaded.blockCount,
         sources: loaded.sources,
         sessionKey: loaded.sessionKey,
-        trustLevel: "unconfirmed_summary",
+        evidenceTier: loaded.evidenceTier,
+        trustLevel: loaded.trustLevel,
+        source: loaded.source,
+        memoryBoundary: loaded.memoryBoundary,
+        redactionApplied: loaded.redactionApplied,
+        redactionCount: loaded.redactionCount,
+        replayEntryIds: loaded.replayEntryIds,
       } : null;
     },
     communicationPromptBuilder: async (input) => {
@@ -4506,7 +4512,13 @@ export async function createFridayHub(
             blockCount: loaded.blockCount,
             sources: loaded.sources,
             sessionKey: loaded.sessionKey,
-            trustLevel: "unconfirmed_summary",
+            evidenceTier: loaded.evidenceTier,
+            trustLevel: loaded.trustLevel,
+            source: loaded.source,
+            memoryBoundary: loaded.memoryBoundary,
+            redactionApplied: loaded.redactionApplied,
+            redactionCount: loaded.redactionCount,
+            replayEntryIds: loaded.replayEntryIds,
           } : null;
         },
         communicationPromptBuilder: async (input) => {

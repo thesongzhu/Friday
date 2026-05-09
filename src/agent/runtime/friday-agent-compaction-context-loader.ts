@@ -19,6 +19,13 @@ export interface FridayCompactionContextLoadResult {
   blockCount: number;
   sources: string[];
   sessionKey?: string;
+  evidenceTier?: "audit_replay_evidence";
+  trustLevel?: "unconfirmed_summary";
+  source?: "context_replay";
+  memoryBoundary?: "not_user_confirmed_memory";
+  redactionApplied?: boolean;
+  redactionCount?: number;
+  replayEntryIds?: string[];
 }
 
 export interface FridayCompactionContextLoader {
@@ -46,12 +53,24 @@ export function createFridayCompactionContextLoader(
         repository.listCompactionSummariesBySession(db, { sessionKey, limit: 40 }));
       const blocks = groupCompactionContextReplayRecords(records);
       const fragment = formatCompactionContextForPrompt(blocks);
+      const redactionCount = records.reduce((sum, record) => {
+        const value = record.metadata.redactionCount;
+        return sum + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+      }, 0);
+      const redactionApplied = records.some((record) => record.metadata.redactionApplied === true) || redactionCount > 0;
 
       return {
         fragment,
         blockCount: blocks.length,
         sources: records.map((record) => `context_replay:${record.entryId}`),
         sessionKey,
+        evidenceTier: "audit_replay_evidence",
+        trustLevel: "unconfirmed_summary",
+        source: "context_replay",
+        memoryBoundary: "not_user_confirmed_memory",
+        redactionApplied,
+        redactionCount,
+        replayEntryIds: records.map((record) => record.entryId),
       };
     },
   };
