@@ -133,31 +133,6 @@ function createTestChannelHarness(kind = "test-channel"): TestChannelHarness {
 
 async function createDefaultProviderAliasForChannelRuns(env: MockHubEnv): Promise<void> {
   const provider = env.providers["anthropic"]!;
-  const mock = env.mockFor("anthropic");
-  mock.setDefault({ type: "text", text: "OK" });
-  const profile = await env.hub.providerService.createProvider({
-    kind: provider.kind,
-    name: "Mock default channel provider",
-    baseUrl: provider.baseUrl,
-    authMode: "api-key",
-    api: provider.api,
-    apiKey: "mock-key-for-channel-default", // pragma: allowlist secret
-    supportedModels: [provider.model],
-    defaultModel: provider.model,
-    enabled: true,
-    runtimeCapabilities: [
-      {
-        capability: "text",
-        model: provider.model,
-        status: "verified",
-        verified: true,
-        verifiedAt: new Date(0).toISOString(),
-        notes: "Mock provider route is backed by deterministic test fetch.",
-      },
-    ],
-    validateOnSave: true,
-  });
-
   const db = new Database(path.join(env.stateDir, "friday.db"));
   try {
     const columns = (db.prepare("PRAGMA table_info(provider_profiles)").all() as Array<{ name: string }>)
@@ -167,7 +142,7 @@ async function createDefaultProviderAliasForChannelRuns(env: MockHubEnv): Promis
     db.prepare(
       `INSERT INTO provider_profiles (id, ${columnList})
        SELECT ?, ${columnList} FROM provider_profiles WHERE id = ?`,
-    ).run("default", profile.id);
+    ).run("default", provider.providerId);
   } finally {
     db.close();
   }
@@ -238,6 +213,10 @@ describe("Friday mock subagent canonical gate E2E", () => {
           type: "text",
           text: "Child completed the approved mutation.",
         },
+        {
+          type: "text",
+          text: "Parent observed the approved child result.",
+        },
       );
 
       const runPromise = apiFetch<AgentRunResponse>(
@@ -286,7 +265,7 @@ describe("Friday mock subagent canonical gate E2E", () => {
       expect(run.status).toBe(200);
       expect(run.json.ok).toBe(true);
       expect(run.json.data.status).toBe("completed");
-      expect(run.json.data.response).toContain("Child completed the approved mutation.");
+      expect(run.json.data.response).toContain("approved child result");
       expect(fs.existsSync(sentinel)).toBe(true);
     } finally {
       fs.rmSync(sentinel, { force: true });

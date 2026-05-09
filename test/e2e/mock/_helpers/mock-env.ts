@@ -14,11 +14,16 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import { createFridayProviderSetupMutatingActionRequest } from "../../../../src/api/http/routes/friday-provider-routes.js";
 
 import type {
   FridayProviderApi,
   FridayProviderKind,
 } from "../../../../src/providers/model/friday-provider.types.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+} from "../../../../src/security/friday-mutating-action-gate.js";
 import {
   createMockFetch,
   resetMockCounters,
@@ -68,6 +73,12 @@ const AUTO_DETECT_PROVIDER_ENV_VARS = [
   "XAI_API_KEY",
   "OLLAMA_BASE_URL",
 ] as const;
+const MOCK_E2E_TOKEN_SECRET = "mock-e2e-token-secret"; // pragma: allowlist secret -- deterministic signing key for canonical-gate mock E2E setup
+const MOCK_E2E_ACTOR = {
+  kind: "user",
+  id: "admin-001",
+  principalId: "admin-001",
+} as const;
 
 // ─── Helpers ───
 
@@ -187,10 +198,7 @@ async function installProvider(
   entry: ProviderMatrixEntry,
   fetchImpl?: typeof fetch,
 ): Promise<InstalledMockProvider> {
-  const { status, json } = await apiFetch<{
-    ok: boolean;
-    data: { provider: { id: string } };
-  }>(baseUrl, token, "POST", "/v1/providers", {
+  const body = {
     kind: entry.kind,
     name: `Mock ${entry.kind}`,
     baseUrl: entry.baseUrl,
@@ -214,6 +222,31 @@ async function installProvider(
     ...(entry.authMode === "api-key"
       ? { apiKey: "mock-key-for-testing" } // pragma: allowlist secret
       : {}),
+  };
+  const planDigest = `mock-e2e-provider-create:${entry.kind}`;
+  const idempotencyKey = `mock-e2e-provider-create:${entry.kind}`;
+  const request = createFridayProviderSetupMutatingActionRequest({
+    action: "providers.create",
+    actor: MOCK_E2E_ACTOR,
+    surface: "api:/v1/providers/create",
+    parameters: body,
+    planDigest,
+    idempotencyKey,
+  });
+  const { status, json } = await apiFetch<{
+    ok: boolean;
+    data: { provider: { id: string } };
+  }>(baseUrl, token, "POST", "/v1/providers", {
+    ...body,
+    planDigest,
+    idempotencyKey,
+    canonicalApproval: signFridayCanonicalApproval({
+      decision: "approved",
+      approvalId: `mock-e2e-provider-create:${entry.kind}`,
+      decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    }, MOCK_E2E_TOKEN_SECRET),
   }, fetchImpl);
 
   if (status !== 200 || !json.ok) {
@@ -279,6 +312,7 @@ export async function createMockHubEnv(opts?: {
       port: 0,
       logRequests: false,
       channels: opts?.channels,
+      tokenSecret: MOCK_E2E_TOKEN_SECRET,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });
@@ -321,6 +355,7 @@ export async function createMockHubEnv(opts?: {
 
   for (const entry of selectedEntries) {
     const mock = createMockFetch(entry.api);
+    mock.setDefault({ type: "text", text: "mock provider validation ok" });
     mocks[entry.api] = mock;
     routes.push({
       urlPrefix: entry.baseUrl,
@@ -346,10 +381,59 @@ export async function createMockHubEnv(opts?: {
   // 8. Set routing: use first provider as default, rest as fallbacks
   const providerIds = Object.values(providers).map((p) => p.providerId);
   if (providerIds.length > 0) {
-    await apiFetch(hubBaseUrl, accessToken, "PUT", "/v1/model-routing", {
+    const routingBody = {
       defaultProviderId: providerIds[0],
       fallbackProviderIds: providerIds.slice(1),
+    };
+    const planDigest = "mock-e2e-provider-routing";
+    const idempotencyKey = "mock-e2e-provider-routing";
+    const request = createFridayProviderSetupMutatingActionRequest({
+      action: "providers.routing.set",
+      actor: MOCK_E2E_ACTOR,
+      surface: "api:/v1/model-routing/set",
+      resourceId: "model-routing",
+      parameters: routingBody,
+      planDigest,
+      idempotencyKey,
+    });
+    await apiFetch(hubBaseUrl, accessToken, "PUT", "/v1/model-routing", {
+      ...routingBody,
+      planDigest,
+      idempotencyKey,
+      canonicalApproval: signFridayCanonicalApproval({
+        decision: "approved",
+        approvalId: "mock-e2e-provider-routing",
+        decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
+        actionDigest: createFridayMutatingActionDigest(request),
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }, MOCK_E2E_TOKEN_SECRET),
     }, originalFetch);
+    const doctorBody = { providerIds };
+    const doctorPlanDigest = "mock-e2e-capability-doctor";
+    const doctorRequest = createFridayProviderSetupMutatingActionRequest({
+      action: "capabilities.doctor",
+      actor: MOCK_E2E_ACTOR,
+      surface: "api:/v1/capabilities/doctor",
+      resourceId: providerIds.join(","),
+      parameters: doctorBody,
+      planDigest: doctorPlanDigest,
+      idempotencyKey: doctorPlanDigest,
+    });
+    await apiFetch(hubBaseUrl, accessToken, "POST", "/v1/capabilities/doctor", {
+      ...doctorBody,
+      planDigest: doctorPlanDigest,
+      idempotencyKey: doctorPlanDigest,
+      canonicalApproval: signFridayCanonicalApproval({
+        decision: "approved",
+        approvalId: doctorPlanDigest,
+        decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
+        actionDigest: createFridayMutatingActionDigest(doctorRequest),
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      }, MOCK_E2E_TOKEN_SECRET),
+    }, originalFetch);
+  }
+  for (const mock of Object.values(mocks)) {
+    mock.reset();
   }
 
   // Build helper maps
