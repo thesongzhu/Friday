@@ -70,6 +70,45 @@ describe("FridayProviderService", () => {
     }) as typeof fetch;
   }
 
+  function markProviderValidated(providerId: string): void {
+    const row = db.withReadConnection((conn) =>
+      conn.prepare(
+        `SELECT config_json FROM provider_profiles WHERE id = ?`,
+      ).get(providerId) as { config_json: string } | undefined,
+    );
+    expect(row).toBeTruthy();
+    const config = JSON.parse(row!.config_json) as Record<string, unknown>;
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE provider_profiles
+            SET config_json = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run(
+        JSON.stringify({
+          ...config,
+          validation: { status: "ok", checkedAt: NOW },
+        }),
+        NOW,
+        providerId,
+      );
+    });
+  }
+
+  function setProviderLifecycle(providerId: string, promotionChannel: string): void {
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `UPDATE provider_profiles
+            SET promotion_channel = ?, shadow_version_id = ?, updated_at = ?
+          WHERE id = ?`,
+      ).run(
+        promotionChannel,
+        promotionChannel === "none" ? null : `${providerId}@shadow`,
+        NOW,
+        providerId,
+      );
+    });
+  }
+
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
@@ -462,6 +501,41 @@ describe("FridayProviderService", () => {
           oauth_provider: null,
           is_active: 1,
         }),
+      ]);
+    });
+
+    it("downgrades update-time user verified runtime capabilities to declared", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      });
+
+      const updated = await service.updateProvider("test-id-0001", {
+        runtimeCapabilities: [
+          {
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          },
+        ],
+        validateOnSave: false,
+      });
+
+      expect(updated.config.runtimeCapabilities).toEqual([
+        {
+          capability: "text",
+          model: "gpt-4o",
+          status: "declared",
+          verified: undefined,
+          verifiedAt: undefined,
+        },
       ]);
     });
   });
@@ -914,6 +988,11 @@ describe("FridayProviderService", () => {
       const route = await service.resolveRoute();
       expect(route.provider.id).toBe("test-id-0001");
       expect(route.model).toBe("gpt-4o");
+      await expect(service.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "ok" },
+        },
+      });
     });
 
     it("uses requested model override", async () => {
@@ -1092,6 +1171,37 @@ describe("FridayProviderService", () => {
       });
     });
 
+    it("rejects normal routing for providers still in shadow or canary lifecycle", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      await service.resolveRoute();
+      setProviderLifecycle("test-id-0001", "shadow");
+
+      await expect(service.resolveRoute(undefined, "test-id-0001")).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+      await expect(service.resolveRoute()).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+
+      setProviderLifecycle("test-id-0001", "active");
+      await expect(service.resolveRoute(undefined, "test-id-0001")).resolves.toMatchObject({
+        provider: { id: "test-id-0001" },
+      });
+    });
+
     it("rejects a pinned route when the provider does not exist", async () => {
       await service.createProvider({
         kind: "openai",
@@ -1181,6 +1291,8 @@ describe("FridayProviderService", () => {
         defaultProviderId: "test-id-0001",
         fallbackProviderIds: ["test-id-0002"],
       });
+      markProviderValidated("test-id-0001");
+      markProviderValidated("test-id-0002");
 
       const explain = await service.explainRouting({
         requestedModel: "gpt-5.4",
@@ -1201,6 +1313,45 @@ describe("FridayProviderService", () => {
         eligible: false,
         ineligibilityReasons: expect.arrayContaining(["requires_native_tools"]),
       });
+    });
+
+    it("keeps explainRouting read-only when required capabilities are unverified", async () => {
+      process.env.TEST_KEY = "test-env-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$TEST_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: [],
+        });
+        markProviderValidated("test-id-0001");
+
+        await expect(service.explainRouting({
+          routingContext: {
+            estimatedInputTokens: 10,
+            complexity: "simple",
+            requiredCapabilities: ["text"],
+          },
+        })).rejects.toMatchObject({
+          code: "PROVIDER_NO_CANDIDATES",
+          message: expect.stringContaining("Configure and verify a capable provider"),
+        });
+
+        const provider = await service.getProvider("test-id-0001");
+        expect(provider?.config.runtimeCapabilities ?? []).toHaveLength(0);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_KEY;
+      }
     });
 
     it("routes with context size, sensitivity, latency, and satellite availability constraints", async () => {
@@ -1247,6 +1398,9 @@ describe("FridayProviderService", () => {
         defaultProviderId: hosted.id,
         fallbackProviderIds: [local.id, cli.id],
       });
+      markProviderValidated(hosted.id);
+      markProviderValidated(local.id);
+      markProviderValidated(cli.id);
 
       const confidentialLongContext = await service.explainRouting({
         routingContext: {
@@ -1318,6 +1472,8 @@ describe("FridayProviderService", () => {
         defaultProviderId: primary.id,
         fallbackProviderIds: [pinned.id],
       });
+      markProviderValidated(primary.id);
+      markProviderValidated(pinned.id);
       await service.pinRoute({
         userId: "test-user",
         taskProfileId: "review",
@@ -1395,6 +1551,75 @@ describe("FridayProviderService", () => {
       ).rejects.toThrow("No model routing configured");
     });
 
+    it("fails closed before execution when automatic provider validation fails", async () => {
+      globalThis.fetch = vi.fn(() =>
+        Promise.resolve(new Response("{}", { status: 401 })),
+      ) as typeof fetch;
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-invalid-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(service.runWithFallback({ run })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+      expect(run).not.toHaveBeenCalled();
+      await expect(service.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "failed" },
+        },
+      });
+    });
+
+    it("does not auto-validate routing candidates when implicit provider mutation is disabled", async () => {
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        allowImplicitProviderStateMutation: false,
+      });
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$TEST_KEY",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(scopedService.runWithFallback({ run })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      await expect(scopedService.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "never" },
+        },
+      });
+    });
+
     it("runs with credential from env-ref", async () => {
       process.env.TEST_KEY = "test-env-key";
       try {
@@ -1470,6 +1695,49 @@ describe("FridayProviderService", () => {
       } finally {
         delete process.env.TEST_KEY;
       }
+    });
+
+    it("does not auto-run capability doctor when implicit provider mutation is disabled", async () => {
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        allowImplicitProviderStateMutation: false,
+      });
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$TEST_KEY",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      markProviderValidated("test-id-0001");
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(scopedService.runWithFallback({
+        routingContext: {
+          estimatedInputTokens: 10,
+          complexity: "simple",
+          requiredCapabilities: ["text"],
+        },
+        run,
+      })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+        message: expect.stringContaining("Configure and verify a capable provider"),
+      });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      const provider = await scopedService.getProvider("test-id-0001");
+      expect(provider?.config.runtimeCapabilities ?? []).toEqual([]);
     });
 
     it("prefers the active auth profile over provider config when resolving credentials", async () => {
@@ -2344,11 +2612,16 @@ describe("FridayProviderService", () => {
       expect(tenantA.result).toBe("tenant-a:alice:secret");
       expect(tenantB.result).toBe("tenant-b:bob:secret");
       expect(tenantA.result).not.toBe(tenantB.result);
+      expect(credentialResolver.resolve).toHaveBeenCalledTimes(3);
       expect(credentialResolver.resolve).toHaveBeenNthCalledWith(1, "test-id-0001", {
         hubId: "tenant-a",
         userId: "alice",
       });
       expect(credentialResolver.resolve).toHaveBeenNthCalledWith(2, "test-id-0001", {
+        hubId: "tenant-a",
+        userId: "alice",
+      });
+      expect(credentialResolver.resolve).toHaveBeenNthCalledWith(3, "test-id-0001", {
         hubId: "tenant-b",
         userId: "bob",
       });
@@ -2546,6 +2819,39 @@ describe("FridayProviderService", () => {
   });
 
   describe("runCapabilityDoctor", () => {
+    it("downgrades create-time user verified runtime capabilities to declared", async () => {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        runtimeCapabilities: [
+          {
+            capability: "text",
+            model: "gpt-4o",
+            status: "verified",
+            verified: true,
+            verifiedAt: NOW,
+          },
+        ],
+        validateOnSave: false,
+      });
+
+      const created = await service.getProvider("test-id-0001");
+      expect(created?.config.runtimeCapabilities).toEqual([
+        {
+          capability: "text",
+          model: "gpt-4o",
+          status: "declared",
+          verified: undefined,
+          verifiedAt: undefined,
+        },
+      ]);
+    });
+
     it("runs live capability probes and persists verified runtime capabilities", async () => {
       process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
       installCapabilityDoctorFetchMock();
@@ -2627,6 +2933,53 @@ describe("FridayProviderService", () => {
             verifiedAt: NOW,
           }),
         ]));
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
+    });
+
+    it("limits capability doctor writes to requested provider ids", async () => {
+      process.env.OPENAI_API_KEY = "doctor-key"; // pragma: allowlist secret
+      installCapabilityDoctorFetchMock();
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI Scoped",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o-mini"],
+          defaultModel: "gpt-4o-mini",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI Untouched",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        const report = await service.runCapabilityDoctor({ providerIds: ["test-id-0001"] });
+        const scoped = await service.getProvider("test-id-0001");
+        const untouched = await service.getProvider("test-id-0002");
+
+        expect(report.providerValidations.map((entry) => entry.providerId)).toEqual(["test-id-0001"]);
+        expect(report.capabilityResults.every((entry) => entry.providerId === "test-id-0001")).toBe(true);
+        expect(scoped?.config.runtimeCapabilities).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            capability: "text",
+            model: "gpt-4o-mini",
+            status: "verified",
+            verified: true,
+          }),
+        ]));
+        expect(untouched?.config.runtimeCapabilities ?? []).toEqual([]);
       } finally {
         delete process.env.OPENAI_API_KEY;
       }

@@ -421,6 +421,13 @@ export interface CreateFridayWorkflowRuntimeDeps {
     nodeId: string,
     payload: Record<string, unknown>,
   ) => Promise<unknown>;
+  userRulesContextProvider?: (input: {
+    task: string;
+    workflowId?: string;
+    runId: string;
+    nodeId: string;
+    surface: "workflow_ai_node";
+  }) => string | null | Promise<string | null>;
   publishEvent?: (event: string, payload: unknown) => Promise<void>;
   triggerRepo?: FridayWorkflowTriggerRepository;
   onRunIntake?: (input: {
@@ -613,6 +620,7 @@ export function createFridayWorkflowRuntime(
     expressionEvaluator,
     resolveSkill: deps.resolveSkill,
     invokeSkill: deps.invokeSkill,
+    userRulesContextProvider: deps.userRulesContextProvider,
     nowIso: deps.nowIso,
   });
 

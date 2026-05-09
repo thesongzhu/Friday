@@ -14,7 +14,13 @@ import type { FridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gat
 import type { FridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.types.js";
 import type { FridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.types.js";
 import type { FridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
-import type { FridayWorkflowBuilderDraftService, FridayWorkflowCrudService, FridayWorkflowExecutionService, FridayWorkflowRuntime } from "#workflows";
+import type {
+  CreateFridayWorkflowRuntimeDeps,
+  FridayWorkflowBuilderDraftService,
+  FridayWorkflowCrudService,
+  FridayWorkflowExecutionService,
+  FridayWorkflowRuntime,
+} from "#workflows";
 import type {
   FridayAutonomyPolicyService,
   FridayCapabilityAcquisitionService,
@@ -23,7 +29,13 @@ import type {
 import type { FridayProviderService } from "#providers";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
-import type { FridaySkillExecutor, FridaySkillGeneratorService, FridaySkillLifecycleService, FridaySkillRegistry } from "#skills";
+import type {
+  FridaySkillExecutor,
+  FridaySkillGeneratorService,
+  FridaySkillLifecycleService,
+  FridaySkillRegistry,
+  SkillLifecycleStatus,
+} from "#skills";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
 import type { FridayWorkflowGeneratorService } from "#workflows";
@@ -172,6 +184,8 @@ export interface CreateFridayApiRuntimeDeps {
   ) => Promise<unknown>;
   /** Optional: pass the hub's workflow runtime to avoid creating a duplicate. */
   workflowRuntime?: FridayWorkflowRuntime;
+  /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
+  userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */
   sessionService?: FridaySessionService;
   /** Optional: agent runtime for agent run endpoints. */
@@ -189,7 +203,7 @@ export interface CreateFridayApiRuntimeDeps {
   /** Optional: external MCP server lister for deterministic MCP bridge queries. */
   listMcpServers?: () => ReadonlyArray<{ id: string; transport?: string }>;
   /** Optional: live MCP adapter used by autonomy inventory and upgrade actions. */
-  mcpAdapter?: Pick<FridayMcpAdapter, "listServers" | "listServerStates">;
+  mcpAdapter?: Pick<FridayMcpAdapter, "listServers" | "listServerStates" | "listTools">;
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
   /** Optional: resolves a pending tool approval gate (approve or reject). */
@@ -234,6 +248,8 @@ export interface CreateFridayApiRuntimeDeps {
   system?: FridaySystemRoutesDeps;
   /** Optional: read-only native guidance overlay route surface. */
   guideLens?: FridayGuideLensRoutesDeps;
+  /** Whether canonical mutating approval gate is required for profile-gated API mutations. */
+  canonicalMutatingActionGate?: boolean;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
@@ -286,6 +302,8 @@ export interface CreateFridayApiRuntimeDeps {
   mcpServer?: FridayMcpServerRoutesDeps;
   /** Optional: canonical skills lifecycle service. */
   skillLifecycle?: FridaySkillLifecycleService;
+  /** Optional: writes runtime-visible skill status before registry refresh after external lifecycle changes. */
+  updateSkillStatus?: (skillId: string, status: SkillLifecycleStatus) => Promise<void> | void;
   /** Optional: satellite pairing/handshake route surface. */
   satellitePairing?: FridaySatellitePairingRoutesDeps;
   /** Optional: satellite runtime sync/command route surface. */

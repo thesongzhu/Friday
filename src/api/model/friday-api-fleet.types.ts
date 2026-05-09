@@ -131,6 +131,12 @@ export interface FridayFleetRemediationActionExecutionResult {
   affectedCount?: number;
   followUpActionId?: string;
   executedAt: ISODateTime;
+  canonicalGate?: {
+    ticketId: string;
+    actionDigest: string;
+    approvalId: string;
+    planDigest?: string;
+  };
 }
 
 export interface FridayFleetRemediationAction {

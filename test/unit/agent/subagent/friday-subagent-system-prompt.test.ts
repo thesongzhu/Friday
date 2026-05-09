@@ -65,6 +65,29 @@ describe("buildFridaySubagentSystemPrompt", () => {
     expect(prompt).toContain("Prioritize regressions first.");
   });
 
+  it("includes Friday user project rules as prompt guidance when provided", () => {
+    const prompt = buildFridaySubagentSystemPrompt({
+      task: "Review generated skill candidate",
+      parentSessionKey: "agent:run:parent-xyz",
+      depth: 1,
+      userRulesContext: "<friday-user-project-rules>Ask before saving skills.</friday-user-project-rules>",
+    });
+
+    expect(prompt).toContain("## Friday User Project Rules");
+    expect(prompt).toContain("prompt guidance only");
+    expect(prompt).toContain("Ask before saving skills.");
+  });
+
+  it("does not add user project rules section when not provided", () => {
+    const prompt = buildFridaySubagentSystemPrompt({
+      task: "Review generated skill candidate",
+      parentSessionKey: "agent:run:parent-xyz",
+      depth: 1,
+    });
+
+    expect(prompt).not.toContain("## Friday User Project Rules");
+  });
+
   it("adds fork-specific context and guardrails when mode=fork", () => {
     const prompt = buildFridaySubagentSystemPrompt({
       task: "Continue the parent investigation",

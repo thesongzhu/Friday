@@ -12,9 +12,13 @@ export {
   isFridayReflexPreferenceKey,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./services/friday-reflex-preference-resolver.js";
+export {
+  requiresFridayReflexPreferenceConfirmation,
+} from "./services/friday-reflex-preference-sensitivity.js";
 export { createFridayReflexService } from "./services/friday-reflex-service.js";
 export type {
   CreateFridayReflexServiceDeps,
+  FridayPreferenceRequestResult,
   FridayPreferenceRevokeResult,
   FridayPreferenceWriteResult,
   FridayReflexOnboardingSnapshot,

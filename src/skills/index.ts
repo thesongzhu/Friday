@@ -279,6 +279,10 @@ export {
   getFridayLocalSkillExecutionContext,
 } from "./executor/friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./executor/friday-skill-executor.js";
+export {
+  createFridaySkillRunMutatingActionRequest,
+  type FridaySkillRunApprovalRequestInput,
+} from "./executor/friday-skill-run-approval.js";
 
 // Converter (re-export key types for convenience; full module at #skills/converter)
 export type { FridaySkillConverterService } from "./converter/services/friday-skill-converter-service.types.js";

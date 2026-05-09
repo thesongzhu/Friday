@@ -31,9 +31,9 @@ export interface LocalSkillScanResult {
   directoriesScanned: string[];
 }
 
-export interface BatchImportResult {
-  results: Array<{ sourcePath: string; success: boolean; skillId?: string; error?: string }>;
-  importedCount: number;
+export interface BatchConvertResult {
+  results: Array<{ sourcePath: string; success: boolean; skillId?: string; mode?: "preview"; error?: string }>;
+  convertedCount: number;
   failedCount: number;
 }
 
@@ -51,11 +51,11 @@ export const scanMigrateApi = {
     return unwrap<LocalSkillScanResult>(res);
   },
 
-  async importBatch(items: Array<{ sourcePath: string; formatHint?: string }>): Promise<BatchImportResult> {
+  async convertBatch(items: Array<{ sourcePath: string; formatHint?: string }>): Promise<BatchConvertResult> {
     const res = await apiClient.post<
       { items: Array<{ sourcePath: string; formatHint?: string }> },
       unknown
-    >("/v1/skills/import-batch", { items });
-    return unwrap<BatchImportResult>(res);
+    >("/v1/skills/convert-batch", { items });
+    return unwrap<BatchConvertResult>(res);
   },
 };

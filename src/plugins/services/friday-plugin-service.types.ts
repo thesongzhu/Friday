@@ -29,16 +29,27 @@ export interface FridayPluginService {
   listPlugins(query?: FridayPluginListQuery): FridayPluginEntity[];
   /** Get a plugin by ID. */
   getPlugin(pluginId: string): FridayPluginEntity | null;
+  /** True when the plugin is currently loaded in the in-process plugin runtime. */
+  isPluginRuntimeLoaded?(pluginId: string): boolean;
   /** List versions for a local/installed plugin. */
   listPluginVersions(pluginId: string): FridayPluginVersionInfo[];
   /** Install a local plugin from a manifest and path. */
   installPlugin(input: FridayPluginInstallInput): FridayPluginEntity;
   /** Enable an installed plugin. */
-  enablePlugin(pluginId: string): Promise<FridayPluginEntity>;
+  enablePlugin(pluginId: string, options?: FridayPluginEnableOptions): Promise<FridayPluginEntity>;
   /** Disable an enabled/running plugin. */
   disablePlugin(pluginId: string): Promise<FridayPluginEntity>;
   /** Uninstall a plugin. */
   uninstallPlugin(pluginId: string, force?: boolean): Promise<void>;
+}
+
+export interface FridayPluginEnableOptions {
+  /**
+   * Internal lifecycle-only bypass used by autonomy canary/promote after the
+   * canonical lifecycle ticket has been issued. This is not exposed by public
+   * plugin routes.
+   */
+  lifecycleBypass?: "canary" | "promote";
 }
 
 export interface FridayPluginInstallInput {

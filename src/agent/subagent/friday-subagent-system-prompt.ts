@@ -11,6 +11,7 @@ export interface BuildSubagentSystemPromptParams {
   mode?: "fresh" | "fork";
   inheritedMessageCount?: number;
   forkedFromMessageId?: string;
+  userRulesContext?: string;
 }
 
 // ─── Builder ───
@@ -53,6 +54,17 @@ export function buildFridaySubagentSystemPrompt(
       "- Complete your task and provide a clear, concise summary of your findings/results.",
     ].join("\n"),
   );
+
+  const userRulesContext = params.userRulesContext?.trim();
+  if (userRulesContext) {
+    sections.push(
+      [
+        "## Friday User Project Rules",
+        "These are prompt guidance only. Hard enforcement remains in deterministic policy, approval, and runtime gates.",
+        userRulesContext,
+      ].join("\n"),
+    );
+  }
 
   sections.push(
     [

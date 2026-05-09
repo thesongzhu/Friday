@@ -26,7 +26,10 @@ export function getFridayDeepProofEnvStatus(
 ): FridayDeepProofEnvStatus {
   const anthropicGate = readFlag(env.FRIDAY_E2E_LIVE_ANTHROPIC);
   const legacyLane = readFlag(env.E2E_LIVE);
-  const supplementalLane = readFlag(env.FRIDAY_E2E_LIVE_OPENAI) || readFlag(env.FRIDAY_E2E_LIVE_OLLAMA);
+  const supplementalLane =
+    readFlag(env.FRIDAY_E2E_LIVE_OPENAI)
+    || readFlag(env.FRIDAY_E2E_LIVE_DEEPSEEK)
+    || readFlag(env.FRIDAY_E2E_LIVE_OLLAMA);
   const credentialEnvRef =
     typeof env.FRIDAY_ANTHROPIC_API_KEY === "string" && env.FRIDAY_ANTHROPIC_API_KEY.trim().length > 0 // pragma: allowlist secret
       ? "$FRIDAY_ANTHROPIC_API_KEY"
@@ -74,7 +77,7 @@ export function assertFridayDeepProofAnthropicLane(
       parts.push("unset E2E_LIVE for deep proof runs");
     }
     if (status.blockers.includes("supplemental_provider_lane_enabled")) {
-      parts.push("unset FRIDAY_E2E_LIVE_OPENAI and FRIDAY_E2E_LIVE_OLLAMA for deep proof runs");
+      parts.push("unset FRIDAY_E2E_LIVE_OPENAI, FRIDAY_E2E_LIVE_DEEPSEEK, and FRIDAY_E2E_LIVE_OLLAMA for deep proof runs");
     }
     throw new Error(`[Deep Proof] Anthropic-only lane required: ${parts.join("; ")}`);
   }

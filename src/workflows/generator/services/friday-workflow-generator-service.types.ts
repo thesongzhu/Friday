@@ -1,6 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayProviderService } from "#providers";
-import type { FridaySkillRegistry } from "#skills";
+import type { FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 import type { FridayWorkflowCrudService } from "#workflows";
 import type { FridayHarnessQaVerdictV1, FridayTemplateHarnessSummary } from "#harness";
 
@@ -61,7 +61,14 @@ export interface CreateFridayWorkflowGeneratorServiceDeps {
   providerService: FridayProviderService;
   workflowCrud: FridayWorkflowCrudService;
   skillRegistry: FridaySkillRegistry;
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
   idGenerator: () => string;
   nowIso: () => string;
   computeChecksum: (content: string) => string;
+  userRulesContextProvider?: (input: {
+    task: string;
+    userId?: string;
+    channel?: string;
+    surface: "workflow_generator";
+  }) => string | null | Promise<string | null>;
 }

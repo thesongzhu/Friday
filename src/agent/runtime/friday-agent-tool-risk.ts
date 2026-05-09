@@ -285,5 +285,12 @@ export function getApprovalRequiredReasonForToolCall(
     }
   }
 
+  if (toolName === "guide_lens") {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (action === "update_preferences" || action === "update_avatar") {
+      return "Changing Guide Lens preferences requires explicit approval in the current run context.";
+    }
+  }
+
   return null;
 }

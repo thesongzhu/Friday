@@ -52,6 +52,9 @@ export interface FridayAgentPlanningGateService {
   approvePlan(input: FridayAgentResumeRunParams): Promise<FridayAgentRuntimeResult>;
   rejectPlan(input: {
     runId: string;
+    principalId?: string;
+    scopes?: string[];
+    executionContext?: FridayAgentResumeRunParams["executionContext"];
   }): FridayAgentRuntimeResult;
   /** P2-RUNTIME: Clean up internal state for a completed/failed run. */
   cleanupRun(runId: string): void;
@@ -719,6 +722,7 @@ export function createFridayAgentPlanningGateService(
         );
       }
 
+      const reviewedAt = deps.nowIso();
       const planReview: FridayAgentPlanReviewPayload = {
         ...(run.planReview ?? {
           plan: {
@@ -731,22 +735,32 @@ export function createFridayAgentPlanningGateService(
           approved: true,
           mode: "manual-approve",
           reason: "Approved by user",
-          reviewedAt: deps.nowIso(),
+          reviewedAt,
         },
         gate: {
           ...(run.planReview?.gate ?? {
             kind: "major_decision" as const,
           }),
           state: "approved",
-          approvalUpdatedAt: deps.nowIso(),
+          approvalUpdatedAt: reviewedAt,
         },
       };
 
       deps.db.withWriteTransaction((writer) =>
         deps.repo.update(writer, {
           id: run.id,
+          status: "planning",
           planReview,
         }));
+      emitRunEvent("agent.run.plan_approved", {
+        runId: run.id,
+        approvedAt: reviewedAt,
+        approvalMode: "manual-approve",
+        ...(planReview.gate?.kind ? { planKind: planReview.gate.kind } : {}),
+        ...(input.principalId ? { approverPrincipalId: input.principalId } : {}),
+        ...(input.scopes ? { scopes: input.scopes } : {}),
+        ...(input.executionContext?.surface ? { surface: input.executionContext.surface } : {}),
+      }, run.id);
 
       return deps.runtime.executeRun({
         runId: run.id,
@@ -778,6 +792,13 @@ export function createFridayAgentPlanningGateService(
       const run = deps.db.withReadConnection((reader) => deps.repo.getById(reader, input.runId));
       if (!run) {
         throw new FridayDomainError("AGENT_RUN_NOT_FOUND", "Agent run not found", { httpStatus: 404 });
+      }
+      if (run.status !== "awaiting_plan_approval") {
+        throw new FridayDomainError(
+          "AGENT_PLAN_NOT_AWAITING_APPROVAL",
+          `Run ${input.runId} is not awaiting plan approval`,
+          { httpStatus: 409 },
+        );
       }
       const completedAt = deps.nowIso();
       const response = "Plan rejected. Friday stopped before executing any real generation or action.";
@@ -813,6 +834,15 @@ export function createFridayAgentPlanningGateService(
           summary: summarize(response),
           planReview,
         }));
+      emitRunEvent("agent.run.plan_rejected", {
+        runId: run.id,
+        rejectedAt: completedAt,
+        rejectionMode: "manual-reject",
+        ...(planReview.gate?.kind ? { planKind: planReview.gate.kind } : {}),
+        ...(input.principalId ? { approverPrincipalId: input.principalId } : {}),
+        ...(input.scopes ? { scopes: input.scopes } : {}),
+        ...(input.executionContext?.surface ? { surface: input.executionContext.surface } : {}),
+      }, run.id);
       emitRunEvent("agent.run.cancelled", {
         runId: run.id,
         reason: "Plan rejected by user",

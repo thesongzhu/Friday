@@ -39,10 +39,12 @@ function makeMockConverterService(): FridaySkillConverterService {
       drafts: [],
       validation: [],
     })),
+    getCandidate: vi.fn(() => null),
     import: vi.fn(async () => ({
       converterId: "test",
       detectedFormat: "unknown",
-      imports: [],
+      candidates: [],
+      validation: [],
       registryRefreshed: false,
     })),
     pack: vi.fn(async () => ({

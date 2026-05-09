@@ -243,6 +243,13 @@ describe("FridayMemoryRoutes", () => {
     const result = await route.handler(makeCtx({ body: { query: "call me" } })) as { items: FridayMemorySearchResult[] };
 
     expect(result.items.some((entry) => entry.item.source === "learned_fact")).toBe(true);
+    const learned = result.items.find((entry) => entry.item.source === "learned_fact")!;
+    expect(learned.item.metadata).toMatchObject({
+      trustLevel: "confidence_scored_learning",
+      memoryBoundary: "separate_from_durable_memory",
+      evidenceBoundary: "preference_fact_evidence",
+      contextUseBoundary: "learning_context_service_gated",
+    });
   });
 
   // ─── Get handler ───
@@ -316,6 +323,13 @@ describe("FridayMemoryRoutes", () => {
     const result = await route.handler(makeCtx()) as { items: FridayMemoryItem[] };
 
     expect(result.items.some((entry) => entry.id === "learned-fact:pref:display_name")).toBe(true);
+    const learned = result.items.find((entry) => entry.id === "learned-fact:pref:display_name")!;
+    expect(learned.metadata).toMatchObject({
+      trustLevel: "confidence_scored_learning",
+      memoryBoundary: "separate_from_durable_memory",
+      evidenceBoundary: "preference_fact_evidence",
+      contextUseBoundary: "learning_context_service_gated",
+    });
   });
 
   // ─── Prune handler ───

@@ -108,4 +108,68 @@ describe("Friday Reflex routes", () => {
     expect(revoked.revoked).toBe(true);
     expect(service.listPreferences("user-1")).toEqual([]);
   });
+
+  it("returns a review candidate for high-impact preferences even if the caller claims Review Center", async () => {
+    const service = createService();
+    const routes = createFridayReflexRoutes({ service });
+    const updateRoute = routes.find((route) => route.operationId === "reflex.preferences.update");
+
+    const pending = await updateRoute!.handler(ctx({
+      params: { key: "testing.live_llm_policy" },
+      body: {
+        category: "reflex",
+        value: "allowed_with_cost_notice",
+        sourceSurface: "review_center",
+      },
+    })) as { requiresConfirmation: true; candidate: { status: string; payload: Record<string, unknown> } };
+
+    expect(pending.requiresConfirmation).toBe(true);
+    expect(pending.candidate.status).toBe("ready_for_review");
+    expect(pending.candidate.payload).toMatchObject({
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+    });
+    expect(service.listPreferences("user-1")
+      .find((pref) => pref.key === "testing.live_llm_policy")).toBeUndefined();
+  });
+
+  it("returns curator review metadata through the candidate list route", async () => {
+    const service = createService();
+    const routes = createFridayReflexRoutes({ service });
+    const listRoute = routes.find((route) => route.operationId === "reflex.candidates.list");
+    const getRoute = routes.find((route) => route.operationId === "reflex.candidates.get");
+    service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable route path",
+      summary: "A route-visible candidate.",
+      payload: { content: "step one\nstep two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+
+    service.curateCandidates({ userId: "user-1" });
+    const listed = await listRoute!.handler(ctx({
+      query: { status: "proposed" },
+    })) as { items: Array<{ evidence: Record<string, unknown> }> };
+
+    expect(listed.items[0]?.evidence.curator).toMatchObject({
+      version: 1,
+      recommendedAction: "review",
+      safetyBoundary: "review_center_required_before_activation",
+    });
+
+    const candidateId = listed.items[0]?.id;
+    expect(candidateId).toBeTruthy();
+    const fetched = await getRoute!.handler(ctx({
+      params: { id: String(candidateId) },
+    })) as { evidence: Record<string, unknown> };
+    expect(fetched.evidence.curator).toMatchObject({
+      version: 1,
+      recommendedAction: "review",
+      safetyBoundary: "review_center_required_before_activation",
+    });
+  });
 });

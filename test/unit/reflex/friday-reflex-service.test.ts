@@ -106,7 +106,7 @@ describe("Friday Reflex service", () => {
     expect(active.session?.primaryChannelKind).toBe("telegram");
   });
 
-  it("answers and skips questions while persisting explicit preferences", () => {
+  it("answers and skips questions while persisting ordinary explicit preferences", () => {
     const service = createService();
     service.startOnboarding({ userId: "user-1", primaryChannelKind: "slack" });
 
@@ -146,6 +146,53 @@ describe("Friday Reflex service", () => {
       .toBe("Wenxin");
   });
 
+  it("turns high-impact onboarding answers into review candidates without blocking progress", () => {
+    const service = createService();
+    service.startOnboarding({ userId: "user-1", primaryChannelKind: "slack" });
+    for (const [questionId, value] of [
+      ["O1", "follow_input"],
+      ["O2", "none"],
+      ["O3", "concise"],
+      ["O4", "compact"],
+      ["O5", "ask_first"],
+    ] as const) {
+      service.answerOnboarding({
+        userId: "user-1",
+        questionId,
+        answer: { value },
+        sourceSurface: "channel",
+      });
+    }
+
+    const afterO6 = service.answerOnboarding({
+      userId: "user-1",
+      questionId: "O6",
+      answer: { value: "save_immediately" },
+      sourceSurface: "channel",
+    });
+
+    expect(afterO6.activeQuestion?.id).toBe("O7");
+    expect(service.listPreferences("user-1")
+      .find((pref) => pref.category === "reflex" && pref.key === "memory.explicit_instruction_policy"))
+      .toBeUndefined();
+    expect(service.listCandidates({ userId: "user-1", kind: "preference" })).toEqual([
+      expect.objectContaining({
+        kind: "preference",
+        origin: "onboarding",
+        status: "ready_for_review",
+        payload: expect.objectContaining({
+          category: "reflex",
+          key: "memory.explicit_instruction_policy",
+          value: "save_immediately",
+        }),
+        evidence: expect.objectContaining({
+          requiresExplicitConfirmation: true,
+          onboardingQuestionId: "O6",
+        }),
+      }),
+    ]);
+  });
+
   it("does not let approved preference candidates overwrite explicit preferences", async () => {
     const service = createService();
     service.updatePreference({
@@ -177,6 +224,72 @@ describe("Friday Reflex service", () => {
       .toBe("concise");
   });
 
+  it("applies ordinary preference requests immediately", () => {
+    const service = createService();
+    const result = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "communication",
+      key: "persona.verbosity",
+      value: "concise",
+      sourceSurface: "operate",
+    });
+
+    expect(result.requiresConfirmation).toBe(false);
+    if (!result.requiresConfirmation) {
+      expect(result.preference.value).toBe("concise");
+    }
+    expect(service.listCandidates({ userId: "user-1", kind: "preference" })).toEqual([]);
+  });
+
+  it("turns high-impact preference requests into one-tap review candidates", async () => {
+    const service = createService();
+    const result = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+      sourceSurface: "operate",
+    });
+
+    expect(result.requiresConfirmation).toBe(true);
+    if (result.requiresConfirmation) {
+      expect(result.candidate.status).toBe("ready_for_review");
+      expect(result.candidate.kind).toBe("preference");
+      expect(result.candidate.payload).toMatchObject({
+        category: "reflex",
+        key: "testing.live_llm_policy",
+        value: "allowed_with_cost_notice",
+        source: "explicit",
+      });
+      expect(result.candidate.evidence.requiresExplicitConfirmation).toBe(true);
+    }
+    expect(service.listPreferences("user-1").find((pref) => pref.key === "testing.live_llm_policy"))
+      .toBeUndefined();
+
+    const duplicate = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+      sourceSurface: "review_center",
+    });
+    expect(duplicate.requiresConfirmation).toBe(true);
+    if (result.requiresConfirmation && duplicate.requiresConfirmation) {
+      expect(duplicate.candidate.id).toBe(result.candidate.id);
+      const approved = await service.approveCandidate({
+        userId: "user-1",
+        candidateId: result.candidate.id,
+      });
+      expect(approved.status).toBe("approved");
+      expect(approved.evidence.explicitPreferenceConfirmed).toBe(true);
+    }
+
+    const pref = service.listPreferences("user-1")
+      .find((item) => item.category === "reflex" && item.key === "testing.live_llm_policy");
+    expect(pref?.source).toBe("explicit");
+    expect(pref?.value).toBe("allowed_with_cost_notice");
+  });
+
   it("enforces candidate state transitions and principal binding", () => {
     const service = createService();
     expect(() => service.updatePreference({
@@ -186,6 +299,13 @@ describe("Friday Reflex service", () => {
       value: "balanced",
       sourceSurface: "operate",
     })).toThrow(/bound Friday user/);
+    expect(() => service.updatePreference({
+      userId: "user-1",
+      category: "reflex",
+      key: "automation.conservatism",
+      value: "balanced",
+      sourceSurface: "operate",
+    })).toThrow(/Review Center confirmation/);
 
     const candidate = service.createCandidate({
       userId: "user-1",
@@ -223,8 +343,8 @@ describe("Friday Reflex service", () => {
     const written = service.updatePreference({
       userId: "user-1",
       category: "reflex",
-      key: "automation.conservatism",
-      value: "balanced",
+      key: "communication.language_policy",
+      value: "zh",
       sourceSurface: "operate",
     });
 
@@ -234,7 +354,7 @@ describe("Friday Reflex service", () => {
       sourceSurface: "review_center",
     });
     expect(revoked.revoked).toBe(true);
-    expect(revoked.preference.key).toBe("automation.conservatism");
+    expect(revoked.preference.key).toBe("communication.language_policy");
     expect(service.listPreferences("user-1")).toEqual([]);
     expect(() => service.revokePreference({
       userId: "user-1",
@@ -284,5 +404,134 @@ describe("Friday Reflex service", () => {
     expect(workflow?.evidence.generatorSessionId).toBe("workflow-session-1");
     expect(workflow?.evidence.draftWorkflowId).toBe("draft-workflow-1");
     expect(approveAndSave).not.toHaveBeenCalled();
+  });
+
+  it("adds curator review metadata without approving generated candidates", async () => {
+    const approveAndSave = vi.fn();
+    const service = createService({
+      workflowGenerator: {
+        startSession: vi.fn(async () => ({
+          mode: "new",
+          session: { sessionId: "workflow-session-1" },
+        })),
+        submitTurn: vi.fn(),
+        getSession: vi.fn(),
+        generateDraft: vi.fn(async () => ({
+          spec: { workflowId: "draft-workflow-1", name: "Draft repeated report workflow" },
+          validation: { ok: true },
+        })),
+        getQaVerdict: vi.fn(async () => null),
+        getHarnessSummary: vi.fn(async () => null),
+        approveAndSave,
+        cancelSession: vi.fn(),
+      } as never,
+    });
+
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-1",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-2",
+      task: "Draft the weekly partner report",
+      outcome: "success",
+      toolSequence: ["memory_search", "web_fetch", "write"],
+    });
+
+    const curated = service.curateCandidates({ userId: "user-1" });
+    const workflow = service.listCandidates({ userId: "user-1", kind: "workflow" })[0];
+
+    expect(curated.some((candidate) => candidate.id === workflow?.id)).toBe(true);
+    expect(workflow?.status).toBe("ready_for_review");
+    expect(workflow?.evidence.curator).toMatchObject({
+      version: 1,
+      curatedBy: "friday_reflex_curator",
+      recommendedAction: "review",
+      tested: true,
+      safetyBoundary: "review_center_required_before_activation",
+    });
+    expect(approveAndSave).not.toHaveBeenCalled();
+  });
+
+  it("supersedes only exact duplicate candidates while keeping distinct candidates reviewable", () => {
+    const service = createService();
+    const first = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "A reusable report path.",
+      payload: { content: "step one\nstep two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+    const duplicate = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "Same candidate repeated.",
+      payload: { content: "step one\nstep two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+    const distinct = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Reusable report path",
+      summary: "Same title with different payload.",
+      payload: { content: "step one\nstep three" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+
+    service.curateCandidates({ userId: "user-1" });
+
+    expect(service.getCandidate({ userId: "user-1", candidateId: first.id }).status).toBe("proposed");
+    expect(service.getCandidate({ userId: "user-1", candidateId: distinct.id }).status).toBe("proposed");
+    expect(service.getCandidate({ userId: "user-1", candidateId: duplicate.id })).toMatchObject({
+      status: "superseded",
+      evidence: expect.objectContaining({
+        duplicateOf: first.id,
+        curator: expect.objectContaining({
+          recommendedAction: "superseded",
+          duplicateOf: first.id,
+        }),
+      }),
+    });
+  });
+
+  it("marks stale candidates for review without deleting or approving them", () => {
+    let now = "2026-04-01T12:00:00.000Z";
+    const service = createService({
+      nowIso: () => now,
+    });
+    const candidate = service.createCandidate({
+      userId: "user-1",
+      kind: "recipe",
+      origin: "post_run",
+      title: "Old reusable path",
+      summary: "An old candidate that still needs a user decision.",
+      payload: { content: "old step one\nold step two" },
+      confidence: 0.7,
+      riskTier: 1,
+    });
+
+    now = "2026-04-30T12:00:00.000Z";
+    service.curateCandidates({ userId: "user-1" });
+    const refreshed = service.getCandidate({ userId: "user-1", candidateId: candidate.id });
+
+    expect(refreshed.status).toBe("proposed");
+    expect(refreshed.evidence.curator).toMatchObject({
+      recommendedAction: "review_or_dismiss",
+      stale: true,
+      ageDays: 29,
+      safetyBoundary: "review_center_required_before_activation",
+    });
   });
 });

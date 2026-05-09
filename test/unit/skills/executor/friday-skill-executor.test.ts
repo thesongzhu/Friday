@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createFridayChannelRegistry } from "#channels";
 import {
   createFridaySkillExecutor,
+  createFridaySkillRunMutatingActionRequest,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   FRIDAY_SKILL_PYTHON_BIN_ENV,
 } from "#skills";
@@ -13,6 +14,15 @@ import type { FridaySkillRegistry } from "#skills";
 import type { FridayRegisteredSkill } from "#skills";
 import type { FridaySkillRunStore } from "#ledger";
 import type { FridaySkillExecuteRequest } from "#skills";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  signFridayCanonicalApproval,
+} from "../../../../src/security/friday-mutating-action-gate.js";
+import {
+  createFridaySkillLifecycleCanaryInputDigest,
+  createFridaySkillLifecycleMutatingActionRequest,
+} from "../../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 
 /** Minimal mock registry that returns skills from a pre-built map. */
 function createMockRegistry(
@@ -113,6 +123,37 @@ describe("FridaySkillExecutor", () => {
     channel: "test",
   };
 
+  function makeSkillRunApprovalRequest(input: Partial<FridaySkillExecuteRequest> = {}) {
+    return createFridaySkillRunMutatingActionRequest({
+      skillId: input.skillId ?? "external-skill",
+      input: input.input ?? baseRequest.input,
+      timeoutMs: input.timeoutMs,
+      channel: input.channel ?? baseRequest.channel,
+      sessionId: input.sessionId ?? baseRequest.sessionId,
+      actor: { kind: "api", id: "test-user", principalId: "test-user" },
+      surface: "test:skill-run",
+    });
+  }
+
+  function makeSignedSkillRunApproval(request = makeSkillRunApprovalRequest()) {
+    return signFridayCanonicalApproval({
+      decision: "approved",
+      approvalId: "approval-skill-run",
+      decidedByPrincipalId: "test-user",
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2999-01-15T10:59:00.000Z",
+    }, "skill-run-test-secret");
+  }
+
+  function makeSkillRunGate() {
+    return createFridayMutatingActionGate({
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      ticketIdGenerator: () => "ticket-skill-run",
+      approvalSignatureSecret: "skill-run-test-secret", // pragma: allowlist secret
+      requireApprovalSignature: true,
+    });
+  }
+
   it("routes shell skill to shell executor and returns result", async () => {
     const skill = makeRegisteredSkill({
       id: "echo-skill",
@@ -130,6 +171,7 @@ describe("FridaySkillExecutor", () => {
       runStore,
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2025-01-15T10:00:00.000Z",
+      canonicalMutationGate: makeSkillRunGate(),
     });
 
     const handle = executor.execute(baseRequest);
@@ -163,6 +205,207 @@ describe("FridaySkillExecutor", () => {
     const result = await executor.execute(baseRequest).result;
 
     expect(result.status).toBe("completed");
+  });
+
+  it("blocks managed external skill execution without a canonical run ticket, including workflow channel", async () => {
+    const skill = makeRegisteredSkill({
+      id: "external-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+      source: "local",
+      origin: "managed",
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("external-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "external-skill",
+      channel: "workflow",
+    }).result;
+
+    expect(result.status).toBe("failed");
+    expect(result.output).toMatchObject({
+      code: "SKILL_RUN_APPROVAL_REQUIRED",
+      status: "installed",
+    });
+    expect(result.stderr).toContain("requires canonical approval");
+  });
+
+  it("rejects lifecycle canary markers on the public execute entrypoint", () => {
+    const skill = makeRegisteredSkill({
+      id: "echo-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+    });
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("echo-skill", skill);
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+    });
+
+    expect(() => executor.execute({
+      ...baseRequest,
+      lifecycleCanary: {
+        skillDir: "/tmp",
+        artifactDigest: "sha256:test",
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canaryInputDigest: "sha256:input",
+      },
+    } as never)).toThrow("Lifecycle canary execution must use the internal lifecycle executor entrypoint.");
+  });
+
+  it("rejects lifecycle canary approval when the input digest does not match", async () => {
+    const skill = makeRegisteredSkill({
+      id: "external-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+      source: "local",
+      origin: "managed",
+    });
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("external-skill", skill);
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      canonicalMutationGate: createFridayMutatingActionGate({
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+        ticketIdGenerator: () => "ticket-lifecycle-canary",
+      }),
+    });
+    const actor = { kind: "api", id: "test-user", principalId: "test-user" };
+    const approvedDigest = createFridaySkillLifecycleCanaryInputDigest({ mode: "approved" });
+    const actualDigest = createFridaySkillLifecycleCanaryInputDigest({ mode: "actual" });
+    const approvalRequest = createFridaySkillLifecycleMutatingActionRequest({
+      action: "canary",
+      skillId: "external-skill",
+      candidateId: "candidate-1",
+      shadowVersionId: "candidate-1",
+      runtimeVersion: "runtime-v1",
+      actor,
+      surface: "test:lifecycle-canary",
+      planDigest: "phase32a-plan-digest",
+      canaryInputDigest: approvedDigest,
+    });
+
+    const result = await executor.executeLifecycleCanary({
+      ...baseRequest,
+      skillId: "external-skill",
+      input: { mode: "actual" },
+      lifecycleCanary: {
+        skillDir: "/tmp",
+        artifactDigest: "sha256:test",
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canaryInputDigest: actualDigest,
+      },
+      canonicalApprovalRequest: approvalRequest,
+      canonicalApproval: {
+        decision: "approved",
+        approvalId: "approval-lifecycle-canary",
+        decidedByPrincipalId: "test-user",
+        actionDigest: createFridayMutatingActionDigest(approvalRequest),
+        expiresAt: "2999-01-15T10:59:00.000Z",
+      },
+    }).result;
+
+    expect(result.status).toBe("failed");
+    expect(result.output).toMatchObject({
+      code: "SKILL_LIFECYCLE_CANARY_APPROVAL_DENIED",
+    });
+    expect(result.stderr).toContain("do not match");
+  });
+
+  it("allows managed external skill execution with a matching canonical approval", async () => {
+    const skill = makeRegisteredSkill({
+      id: "external-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+      source: "local",
+      origin: "managed",
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("external-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      canonicalMutationGate: makeSkillRunGate(),
+    });
+    const approvalRequest = makeSkillRunApprovalRequest();
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "external-skill",
+      canonicalApprovalRequest: approvalRequest,
+      canonicalApproval: makeSignedSkillRunApproval(approvalRequest),
+    }).result;
+
+    expect(result.status).toBe("completed");
+  });
+
+  it("rejects managed external execution when approval digest does not match the actual input", async () => {
+    const skill = makeRegisteredSkill({
+      id: "external-skill",
+      runtimeKind: "shell",
+      entrypoint: "/bin/echo",
+      skillDir: "/tmp",
+      source: "local",
+      origin: "managed",
+    });
+
+    const skills = new Map<string, FridayRegisteredSkill>();
+    skills.set("external-skill", skill);
+
+    const executor = createFridaySkillExecutor({
+      db,
+      registry: createMockRegistry(skills),
+      runStore,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2025-01-15T10:00:00.000Z",
+      canonicalMutationGate: makeSkillRunGate(),
+    });
+    const approvalRequest = makeSkillRunApprovalRequest({ input: { message: "approved" } });
+
+    const result = await executor.execute({
+      ...baseRequest,
+      skillId: "external-skill",
+      input: { message: "tampered" },
+      canonicalApprovalRequest: approvalRequest,
+      canonicalApproval: makeSignedSkillRunApproval(approvalRequest),
+    }).result;
+
+    expect(result.status).toBe("failed");
+    expect(result.output).toMatchObject({
+      code: "SKILL_RUN_APPROVAL_DENIED",
+      status: "installed",
+    });
+    expect(result.stderr).toContain("does not match");
   });
 
   it("blocks restricted shell entrypoints that escape the skill directory sandbox", async () => {

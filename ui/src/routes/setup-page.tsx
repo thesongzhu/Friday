@@ -10,7 +10,7 @@ import { setupApi } from "@/lib/api/setup";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
 import { scanMigrateApi } from "@/lib/api/scan-migrate";
-import type { BatchImportResult, LocalSkillScanItem } from "@/lib/api/scan-migrate";
+import type { BatchConvertResult, LocalSkillScanItem } from "@/lib/api/scan-migrate";
 import { getIntegrationDescription } from "@/lib/discovery/integration-descriptions";
 import {
   FRIDAY_ASSISTANT_STARTER_TASKS,
@@ -132,7 +132,7 @@ type ChannelTestState = {
 type SetupCompletionStepStateInput = {
   providerValidated: boolean;
   channelsSaved: boolean;
-  skillsImported: boolean;
+  skillsPromoted: boolean;
 };
 
 export function buildSetupCompletionStepState(input: SetupCompletionStepStateInput): {
@@ -144,7 +144,7 @@ export function buildSetupCompletionStepState(input: SetupCompletionStepStateInp
     "security",
     ...(input.providerValidated ? (["provider"] as const) : []),
     ...(input.channelsSaved ? (["channels"] as const) : []),
-    ...(input.skillsImported ? (["skills"] as const) : []),
+    ...(input.skillsPromoted ? (["skills"] as const) : []),
     "done",
   ];
   const skippedSteps: SetupStepId[] = [
@@ -152,7 +152,7 @@ export function buildSetupCompletionStepState(input: SetupCompletionStepStateInp
     ...(input.providerValidated ? [] : (["provider"] as const)),
     ...(input.channelsSaved ? [] : (["channels"] as const)),
     "network",
-    ...(input.skillsImported ? [] : (["skills"] as const)),
+    ...(input.skillsPromoted ? [] : (["skills"] as const)),
   ];
   return { completedSteps, skippedSteps };
 }
@@ -409,7 +409,7 @@ export function SetupPage() {
   const [skillScanError, setSkillScanError] = useState<string | null>(null);
   const [selectedSkillPaths, setSelectedSkillPaths] = useState<Set<string>>(new Set());
   const [skillImporting, setSkillImporting] = useState(false);
-  const [skillImportResult, setSkillImportResult] = useState<BatchImportResult | null>(null);
+  const [skillImportResult, setSkillImportResult] = useState<BatchConvertResult | null>(null);
   // ── Existing queries ──
 
   const { data: setupStatus } = useQuery({
@@ -1305,7 +1305,7 @@ export function SetupPage() {
       const { completedSteps, skippedSteps } = buildSetupCompletionStepState({
         providerValidated,
         channelsSaved,
-        skillsImported: (skillImportResult?.importedCount ?? 0) > 0,
+        skillsPromoted: false,
       });
       return setupApi.completeSetup({ completedSteps, skippedSteps });
     },
@@ -1421,21 +1421,22 @@ export function SetupPage() {
       const items = skillScanItems
         .filter((item) => selectedSkillPaths.has(item.sourcePath))
         .map((item) => ({ sourcePath: item.sourcePath, formatHint: item.converterHint }));
-      const result = await scanMigrateApi.importBatch(items);
+      const result = await scanMigrateApi.convertBatch(items);
       setSkillImportResult(result);
+      const convertedCount = result.convertedCount;
       toast.success(
         localize(
           locale,
-          `已导入 ${result.importedCount} 个技能`,
-          `Imported ${result.importedCount} skills`,
+          `已预览 ${convertedCount} 个候选草稿`,
+          `Previewed ${convertedCount} draft candidates`,
         ),
       );
       if (result.failedCount > 0) {
         toast.warning(
           localize(
             locale,
-            `${result.failedCount} 个导入失败`,
-            `${result.failedCount} failed to import`,
+            `${result.failedCount} 个预览失败`,
+            `${result.failedCount} failed to preview`,
           ),
         );
       }
@@ -1443,7 +1444,7 @@ export function SetupPage() {
       toast.error(
         error instanceof Error
           ? error.message
-          : localize(locale, "导入失败", "Import failed"),
+          : localize(locale, "预览失败", "Preview failed"),
       );
     } finally {
       setSkillImporting(false);
@@ -2119,8 +2120,8 @@ export function SetupPage() {
                         disabled={skillImporting}
                       >
                         {skillImporting
-                          ? localize(locale, "导入中...", "Importing...")
-                          : localize(locale, `导入选中 (${selectedSkillPaths.size})`, `Import Selected (${selectedSkillPaths.size})`)}
+                          ? localize(locale, "预览中...", "Previewing...")
+                          : localize(locale, `预览候选 (${selectedSkillPaths.size})`, `Preview Candidates (${selectedSkillPaths.size})`)}
                       </ActionButton>
                     </div>
                   )}
@@ -2135,7 +2136,7 @@ export function SetupPage() {
                             {entry.sourcePath.split("/").at(-2) ?? entry.sourcePath}
                           </p>
                           <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
-                            {entry.error ?? localize(locale, "导入失败，但后端没有返回更具体的原因。", "Import failed, but the backend did not return a more specific reason.")}
+                            {entry.error ?? localize(locale, "预览失败，但后端没有返回更具体的原因。", "Preview failed, but the backend did not return a more specific reason.")}
                           </p>
                         </div>
                       ))}
@@ -2761,10 +2762,10 @@ export function SetupPage() {
         localize(locale, `${discoveryProgramCount} 个程序`, `${discoveryProgramCount} programs`),
       );
     }
-    const importedSkillCount = skillImportResult?.importedCount ?? 0;
-    if (importedSkillCount > 0) {
+    const convertedSkillCount = skillImportResult?.convertedCount ?? 0;
+    if (convertedSkillCount > 0) {
       summaryItems.push(
-        localize(locale, `${importedSkillCount} 个技能`, `${importedSkillCount} skills`),
+        localize(locale, `${convertedSkillCount} 个候选预览`, `${convertedSkillCount} candidate previews`),
       );
     }
     if (channelsSaved && enabledChannels.size > 0) {

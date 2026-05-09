@@ -55,11 +55,18 @@ export function createFridayWorkflowBuilderTemplateService(
 ): FridayWorkflowBuilderTemplateService {
   /** Derive templates from installed skills that support workflow mode. */
   function getSkillDerivedTemplates(): FridayWorkflowTemplateEntity[] {
-    const installed = deps.skillRepo
-      ? deps.db.withReadConnection((db) => deps.skillRepo!.listInstalled(db))
+    const persisted = deps.skillRepo
+      ? deps.db.withReadConnection((db) => deps.skillRepo!.listAll(db))
       : [];
+    const persistedStatusBySkillId = new Map(persisted.map((skill) => [skill.id, skill.status]));
+    const installed = persisted.filter((skill) => skill.status === "installed");
     const registered = deps.skillRegistry
-      ? deps.skillRegistry.list().map((skill) => ({
+      ? deps.skillRegistry.list()
+        .filter((skill) =>
+          skill.status === "installed"
+          && (persistedStatusBySkillId.get(skill.manifest.id) ?? "installed") === "installed"
+        )
+        .map((skill) => ({
         id: skill.manifest.id,
         currentManifest: skill.manifest,
       }))

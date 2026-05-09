@@ -4,6 +4,7 @@
  * Gate:
  *   FRIDAY_E2E_LIVE_VOICE=1 plus one live provider lane:
  *   - FRIDAY_E2E_LIVE_OPENAI=1 + OPENAI_API_KEY
+ *   - FRIDAY_E2E_LIVE_DEEPSEEK=1 + DEEPSEEK_API_KEY or FRIDAY_DEEPSEEK_API_KEY
  *   - FRIDAY_E2E_LIVE_ANTHROPIC=1 + FRIDAY_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY
  *   - FRIDAY_E2E_LIVE_OLLAMA=1 + local Ollama model
  */
@@ -24,6 +25,8 @@ import { createTestDb, createTestIdGenerator } from "../../unit/satellites/_help
 import {
   ANTHROPIC_API_KEY_ENV_REF,
   ANTHROPIC_BASE_URL,
+  DEEPSEEK_API_KEY_ENV,
+  DEEPSEEK_BASE_URL,
   E2E_GATED,
   FAST_MODEL,
   LIVE_PROVIDER_KIND,
@@ -31,6 +34,7 @@ import {
   OPENAI_API_KEY_ENV,
   OPENAI_BASE_URL,
   ensureAnthropicReady,
+  ensureDeepSeekReady,
   ensureOllamaReady,
   ensureOpenAiReady,
 } from "./_helpers/real-env.js";
@@ -93,11 +97,17 @@ function createLiveVoiceLlmClient(): FridayAgentLlmClient {
         baseUrl: ANTHROPIC_BASE_URL,
         apiKey: readAnthropicApiKey(),
       })
-      : createFridayAgentLlmClient({
-        api: "ollama",
-        baseUrl: OLLAMA_BASE_URL,
-        allowPrivateNetwork: true,
-      });
+      : LIVE_PROVIDER_KIND === "deepseek"
+        ? createFridayAgentLlmClient({
+          api: "openai-completions",
+          baseUrl: DEEPSEEK_BASE_URL,
+          apiKey: process.env[DEEPSEEK_API_KEY_ENV]?.trim(),
+        })
+        : createFridayAgentLlmClient({
+          api: "ollama",
+          baseUrl: OLLAMA_BASE_URL,
+          allowPrivateNetwork: true,
+        });
 }
 
 function sanitizeProviderError(error: unknown): string {
@@ -111,6 +121,8 @@ async function ensureLiveVoiceProviderReady(): Promise<void> {
     await ensureOpenAiReady({ requiredKeyEnv: OPENAI_API_KEY_ENV });
   } else if (LIVE_PROVIDER_KIND === "anthropic") {
     await ensureAnthropicReady();
+  } else if (LIVE_PROVIDER_KIND === "deepseek") {
+    await ensureDeepSeekReady({ requiredKeyEnv: DEEPSEEK_API_KEY_ENV });
   } else {
     await ensureOllamaReady({ requiredModels: [FAST_MODEL] });
   }

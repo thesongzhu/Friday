@@ -22,6 +22,7 @@ import type {
 } from "../model/friday-plugin.types.js";
 import type {
   CreateFridayPluginServiceDeps,
+  FridayPluginEnableOptions,
   FridayPluginInstallInput,
   FridayPluginService,
 } from "./friday-plugin-service.types.js";
@@ -100,6 +101,33 @@ export function createFridayPluginService(
         { httpStatus: 403, details: { pluginId } },
       );
     }
+  }
+
+  function assertPluginEnableAllowedByLifecycle(
+    entity: FridayPluginEntity,
+    options?: FridayPluginEnableOptions,
+  ): void {
+    if (coreIds.has(entity.id) || entity.source === "bundled") {
+      return;
+    }
+    if (options?.lifecycleBypass === "canary" || options?.lifecycleBypass === "promote") {
+      return;
+    }
+    if (entity.promotionChannel === "active" && entity.compatibilityStatus === "compatible") {
+      return;
+    }
+    throw new FridayDomainError(
+      "PLUGIN_LIFECYCLE_PROMOTION_REQUIRED",
+      `Plugin "${entity.id}" must complete the external plugin lifecycle before it can be enabled.`,
+      {
+        httpStatus: 403,
+        details: {
+          pluginId: entity.id,
+          promotionChannel: entity.promotionChannel,
+          compatibilityStatus: entity.compatibilityStatus,
+        },
+      },
+    );
   }
 
   function classifyPublisherProgram(
@@ -218,6 +246,10 @@ export function createFridayPluginService(
       return entity ? enrichPluginEntity(entity) : null;
     },
 
+    isPluginRuntimeLoaded(pluginId: string): boolean {
+      return loader.getLoaded().has(pluginId);
+    },
+
     listPluginVersions(pluginId: string) {
       const entity = requirePlugin(pluginId);
       // Return the currently installed version as the only known version
@@ -305,9 +337,11 @@ export function createFridayPluginService(
       return enrichPluginEntity(entity);
     },
 
-    async enablePlugin(pluginId: string): Promise<FridayPluginEntity> {
+    async enablePlugin(pluginId: string, options?: FridayPluginEnableOptions): Promise<FridayPluginEntity> {
       const entity = requirePlugin(pluginId);
       const policySummary = buildPolicySummary(pluginId, entity.manifest);
+
+      assertPluginEnableAllowedByLifecycle(entity, options);
 
       if (!policySummary.enableAllowed) {
         throw new FridayDomainError(

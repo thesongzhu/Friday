@@ -8,6 +8,7 @@ import {
   type FridaySkillRegistry,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
+  type SkillLifecycleStatus,
 } from "#skills";
 import { FRIDAY_AGENT_TOOL_TIMEOUT_MS } from "../friday-agent.constants.js";
 import { evaluateFridaySkillMcpReadiness, type FridayMcpServerReadiness } from "../mcp/friday-mcp-readiness.js";
@@ -24,6 +25,7 @@ export interface CreateFridayAgentSkillToolDeps {
   skillExecutor: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
   listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
 }
 
 // ─── Factory ───
@@ -72,8 +74,30 @@ export function createFridayAgentSkillTool(
         timeoutMs,
       };
 
+      const persistedLifecycleStatus = deps.getSkillLifecycleStatus?.(skillId);
       const registeredSkill = deps.skillRegistry?.get(skillId);
+      if (persistedLifecycleStatus && persistedLifecycleStatus !== "installed") {
+        return jsonResult({
+          skillId,
+          status: "blocked",
+          ready: false,
+          code: "SKILL_NOT_AVAILABLE",
+          lifecycleStatus: persistedLifecycleStatus,
+          blockers: ["Skill is not available until it is installed and promoted."],
+        });
+      }
       if (registeredSkill) {
+        const lifecycleStatus = persistedLifecycleStatus ?? registeredSkill.status;
+        if (lifecycleStatus !== "installed") {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            code: "SKILL_NOT_AVAILABLE",
+            lifecycleStatus,
+            blockers: ["Skill is not available until it is installed and promoted."],
+          });
+        }
         const requiredInputs = (registeredSkill.manifest.inputs ?? [])
           .filter((field) =>
             field.required !== false
@@ -142,6 +166,15 @@ export function createFridayAgentSkillTool(
               runtimeKind: "node",
               gate: FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
             },
+          });
+        }
+        if (registeredSkill.origin === "managed" && registeredSkill.source !== "bundled") {
+          return jsonResult({
+            skillId,
+            status: "blocked",
+            ready: false,
+            code: "SKILL_RUN_APPROVAL_REQUIRED",
+            blockers: ["External skill execution requires canonical approval after promotion."],
           });
         }
         const blockers = [

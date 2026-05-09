@@ -2,7 +2,7 @@
  * Environment helpers for live E2E tests with real LLM providers.
  *
  * Canonical lane: FRIDAY_E2E_LIVE_ANTHROPIC=1 + FRIDAY_ANTHROPIC_API_KEY
- * Optional lanes: FRIDAY_E2E_LIVE_OPENAI=1, FRIDAY_E2E_LIVE_OLLAMA=1
+ * Optional lanes: FRIDAY_E2E_LIVE_OPENAI=1, FRIDAY_E2E_LIVE_DEEPSEEK=1, FRIDAY_E2E_LIVE_OLLAMA=1
  * Target: FRIDAY_E2E_TARGET=local|cloud (default: local)
  * Backward compatibility: E2E_LIVE=1
  */
@@ -34,35 +34,47 @@ import {
 // ─── Env constants ───
 
 const FRIDAY_E2E_LIVE_ANTHROPIC = process.env.FRIDAY_E2E_LIVE_ANTHROPIC === "1";
+const FRIDAY_E2E_LIVE_DEEPSEEK = process.env.FRIDAY_E2E_LIVE_DEEPSEEK === "1";
 const FRIDAY_E2E_LIVE_OLLAMA = process.env.FRIDAY_E2E_LIVE_OLLAMA === "1";
 const FRIDAY_E2E_LIVE_OPENAI = process.env.FRIDAY_E2E_LIVE_OPENAI === "1";
 const LEGACY_E2E_LIVE = process.env.E2E_LIVE === "1";
 export const E2E_LIVE =
-  FRIDAY_E2E_LIVE_ANTHROPIC || FRIDAY_E2E_LIVE_OLLAMA || FRIDAY_E2E_LIVE_OPENAI || LEGACY_E2E_LIVE;
+  FRIDAY_E2E_LIVE_ANTHROPIC
+  || FRIDAY_E2E_LIVE_DEEPSEEK
+  || FRIDAY_E2E_LIVE_OLLAMA
+  || FRIDAY_E2E_LIVE_OPENAI
+  || LEGACY_E2E_LIVE;
 /** @deprecated Use E2E_LIVE instead */
 export const E2E_REAL = E2E_LIVE;
 /** @deprecated Use E2E_LIVE instead */
 export const E2E_OLLAMA = E2E_LIVE;
 export const E2E_GATED = E2E_LIVE;
 
-export type FridayLiveProviderKind = "anthropic" | "ollama" | "openai";
+export type FridayLiveProviderKind = "anthropic" | "deepseek" | "ollama" | "openai";
 export const LIVE_PROVIDER_KIND: FridayLiveProviderKind =
   FRIDAY_E2E_LIVE_OPENAI
     ? "openai"
-    : FRIDAY_E2E_LIVE_OLLAMA
-      ? "ollama"
-      : (FRIDAY_E2E_LIVE_ANTHROPIC || (LEGACY_E2E_LIVE && hasLiveAnthropicApiKey()))
-        ? "anthropic"
-        : "ollama";
+    : FRIDAY_E2E_LIVE_DEEPSEEK
+      ? "deepseek"
+      : FRIDAY_E2E_LIVE_OLLAMA
+        ? "ollama"
+        : (FRIDAY_E2E_LIVE_ANTHROPIC || (LEGACY_E2E_LIVE && hasLiveAnthropicApiKey()))
+          ? "anthropic"
+          : "ollama";
 
 export const OLLAMA_BASE_URL =
   process.env.E2E_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
 export const OPENAI_BASE_URL =
   process.env.E2E_OPENAI_BASE_URL ?? "https://api.openai.com";
+export const DEEPSEEK_BASE_URL =
+  process.env.E2E_DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
 export const ANTHROPIC_BASE_URL =
   process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 export const OPENAI_API_KEY_ENV =
   process.env.E2E_OPENAI_API_KEY_ENV ?? "OPENAI_API_KEY";
+export const DEEPSEEK_API_KEY_ENV =
+  process.env.E2E_DEEPSEEK_API_KEY_ENV
+  ?? (process.env.DEEPSEEK_API_KEY ? "DEEPSEEK_API_KEY" : "FRIDAY_DEEPSEEK_API_KEY");
 export const ANTHROPIC_API_KEY_ENV_REF = resolveLiveAnthropicApiKeyEnvRef();
 export const FAST_MODEL =
   process.env.E2E_FAST_MODEL ??
@@ -70,14 +82,18 @@ export const FAST_MODEL =
     ? LIVE_ANTHROPIC_MODEL
     : LIVE_PROVIDER_KIND === "openai"
       ? "gpt-4o-mini"
-      : "llama3.2:3b");
+      : LIVE_PROVIDER_KIND === "deepseek"
+        ? "deepseek-v4-flash"
+        : "llama3.2:3b");
 export const CODE_MODEL =
   process.env.E2E_CODE_MODEL ??
   (LIVE_PROVIDER_KIND === "anthropic"
     ? LIVE_ANTHROPIC_MODEL
     : LIVE_PROVIDER_KIND === "openai"
       ? "gpt-4o"
-      : "qwen2.5-coder:7b");
+      : LIVE_PROVIDER_KIND === "deepseek"
+        ? "deepseek-v4-pro"
+        : "qwen2.5-coder:7b");
 export const LIVE_TARGET: FridayE2eTarget = E2E_TARGET;
 const LOCAL_PASSPHRASE =
   process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
@@ -106,6 +122,8 @@ function providerEnvKeysToSanitize(): string[] {
     case "anthropic":
       return [
         "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FRIDAY_DEEPSEEK_API_KEY",
         "GOOGLE_API_KEY",
         "OPENROUTER_API_KEY",
         "GROQ_API_KEY",
@@ -117,6 +135,8 @@ function providerEnvKeysToSanitize(): string[] {
       return [
         "FRIDAY_ANTHROPIC_API_KEY",
         "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FRIDAY_DEEPSEEK_API_KEY",
         "GOOGLE_API_KEY",
         "OPENROUTER_API_KEY",
         "GROQ_API_KEY",
@@ -129,11 +149,25 @@ function providerEnvKeysToSanitize(): string[] {
         "FRIDAY_ANTHROPIC_API_KEY",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FRIDAY_DEEPSEEK_API_KEY",
         "GOOGLE_API_KEY",
         "OPENROUTER_API_KEY",
         "GROQ_API_KEY",
         "MISTRAL_API_KEY",
         "XAI_API_KEY",
+      ];
+    case "deepseek":
+      return [
+        "FRIDAY_ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "XAI_API_KEY",
+        "OLLAMA_BASE_URL",
       ];
     default:
       return [];
@@ -252,6 +286,18 @@ export async function ensureOpenAiReady(opts?: {
   }
 }
 
+export async function ensureDeepSeekReady(opts?: {
+  requiredKeyEnv?: string;
+}): Promise<void> {
+  const requiredKeyEnv = opts?.requiredKeyEnv ?? DEEPSEEK_API_KEY_ENV;
+  const value = process.env[requiredKeyEnv];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(
+      `[Real E2E] DeepSeek preflight failed: environment variable '${requiredKeyEnv}' is not set`,
+    );
+  }
+}
+
 export async function ensureAnthropicReady(): Promise<void> {
   if (!ANTHROPIC_API_KEY_ENV_REF) {
     throw new Error(`[Real E2E] Anthropic preflight failed: ${liveAnthropicCredentialMessage()}`);
@@ -342,6 +388,8 @@ async function startLocalRealHubEnv(
 export async function createRealHubEnv(opts?: StartLocalRealHubEnvOptions): Promise<RealHubEnv> {
   if (LIVE_PROVIDER_KIND === "anthropic") {
     await ensureAnthropicReady();
+  } else if (LIVE_PROVIDER_KIND === "deepseek") {
+    await ensureDeepSeekReady();
   } else if (LIVE_PROVIDER_KIND === "openai") {
     await ensureOpenAiReady();
   } else if (LIVE_TARGET === "local") {

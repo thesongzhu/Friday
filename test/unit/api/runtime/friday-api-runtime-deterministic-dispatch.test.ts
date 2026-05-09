@@ -251,4 +251,73 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       }),
     }));
   });
+
+  it("routes session explicit high-impact preferences through requestPreferenceUpdate before agent execution", async () => {
+    db = createTestDb();
+    const executeRun = vi.fn(async (input) => ({
+      runId: input.runId ?? "agent-run-1",
+      status: "completed" as const,
+      response: "ok",
+      toolCallCount: 0,
+      durationMs: 10,
+      usageInput: 1,
+      usageOutput: 1,
+    }));
+    const requestPreferenceUpdate = vi.fn(() => ({
+      requiresConfirmation: true,
+      candidate: { id: "candidate-1", status: "ready_for_review" },
+    }));
+    const updatePreference = vi.fn();
+    const agentRuntime: FridayAgentRuntime = {
+      executeRun,
+      registerTool: vi.fn(),
+      resumeStaleRunsOnBoot: vi.fn(() => 0),
+    };
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: makeIdGenerator(),
+      nowIso: () => NOW,
+      providerService: makeProviderService(),
+      agentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
+      reflexService: {
+        requestPreferenceUpdate,
+        updatePreference,
+      } as never,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      computeChecksum: (content: string) => `checksum-${content.length}`,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    const runRoute = runtime.routes.getRoutes().find((route) => route.operationId === "sessions.run");
+    expect(runRoute).toBeDefined();
+
+    await runRoute!.handler({
+      params: { sessionKey: "chat:default:user-1" },
+      body: {
+        task: "以后允许 live llm 测试",
+      },
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        scopes: ["agent.run"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+    } as never);
+
+    expect(requestPreferenceUpdate).toHaveBeenCalledWith({
+      userId: "user-1",
+      category: "reflex",
+      key: "testing.live_llm_policy",
+      value: "allowed_with_cost_notice",
+      sourceSurface: "operate",
+    });
+    expect(updatePreference).not.toHaveBeenCalled();
+    expect(executeRun).toHaveBeenCalledOnce();
+  });
 });

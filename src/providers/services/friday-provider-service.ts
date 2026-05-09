@@ -132,7 +132,50 @@ function describeRoutingReference(
   if (!provider.enabled) {
     return `${label} "${providerId}" is disabled`;
   }
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    return `${label} "${providerId}" is in ${provider.promotionChannel} lifecycle and is not promoted`;
+  }
+  if (!isProviderValidationOkForRouting(provider)) {
+    return `${label} "${providerId}" ${describeProviderValidationForRouting(provider)}`;
+  }
   return `${label} "${providerId}" is enabled but was not selected`;
+}
+
+function providerValidationStatusForRouting(
+  provider: FridayProviderProfile,
+): FridayProviderValidationState["status"] {
+  return provider.config.validation?.status ?? "never";
+}
+
+function isProviderValidationOkForRouting(provider: FridayProviderProfile): boolean {
+  return providerValidationStatusForRouting(provider) === "ok";
+}
+
+function isProviderLifecycleAvailableForRouting(provider: FridayProviderProfile): boolean {
+  const promotionChannel = provider.promotionChannel ?? "none";
+  return promotionChannel === "none" || promotionChannel === "active";
+}
+
+function shouldAutoValidateProviderForRouting(provider: FridayProviderProfile): boolean {
+  return provider.enabled && isProviderLifecycleAvailableForRouting(provider)
+    && providerValidationStatusForRouting(provider) === "never";
+}
+
+function describeProviderValidationForRouting(provider: FridayProviderProfile): string {
+  const status = providerValidationStatusForRouting(provider);
+  if (status === "ok") {
+    return "is validated";
+  }
+  if (status === "failed") {
+    const detail = provider.config.validation?.errorMessage
+      ? `: ${provider.config.validation.errorMessage}`
+      : "";
+    return `validation failed${detail}`;
+  }
+  const detail = provider.config.validation?.errorMessage
+    ? `: ${provider.config.validation.errorMessage}`
+    : "";
+  return `has not been validated${detail}`;
 }
 
 function isImageCapabilityProbe(capability: FridayRuntimeCapabilityId): boolean {
@@ -280,6 +323,13 @@ function assertRequestedProviderAvailable(
       httpStatus: 400,
     });
   }
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    throw new FridayDomainError(
+      "PROVIDER_LIFECYCLE_UNPROMOTED",
+      `Provider "${requestedProviderId}" is in ${provider.promotionChannel} lifecycle and is not promoted for normal routing`,
+      { httpStatus: 409 },
+    );
+  }
   return provider;
 }
 
@@ -287,6 +337,12 @@ function explainPinnedProviderNoCandidates(
   provider: FridayProviderProfile,
   requestedModel?: string,
 ): string {
+  if (!isProviderLifecycleAvailableForRouting(provider)) {
+    return `Provider "${provider.id}" is in ${provider.promotionChannel} lifecycle and is not promoted for normal routing.`;
+  }
+  if (!isProviderValidationOkForRouting(provider)) {
+    return `Provider "${provider.id}" ${describeProviderValidationForRouting(provider)}. Validate the provider before routing.`;
+  }
   if (requestedModel && requestedModel.trim().length > 0) {
     return `Provider "${provider.id}" does not support requested model "${requestedModel}".`;
   }
@@ -301,6 +357,14 @@ function filterCandidatesToPinnedProvider(
     return candidates;
   }
   return candidates.filter((candidate) => candidate.provider.id === pinnedProvider.id);
+}
+
+function filterCandidatesToValidatedProviders(
+  candidates: FridayResolvedProviderRoute[],
+): FridayResolvedProviderRoute[] {
+  return candidates.filter((candidate) =>
+    isProviderValidationOkForRouting(candidate.provider),
+  );
 }
 
 interface FridayHistoricalRunRouteRow {
@@ -379,6 +443,7 @@ export function createFridayProviderService(
     usageRepo,
     nowIso: deps.nowIso,
   });
+  const allowImplicitProviderStateMutation = deps.allowImplicitProviderStateMutation !== false;
   const credentialHandles = createFridayEphemeralSecretHandleRegistry({
     nowMs: deps.nowMs,
   });
@@ -1326,6 +1391,11 @@ export function createFridayProviderService(
           break;
       }
       reasons.push("validation_failed");
+    } else if ((validationState?.status ?? "never") !== "ok") {
+      if (backendHealth === "healthy") {
+        backendHealth = "status_unknown";
+      }
+      reasons.push("validation_unverified");
     }
 
     if ((normalized.config.supportedModels?.length ?? 0) === 0) {
@@ -1372,6 +1442,17 @@ export function createFridayProviderService(
     return (profile.config.runtimeCapabilities ?? []).some((declaration) =>
       declaration.capability === capability && declarationMatchesModel(declaration, model),
     );
+  }
+
+  function normalizeUserDeclaredRuntimeCapabilities(
+    declarations: FridayProviderRuntimeCapabilityDeclaration[] | undefined,
+  ): FridayProviderRuntimeCapabilityDeclaration[] | undefined {
+    return declarations?.map((declaration) => ({
+      ...declaration,
+      verified: declaration.status === "failed" ? false : undefined,
+      status: declaration.status === "failed" ? "failed" : "declared",
+      verifiedAt: undefined,
+    }));
   }
 
   function listCapabilityDoctorTargets(
@@ -2261,6 +2342,101 @@ export function createFridayProviderService(
     return filterFridayProviderRoutesByRequiredCapabilities(input.candidates, required);
   }
 
+  function buildRouteCandidates(input: {
+    routing: FridayModelRoutingConfig;
+    providers: FridayProviderProfile[];
+    requestedModel?: string;
+    pinnedProvider?: FridayProviderProfile;
+  }): FridayResolvedProviderRoute[] {
+    return filterCandidatesToPinnedProvider(
+      fallback.resolveCandidates({
+        routing: input.pinnedProvider
+          ? {
+              defaultProviderId: input.pinnedProvider.id,
+              fallbackProviderIds: [],
+            }
+          : input.routing,
+        providers: input.providers,
+        requestedModel: input.requestedModel,
+      }).filter((route) => isProviderLifecycleAvailableForRouting(route.provider)),
+      input.pinnedProvider,
+    );
+  }
+
+  async function autoValidateRoutingCandidatesOnce(input: {
+    candidates: FridayResolvedProviderRoute[];
+    tenantContext?: FridayProviderTenantContext;
+  }): Promise<boolean> {
+    if (!allowImplicitProviderStateMutation) {
+      return false;
+    }
+    const providerIds = new Set<string>();
+    for (const candidate of input.candidates) {
+      if (shouldAutoValidateProviderForRouting(candidate.provider)) {
+        providerIds.add(candidate.provider.id);
+      }
+    }
+    for (const providerId of providerIds) {
+      await service.validateProvider(providerId, {
+        tenantContext: input.tenantContext,
+      });
+    }
+    return providerIds.size > 0;
+  }
+
+  async function buildValidatedRouteCandidates(input: {
+    routing: FridayModelRoutingConfig;
+    providers: FridayProviderProfile[];
+    requestedModel?: string;
+    requestedProviderId?: string;
+    tenantContext?: FridayProviderTenantContext;
+    autoValidate?: boolean;
+  }): Promise<{
+    providers: FridayProviderProfile[];
+    pinnedProvider?: FridayProviderProfile;
+    candidates: FridayResolvedProviderRoute[];
+  }> {
+    let currentProviders = input.providers;
+    let pinnedProvider = input.requestedProviderId
+      ? assertRequestedProviderAvailable(currentProviders, input.requestedProviderId)
+      : undefined;
+    let candidates = buildRouteCandidates({
+      routing: input.routing,
+      providers: currentProviders,
+      requestedModel: input.requestedModel,
+      pinnedProvider,
+    });
+
+    if (input.autoValidate === true) {
+      const validatedAny = await autoValidateRoutingCandidatesOnce({
+        candidates,
+        tenantContext: input.tenantContext,
+      });
+      if (validatedAny) {
+        currentProviders = deps.db.withReadConnection((db) =>
+          profileRepo.list(db),
+        );
+        pinnedProvider = input.requestedProviderId
+          ? assertRequestedProviderAvailable(currentProviders, input.requestedProviderId)
+          : undefined;
+        candidates = buildRouteCandidates({
+          routing: input.routing,
+          providers: currentProviders,
+          requestedModel: input.requestedModel,
+          pinnedProvider,
+        });
+      }
+    }
+
+    candidates = filterCandidatesToValidatedProviders(candidates);
+
+    return {
+      providers: currentProviders,
+      pinnedProvider,
+      candidates,
+    };
+  }
+
   function explainRequiredCapabilityNoCandidates(
     requiredCapabilities?: FridayRuntimeCapabilityId[],
   ): string {
@@ -2346,7 +2522,22 @@ export function createFridayProviderService(
         ?? (options?.ownerUserId
           ? { hubId: options.ownerUserId, userId: options.ownerUserId }
           : undefined);
-      const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const requestedProviderIds = new Set(
+        (options?.providerIds ?? [])
+          .map((providerId) => providerId.trim())
+          .filter((providerId) => providerId.length > 0),
+      );
+      const allProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
+      const providers = requestedProviderIds.size > 0
+        ? allProviders.filter((provider) => requestedProviderIds.has(provider.id))
+        : allProviders;
+      if (providers.length !== requestedProviderIds.size && requestedProviderIds.size > 0) {
+        const foundProviderIds = new Set(providers.map((provider) => provider.id));
+        const missingProviderId = [...requestedProviderIds].find((providerId) => !foundProviderIds.has(providerId));
+        throw new FridayDomainError("PROVIDER_NOT_FOUND", `Provider "${missingProviderId ?? "unknown"}" not found`, {
+          httpStatus: 404,
+        });
+      }
       const providerValidations: FridayProviderCapabilityDoctorReport["providerValidations"] = [];
       const capabilityResults: FridayProviderCapabilityDoctorProbeResult[] = [];
 
@@ -2402,7 +2593,6 @@ export function createFridayProviderService(
           });
           deps.db.withWriteTransaction((db) => {
             profileRepo.update(db, updated);
-            syncDefaultAuthProfile(db, updated);
           });
         }
       }
@@ -2424,21 +2614,18 @@ export function createFridayProviderService(
         );
       }
       const providers = deps.db.withReadConnection((db) => profileRepo.list(db));
-      let currentProviders = providers;
-      let pinnedProvider = input.requestedProviderId
-        ? assertRequestedProviderAvailable(providers, input.requestedProviderId)
-        : undefined;
-      let candidates = fallback.resolveCandidates({
-        routing: pinnedProvider
-          ? {
-              defaultProviderId: pinnedProvider.id,
-              fallbackProviderIds: [],
-            }
-          : routing,
+      let {
+        providers: currentProviders,
+        pinnedProvider,
+        candidates,
+      } = await buildValidatedRouteCandidates({
+        routing,
         providers,
         requestedModel: input.requestedModel,
+        requestedProviderId: input.requestedProviderId,
+        tenantContext: input.tenantContext,
+        autoValidate: false,
       });
-      candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
       const requiredCapabilities = input.routingContext?.requiredCapabilities;
       let candidatesBeforeCapabilityFilter = candidates;
       let candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
@@ -2450,35 +2637,6 @@ export function createFridayProviderService(
         && candidatesAfterCapabilityFilter.length === 0
         && Boolean(requiredCapabilities?.length);
 
-      if (capabilityFilterRemovedAllCandidates) {
-        await service.runCapabilityDoctor({
-          tenantContext: input.tenantContext,
-        });
-        currentProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
-        pinnedProvider = input.requestedProviderId
-          ? assertRequestedProviderAvailable(currentProviders, input.requestedProviderId)
-          : undefined;
-        candidates = fallback.resolveCandidates({
-          routing: pinnedProvider
-            ? {
-                defaultProviderId: pinnedProvider.id,
-                fallbackProviderIds: [],
-              }
-            : routing,
-          providers: currentProviders,
-          requestedModel: input.requestedModel,
-        });
-        candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
-        candidatesBeforeCapabilityFilter = candidates;
-        candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
-          candidates,
-          requiredCapabilities,
-        });
-        capabilityFilterRemovedAllCandidates =
-          candidatesBeforeCapabilityFilter.length > 0
-          && candidatesAfterCapabilityFilter.length === 0
-          && Boolean(requiredCapabilities?.length);
-      }
       candidates = candidatesAfterCapabilityFilter;
       const requiresNativeTools = input.routingContext?.requiresNativeTools === true;
       if (candidates.length === 0) {
@@ -2613,7 +2771,7 @@ export function createFridayProviderService(
           : keySource,
         supportedModels: normalizeFridayProviderSupportedModels(input.supportedModels),
         headers: input.headers,
-        runtimeCapabilities: input.runtimeCapabilities,
+        runtimeCapabilities: normalizeUserDeclaredRuntimeCapabilities(input.runtimeCapabilities),
         httpConfig: backendKind === "http" ? { headersPolicy: "custom" } : undefined,
         cliConfig: backendKind === "cli" ? input.cliConfig : undefined,
         validation: { status: "never" },
@@ -2770,7 +2928,9 @@ export function createFridayProviderService(
           patch.supportedModels ?? existing.config.supportedModels,
         ),
         headers: patch.headers ?? existing.config.headers,
-        runtimeCapabilities: patch.runtimeCapabilities ?? existing.config.runtimeCapabilities,
+        runtimeCapabilities: patch.runtimeCapabilities !== undefined
+          ? normalizeUserDeclaredRuntimeCapabilities(patch.runtimeCapabilities)
+          : existing.config.runtimeCapabilities,
         httpConfig: nextBackendKind === "http"
           ? existing.config.httpConfig ?? { headersPolicy: "custom" }
           : undefined,
@@ -2942,6 +3102,8 @@ export function createFridayProviderService(
         api: profile.config.api,
         authMode: profile.config.authMode,
         baseUrl: profile.baseUrl,
+        backendKind: profile.config.backendKind,
+        cliConfig: profile.config.cliConfig,
       });
 
       let credential: string | null = null;
@@ -2950,7 +3112,6 @@ export function createFridayProviderService(
         profile.config.validation = state;
         deps.db.withWriteTransaction((db) => {
           profileRepo.update(db, normalizeProviderConfig(profile));
-          syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
         });
         return state;
       }
@@ -2987,7 +3148,6 @@ export function createFridayProviderService(
       profile.config.validation = state;
       deps.db.withWriteTransaction((db) => {
         profileRepo.update(db, normalizeProviderConfig(profile));
-        syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
       });
 
       return state;
@@ -3007,7 +3167,7 @@ export function createFridayProviderService(
       return normalizeFridayModelRoutingConfig(validated);
     },
 
-    async resolveRoute(requestedModel, requestedProviderId) {
+    async resolveRoute(requestedModel, requestedProviderId, options) {
       const routing = loadRoutingConfig();
       if (!routing || !routing.defaultProviderId) {
         throw new FridayDomainError(
@@ -3019,28 +3179,24 @@ export function createFridayProviderService(
       const providers = deps.db.withReadConnection((db) =>
         profileRepo.list(db),
       );
-      const pinnedProvider = requestedProviderId
-        ? assertRequestedProviderAvailable(providers, requestedProviderId)
-        : undefined;
-      const candidates = filterCandidatesToPinnedProvider(
-        fallback.resolveCandidates({
-        routing: pinnedProvider
-          ? {
-              defaultProviderId: pinnedProvider.id,
-              fallbackProviderIds: [],
-            }
-          : routing,
+      const {
+        providers: currentProviders,
+        pinnedProvider,
+        candidates,
+      } = await buildValidatedRouteCandidates({
+        routing,
         providers,
         requestedModel,
-        }),
-        pinnedProvider,
-      );
+        requestedProviderId,
+        tenantContext: options?.tenantContext,
+        autoValidate: options?.autoValidate !== false,
+      });
       if (candidates.length === 0) {
         throw new FridayDomainError(
           "PROVIDER_NO_CANDIDATES",
           pinnedProvider
             ? explainPinnedProviderNoCandidates(pinnedProvider, requestedModel)
-            : explainNoCandidates(routing, providers),
+            : explainNoCandidates(routing, currentProviders),
           { httpStatus: 400 },
         );
       }
@@ -3089,22 +3245,19 @@ export function createFridayProviderService(
       const providers = deps.db.withReadConnection((db) =>
         profileRepo.list(db),
       );
-      let currentProviders = providers;
-      let pinnedProvider = params.requestedProviderId
-        ? assertRequestedProviderAvailable(providers, params.requestedProviderId)
-        : undefined;
-      const prefetchedCredentialHandles = new Map<string, string>();
-      let candidates = fallback.resolveCandidates({
-        routing: pinnedProvider
-          ? {
-              defaultProviderId: pinnedProvider.id,
-              fallbackProviderIds: [],
-            }
-          : routing,
+      let {
+        providers: currentProviders,
+        pinnedProvider,
+        candidates,
+      } = await buildValidatedRouteCandidates({
+        routing,
         providers,
         requestedModel: params.requestedModel,
+        requestedProviderId: params.requestedProviderId,
+        tenantContext: params.tenantContext,
+        autoValidate: true,
       });
-      candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+      const prefetchedCredentialHandles = new Map<string, string>();
       const requiredCapabilities = params.routingContext?.requiredCapabilities;
       let candidatesBeforeCapabilityFilter = candidates;
       let candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
@@ -3116,27 +3269,25 @@ export function createFridayProviderService(
         && candidatesAfterCapabilityFilter.length === 0
         && Boolean(requiredCapabilities?.length);
 
-      if (capabilityFilterRemovedAllCandidates) {
+      if (capabilityFilterRemovedAllCandidates && allowImplicitProviderStateMutation) {
         await service.runCapabilityDoctor({
           tenantContext: params.tenantContext,
         });
         currentProviders = deps.db.withReadConnection((db) =>
           profileRepo.list(db),
         );
-        pinnedProvider = params.requestedProviderId
-          ? assertRequestedProviderAvailable(currentProviders, params.requestedProviderId)
-          : undefined;
-        candidates = fallback.resolveCandidates({
-          routing: pinnedProvider
-            ? {
-                defaultProviderId: pinnedProvider.id,
-                fallbackProviderIds: [],
-              }
-            : routing,
+        ({
+          providers: currentProviders,
+          pinnedProvider,
+          candidates,
+        } = await buildValidatedRouteCandidates({
+          routing,
           providers: currentProviders,
           requestedModel: params.requestedModel,
-        });
-        candidates = filterCandidatesToPinnedProvider(candidates, pinnedProvider);
+          requestedProviderId: params.requestedProviderId,
+          tenantContext: params.tenantContext,
+          autoValidate: false,
+        }));
         candidatesBeforeCapabilityFilter = candidates;
         candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
           candidates,

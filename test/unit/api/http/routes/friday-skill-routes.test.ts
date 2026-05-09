@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { FridayDomainError } from "#errors";
 import { FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV } from "#skills";
 import { createFridaySkillRoutes } from "../../../../../src/api/http/routes/friday-skill-routes.js";
@@ -177,11 +180,37 @@ describe("createFridaySkillRoutes", () => {
     expect(result).toHaveProperty("items.0.version", "1.0.0");
   });
 
-  it("registers lifecycle routes when the lifecycle service is provided", () => {
+  it("uses persisted lifecycle status over registry status in GET /v1/skills fallback", async () => {
     const routes = createFridaySkillRoutes({
-      skillRegistry: { list: () => [] } as never,
-      lifecycle: makeLifecycle() as never,
+      skillRegistry: {
+        list: () => [{
+          manifest: {
+            id: "skill.alpha",
+            name: "Alpha",
+            version: "1.0.0",
+            category: "utility",
+            tags: [],
+          },
+          source: "local",
+          origin: "workspace",
+          status: "installed",
+        } as never],
+      } as never,
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "skill.alpha" ? "not_installed" : undefined,
     });
+
+    const route = routes.find((item) => item.operationId === "skills.list");
+    const result = await route!.handler(makeCtx());
+    expect(result).toHaveProperty("items.0.skillId", "skill.alpha");
+    expect(result).toHaveProperty("items.0.status", "not_installed");
+  });
+
+	  it("registers lifecycle routes when the lifecycle service is provided", () => {
+	    const routes = createFridaySkillRoutes({
+	      skillRegistry: { list: () => [] } as never,
+	      lifecycle: makeLifecycle() as never,
+	    });
 
     expect(routes.map((route) => route.operationId)).toEqual([
       "skills.list",
@@ -193,10 +222,38 @@ describe("createFridaySkillRoutes", () => {
       "skills.manifest.validate",
       "skills.verify",
       "skills.run",
-    ]);
-  });
+	    ]);
+	  });
 
-  it("forwards install, update, delete, verify, and manifest validation to lifecycle service", async () => {
+	  it("keeps retired legacy mutation operation ids when the lifecycle service is unavailable", async () => {
+	    const routes = createFridaySkillRoutes({
+	      skillRegistry: { list: () => [] } as never,
+	      registerRetiredLegacySkillMutationRoutes: true,
+	    });
+
+	    expect(routes.map((route) => route.operationId)).toEqual([
+	      "skills.list",
+	      "skills.install",
+	      "skills.update",
+	      "skills.delete",
+	      "skills.run",
+	    ]);
+
+	    await expect(
+	      routes.find((item) => item.operationId === "skills.install")!
+	        .handler(makeCtx({ body: { skillId: "skill.alpha" } })),
+	    ).rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(
+	      routes.find((item) => item.operationId === "skills.update")!
+	        .handler(makeCtx({ params: { skillId: "skill.alpha" } })),
+	    ).rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(
+	      routes.find((item) => item.operationId === "skills.delete")!
+	        .handler(makeCtx({ params: { skillId: "skill.alpha" } })),
+	    ).rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	  });
+
+	  it("blocks legacy install/update/delete for managed external skills while keeping read verification routes active", async () => {
     const lifecycle = makeLifecycle();
     const routes = createFridaySkillRoutes({
       skillRegistry: { list: () => [] } as never,
@@ -209,17 +266,52 @@ describe("createFridaySkillRoutes", () => {
     const verify = routes.find((item) => item.operationId === "skills.verify")!;
     const validate = routes.find((item) => item.operationId === "skills.manifest.validate")!;
 
-    await install.handler(makeCtx({ body: { skillId: "skill.alpha", sourceId: "src-1" } }));
-    await update.handler(makeCtx({ params: { skillId: "skill.alpha" }, body: { version: "1.1.0" } }));
-    await remove.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
+    await expect(install.handler(makeCtx({ body: { skillId: "skill.alpha", sourceId: "src-1" } })))
+      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+    await expect(update.handler(makeCtx({ params: { skillId: "skill.alpha" }, body: { version: "1.1.0" } })))
+      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+    await expect(remove.handler(makeCtx({ params: { skillId: "skill.alpha" } })))
+      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
     await verify.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
     await validate.handler(makeCtx({ body: { manifest: { id: "skill.alpha" } } }));
 
-    expect(lifecycle.install).toHaveBeenCalledWith(expect.objectContaining({
+    expect(lifecycle.install).not.toHaveBeenCalled();
+    expect(lifecycle.update).not.toHaveBeenCalled();
+    expect(lifecycle.deleteSkill).not.toHaveBeenCalled();
+    expect(lifecycle.verifySkill).toHaveBeenCalledWith({
       skillId: "skill.alpha",
-      sourceId: "src-1",
       userId: "user-1",
+    });
+    expect(lifecycle.validateManifest).toHaveBeenCalledWith({ id: "skill.alpha" });
+  });
+
+  it("keeps legacy update/delete available for non-managed skills", async () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.getSkill.mockImplementation((skillId: string) => ({
+      skillId,
+      name: "Workspace Skill",
+      source: "workspace",
+      origin: "workspace",
+      status: "installed",
+      starter: false,
+      tags: [],
+      updateAvailable: false,
+      managed: false,
+      registryLoaded: true,
+      versions: [],
+      installations: [],
     }));
+    const routes = createFridaySkillRoutes({
+      skillRegistry: { list: () => [] } as never,
+      lifecycle: lifecycle as never,
+    });
+
+    const update = routes.find((item) => item.operationId === "skills.update")!;
+    const remove = routes.find((item) => item.operationId === "skills.delete")!;
+
+    await update.handler(makeCtx({ params: { skillId: "skill.alpha" }, body: { version: "1.1.0" } }));
+    await remove.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
+
     expect(lifecycle.update).toHaveBeenCalledWith(expect.objectContaining({
       skillId: "skill.alpha",
       version: "1.1.0",
@@ -229,11 +321,6 @@ describe("createFridaySkillRoutes", () => {
       skillId: "skill.alpha",
       deletedBy: "user-1",
     });
-    expect(lifecycle.verifySkill).toHaveBeenCalledWith({
-      skillId: "skill.alpha",
-      userId: "user-1",
-    });
-    expect(lifecycle.validateManifest).toHaveBeenCalledWith({ id: "skill.alpha" });
   });
 
   it("rejects missing install skillId and missing manifest payload", async () => {
@@ -255,7 +342,23 @@ describe("createFridaySkillRoutes", () => {
     const lifecycle = makeLifecycle();
     const executor = makeExecutor();
     const routes = createFridaySkillRoutes({
-      skillRegistry: { list: () => [] } as never,
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => ({
+          source: "bundled",
+          origin: "bundled",
+          manifest: {
+            id: "skill.alpha",
+            kind: "conversation",
+            runtime: { kind: "shell" },
+            requirements: { bins: [], env: [], config: [], os: [] },
+            executionTargets: {
+              allowedSatelliteTypes: ["desktop"],
+              requiredCapabilities: [],
+            },
+          },
+        })),
+      } as never,
       lifecycle: lifecycle as never,
       skillExecutor: executor as never,
     });
@@ -313,6 +416,92 @@ describe("createFridaySkillRoutes", () => {
       skillId: "skill.alpha",
     }));
     expect(result).toHaveProperty("status", "completed");
+  });
+
+  it("blocks lifecycle-visible skills that are staged but not installed", async () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.getSkill.mockReturnValueOnce({
+      skillId: "skill.staged",
+      name: "Staged",
+      source: "external",
+      origin: "managed",
+      status: "not_installed",
+      starter: false,
+      tags: [],
+      updateAvailable: false,
+      managed: true,
+      registryLoaded: false,
+      currentManifest: {
+        kind: "conversation",
+        runtime: { kind: "shell" },
+      },
+      versions: [],
+      installations: [],
+    });
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => null),
+      } as never,
+      lifecycle: lifecycle as never,
+      skillExecutor: executor as never,
+    });
+
+    await expect(
+      routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "skill.staged" },
+        body: { input: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+      httpStatus: 409,
+      details: {
+        skillId: "skill.staged",
+        status: "not_installed",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("blocks registry-visible skills when persisted lifecycle status is unavailable", async () => {
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => ({
+          status: "installed",
+          manifest: {
+            id: "skill.alpha",
+            kind: "conversation",
+            runtime: { kind: "shell" },
+            requirements: { bins: [], env: [], config: [], os: [] },
+            executionTargets: {
+              allowedSatelliteTypes: ["desktop"],
+              requiredCapabilities: [],
+            },
+          },
+        })),
+      } as never,
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "skill.alpha" ? "not_installed" : undefined,
+      skillExecutor: executor as never,
+    });
+
+    await expect(
+      routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "skill.alpha" },
+        body: { input: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+      httpStatus: 409,
+      details: {
+        skillId: "skill.alpha",
+        status: "not_installed",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
   });
 
   it("returns CAPABILITY_DISABLED for node-runtime skill execution when the gate is off", async () => {
@@ -393,6 +582,59 @@ describe("createFridaySkillRoutes", () => {
       } else {
         process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV] = previousGate;
       }
+    }
+  });
+
+  it("rejects in-place content edits for promoted managed external skills", async () => {
+    const managedSkillsDir = join(tmpdir(), `friday-skill-route-managed-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const skillDir = join(managedSkillsDir, "skill.external");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Original\n", "utf8");
+    writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify({
+      id: "skill.external",
+      name: "Original",
+      version: "1.0.0",
+      runtime: { kind: "shell" },
+    }, null, 2), "utf8");
+    try {
+      const routes = createFridaySkillRoutes({
+        managedSkillsDir,
+        skillRegistry: {
+          list: () => [],
+          get: vi.fn(() => ({
+            source: "local",
+            origin: "managed",
+            status: "installed",
+            manifest: {
+              id: "skill.external",
+              name: "Original",
+              kind: "conversation",
+              runtime: { kind: "shell" },
+            },
+          })),
+        } as never,
+      });
+
+      await expect(
+        routes.find((item) => item.operationId === "skills.content.update")!.handler(makeCtx({
+          params: { skillId: "skill.external" },
+          body: {
+            name: "Changed",
+            description: "Changed description",
+            tags: ["changed"],
+          },
+        })),
+      ).rejects.toMatchObject({
+        code: "SKILL_CONTENT_UPDATE_REQUIRES_LIFECYCLE",
+        httpStatus: 409,
+      });
+
+      expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("# Original\n");
+      expect(JSON.parse(readFileSync(join(skillDir, "skill.manifest.json"), "utf8"))).toMatchObject({
+        name: "Original",
+      });
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
     }
   });
 });

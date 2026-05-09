@@ -420,6 +420,36 @@ export interface FridayAgentRunAwaitingPlanApprovalPayload {
     | "major_decision";
 }
 
+export interface FridayAgentRunPlanApprovedPayload {
+  runId: string;
+  approvedAt: string;
+  approvalMode: string;
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
+  approverPrincipalId?: string;
+  scopes?: string[];
+  surface?: string;
+}
+
+export interface FridayAgentRunPlanRejectedPayload {
+  runId: string;
+  rejectedAt: string;
+  rejectionMode: string;
+  planKind?:
+    | "generate_skill"
+    | "generate_workflow"
+    | "deploy_workflow"
+    | "export_workflow_bundle"
+    | "major_decision";
+  approverPrincipalId?: string;
+  scopes?: string[];
+  surface?: string;
+}
+
 export interface FridayAgentRunAwaitingToolApprovalPayload {
   runId: string;
   status: "awaiting_tool_approval";
@@ -680,6 +710,8 @@ export interface FridayAgentEventMap {
   "agent.run.awaiting_clarification": FridayAgentRunAwaitingClarificationPayload;
   "agent.run.plan_ready": FridayAgentRunPlanReadyPayload;
   "agent.run.awaiting_plan_approval": FridayAgentRunAwaitingPlanApprovalPayload;
+  "agent.run.plan_approved": FridayAgentRunPlanApprovedPayload;
+  "agent.run.plan_rejected": FridayAgentRunPlanRejectedPayload;
   "agent.run.awaiting_tool_approval": FridayAgentRunAwaitingToolApprovalPayload;
   "agent.run.capability_grant_issued": FridayAgentCapabilityGrantIssuedPayload;
   "agent.run.capability_grant_denied": FridayAgentCapabilityGrantDeniedPayload;

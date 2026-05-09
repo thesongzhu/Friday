@@ -65,11 +65,15 @@ function createStubConverterService(): FridaySkillConverterService {
         ],
       };
     },
+    getCandidate() {
+      return null;
+    },
     async import() {
       return {
         converterId: "mock-skill-converter",
         detectedFormat: "clawdbot-skill-md",
-        imports: [],
+        candidates: [],
+        validation: [],
         registryRefreshed: false,
       };
     },

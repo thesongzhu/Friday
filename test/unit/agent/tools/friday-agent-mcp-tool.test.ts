@@ -80,10 +80,17 @@ function makeAdapter(): FridayMcpAdapter {
   };
 }
 
+function createPromotedMcpTool(adapter: FridayMcpAdapter) {
+  return createFridayAgentMcpTool({
+    mcpAdapter: adapter,
+    getServerAvailability: () => ({ available: true, promotionChannel: "active" }),
+  });
+}
+
 describe("createFridayAgentMcpTool", () => {
   it("lists configured MCP servers", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute({ action: "list_servers" }, new AbortController().signal);
     expect(result.isError).toBeUndefined();
@@ -95,7 +102,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("lists MCP server discovery states", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute({ action: "list_server_states" }, new AbortController().signal);
     expect(result.isError).toBeUndefined();
@@ -106,7 +113,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("lists MCP tools for a server filter", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute(
       { action: "list_tools", serverId: "filesystem" },
@@ -125,7 +132,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("searches MCP tools without loading full prompt/resource results", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute(
       { action: "search_tools", serverId: "filesystem", query: "read" },
@@ -142,7 +149,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("calls an MCP tool with args", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute(
       {
@@ -163,9 +170,90 @@ describe("createFridayAgentMcpTool", () => {
     });
   });
 
-  it("lists and reads MCP resources", async () => {
+  it("blocks MCP tool calls for configured servers that are not lifecycle-promoted", async () => {
+    const adapter = makeAdapter();
+    const tool = createFridayAgentMcpTool({
+      mcpAdapter: adapter,
+      getServerAvailability: () => ({
+        available: false,
+        promotionChannel: "shadow",
+        reason: "MCP server must complete lifecycle promote before agent use.",
+      }),
+    });
+
+    const result = await tool.execute(
+      {
+        action: "call_tool",
+        serverId: "filesystem",
+        toolName: "read_file",
+        args: { path: "/tmp/a.txt" },
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.errorCode).toBe("MCP_SERVER_NOT_PROMOTED");
+    expect(adapter.callTool).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when no MCP lifecycle availability resolver is provided", async () => {
     const adapter = makeAdapter();
     const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+
+    const result = await tool.execute(
+      {
+        action: "call_tool",
+        serverId: "filesystem",
+        toolName: "read_file",
+        args: { path: "/tmp/a.txt" },
+      },
+      new AbortController().signal,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.errorCode).toBe("MCP_SERVER_NOT_PROMOTED");
+    expect(result.content).toContain("availability gate is unavailable");
+    expect(adapter.callTool).not.toHaveBeenCalled();
+  });
+
+  it("filters discovery actions to lifecycle-promoted servers only", async () => {
+    const adapter = makeAdapter();
+    adapter.listServers = vi.fn().mockReturnValue([
+      {
+        id: "filesystem",
+        transport: "stdio",
+        command: "npx",
+      },
+      {
+        id: "candidate",
+        transport: "stdio",
+        command: "node",
+      },
+    ]);
+    const tool = createFridayAgentMcpTool({
+      mcpAdapter: adapter,
+      getServerAvailability: (serverId) => ({
+        available: serverId === "filesystem",
+        promotionChannel: serverId === "filesystem" ? "active" : "shadow",
+      }),
+    });
+
+    const result = await tool.execute(
+      { action: "list_tools" },
+      new AbortController().signal,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(adapter.listTools).toHaveBeenCalledTimes(1);
+    expect(adapter.listTools).toHaveBeenCalledWith({
+      serverId: "filesystem",
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("lists and reads MCP resources", async () => {
+    const adapter = makeAdapter();
+    const tool = createPromotedMcpTool(adapter);
 
     const listResult = await tool.execute(
       { action: "list_resources", serverId: "filesystem" },
@@ -187,7 +275,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("lists and gets MCP prompts", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const listResult = await tool.execute(
       { action: "list_prompts", serverId: "filesystem" },
@@ -215,7 +303,7 @@ describe("createFridayAgentMcpTool", () => {
 
   it("returns validation error when args is not an object", async () => {
     const adapter = makeAdapter();
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
 
     const result = await tool.execute(
       {
@@ -243,7 +331,7 @@ describe("createFridayAgentMcpTool", () => {
     mcpError.correlationId = "filesystem:tools.call.read_file:abc";
     adapter.callTool = vi.fn().mockRejectedValue(mcpError);
 
-    const tool = createFridayAgentMcpTool({ mcpAdapter: adapter });
+    const tool = createPromotedMcpTool(adapter);
     const result = await tool.execute(
       {
         action: "call_tool",

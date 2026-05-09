@@ -1,4 +1,4 @@
-import type { FridaySkillExecutor, FridaySkillRegistry } from "#skills";
+import type { FridaySkillExecutor, FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 import type { FridayWorkflowExecutionService } from "#workflows";
 import type { FridayMemoryService } from "#memory";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
@@ -26,7 +26,7 @@ import { createFridayAgentCronTool } from "./friday-agent-cron-tool.js";
 import { createFridayAgentMessageTool } from "./friday-agent-message-tool.js";
 import { createFridayAgentAgentsListTool } from "./friday-agent-agents-list-tool.js";
 import { createFridayAgentSessionsTool } from "./friday-agent-sessions-tool.js";
-import { createFridayAgentMcpTool } from "./friday-agent-mcp-tool.js";
+import { createFridayAgentMcpTool, type FridayMcpServerAvailabilityResolver } from "./friday-agent-mcp-tool.js";
 import type { FridayImageAnalysisFn } from "./friday-agent-image-analysis-tool.js";
 import type { FridayTtsService } from "../../media/friday-tts-service.js";
 import type { FridayNodesService } from "../../nodes/friday-nodes-service.js";
@@ -71,6 +71,7 @@ export interface CreateFridayAgentToolRegistryOptions {
   workdir?: string;
   skillExecutor?: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
   listLearnedFacts?: (input: { userId: string; limit: number }) => FridayLearnedFactView[];
@@ -116,6 +117,8 @@ export interface CreateFridayAgentToolRegistryOptions {
   guideLensService?: FridayGuideLensService;
   /** Optional MCP adapter for external MCP server integration. */
   mcpAdapter?: FridayMcpAdapter;
+  /** Optional lifecycle availability gate for configured MCP servers. */
+  getMcpServerAvailability?: FridayMcpServerAvailabilityResolver;
   /** OC-013: Session memory extraction service for memory_extract tool. */
   extractionService?: FridaySessionMemoryExtractionService;
   /** Provider service for LLM provider management tool. */
@@ -148,9 +151,26 @@ export function createFridayAgentToolRegistry(
   options?: CreateFridayAgentToolRegistryOptions,
 ): FridayAgentToolDefinition[] {
   const workdir = options?.workdir ?? process.cwd();
+  const listLifecycleAvailableMcpServers = () => {
+    if (!options?.mcpAdapter || !options.getMcpServerAvailability) {
+      return [];
+    }
+    return options.mcpAdapter
+      .listServers()
+      .filter((server) => options.getMcpServerAvailability!(server.id).available);
+  };
+  const listLifecycleAvailableMcpServerStates = () => {
+    if (!options?.mcpAdapter || !options.getMcpServerAvailability) {
+      return [];
+    }
+    const availableIds = new Set(listLifecycleAvailableMcpServers().map((server) => server.id));
+    return options.mcpAdapter
+      .listServerStates()
+      .filter((state) => availableIds.has(state.serverId));
+  };
   const listMcpServerReadiness = () => listFridayMcpServerReadiness({
-    servers: options?.mcpAdapter?.listServers() ?? [],
-    serverStates: options?.mcpAdapter?.listServerStates() ?? [],
+    servers: listLifecycleAvailableMcpServers(),
+    serverStates: listLifecycleAvailableMcpServerStates(),
   });
 
   const tools: FridayAgentToolDefinition[] = [
@@ -170,12 +190,14 @@ export function createFridayAgentToolRegistry(
         ? [createFridayAgentSkillsListTool({
           skillRegistry: options.skillRegistry,
           listMcpServerReadiness,
+          getSkillLifecycleStatus: options.getSkillLifecycleStatus,
         })]
         : []),
       createFridayAgentSkillTool({
         skillExecutor: options.skillExecutor,
         skillRegistry: options.skillRegistry,
         listMcpServerReadiness,
+        getSkillLifecycleStatus: options?.getSkillLifecycleStatus,
       }),
     );
   }
@@ -317,9 +339,12 @@ export function createFridayAgentToolRegistry(
     );
   }
 
-  if (options?.mcpAdapter && options.mcpAdapter.listServers().length > 0) {
+  if (options?.mcpAdapter && options.getMcpServerAvailability && listLifecycleAvailableMcpServers().length > 0) {
     tools.push(
-      createFridayAgentMcpTool({ mcpAdapter: options.mcpAdapter }),
+      createFridayAgentMcpTool({
+        mcpAdapter: options.mcpAdapter,
+        getServerAvailability: options.getMcpServerAvailability,
+      }),
     );
   }
 

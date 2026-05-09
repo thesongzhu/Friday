@@ -1,4 +1,6 @@
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { createHash } from "node:crypto";
+
+import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 
 import type {
   FridayActivateProviderAuthProfileResponse,
@@ -22,6 +24,7 @@ import type {
   FridayListProvidersResponse,
   FridayListProviderTemplatesResponse,
   FridayPinProviderRouteResponse,
+  FridayRunCapabilityDoctorRequest,
   FridayRunCapabilityDoctorResponse,
   FridaySetRoutingConfigRequest,
   FridaySetRoutingConfigResponse,
@@ -44,6 +47,13 @@ import {
   resolveExistingOAuthProvider,
   resolveOrProvisionOAuthProvider,
 } from "../../../providers/services/friday-provider-oauth-selection.js";
+import {
+  type FridayCanonicalApprovalResolution,
+  type FridayMutatingActionActor,
+  type FridayMutatingActionGate,
+  type FridayMutatingActionRequest,
+  type FridayMutatingActionTicket,
+} from "../../../security/friday-mutating-action-gate.js";
 
 // ─── Validation helpers ───
 
@@ -54,6 +64,37 @@ const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "
 const VALID_DEPLOYMENT_KINDS = new Set(["hosted", "local", "self-hosted", "consumer-cli"]);
 const VALID_REGION_TAGS = new Set(["global", "us", "china", "local", "custom"]);
 const VALID_RUNTIME_CAPABILITIES = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
+
+function parseCapabilityDoctorProviderIds(body: unknown): string[] | undefined {
+  if (body == null) {
+    return undefined;
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "Request body must be an object", { httpStatus: 400 });
+  }
+  const { providerIds } = body as FridayRunCapabilityDoctorRequest;
+  if (providerIds == null) {
+    return undefined;
+  }
+  if (!Array.isArray(providerIds)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "providerIds must be an array", { httpStatus: 400 });
+  }
+  const normalizedProviderIds = providerIds.map((providerId) => {
+    if (typeof providerId !== "string" || providerId.trim().length === 0) {
+      throw new FridayDomainError("VALIDATION_ERROR", "providerIds must contain non-empty strings", {
+        httpStatus: 400,
+      });
+    }
+    return providerId.trim();
+  });
+  const uniqueProviderIds = [...new Set(normalizedProviderIds)];
+  if (uniqueProviderIds.length === 0) {
+    throw new FridayDomainError("VALIDATION_ERROR", "providerIds must contain at least one provider id when provided", {
+      httpStatus: 400,
+    });
+  }
+  return uniqueProviderIds;
+}
 
 const PROVIDER_CREATE_ACCEPTED_FIELDS = [
   "kind",
@@ -339,6 +380,47 @@ function validateRoutingBody(body: unknown): asserts body is FridaySetRoutingCon
 
 export interface FridayProviderRoutesDeps {
   providerService: FridayProviderService;
+  canonicalMutationGate?: FridayMutatingActionGate;
+  providerMutationGateRequired?: boolean;
+}
+
+export function createFridayProviderSetupMutatingActionRequest(input: {
+  action: string;
+  actor: FridayMutatingActionActor;
+  surface: string;
+  resourceId?: string;
+  parameters: Record<string, unknown>;
+  planDigest?: string;
+  idempotencyKey?: string;
+}): FridayMutatingActionRequest {
+  const sanitizedParameters = sanitizeProviderMutationParameters(input.parameters) as Readonly<Record<string, unknown>>;
+  return {
+    action: input.action,
+    actor: input.actor,
+    surface: input.surface,
+    resource: {
+      type: input.action.startsWith("providers.routing.") ? "provider_routing" : "provider_setup",
+      id: input.resourceId,
+      digest: hashStableJson(sanitizedParameters),
+      attributes: {
+        providerAction: input.action,
+        resourceId: input.resourceId,
+      },
+    },
+    mutating: true,
+    risk: "high",
+    parameters: sanitizedParameters,
+    planDigest: input.planDigest,
+    idempotencyKey: input.idempotencyKey,
+    localClaims: [
+      {
+        guardId: "provider_setup_mutation_guard",
+        decision: "requires_approval",
+        risk: "high",
+        reason: "provider_setup_or_routing_mutation_requires_canonical_approval",
+      },
+    ],
+  };
 }
 
 // ─── Factory ───
@@ -346,6 +428,77 @@ export interface FridayProviderRoutesDeps {
 export function createFridayProviderRoutes(
   deps: FridayProviderRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function readProviderMutationControls(body: Record<string, unknown> | null | undefined): {
+    planDigest?: string;
+    idempotencyKey?: string;
+    canonicalApproval?: FridayCanonicalApprovalResolution;
+  } {
+    return {
+      planDigest: typeof body?.planDigest === "string" ? body.planDigest : undefined,
+      idempotencyKey: typeof body?.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+      canonicalApproval: readCanonicalApproval(body?.canonicalApproval),
+    };
+  }
+
+  function maybeRequireProviderMutationTicket(input: {
+    action: string;
+    ctx: { requestId: string; principal: FridayAuthPrincipal | null };
+    body?: Record<string, unknown> | null;
+    resourceId?: string;
+    parameters: Record<string, unknown>;
+    surface: string;
+  }): FridayMutatingActionTicket | undefined {
+    if (!deps.providerMutationGateRequired) {
+      return undefined;
+    }
+    if (!deps.canonicalMutationGate) {
+      throw new FridayDomainError(
+        "PROVIDER_MUTATION_CANONICAL_GATE_UNAVAILABLE",
+        "Provider setup and routing mutations require the canonical approval gate in this profile.",
+        { httpStatus: 503 },
+      );
+    }
+    const controls = readProviderMutationControls(input.body);
+    if (!controls.planDigest) {
+      throw new FridayDomainError(
+        "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED",
+        "Provider setup and routing mutations require an approved plan digest in this profile.",
+        { httpStatus: 403, details: { action: input.action, resourceId: input.resourceId } },
+      );
+    }
+    const request = createFridayProviderSetupMutatingActionRequest({
+      action: input.action,
+      actor: createActorFromPrincipal(input.ctx.principal, `api:${input.ctx.requestId}`),
+      surface: input.surface,
+      resourceId: input.resourceId,
+      parameters: input.parameters,
+      planDigest: controls.planDigest,
+      idempotencyKey: controls.idempotencyKey,
+    });
+    const gateResult = deps.canonicalMutationGate.evaluate({
+      ...request,
+      canonicalApproval: controls.canonicalApproval,
+    });
+    if (gateResult.decision !== "allow" || !gateResult.ticket) {
+      throw new FridayDomainError(
+        gateResult.decision === "requires_approval"
+          ? "CANONICAL_APPROVAL_REQUIRED"
+          : "CANONICAL_APPROVAL_DENIED",
+        gateResult.decision === "requires_approval"
+          ? "Provider setup or routing mutation requires canonical approval before any mutation."
+          : `Provider setup or routing mutation was blocked by the canonical approval gate: ${gateResult.reason}`,
+        {
+          httpStatus: 403,
+          details: {
+            canonicalGate: gateResult.evidenceRecord,
+            actionDigest: gateResult.actionDigest,
+          },
+        },
+      );
+    }
+    return gateResult.ticket;
+  }
+
   async function listHealthSnapshot(): Promise<FridayGetProviderHealthSnapshotResponse> {
     const providers = await deps.providerService.listProviders();
     const routing = await deps.providerService.getRoutingConfig().catch((): FridayModelRoutingConfig => ({
@@ -377,6 +530,7 @@ export function createFridayProviderRoutes(
         const reasons = Array.from(new Set([
           ...doctor.reasons,
           ...(validationStatus === "failed" ? ["validation_failed"] : []),
+          ...(validationStatus !== "ok" && validationStatus !== "failed" ? ["validation_unverified"] : []),
         ]));
         const suggestedAction = !provider.enabled
           ? "Enable the provider before using it for routing."
@@ -384,6 +538,8 @@ export function createFridayProviderRoutes(
             ? "Wait for cooldown to expire or route around this provider for now."
             : validationStatus === "failed"
               ? "Re-validate credentials or base URL before promoting this provider."
+              : validationStatus !== "ok"
+                ? "Validate this provider before using it for routing."
               : doctor.routingEligible
                 ? lane === "primary"
                   ? "Keep this provider healthy; it is the current default lane."
@@ -468,9 +624,21 @@ export function createFridayProviderRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<FridayRunCapabilityDoctorResponse> {
-        return deps.providerService.runCapabilityDoctor({
-          ownerUserId: ctx.principal?.userId,
+        const raw = ctx.body as Record<string, unknown> | null;
+        const providerIds = parseCapabilityDoctorProviderIds(raw);
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "capabilities.doctor",
+          ctx,
+          body: raw,
+          resourceId: providerIds ? providerIds.join(",") : "all-providers",
+          parameters: { providerIds: providerIds ?? "all-providers" },
+          surface: "api:/v1/capabilities/doctor",
         });
+        const report = await deps.providerService.runCapabilityDoctor({
+          ownerUserId: ctx.principal?.userId,
+          providerIds,
+        });
+        return withCanonicalGate(report, ticket);
       },
     },
 
@@ -504,7 +672,8 @@ export function createFridayProviderRoutes(
       async handler(ctx): Promise<FridayCreateProviderResponse> {
         // DX-001: Accept both flat and nested (config) formats.
         // If the body has a `config` object with provider fields, lift them to top level.
-        const raw = ctx.body as Record<string, unknown> | null;
+        const rawInput = ctx.body as Record<string, unknown> | null;
+        const raw = rawInput && typeof rawInput === "object" ? { ...rawInput } : rawInput;
         if (raw && typeof raw === "object" && raw.config && typeof raw.config === "object") {
           const config = raw.config as Record<string, unknown>;
           const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers", "backendKind", "cliConfig", "runtimeCapabilities", "deploymentKind", "regionTag"] as const;
@@ -514,13 +683,22 @@ export function createFridayProviderRoutes(
             }
           }
         }
-        validateCreateBody(ctx.body);
-        const body = ctx.body;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
+        validateCreateBody(body);
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.create",
+          ctx,
+          body: raw && typeof raw === "object" ? raw : undefined,
+          parameters: body as unknown as Record<string, unknown>,
+          surface: "api:/v1/providers/create",
+        });
         const provider = await deps.providerService.createProvider(body);
-        return {
+        return withCanonicalGate({
           provider,
           validation: provider.config.validation,
-        };
+        }, ticket);
       },
     },
 
@@ -533,16 +711,27 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayUpdateProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
-        validateUpdateBody(ctx.body);
-        const body = ctx.body;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
+        validateUpdateBody(body);
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.update",
+          ctx,
+          body: raw,
+          resourceId: providerId,
+          parameters: { providerId, patch: body as unknown as Record<string, unknown> },
+          surface: "api:/v1/providers/update",
+        });
         const provider = await deps.providerService.updateProvider(
           providerId,
           body,
         );
-        return {
+        return withCanonicalGate({
           provider,
           validation: provider.config.validation,
-        };
+        }, ticket);
       },
     },
 
@@ -555,8 +744,17 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayDeleteProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.delete",
+          ctx,
+          body,
+          resourceId: providerId,
+          parameters: { providerId },
+          surface: "api:/v1/providers/delete",
+        });
         await deps.providerService.deleteProvider(providerId);
-        return { deleted: true };
+        return withCanonicalGate({ deleted: true as const }, ticket);
       },
     },
 
@@ -569,11 +767,20 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<FridayValidateProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.validate",
+          ctx,
+          body,
+          resourceId: providerId,
+          parameters: { providerId },
+          surface: "api:/v1/providers/validate",
+        });
         const validation =
           await deps.providerService.validateProvider(providerId, {
             ownerUserId: ctx.principal?.userId,
           });
-        return { validation };
+        return withCanonicalGate({ validation }, ticket);
       },
     },
 
@@ -642,7 +849,10 @@ export function createFridayProviderRoutes(
             httpStatus: 401,
           });
         }
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
         }
@@ -652,6 +862,14 @@ export function createFridayProviderRoutes(
         if (body.backendKind !== "http" && body.backendKind !== "cli" && body.backendKind !== "sdk") {
           throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
         }
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.routing.pin",
+          ctx,
+          body: raw,
+          resourceId: `${body.providerId}:${body.model}:${body.backendKind}`,
+          parameters: body,
+          surface: "api:/v1/providers/routing/pin",
+        });
         await deps.providerService.pinRoute({
           userId: ctx.principal.userId,
           taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,
@@ -660,7 +878,7 @@ export function createFridayProviderRoutes(
           backendKind: body.backendKind,
           reason: typeof body.reason === "string" ? body.reason : undefined,
         });
-        return { pinned: true };
+        return withCanonicalGate({ pinned: true as const }, ticket);
       },
     },
     {
@@ -675,7 +893,10 @@ export function createFridayProviderRoutes(
             httpStatus: 401,
           });
         }
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
         }
@@ -685,6 +906,14 @@ export function createFridayProviderRoutes(
         if (body.backendKind !== "http" && body.backendKind !== "cli" && body.backendKind !== "sdk") {
           throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
         }
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.routing.penalty.clear",
+          ctx,
+          body: raw,
+          resourceId: `${body.providerId}:${body.model}:${body.backendKind}`,
+          parameters: body,
+          surface: "api:/v1/providers/routing/penalties/clear",
+        });
         const cleared = await deps.providerService.clearRoutePenalty({
           userId: ctx.principal.userId,
           taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,
@@ -692,7 +921,7 @@ export function createFridayProviderRoutes(
           model: body.model,
           backendKind: body.backendKind,
         });
-        return { cleared };
+        return withCanonicalGate({ cleared }, ticket);
       },
     },
 
@@ -716,8 +945,17 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayActivateProviderAuthProfileResponse> {
         const { providerId, profileKey } = ctx.params as { providerId: string; profileKey: string };
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.auth.profiles.activate",
+          ctx,
+          body,
+          resourceId: `${providerId}:${profileKey}`,
+          parameters: { providerId, profileKey },
+          surface: "api:/v1/providers/auth-profiles/activate",
+        });
         const profile = await deps.providerService.activateAuthProfile(providerId, profileKey);
-        return { profile };
+        return withCanonicalGate({ profile }, ticket);
       },
     },
 
@@ -741,10 +979,21 @@ export function createFridayProviderRoutes(
       auth: { public: false, anyOfScopes: ["hub.admin"] },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridaySetRoutingConfigResponse> {
-        validateRoutingBody(ctx.body);
-        const body = ctx.body;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
+        validateRoutingBody(body);
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.routing.set",
+          ctx,
+          body: raw,
+          resourceId: "model-routing",
+          parameters: body as unknown as Record<string, unknown>,
+          surface: "api:/v1/model-routing/set",
+        });
         const routing = await deps.providerService.setRoutingConfig(body);
-        return { routing };
+        return withCanonicalGate({ routing }, ticket);
       },
     },
 
@@ -757,7 +1006,21 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateAnthropicOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.oauth.anthropic.initiate",
+          ctx,
+          body: raw,
+          resourceId: typeof body?.providerId === "string" ? body.providerId : "anthropic",
+          parameters: {
+            ownerUserId,
+            selection: readOAuthSelectionInput(body, "anthropic"),
+          },
+          surface: "api:/v1/auth/oauth/anthropic/initiate",
+        });
         const selection = await resolveOrProvisionOAuthProvider(
           deps.providerService,
           readOAuthSelectionInput(body, "anthropic"),
@@ -766,7 +1029,7 @@ export function createFridayProviderRoutes(
           providerId: selection.provider.id,
           ownerUserId,
         });
-        return { oauth };
+        return withCanonicalGate({ oauth }, ticket);
       },
     },
 
@@ -779,7 +1042,10 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteAnthropicOAuthCallbackResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError(
             "VALIDATION_ERROR",
@@ -794,6 +1060,19 @@ export function createFridayProviderRoutes(
             { httpStatus: 400 },
           );
         }
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.oauth.anthropic.complete",
+          ctx,
+          body: raw,
+          resourceId: typeof body.providerId === "string" ? body.providerId : "anthropic",
+          parameters: {
+            ownerUserId,
+            selection: readOAuthSelectionInput(body, "anthropic"),
+            authorizationCodePresent: true,
+            statePresent: typeof body.state === "string",
+          },
+          surface: "api:/v1/auth/oauth/anthropic/callback",
+        });
         const selection = await resolveExistingOAuthProvider(
           deps.providerService,
           readOAuthSelectionInput(body, "anthropic"),
@@ -808,7 +1087,7 @@ export function createFridayProviderRoutes(
           state,
           ownerUserId,
         });
-        return { oauth };
+        return withCanonicalGate({ oauth }, ticket);
       },
     },
     {
@@ -819,7 +1098,21 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateOpenAICodexDeviceOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.oauth.openai_codex.device.initiate",
+          ctx,
+          body: raw,
+          resourceId: typeof body?.providerId === "string" ? body.providerId : "openai-codex",
+          parameters: {
+            ownerUserId,
+            selection: readOAuthSelectionInput(body, "openai-codex"),
+          },
+          surface: "api:/v1/auth/oauth/openai-codex/device/initiate",
+        });
         const selection = await resolveOrProvisionOAuthProvider(
           deps.providerService,
           readOAuthSelectionInput(body, "openai-codex"),
@@ -828,7 +1121,7 @@ export function createFridayProviderRoutes(
           providerId: selection.provider.id,
           ownerUserId,
         });
-        return { oauth };
+        return withCanonicalGate({ oauth }, ticket);
       },
     },
     {
@@ -839,7 +1132,10 @@ export function createFridayProviderRoutes(
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteOpenAICodexDeviceOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const body = ctx.body as Record<string, unknown> | null;
+        const raw = ctx.body as Record<string, unknown> | null;
+        const body = raw && typeof raw === "object"
+          ? stripProviderMutationControlFields(raw)
+          : raw;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError(
             "VALIDATION_ERROR",
@@ -854,6 +1150,18 @@ export function createFridayProviderRoutes(
             { httpStatus: 400 },
           );
         }
+        const ticket = maybeRequireProviderMutationTicket({
+          action: "providers.oauth.openai_codex.device.complete",
+          ctx,
+          body: raw,
+          resourceId: typeof body.providerId === "string" ? body.providerId : "openai-codex",
+          parameters: {
+            ownerUserId,
+            selection: readOAuthSelectionInput(body, "openai-codex"),
+            deviceCodeIdPresent: true,
+          },
+          surface: "api:/v1/auth/oauth/openai-codex/device/complete",
+        });
         const selection = await resolveExistingOAuthProvider(
           deps.providerService,
           readOAuthSelectionInput(body, "openai-codex"),
@@ -864,7 +1172,7 @@ export function createFridayProviderRoutes(
           ownerUserId,
           deviceCodeId: body.deviceCodeId.trim(),
         });
-        return { oauth };
+        return withCanonicalGate({ oauth }, ticket);
       },
     },
   ];
@@ -890,4 +1198,119 @@ function readOAuthSelectionInput(body: Record<string, unknown> | null, defaultKi
       ? body.defaultModel.trim()
       : undefined,
   };
+}
+
+function createActorFromPrincipal(
+  principal: FridayAuthPrincipal | null,
+  fallbackId: string,
+): FridayMutatingActionActor {
+  if (!principal) {
+    return {
+      kind: "api",
+      id: fallbackId,
+      principalId: fallbackId,
+    };
+  }
+  return {
+    kind: principal.principalType,
+    id: principal.principalId,
+    principalId: principal.principalId,
+  };
+}
+
+function readCanonicalApproval(value: unknown): FridayCanonicalApprovalResolution | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as FridayCanonicalApprovalResolution;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "canonicalApproval must be an object", { httpStatus: 400 });
+}
+
+function stripProviderMutationControlFields<T extends Record<string, unknown>>(body: T): T {
+  const stripped = { ...body };
+  delete stripped.canonicalApproval;
+  delete stripped.planDigest;
+  delete stripped.idempotencyKey;
+  return stripped;
+}
+
+function canonicalGateEvidence(ticket: FridayMutatingActionTicket | undefined): {
+  ticketId: string;
+  actionDigest: string;
+  approvalId: string;
+  planDigest?: string;
+} | undefined {
+  if (!ticket) {
+    return undefined;
+  }
+  return {
+    ticketId: ticket.ticketId,
+    actionDigest: ticket.actionDigest,
+    approvalId: ticket.approvalId,
+    planDigest: ticket.planDigest,
+  };
+}
+
+function withCanonicalGate<T extends object>(
+  payload: T,
+  ticket: FridayMutatingActionTicket | undefined,
+): T & { canonicalGate?: NonNullable<ReturnType<typeof canonicalGateEvidence>> } {
+  const evidence = canonicalGateEvidence(ticket);
+  return evidence ? { ...payload, canonicalGate: evidence } : payload;
+}
+
+function sanitizeProviderMutationParameters(value: unknown, keyHint = ""): unknown {
+  if (typeof value === "string") {
+    return isSensitiveProviderMutationKey(keyHint)
+      ? { redacted: true, sha256: createHash("sha256").update(value).digest("hex") }
+      : value;
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeProviderMutationParameters(entry, keyHint));
+  }
+  const record = value as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    if (key === "canonicalApproval" || key === "planDigest" || key === "idempotencyKey") {
+      continue;
+    }
+    sanitized[key] = sanitizeProviderMutationParameters(record[key], key);
+  }
+  return sanitized;
+}
+
+function isSensitiveProviderMutationKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return normalized.includes("key")
+    || normalized.includes("token")
+    || normalized.includes("secret")
+    || normalized.includes("authorization")
+    || normalized.includes("cookie")
+    || normalized.includes("password")
+    || normalized.includes("authorizationcode")
+    || normalized.includes("devicecode");
+}
+
+function hashStableJson(value: unknown): string {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .filter((key) => record[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
 }

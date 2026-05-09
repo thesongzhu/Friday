@@ -342,6 +342,24 @@ function mockFetchForLlm(responses: unknown[]): void {
   });
 }
 
+function readFetchUserPrompt(callIndex = 0): string {
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const init = fetchMock.mock.calls[callIndex]?.[1] as RequestInit | undefined;
+  const body = JSON.parse(String(init?.body ?? "{}")) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  return body.messages?.findLast((message) => message.role === "user")?.content ?? "";
+}
+
+function readFetchSystemPrompt(callIndex = 0): string {
+  const fetchMock = vi.mocked(globalThis.fetch);
+  const init = fetchMock.mock.calls[callIndex]?.[1] as RequestInit | undefined;
+  const body = JSON.parse(String(init?.body ?? "{}")) as {
+    messages?: Array<{ role?: string; content?: string }>;
+  };
+  return body.messages?.find((message) => message.role === "system")?.content ?? "";
+}
+
 // ─── Tests ───
 
 describe("FridayWorkflowGeneratorService", () => {
@@ -381,6 +399,46 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(result.mode).toBe("clarification_required");
       expect(result.questions).toEqual(["What trigger type?"]);
       expect(result.session.status).toBe("needs_clarification");
+    });
+
+    it("excludes persisted non-installed skills from generator prompts", async () => {
+      deps.getSkillLifecycleStatus = (skillId) =>
+        skillId === "send-email" ? "not_installed" : undefined;
+      service = createFridayWorkflowGeneratorService(deps);
+      mockFetchForLlm([makeRequirementsResponse("needs_clarification")]);
+
+      await service.startSession({
+        goal: "Build a workflow",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      const userPrompt = readFetchUserPrompt();
+      expect(userPrompt).toContain("Available skills");
+      expect(userPrompt).not.toContain('"id": "send-email"');
+    });
+
+    it("injects Friday user project rules into workflow generator prompts", async () => {
+      deps.userRulesContextProvider = vi.fn().mockResolvedValue(
+        "<friday-user-project-rules>Ask before saving generated workflows.</friday-user-project-rules>",
+      );
+      service = createFridayWorkflowGeneratorService(deps);
+      mockFetchForLlm([makeRequirementsResponse("needs_clarification")]);
+
+      await service.startSession({
+        goal: "Build a workflow",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(deps.userRulesContextProvider).toHaveBeenCalledWith({
+        task: "Build a workflow",
+        userId: "u-1",
+        channel: "test",
+        surface: "workflow_generator",
+      });
+      expect(readFetchSystemPrompt()).toContain("Friday user/project rules");
+      expect(readFetchSystemPrompt()).toContain("Ask before saving generated workflows.");
     });
 
     it("auto-generates draft when ready", async () => {

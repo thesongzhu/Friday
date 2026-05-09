@@ -29,7 +29,7 @@ import type {
 } from "./friday-agent-task-profile.js";
 import type { FridayAgentStarterSkillRoutingConfig } from "./friday-agent-starter-skill-routing.js";
 import type { FridayAgentCompactionBridge } from "./friday-agent-compaction-bridge.js";
-import type { FridayCompactionMemorySink } from "./friday-agent-compaction-memory-sink.js";
+import type { FridayCompactionContextReplaySink } from "./friday-agent-compaction-context-replay-sink.js";
 import type {
   FridayAgentPromptProfile,
   FridayAgentToolRoutingDecision,
@@ -161,6 +161,20 @@ export interface FridayAgentContextCostSummary {
 export interface FridayAgentSystemPromptBuildResult {
   prompt: string;
   contextCostSummary?: FridayAgentContextCostSummary;
+}
+
+export interface FridayAgentCompactionContextBuildResult {
+  fragment: string;
+  blockCount?: number;
+  sources?: string[];
+  sessionKey?: string;
+  evidenceTier?: "audit_replay_evidence";
+  trustLevel?: "unconfirmed_summary";
+  source?: "context_replay";
+  memoryBoundary?: "not_user_confirmed_memory";
+  redactionApplied?: boolean;
+  redactionCount?: number;
+  replayEntryIds?: string[];
 }
 
 // ─── Runtime interface ───
@@ -356,7 +370,11 @@ export interface CreateFridayAgentRuntimeDeps {
     userId?: string;
     sessionKey?: string;
     nowIso: string;
-  }) => string | null | Promise<string | null>;
+  }) =>
+    | string
+    | FridayAgentCompactionContextBuildResult
+    | null
+    | Promise<string | FridayAgentCompactionContextBuildResult | null>;
   /** Optional callback that returns a communication persona prompt fragment for the current user. */
   communicationPromptBuilder?: (input: { userId: string; nowIso: string }) => string | null | Promise<string | null>;
   /** Optional deterministic delegation hook for top-level coordinator runs. */
@@ -372,12 +390,11 @@ export interface CreateFridayAgentRuntimeDeps {
    */
   compactionBridge?: FridayAgentCompactionBridge;
   /**
-   * Optional memory sink for persisting compaction summaries.
-   * When provided, structured summaries (decisions, TODOs, failures) are
-   * written to persistent memory after compaction, enabling cross-session
-   * context retrieval.  Calls are non-blocking.
+   * Optional context replay sink for persisting compaction summaries.
+   * When provided, structured summaries are written as unconfirmed replay
+   * evidence outside durable memory. Calls are non-blocking.
    */
-  compactionMemorySink?: FridayCompactionMemorySink;
+  compactionContextReplaySink?: FridayCompactionContextReplaySink;
   /** Optional pluggable decision engine for world-model-ready action selection. */
   decisionEngine?: FridayDecisionEngine;
   /** Optional world state manager for loading user context into decision engine. */

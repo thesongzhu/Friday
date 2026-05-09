@@ -15,6 +15,7 @@ import type {
   FridayAgentEventEmitter,
   FridayAgentEventMap,
   FridayAgentEventName,
+  FridayAgentExecutionContext,
   FridayAgentRunConstraints,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
@@ -178,6 +179,324 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readStringField(record: Record<string, unknown> | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function eventPointer(event: FridayAgentRunEventRecord, kind = "agent_run_event"): FridayAgentAuditPointer {
+  const payload = asRecord(event.payload);
+  return {
+    kind,
+    runId: event.runId ?? readStringField(payload, "runId") ?? "unknown",
+    seq: event.seq,
+  };
+}
+
+function buildPlanControlInput(
+  runId: string,
+  principal: FridayAuthPrincipal | null,
+): FridayAgentPlanControlInput {
+  return {
+    runId,
+    executionContext: {
+      surface: "api",
+      interactive: true,
+    },
+    ...(principal
+      ? {
+        principalId: principal.principalId,
+        scopes: principal.scopes,
+      }
+      : {}),
+  };
+}
+
+function buildAgentRunDecisionTrace(
+  run: FridayAgentRunRecord,
+  auditEvents: FridayAgentRunEventRecord[],
+): FridayAgentAuditDecisionTrace {
+  const planEventNames = new Set([
+    "agent.run.planning",
+    "agent.run.plan_ready",
+    "agent.run.awaiting_plan_approval",
+    "agent.run.plan_approved",
+    "agent.run.plan_rejected",
+  ]);
+  const planEvents = auditEvents.filter((event) => planEventNames.has(event.eventName));
+  const planDecisionEvent = auditEvents.find((event) =>
+    event.eventName === "agent.run.plan_approved" || event.eventName === "agent.run.plan_rejected");
+  const planDecisionPayload = asRecord(planDecisionEvent?.payload);
+  const planDecisionFromEvent = planDecisionEvent
+    ? {
+      approved: planDecisionEvent.eventName === "agent.run.plan_approved",
+      mode: planDecisionEvent.eventName === "agent.run.plan_approved"
+        ? readStringField(planDecisionPayload, "approvalMode") ?? "manual-approve"
+        : readStringField(planDecisionPayload, "rejectionMode") ?? "manual-reject",
+      reviewedAt: readStringField(planDecisionPayload, "approvedAt")
+        ?? readStringField(planDecisionPayload, "rejectedAt")
+        ?? planDecisionEvent.emittedAt,
+      eventPointer: eventPointer(planDecisionEvent, "agent_plan_decision_event"),
+    }
+    : undefined;
+  const startByToolCallId = new Map<string, FridayAgentRunEventRecord>();
+  const endByToolCallId = new Map<string, FridayAgentRunEventRecord>();
+
+  for (const event of auditEvents) {
+    const payload = asRecord(event.payload);
+    const toolCallId = readStringField(payload, "toolCallId");
+    if (!toolCallId) continue;
+    if (event.eventName === "agent.run.tool_start") {
+      startByToolCallId.set(toolCallId, event);
+    } else if (event.eventName === "agent.run.tool_end") {
+      endByToolCallId.set(toolCallId, event);
+    }
+  }
+
+  const actions: FridayAgentAuditActionTrace[] = [...startByToolCallId.entries()]
+    .map(([toolCallId, startEvent]) => {
+      const startPayload = asRecord(startEvent.payload);
+      const endEvent = endByToolCallId.get(toolCallId);
+      const endPayload = asRecord(endEvent?.payload);
+      const isError = endPayload?.isError === true;
+      return {
+        toolCallId,
+        toolName: readStringField(startPayload, "toolName") ?? readStringField(endPayload, "toolName") ?? "unknown",
+        status: endEvent ? (isError ? "failed" : "completed") : "started",
+        inputPointer: eventPointer(startEvent, "agent_tool_input_event"),
+        ...(endEvent ? { outputPointer: eventPointer(endEvent, "agent_tool_output_event") } : {}),
+        ...(endEvent ? { evidencePointer: eventPointer(endEvent, "agent_tool_evidence_event") } : {}),
+        ...(readStringField(endPayload, "routeId") ? { routeId: readStringField(endPayload, "routeId") } : {}),
+        ...(readStringField(endPayload, "correlationId") ? { correlationId: readStringField(endPayload, "correlationId") } : {}),
+      };
+    });
+
+  const toolRequests = auditEvents
+    .filter((event) => event.eventName === "agent.run.awaiting_tool_approval")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
+        ...(readStringField(payload, "toolName") ? { toolName: readStringField(payload, "toolName") } : {}),
+        eventPointer: eventPointer(event, "agent_tool_approval_request_event"),
+      };
+    });
+
+  const grantStateByEventName = new Map<string, "issued" | "used" | "denied" | "revoked">([
+    ["agent.run.capability_grant_issued", "issued"],
+    ["agent.run.capability_grant_used", "used"],
+    ["agent.run.capability_grant_denied", "denied"],
+    ["agent.run.capability_grant_revoked", "revoked"],
+  ]);
+  const grants = auditEvents
+    .filter((event) => grantStateByEventName.has(event.eventName))
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        state: grantStateByEventName.get(event.eventName)!,
+        ...(readStringField(payload, "grantId") ? { grantId: readStringField(payload, "grantId") } : {}),
+        ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
+        ...(readStringField(payload, "toolName") ? { toolName: readStringField(payload, "toolName") } : {}),
+        eventPointer: eventPointer(event, "agent_capability_grant_event"),
+      };
+    });
+  const contextReplayReads = auditEvents
+    .filter((event) => event.eventName === "agent.run.context_replay_loaded")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_read_event"),
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+        memoryBoundary: readStringField(payload, "memoryBoundary") ?? "not_user_confirmed_memory",
+        ...(typeof payload?.sourceCount === "number" ? { sourceCount: payload.sourceCount } : {}),
+        ...(typeof payload?.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+        ...(typeof payload?.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+        ...(typeof payload?.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
+      };
+    });
+  const contextReplayWrites = auditEvents
+    .filter((event) => event.eventName === "agent.run.compaction_persisted")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_write_event"),
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        ...(readStringField(payload, "entryId") ? { entryId: readStringField(payload, "entryId") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+        ...(typeof payload?.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+        ...(typeof payload?.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+        ...(typeof payload?.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
+      };
+    });
+  const contextReplayExceptions = auditEvents
+    .filter((event) =>
+      event.eventName === "agent.run.compaction_persist_skipped"
+      || event.eventName === "agent.run.compaction_persist_failed")
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      const kind: "skipped" | "failed" = event.eventName === "agent.run.compaction_persist_skipped" ? "skipped" : "failed";
+      return {
+        eventPointer: eventPointer(event, "agent_context_replay_exception_event"),
+        kind,
+        ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+        ...(readStringField(payload, "skippedReason") ? { reason: readStringField(payload, "skippedReason") } : {}),
+        ...(readStringField(payload, "errorName") ? { errorName: readStringField(payload, "errorName") } : {}),
+        evidenceTier: readStringField(payload, "evidenceTier") ?? "audit_replay_evidence",
+        trustLevel: readStringField(payload, "trustLevel") ?? "unconfirmed_summary",
+      };
+    });
+
+  return {
+    evidenceTier: "audit_replay_evidence",
+    source: "friday_agent_run_events",
+    boundary: "Derived from persisted run metadata and event pointers only; reading this trace does not execute tools or mutate state.",
+    run: {
+      runId: run.id,
+      status: run.status,
+      ...(getRunSurface(run) ? { sourceSurface: getRunSurface(run) } : {}),
+      ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+      ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+    },
+    plan: {
+      ...(run.planReview ? { reviewPointer: { kind: "agent_run_plan_review", runId: run.id } } : {}),
+      ...(run.planReview?.gate?.state ? { state: run.planReview.gate.state } : {}),
+      ...(run.planReview?.gate?.kind ? { planKind: run.planReview.gate.kind } : {}),
+      ...(typeof run.planReview?.plan?.stepCount === "number" ? { stepCount: run.planReview.plan.stepCount } : {}),
+      eventPointers: planEvents.map((event) => eventPointer(event)),
+      ...(planDecisionFromEvent
+        ? {
+          decision: {
+            approved: planDecisionFromEvent.approved,
+            mode: planDecisionFromEvent.mode,
+            reviewedAt: planDecisionFromEvent.reviewedAt,
+            eventPointer: planDecisionFromEvent.eventPointer,
+          },
+        }
+        : {}),
+    },
+    approvals: {
+      ...(planDecisionFromEvent
+        ? {
+          plan: {
+            state: planDecisionFromEvent.approved ? "approved" : "rejected",
+            reviewedAt: planDecisionFromEvent.reviewedAt,
+            mode: planDecisionFromEvent.mode,
+            eventPointer: planDecisionFromEvent.eventPointer,
+          },
+        }
+        : {}),
+      toolRequests,
+      grants,
+    },
+    actions,
+    rollback: {
+      available: run.rollbackAvailable === true,
+      ...(run.rollbackAvailable === true
+        ? { pointer: { kind: "agent_runtime_rollback_checkpoint", runId: run.id } }
+        : {}),
+    },
+    contextReplay: {
+      reads: contextReplayReads,
+      writes: contextReplayWrites,
+      exceptions: contextReplayExceptions,
+      boundary: "Context replay is audit evidence and unconfirmed summary input; it is not durable memory or user-confirmed preference.",
+    },
+    traceCompleteness: {
+      hasPlanReview: Boolean(run.planReview),
+      hasPlanDecision: Boolean(planDecisionFromEvent),
+      toolStartCount: startByToolCallId.size,
+      toolEndCount: endByToolCallId.size,
+      unpairedToolStartCount: actions.filter((action) => action.status === "started").length,
+      hasTerminalEvent: auditEvents.some((event) => TERMINAL_EVENT_NAMES.has(event.eventName)),
+      contextReplayReadCount: contextReplayReads.length,
+      contextReplayWriteCount: contextReplayWrites.length,
+      contextReplayExceptionCount: contextReplayExceptions.length,
+    },
+  };
+}
+
+function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
+  const payload = asRecord(event.payload);
+  if (!payload) {
+    return event.payload;
+  }
+  if (event.eventName === "agent.run.plan_ready") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      ...(readStringField(payload, "planKind") ? { planKind: readStringField(payload, "planKind") } : {}),
+      hasPlanMarkdown: typeof payload.planMarkdown === "string" && payload.planMarkdown.length > 0,
+      hasPlanSummary: typeof payload.planSummary === "string" && payload.planSummary.length > 0,
+    };
+  }
+  if (event.eventName === "agent.run.awaiting_plan_approval") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      status: "awaiting_plan_approval",
+      ...(readStringField(payload, "planKind") ? { planKind: readStringField(payload, "planKind") } : {}),
+      hasMessage: typeof payload.message === "string" && payload.message.length > 0,
+      hasPlanMarkdown: typeof payload.planMarkdown === "string" && payload.planMarkdown.length > 0,
+      hasPlanSummary: typeof payload.planSummary === "string" && payload.planSummary.length > 0,
+    };
+  }
+  if (event.eventName === "agent.run.tool_start" || event.eventName === "agent.run.tool_end") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
+      ...(readStringField(payload, "toolName") ? { toolName: readStringField(payload, "toolName") } : {}),
+      ...(event.eventName === "agent.run.tool_end" && typeof payload.isError === "boolean" ? { isError: payload.isError } : {}),
+      ...(event.eventName === "agent.run.tool_end" && typeof payload.durationMs === "number" ? { durationMs: payload.durationMs } : {}),
+      ...(event.eventName === "agent.run.tool_end" && readStringField(payload, "routeId") ? { routeId: readStringField(payload, "routeId") } : {}),
+      ...(event.eventName === "agent.run.tool_end" && readStringField(payload, "correlationId") ? { correlationId: readStringField(payload, "correlationId") } : {}),
+      hasParams: event.eventName === "agent.run.tool_start" && typeof payload.params === "object" && payload.params !== null,
+      hasSummary: event.eventName === "agent.run.tool_end" && typeof payload.summary === "string" && payload.summary.length > 0,
+    };
+  }
+  if (event.eventName === "agent.run.awaiting_tool_approval") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      status: "awaiting_tool_approval",
+      ...(readStringField(payload, "grantId") ? { grantId: readStringField(payload, "grantId") } : {}),
+      ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
+      ...(readStringField(payload, "toolName") ? { toolName: readStringField(payload, "toolName") } : {}),
+      ...(readStringField(payload, "expiresAt") ? { expiresAt: readStringField(payload, "expiresAt") } : {}),
+      ...(readStringField(payload, "riskLevel") ? { riskLevel: readStringField(payload, "riskLevel") } : {}),
+      hasParams: typeof payload.params === "object" && payload.params !== null,
+      hasReason: typeof payload.reason === "string" && payload.reason.length > 0,
+    };
+  }
+  if (
+    event.eventName === "agent.run.context_replay_loaded"
+    || event.eventName === "agent.run.compaction_persisted"
+    || event.eventName === "agent.run.compaction_persist_skipped"
+    || event.eventName === "agent.run.compaction_persist_failed"
+  ) {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      ...(readStringField(payload, "sessionKey") ? { sessionKey: readStringField(payload, "sessionKey") } : {}),
+      ...(readStringField(payload, "entryId") ? { entryId: readStringField(payload, "entryId") } : {}),
+      ...(readStringField(payload, "evidenceTier") ? { evidenceTier: readStringField(payload, "evidenceTier") } : {}),
+      ...(readStringField(payload, "trustLevel") ? { trustLevel: readStringField(payload, "trustLevel") } : {}),
+      ...(readStringField(payload, "memoryBoundary") ? { memoryBoundary: readStringField(payload, "memoryBoundary") } : {}),
+      ...(readStringField(payload, "skippedReason") ? { skippedReason: readStringField(payload, "skippedReason") } : {}),
+      ...(readStringField(payload, "errorName") ? { errorName: readStringField(payload, "errorName") } : {}),
+      ...(typeof payload.sourceCount === "number" ? { sourceCount: payload.sourceCount } : {}),
+      ...(typeof payload.blockCount === "number" ? { blockCount: payload.blockCount } : {}),
+      ...(typeof payload.redactionApplied === "boolean" ? { redactionApplied: payload.redactionApplied } : {}),
+      ...(typeof payload.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
+    };
+  }
+  return event.payload;
+}
+
 // ─── Deps ───
 
 export interface FridayAgentRoutesDeps {
@@ -219,8 +538,8 @@ export interface FridayAgentRoutesDeps {
   }) => FridayAgentRunRecord[];
   listRunEvents: (runId: string, afterSeq?: number) => FridayAgentRunEventRecord[];
   cancelRun: (runId: string) => void;
-  approvePlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
-  rejectPlan: (runId: string) => Promise<FridayAgentRuntimeResult>;
+  approvePlan: (input: FridayAgentPlanControlInput) => Promise<FridayAgentRuntimeResult>;
+  rejectPlan: (input: FridayAgentPlanControlInput) => Promise<FridayAgentRuntimeResult>;
   resolveToolApproval: (
     runId: string,
     toolCallId: string,
@@ -235,6 +554,125 @@ export interface FridayAgentRoutesDeps {
   rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
+}
+
+interface FridayAgentPlanControlInput {
+  runId: string;
+  principalId?: string;
+  scopes?: string[];
+  executionContext?: FridayAgentExecutionContext;
+}
+
+interface FridayAgentAuditPointer {
+  kind: string;
+  runId: string;
+  seq?: number;
+}
+
+interface FridayAgentAuditActionTrace {
+  toolCallId: string;
+  toolName: string;
+  status: "started" | "completed" | "failed";
+  inputPointer: FridayAgentAuditPointer;
+  outputPointer?: FridayAgentAuditPointer;
+  evidencePointer?: FridayAgentAuditPointer;
+  routeId?: string;
+  correlationId?: string;
+}
+
+interface FridayAgentAuditDecisionTrace {
+  evidenceTier: "audit_replay_evidence";
+  source: "friday_agent_run_events";
+  boundary: string;
+  run: {
+    runId: string;
+    status: FridayAgentRunStatus;
+    sourceSurface?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+  plan: {
+    reviewPointer?: FridayAgentAuditPointer;
+    state?: string;
+    planKind?: string;
+    stepCount?: number;
+    eventPointers: FridayAgentAuditPointer[];
+    decision?: {
+      approved: boolean;
+      mode: string;
+      reviewedAt: string;
+      eventPointer?: FridayAgentAuditPointer;
+    };
+  };
+  approvals: {
+    plan?: {
+      state: "approved" | "rejected";
+      reviewedAt: string;
+      mode: string;
+      eventPointer?: FridayAgentAuditPointer;
+    };
+    toolRequests: Array<{
+      toolCallId?: string;
+      toolName?: string;
+      eventPointer: FridayAgentAuditPointer;
+    }>;
+    grants: Array<{
+      state: "issued" | "used" | "denied" | "revoked";
+      grantId?: string;
+      toolCallId?: string;
+      toolName?: string;
+      eventPointer: FridayAgentAuditPointer;
+    }>;
+  };
+  actions: FridayAgentAuditActionTrace[];
+  rollback: {
+    available: boolean;
+    pointer?: FridayAgentAuditPointer;
+  };
+  contextReplay: {
+    reads: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      sessionKey?: string;
+      evidenceTier: string;
+      trustLevel: string;
+      memoryBoundary: string;
+      sourceCount?: number;
+      blockCount?: number;
+      redactionApplied?: boolean;
+      redactionCount?: number;
+    }>;
+    writes: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      sessionKey?: string;
+      entryId?: string;
+      evidenceTier: string;
+      trustLevel: string;
+      blockCount?: number;
+      redactionApplied?: boolean;
+      redactionCount?: number;
+    }>;
+    exceptions: Array<{
+      eventPointer: FridayAgentAuditPointer;
+      kind: "skipped" | "failed";
+      sessionKey?: string;
+      reason?: string;
+      errorName?: string;
+      evidenceTier: string;
+      trustLevel: string;
+    }>;
+    boundary: string;
+  };
+  traceCompleteness: {
+    hasPlanReview: boolean;
+    hasPlanDecision: boolean;
+    toolStartCount: number;
+    toolEndCount: number;
+    unpairedToolStartCount: number;
+    hasTerminalEvent: boolean;
+    contextReplayReadCount: number;
+    contextReplayWriteCount: number;
+    contextReplayExceptionCount: number;
+  };
 }
 
 function readPreferredString(
@@ -711,9 +1149,15 @@ export function createFridayAgentRoutes(
       auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
-        getVisibleRunOrThrow(runId);
+        const run = getVisibleRunOrThrow(runId);
         const AUDIT_EVENT_NAMES = new Set([
           "agent.run.started",
+          "agent.run.planning",
+          "agent.run.plan_ready",
+          "agent.run.awaiting_plan_approval",
+          "agent.run.plan_approved",
+          "agent.run.plan_rejected",
+          "agent.run.executing",
           "agent.run.tool_start",
           "agent.run.tool_end",
           "agent.run.route_selected",
@@ -725,6 +1169,11 @@ export function createFridayAgentRoutes(
           "agent.run.capability_grant_issued",
           "agent.run.capability_grant_denied",
           "agent.run.capability_grant_used",
+          "agent.run.capability_grant_revoked",
+          "agent.run.context_replay_loaded",
+          "agent.run.compaction_persisted",
+          "agent.run.compaction_persist_skipped",
+          "agent.run.compaction_persist_failed",
           "agent.run.completed",
           "agent.run.failed",
           "agent.run.cancelled",
@@ -739,8 +1188,9 @@ export function createFridayAgentRoutes(
             seq: e.seq,
             type: e.eventName,
             timestamp: e.emittedAt,
-            payload: e.payload,
+            payload: sanitizeAuditEventPayload(e),
           })),
+          decisionTrace: buildAgentRunDecisionTrace(run, auditEvents),
         };
       },
     },
@@ -782,7 +1232,7 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
-        return await deps.approvePlan(runId);
+        return await deps.approvePlan(buildPlanControlInput(runId, ctx.principal));
       },
     },
 
@@ -795,7 +1245,7 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
-        return await deps.rejectPlan(runId);
+        return await deps.rejectPlan(buildPlanControlInput(runId, ctx.principal));
       },
     },
 
@@ -896,6 +1346,8 @@ export function createFridayAgentRoutes(
           "agent.run.awaiting_clarification",
           "agent.run.plan_ready",
           "agent.run.awaiting_plan_approval",
+          "agent.run.plan_approved",
+          "agent.run.plan_rejected",
           "agent.run.awaiting_tool_approval",
           "agent.run.degraded",
           "agent.run.mode_changed",

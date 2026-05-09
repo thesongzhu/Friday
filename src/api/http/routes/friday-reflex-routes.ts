@@ -312,7 +312,7 @@ export function createFridayReflexRoutes(
         if (!("value" in body)) {
           throw new FridayDomainError("VALIDATION_ERROR", "value is required", { httpStatus: 400 });
         }
-        return deps.service.updatePreference({
+        return deps.service.requestPreferenceUpdate({
           userId,
           category: readPreferenceCategory(body.category),
           key,

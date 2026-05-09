@@ -91,6 +91,7 @@ function buildPluginServiceStack(
   },
 ): {
   pluginService: FridayPluginService;
+  markLifecyclePromoted: (pluginId: string) => void;
 } {
   const pluginRepo = createFridayPluginRepository();
   const registry = createFridayPluginRegistryService({ sqlite, pluginRepository: pluginRepo });
@@ -127,7 +128,18 @@ function buildPluginServiceStack(
     readFileAsBuffer: () => stubbedFileBytes,
   });
 
-  return { pluginService };
+  return {
+    pluginService,
+    markLifecyclePromoted(pluginId: string) {
+      sqlite.withWriteTransaction((db) => {
+        pluginRepo.setUpgradeMetadata(db, pluginId, {
+          compatibilityStatus: "compatible",
+          promotionChannel: "active",
+          shadowVersionId: `${pluginId}@shadow`,
+        }, NOW);
+      });
+    },
+  };
 }
 
 const NOW = "2025-06-15T10:00:00.000Z";
@@ -137,10 +149,11 @@ const NOW = "2025-06-15T10:00:00.000Z";
 describe("Plugin local lifecycle (service layer)", () => {
   let sqlite: FridaySqliteLayer;
   let pluginService: FridayPluginService;
+  let markLifecyclePromoted: (pluginId: string) => void;
 
   beforeEach(() => {
     sqlite = createTestDb();
-    ({ pluginService } = buildPluginServiceStack(sqlite));
+    ({ pluginService, markLifecyclePromoted } = buildPluginServiceStack(sqlite));
   });
 
   afterEach(() => {
@@ -178,6 +191,7 @@ describe("Plugin local lifecycle (service layer)", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("test.plugin.hello");
 
     const enabled = await pluginService.enablePlugin("test.plugin.hello");
 
@@ -194,6 +208,7 @@ describe("Plugin local lifecycle (service layer)", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("test.plugin.hello");
 
     await pluginService.enablePlugin("test.plugin.hello");
     const disabled = await pluginService.disablePlugin("test.plugin.hello");
@@ -253,7 +268,10 @@ describe("Plugin local lifecycle (service layer)", () => {
     // Build a stack where importModule always throws (simulates corrupt plugin JS)
     const failingSqlite = createTestDb();
     try {
-      const { pluginService: failingService } = buildPluginServiceStack(failingSqlite, {
+      const {
+        pluginService: failingService,
+        markLifecyclePromoted: markBrokenLifecyclePromoted,
+      } = buildPluginServiceStack(failingSqlite, {
         importModule: async () => {
           throw new Error("SyntaxError: Unexpected token");
         },
@@ -266,6 +284,7 @@ describe("Plugin local lifecycle (service layer)", () => {
         source: "local",
         userApproved: true,
       });
+      markBrokenLifecyclePromoted("test.plugin.broken");
 
       // Enabling should fail because importModule throws during load
       await expect(

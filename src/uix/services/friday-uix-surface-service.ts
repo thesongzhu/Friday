@@ -28,7 +28,10 @@ import type {
 } from "../../api/model/friday-api-uix-surface.types.js";
 import type { FridayIssueCard } from "../../api/model/friday-api-self-healing.types.js";
 import type { FridayAssistantWorkflowCard } from "../../api/model/friday-api-workflow.types.js";
-import { isFridayReflexPreferenceKey } from "../../reflex/index.js";
+import {
+  isFridayReflexPreferenceKey,
+  requiresFridayReflexPreferenceConfirmation,
+} from "../../reflex/index.js";
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayObservabilityApiService } from "../../observability/services/friday-observability-api-service.js";
 import type {
@@ -1611,6 +1614,19 @@ export function createFridayUixSurfaceService(
               "UIX_PREFERENCE_VALIDATION_FAILED",
               `Invalid ${preference.category} preference: ${preference.key}`,
               { httpStatus: 400 },
+            );
+          }
+          if (
+            isReflexPreference
+            && requiresFridayReflexPreferenceConfirmation({
+              category: "reflex",
+              key: preference.key,
+            })
+          ) {
+            throw new FridayDomainError(
+              "UIX_PREFERENCE_VALIDATION_FAILED",
+              `Reflex preference '${preference.key}' requires Review Center confirmation.`,
+              { httpStatus: 409 },
             );
           }
           const existing = existingByKey.get(`${preference.category}:${preference.key}`);

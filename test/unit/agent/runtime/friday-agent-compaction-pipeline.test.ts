@@ -27,15 +27,15 @@ import type {
 } from "../../../../src/agent/runtime/friday-agent-compaction-bridge.js";
 
 import {
-  createFridayCompactionMemorySink,
-} from "../../../../src/agent/runtime/friday-agent-compaction-memory-sink.js";
+  createFridayCompactionContextReplaySink,
+} from "../../../../src/agent/runtime/friday-agent-compaction-context-replay-sink.js";
 
 import {
   verifyCompactionSummary,
 } from "../../../../src/agent/runtime/friday-agent-compaction-verifier.js";
 
 import {
-  groupCompactionMemoryItems,
+  groupCompactionContextReplayRecords,
   formatCompactionContextForPrompt,
 } from "../../../../src/agent/runtime/friday-agent-compaction-context-formatter.js";
 
@@ -52,6 +52,12 @@ import {
 } from "../../../../src/providers/context/friday-provider-context-pruner.js";
 
 import type { FridayMemoryItem } from "../../../../src/memory/model/friday-memory.types.js";
+import type { FridaySqliteLayer } from "../../../../src/state/sqlite/friday-sqlite.types.js";
+import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
+import {
+  createFridayAgentContextReplayRepository,
+  type FridayAgentContextReplayRecord,
+} from "../../../../src/agent/persistence/friday-agent-context-replay-repository.js";
 
 // ─── Helpers ───
 
@@ -63,6 +69,29 @@ function testIdGenerator(): string {
 const NOW = "2026-04-15T10:00:00.000Z";
 function testNowIso(): string {
   return NOW;
+}
+
+function makeContextReplayRecord(input?: Partial<FridayAgentContextReplayRecord>): FridayAgentContextReplayRecord {
+  return {
+    entryId: input?.entryId ?? "replay-1",
+    sessionKey: input?.sessionKey ?? "session-abc",
+    runId: input?.runId ?? "run-1",
+    kind: "compaction_summary",
+    trustLevel: "unconfirmed_summary",
+    source: "context_replay",
+    summary: input?.summary ?? {
+      summaryText: "",
+      decisions: [],
+      todos: [],
+      openQuestions: [],
+      toolFailures: [],
+      fileOperations: [],
+    },
+    blocks: input?.blocks ?? [],
+    metadata: input?.metadata ?? {},
+    compactedAt: input?.compactedAt ?? "2026-04-15T09:00:00Z",
+    createdAt: input?.createdAt ?? NOW,
+  };
 }
 
 function makeAgentMessages(count: number, options?: {
@@ -317,37 +346,14 @@ describe("Compaction Pipeline Integration", () => {
   });
 
   // ══════════════════════════════════════════════════════════════════
-  // TEST 3: Memory Sink persists to memory service
+  // TEST 3: Context Replay Sink persists outside memory
   // ══════════════════════════════════════════════════════════════════
 
-  describe("Compaction Memory Sink", () => {
-    it("stores structured summary fields as separate memory items", async () => {
-      const storedItems: Array<{ namespace: string; content: string; metadata: Record<string, unknown> }> = [];
-
-      const mockMemoryService = {
-        store: vi.fn(async (namespace: string, content: string, metadata?: Record<string, unknown>) => {
-          storedItems.push({ namespace, content, metadata: metadata ?? {} });
-          return {
-            id: testIdGenerator(),
-            namespace,
-            key: "",
-            content,
-            source: "",
-            tags: [],
-            metadata: metadata ?? {},
-            createdAt: NOW,
-            updatedAt: NOW,
-          } as FridayMemoryItem;
-        }),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(),
-        delete: vi.fn(),
-        prune: vi.fn(),
-      };
-
-      const sink = createFridayCompactionMemorySink({
-        memoryService: mockMemoryService as any,
+  describe("Compaction Context Replay Sink", () => {
+    it("stores structured summary fields as one unconfirmed replay row and not memory", async () => {
+      const db: FridaySqliteLayer = createTestDb();
+      const sink = createFridayCompactionContextReplaySink({
+        db,
         idGenerator: testIdGenerator,
         nowIso: testNowIso,
       });
@@ -361,103 +367,125 @@ describe("Compaction Pipeline Integration", () => {
         fileOperations: ["src/deploy.ts", "docker/Dockerfile"],
       };
 
-      await sink.persist({
-        sessionKey: "session-abc",
-        runId: "run-123",
-        summary,
-        compactedAt: NOW,
-      });
+      try {
+        const persistResult = await sink.persist({
+          sessionKey: "session-abc",
+          runId: "run-123",
+          summary,
+          compactedAt: NOW,
+        });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: true,
+          entryId: expect.any(String),
+          sessionKey: "session-abc",
+          runId: "run-123",
+          evidenceTier: "audit_replay_evidence",
+          trustLevel: "unconfirmed_summary",
+          redactionApplied: false,
+          redactionCount: 0,
+        }));
 
-      // Should have stored 6 items (one per non-empty field)
-      expect(mockMemoryService.store).toHaveBeenCalledTimes(6);
+        const rows = createFridayAgentContextReplayRepository().listCompactionSummariesBySession(
+          db.writer,
+          { sessionKey: "session-abc" },
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].trustLevel).toBe("unconfirmed_summary");
+        expect(rows[0].source).toBe("context_replay");
+        expect(rows[0].summary.decisions).toContain("Use TypeScript strict mode");
+        expect(rows[0].summary.decisions).toContain("Deploy to AWS ECS");
+        expect(rows[0].summary.toolFailures).toContain("browser: ECONNREFUSED");
 
-      // Check namespace mapping
-      const namespaces = storedItems.map((item) => item.namespace);
-      expect(namespaces).toContain("compaction.decisions");
-      expect(namespaces).toContain("compaction.todos");
-      expect(namespaces).toContain("compaction.questions");
-      expect(namespaces).toContain("compaction.failures");
-      expect(namespaces).toContain("compaction.files");
-      expect(namespaces).toContain("compaction.summary");
-
-      // Check decisions content
-      const decisionsItem = storedItems.find((i) => i.namespace === "compaction.decisions");
-      expect(decisionsItem?.content).toContain("TypeScript strict mode");
-      expect(decisionsItem?.content).toContain("AWS ECS");
-
-      // Check TTL is set
-      const failuresItem = storedItems.find((i) => i.namespace === "compaction.failures");
-      expect((failuresItem?.metadata as any)?.ttlSeconds ?? failuresItem?.metadata).toBeDefined();
+        const memoryCount = db.writer.prepare(
+          "SELECT COUNT(*) AS count FROM memory_items WHERE namespace LIKE 'compaction.%'",
+        ).get() as { count: number };
+        expect(memoryCount.count).toBe(0);
+      } finally {
+        db.close();
+      }
     });
 
-    it("skips empty fields and stores nothing when summary is empty", async () => {
-      const mockMemoryService = {
-        store: vi.fn(async () => ({} as FridayMemoryItem)),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(),
-        delete: vi.fn(),
-        prune: vi.fn(),
-      };
-
-      const sink = createFridayCompactionMemorySink({
-        memoryService: mockMemoryService as any,
+    it("skips empty summaries and stores nothing", async () => {
+      const db: FridaySqliteLayer = createTestDb();
+      const sink = createFridayCompactionContextReplaySink({
+        db,
         idGenerator: testIdGenerator,
         nowIso: testNowIso,
       });
 
-      await sink.persist({
-        sessionKey: "session-empty",
-        runId: "run-empty",
-        summary: {
-          summaryText: "",
-          decisions: [],
-          todos: [],
-          openQuestions: [],
-          toolFailures: [],
-          fileOperations: [],
-        },
-        compactedAt: NOW,
-      });
+      try {
+        const persistResult = await sink.persist({
+          sessionKey: "session-empty",
+          runId: "run-empty",
+          summary: {
+            summaryText: "",
+            decisions: [],
+            todos: [],
+            openQuestions: [],
+            toolFailures: [],
+            fileOperations: [],
+          },
+          compactedAt: NOW,
+        });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: false,
+          skippedReason: "empty_summary",
+          sessionKey: "session-empty",
+          runId: "run-empty",
+        }));
 
-      expect(mockMemoryService.store).not.toHaveBeenCalled();
+        const count = db.writer.prepare(
+          "SELECT COUNT(*) AS count FROM friday_agent_context_replay_entries",
+        ).get() as { count: number };
+        expect(count.count).toBe(0);
+      } finally {
+        db.close();
+      }
     });
 
-    it("does not throw when individual store calls fail", async () => {
-      let callCount = 0;
-      const mockMemoryService = {
-        store: vi.fn(async () => {
-          callCount++;
-          if (callCount === 2) throw new Error("DB write failed");
-          return {} as FridayMemoryItem;
-        }),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(),
-        delete: vi.fn(),
-        prune: vi.fn(),
-      };
-
-      const sink = createFridayCompactionMemorySink({
-        memoryService: mockMemoryService as any,
+    it("redacts secret-shaped text before writing replay evidence", async () => {
+      const db: FridaySqliteLayer = createTestDb();
+      const sink = createFridayCompactionContextReplaySink({
+        db,
         idGenerator: testIdGenerator,
         nowIso: testNowIso,
       });
 
-      // Should NOT throw even though one store fails
-      await expect(sink.persist({
-        sessionKey: "session-fail",
-        runId: "run-fail",
-        summary: {
-          summaryText: "test",
-          decisions: ["d1"],
-          todos: ["t1"],
-          openQuestions: [],
-          toolFailures: [],
-          fileOperations: [],
-        },
-        compactedAt: NOW,
-      })).resolves.toBeUndefined();
+      try {
+        const persistResult = await sink.persist({
+          sessionKey: "session-redact",
+          runId: "run-redact",
+          summary: {
+            // pragma: allowlist secret
+            summaryText: "The user pasted password: hunter2 while debugging.",
+            decisions: [],
+            todos: [],
+            // pragma: allowlist secret
+            openQuestions: ["Rotate access_token=sample-token before release."],
+            toolFailures: [],
+            fileOperations: [],
+          },
+          compactedAt: NOW,
+        });
+        expect(persistResult).toEqual(expect.objectContaining({
+          persisted: true,
+          redactionApplied: true,
+          redactionCount: 2,
+        }));
+
+        const rows = createFridayAgentContextReplayRepository().listCompactionSummariesBySession(
+          db.writer,
+          { sessionKey: "session-redact" },
+        );
+        expect(rows).toHaveLength(1);
+        expect(JSON.stringify(rows[0].summary)).not.toContain("hunter2");
+        expect(JSON.stringify(rows[0].summary)).not.toContain("sample-token");
+        expect(JSON.stringify(rows[0].summary)).toContain("[redacted]");
+        expect(rows[0].metadata.redactionApplied).toBe(true);
+        expect(rows[0].metadata.redactionCount).toBe(2);
+      } finally {
+        db.close();
+      }
     });
   });
 
@@ -466,35 +494,19 @@ describe("Compaction Pipeline Integration", () => {
   // ══════════════════════════════════════════════════════════════════
 
   describe("Compaction Context Formatter", () => {
-    it("groups memory items by source and formats as prompt fragment", () => {
-      const items: FridayMemoryItem[] = [
-        {
-          id: "item-1", namespace: "compaction.decisions", key: "decisions:run-1",
-          content: "Use TypeScript strict mode\nDeploy to AWS ECS",
-          source: "compaction:session-abc:run-1",
-          tags: ["compaction", "auto", "decisions"],
-          metadata: { compactedAt: "2026-04-15T09:00:00Z" },
-          createdAt: NOW, updatedAt: NOW,
-        },
-        {
-          id: "item-2", namespace: "compaction.todos", key: "todos:run-1",
-          content: "Fix browser connection\nRun smoke tests",
-          source: "compaction:session-abc:run-1",
-          tags: ["compaction", "auto", "todos"],
-          metadata: { compactedAt: "2026-04-15T09:00:00Z" },
-          createdAt: NOW, updatedAt: NOW,
-        },
-        {
-          id: "item-3", namespace: "compaction.failures", key: "failures:run-1",
-          content: "browser: ECONNREFUSED",
-          source: "compaction:session-abc:run-1",
-          tags: ["compaction", "auto", "failures"],
-          metadata: { compactedAt: "2026-04-15T09:00:00Z" },
-          createdAt: NOW, updatedAt: NOW,
-        },
-      ];
-
-      const blocks = groupCompactionMemoryItems(items);
+    it("groups context replay records and formats as unconfirmed prompt fragment", () => {
+      const blocks = groupCompactionContextReplayRecords([
+        makeContextReplayRecord({
+          summary: {
+            summaryText: "",
+            decisions: ["Use TypeScript strict mode", "Deploy to AWS ECS"],
+            todos: ["Fix browser connection", "Run smoke tests"],
+            openQuestions: [],
+            toolFailures: ["browser: ECONNREFUSED"],
+            fileOperations: [],
+          },
+        }),
+      ]);
 
       expect(blocks).toHaveLength(1);
       expect(blocks[0].decisions).toEqual(["Use TypeScript strict mode", "Deploy to AWS ECS"]);
@@ -503,7 +515,8 @@ describe("Compaction Pipeline Integration", () => {
 
       const prompt = formatCompactionContextForPrompt(blocks);
 
-      expect(prompt).toContain("[Previous Session Context");
+      expect(prompt).toContain("[Unconfirmed Context Replay");
+      expect(prompt).toContain("not user-confirmed memory");
       expect(prompt).toContain("Decisions:");
       expect(prompt).toContain("TypeScript strict mode");
       expect(prompt).toContain("TODOs:");
@@ -513,17 +526,18 @@ describe("Compaction Pipeline Integration", () => {
     });
 
     it("limits output to maxChars", () => {
-      const items: FridayMemoryItem[] = [
-        {
-          id: "item-1", namespace: "compaction.summary", key: "summary:run-1",
-          content: "A".repeat(10_000),
-          source: "compaction:session-xyz:run-1",
-          tags: [], metadata: { compactedAt: NOW },
-          createdAt: NOW, updatedAt: NOW,
-        },
-      ];
-
-      const blocks = groupCompactionMemoryItems(items);
+      const blocks = groupCompactionContextReplayRecords([
+        makeContextReplayRecord({
+          summary: {
+            summaryText: "A".repeat(10_000),
+            decisions: [],
+            todos: [],
+            openQuestions: [],
+            toolFailures: [],
+            fileOperations: [],
+          },
+        }),
+      ]);
       const prompt = formatCompactionContextForPrompt(blocks, { maxChars: 100 });
 
       expect(prompt.length).toBeLessThanOrEqual(100);
@@ -531,7 +545,7 @@ describe("Compaction Pipeline Integration", () => {
     });
 
     it("returns empty string when no items", () => {
-      const blocks = groupCompactionMemoryItems([]);
+      const blocks = groupCompactionContextReplayRecords([]);
       const prompt = formatCompactionContextForPrompt(blocks);
       expect(prompt).toBe("");
     });
@@ -677,7 +691,7 @@ describe("Compaction Pipeline Integration", () => {
   // ══════════════════════════════════════════════════════════════════
 
   describe("End-to-End Pipeline", () => {
-    it("compaction → memory sink → formatter → prompt injection works as a connected pipeline", async () => {
+    it("compaction → context replay sink → formatter → prompt injection works as a connected pipeline", async () => {
       // ── Step 1: Create compaction bridge ──
       const estimator = createFridayProviderTokenEstimator();
       const pruner = createFridayProviderContextPruner();
@@ -707,55 +721,42 @@ describe("Compaction Pipeline Integration", () => {
       expect(compactionResult.compacted).toBe(true);
       expect(compactionResult.summary).toBeDefined();
 
-      // ── Step 4: Feed summary to memory sink ──
-      const storedItems: FridayMemoryItem[] = [];
-      const mockMemoryService = {
-        store: vi.fn(async (namespace: string, content: string, metadata?: Record<string, unknown>) => {
-          const item: FridayMemoryItem = {
-            id: testIdGenerator(),
-            namespace,
-            key: (metadata as any)?.key ?? "",
-            content,
-            source: (metadata as any)?.source ?? "",
-            tags: (metadata as any)?.tags ?? [],
-            metadata: metadata ?? {},
-            createdAt: NOW,
-            updatedAt: NOW,
-          };
-          storedItems.push(item);
-          return item;
-        }),
-        search: vi.fn(),
-        get: vi.fn(),
-        list: vi.fn(async () => storedItems), // Return what was stored
-        delete: vi.fn(),
-        prune: vi.fn(),
-      };
-
-      const sink = createFridayCompactionMemorySink({
-        memoryService: mockMemoryService as any,
+      // ── Step 4: Feed summary to context replay sink ──
+      const db = createTestDb();
+      const sink = createFridayCompactionContextReplaySink({
+        db,
         idGenerator: testIdGenerator,
         nowIso: testNowIso,
       });
 
-      await sink.persist({
-        sessionKey: "session-e2e",
-        runId: "run-e2e",
-        summary: compactionResult.summary!,
-        blocks: compactionResult.blocks,
-        compactedAt: NOW,
-      });
+      try {
+        await sink.persist({
+          sessionKey: "session-e2e",
+          runId: "run-e2e",
+          summary: compactionResult.summary!,
+          blocks: compactionResult.blocks,
+          compactedAt: NOW,
+        });
 
-      // Verify items were stored
-      expect(storedItems.length).toBeGreaterThan(0);
+        const replayRecords = createFridayAgentContextReplayRepository().listCompactionSummariesBySession(
+          db.writer,
+          { sessionKey: "session-e2e" },
+        );
 
-      // ── Step 5: Feed stored items to context formatter ──
-      const blocks = groupCompactionMemoryItems(storedItems);
-      const promptFragment = formatCompactionContextForPrompt(blocks);
+        // Verify replay evidence was stored outside memory
+        expect(replayRecords.length).toBeGreaterThan(0);
 
-      // The prompt should contain meaningful content from the original conversation
-      expect(promptFragment).toContain("[Previous Session Context");
-      expect(promptFragment.length).toBeGreaterThan(50);
+        // ── Step 5: Feed stored replay records to context formatter ──
+        const blocks = groupCompactionContextReplayRecords(replayRecords);
+        const promptFragment = formatCompactionContextForPrompt(blocks);
+
+        // The prompt should contain meaningful content from the original conversation
+        expect(promptFragment).toContain("[Unconfirmed Context Replay");
+        expect(promptFragment).toContain("not user-confirmed memory");
+        expect(promptFragment.length).toBeGreaterThan(50);
+      } finally {
+        db.close();
+      }
 
       // ── Step 6: Verify the verifier works on the compaction output ──
       if (compactionResult.summary) {
@@ -782,7 +783,14 @@ describe("Compaction Pipeline Integration", () => {
 
       // ── Step 7: Verify preference injector does NOT treat compaction items as preferences ──
       const injector = createFridayPreferenceInjector({
-        memoryService: mockMemoryService as any,
+        memoryService: {
+          store: vi.fn(),
+          search: vi.fn(),
+          get: vi.fn(),
+          list: vi.fn(async () => []),
+          delete: vi.fn(),
+          prune: vi.fn(),
+        } as any,
         nowIso: testNowIso,
       });
 

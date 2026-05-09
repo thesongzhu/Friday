@@ -54,6 +54,10 @@ describe("FridayAgentRuntime", () => {
     };
   }
 
+  async function flushAsyncEvents(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
   function createEchoTool(): FridayAgentToolDefinition {
     return {
       name: "echo",
@@ -7518,7 +7522,7 @@ describe("FridayAgentRuntime", () => {
     expect(capturedSystemPrompt).toContain("COMPACTION_CANARY");
   });
 
-  it("injects persisted compaction context for the current session before the run", async () => {
+  it("injects persisted compaction context for the current session before the run and records replay evidence", async () => {
     let capturedSystemPrompt = "";
 
     const llmClient: FridayAgentLlmClient = {
@@ -7531,7 +7535,20 @@ describe("FridayAgentRuntime", () => {
 
     const compactionContextBuilder = vi
       .fn()
-      .mockResolvedValue("[Previous Session Context]\nSummary: Discord channel wiring already validated.");
+      .mockResolvedValue({
+        fragment: "[Previous Session Context]\nSummary: Discord channel wiring already validated.",
+        blockCount: 1,
+        sources: ["context_replay:entry-1"],
+        sessionKey: "session-ctx-1",
+        evidenceTier: "audit_replay_evidence",
+        trustLevel: "unconfirmed_summary",
+        source: "context_replay",
+        memoryBoundary: "not_user_confirmed_memory",
+        redactionApplied: true,
+        redactionCount: 1,
+        replayEntryIds: ["entry-1"],
+      });
+    const eventRepo = createFridayAgentRunEventRepository();
 
     const runtime = createFridayAgentRuntime({
       db,
@@ -7544,9 +7561,10 @@ describe("FridayAgentRuntime", () => {
       idGenerator,
       nowIso: () => NOW,
       compactionContextBuilder,
+      runEventRepository: eventRepo,
     });
 
-    await runtime.executeRun({ task: "Continue the task", principalId: "user-123", sessionKey: "session-ctx-1" });
+    const result = await runtime.executeRun({ task: "Continue the task", principalId: "user-123", sessionKey: "session-ctx-1" });
 
     expect(compactionContextBuilder).toHaveBeenCalledWith({
       userId: "user-123",
@@ -7555,6 +7573,213 @@ describe("FridayAgentRuntime", () => {
     });
     expect(capturedSystemPrompt).toContain("[Previous Session Context]");
     expect(capturedSystemPrompt).toContain("Discord channel wiring already validated");
+    const events = db.withReadConnection((reader) => eventRepo.list(reader, result.runId));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventName: "agent.run.context_replay_loaded",
+          payload: expect.objectContaining({
+            sessionKey: "session-ctx-1",
+            evidenceTier: "audit_replay_evidence",
+            trustLevel: "unconfirmed_summary",
+            source: "context_replay",
+            sourceCount: 1,
+            blockCount: 1,
+            memoryBoundary: "not_user_confirmed_memory",
+            redactionApplied: true,
+            redactionCount: 1,
+            replayEntryIds: ["entry-1"],
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("records durable evidence when compaction replay persistence succeeds", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "ok" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 },
+      ],
+    ]);
+    const eventRepo = createFridayAgentRunEventRepository();
+    const compactionContextReplaySink = {
+      persist: vi.fn().mockResolvedValue({
+        persisted: true,
+        entryId: "context-entry-1",
+        sessionKey: "session-compaction-1",
+        runId: "run-compaction-1",
+        blockCount: 2,
+        evidenceTier: "audit_replay_evidence",
+        trustLevel: "unconfirmed_summary",
+        redactionApplied: false,
+        redactionCount: 0,
+      }),
+    };
+    const compactionBridge = {
+      compact: vi.fn().mockResolvedValue({
+        compacted: true,
+        messages: [{ role: "user", content: "Compacted context summary." }],
+        summary: {
+          summaryText: "The user validated context replay.",
+          decisions: ["Keep replay outside memory"],
+          todos: [],
+          openQuestions: [],
+          toolFailures: [],
+          fileOperations: [],
+        },
+        blocks: [
+          {
+            id: "block-1",
+            kind: "conversation_block",
+            messageIds: ["m-1"],
+            summaryText: "Block one.",
+            decisions: [],
+            todos: [],
+            openQuestions: [],
+            toolFailures: [],
+            fileOperations: [],
+          },
+          {
+            id: "block-2",
+            kind: "conversation_block",
+            messageIds: ["m-2"],
+            summaryText: "Block two.",
+            decisions: [],
+            todos: [],
+            openQuestions: [],
+            toolFailures: [],
+            fileOperations: [],
+          },
+        ],
+        droppedMessageCount: 39,
+        estimatedTokensBefore: 10_000,
+        estimatedTokensAfter: 400,
+      }),
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      runEventRepository: eventRepo,
+      compactionBridge,
+      compactionContextReplaySink,
+    });
+
+    await runtime.executeRun({
+      runId: "run-compaction-1",
+      task: "Continue with compaction",
+      sessionKey: "session-compaction-1",
+      historyMessages: Array.from({ length: 41 }, (_, index) => ({
+        role: "user" as const,
+        content: `history message ${index}`,
+      })),
+    });
+    await flushAsyncEvents();
+
+    expect(compactionContextReplaySink.persist).toHaveBeenCalledTimes(1);
+    const events = db.withReadConnection((reader) => eventRepo.list(reader, "run-compaction-1"));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventName: "agent.run.compaction_persist_scheduled",
+          payload: expect.objectContaining({
+            sessionKey: "session-compaction-1",
+            summaryPresent: true,
+            blockCount: 2,
+          }),
+        }),
+        expect.objectContaining({
+          eventName: "agent.run.compaction_persisted",
+          payload: expect.objectContaining({
+            sessionKey: "session-compaction-1",
+            entryId: "context-entry-1",
+            evidenceTier: "audit_replay_evidence",
+            trustLevel: "unconfirmed_summary",
+            blockCount: 2,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("records durable evidence when compaction replay persistence fails", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "ok" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 },
+      ],
+    ]);
+    const eventRepo = createFridayAgentRunEventRepository();
+    const compactionContextReplaySink = {
+      persist: vi.fn().mockRejectedValue(new Error("sqlite write failed")),
+    };
+    const compactionBridge = {
+      compact: vi.fn().mockResolvedValue({
+        compacted: true,
+        messages: [{ role: "user", content: "Compacted context summary." }],
+        summary: {
+          summaryText: "The user validated context replay.",
+          decisions: [],
+          todos: [],
+          openQuestions: [],
+          toolFailures: [],
+          fileOperations: [],
+        },
+        blocks: [],
+        droppedMessageCount: 39,
+        estimatedTokensBefore: 10_000,
+        estimatedTokensAfter: 400,
+      }),
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      runEventRepository: eventRepo,
+      compactionBridge,
+      compactionContextReplaySink,
+    });
+
+    await runtime.executeRun({
+      runId: "run-compaction-fail",
+      task: "Continue with compaction",
+      sessionKey: "session-compaction-fail",
+      historyMessages: Array.from({ length: 41 }, (_, index) => ({
+        role: "user" as const,
+        content: `history message ${index}`,
+      })),
+    });
+    await flushAsyncEvents();
+
+    const events = db.withReadConnection((reader) => eventRepo.list(reader, "run-compaction-fail"));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventName: "agent.run.compaction_persist_failed",
+          payload: expect.objectContaining({
+            sessionKey: "session-compaction-fail",
+            errorName: "Error",
+            evidenceTier: "audit_replay_evidence",
+            trustLevel: "unconfirmed_summary",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("uses learned timezone preference when no explicit timezone is provided", async () => {

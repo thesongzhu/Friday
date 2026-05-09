@@ -5,6 +5,7 @@ import { createFridayWorkflowBuilderValidationService } from "#workflows";
 import { createFridayWorkflowCompiler } from "#workflows";
 import { createFridayWorkflowValidator } from "#workflows";
 import { createFridaySkillRepository } from "#skills";
+import type { FridayRegisteredSkill, FridaySkillRegistry } from "#skills";
 import type { FridayWorkflowDraftEntity } from "#workflows";
 import { createTestSpec, createTestSpecWithEdge, createTestVisual } from "./_helpers/create-test-spec.helper.js";
 import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
@@ -240,7 +241,7 @@ describe("FridayWorkflowBuilderValidationService", () => {
 
   // ─── skill_refs validation tests ───
 
-  function createServiceWithSkills() {
+  function createServiceWithSkills(skillRegistry?: FridaySkillRegistry) {
     const idGen = createTestIdGenerator();
     const skillRepo = createFridaySkillRepository();
     const compiler = createFridayWorkflowCompiler({
@@ -255,6 +256,7 @@ describe("FridayWorkflowBuilderValidationService", () => {
         validator,
         db,
         skillRepo,
+        skillRegistry,
         nowIso: () => NOW,
         idGenerator: idGen,
       }),
@@ -302,6 +304,85 @@ describe("FridayWorkflowBuilderValidationService", () => {
     const report = service.validateSpec(spec);
     const skillIssues = report.issues.filter((i) => i.stage === "skill_refs");
     expect(skillIssues).toHaveLength(0);
+  });
+
+  it("skill_refs reports skill that is not installed or promoted", () => {
+    const { service, skillRepo } = createServiceWithSkills();
+
+    db.withWriteTransaction((writerDb) => {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
+        id: "candidate-skill",
+        name: "Candidate Skill",
+        source: "local",
+        origin: "managed",
+        status: "not_installed",
+        nowIso: NOW,
+      });
+    });
+
+    const spec = createTestSpec({
+      steps: [
+        { id: "step-1", type: "skill_call", ref: "candidate-skill" },
+      ],
+    });
+
+    const report = service.validateSpec(spec);
+    const skillIssue = report.issues.find((i) => i.code === "SKILL_REF_NOT_AVAILABLE");
+    expect(skillIssue).toBeDefined();
+    expect(skillIssue!.stage).toBe("skill_refs");
+    expect(skillIssue!.severity).toBe("error");
+    expect(skillIssue!.stepId).toBe("step-1");
+  });
+
+  it("skill_refs passes for installed registry skill when repo has no row", () => {
+    const registrySkill = {
+      status: "installed",
+    } as FridayRegisteredSkill;
+    const skillRegistry = {
+      get: (skillId: string) => skillId === "registry-skill" ? registrySkill : null,
+    } as FridaySkillRegistry;
+    const { service } = createServiceWithSkills(skillRegistry);
+    const spec = createTestSpec({
+      steps: [
+        { id: "step-1", type: "skill_call", ref: "registry-skill" },
+      ],
+    });
+
+    const report = service.validateSpec(spec);
+    const skillIssues = report.issues.filter((i) => i.stage === "skill_refs");
+    expect(skillIssues).toHaveLength(0);
+  });
+
+  it("skill_refs keeps persisted lifecycle status authoritative over registry", () => {
+    const registrySkill = {
+      status: "installed",
+    } as FridayRegisteredSkill;
+    const skillRegistry = {
+      get: (skillId: string) => skillId === "candidate-skill" ? registrySkill : null,
+    } as FridaySkillRegistry;
+    const { service, skillRepo } = createServiceWithSkills(skillRegistry);
+
+    db.withWriteTransaction((writerDb) => {
+      skillRepo.upsertSkillFromCatalog(writerDb, {
+        id: "candidate-skill",
+        name: "Candidate Skill",
+        source: "local",
+        origin: "managed",
+        status: "not_installed",
+        nowIso: NOW,
+      });
+    });
+
+    const spec = createTestSpec({
+      steps: [
+        { id: "step-1", type: "skill_call", ref: "candidate-skill" },
+      ],
+    });
+
+    const report = service.validateSpec(spec);
+    const skillIssue = report.issues.find((i) => i.code === "SKILL_REF_NOT_AVAILABLE");
+    expect(skillIssue).toBeDefined();
+    expect(skillIssue!.stepId).toBe("step-1");
   });
 
   it("skill_refs checks tool_call refs too", () => {

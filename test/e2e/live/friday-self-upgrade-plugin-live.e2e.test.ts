@@ -8,11 +8,23 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LIVE_ANTHROPIC_MODEL } from "../_helpers/live-anthropic.js";
 import { apiFetch } from "./_helpers/api.js";
 import {
+  createFridayPluginLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+const PLUGIN_LIFECYCLE_SIGNING_MATERIAL =
+  "plugin-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface RuntimeVersionEnvelope {
   ok: boolean;
@@ -86,6 +98,15 @@ interface PluginActionEnvelope {
       };
     };
     status: UpgradeStatusEnvelope["data"]["items"][number] | null;
+    evidence?: {
+      pluginId?: string;
+      shadowVersionId?: string;
+      stage?: string;
+      canarySuccessCount?: number;
+      canaryFailureCount?: number;
+      rollbackPointerAvailable?: boolean;
+      planDigest?: string;
+    };
   };
 }
 
@@ -193,12 +214,50 @@ async function getUpgradeStatus(env: RealHubEnv, pluginId: string): Promise<Upgr
   return response.json.data.items[0]!;
 }
 
+function makePluginLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  pluginId: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+  planDigest: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: input.planDigest, actions: ["plugins.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayPluginLifecycleMutatingActionRequest({
+    action: input.action,
+    pluginId: input.pluginId,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: LIVE_ANTHROPIC_MODEL,
+    actor: {
+      kind: "user",
+      id: LOCAL_LIVE_PRINCIPAL_ID,
+      principalId: LOCAL_LIVE_PRINCIPAL_ID,
+    },
+    surface: `api:/v1/autonomy/plugins/${input.action}`,
+    planDigest: input.planDigest,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `plugin-live-${input.action}`,
+    decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-05-07T00:00:00.000Z",
+  }, PLUGIN_LIFECYCLE_SIGNING_MATERIAL);
+}
+
 describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anthropic API key lane)", () => {
   let env: RealHubEnv;
   let pluginRootDir: string;
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
+    env = await createFridayDeepProofHubEnv({
+      hubConfig: {
+        tokenSecret: PLUGIN_LIFECYCLE_SIGNING_MATERIAL,
+      },
+    });
     pluginRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-plugin-self-upgrade-"));
   }, 120_000);
 
@@ -241,16 +300,37 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anth
         detectStatus.findings.some((finding) => finding.id === "plugin_enabled" && !finding.passed),
       ).toBe(true);
 
-      const enableRes = await apiFetch<PluginEnvelope>(
+      const enableRes = await apiFetch<{ ok: boolean; error?: { code?: string } }>(
         env.baseUrl,
         env.accessToken,
         "POST",
         `/v1/plugins/${encodeURIComponent(pluginId)}/enable`,
       );
-      expect(enableRes.status).toBe(200);
-      expect(enableRes.json.ok).toBe(true);
-      expect(enableRes.json.data.plugin.enabled).toBe(true);
-      expect(enableRes.json.data.plugin.status).toBe("running");
+      expect(enableRes.status).toBe(403);
+      expect(enableRes.json.ok).toBe(false);
+      expect(enableRes.json.error?.code).toBe("PLUGIN_LIFECYCLE_PROMOTION_REQUIRED");
+
+      const reviewEnableRes = await apiFetch<PluginActionEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "POST",
+        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/review-enable`,
+        {
+          runtimeVersion,
+          providerModel: LIVE_ANTHROPIC_MODEL,
+        },
+      );
+      expect(reviewEnableRes.status).toBe(200);
+      expect(reviewEnableRes.json.ok).toBe(true);
+      expect(reviewEnableRes.json.data.plugin.enabled).toBe(true);
+      expect(reviewEnableRes.json.data.plugin.status).toBe("running");
+      expect(reviewEnableRes.json.data.plugin.promotionChannel).toBe("active");
+      expect(reviewEnableRes.json.data.plugin.compatibilityStatus).toBe("compatible");
+      expect(reviewEnableRes.json.data.plugin.canaryStats?.successCount).toBe(1);
+      expect(reviewEnableRes.json.data.plugin.canaryStats?.failureCount).toBe(0);
+      expect(reviewEnableRes.json.data.evidence?.stage).toBe("active");
+      expect(reviewEnableRes.json.data.evidence?.rollbackPointerAvailable).toBe(true);
+      expect(reviewEnableRes.json.data.evidence?.planDigest).toBeTruthy();
 
       const activatedMarker = path.join(installPath, "activated.json");
       expect(fs.existsSync(activatedMarker)).toBe(true);
@@ -271,79 +351,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anth
       expect(postAdaptStatus.derivedCompatibilityStatus).toBe("compatible");
       expect(postAdaptStatus.strategy).toBe("noop");
 
-      const firstShadowId = `${pluginId}@shadow`;
-      const shadowRes = await apiFetch<PluginActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/shadow`,
-        {
-          shadowVersionId: firstShadowId,
-          runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
-        },
-      );
-      expect(shadowRes.status).toBe(200);
-      expect(shadowRes.json.ok).toBe(true);
-      expect(shadowRes.json.data.plugin.promotionChannel).toBe("shadow");
-      expect(shadowRes.json.data.status?.promotionChannel).toBe("shadow");
-      expect(shadowRes.json.data.status?.shadowVersionId).toBe(firstShadowId);
-
-      const canaryRes = await apiFetch<PluginActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/canary`,
-        { success: true },
-      );
-      expect(canaryRes.status).toBe(200);
-      expect(canaryRes.json.ok).toBe(true);
-      expect(canaryRes.json.data.plugin.promotionChannel).toBe("canary");
-      expect(canaryRes.json.data.plugin.canaryStats?.sampleSize).toBe(1);
-      expect(canaryRes.json.data.plugin.canaryStats?.successCount).toBe(1);
-
-      const promoteRes = await apiFetch<PluginActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/promote`,
-        {
-          runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
-        },
-      );
-      expect(promoteRes.status).toBe(200);
-      expect(promoteRes.json.ok).toBe(true);
-      expect(promoteRes.json.data.plugin.promotionChannel).toBe("active");
-      expect(promoteRes.json.data.status?.promotionChannel).toBe("active");
-      expect(promoteRes.json.data.status?.derivedCompatibilityStatus).toBe("compatible");
-
-      const secondShadowId = `${pluginId}@shadow-rollback`;
-      const secondShadowRes = await apiFetch<PluginActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/shadow`,
-        {
-          shadowVersionId: secondShadowId,
-          runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
-        },
-      );
-      expect(secondShadowRes.status).toBe(200);
-      expect(secondShadowRes.json.ok).toBe(true);
-
-      const failedCanaryRes = await apiFetch<PluginActionEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "POST",
-        `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/canary`,
-        { success: false },
-      );
-      expect(failedCanaryRes.status).toBe(200);
-      expect(failedCanaryRes.json.ok).toBe(true);
-      expect(failedCanaryRes.json.data.plugin.canaryStats?.sampleSize).toBe(2);
-      expect(failedCanaryRes.json.data.plugin.canaryStats?.failureCount).toBe(1);
+      const planDigest = reviewEnableRes.json.data.evidence?.planDigest;
+      const shadowVersionId = reviewEnableRes.json.data.plugin.shadowVersionId ?? undefined;
+      expect(planDigest).toBeTruthy();
+      expect(shadowVersionId).toBeTruthy();
 
       const rollbackRes = await apiFetch<PluginActionEnvelope>(
         env.baseUrl,
@@ -353,35 +364,45 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anth
         {
           runtimeVersion,
           providerModel: LIVE_ANTHROPIC_MODEL,
+          planDigest,
+          reason: "live plugin lifecycle rollback proof",
+          canonicalApproval: makePluginLifecycleApproval({
+            action: "rollback",
+            pluginId,
+            shadowVersionId,
+            runtimeVersion,
+            planDigest: planDigest!,
+          }),
         },
       );
       expect(rollbackRes.status).toBe(200);
       expect(rollbackRes.json.ok).toBe(true);
-      expect(rollbackRes.json.data.plugin.promotionChannel).toBe("rolled_back");
-      expect(rollbackRes.json.data.status?.promotionChannel).toBe("rolled_back");
+      expect(rollbackRes.json.data.plugin.promotionChannel).toBe("none");
+      expect(rollbackRes.json.data.plugin.enabled).toBe(false);
+      expect(rollbackRes.json.data.status?.promotionChannel).toBe("none");
 
       const pluginRow = readPluginRow(env.stateDir!, pluginId);
       expect(pluginRow).not.toBeNull();
-      expect(pluginRow?.status).toBe("running");
-      expect(pluginRow?.enabled).toBe(1);
-      expect(pluginRow?.promotionChannel).toBe("rolled_back");
+      expect(pluginRow?.status).toBe("installed");
+      expect(pluginRow?.enabled).toBe(0);
+      expect(pluginRow?.promotionChannel).toBe("none");
       expect(pluginRow?.shadowVersionId).toBeNull();
-      expect(pluginRow?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
-      expect(pluginRow?.lastVerifiedProviderModel).toBe(LIVE_ANTHROPIC_MODEL);
+      expect(pluginRow?.lastVerifiedRuntimeVersion).toBeNull();
+      expect(pluginRow?.lastVerifiedProviderModel).toBeNull();
       const canaryStats = JSON.parse(pluginRow?.canaryStatsJson ?? "{}") as {
         sampleSize?: number;
         successCount?: number;
         failureCount?: number;
         rollbackCount?: number;
       };
-      expect(canaryStats.sampleSize).toBe(2);
+      expect(canaryStats.sampleSize).toBe(1);
       expect(canaryStats.successCount).toBe(1);
-      expect(canaryStats.failureCount).toBe(1);
+      expect(canaryStats.failureCount).toBe(0);
       expect(canaryStats.rollbackCount).toBe(1);
 
       const finalStatus = await getUpgradeStatus(env, pluginId);
-      expect(finalStatus.promotionChannel).toBe("rolled_back");
-      expect(finalStatus.recordedCompatibilityStatus).toBe("adaptation_required");
+      expect(finalStatus.promotionChannel).toBe("none");
+      expect(finalStatus.recordedCompatibilityStatus).toBe("unknown");
     },
   );
 });

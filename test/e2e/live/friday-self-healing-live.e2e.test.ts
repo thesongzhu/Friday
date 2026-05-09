@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
-import { apiFetch, createOpenAiProvider } from "./_helpers/api.js";
+import { apiFetch, createOpenAiProvider, verifyProviderTextCapability } from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
   cleanupRealHubEnv,
@@ -373,6 +373,10 @@ async function createProviderPair(env: RealHubEnv): Promise<{ primaryProviderId:
     defaultModel: LIVE_MODEL,
     apiKeyEnvRef,
   });
+  await verifyProviderTextCapability(env.baseUrl, env.accessToken, primaryProviderId, LIVE_MODEL, {
+    doctorProviderIds: [primaryProviderId, secondaryProviderId],
+  });
+  await verifyProviderTextCapability(env.baseUrl, env.accessToken, secondaryProviderId, LIVE_MODEL, { runDoctor: false });
   return { primaryProviderId, secondaryProviderId };
 }
 

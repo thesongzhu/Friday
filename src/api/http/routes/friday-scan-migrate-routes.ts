@@ -2,7 +2,7 @@
  * Skill Scan & Migrate Routes.
  *
  * REST endpoints for local skill scanning, community catalog browsing,
- * and batch skill import.
+ * and batch skill conversion preview.
  *
  * @module api/http/routes
  */
@@ -10,15 +10,20 @@
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { LocalSkillScanResult } from "../../../skills/converter/discovery/friday-local-skill-scanner.js";
 import type { CommunitySkillItem } from "../../../skills/converter/discovery/friday-community-skill-catalog.js";
+import {
+  redactFridaySkillCandidateSourceUri,
+  redactFridaySkillSourceText,
+} from "../../../skills/converter/index.js";
 
 // ─── Deps ───
 
 export interface FridayScanMigrateRoutesDeps {
   scanLocal: () => LocalSkillScanResult;
   getCommunitySkills: (query?: string) => CommunitySkillItem[];
-  importSkill: (sourcePath: string, formatHint?: string) => Promise<{
+  convertSkill: (sourcePath: string, formatHint?: string) => Promise<{
     success: boolean;
     skillId?: string;
+    mode?: "preview";
     error?: string;
   }>;
 }
@@ -60,11 +65,11 @@ export function createFridayScanMigrateRoutes(
       },
     },
 
-    // ── Import Batch ──
+    // ── Convert Batch Preview ──
     {
-      operationId: "skills.import.batch",
+      operationId: "skills.convert.batch",
       method: "POST",
-      path: "/v1/skills/import-batch",
+      path: "/v1/skills/convert-batch",
       auth: { public: false, anyOfScopes: ["skill.write"] },
       handler: async (ctx: Ctx) => {
         const body = (ctx.body ?? {}) as {
@@ -72,20 +77,22 @@ export function createFridayScanMigrateRoutes(
         };
 
         const items = body.items ?? [];
-        const results: Array<{ sourcePath: string; success: boolean; skillId?: string; error?: string }> = [];
-        let importedCount = 0;
+        const results: Array<{ sourcePath: string; success: boolean; skillId?: string; mode?: "preview"; error?: string }> = [];
+        let convertedCount = 0;
         let failedCount = 0;
 
         for (const item of items) {
-          const result = await deps.importSkill(item.sourcePath, item.formatHint);
+          const result = await deps.convertSkill(item.sourcePath, item.formatHint);
+          const source = { uri: item.sourcePath };
           results.push({
-            sourcePath: item.sourcePath,
+            sourcePath: redactFridaySkillCandidateSourceUri(item.sourcePath),
             success: result.success,
             skillId: result.skillId,
-            error: result.error,
+            mode: result.mode,
+            error: result.error ? redactFridaySkillSourceText(result.error, source) : undefined,
           });
           if (result.success) {
-            importedCount++;
+            convertedCount++;
           } else {
             failedCount++;
           }
@@ -93,7 +100,7 @@ export function createFridayScanMigrateRoutes(
 
         return {
           status: 200,
-          body: { results, importedCount, failedCount },
+          body: { results, convertedCount, failedCount },
         };
       },
     },

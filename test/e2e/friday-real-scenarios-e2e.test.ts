@@ -27,6 +27,7 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import { signFridayCanonicalApproval } from "../../src/security/friday-mutating-action-gate.js";
 import { parseArgs } from "../../src/cli/friday-cli.js";
 import {
   hasLiveAnthropicApiKey,
@@ -49,6 +50,7 @@ const LOCAL_PASSPHRASE =
   process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ??
   process.env.FRIDAY_LOCAL_PASSPHRASE ??
   "friday-test-local-passphrase-123";
+const TEST_TOKEN_SECRET = "test-token-secret-for-canonical-skill-stage-approval-123"; // pragma: allowlist secret
 
 // ─── Helpers ───
 
@@ -126,6 +128,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
   let baseUrl: string;
   let stateDir: string;
   let accessToken: string;
+  let adminPrincipalId: string;
 
   beforeAll(async () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-scenarios-e2e-"));
@@ -135,6 +138,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
       skillDirs: [],
       port: 0,
       logRequests: false,
+      tokenSecret: TEST_TOKEN_SECRET,
     });
     await hub.start();
 
@@ -164,6 +168,17 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
       throw new Error(`Admin login failed: ${JSON.stringify(loginJson)}`);
     }
     accessToken = loginJson.data.accessToken;
+    const meRes = await fetch(`${baseUrl}/v1/auth/me`, {
+      headers: authHeaders(accessToken),
+    });
+    const meJson = (await meRes.json()) as {
+      ok: boolean;
+      data?: { user?: { id?: string } };
+    };
+    adminPrincipalId = meJson.data?.user?.id ?? "";
+    if (!meJson.ok || adminPrincipalId.length === 0) {
+      throw new Error(`Admin principal lookup failed: ${JSON.stringify(meJson)}`);
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -682,6 +697,47 @@ echo '{"greeting": "hello from converted skill"}'
       if (skillMdDir) fs.rmSync(skillMdDir, { recursive: true, force: true });
     });
 
+    async function approveSkillImportBody<TBody extends Record<string, unknown>>(
+      body: TBody,
+      idempotencyKey: string,
+    ): Promise<TBody & { idempotencyKey: string; canonicalApproval: Record<string, unknown> }> {
+      const bodyWithoutApproval = {
+        ...body,
+        idempotencyKey,
+      };
+      const probeRes = await fetch(`${baseUrl}/v1/skills/import`, {
+        method: "POST",
+        headers: authHeaders(accessToken),
+        body: JSON.stringify(bodyWithoutApproval),
+      });
+      expect(probeRes.status).toBe(403);
+      const probeJson = (await probeRes.json()) as {
+        ok: false;
+        error: {
+          code: string;
+          details?: {
+            canonicalGate?: {
+              actionDigest?: string;
+            };
+          };
+        };
+      };
+      expect(probeJson.error.code).toBe("CANONICAL_APPROVAL_REQUIRED");
+      const actionDigest = probeJson.error.details?.canonicalGate?.actionDigest;
+      expect(actionDigest).toBeTruthy();
+
+      return {
+        ...bodyWithoutApproval,
+        canonicalApproval: signFridayCanonicalApproval({
+          decision: "approved",
+          approvalId: `approval-${idempotencyKey}`,
+          decidedByPrincipalId: adminPrincipalId,
+          actionDigest: actionDigest!,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        }, TEST_TOKEN_SECRET),
+      };
+    }
+
     it("6.1: List available converters", async () => {
       const res = await fetch(`${baseUrl}/v1/skills/converters`, {
         headers: authHeaders(accessToken),
@@ -785,80 +841,64 @@ echo '{"greeting": "hello from converted skill"}'
       }
     });
 
-    it("6.5: Import skill", async () => {
+    it("6.5: Skill import stages a candidate only", async () => {
+      const body = await approveSkillImportBody({
+        source: { uri: skillMdDir },
+        formatHint: "clawdbot-skill-md",
+        target: "managed",
+        replace: true,
+        refreshRegistry: true,
+      }, "scenario-6-5-stage");
       const res = await fetch(`${baseUrl}/v1/skills/import`, {
         method: "POST",
         headers: authHeaders(accessToken),
-        body: JSON.stringify({
-          source: { uri: skillMdDir },
-          formatHint: "clawdbot-skill-md",
-          target: "managed",
-          replace: true,
-          refreshRegistry: true,
-        }),
+        body: JSON.stringify(body),
       });
       expect(res.status).toBe(200);
       const json = (await res.json()) as {
         ok: boolean;
         data: {
-          converterId: string;
-          detectedFormat: string;
-          imports: Array<{
-            skillId: string;
-            skillDir: string;
-            installed: boolean;
-            issues: Array<{ severity: string; message: string }>;
-          }>;
+          candidates: Array<{ candidateId: string; skillId: string; validation: { ok: boolean } }>;
           registryRefreshed: boolean;
         };
       };
       expect(json.ok).toBe(true);
-      expect(json.data.imports.length).toBeGreaterThanOrEqual(1);
-      // Installation may fail due to hub version check (test hub defaults to "0.1.0"
-      // but generated manifest requires >=1.0.0). The import pipeline still succeeds —
-      // the skill is written to disk but validation issues block registry refresh.
-      const firstImport = json.data.imports[0]!;
-      expect(firstImport.skillId).toBeTruthy();
-      if (firstImport.installed) {
-        expect(firstImport.skillDir).toBeTruthy();
-      } else {
-        // When not installed, verify it's only due to version compatibility
-        const hasVersionIssue = firstImport.issues.some(
-          (i) => i.message.includes("hub version") || i.message.includes("HUB_VERSION"),
-        );
-        expect(hasVersionIssue).toBe(true);
-      }
+      expect(json.data.candidates.length).toBeGreaterThanOrEqual(1);
+      expect(json.data.candidates[0]?.skillId).toBeTruthy();
+      expect(json.data.registryRefreshed).toBe(false);
     });
 
-    it("6.6: Verify skill was written to disk", async () => {
-      // Even if the registry didn't refresh (due to version check), the skill files
-      // should have been written to the managed skills directory.
+    it("6.6: Staged import does not make the skill runnable", async () => {
+      const body = await approveSkillImportBody({
+        source: { uri: skillMdDir },
+        formatHint: "clawdbot-skill-md",
+        target: "managed",
+        replace: true,
+        refreshRegistry: false,
+        dryRun: false,
+      }, "scenario-6-6-stage");
       const res = await fetch(`${baseUrl}/v1/skills/import`, {
         method: "POST",
         headers: authHeaders(accessToken),
-        body: JSON.stringify({
-          source: { uri: skillMdDir },
-          formatHint: "clawdbot-skill-md",
-          target: "managed",
-          replace: true,
-          refreshRegistry: false,
-          dryRun: false,
-        }),
+        body: JSON.stringify(body),
       });
       expect(res.status).toBe(200);
       const json = (await res.json()) as {
         ok: boolean;
         data: {
-          imports: Array<{ skillId: string; skillDir: string }>;
+          candidates: Array<{ candidateId: string; skillId: string }>;
         };
       };
       expect(json.ok).toBe(true);
-      expect(json.data.imports.length).toBeGreaterThanOrEqual(1);
-      const skillDir = json.data.imports[0]!.skillDir;
-      if (skillDir) {
-        // Verify the manifest file exists on disk
-        expect(fs.existsSync(path.join(skillDir, "skill.manifest.json"))).toBe(true);
-      }
+      const stagedSkillId = json.data.candidates[0]?.skillId;
+      expect(stagedSkillId).toBeTruthy();
+
+      const runRes = await fetch(`${baseUrl}/v1/skills/${encodeURIComponent(stagedSkillId!)}/run`, {
+        method: "POST",
+        headers: authHeaders(accessToken),
+        body: JSON.stringify({ input: {} }),
+      });
+      expect(runRes.status).not.toBe(200);
     });
   });
 

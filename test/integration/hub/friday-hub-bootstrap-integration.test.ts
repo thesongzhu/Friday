@@ -5,6 +5,10 @@ import * as path from "node:path";
 import Database from "better-sqlite3";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
+import {
+  createFridaySkillStageMutatingActionRequest,
+  type FridaySkillImportInput,
+} from "#skills/converter";
 import { initializeFridayState } from "#state";
 import {
   createFridayAgentRunRepository,
@@ -17,6 +21,156 @@ import {
   restoreAutoDetectProviderEnv,
   type FridayAutoDetectProviderEnvSnapshot,
 } from "../../_helpers/auto-detect-provider-env.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
+  createFridaySkillLifecycleCanaryInputDigest,
+  createFridaySkillLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import {
+  createFridayProviderProfileLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
+import { createFridaySkillRunMutatingActionRequest } from "../../../src/api/http/routes/friday-skill-routes.js";
+
+const CANONICAL_STAGE_NOW = "2026-02-17T12:00:00.000Z";
+const PHASE32_TOKEN_SECRET = "phase32-token-secret"; // pragma: allowlist secret
+const PHASE32_PLAN_DIGEST = "phase32a-plan-digest";
+const PHASE32B_PROVIDER_PLAN_DIGEST = "phase32b-provider-plan-digest";
+
+function makeCanonicalStageTicket(input: FridaySkillImportInput) {
+  const actor = {
+    kind: "test",
+    id: "hub-integration-test",
+    principalId: "hub-integration-test",
+  };
+  const request = createFridaySkillStageMutatingActionRequest({
+    source: input.source,
+    formatHint: input.formatHint,
+    target: input.target,
+    replace: input.replace,
+    refreshRegistry: input.refreshRegistry,
+    options: input.options,
+    actor,
+    surface: "test:hub-integration",
+    idempotencyKey: "hub-stage-1",
+  });
+  const gate = createFridayMutatingActionGate({
+    nowIso: () => CANONICAL_STAGE_NOW,
+    ticketIdGenerator: () => "ticket-1",
+  });
+  const result = gate.evaluate({
+    ...request,
+    canonicalApproval: {
+      decision: "approved",
+      approvalId: "approval-1",
+      decidedByPrincipalId: actor.principalId,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-02-17T13:00:00.000Z",
+    },
+  });
+  if (!result.ticket) {
+    throw new Error(`failed to create canonical stage ticket: ${result.reason}`);
+  }
+  return result.ticket;
+}
+
+function makeSignedLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  skillId: string;
+  candidateId: string;
+  runtimeVersion: string;
+  canaryInput?: Record<string, unknown>;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: PHASE32_PLAN_DIGEST, actions: ["skills.lifecycle.promote"] }
+    : undefined;
+  const request = createFridaySkillLifecycleMutatingActionRequest({
+    action: input.action,
+    skillId: input.skillId,
+    candidateId: input.candidateId,
+    shadowVersionId: input.candidateId,
+    runtimeVersion: input.runtimeVersion,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: `api:/v1/autonomy/skills/${input.action}`,
+    planDigest: PHASE32_PLAN_DIGEST,
+    rollback,
+    canaryInputDigest: input.action === "canary"
+      ? createFridaySkillLifecycleCanaryInputDigest(input.canaryInput)
+      : undefined,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `phase32-${input.action}-approval`,
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
+}
+
+function makeSignedSkillRunApproval(input: {
+  skillId: string;
+  runInput: Record<string, unknown>;
+}): FridayCanonicalApprovalResolution {
+  const request = createFridaySkillRunMutatingActionRequest({
+    skillId: input.skillId,
+    input: input.runInput,
+    channel: "api",
+    sessionId: `api-skill-run:${input.skillId}`,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: "api:/v1/skills/:skillId/run",
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: "phase32-run-approval",
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
+}
+
+function makeSignedProviderLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  providerId: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: PHASE32B_PROVIDER_PLAN_DIGEST, actions: ["providers.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayProviderProfileLifecycleMutatingActionRequest({
+    action: input.action,
+    providerId: input.providerId,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    actor: {
+      kind: "user",
+      id: "phase32-user",
+      principalId: "phase32-user",
+    },
+    surface: `api:/v1/autonomy/providers/${input.action}`,
+    planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `phase32b-provider-${input.action}-approval`,
+    decidedByPrincipalId: "phase32-user",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-02-17T13:00:00.000Z",
+  }, PHASE32_TOKEN_SECRET);
+}
 
 describe("FridayHub Bootstrap Integration", () => {
   const tmpDirs: string[] = [];
@@ -128,6 +282,83 @@ describe("FridayHub Bootstrap Integration", () => {
       tests: [],
       checksum: "placeholder",
     };
+  }
+
+  function makeSkillActionGraph(
+    workflowId: string,
+    versionId: string,
+    skillId: string,
+  ): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: versionId,
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "action1",
+            type: "action",
+            label: "Skill Action",
+            config: { skillId },
+          },
+        ],
+        edges: [
+          { id: "e1", sourceNodeId: "trigger", targetNodeId: "action1" },
+        ],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+  }
+
+  function writeShellSkillFixture(input: {
+    dir: string;
+    skillId: string;
+    name: string;
+    result: string;
+    sideEffectFile?: string;
+  }): void {
+    fs.mkdirSync(input.dir, { recursive: true });
+    fs.writeFileSync(path.join(input.dir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: input.skillId,
+      name: input.name,
+      description: "Workflow availability fixture",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Friday Test" },
+      tags: ["workflow-availability"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: { userInvocable: true, modelInvocable: true, priority: 50, modes: ["workflow"] },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string", description: "Result" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(input.dir, "SKILL.md"), `# ${input.name}\n`);
+    const sideEffectLine = input.sideEffectFile
+      ? `echo ran > '${input.sideEffectFile.replace(/'/g, "'\\''")}'\n`
+      : "";
+    fs.writeFileSync(path.join(input.dir, "run.sh"), `#!/usr/bin/env bash\n${sideEffectLine}echo '{"result":"${input.result}"}'\n`);
+    fs.chmodSync(path.join(input.dir, "run.sh"), 0o755);
   }
 
   async function waitForWorkflowRunStable(
@@ -278,6 +509,541 @@ describe("FridayHub Bootstrap Integration", () => {
     }
   });
 
+  it("stores external skill candidates under the resolved state dir when no input stateDir is provided", async () => {
+    const previousHome = process.env.HOME;
+    const previousFridayStateDir = process.env.FRIDAY_STATE_DIR;
+    const previousXdgStateHome = process.env.XDG_STATE_HOME;
+    const previousCwd = process.cwd();
+    const homeDir = makeTmpDir();
+    const cwdDir = makeTmpDir();
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const expectedStateDir = process.platform === "darwin"
+      ? path.join(homeDir, "Library", "Application Support", "Friday", "state")
+      : process.platform === "win32"
+        ? path.join(homeDir, "AppData", "Local", "Friday", "state")
+        : path.join(homeDir, ".local", "state", "friday");
+
+    fs.writeFileSync(path.join(sourceDir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: "resolved-state-candidate-skill",
+      name: "Resolved State Candidate Skill",
+      description: "Verifies candidate storage path.",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Test" },
+      tags: ["test"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: {
+        userInvocable: true,
+        modelInvocable: true,
+        priority: 50,
+        modes: ["intent"],
+      },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "skill.ui.json"), JSON.stringify({
+      schemaVersion: "1.0",
+      title: "Resolved State Candidate Skill",
+      sections: [],
+      fields: [],
+      outputs: [],
+      actions: [],
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "run.sh"), "#!/usr/bin/env bash\necho '{}'\n");
+
+    try {
+      process.env.HOME = homeDir;
+      delete process.env.FRIDAY_STATE_DIR;
+      delete process.env.XDG_STATE_HOME;
+      process.chdir(cwdDir);
+
+      const hub = await createFridayHub({
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+      });
+      hubs.push(hub);
+
+      await expect(hub.converterService.import({
+        source: { uri: sourceDir },
+        formatHint: "friday-package",
+      })).rejects.toThrow("canonical approval ticket");
+
+      const importInput = {
+        source: { uri: sourceDir },
+        formatHint: "friday-package" as const,
+      };
+      const result = await hub.converterService.import({
+        ...importInput,
+        canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+      });
+      const candidate = result.candidates[0]!;
+
+      expect(candidate.candidateDir.startsWith(path.join(expectedStateDir, "skill-candidates"))).toBe(true);
+      expect(candidate.candidateDir.startsWith(path.join(cwdDir, "skill-candidates"))).toBe(false);
+    } finally {
+      process.chdir(previousCwd);
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousFridayStateDir === undefined) {
+        delete process.env.FRIDAY_STATE_DIR;
+      } else {
+        process.env.FRIDAY_STATE_DIR = previousFridayStateDir;
+      }
+      if (previousXdgStateHome === undefined) {
+        delete process.env.XDG_STATE_HOME;
+      } else {
+        process.env.XDG_STATE_HOME = previousXdgStateHome;
+      }
+    }
+  });
+
+  it("drives external skill candidate through shadow, real canary, promote, run, and rollback via autonomy routes", async () => {
+    const stateDir = makeTmpDir();
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const skillId = "phase32-skill";
+    const runtimeVersion = "runtime-phase32";
+
+    fs.writeFileSync(path.join(sourceDir, "skill.manifest.json"), JSON.stringify({
+      schemaVersion: "2.0",
+      id: skillId,
+      name: "Phase 3.2 Skill",
+      description: "External lifecycle closure fixture",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: { name: "Friday Test" },
+      tags: ["phase32"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30_000,
+      },
+      triggers: { intents: [], phrases: [], channels: ["*"] },
+      invocation: { userInvocable: true, modelInvocable: true, priority: 50, modes: ["intent"] },
+      requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+      inputs: [],
+      outputs: [{ key: "result", type: "string", description: "Result" }],
+      permissions: { grants: [], promptOn: [] },
+      schemas: { input: null, state: null, output: null },
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: { events: [] },
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "SKILL.md"), "# Phase 3.2 Skill\n");
+    fs.writeFileSync(path.join(sourceDir, "skill.ui.json"), JSON.stringify({
+      schemaVersion: "1.0",
+      title: "Phase 3.2 Skill",
+      sections: [],
+      fields: [],
+      outputs: [],
+      actions: [],
+    }, null, 2));
+    fs.writeFileSync(path.join(sourceDir, "run.sh"), "#!/usr/bin/env bash\necho '{\"result\":\"phase32-ok\"}'\n");
+    fs.chmodSync(path.join(sourceDir, "run.sh"), 0o755);
+
+    const hub = await createFridayHub({
+      stateDir,
+      skillDirs: [bundledSkillsDir, managedSkillsDir],
+      tokenSecret: PHASE32_TOKEN_SECRET,
+    });
+    hubs.push(hub);
+
+    const importInput = {
+      source: { uri: sourceDir },
+      formatHint: "friday-package" as const,
+    };
+    const importResult = await hub.converterService.import({
+      ...importInput,
+      canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+    });
+    const candidate = importResult.candidates[0]!;
+
+    const principal = {
+      principalType: "user" as const,
+      principalId: "phase32-user",
+      userId: "phase32-user",
+      role: "admin" as const,
+      scopes: ["hub.admin"] as const,
+    };
+	    const invokeRoute = async (operationId: string, body: Record<string, unknown>) => {
+	      const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === operationId);
+	      expect(route).toBeDefined();
+	      return route!.handler({
+        requestId: `${operationId}:req`,
+        receivedAt: new Date().toISOString(),
+        params: { skillId },
+        query: {},
+        body,
+        headers: {},
+	        principal,
+	      });
+	    };
+
+	    await expect(invokeRoute("skills.install", { skillId, sourceId: "legacy-source" }))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(invokeRoute("skills.update", { version: "2.0.0" }))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+	    await expect(invokeRoute("skills.delete", {}))
+	      .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
+
+	    await invokeRoute("autonomy.skills.shadow", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "shadow",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, ".shadow", skillId, candidate.candidateId, "skill.manifest.json"))).toBe(true);
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(false);
+
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+    });
+
+    await invokeRoute("autonomy.skills.canary", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      input: {},
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "canary",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+        canaryInput: {},
+      }),
+    });
+
+    await invokeRoute("autonomy.skills.promote", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "promote",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(true);
+
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_RUN_APPROVAL_REQUIRED",
+    });
+    const runResult = await invokeRoute("skills.run", {
+      input: {},
+      canonicalApproval: makeSignedSkillRunApproval({ skillId, runInput: {} }),
+    }) as {
+      status: string;
+      output: { result?: string };
+    };
+    expect(runResult.status).toBe("completed");
+    expect(runResult.output.result).toBe("phase32-ok");
+
+    await invokeRoute("autonomy.skills.rollback", {
+      candidateId: candidate.candidateId,
+      runtimeVersion,
+      planDigest: PHASE32_PLAN_DIGEST,
+      reason: "integration rollback proof",
+      canonicalApproval: makeSignedLifecycleApproval({
+        action: "rollback",
+        skillId,
+        candidateId: candidate.candidateId,
+        runtimeVersion,
+      }),
+    });
+    expect(fs.existsSync(path.join(managedSkillsDir, skillId, "skill.manifest.json"))).toBe(false);
+    await expect(invokeRoute("skills.run", { input: {} })).rejects.toMatchObject({
+      code: "SKILL_NOT_AVAILABLE",
+    });
+  });
+
+  it("blocks workflow skill execution when persisted lifecycle status is unavailable", async () => {
+    const stateDir = makeTmpDir();
+    lastStateDir = stateDir;
+    const bundledSkillsDir = makeTmpDir();
+    const managedSkillsDir = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    const skillId = "workflow-status-proof";
+    const sideEffectFile = path.join(stateDir, "workflow-skill-ran.txt");
+
+    writeShellSkillFixture({
+      dir: path.join(bundledSkillsDir, skillId),
+      skillId,
+      name: "Workflow Status Proof",
+      result: "bundled-ran",
+      sideEffectFile,
+    });
+    writeShellSkillFixture({
+      dir: sourceDir,
+      skillId,
+      name: "Workflow Status Proof Candidate",
+      result: "candidate-ran",
+    });
+
+    const hub = await createFridayHub({
+      stateDir,
+      skillDirs: [bundledSkillsDir, managedSkillsDir],
+      tokenSecret: PHASE32_TOKEN_SECRET,
+    });
+    hubs.push(hub);
+    await hub.start();
+
+    expect(hub.skills.get(skillId)?.status).toBe("installed");
+
+    const importInput = {
+      source: { uri: sourceDir },
+      formatHint: "friday-package" as const,
+    };
+    await hub.converterService.import({
+      ...importInput,
+      canonicalApprovalTicket: makeCanonicalStageTicket(importInput),
+    });
+    await hub.skills.refresh();
+
+    expect(hub.skills.get(skillId)?.status).toBe("installed");
+
+    const skillListRoute = hub.apiRuntime.routes.getRoutes()
+      .find((entry) => entry.operationId === "skills.list");
+    expect(skillListRoute).toBeDefined();
+    const skillList = await skillListRoute!.handler({
+      requestId: "workflow-status-proof:list",
+      receivedAt: new Date().toISOString(),
+      params: {},
+      query: {},
+      body: {},
+      headers: {},
+      principal: null,
+    } as never) as { items: Array<{ skillId: string; status: string }> };
+    expect(skillList.items.find((item) => item.skillId === skillId)?.status).toBe("not_installed");
+
+    const workflow = hub.workflowRuntime.crud.createWorkflow({
+      slug: "workflow-status-proof",
+      name: "Workflow Status Proof",
+    });
+    const version = hub.workflowRuntime.crud.createVersion(
+      workflow.id,
+      makeSkillActionGraph(workflow.id, "placeholder", skillId),
+    );
+    hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await hub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      startedByUserId: "admin-001",
+    });
+
+    const finalStatus = await waitForWorkflowRunStable(hub, run.id, 10_000);
+    expect(finalStatus).toBe("failed");
+    expect(fs.existsSync(sideEffectFile)).toBe(false);
+  });
+
+  it("drives provider profile lifecycle through canonical-approved autonomy routes and survives restart", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [{ id: "phase32b-model" }] }), { status: 200 })) as typeof fetch;
+    try {
+      const stateDir = makeTmpDir();
+      lastStateDir = stateDir;
+      const bundledSkillsDir = makeTmpDir();
+      const managedSkillsDir = makeTmpDir();
+      const runtimeVersion = "phase32b-runtime";
+      const hub = await createFridayHub({
+        stateDir,
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+        tokenSecret: PHASE32_TOKEN_SECRET,
+      });
+      hubs.push(hub);
+
+      const provider = await hub.providerService.createProvider({
+        kind: "openai-compatible",
+        name: "Phase 3.2B Provider",
+        baseUrl: "https://example.com",
+        authMode: "none",
+        api: "openai-completions",
+        supportedModels: ["phase32b-model"],
+        defaultModel: "phase32b-model",
+        enabled: true,
+        validateOnSave: false,
+      });
+      const validation = await hub.providerService.validateProvider(provider.id);
+      expect(validation.status).toBe("ok");
+      await hub.providerService.setRoutingConfig({
+        defaultProviderId: provider.id,
+        fallbackProviderIds: [],
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      const principal = {
+        principalType: "user" as const,
+        principalId: "phase32-user",
+        userId: "phase32-user",
+        role: "admin" as const,
+        scopes: ["hub.admin"] as const,
+      };
+      const shadowVersionId = `${provider.id}@shadow`;
+      const invokeProviderRoute = async (operationId: string, body: Record<string, unknown>) => {
+        const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === operationId);
+        expect(route).toBeDefined();
+        return route!.handler({
+          requestId: `${operationId}:req`,
+          receivedAt: new Date().toISOString(),
+          params: { providerId: provider.id },
+          query: {},
+          body,
+          headers: {},
+          principal,
+        });
+      };
+
+      await expect(invokeProviderRoute("autonomy.providers.shadow", {
+        shadowVersionId,
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+      })).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+      await invokeProviderRoute("autonomy.providers.shadow", {
+        shadowVersionId,
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "shadow",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+
+      await expect(invokeProviderRoute("autonomy.providers.canary", {
+        runtimeVersion,
+        success: true,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "canary",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      })).rejects.toMatchObject({ code: "PROVIDER_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+      await invokeProviderRoute("autonomy.providers.canary", {
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "canary",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      });
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).rejects.toMatchObject({
+        code: "PROVIDER_LIFECYCLE_UNPROMOTED",
+      });
+
+      const promoteResult = await invokeProviderRoute("autonomy.providers.promote", {
+        runtimeVersion,
+        planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeSignedProviderLifecycleApproval({
+          action: "promote",
+          providerId: provider.id,
+          shadowVersionId,
+          runtimeVersion,
+        }),
+      }) as {
+        provider: { promotionChannel?: string };
+        evidence?: { stage?: string };
+      };
+      expect(promoteResult.provider.promotionChannel).toBe("active");
+      expect(promoteResult.evidence?.stage).toBe("active");
+      await expect(hub.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      await hub.stop();
+      const restarted = await createFridayHub({
+        stateDir,
+        skillDirs: [bundledSkillsDir, managedSkillsDir],
+        tokenSecret: PHASE32_TOKEN_SECRET,
+      });
+      hubs.push(restarted);
+      const restartedProvider = await restarted.providerService.getProvider(provider.id);
+      expect(restartedProvider?.promotionChannel).toBe("active");
+      expect(restartedProvider?.config.validation?.status).toBe("ok");
+      await expect(restarted.providerService.resolveRoute(undefined, provider.id)).resolves.toMatchObject({
+        provider: { id: provider.id },
+      });
+
+      const rollbackRoute = restarted.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "autonomy.providers.rollback");
+      expect(rollbackRoute).toBeDefined();
+      const rollbackResult = await rollbackRoute!.handler({
+        requestId: "autonomy.providers.rollback:req",
+        receivedAt: new Date().toISOString(),
+        params: { providerId: provider.id },
+        query: {},
+        body: {
+          runtimeVersion,
+          planDigest: PHASE32B_PROVIDER_PLAN_DIGEST,
+          reason: "integration rollback proof",
+          canonicalApproval: makeSignedProviderLifecycleApproval({
+            action: "rollback",
+            providerId: provider.id,
+            shadowVersionId,
+            runtimeVersion,
+          }),
+        },
+        headers: {},
+        principal,
+      }) as {
+        provider: { promotionChannel?: string };
+        evidence?: { stage?: string };
+      };
+      expect(rollbackResult.provider.promotionChannel).toBe("none");
+      expect(rollbackResult.evidence?.stage).toBe("rolled_back");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("blocks legacy system approval-rule mutation route in the live hub", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
@@ -303,6 +1069,56 @@ describe("FridayHub Bootstrap Integration", () => {
         code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
       });
     } finally {
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousTransport === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = previousTransport;
+      }
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
+
+  it("enforces canonical system mutation gate by default in production profile", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.NODE_ENV = "production";
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
+    process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
+    delete process.env.FRIDAY_CANONICAL_GATE;
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.approvals.update");
+
+      expect(route).toBeDefined();
+      await expect(route!.handler({
+        requestId: "req-system-approval-production-default",
+        receivedAt: new Date().toISOString(),
+        params: { approvalId: "approval-1" },
+        query: {},
+        body: { decision: "allow", idempotencyKey: "approval-update-production-default" },
+        headers: {},
+        principal: null,
+      } as never)).rejects.toMatchObject({
+        code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+      });
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousNodeEnv;
+      }
       if (previousEnabled === undefined) {
         delete process.env.FRIDAY_SYSTEM_ENABLED;
       } else {
@@ -1079,6 +1895,92 @@ describe("FridayHub Bootstrap Integration", () => {
   });
 
   // ─── DeepSeek auto-detect from env ───
+
+  it("does not auto-register env providers when canonical gate is enabled", async () => {
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+    try {
+      const hub = await createIsolatedHub();
+      await hub.start();
+
+      const providers = await hub.providerService.listProviders();
+      const routing = await hub.providerService.getRoutingConfig();
+
+      expect(providers.find((p) => p.kind === "deepseek")).toBeUndefined();
+      expect(routing.defaultProviderId).toBe("");
+    } finally {
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
+
+  it("does not auto-configure provider fallbacks when canonical gate is enabled", async () => {
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
+    try {
+      const hub = await createIsolatedHub();
+      const primary = await hub.providerService.createProvider({
+        kind: "openai",
+        name: "OpenAI Primary",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$BOOT_PROVIDER_PRIMARY_KEY",
+        supportedModels: ["gpt-4o-mini"],
+        defaultModel: "gpt-4o-mini",
+        validateOnSave: false,
+      });
+      const fallback = await hub.providerService.createProvider({
+        kind: "deepseek",
+        name: "DeepSeek Fallback",
+        baseUrl: "https://api.deepseek.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$BOOT_PROVIDER_FALLBACK_KEY",
+        supportedModels: ["deepseek-v4-pro"],
+        defaultModel: "deepseek-v4-pro",
+        validateOnSave: false,
+      });
+      const dbPath = path.join(lastStateDir ?? "", "friday.db");
+      const db = new Database(dbPath);
+      try {
+        for (const providerId of [primary.id, fallback.id]) {
+          const row = db.prepare("SELECT config_json FROM provider_profiles WHERE id = ?")
+            .get(providerId) as { config_json: string } | undefined;
+          expect(row).toBeDefined();
+          const config = JSON.parse(row!.config_json) as Record<string, unknown>;
+          db.prepare("UPDATE provider_profiles SET config_json = ? WHERE id = ?")
+            .run(JSON.stringify({
+              ...config,
+              validation: { status: "ok", checkedAt: "2026-05-08T00:00:00.000Z" },
+            }), providerId);
+        }
+      } finally {
+        db.close();
+      }
+      await hub.providerService.setRoutingConfig({
+        defaultProviderId: primary.id,
+        defaultModel: "gpt-4o-mini",
+        fallbackProviderIds: [],
+      });
+
+      await hub.start();
+
+      const routing = await hub.providerService.getRoutingConfig();
+      expect(routing.defaultProviderId).toBe(primary.id);
+      expect(routing.fallbackProviderIds).toEqual([]);
+    } finally {
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
 
   it("auto-registers DeepSeek provider with V4 defaults when DEEPSEEK_API_KEY is set", async () => {
     process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret

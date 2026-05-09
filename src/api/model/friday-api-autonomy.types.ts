@@ -9,6 +9,7 @@ import type {
   FridayAutonomyCompatibilityStatus,
   FridayAutonomyPromotionChannel,
 } from "../../autonomy/model/friday-autonomy-upgrade.types.js";
+import type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
 import type { FridayUpgradeImpactFinding } from "../../autonomy/model/friday-autonomy-impact.types.js";
 import type {
   FridayAgendaItem,
@@ -69,108 +70,184 @@ export interface FridayRecordWorkflowCanaryRequest {
 }
 
 export interface FridayRegisterSkillShadowRequest {
-  shadowVersionId: string;
+  candidateId: string;
+  shadowVersionId?: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordSkillCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  candidateId: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  input?: Record<string, unknown>;
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterPluginShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordPluginCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromotePluginUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackPluginUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+}
+
+export interface FridayReviewEnablePluginRequest {
+  runtimeVersion?: string;
+  providerModel?: string;
+  idempotencyKey?: string;
 }
 
 export interface FridayRegisterProviderProfileShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordProviderProfileCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteProviderProfileUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackProviderProfileUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterMcpServerShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordMcpServerCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteMcpServerUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackMcpServerUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterChannelAdapterShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordChannelAdapterCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteChannelAdapterUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackChannelAdapterUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteSkillUpgradeRequest {
+  candidateId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackSkillUpgradeRequest {
+  candidateId: string;
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteWorkflowUpgradeRequest {
@@ -202,6 +279,7 @@ export interface FridaySkillUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayPluginUpgradeActionResponse {
@@ -216,6 +294,7 @@ export interface FridayPluginUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayProviderProfileUpgradeActionResponse {
@@ -232,6 +311,7 @@ export interface FridayProviderProfileUpgradeActionResponse {
     validationStatus?: string;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayMcpServerUpgradeActionResponse {
@@ -247,6 +327,7 @@ export interface FridayMcpServerUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayChannelAdapterUpgradeActionResponse {
@@ -262,6 +343,7 @@ export interface FridayChannelAdapterUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayCapabilityAcquisitionPlanRequest {

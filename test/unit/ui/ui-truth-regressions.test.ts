@@ -45,11 +45,11 @@ describe("ui truth regressions", () => {
     expect(SETUP_CHANNEL_KINDS_ORDERED).toEqual(["telegram", "discord", "feishu"]);
   });
 
-  it("records imported skills as completed setup work", () => {
+  it("records only promoted skills as completed setup work", () => {
     expect(buildSetupCompletionStepState({
       providerValidated: true,
       channelsSaved: true,
-      skillsImported: true,
+      skillsPromoted: true,
     })).toEqual({
       completedSteps: ["welcome", "security", "provider", "channels", "skills", "done"],
       skippedSteps: ["communication", "network"],
@@ -58,7 +58,7 @@ describe("ui truth regressions", () => {
     expect(buildSetupCompletionStepState({
       providerValidated: false,
       channelsSaved: false,
-      skillsImported: false,
+      skillsPromoted: false,
     })).toEqual({
       completedSteps: ["welcome", "security", "done"],
       skippedSteps: ["communication", "provider", "channels", "network", "skills"],

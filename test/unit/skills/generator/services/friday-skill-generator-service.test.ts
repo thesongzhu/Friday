@@ -461,6 +461,15 @@ describe("FridaySkillGeneratorService", () => {
     globalThis.fetch = originalFetch;
   }
 
+  function readFetchSystemPrompt(callIndex = 0): string {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const init = fetchMock.mock.calls[callIndex]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    return body.messages?.find((message) => message.role === "system")?.content ?? "";
+  }
+
   describe("startSession", () => {
     it("rejects unsafe local security bypass skill goals before generation starts", async () => {
       await expect(
@@ -507,6 +516,38 @@ describe("FridaySkillGeneratorService", () => {
         expect(result.mode).toBe("clarification_required");
         expect(result.questions).toHaveLength(2);
         expect(result.session.status).toBe("needs_clarification");
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("injects Friday user project rules into skill generator prompts", async () => {
+      const analyzerResponse = {
+        state: "needs_clarification",
+        questions: ["What format should the output be?"],
+        spec: { goal: "Build a timer" },
+      };
+      deps.userRulesContextProvider = vi.fn().mockResolvedValue(
+        "<friday-user-project-rules>Do not save generated skills automatically.</friday-user-project-rules>",
+      );
+      service = createFridaySkillGeneratorService(deps);
+      mockFetchForLlm([analyzerResponse]);
+
+      try {
+        await service.startSession({
+          goal: "Build a timer skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+
+        expect(deps.userRulesContextProvider).toHaveBeenCalledWith({
+          task: "Build a timer skill",
+          userId: "user-1",
+          channel: "discord",
+          surface: "skill_generator",
+        });
+        expect(readFetchSystemPrompt()).toContain("Friday user/project rules");
+        expect(readFetchSystemPrompt()).toContain("Do not save generated skills automatically.");
       } finally {
         restoreFetch();
       }

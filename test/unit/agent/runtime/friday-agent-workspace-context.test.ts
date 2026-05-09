@@ -34,6 +34,16 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.promptFragment).toContain("Do X, Y, Z.");
     });
 
+    it("does not load root AGENTS.md into Friday runtime prompts", async () => {
+      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "# Codex Repair Rules\nOnly for Codex.");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "# Friday Rules\nOnly for Friday.");
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir);
+
+      expect(ctx.promptFragment).toContain("Only for Friday.");
+      expect(ctx.promptFragment).not.toContain("Only for Codex.");
+    });
+
     it("loads BELIEFS.md as an identity block when present", async () => {
       await fs.writeFile(path.join(tmpDir, "context", "BELIEFS.md"), "# Engineering Principles\nNo claim without working code.");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
@@ -69,6 +79,7 @@ describe("loadFridayWorkspaceContext", () => {
       try {
         const ctx = await loadFridayWorkspaceContext(tmpDir);
         expect(ctx.promptFragment).toBe("");
+        expect(ctx.summary.loadErrors).toEqual([]);
         // All files should be marked missing
         const missing = ctx.files.filter((f) => f.missing);
         expect(missing.length).toBeGreaterThanOrEqual(6);
@@ -175,7 +186,7 @@ describe("loadFridayWorkspaceContext", () => {
   });
 
   describe("memory export feedback loop", () => {
-    it("loads prompt-safe exported memory items from .friday/exports/memory/", async () => {
+    it("skips exported compaction memory items because context replay owns compaction recovery", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -204,13 +215,13 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("deployment wiring was already validated");
-      expect(ctx.promptFragment).toContain("rollback path was tested");
-      expect(ctx.promptFragment).toContain("[compaction, summary]");
-      expect(ctx.promptFragment).toContain("stored-memories");
+      expect(ctx.promptFragment).not.toContain("deployment wiring was already validated");
+      expect(ctx.promptFragment).not.toContain("rollback path was tested");
+      expect(ctx.promptFragment).not.toContain("[compaction, summary]");
+      expect(ctx.promptFragment).not.toContain("stored-memories");
     });
 
-    it("loads multiple prompt-safe memory export files", async () => {
+    it("skips multiple exported compaction memory files", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -227,11 +238,11 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(path.join(exportDir, "ns2_def.json"), JSON.stringify(ns2));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Compaction memory from export 1");
-      expect(ctx.promptFragment).toContain("Compaction memory from export 2");
+      expect(ctx.promptFragment).not.toContain("Compaction memory from export 1");
+      expect(ctx.promptFragment).not.toContain("Compaction memory from export 2");
     });
 
-    it("skips non-compaction exported memories so durable user facts stay behind memory_search", async () => {
+    it("skips all exported memories so durable user facts stay behind explicit memory APIs", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
 
@@ -258,7 +269,7 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Visible exported memory");
+      expect(ctx.promptFragment).not.toContain("Visible exported memory");
       expect(ctx.promptFragment).not.toContain("MemoryAuditName-leak");
     });
 
@@ -276,7 +287,7 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Valid memory");
+      expect(ctx.promptFragment).not.toContain("Valid memory");
     });
 
     it("skips items without contentText or value", async () => {
@@ -294,7 +305,7 @@ describe("loadFridayWorkspaceContext", () => {
       await fs.writeFile(path.join(exportDir, "test.json"), JSON.stringify(exported));
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      expect(ctx.promptFragment).toContain("Has content");
+      expect(ctx.promptFragment).not.toContain("Has content");
     });
 
     it("returns empty when no exports directory exists", async () => {
@@ -327,9 +338,9 @@ describe("loadFridayWorkspaceContext", () => {
       );
 
       const ctx = await loadFridayWorkspaceContext(tmpDir);
-      // Should have at most 100 items
+      // Should have no exported memory prompt items while the allowlist is empty.
       const lines = ctx.promptFragment.split("\n").filter((l) => l.startsWith("- Memory item number"));
-      expect(lines.length).toBeLessThanOrEqual(100);
+      expect(lines.length).toBe(0);
     });
   });
 
@@ -411,7 +422,7 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.promptFragment).not.toContain("dark mode in editors");
     });
 
-    it("uses selected session blocks to pull in relevant stored memory for generic follow-ups", async () => {
+    it("does not use selected session blocks to pull exported compaction memory into generic follow-ups", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
       await fs.writeFile(
@@ -451,11 +462,11 @@ describe("loadFridayWorkspaceContext", () => {
         selectedBlocks,
       });
 
-      expect(ctx.promptFragment).toContain("browser not connected");
+      expect(ctx.promptFragment).not.toContain("browser not connected");
       expect(ctx.promptFragment).not.toContain("sourdough hydration");
     });
 
-    it("matches simple singular/plural variants when selecting stored memories", async () => {
+    it("does not select exported compaction memory through singular/plural matching", async () => {
       const exportDir = path.join(tmpDir, ".friday", "exports", "memory");
       await fs.mkdir(exportDir, { recursive: true });
       await fs.writeFile(
@@ -477,7 +488,7 @@ describe("loadFridayWorkspaceContext", () => {
         task: "What drink do I like?",
       });
 
-      expect(ctx.promptFragment).toContain("matcha drinks");
+      expect(ctx.promptFragment).not.toContain("matcha drinks");
     });
 
     it("includes all candidate blocks when no task-aware filtering input is provided", async () => {
@@ -506,6 +517,56 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.summary.pathRuleCount).toBe(1);
       expect(ctx.summary.selectedPathRuleCount).toBe(1);
       expect(ctx.summary.candidatePaths).toContain("src/agent/runtime/friday-agent-runtime.ts");
+      expect(ctx.summary.selectedSourceNames).toContain("rules/path/src/agent.md");
+      expect(ctx.summary.sourceSummaries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          name: "rules/path/src/agent.md",
+          selected: true,
+          ruleScopeKind: "path",
+          ruleScopePattern: "src/agent",
+        }),
+      ]));
+    });
+
+    it("loads extension-scoped rules only when task file extensions match", async () => {
+      const ruleDir = path.join(tmpDir, ".friday", "rules", "ext");
+      await fs.mkdir(ruleDir, { recursive: true });
+      await fs.writeFile(
+        path.join(ruleDir, "ts.md"),
+        "TypeScript changes must keep runtime prompt guidance separate from hard policy.",
+      );
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "Please update src/workflows/runtime/friday-workflow-runtime.ts",
+      });
+
+      expect(ctx.promptFragment).toContain("TypeScript changes");
+      expect(ctx.summary.pathRuleCount).toBe(1);
+      expect(ctx.summary.selectedPathRuleCount).toBe(1);
+      expect(ctx.summary.candidatePaths).toContain("src/workflows/runtime/friday-workflow-runtime.ts");
+    });
+
+    it("records rule directory traversal failures for fail-closed callers", async () => {
+      const ruleDir = path.join(tmpDir, ".friday", "rules", "path");
+      await fs.mkdir(ruleDir, { recursive: true });
+      await fs.chmod(ruleDir, 0o000);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const ctx = await loadFridayWorkspaceContext(tmpDir, {
+          task: "Please update src/agent/runtime/friday-agent-runtime.ts",
+        });
+
+        expect(ctx.summary.loadErrors).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            name: "rules/path",
+            code: "EACCES",
+          }),
+        ]));
+      } finally {
+        await fs.chmod(ruleDir, 0o700);
+        warnSpy.mockRestore();
+      }
     });
   });
 });

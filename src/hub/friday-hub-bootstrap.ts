@@ -44,6 +44,7 @@ import { buildOpenBrowserUrlCommand, isFridayTestSecurityWarningSuppressed, safe
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
+import { createFridayMutatingActionGate } from "../security/friday-mutating-action-gate.js";
 import {
   buildFridayRuntimeCapabilityMatrix,
   createFridayProviderCostCalculator,
@@ -63,7 +64,7 @@ import {
   FridaySkillRegistryImpl,
   safeParseFridaySkillManifestV2,
 } from "#skills";
-import type { SkillOrigin, SkillSource } from "#skills";
+import type { SkillLifecycleStatus, SkillOrigin, SkillSource } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
@@ -79,6 +80,7 @@ import {
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
   type FridaySkillInstallTarget,
   type FridaySkillSourceFormat,
+  redactFridaySkillSourceText,
 } from "#skills/converter";
 import { createFridaySkillRunStore } from "#ledger";
 import type { FridayLearningEventAppendInput } from "#ledger";
@@ -168,7 +170,7 @@ import {
   createFridayAgentToolRegistry,
   createFridayAgentWorkflowGeneratorTool,
   createFridayCompactionContextLoader,
-  createFridayCompactionMemorySink,
+  createFridayCompactionContextReplaySink,
   createFridayMcpAdapter,
   createFridaySubagentRegistry,
   createFridayWorkspaceContextEngine,
@@ -176,12 +178,13 @@ import {
   fetchWithFridayAgentSsrfGuard,
   inferFridaySubagentProfile,
   listFridayMcpServerReadiness,
+  loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
   taskLikelyNeedsWriteAccessForSubagent,
 } from "#agent";
-import type { FridayAgentModeChangedPayload, FridayAgentRunDegradedPayload, loadFridayWorkspaceContext } from "#agent";
+import type { FridayAgentModeChangedPayload, FridayAgentRunDegradedPayload } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
 
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
@@ -255,6 +258,7 @@ import {
   createFridaySatelliteRuntime,
 } from "#satellites";
 import { createFridaySatelliteNodesService } from "../nodes/friday-satellite-nodes-service.js";
+import { createFridayAutonomySubjectUpgradeStateRepository } from "../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import {
   createFridayAgentLoopRepository,
   createFridayAgentLoopService,
@@ -426,6 +430,8 @@ const FRIDAY_HUB_SKILL_COMPAT_VERSION = "1.0.0";
 const FRIDAY_CHANNEL_MAX_MESSAGE_LENGTH = 4000;
 const FRIDAY_CHANNEL_CONTEXT_HISTORY_LIMIT = Number(process.env.FRIDAY_SESSION_HISTORY_LIMIT) || 24;
 const FRIDAY_WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
+const FRIDAY_CANONICAL_GATE_TRUE_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
+const FRIDAY_CANONICAL_GATE_FALSE_VALUES = new Set(["0", "false", "no", "off", "disabled"]);
 
 function createDiscoveryScannerForPlatform(platform: NodeJS.Platform) {
   switch (platform) {
@@ -733,6 +739,7 @@ export function resolveFridayHubConfig(
   const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "full";
   const pluginRuntimeMode = pluginRuntimeModeRaw === "stub" ? "stub" : "full";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
+  const canonicalMutatingActionGate = resolveFridayCanonicalMutatingActionGate(env);
 
   // Private-network access must be explicitly enabled. Local/self-hosted
   // deployments that need loopback providers such as Ollama should opt in via
@@ -759,8 +766,40 @@ export function resolveFridayHubConfig(
     pluginRuntimeMode,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
+    canonicalMutatingActionGate,
     ssrfPolicy: { allowPrivateNetwork },
   };
+}
+
+function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
+  return env.NODE_ENV?.trim().toLowerCase() === "production"
+    || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+}
+
+export function resolveFridayCanonicalMutatingActionGate(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const explicit = env.FRIDAY_CANONICAL_GATE?.trim().toLowerCase();
+  const protectedProfile = isFridayCanonicalGateProtectedProfile(env);
+  if (explicit) {
+    if (FRIDAY_CANONICAL_GATE_TRUE_VALUES.has(explicit)) {
+      return true;
+    }
+    if (FRIDAY_CANONICAL_GATE_FALSE_VALUES.has(explicit)) {
+      if (protectedProfile) {
+        throw new Error(
+          "[friday] FRIDAY_CANONICAL_GATE cannot be disabled in production/release profiles. " +
+            "Use a development or test profile for mock lanes.",
+        );
+      }
+      return false;
+    }
+    throw new Error(
+      `[friday] Invalid FRIDAY_CANONICAL_GATE value "${env.FRIDAY_CANONICAL_GATE}". ` +
+        "Use true or false.",
+    );
+  }
+  return protectedProfile;
 }
 
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
@@ -828,6 +867,29 @@ function resolveImportedSkillOrigin(target: FridaySkillInstallTarget): SkillOrig
     return "managed";
   }
   return "extra";
+}
+
+const FRIDAY_WORKSPACE_CONTEXT_FAIL_CLOSED_PROFILES = new Set([
+  "autonomy",
+  "browser",
+  "code",
+  "general",
+  "media",
+  "memory",
+  "skill",
+  "system",
+  "workflow",
+]);
+
+export function shouldFailClosedForFridayWorkspaceContext(input: {
+  promptProfile?: "standard" | "minimal";
+  contextPolicy?: { workspaceContext?: "auto" | "skip" };
+  toolRouting?: { profile?: string };
+}): boolean {
+  if (input.promptProfile === "minimal" || input.contextPolicy?.workspaceContext === "skip") {
+    return false;
+  }
+  return FRIDAY_WORKSPACE_CONTEXT_FAIL_CLOSED_PROFILES.has(input.toolRouting?.profile ?? "");
 }
 
 // ─── Factory ───
@@ -924,6 +986,7 @@ export async function createFridayHub(
   const nowIso = () => new Date().toISOString();
   const tokenSecretResult = resolveTokenSecret(config.tokenSecret);
   const tokenSecret = tokenSecretResult.secret;
+  const canonicalMutatingActionGateEnabled = resolveFridayCanonicalMutatingActionGate(process.env);
 
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(process.env);
   const capabilityGates = resolveFridayCapabilityGates(process.env);
@@ -955,10 +1018,17 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    allowImplicitProviderStateMutation: !canonicalMutatingActionGateEnabled,
   });
 
   let browserManager: FridayBrowserManager | undefined;
   const channelRegistry: FridayChannelRegistry = createFridayChannelRegistry();
+  const skillRunCanonicalMutationGate = createFridayMutatingActionGate({
+    nowIso,
+    ticketIdGenerator: () => idGenerator(),
+    approvalSignatureSecret: tokenSecret,
+    requireApprovalSignature: true,
+  });
 
   // 7. Create executor with providerService injected for ai-inference BYOK path
   const executor = createFridaySkillExecutor({
@@ -972,6 +1042,7 @@ export async function createFridayHub(
     getSelfHealingService: () => selfHealingApiService,
     getBrowserManager: () => browserManager,
     getChannelRegistry: () => channelRegistry,
+    canonicalMutationGate: skillRunCanonicalMutationGate,
   });
 
   const rulesRepository = createFridayRulesRepository();
@@ -1063,6 +1134,22 @@ export async function createFridayHub(
     nodeId: string,
     payload: Record<string, unknown>,
   ): Promise<unknown> => {
+    const persistedStatus = getPersistedSkillLifecycleStatus(skillId);
+    if (persistedStatus && persistedStatus !== "installed") {
+      throw new FridayDomainError(
+        "SKILL_NOT_AVAILABLE",
+        `Skill "${skillId}" is not available until it is installed and promoted.`,
+        {
+          httpStatus: 409,
+          details: {
+            skillId,
+            status: persistedStatus,
+            runId,
+            nodeId,
+          },
+        },
+      );
+    }
     const policy = await evaluateRules({
       resource: "skill",
       action: "execute",
@@ -1104,6 +1191,44 @@ export async function createFridayHub(
     }
     return result.output;
   };
+  const workspaceRoot = config.stateDir ?? ".";
+  type FridayUserRulesPromptSurface =
+    | "skill_generator"
+    | "workflow_generator"
+    | "workflow_ai_node"
+    | "subagent";
+  const buildFridayUserRulesPromptContext = async (input: {
+    task: string;
+    surface: FridayUserRulesPromptSurface;
+  }): Promise<string | null> => {
+    const ctx = await loadFridayWorkspaceContext(workspaceRoot, { task: input.task });
+    if (ctx.summary.loadErrors.length > 0) {
+      throw new FridayDomainError(
+        "WORKSPACE_CONTEXT_UNAVAILABLE",
+        `Friday user/project rules could not be loaded for ${input.surface}: ${ctx.summary.loadErrors.map((err) => err.name).join(", ")}`,
+        {
+          httpStatus: 503,
+          details: {
+            surface: input.surface,
+            loadErrors: ctx.summary.loadErrors.map((err) => ({
+              name: err.name,
+              code: err.code,
+              message: err.message,
+            })),
+          },
+        },
+      );
+    }
+    const fragment = ctx.promptFragment.trim();
+    if (!fragment) {
+      return null;
+    }
+    return [
+      `<friday-user-project-rules surface="${input.surface}" enforcement="prompt-guidance-only">`,
+      fragment,
+      `</friday-user-project-rules>`,
+    ].join("\n");
+  };
 
   // 8. Create AI skill generator service
   const skillGenerator = createFridaySkillGeneratorService({
@@ -1114,6 +1239,11 @@ export async function createFridayHub(
     memoryStateService: memoryState,
     idGenerator,
     nowIso,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
   });
 
   // 9. Create converter service
@@ -1125,14 +1255,30 @@ export async function createFridayHub(
   const converterInstaller = createFridaySkillImportInstaller();
   const converterArchiver = createFridaySkillPackageArchiver();
   const converterSkillRepo = createFridaySkillRepository();
+  const managedSkillsDir = config.skillDirs[1] ?? "managed-skills";
+  const getPersistedSkillLifecycleStatus = (skillId: string): SkillLifecycleStatus | undefined =>
+    stateRuntime.sqlite.withReadConnection((db) =>
+      converterSkillRepo.getSkillById(db, skillId)?.status,
+    );
+  const resolveWorkflowSkill = (skillId: string) => {
+    const persistedStatus = getPersistedSkillLifecycleStatus(skillId);
+    if (persistedStatus && persistedStatus !== "installed") {
+      return null;
+    }
+    const skill = registry.get(skillId);
+    if (!skill || skill.status !== "installed") {
+      return null;
+    }
+    return skill;
+  };
 
   const converterService = createFridaySkillConverterService({
     registry: converterRegistry,
     installer: converterInstaller,
     archiver: converterArchiver,
     context: {
-      workspaceDir: config.stateDir ?? ".",
-      managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
+      workspaceDir: stateRuntime.stateDir,
+      managedSkillsDir,
       nowIso,
     },
     hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
@@ -1153,6 +1299,23 @@ export async function createFridayHub(
         });
         converterSkillRepo.setInstalledVersion(conn, manifest.id, manifest.version, manifest, persistedAt);
       });
+    },
+    onSkillCandidateStaged: async ({ candidate, draft }) => {
+      const manifest = draft.manifest;
+      const persistedAt = candidate.stagedAt;
+      stateRuntime.sqlite.withWriteTransaction((conn) => {
+        converterSkillRepo.upsertSkillFromCatalog(conn, {
+          id: manifest.id,
+          name: manifest.name,
+          source: resolveImportedSkillSource(candidate.sourceProvenance.redactedUri),
+          origin: "managed",
+          latestVersion: manifest.version,
+          status: "not_installed",
+          currentManifest: manifest,
+          nowIso: persistedAt,
+        });
+      });
+      await memoryState.updateSkillStatus(manifest.id, "not_installed");
     },
     onRegistryRefresh: async () => {
       await registry.refresh();
@@ -1321,17 +1484,18 @@ export async function createFridayHub(
       return null;
     }
   };
-
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
     nowIso,
     computeChecksum,
-    resolveSkill: (skillId) => {
-      const skill = registry.get(skillId);
-      return skill ?? null;
-    },
+    resolveSkill: resolveWorkflowSkill,
     invokeSkill: invokeSkillForWorkflow,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
     resolveWebhookSecretRef: resolveWorkflowWebhookSecretRef,
@@ -1362,6 +1526,8 @@ export async function createFridayHub(
   const workflowBuilderRuntime = createFridayWorkflowBuilderRuntime({
     db: stateRuntime!.sqlite,
     crudService: workflowRuntime.crud,
+    skillRegistry: registry,
+    skillRepo: converterSkillRepo,
     idGenerator,
     nowIso,
     computeChecksum,
@@ -1375,9 +1541,15 @@ export async function createFridayHub(
     providerService,
     workflowCrud: workflowRuntime.crud,
     skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
     idGenerator,
     nowIso,
     computeChecksum,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
   });
 
   // ─── Agent runtime ───
@@ -1397,7 +1569,6 @@ export async function createFridayHub(
   const agentSsrfGuard = createFridayAgentSsrfGuard(config.ssrfPolicy);
 
   // IMPL-7: Artifact writer
-  const workspaceRoot = config.stateDir ?? ".";
   const agentArtifactWriter = createFridayAgentArtifactWriter(workspaceRoot);
   const ttsService = createFridayProviderBackedTtsService({
     providerService,
@@ -1520,6 +1691,11 @@ export async function createFridayHub(
     sessionManager: xhsSessionManager,
     artifactDir: path.join(workspaceRoot, ".friday", "artifacts", "xhs"),
   });
+  const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
+  const guideLensPreferencePrincipalId = process.env.FRIDAY_GUIDE_LENS_PRINCIPAL_ID?.trim() || "local-guide-lens";
+  const guideLensPreferenceKey = "guide_lens.preferences";
+  const isGuideLensPreferencePatch = (value: unknown): value is Partial<FridayGuideLensPreferences> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
 
   // Optional desktop runtime (opt-in)
   const desktopEnabled = capabilityGates.desktopEnabled;
@@ -1765,7 +1941,7 @@ export async function createFridayHub(
 	      },
 	      mode: "agent_os",
 	      remoteMode: systemRemoteMode,
-	      canonicalMutationGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+	      canonicalMutationGate: canonicalMutatingActionGateEnabled,
 	      canonicalApprovalSecret: tokenSecret,
 	      cloudPlanningMode: systemCloudPlanningMode,
       remoteAuth: {
@@ -1946,6 +2122,30 @@ export async function createFridayHub(
           sizePx: 56,
         },
       },
+      preferenceStore: {
+        load: () => {
+          const persisted = stateRuntime!.sqlite.withReadConnection((db) =>
+            uixUserPreferenceRepository.listByPrincipal(db, {
+              principalId: guideLensPreferencePrincipalId,
+              category: "uix",
+            }).find((preference) => preference.key === guideLensPreferenceKey));
+          return isGuideLensPreferencePatch(persisted?.value) ? persisted.value : undefined;
+        },
+        save: (preferences) => {
+          stateRuntime!.sqlite.withWriteTransaction((db) => {
+            uixUserPreferenceRepository.upsert(db, {
+              id: idGenerator(),
+              principalId: guideLensPreferencePrincipalId,
+              category: "uix",
+              key: guideLensPreferenceKey,
+              value: JSON.parse(JSON.stringify(preferences)),
+              source: "explicit",
+              confidence: 1,
+              nowIso: nowIso(),
+            });
+          });
+        },
+      },
     });
     guideLensRouteDeps = {
       service: guideLensService,
@@ -1984,6 +2184,24 @@ export async function createFridayHub(
   if (mcpAdapter) {
     console.log(`[friday] MCP adapter enabled with ${String(mcpServers.length)} server(s)`);
   }
+  const mcpServerUpgradeStateRepoForAgent = createFridayAutonomySubjectUpgradeStateRepository();
+  const getMcpServerAvailability = (serverId: string) => {
+    const state = stateRuntime!.sqlite.withReadConnection((db) =>
+      mcpServerUpgradeStateRepoForAgent.get(db, "mcp_server", serverId));
+    const available = state?.promotionChannel === "active" && state.compatibilityStatus === "compatible";
+    return {
+      available,
+      promotionChannel: state?.promotionChannel ?? "none",
+      compatibilityStatus: state?.compatibilityStatus ?? "unknown",
+      reason: available ? undefined : "MCP server must complete lifecycle promote before agent use.",
+    };
+  };
+  const listAgentAvailableMcpServers = () =>
+    (mcpAdapter?.listServers() ?? []).filter((server) => getMcpServerAvailability(server.id).available);
+  const listAgentAvailableMcpServerStates = () => {
+    const availableIds = new Set(listAgentAvailableMcpServers().map((server) => server.id));
+    return (mcpAdapter?.listServerStates() ?? []).filter((state) => availableIds.has(state.serverId));
+  };
   const explicitSearchProvider = process.env.FRIDAY_SEARCH_PROVIDER?.trim().toLowerCase();
   const inferredSearchProvider = explicitSearchProvider && explicitSearchProvider !== "auto"
     ? explicitSearchProvider
@@ -2123,8 +2341,8 @@ export async function createFridayHub(
       ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
       : [];
     const mcpServers = listFridayMcpServerReadiness({
-      servers: mcpAdapter?.listServers() ?? [],
-      serverStates: mcpAdapter?.listServerStates() ?? [],
+      servers: listAgentAvailableMcpServers(),
+      serverStates: listAgentAvailableMcpServerStates(),
     });
     const verifiedMcpServerCount = mcpServers.filter((server) => server.connected).length;
     const providers = await providerService.listProviders()
@@ -2144,8 +2362,8 @@ export async function createFridayHub(
         kinds: messagingKinds,
       },
       mcp: {
-        enabled: mcpServers.length > 0,
-        serverCount: mcpServers.length,
+        enabled: verifiedMcpServerCount > 0,
+        serverCount: verifiedMcpServerCount,
         servers: mcpServers.map((server) => ({
           name: server.name,
           connected: server.connected,
@@ -2478,6 +2696,7 @@ export async function createFridayHub(
     workdir: workspaceRoot,
     skillExecutor: executor,
     skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
     listLearnedFacts: (input) =>
@@ -2505,6 +2724,7 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     agentRuntimeGetter,
     mcpAdapter,
+    getMcpServerAvailability,
     providerService,
     ttsService,
     webSearchProvider: configuredSearchProvider,
@@ -2953,7 +3173,9 @@ export async function createFridayHub(
   // ─── Resolve provider identity at boot for system prompt ───
   let agentModelIdentity = "an AI model";
   try {
-    const defaultRoute = await providerService.resolveRoute(undefined);
+    const defaultRoute = await providerService.resolveRoute(undefined, undefined, {
+      autoValidate: false,
+    });
     const providerKind = defaultRoute.provider.kind; // e.g. "anthropic"
     const modelName = defaultRoute.model;            // e.g. "claude-opus-4-5-20251101"
     agentModelIdentity = `${modelName} (provider: ${providerKind})`;
@@ -2972,7 +3194,11 @@ export async function createFridayHub(
     if (routingWarning && providers.length > 0) {
       warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
       // Auto-configure fallback providers if none are set
-      if (routing.defaultProviderId && (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)) {
+      if (
+        !canonicalMutatingActionGateEnabled &&
+        routing.defaultProviderId &&
+        (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)
+      ) {
         const validatedAlternatives = providers
           .filter((p) => p.enabled && p.id !== routing.defaultProviderId)
           .slice(0, 3)
@@ -3124,8 +3350,10 @@ export async function createFridayHub(
 
   // Dynamic system prompt builder — invoked at each executeRun() with the
   // current set of registered tool names, so the prompt is always accurate.
-  // Loads workspace context files (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
+  // Loads Friday runtime user context files (context/AGENTS.md, context/USER.md,
+  // context/MEMORY.md, context/BELIEFS.md, context/SOUL.md, .friday/rules/**)
   // fresh on each run so edits take effect immediately.
+  const shouldFailClosedForWorkspaceContext = shouldFailClosedForFridayWorkspaceContext;
   const agentSystemPromptBuilder = async (input: {
     userId?: string;
     toolNames: string[];
@@ -3136,12 +3364,10 @@ export async function createFridayHub(
     executionContext?: {
       packId?: string;
     };
+    promptProfile?: "standard" | "minimal";
+    contextPolicy?: { workspaceContext?: "auto" | "skip" };
     conversationContext?: {
       selectedBlocks?: FridayConversationBlock[];
-    };
-    promptProfile?: "standard" | "minimal";
-    contextPolicy?: {
-      workspaceContext?: "auto" | "skip";
     };
     toolRouting?: {
       profile: string;
@@ -3169,9 +3395,43 @@ export async function createFridayHub(
           workspaceContext = ctx.promptFragment;
         }
         workspaceContextSummary = ctx.workspaceContext?.summary;
+        if (
+          workspaceContextSummary?.loadErrors.length
+          && shouldFailClosedForWorkspaceContext(input)
+        ) {
+          throw new FridayDomainError(
+            "WORKSPACE_CONTEXT_UNAVAILABLE",
+            `Friday user/project rules could not be loaded: ${workspaceContextSummary.loadErrors.map((err) => err.name).join(", ")}`,
+            {
+              httpStatus: 503,
+              details: {
+                loadErrors: workspaceContextSummary.loadErrors.map((err) => ({
+                  name: err.name,
+                  code: err.code,
+                  message: err.message,
+                })),
+              },
+            },
+          );
+        }
+        if (workspaceContextSummary?.loadErrors.length) {
+          const warningLines = workspaceContextSummary.loadErrors.map((err) =>
+            `- ${err.name}${err.code ? ` (${err.code})` : ""}: ${err.message}`
+          );
+          workspaceContext = [
+            workspaceContext ?? "",
+            "<workspace-context-warning>",
+            "Some Friday user/project rules could not be loaded. Continue only for low-risk chat or status tasks; do not perform mutation, generation, installation, promotion, or execution from this run.",
+            ...warningLines,
+            "</workspace-context-warning>",
+          ].filter((line) => line.length > 0).join("\n");
+        }
       } catch (err) {
+        if (shouldFailClosedForWorkspaceContext(input)) {
+          throw err;
+        }
         warnHubBootstrapOperationFailureOnce(err);
-        // Non-fatal: workspace context loading failure should not block agent runs.
+        // Non-fatal for low-risk chat/status runs only.
       }
     }
 
@@ -3319,10 +3579,8 @@ export async function createFridayHub(
           ? channelRegistry.list().filter((kind) => channelRegistry.status(kind) === "connected")
           : [],
         mcpEnabled: input.toolNames.includes("mcp")
-          && typeof mcpAdapter !== "undefined"
-          && !!mcpAdapter
-          && mcpAdapter.listServers().length > 0,
-        mcpServerCount: mcpAdapter?.listServers().length ?? 0,
+          && listAgentAvailableMcpServers().length > 0,
+        mcpServerCount: listAgentAvailableMcpServers().length,
         cronEnabled: input.toolNames.includes("cron") && !!jobScheduler && !!schedulerRepo,
         subagentsEnabled: input.toolNames.includes("spawn_subagent"),
         selfLearningEnabled: input.toolNames.includes("feedback"),
@@ -3337,14 +3595,25 @@ export async function createFridayHub(
     0);
     const mcpStates = mcpAdapter?.listServerStates() ?? [];
     const components = [
-      workspaceContextSummary && workspaceContextSummary.promptChars > 0
+      workspaceContextSummary && (
+        workspaceContextSummary.promptChars > 0
+        || workspaceContextSummary.loadErrors.length > 0
+      )
         ? {
             kind: "workspace_context" as const,
             estimatedChars: workspaceContextSummary.promptChars,
             count: workspaceContextSummary.selectedFileCount,
             metadata: {
               pathRuleCount: workspaceContextSummary.selectedPathRuleCount,
+              loadErrorCount: workspaceContextSummary.loadErrors.length,
               candidatePaths: workspaceContextSummary.candidatePaths,
+              selectedSourceNames: workspaceContextSummary.selectedSourceNames,
+              sourceSummaries: workspaceContextSummary.sourceSummaries,
+              loadErrors: workspaceContextSummary.loadErrors.map((err) => ({
+                name: err.name,
+                code: err.code,
+                message: err.message,
+              })),
             },
           }
         : null,
@@ -3426,7 +3695,6 @@ export async function createFridayHub(
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
   // always have access to learned preferences — no startup window gap.
   const _learningContextRef = selfLearningRuntime.context;
-  const uixUserPreferenceRepository = createFridayUixUserPreferenceRepository();
   const uixGuidedContextRepository = createFridayUixGuidedContextRepository();
   const buildMergedPreferenceContext = (input: { userId: string; nowIso: string }) => {
     const learned = _learningContextRef?.buildContext(input) ?? { preferences: {} };
@@ -3601,19 +3869,26 @@ export async function createFridayHub(
   const applyChannelReflexExplicitPreferences = (input: {
     userId: string;
     text: string;
-  }): number => {
-    if (!reflexService) return 0;
+  }): { applied: number; pendingConfirmation: number } => {
+    if (!reflexService) return { applied: 0, pendingConfirmation: 0 };
     const writes = parseFridayReflexExplicitPreferenceMessage(input.text);
+    let applied = 0;
+    let pendingConfirmation = 0;
     for (const write of writes) {
-      reflexService.updatePreference({
+      const result = reflexService.requestPreferenceUpdate({
         userId: input.userId,
         category: write.category,
         key: write.key,
         value: write.value,
         sourceSurface: "channel",
       });
+      if (result.requiresConfirmation) {
+        pendingConfirmation += 1;
+      } else {
+        applied += 1;
+      }
     }
-    return writes.length;
+    return { applied, pendingConfirmation };
   };
 
   const listPendingChannelToolApprovalsForSession = (
@@ -4008,12 +4283,14 @@ export async function createFridayHub(
       }
     },
   });
-  const agentCompactionMemorySink = memoryService
-    ? createFridayCompactionMemorySink({ memoryService, idGenerator, nowIso })
-    : undefined;
-  const agentCompactionContextLoader = memoryService
-    ? createFridayCompactionContextLoader({ memoryService })
-    : undefined;
+  const agentCompactionContextReplaySink = createFridayCompactionContextReplaySink({
+    db: stateRuntime!.sqlite,
+    idGenerator,
+    nowIso,
+  });
+  const agentCompactionContextLoader = createFridayCompactionContextLoader({
+    db: stateRuntime!.sqlite,
+  });
 
   const agentRuntime = createFridayAgentRuntime({
     db: stateRuntime!.sqlite,
@@ -4030,7 +4307,7 @@ export async function createFridayHub(
     selfTestService: agentSelfTestService,
     selfFixService: agentSelfFixService,
     compactionBridge: agentCompactionBridge,
-    compactionMemorySink: agentCompactionMemorySink,
+    compactionContextReplaySink: agentCompactionContextReplaySink,
     sessionMirror: async (sessionKey, message) => {
       await hubSessionService.addMessage(sessionKey, message);
     },
@@ -4046,7 +4323,19 @@ export async function createFridayHub(
     compactionContextBuilder: async (input) => {
       if (!agentCompactionContextLoader) return null;
       const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
-      return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
+      return loaded.fragment.trim().length > 0 ? {
+        fragment: loaded.fragment,
+        blockCount: loaded.blockCount,
+        sources: loaded.sources,
+        sessionKey: loaded.sessionKey,
+        evidenceTier: loaded.evidenceTier,
+        trustLevel: loaded.trustLevel,
+        source: loaded.source,
+        memoryBoundary: loaded.memoryBoundary,
+        redactionApplied: loaded.redactionApplied,
+        redactionCount: loaded.redactionCount,
+        replayEntryIds: loaded.replayEntryIds,
+      } : null;
     },
     communicationPromptBuilder: async (input) => {
       const fragments: string[] = [];
@@ -4136,7 +4425,7 @@ export async function createFridayHub(
       });
 	    },
 	    toolApprovalResolver,
-	    canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+	    canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
 	    canonicalApprovalSecret: tokenSecret,
 	    learnedLessons: () => {
       try {
@@ -4233,6 +4522,11 @@ export async function createFridayHub(
   subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
     sessionService: hubSessionService,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
     createChildRuntime: (params) => {
       let childRuntimeRef: FridayAgentRuntime | undefined;
       const childRuntimeGetter = () => childRuntimeRef;
@@ -4240,6 +4534,7 @@ export async function createFridayHub(
         workdir: workspaceRoot,
         skillExecutor: executor,
         skillRegistry: registry,
+        getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
         listLearnedFacts: (input) =>
@@ -4297,6 +4592,7 @@ export async function createFridayHub(
         schedulerRepository: schedulerRepo,
         schedulerService: jobScheduler,
         mcpAdapter,
+        getMcpServerAvailability,
         extractionService: sessionExtractionService,
         providerService,
         ttsService,
@@ -4323,7 +4619,7 @@ export async function createFridayHub(
         selfTestService: agentSelfTestService,
         selfFixService: createFridayAgentSelfFixService(),
         compactionBridge: agentCompactionBridge,
-        compactionMemorySink: agentCompactionMemorySink,
+        compactionContextReplaySink: agentCompactionContextReplaySink,
         sessionMirror: async (sessionKey, message) => {
           await hubSessionService.addMessage(sessionKey, message);
         },
@@ -4336,7 +4632,19 @@ export async function createFridayHub(
         compactionContextBuilder: async (input) => {
           if (!agentCompactionContextLoader) return null;
           const loaded = await agentCompactionContextLoader.loadContext({ sessionKey: input.sessionKey });
-          return loaded.fragment.trim().length > 0 ? loaded.fragment : null;
+          return loaded.fragment.trim().length > 0 ? {
+            fragment: loaded.fragment,
+            blockCount: loaded.blockCount,
+            sources: loaded.sources,
+            sessionKey: loaded.sessionKey,
+            evidenceTier: loaded.evidenceTier,
+            trustLevel: loaded.trustLevel,
+            source: loaded.source,
+            memoryBoundary: loaded.memoryBoundary,
+            redactionApplied: loaded.redactionApplied,
+            redactionCount: loaded.redactionCount,
+            replayEntryIds: loaded.replayEntryIds,
+          } : null;
         },
         communicationPromptBuilder: async (input) => {
           const fragments: string[] = [];
@@ -4383,7 +4691,7 @@ export async function createFridayHub(
           });
         },
         toolApprovalResolver,
-        canonicalMutatingActionGate: process.env.FRIDAY_CANONICAL_GATE === "true",
+        canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
         canonicalApprovalSecret: tokenSecret,
       });
       childRuntimeRef = childRuntime;
@@ -5684,6 +5992,7 @@ export async function createFridayHub(
     workflowGenerator,
     skillRegistry: registry,
     skillExecutor: executor,
+    updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
     tokenSecret,
     pluginRuntimeMode,
     supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
@@ -5734,6 +6043,7 @@ export async function createFridayHub(
     },
     system: systemRouteDeps,
     guideLens: guideLensRouteDeps,
+    canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
     uix: {
       service: uixService,
       readSetupCompletedAt,
@@ -6055,19 +6365,25 @@ export async function createFridayHub(
   const scanMigrateRoutes = createFridayScanMigrateRoutes({
     scanLocal: scanLocalSkills,
     getCommunitySkills: getCommunitySkillCatalog,
-    importSkill: async (sourcePath, formatHint) => {
+    convertSkill: async (sourcePath, formatHint) => {
       try {
-        const result = await converterService.import({
+        const result = await converterService.convert({
           source: { uri: sourcePath },
           formatHint: (formatHint ?? "auto") as FridaySkillSourceFormat | "auto",
-          target: "managed",
-          replace: false,
-          refreshRegistry: true,
+          dryRun: true,
         });
-        const firstImport = result.imports[0];
-        return { success: firstImport?.installed ?? false, skillId: firstImport?.skillId };
+        const firstDraft = result.drafts[0];
+        return {
+          success: true,
+          skillId: firstDraft?.manifest.id,
+          mode: "preview" as const,
+        };
       } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : "Import failed" };
+        const rawMessage = err instanceof Error ? err.message : "Conversion preview failed";
+        return {
+          success: false,
+          error: redactFridaySkillSourceText(rawMessage, { uri: sourcePath }),
+        };
       }
     },
   });
@@ -7039,7 +7355,11 @@ export async function createFridayHub(
       }
 
       // 2d. Auto-detect LLM providers from environment variables
-      {
+      if (canonicalMutatingActionGateEnabled) {
+        console.warn(
+          "[friday] Skipping automatic provider setup/repair because canonical mutation gate is enabled; use approved provider setup routes.",
+        );
+      } else {
         const autoDetected = await autoDetectProvidersFromEnv(providerService);
         if (autoDetected.length > 0) {
           console.log(
@@ -7108,9 +7428,9 @@ export async function createFridayHub(
           classifyExecution: classifyFridayExecution,
           capabilitySnapshotGetter: getAgentCapabilitySnapshot as unknown as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
           taskStatusSnapshotGetter: getAgentTaskStatusSnapshot as unknown as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
-          persistCompactionEvidence: agentCompactionMemorySink
+          persistCompactionEvidence: agentCompactionContextReplaySink
             ? async (input) => {
-              await agentCompactionMemorySink.persist({
+              await agentCompactionContextReplaySink.persist({
                 sessionKey: input.sessionKey,
                 runId: input.runId,
                 summary: input.summary,
@@ -7573,11 +7893,11 @@ export async function createFridayHub(
             return;
           }
 
-          const reflexPreferenceWriteCount = applyChannelReflexExplicitPreferences({
+          const reflexPreferenceResult = applyChannelReflexExplicitPreferences({
             userId: learningDefaultUserId,
             text,
           });
-          if (reflexPreferenceWriteCount > 0) {
+          if (reflexPreferenceResult.applied > 0 || reflexPreferenceResult.pendingConfirmation > 0) {
             void (async () => {
               await hubSessionService.addMessage(sessionKey, {
                 role: "user",
@@ -7597,7 +7917,14 @@ export async function createFridayHub(
                   error: err,
                 });
               });
-              const ackText = `已更新 ${String(reflexPreferenceWriteCount)} 条 Friday 偏好，会在所有绑定渠道生效。你可以在 Review Center 撤销。`;
+              const ackText = reflexPreferenceResult.pendingConfirmation > 0
+                ? [
+                    reflexPreferenceResult.applied > 0
+                      ? `已更新 ${String(reflexPreferenceResult.applied)} 条普通 Friday 偏好。`
+                      : null,
+                    `有 ${String(reflexPreferenceResult.pendingConfirmation)} 条会影响安全、执行、自动化、记忆或测试策略的设置，我已放到 Review Center 待确认；你确认一次后才会长期生效。`,
+                  ].filter(Boolean).join(" ")
+                : `已更新 ${String(reflexPreferenceResult.applied)} 条 Friday 偏好，会在所有绑定渠道生效。你可以在 Review Center 撤销。`;
               const delivery = await channelRegistry.send(msg.channelKind, {
                 chatId: msg.chatId,
                 text: ackText,

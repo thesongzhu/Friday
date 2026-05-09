@@ -38,6 +38,7 @@ function makeManifest(id: string, overrides?: Partial<FridayPluginManifest>): Fr
 
 describe("FridayPluginService", () => {
   let db: FridaySqliteLayer;
+  let repo: ReturnType<typeof createFridayPluginRepository>;
   let registry: FridayPluginRegistryService;
   let resolver: FridayPluginDependencyResolver;
   let loader: FridayPluginLoader;
@@ -46,7 +47,7 @@ describe("FridayPluginService", () => {
 
   beforeEach(() => {
     db = createTestDb();
-    const repo = createFridayPluginRepository();
+    repo = createFridayPluginRepository();
     registry = createFridayPluginRegistryService({ sqlite: db, pluginRepository: repo });
     resolver = createFridayPluginDependencyResolver();
     signatureVerifier = createFridayPluginSignatureVerifier({
@@ -75,6 +76,16 @@ describe("FridayPluginService", () => {
   afterEach(() => {
     db.close();
   });
+
+  function markLifecyclePromoted(pluginId: string): void {
+    db.withWriteTransaction((conn) => {
+      repo.setUpgradeMetadata(conn, pluginId, {
+        compatibilityStatus: "compatible",
+        promotionChannel: "active",
+        shadowVersionId: `${pluginId}@shadow`,
+      }, NOW);
+    });
+  }
 
   // ─── installPlugin ───
 
@@ -316,8 +327,35 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.alpha");
 
     const enabled = await service.enablePlugin("friday.test.alpha");
+    expect(enabled.status).toBe("running");
+    expect(enabled.enabled).toBe(true);
+  });
+
+  it("rejects public enable before local plugin lifecycle promotion", async () => {
+    service.installPlugin({
+      manifest: makeManifest("friday.test.alpha"),
+      installPath: "/plugins/alpha",
+      source: "local",
+      userApproved: true,
+    });
+
+    await expect(service.enablePlugin("friday.test.alpha")).rejects.toMatchObject({
+      code: "PLUGIN_LIFECYCLE_PROMOTION_REQUIRED",
+    });
+  });
+
+  it("allows lifecycle canary bypass without marking the plugin public-promoted", async () => {
+    service.installPlugin({
+      manifest: makeManifest("friday.test.alpha"),
+      installPath: "/plugins/alpha",
+      source: "local",
+      userApproved: true,
+    });
+
+    const enabled = await service.enablePlugin("friday.test.alpha", { lifecycleBypass: "canary" });
     expect(enabled.status).toBe("running");
     expect(enabled.enabled).toBe(true);
   });
@@ -329,6 +367,7 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.alpha");
     await service.enablePlugin("friday.test.alpha");
 
     await expect(service.enablePlugin("friday.test.alpha")).rejects.toThrow(FridayDomainError);
@@ -345,6 +384,7 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.flaky");
     vi.spyOn(loader, "load").mockRejectedValue(
       new FridayDomainError("PLUGIN_LOAD_FAILED", "boom", { httpStatus: 500 }),
     );
@@ -371,6 +411,7 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.alpha");
     await service.enablePlugin("friday.test.alpha");
 
     const disabled = await service.disablePlugin("friday.test.alpha");
@@ -385,6 +426,7 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.alpha");
     await service.enablePlugin("friday.test.alpha");
     await service.disablePlugin("friday.test.alpha");
 
@@ -420,6 +462,7 @@ describe("FridayPluginService", () => {
       source: "local",
       userApproved: true,
     });
+    markLifecyclePromoted("friday.test.unload-flaky");
     await service.enablePlugin("friday.test.unload-flaky");
 
     vi.spyOn(loader, "unload").mockRejectedValue(

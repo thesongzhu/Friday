@@ -45,6 +45,7 @@ export interface FridayProviderService {
   runCapabilityDoctor(options?: {
     tenantContext?: FridayProviderTenantContext;
     ownerUserId?: string;
+    providerIds?: string[];
   }): Promise<FridayProviderCapabilityDoctorReport>;
   explainRouting(input: {
     requestedModel?: string;
@@ -142,6 +143,10 @@ export interface FridayProviderService {
   resolveRoute(
     requestedModel?: string,
     requestedProviderId?: string,
+    options?: {
+      tenantContext?: FridayProviderTenantContext;
+      autoValidate?: boolean;
+    },
   ): Promise<FridayResolvedProviderRoute>;
 
   runWithFallback<T>(params: {
@@ -291,4 +296,10 @@ export interface CreateFridayProviderServiceDeps {
   nowMs?: () => number;
   /** Optional tenant credential resolver for multi-tenant deployments. */
   credentialResolver?: FridayProviderCredentialResolver;
+  /**
+   * Allow routing reads to perform implicit validation/capability writes.
+   * Protected gate-on profiles disable this so provider state changes only
+   * happen through explicit, approval-gated setup/doctor/validation routes.
+   */
+  allowImplicitProviderStateMutation?: boolean;
 }

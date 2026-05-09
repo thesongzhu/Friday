@@ -8,6 +8,10 @@ import { pipeline } from "node:stream/promises";
 import { FridayDomainError } from "#errors";
 import { isWithinBase } from "#utilities";
 
+import {
+  redactFridaySkillCandidateSourceUri,
+  redactFridaySkillSourceText,
+} from "../services/friday-skill-candidate-store.js";
 import type { FridayCodeRepoFile, FridayCodeRepoMaterializedSource } from "./friday-code-repo.types.js";
 
 // ─── Defaults ───
@@ -94,7 +98,7 @@ export function detectSourceProtocol(sourceUri: string): FridayCodeRepoSourcePro
   }
 
   // Archive files
-  const lower = sourceUri.toLowerCase();
+  const lower = normalizedSourcePathForProtocol(sourceUri);
   if (
     lower.endsWith(".zip") ||
     lower.endsWith(".tar.gz") ||
@@ -105,6 +109,14 @@ export function detectSourceProtocol(sourceUri: string): FridayCodeRepoSourcePro
   }
 
   return "local";
+}
+
+function normalizedSourcePathForProtocol(sourceUri: string): string {
+  try {
+    return new URL(sourceUri).pathname.toLowerCase();
+  } catch {
+    return sourceUri.toLowerCase();
+  }
 }
 
 // ─── Options ───
@@ -150,10 +162,10 @@ function materializeLocalSource(
   try {
     rootStats = statSync(rootPath);
   } catch (err) {
-    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
+    console.warn("[friday][source-materializer] operation failed:", redactSourceErrorMessage(err, sourceUri));
     throw new FridayDomainError(
       "CONVERTER_SOURCE_NOT_FOUND",
-      `Code repository source not found: ${sourceUri}`,
+      `Code repository source not found: ${redactFridaySkillCandidateSourceUri(sourceUri)}`,
       { httpStatus: 404 },
     );
   }
@@ -180,7 +192,7 @@ function materializeLocalSource(
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
+      console.warn("[friday][source-materializer] operation failed:", redactSourceErrorMessage(err, sourceUri));
       return;
     }
 
@@ -212,7 +224,7 @@ function materializeLocalSource(
         const raw = readFileSync(absolute, "utf-8");
         content = raw.slice(0, maxFileBytes);
       } catch (err) {
-    console.warn("[friday][source-materializer] operation failed:", err instanceof Error ? err.message : String(err));
+        console.warn("[friday][source-materializer] operation failed:", redactSourceErrorMessage(err, sourceUri));
         continue;
       }
 
@@ -245,10 +257,13 @@ function materializeGitSource(
     cleanupTempWorkspace(tempDir);
     throw new FridayDomainError(
       "CONVERTER_GIT_CLONE_FAILED",
-      `Failed to clone git repository: ${sourceUri}`,
+      `Failed to clone git repository: ${redactFridaySkillCandidateSourceUri(sourceUri)}`,
       {
         httpStatus: 422,
-        details: { sourceUri, error: err instanceof Error ? err.message : String(err) },
+        details: {
+          sourceUri: redactFridaySkillCandidateSourceUri(sourceUri),
+          error: redactSourceErrorMessage(err, sourceUri),
+        },
       },
     );
   }
@@ -284,7 +299,7 @@ function materializeArchiveSource(
   if (!existsSync(archivePath)) {
     throw new FridayDomainError(
       "CONVERTER_SOURCE_NOT_FOUND",
-      `Archive file not found: ${sourceUri}`,
+      `Archive file not found: ${redactFridaySkillCandidateSourceUri(sourceUri)}`,
       { httpStatus: 404 },
     );
   }
@@ -300,7 +315,7 @@ function materializeArchiveSource(
   }
 
   const tempDir = createTempWorkspace("friday-archive-");
-  const lower = sourceUri.toLowerCase();
+  const lower = normalizedSourcePathForProtocol(sourceUri);
 
   try {
     if (lower.endsWith(".zip")) {
@@ -315,7 +330,7 @@ function materializeArchiveSource(
     } else {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
-        `Unsupported archive format: ${extname(sourceUri)}`,
+        `Unsupported archive format for source: ${redactFridaySkillCandidateSourceUri(sourceUri)}`,
         { httpStatus: 400 },
       );
     }
@@ -327,10 +342,13 @@ function materializeArchiveSource(
     cleanupTempWorkspace(tempDir);
     throw new FridayDomainError(
       "CONVERTER_ARCHIVE_EXTRACT_FAILED",
-      `Failed to extract archive: ${sourceUri}`,
+      `Failed to extract archive: ${redactFridaySkillCandidateSourceUri(sourceUri)}`,
       {
         httpStatus: 422,
-        details: { sourceUri, error: err instanceof Error ? err.message : String(err) },
+        details: {
+          sourceUri: redactFridaySkillCandidateSourceUri(sourceUri),
+          error: redactSourceErrorMessage(err, sourceUri),
+        },
       },
     );
   }
@@ -362,6 +380,13 @@ function extractZip(archivePath: string, destDir: string): void {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+}
+
+function redactSourceErrorMessage(err: unknown, sourceUri: string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const redactedSource = redactFridaySkillCandidateSourceUri(sourceUri);
+  return redactFridaySkillSourceText(message, { uri: sourceUri })
+    .split(resolve(sourceUri)).join(redactedSource);
 }
 
 function extractTarGz(archivePath: string, destDir: string): void {

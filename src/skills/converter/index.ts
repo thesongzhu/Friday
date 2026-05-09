@@ -137,13 +137,36 @@ export {
   createFridaySkillConverterService,
 } from "./services/friday-skill-converter-service.js";
 
+export type {
+  FridayExternalSkillCandidate,
+  FridaySkillCandidateSourceProvenance,
+  FridaySkillCandidateValidation,
+} from "./services/friday-skill-candidate-store.js";
+
+export {
+  createFridaySkillCandidateSourceProvenance,
+  formatFridaySkillCandidateSourceProvenance,
+  redactFridaySkillCandidateSourceUri,
+  redactFridaySkillSourceText,
+  redactFridaySkillSourceValue,
+} from "./services/friday-skill-candidate-store.js";
+
 export {
   summarizeFridaySkillConversionQuality,
 } from "./services/friday-skill-converter-quality.js";
 
+export {
+  createFridaySkillStageMutatingActionRequest,
+} from "./services/friday-skill-staging-approval.js";
+
+export type {
+  FridaySkillStageApprovalInput,
+} from "./services/friday-skill-staging-approval.js";
+
 export type {
   CreateFridaySkillConverterServiceDeps,
   FridaySkillImportedEvent,
+  FridaySkillCandidateEvent,
 } from "./services/friday-skill-converter-service.js";
 
 // Discovery (E5)

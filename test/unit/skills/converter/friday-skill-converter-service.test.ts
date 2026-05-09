@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createFridaySkillConverterService } from "#skills/converter";
@@ -13,10 +13,76 @@ import { createFridayOpenAiGptActionConverter } from "#skills/converter";
 import { createFridayCodeRepoConverter } from "#skills/converter";
 import { createFridayUndocumentedApiConverter } from "#skills/converter";
 import { createFridayRecordingConverter } from "#skills/converter";
-import type { FridaySkillConverterContext, FridaySkillImportedEvent } from "#skills/converter";
+import { createFridaySkillStageMutatingActionRequest } from "#skills/converter";
+import type {
+  FridaySkillConversionSource,
+  FridaySkillCandidateEvent,
+  FridaySkillConverterContext,
+  FridaySkillImportInput,
+  FridaySkillImportedEvent,
+  FridaySkillSourceFormat,
+} from "#skills/converter";
 import type { SkillManifestV2 } from "#skills";
+import { createFridaySkillCandidateStore } from "../../../../src/skills/converter/services/friday-skill-candidate-store.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  type FridayMutatingActionTicket,
+} from "../../../../src/security/friday-mutating-action-gate.js";
 
 const NOW_ISO = "2026-02-17T12:00:00.000Z";
+const STAGE_ACTOR = {
+  kind: "test",
+  id: "test-runner",
+  principalId: "test-runner",
+};
+
+function makeCanonicalStageTicket(input: {
+  source: FridaySkillConversionSource;
+  formatHint?: FridaySkillSourceFormat | "auto";
+  target?: FridaySkillImportInput["target"];
+  replace?: boolean;
+  refreshRegistry?: boolean;
+  options?: FridaySkillImportInput["options"];
+  idempotencyKey?: string;
+}): FridayMutatingActionTicket {
+  const gate = createFridayMutatingActionGate({
+    nowIso: () => NOW_ISO,
+    ticketIdGenerator: () => "ticket-1",
+  });
+  const request = createFridaySkillStageMutatingActionRequest({
+    source: input.source,
+    formatHint: input.formatHint,
+    target: input.target,
+    replace: input.replace,
+    refreshRegistry: input.refreshRegistry,
+    options: input.options,
+    actor: STAGE_ACTOR,
+    surface: "test:skill-import",
+    idempotencyKey: input.idempotencyKey ?? "test-stage-1",
+  });
+  const result = gate.evaluate({
+    ...request,
+    canonicalApproval: {
+      decision: "approved",
+      approvalId: "approval-1",
+      decidedByPrincipalId: STAGE_ACTOR.principalId,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-02-17T13:00:00.000Z",
+    },
+  });
+  if (!result.ticket) {
+    throw new Error(`failed to create canonical test ticket: ${result.reason}`);
+  }
+  return result.ticket;
+}
+
+function withCanonicalStageTicket<T extends FridaySkillImportInput>(input: T): T {
+  return {
+    ...input,
+    canonicalApprovalTicket: makeCanonicalStageTicket(input),
+  };
+}
 
 function makeValidManifest(overrides: Partial<SkillManifestV2> = {}): SkillManifestV2 {
   return {
@@ -85,6 +151,7 @@ describe("FridaySkillConverterService", () => {
   function createService(options: {
     onRegistryRefresh?: () => Promise<void>;
     onSkillImported?: (event: FridaySkillImportedEvent) => Promise<void> | void;
+    onSkillCandidateStaged?: (event: FridaySkillCandidateEvent) => Promise<void> | void;
   } = {}) {
     const registry = createFridaySkillConverterRegistry();
     registry.register(createNativeSkillPackageConverter());
@@ -104,6 +171,7 @@ describe("FridaySkillConverterService", () => {
       archiver,
       context: ctx,
       onSkillImported: options.onSkillImported,
+      onSkillCandidateStaged: options.onSkillCandidateStaged,
       onRegistryRefresh: options.onRegistryRefresh,
     });
   }
@@ -272,149 +340,345 @@ echo hello
       // Validation should have run
       expect(Array.isArray(result.validation[0]!.issues)).toBe(true);
     });
-  });
 
-  // ─── import ───
-
-  describe("import", () => {
-    it("imports a Clawdbot SKILL.md to managed dir", async () => {
-      const skillDir = join(testDir, "import-skill");
-      mkdirSync(skillDir);
-      writeFileSync(join(skillDir, "SKILL.md"), `---
-name: import-test
-skillKey: import-test
----
-
-Test import.
-
-\`\`\`bash
-echo "imported"
-\`\`\`
-`);
-
+    it("keeps conversion preview-only even when dryRun is omitted", async () => {
+      const stagedMock = vi.fn().mockResolvedValue(undefined);
       const refreshMock = vi.fn().mockResolvedValue(undefined);
-      const service = createService({ onRegistryRefresh: refreshMock });
-
-      const result = await service.import({
-        source: { uri: skillDir },
-        target: "managed",
-      });
-
-      expect(result.converterId).toBe("clawdbot-skill-md");
-      expect(result.detectedFormat).toBe("clawdbot-skill-md");
-      expect(result.imports).toHaveLength(1);
-      expect(result.imports[0]!.installed).toBe(true);
-      expect(result.imports[0]!.skillId).toBe("import-test");
-      expect(result.registryRefreshed).toBe(true);
-      expect(refreshMock).toHaveBeenCalledOnce();
-    });
-
-    it("notifies lifecycle persistence after a successful import", async () => {
-      const skillDir = join(testDir, "lifecycle-skill");
+      const skillDir = join(testDir, "candidate-skill");
       mkdirSync(skillDir);
-      writeFileSync(join(skillDir, "SKILL.md"), `---
-name: lifecycle-import
-skillKey: lifecycle-import
----
+      writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(makeValidManifest({
+        id: "candidate-skill",
+      }), null, 2));
+      writeFileSync(join(skillDir, "skill.ui.json"), JSON.stringify({
+        schemaVersion: "1.0",
+        title: "Candidate Skill",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [{ id: "run", label: "Run", style: "primary" }],
+      }));
+      writeFileSync(join(skillDir, "run.sh"), "#!/usr/bin/env bash\necho '{\"ok\":true}'\n");
 
-\`\`\`bash
-echo lifecycle
-\`\`\`
-`);
-
-      const importedMock = vi.fn().mockResolvedValue(undefined);
-      const service = createService({ onSkillImported: importedMock });
-
-      const result = await service.import({
+      const service = createService({
+        onSkillCandidateStaged: stagedMock,
+        onRegistryRefresh: refreshMock,
+      });
+      const result = await service.convert({
         source: { uri: skillDir },
-        target: "managed",
+        formatHint: "friday-package",
       });
 
-      expect(result.imports[0]!.installed).toBe(true);
-      expect(importedMock).toHaveBeenCalledOnce();
-      expect(importedMock.mock.calls[0]![0]).toMatchObject({
-        installResult: {
-          skillId: "lifecycle-import",
-          installed: true,
-        },
-        source: { uri: skillDir },
-        target: "managed",
-        converterId: "clawdbot-skill-md",
-        detectedFormat: "clawdbot-skill-md",
-      });
-      expect(importedMock.mock.calls[0]![0].draft.manifest.id).toBe("lifecycle-import");
-    });
-
-    it("does not notify lifecycle persistence for dry runs or failed installs", async () => {
-      const skillDir = join(testDir, "dry-run-skill");
-      mkdirSync(skillDir);
-      writeFileSync(join(skillDir, "SKILL.md"), `---
-name: dry-run-import
-skillKey: dry-run-import
----
-
-\`\`\`bash
-echo dry-run
-\`\`\`
-`);
-
-      const importedMock = vi.fn().mockResolvedValue(undefined);
-      const service = createService({ onSkillImported: importedMock });
-
-      const dryRunResult = await service.import({
-        source: { uri: skillDir },
-        dryRun: true,
-      });
-      expect(dryRunResult.imports[0]!.installed).toBe(false);
-
-      await service.import({
-        source: { uri: skillDir },
-        target: "managed",
-      });
-      const collisionResult = await service.import({
-        source: { uri: skillDir },
-        target: "managed",
-        replace: false,
-      });
-
-      expect(collisionResult.imports[0]!.installed).toBe(false);
-      expect(importedMock).toHaveBeenCalledOnce();
-    });
-
-    it("does not refresh registry when refreshRegistry is false", async () => {
-      const skillDir = join(testDir, "no-refresh-skill");
-      mkdirSync(skillDir);
-      writeFileSync(join(skillDir, "SKILL.md"), `---
-name: no-refresh
-skillKey: no-refresh
----
-
-\`\`\`bash
-echo test
-\`\`\`
-`);
-
-      const refreshMock = vi.fn().mockResolvedValue(undefined);
-      const service = createService({ onRegistryRefresh: refreshMock });
-
-      const result = await service.import({
-        source: { uri: skillDir },
-        refreshRegistry: false,
-      });
-
-      expect(result.imports[0]!.installed).toBe(true);
-      expect(result.registryRefreshed).toBe(false);
+      expect(result.drafts).toHaveLength(1);
+      expect(result.validation[0]?.ok).toBe(true);
+      expect("candidates" in result).toBe(false);
+      expect(existsSync(join(managedDir, "candidate-skill", "run.sh"))).toBe(false);
+      expect(stagedMock).not.toHaveBeenCalled();
       expect(refreshMock).not.toHaveBeenCalled();
     });
 
-    it("throws when no converter detected for import", async () => {
+    it("keeps dry-run conversion as preview only with no persisted candidate", async () => {
+      const stagedMock = vi.fn().mockResolvedValue(undefined);
+      const skillDir = join(testDir, "dry-run-candidate-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(makeValidManifest({
+        id: "dry-run-candidate-skill",
+      }), null, 2));
+      writeFileSync(join(skillDir, "skill.ui.json"), JSON.stringify({
+        schemaVersion: "1.0",
+        title: "Dry Run Candidate Skill",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      }));
+      writeFileSync(join(skillDir, "run.sh"), "#!/usr/bin/env bash\necho '{}'\n");
+
+      const service = createService({ onSkillCandidateStaged: stagedMock });
+      const result = await service.convert({
+        source: { uri: skillDir },
+        formatHint: "friday-package",
+        dryRun: true,
+      });
+
+      expect("candidates" in result).toBe(false);
+      expect(stagedMock).not.toHaveBeenCalled();
+    });
+
+  });
+
+  // ─── staged candidate import ───
+
+  describe("import", () => {
+    it("stages a persisted candidate without installing it", async () => {
+      const skillDir = join(testDir, "import-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(makeValidManifest({
+        id: "import-skill",
+      }), null, 2));
+      writeFileSync(join(skillDir, "skill.ui.json"), JSON.stringify({
+        schemaVersion: "1.0",
+        title: "Import Skill",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      }));
+      writeFileSync(join(skillDir, "run.sh"), "#!/usr/bin/env bash\necho '{\"ok\":true}'\n");
+      const stagedMock = vi.fn().mockResolvedValue(undefined);
+      const refreshMock = vi.fn().mockResolvedValue(undefined);
+      const service = createService({
+        onSkillCandidateStaged: stagedMock,
+        onRegistryRefresh: refreshMock,
+      });
+
+      const result = await service.import(withCanonicalStageTicket({
+        source: { uri: skillDir },
+        target: "managed",
+      }));
+      expect(result.candidates).toHaveLength(1);
+      const candidate = result.candidates[0]!;
+      expect(candidate.skillId).toBe("import-skill");
+      expect(candidate.validation.ok).toBe(true);
+      expect(candidate.canonicalApprovalProof).toMatchObject({
+        gateId: "friday_canonical_mutating_action_gate",
+        ticketId: "ticket-1",
+        action: "skills.import.stage_candidate",
+        approvalId: "approval-1",
+      });
+      expect(result.registryRefreshed).toBe(false);
+      expect(existsSync(join(candidate.filesDir, "run.sh"))).toBe(true);
+      expect(existsSync(join(managedDir, "import-skill", "run.sh"))).toBe(false);
+      expect(service.getCandidate({
+        skillId: "import-skill",
+        candidateId: candidate.candidateId,
+      })?.candidateId).toBe(candidate.candidateId);
+      expect(stagedMock).toHaveBeenCalledWith(expect.objectContaining({
+        candidate: expect.objectContaining({ candidateId: candidate.candidateId }),
+      }));
+      expect(refreshMock).not.toHaveBeenCalled();
+    });
+
+    it("does not notify legacy import hooks or install during candidate staging", async () => {
+      const skillDir = join(testDir, "dry-run-skill");
+      mkdirSync(skillDir);
+      writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(makeValidManifest({
+        id: "dry-run-skill",
+      }), null, 2));
+      writeFileSync(join(skillDir, "skill.ui.json"), JSON.stringify({
+        schemaVersion: "1.0",
+        title: "Dry Run Skill",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      }));
+      writeFileSync(join(skillDir, "run.sh"), "#!/usr/bin/env bash\necho '{}'\n");
+
+      const importedMock = vi.fn().mockResolvedValue(undefined);
+      const service = createService({ onSkillImported: importedMock });
+
+      const result = await service.import(withCanonicalStageTicket({
+        source: { uri: skillDir },
+        dryRun: true,
+      }));
+      expect(result.candidates).toHaveLength(1);
+      expect(existsSync(join(managedDir, "dry-run-skill", "run.sh"))).toBe(false);
+      expect(importedMock).not.toHaveBeenCalled();
+    });
+
+    it("persists only redacted source provenance for staged external candidates", async () => {
+      const sourceUri = "https://example.com/skill-repo?token=candidate-secret-token&api_key=secret";
+      const manifest = makeValidManifest({
+        id: "redacted-source-candidate",
+      });
+      const uiSchema = {
+        schemaVersion: "1.0" as const,
+        title: "Redacted Source Candidate",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      };
+      const store = createFridaySkillCandidateStore({
+        context: ctx,
+        installer: createFridaySkillImportInstaller(),
+        hubVersion: "1.0.0",
+        supportedApiVersions: ["1"],
+      });
+
+      const candidate = await store.stage({
+        source: { uri: sourceUri, formatHint: "friday-package" },
+        converterId: "native-friday-package",
+        detectedFormat: "friday-package",
+        draft: {
+          manifest,
+          uiSchema,
+          files: [
+            {
+              path: "skill.manifest.json",
+              content: JSON.stringify(manifest, null, 2),
+            },
+            {
+              path: "skill.ui.json",
+              content: JSON.stringify(uiSchema),
+            },
+            {
+              path: "run.sh",
+              content: "#!/usr/bin/env bash\necho '{}'\n",
+              executable: true,
+            },
+            {
+              path: "conversion.report.json",
+              content: JSON.stringify({
+                sourceFormat: "friday-package",
+                sourceRef: sourceUri,
+                convertedAt: NOW_ISO,
+                converterId: "native-friday-package",
+              }, null, 2),
+            },
+          ],
+          warnings: [],
+          conversionReport: {
+            sourceFormat: "friday-package",
+            sourceRef: sourceUri,
+            convertedAt: NOW_ISO,
+            converterId: "native-friday-package",
+          },
+        },
+        validation: { ok: true, issues: [] },
+        canonicalApprovalTicket: makeCanonicalStageTicket({
+          source: { uri: sourceUri, formatHint: "friday-package" },
+        }),
+      });
+
+      const persisted = readFileSync(join(candidate.candidateDir, "candidate.json"), "utf8");
+      const report = readFileSync(join(candidate.filesDir, "conversion.report.json"), "utf8");
+      const serializedCandidate = JSON.stringify(candidate);
+      expect(candidate.sourceProvenance).toMatchObject({
+        sourceKind: "uri",
+        redactedUri: "https://example.com/skill-repo?redacted=1",
+        formatHint: "friday-package",
+      });
+      expect(serializedCandidate).not.toContain(sourceUri);
+      expect(serializedCandidate).not.toContain("candidate-secret-token");
+      expect(serializedCandidate).not.toContain("\"source\":");
+      expect(candidate.canonicalApprovalProof).toMatchObject({
+        gateId: "friday_canonical_mutating_action_gate",
+        ticketId: "ticket-1",
+        action: "skills.import.stage_candidate",
+        approvalId: "approval-1",
+      });
+      expect(persisted).not.toContain(sourceUri);
+      expect(persisted).not.toContain("candidate-secret-token");
+      expect(persisted).not.toContain("api_key");
+      expect(persisted).toContain("sourceProvenance");
+      expect(persisted).toContain("canonicalApprovalProof");
+      expect(report).not.toContain(sourceUri);
+      expect(report).not.toContain("candidate-secret-token");
+      expect(report).toContain("https://example.com/skill-repo?redacted=1");
+    });
+
+    it("persists only a digest for contentBase64 staged candidate sources", async () => {
+      const rawContent = "secret inline skill payload";
+      const contentBase64 = Buffer.from(rawContent, "utf8").toString("base64");
+      const manifest = makeValidManifest({
+        id: "redacted-content-candidate",
+      });
+      const uiSchema = {
+        schemaVersion: "1.0" as const,
+        title: "Redacted Content Candidate",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      };
+      const store = createFridaySkillCandidateStore({
+        context: ctx,
+        installer: createFridaySkillImportInstaller(),
+        hubVersion: "1.0.0",
+        supportedApiVersions: ["1"],
+      });
+
+      const candidate = await store.stage({
+        source: { contentBase64, formatHint: "openai-gpt-action" },
+        converterId: "openai-gpt-action",
+        detectedFormat: "openai-gpt-action",
+        draft: {
+          manifest,
+          uiSchema,
+          files: [
+            {
+              path: "skill.manifest.json",
+              content: JSON.stringify(manifest, null, 2),
+            },
+            {
+              path: "skill.ui.json",
+              content: JSON.stringify(uiSchema),
+            },
+            {
+              path: "run.sh",
+              content: "#!/usr/bin/env bash\necho '{}'\n",
+              executable: true,
+            },
+            {
+              path: "conversion.report.json",
+              content: JSON.stringify({
+                sourceFormat: "openai-gpt-action",
+                sourceRef: contentBase64,
+                convertedAt: NOW_ISO,
+                converterId: "openai-gpt-action",
+              }, null, 2),
+            },
+          ],
+          warnings: [],
+          conversionReport: {
+            sourceFormat: "openai-gpt-action",
+            sourceRef: contentBase64,
+            convertedAt: NOW_ISO,
+            converterId: "openai-gpt-action",
+          },
+        },
+        validation: { ok: true, issues: [] },
+        canonicalApprovalTicket: makeCanonicalStageTicket({
+          source: { contentBase64, formatHint: "openai-gpt-action" },
+        }),
+      });
+
+      const persisted = readFileSync(join(candidate.candidateDir, "candidate.json"), "utf8");
+      const report = readFileSync(join(candidate.filesDir, "conversion.report.json"), "utf8");
+      const serializedCandidate = JSON.stringify(candidate);
+      expect(candidate.sourceProvenance).toMatchObject({
+        sourceKind: "contentBase64",
+        formatHint: "openai-gpt-action",
+      });
+      expect(candidate.sourceProvenance.sourceDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(candidate.sourceProvenance.redactedUri).toBeUndefined();
+      expect(serializedCandidate).not.toContain(contentBase64);
+      expect(serializedCandidate).not.toContain(rawContent);
+      expect(serializedCandidate).toContain("canonicalApprovalProof");
+      expect(persisted).not.toContain(contentBase64);
+      expect(persisted).not.toContain(rawContent);
+      expect(persisted).toContain("sourceDigest");
+      expect(persisted).toContain("canonicalApprovalProof");
+      expect(report).not.toContain(contentBase64);
+      expect(report).not.toContain(rawContent);
+      expect(report).toContain(candidate.sourceProvenance.sourceDigest);
+    });
+
+    it("fails closed when no converter matches the source", async () => {
       const filePath = join(testDir, "unknown.txt");
       writeFileSync(filePath, "unknown content");
 
       const service = createService();
-      await expect(service.import({ source: { uri: filePath } })).rejects.toThrow(
-        "No converter detected",
-      );
+      await expect(service.import(withCanonicalStageTicket({ source: { uri: filePath } }))).rejects.toThrow("No converter detected");
+    });
+
+    it("fails closed before candidate writes when canonical proof is missing", async () => {
+      const filePath = join(testDir, "unknown.txt");
+      writeFileSync(filePath, "unknown content");
+
+      const service = createService();
+      await expect(service.import({ source: { uri: filePath } })).rejects.toThrow("canonical approval ticket");
     });
   });
 

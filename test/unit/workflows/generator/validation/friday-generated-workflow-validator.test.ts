@@ -9,7 +9,7 @@ import type {
   FridayWorkflowCompiler,
   FridayWorkflowValidator,
 } from "#workflows";
-import type { FridaySkillRegistry } from "#skills";
+import type { FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 
 // ─── Fixtures ───
 
@@ -118,7 +118,10 @@ describe("FridayGeneratedWorkflowValidator", () => {
   let mockGraphValidator: FridayWorkflowValidator;
   let mockSkillRegistry: FridaySkillRegistry;
 
-  function createValidator(knownSkills: string[] = ["my-skill"]) {
+  function createValidator(
+    knownSkills: string[] = ["my-skill"],
+    getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined,
+  ) {
     mockCompiler = makeMockCompiler();
     mockGraphValidator = makeMockWorkflowValidator();
     mockSkillRegistry = makeMockSkillRegistry(knownSkills);
@@ -126,6 +129,7 @@ describe("FridayGeneratedWorkflowValidator", () => {
       compiler: mockCompiler,
       workflowValidator: mockGraphValidator,
       skillRegistry: mockSkillRegistry,
+      getSkillLifecycleStatus,
       idGenerator: () => "id-1",
     });
   }
@@ -153,6 +157,24 @@ describe("FridayGeneratedWorkflowValidator", () => {
     expect(skillErrors).toHaveLength(1);
     expect(skillErrors[0].severity).toBe("error");
     expect(skillErrors[0].stage).toBe("skill_refs");
+  });
+
+  it("unavailable persisted skill ref produces error even when registry knows it", () => {
+    createValidator(["my-skill"], (skillId) =>
+      skillId === "my-skill" ? "not_installed" : undefined,
+    );
+    const result = validator.validate({
+      spec: makeSpec(),
+      visual: makeVisual(),
+      tests: makeTests(),
+    });
+    const skillErrors = result.issues.filter((i) => i.code === "SKILL_REF_NOT_AVAILABLE");
+    expect(skillErrors).toHaveLength(1);
+    expect(skillErrors[0]).toMatchObject({
+      severity: "error",
+      stage: "skill_refs",
+      stepId: "step-1",
+    });
   });
 
   it("missing step node in visual produces error", () => {

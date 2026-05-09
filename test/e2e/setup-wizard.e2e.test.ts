@@ -23,6 +23,7 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import { signFridayCanonicalApproval } from "../../src/security/friday-mutating-action-gate.js";
 import {
   clearAutoDetectProviderEnv,
   restoreAutoDetectProviderEnv,
@@ -38,6 +39,7 @@ const LOCAL_PASSPHRASE =
   process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ??
   process.env.FRIDAY_LOCAL_PASSPHRASE ??
   "friday-test-local-passphrase-123";
+const TEST_TOKEN_SECRET = "setup-test-token-secret-for-canonical-skill-stage-approval-123"; // pragma: allowlist secret
 
 function resolveUiStaticDir(): string | undefined {
   const uiStaticDir = path.resolve(process.cwd(), "dist/ui");
@@ -128,6 +130,7 @@ describe("Setup Wizard E2E", () => {
   let stateDir: string;
   let accessToken: string;
   let refreshToken: string;
+  let adminPrincipalId: string;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
 
   beforeAll(async () => {
@@ -143,6 +146,7 @@ describe("Setup Wizard E2E", () => {
         skillDirs: [],
         port: 0,
         logRequests: false,
+        tokenSecret: TEST_TOKEN_SECRET,
       });
       await hub.start();
     } finally {
@@ -182,7 +186,54 @@ describe("Setup Wizard E2E", () => {
     }
     accessToken = loginJson.data.accessToken;
     refreshToken = loginJson.data.refreshToken;
+    const meRes = await fetch(`${baseUrl}/v1/auth/me`, {
+      headers: authHeaders(accessToken),
+    });
+    const meJson = (await meRes.json()) as {
+      ok: boolean;
+      data?: { user?: { id?: string } };
+    };
+    adminPrincipalId = meJson.data?.user?.id ?? "";
+    if (!meJson.ok || adminPrincipalId.length === 0) {
+      throw new Error(`Admin principal lookup failed: ${JSON.stringify(meJson)}`);
+    }
   }, 60_000);
+
+  async function approveSkillImportBody<TBody extends Record<string, unknown>>(
+    body: TBody,
+    idempotencyKey: string,
+  ): Promise<TBody & { idempotencyKey: string; canonicalApproval: Record<string, unknown> }> {
+    const bodyWithoutApproval = {
+      ...body,
+      idempotencyKey,
+    };
+    const probeRes = await fetch(`${baseUrl}/v1/skills/import`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(bodyWithoutApproval),
+    });
+    expect(probeRes.status).toBe(403);
+    const probeJson = (await probeRes.json()) as {
+      ok: false;
+      error: {
+        code: string;
+        details?: { canonicalGate?: { actionDigest?: string } };
+      };
+    };
+    expect(probeJson.error.code).toBe("CANONICAL_APPROVAL_REQUIRED");
+    const actionDigest = probeJson.error.details?.canonicalGate?.actionDigest;
+    expect(actionDigest).toBeTruthy();
+    return {
+      ...bodyWithoutApproval,
+      canonicalApproval: signFridayCanonicalApproval({
+        decision: "approved",
+        approvalId: `approval-${idempotencyKey}`,
+        decidedByPrincipalId: adminPrincipalId,
+        actionDigest: actionDigest!,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      }, TEST_TOKEN_SECRET),
+    };
+  }
 
   afterAll(async () => {
     const closeTimeout = setTimeout(() => {
@@ -1502,45 +1553,44 @@ echo '{"result": "hello from c18"}'
         expect(convertJson.ok).toBe(true);
         expect(convertJson.data.drafts.length).toBeGreaterThanOrEqual(1);
 
-        // 2. Import
+        // 2. Import stages candidates only; drafts must go through lifecycle promotion.
+        const importBody = await approveSkillImportBody({
+          source: { uri: skillDir },
+          formatHint: "clawdbot-skill-md",
+          target: "managed",
+          replace: true,
+          refreshRegistry: true,
+        }, "setup-c18-stage");
         const importRes = await fetch(`${baseUrl}/v1/skills/import`, {
           method: "POST",
           headers: authHeaders(accessToken),
-          body: JSON.stringify({
-            source: { uri: skillDir },
-            formatHint: "clawdbot-skill-md",
-            target: "managed",
-            replace: true,
-            refreshRegistry: true,
-          }),
+          body: JSON.stringify(importBody),
         });
         expect(importRes.status).toBe(200);
         const importJson = (await importRes.json()) as {
           ok: boolean;
           data: {
-            imports: Array<{
-              skillId: string;
-              installed: boolean;
-              skillDir: string;
-            }>;
+            candidates: Array<{ candidateId: string; skillId: string }>;
+            registryRefreshed: boolean;
           };
         };
         expect(importJson.ok).toBe(true);
-        expect(importJson.data.imports.length).toBeGreaterThanOrEqual(1);
-        const importedSkillId = importJson.data.imports[0]!.skillId;
+        expect(importJson.data.candidates.length).toBeGreaterThanOrEqual(1);
+        expect(importJson.data.registryRefreshed).toBe(false);
 
-        // 3. Verify the imported skill ID appears in the skills list
+        // 3. Verify the candidate did not become an installed skill.
         const listRes = await fetch(`${baseUrl}/v1/skills`, {
           headers: authHeaders(accessToken),
         });
         expect(listRes.status).toBe(200);
         const listJson = (await listRes.json()) as {
           ok: boolean;
-          data: { items: Array<{ id: string }> };
+          data: { items: Array<{ id: string; status?: string }> };
         };
         expect(listJson.ok).toBe(true);
-        const skillIds = listJson.data.items.map((item) => item.id);
-        expect(skillIds).toContain(importedSkillId);
+        const stagedSkillId = importJson.data.candidates[0]!.skillId;
+        const stagedListItem = listJson.data.items.find((item) => item.id === stagedSkillId);
+        expect(stagedListItem?.status).not.toBe("installed");
       } finally {
         fs.rmSync(skillDir, { recursive: true, force: true });
       }

@@ -24,15 +24,6 @@ interface DeepLinkPreviewResponse {
   preview: DeepLinkPreviewResult;
 }
 
-interface DeepLinkApplyResponse {
-  result: {
-    applied: boolean;
-    resourceType: string;
-    resourceId?: string;
-    message: string;
-  };
-}
-
 function checkLevelBadge(level: string) {
   switch (level) {
     case "blocking":
@@ -57,19 +48,6 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
     onSuccess: (data) => setPreview(data),
   });
 
-  const applyMutation = useMutation({
-    mutationFn: async () => {
-      const body = uri.startsWith("friday://")
-        ? { uri, confirmed: true }
-        : { payload: JSON.parse(uri), confirmed: true };
-      return apiClient.post<typeof body, DeepLinkApplyResponse>("/v1/deeplink/apply", body);
-    },
-    onSuccess: () => {
-      props.onApplied?.();
-      props.onClose();
-    },
-  });
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={props.onClose} role="presentation">
       <div
@@ -80,7 +58,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
       >
         <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">Import from URL</h2>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview and import.
+          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview it before canonical approval is wired.
         </p>
 
         <textarea
@@ -146,21 +124,14 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
 
             <div className="flex justify-end gap-2">
               <button type="button" onClick={props.onClose} className="rounded-xl border border-[color:var(--color-border-soft)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]">Cancel</button>
-              <button
-                type="button"
-                onClick={() => applyMutation.mutate()}
-                disabled={preview.verdict === "blocked" || applyMutation.isPending}
-                className="rounded-xl bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)] disabled:opacity-50"
-              >
-                {applyMutation.isPending ? "Importing..." : "Confirm Import"}
+              <button type="button" disabled className="rounded-xl bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] opacity-50">
+                Preview Only
               </button>
             </div>
 
-            {applyMutation.error ? (
-              <p className="text-xs text-red-600 ">
-                {applyMutation.error instanceof Error ? applyMutation.error.message : "Import failed"}
-              </p>
-            ) : null}
+            <p className="text-xs text-[color:var(--color-text-tertiary)]">
+              Canonical approval UX is not wired in Phase 3.1. This dialog intentionally stops at preview instead of staging without a proof ticket.
+            </p>
           </div>
         )}
       </div>

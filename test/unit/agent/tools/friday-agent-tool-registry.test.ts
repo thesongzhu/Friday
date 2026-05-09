@@ -10,6 +10,7 @@ import type { FridayChannelRegistry } from "../../../../src/channels/friday-chan
 import type { FridayMcpAdapter } from "../../../../src/agent/mcp/friday-mcp-adapter.types.js";
 import type { FridayProviderService } from "../../../../src/providers/services/friday-provider-service.types.js";
 import type { FridayGuideLensService } from "../../../../src/guide-lens/model/friday-guide-lens.types.js";
+import { makeManifest } from "../../skills/_helpers/make-manifest.helper.js";
 
 function stubSessionService(): FridaySessionService {
   return {
@@ -39,7 +40,7 @@ function stubRuntime(): FridayAgentRuntime {
 function stubMcpAdapter(): FridayMcpAdapter {
   return {
     listServers: vi.fn().mockReturnValue([{ id: "filesystem", command: "npx" }]),
-    listServerStates: vi.fn().mockReturnValue([]),
+    listServerStates: vi.fn().mockReturnValue([{ serverId: "filesystem", transport: "stdio", state: "loaded", lazyDiscovery: true }]),
     listTools: vi.fn(),
     searchTools: vi.fn(),
     callTool: vi.fn(),
@@ -62,6 +63,47 @@ function stubSkillRegistry(): FridaySkillRegistry {
     startWatching: vi.fn(),
     stopWatching: vi.fn(),
     close: vi.fn(),
+  } as unknown as FridaySkillRegistry;
+}
+
+function stubMcpRequiredSkillRegistry(): FridaySkillRegistry {
+  const manifest = makeManifest({
+    id: "mcp-skill",
+    requirements: {
+      bins: [],
+      env: [],
+      config: [],
+      os: ["darwin", "linux", "win32"],
+      mcpServers: [{ name: "filesystem", auth: "connected" }],
+    },
+  });
+  const skill = {
+    manifest,
+    skillDir: "/tmp/mcp-skill",
+    source: "bundled",
+    origin: "bundled",
+    status: "installed",
+    loaded: {
+      skillDir: "/tmp/mcp-skill",
+      manifest,
+      loadMode: "manifest-v2",
+      declaredFiles: [],
+    },
+    validation: { ok: true, issues: [] },
+    trust: {
+      trustTier: "bundled",
+      executionMode: "trusted",
+      sandboxPolicy: {
+        trustTier: "bundled",
+        defaultExecutionMode: "trusted",
+        allowedExecutionModes: ["trusted", "restricted"],
+      },
+    },
+  };
+  return {
+    ...stubSkillRegistry(),
+    list: vi.fn().mockReturnValue([skill]),
+    get: vi.fn((skillId: string) => (skillId === "mcp-skill" ? skill : null)),
   } as unknown as FridaySkillRegistry;
 }
 
@@ -167,12 +209,96 @@ describe("createFridayAgentToolRegistry", () => {
     expect(names).toContain("message");
   });
 
-  it("includes mcp tool when mcpAdapter has configured servers", () => {
+  it("excludes mcp tool when lifecycle availability resolver is missing", () => {
     const tools = createFridayAgentToolRegistry({
       mcpAdapter: stubMcpAdapter(),
     });
     const names = tools.map((t) => t.name);
+    expect(names).not.toContain("mcp");
+  });
+
+  it("includes mcp tool when mcpAdapter has promoted servers", () => {
+    const tools = createFridayAgentToolRegistry({
+      mcpAdapter: stubMcpAdapter(),
+      getMcpServerAvailability: () => ({ available: true, promotionChannel: "active" }),
+    });
+    const names = tools.map((t) => t.name);
     expect(names).toContain("mcp");
+  });
+
+  it("blocks MCP-backed skills when the configured server is not lifecycle-promoted", async () => {
+    const execute = vi.fn().mockReturnValue({
+      runId: "run-1",
+      result: Promise.resolve({
+        runId: "run-1",
+        status: "completed",
+        output: {},
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      }),
+    });
+    const tools = createFridayAgentToolRegistry({
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      } as never,
+      skillRegistry: stubMcpRequiredSkillRegistry(),
+      mcpAdapter: stubMcpAdapter(),
+      getMcpServerAvailability: () => ({ available: false, promotionChannel: "shadow" }),
+    });
+
+    const skillRun = tools.find((tool) => tool.name === "skill_run")!;
+    const runResult = await skillRun.execute({ skillId: "mcp-skill", input: {} }, new AbortController().signal);
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.parse(runResult.content)).toMatchObject({
+      status: "blocked",
+      ready: false,
+      blockers: ['Required MCP server "filesystem" is not configured for this deployment.'],
+    });
+
+    const skillsList = tools.find((tool) => tool.name === "skills_list")!;
+    const listResult = await skillsList.execute({}, new AbortController().signal);
+    const parsed = JSON.parse(listResult.content) as { skills: Array<{ ready: boolean; blockers: string[] }> };
+    expect(parsed.skills[0]?.ready).toBe(false);
+    expect(parsed.skills[0]?.blockers).toContain('Required MCP server "filesystem" is not configured for this deployment.');
+  });
+
+  it("passes persisted skill lifecycle status into agent skill tools", async () => {
+    const execute = vi.fn().mockReturnValue({
+      runId: "run-1",
+      result: Promise.resolve({
+        runId: "run-1",
+        status: "completed",
+        output: {},
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      }),
+    });
+    const tools = createFridayAgentToolRegistry({
+      skillExecutor: {
+        execute,
+        cancel: vi.fn(),
+      } as never,
+      skillRegistry: stubMcpRequiredSkillRegistry(),
+      getSkillLifecycleStatus: (skillId) =>
+        skillId === "mcp-skill" ? "not_installed" : undefined,
+    });
+
+    const skillsList = tools.find((tool) => tool.name === "skills_list")!;
+    const listResult = await skillsList.execute({ installedOnly: true }, new AbortController().signal);
+    expect(JSON.parse(listResult.content)).toMatchObject({ count: 0 });
+
+    const skillRun = tools.find((tool) => tool.name === "skill_run")!;
+    const runResult = await skillRun.execute({ skillId: "mcp-skill", input: {} }, new AbortController().signal);
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.parse(runResult.content)).toMatchObject({
+      status: "blocked",
+      ready: false,
+      code: "SKILL_NOT_AVAILABLE",
+      lifecycleStatus: "not_installed",
+    });
   });
 
   it("always includes exec, file, web_fetch tools", () => {

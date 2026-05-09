@@ -983,6 +983,10 @@ function WorkflowBuilderEditor() {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
+  const installedSkillOptions = useMemo(
+    () => (skillsQuery.data ?? []).filter((skill) => skill.status === "installed"),
+    [skillsQuery.data],
+  );
 
   const draftQuery = useQuery({
     queryKey: ["workflow-builder", "draft", requestedWorkflowId, resolvedDraftId],
@@ -2699,7 +2703,7 @@ function WorkflowBuilderEditor() {
             selectedTaskProfileId={selectedTaskProfileId}
             taskProfileOptions={TASK_PROFILE_OPTIONS}
             integrationModeOptions={INTEGRATION_MODE_OPTIONS}
-            availableSkills={skillsQuery.data ?? []}
+            availableSkills={installedSkillOptions}
             onUpdateSelectedEdgeBranch={updateSelectedEdgeBranch}
             activeDraft={activeDraft}
             draftTitle={draftTitle}

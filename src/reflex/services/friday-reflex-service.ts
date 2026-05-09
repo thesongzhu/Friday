@@ -28,10 +28,14 @@ import {
   isFridayReflexPreferenceKey,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./friday-reflex-preference-resolver.js";
+import { requiresFridayReflexPreferenceConfirmation } from "./friday-reflex-preference-sensitivity.js";
 
 const REFLEX_INTERNAL_CHANNEL = "reflex";
 const REFLEX_RECIPE_NAMESPACE = "reflex.recipes";
 const REFLEX_MEMORY_NAMESPACE = "reflex.memories";
+const REFLEX_CURATOR_METADATA_VERSION = 1;
+const REFLEX_CURATOR_STALE_DAYS = 14;
+const REFLEX_CURATOR_FAILED_STALE_DAYS = 7;
 const REFLEX_PREFERENCE_CATEGORIES = new Set<FridayUserPreferenceCategory>([
   "communication",
   "uix",
@@ -111,6 +115,13 @@ export interface FridayReflexService {
     value: JsonValue;
     sourceSurface?: FridayReflexSurface;
   }): FridayPreferenceWriteResult;
+  requestPreferenceUpdate(input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+    sourceSurface?: FridayReflexSurface;
+  }): FridayPreferenceRequestResult;
   revokePreference(input: {
     userId: string;
     preferenceId: string;
@@ -135,6 +146,15 @@ export interface FridayPreferenceWriteResult {
   };
   skippedBecauseExplicit?: boolean;
 }
+
+export type FridayPreferenceRequestResult =
+  | ({ requiresConfirmation: false } & FridayPreferenceWriteResult)
+  | {
+      requiresConfirmation: true;
+      candidate: FridayReflexCandidate;
+    };
+
+type FridayReflexDb = Parameters<FridayReflexCandidateRepository["list"]>[0];
 
 export interface FridayPreferenceRevokeResult {
   revoked: true;
@@ -287,6 +307,137 @@ function normalizeReflexTaskSignature(task: string | undefined, toolSequence: st
   });
 }
 
+function readIsoMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readEvidenceString(value: JsonValue | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function candidateHasGeneratedDraft(candidate: FridayReflexCandidate): boolean {
+  return Boolean(readEvidenceString(candidate.evidence.draftSkillId) || readEvidenceString(candidate.evidence.draftWorkflowId));
+}
+
+function candidateHasCompletedTest(candidate: FridayReflexCandidate): boolean {
+  return Boolean(readEvidenceString(candidate.evidence.testCompletedAt) || candidate.evidence.deterministicReview === true);
+}
+
+function resolveCuratorRecommendedAction(input: {
+  candidate: FridayReflexCandidate;
+  duplicateOf?: string;
+  hasFailedTest: boolean;
+  stale: boolean;
+  tested: boolean;
+}): string {
+  if (input.duplicateOf) return "superseded";
+  if (input.candidate.status === "failed" || input.hasFailedTest) return "diagnose_or_retest";
+  if ((input.candidate.kind === "skill" || input.candidate.kind === "workflow") && !input.tested) {
+    return "test_before_review";
+  }
+  if (input.stale) return "review_or_dismiss";
+  return "review";
+}
+
+function resolveCuratorReviewReason(input: {
+  candidate: FridayReflexCandidate;
+  duplicateOf?: string;
+  hasFailedTest: boolean;
+}): string {
+  if (input.duplicateOf) {
+    return "Curator found an exact duplicate candidate; keep the earlier candidate and do not ask the user twice.";
+  }
+  if (input.candidate.status === "failed" || input.hasFailedTest) {
+    return "This candidate has failed evidence; diagnose or retest before any approval.";
+  }
+  if (input.candidate.kind === "skill" || input.candidate.kind === "workflow") {
+    return "Friday saw a reusable pattern, but executable candidates stay draft-only until test evidence and Review Center approval.";
+  }
+  return "Friday found a reusable learning candidate; review it before it changes memory, preferences, recipes, skills, or workflows.";
+}
+
+function buildCuratorReviewMetadata(input: {
+  candidate: FridayReflexCandidate;
+  nowIso: string;
+  duplicateOf?: string;
+}): Record<string, JsonValue> {
+  const { candidate } = input;
+  const nowMs = readIsoMs(input.nowIso) ?? Date.now();
+  const createdMs = readIsoMs(candidate.createdAt) ?? readIsoMs(candidate.updatedAt) ?? nowMs;
+  const ageDays = Math.max(0, Math.floor((nowMs - createdMs) / 86_400_000));
+  const staleAfterDays = candidate.status === "failed" ? REFLEX_CURATOR_FAILED_STALE_DAYS : REFLEX_CURATOR_STALE_DAYS;
+  const stale = ageDays >= staleAfterDays;
+  const tested = candidateHasCompletedTest(candidate) || candidateHasGeneratedDraft(candidate);
+  const hasFailedTest = Boolean(readEvidenceString(candidate.evidence.testFailedAt) || readEvidenceString(candidate.evidence.error));
+  const priority = Math.min(100, Math.max(1,
+    (candidate.riskTier * 12)
+    + Math.round(candidate.confidence * 20)
+    + (candidate.status === "ready_for_review" ? 24 : candidate.status === "failed" ? 16 : 8)
+    + (candidate.kind === "skill" || candidate.kind === "workflow" ? 12 : 0)
+    + (stale ? 6 : 0),
+  ));
+
+  return {
+    version: REFLEX_CURATOR_METADATA_VERSION,
+    curatedBy: "friday_reflex_curator",
+    lastCuratedAt: input.nowIso,
+    reviewReason: resolveCuratorReviewReason({ candidate, duplicateOf: input.duplicateOf, hasFailedTest }),
+    recommendedAction: resolveCuratorRecommendedAction({
+      candidate,
+      duplicateOf: input.duplicateOf,
+      hasFailedTest,
+      stale,
+      tested,
+    }),
+    priority,
+    stale,
+    ageDays,
+    staleAfterDays,
+    tested,
+    duplicateOf: input.duplicateOf ?? null,
+    safetyBoundary: "review_center_required_before_activation",
+    evidenceSummary: hasFailedTest
+      ? "failed_test_or_approval_evidence_present"
+      : tested
+        ? "test_or_draft_evidence_present"
+        : "no_test_evidence_yet",
+  };
+}
+
+function curatorMetadataMatches(current: JsonValue | undefined, next: Record<string, JsonValue>): boolean {
+  if (!current || typeof current !== "object" || Array.isArray(current)) return false;
+  const currentRecord = { ...(current as Record<string, JsonValue>) };
+  const nextRecord = { ...next };
+  delete currentRecord.lastCuratedAt;
+  delete nextRecord.lastCuratedAt;
+  return JSON.stringify(currentRecord) === JSON.stringify(nextRecord);
+}
+
+function buildCuratorDuplicateKey(candidate: FridayReflexCandidate): string {
+  return JSON.stringify({
+    userId: candidate.userId,
+    kind: candidate.kind,
+    title: candidate.title,
+    payload: candidate.payload,
+  });
+}
+
+function curatorCandidateRank(candidate: FridayReflexCandidate): number {
+  const statusRank: Record<FridayReflexCandidateStatus, number> = {
+    ready_for_review: 0,
+    proposed: 1,
+    failed: 2,
+    testing: 3,
+    approved: 4,
+    rejected: 5,
+    dismissed: 6,
+    superseded: 7,
+  };
+  return statusRank[candidate.status] ?? 9;
+}
+
 export function createFridayReflexService(
   deps: CreateFridayReflexServiceDeps,
 ): FridayReflexService {
@@ -346,6 +497,73 @@ export function createFridayReflexService(
       ]);
     }
     return result;
+  }
+
+  function findPendingPreferenceConfirmation(db: FridayReflexDb, input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+  }): FridayReflexCandidate | null {
+    return deps.candidateRepo.list(db, {
+      userId: input.userId,
+      kind: "preference",
+      limit: 200,
+    }).find((candidate) =>
+      (candidate.status === "proposed" || candidate.status === "ready_for_review" || candidate.status === "testing")
+      && candidate.evidence.requiresExplicitConfirmation === true
+      && candidate.payload.category === input.category
+      && candidate.payload.key === input.key
+      && JSON.stringify(candidate.payload.value) === JSON.stringify(input.value),
+    ) ?? null;
+  }
+
+  function createPreferenceConfirmationCandidate(db: FridayReflexDb, input: {
+    userId: string;
+    category: FridayUserPreferenceCategory;
+    key: string;
+    value: JsonValue;
+    sourceSurface?: FridayReflexSurface;
+    origin?: FridayReflexCandidate["origin"];
+    evidence?: Record<string, JsonValue>;
+  }): FridayReflexCandidate {
+    if (!candidatesEnabled) {
+      throw new FridayDomainError(
+        "REFLEX_CANDIDATES_DISABLED",
+        "Reflex candidates are disabled in this runtime.",
+        { httpStatus: 503 },
+      );
+    }
+    const existing = findPendingPreferenceConfirmation(db, input);
+    if (existing) return existing;
+    const now = deps.nowIso();
+    return deps.candidateRepo.insert(db, {
+      userId: input.userId,
+      kind: "preference",
+      origin: input.origin ?? (input.sourceSurface === "channel" ? "channel" : "operate"),
+      status: "ready_for_review",
+      title: `Confirm Friday setting: ${input.key}`,
+      summary:
+        "This preference affects safety, execution, automation, memory, or test behavior. Review once before it becomes a durable Friday setting.",
+      payload: {
+        category: input.category,
+        key: input.key,
+        value: input.value,
+        source: "explicit",
+        sourceSurface: input.sourceSurface ?? "operate",
+      },
+      evidence: {
+        requiresExplicitConfirmation: true,
+        reason: "high_impact_reflex_preference",
+        requestedAt: now,
+        sourceSurface: input.sourceSurface ?? "operate",
+        ...(input.evidence ?? {}),
+      },
+      confidence: 1,
+      riskTier: 2,
+      id: deps.idGenerator(),
+      nowIso: now,
+    });
   }
 
   function loadOnboardingSnapshot(userId: string): FridayReflexOnboardingSnapshot {
@@ -456,6 +674,23 @@ export function createFridayReflexService(
           answer: input.answer,
         })) {
           assertPreferenceTarget(write);
+          if (requiresFridayReflexPreferenceConfirmation({
+            category: write.category,
+            key: write.key,
+          })) {
+            createPreferenceConfirmationCandidate(db, {
+              userId: input.userId,
+              category: write.category,
+              key: write.key,
+              value: write.value,
+              sourceSurface: input.sourceSurface,
+              origin: "onboarding",
+              evidence: {
+                onboardingQuestionId: input.questionId,
+              },
+            });
+            continue;
+          }
           const existingPreference = deps.preferenceRepo
             .listByPrincipal(db, { principalId: input.userId, category: write.category })
             .find((preference) => preference.key === write.key);
@@ -890,15 +1125,21 @@ export function createFridayReflexService(
             category,
             key,
             value,
-            source: "implicit",
-            confidence: candidate.confidence,
-            preserveExplicit: true,
+            source: candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true
+              ? "explicit"
+              : "implicit",
+            confidence: candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true
+              ? 1
+              : candidate.confidence,
+            preserveExplicit: !(candidate.payload.source === "explicit" || candidate.evidence.requiresExplicitConfirmation === true),
             sourceSurface: "review_center",
           });
           evidence = {
             ...evidence,
             preferenceId: result.preference.id,
             skippedBecauseExplicit: result.skippedBecauseExplicit ?? false,
+            explicitPreferenceConfirmed: candidate.payload.source === "explicit"
+              || candidate.evidence.requiresExplicitConfirmation === true,
           };
         } else if (candidate.kind === "skill" || candidate.kind === "workflow") {
           evidence = { ...evidence, ...(await approveGeneratedCandidate(candidate)) };
@@ -955,11 +1196,51 @@ export function createFridayReflexService(
     },
 
     updatePreference(input) {
+      assertPrincipal(input.userId);
+      assertPreferenceTarget(input);
+      if (requiresFridayReflexPreferenceConfirmation({
+        category: input.category,
+        key: input.key,
+      })) {
+        throw new FridayDomainError(
+          "REFLEX_PREFERENCE_REQUIRES_CONFIRMATION",
+          `Preference '${input.key}' requires Review Center confirmation.`,
+          { httpStatus: 409 },
+        );
+      }
       return writePreference({
         ...input,
         source: "explicit",
         confidence: 1,
       });
+    },
+
+    requestPreferenceUpdate(input) {
+      assertPrincipal(input.userId);
+      assertPreferenceTarget(input);
+      if (requiresFridayReflexPreferenceConfirmation({
+        category: input.category,
+        key: input.key,
+      })) {
+        return {
+          requiresConfirmation: true,
+          candidate: deps.db.withWriteTransaction((db) => createPreferenceConfirmationCandidate(db, {
+            userId: input.userId,
+            category: input.category,
+            key: input.key,
+            value: input.value,
+            sourceSurface: input.sourceSurface,
+          })),
+        };
+      }
+      return {
+        requiresConfirmation: false,
+        ...writePreference({
+          ...input,
+          source: "explicit",
+          confidence: 1,
+        }),
+      };
     },
 
     revokePreference(input) {
@@ -1121,6 +1402,7 @@ export function createFridayReflexService(
     curateCandidates(input) {
       if (!curatorEnabled) return [];
       const statuses: FridayReflexCandidateStatus[] = ["proposed", "ready_for_review", "failed"];
+      const now = deps.nowIso();
       const candidates = deps.db.withReadConnection((db) => {
         const collected: FridayReflexCandidate[] = [];
         const userIds = input?.userId
@@ -1140,25 +1422,47 @@ export function createFridayReflexService(
         }
         return collected;
       });
-      const seen = new Set<string>();
-      const superseded: FridayReflexCandidate[] = [];
-      for (const candidate of candidates) {
-        const key = `${candidate.userId}:${candidate.kind}:${candidate.title}:${JSON.stringify(candidate.payload)}`;
-        if (!seen.has(key)) {
-          seen.add(key);
+      const keptByKey = new Map<string, FridayReflexCandidate>();
+      const curated: FridayReflexCandidate[] = [];
+      for (const candidate of [...candidates].sort((left, right) => {
+        const rankDiff = curatorCandidateRank(left) - curatorCandidateRank(right);
+        if (rankDiff !== 0) return rankDiff;
+        const createdDiff = left.createdAt.localeCompare(right.createdAt);
+        return createdDiff !== 0 ? createdDiff : left.id.localeCompare(right.id);
+      })) {
+        const key = buildCuratorDuplicateKey(candidate);
+        const kept = keptByKey.get(key);
+        if (!kept) {
+          keptByKey.set(key, candidate);
+          const curator = buildCuratorReviewMetadata({ candidate, nowIso: now });
+          if (curatorMetadataMatches(candidate.evidence.curator, curator)) continue;
+          const updated = deps.db.withWriteTransaction((db) => deps.candidateRepo.updateEvidence(db, {
+            userId: candidate.userId,
+            id: candidate.id,
+            evidence: { curator },
+            nowIso: now,
+          }));
+          if (updated) curated.push(updated);
           continue;
         }
-        superseded.push(updateCandidateStatus({
+        const curator = buildCuratorReviewMetadata({
+          candidate,
+          nowIso: now,
+          duplicateOf: kept.id,
+        });
+        curated.push(updateCandidateStatus({
           userId: candidate.userId,
           candidateId: candidate.id,
           status: "superseded",
           evidence: {
-            supersededByCuratorAt: deps.nowIso(),
+            curator,
+            supersededByCuratorAt: now,
             reason: "Duplicate reflex candidate",
+            duplicateOf: kept.id,
           },
         }));
       }
-      return superseded;
+      return curated;
     },
   };
 }

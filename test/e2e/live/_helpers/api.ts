@@ -19,6 +19,33 @@ interface FridayErrorEnvelope {
   };
 }
 
+interface FridayProviderRuntimeCapabilityRecord {
+  capability?: string;
+  model?: string;
+  verified?: boolean;
+  status?: "declared" | "verified" | "failed";
+}
+
+interface FridayProviderProfileEnvelope {
+  id: string;
+  config: {
+    runtimeCapabilities?: FridayProviderRuntimeCapabilityRecord[];
+  };
+}
+
+interface FridayCapabilityDoctorResult {
+  providerId?: string;
+  capability?: string;
+  model?: string;
+  status?: string;
+  message?: string;
+  errorCode?: string;
+}
+
+interface FridayCapabilityDoctorReportEnvelope {
+  capabilityResults?: FridayCapabilityDoctorResult[];
+}
+
 const TOKEN_RECOVERABLE_CODES = new Set(["TOKEN_EXPIRED", "AUTH_INVALID"]);
 const AUTH_STATE_BY_BASE_URL = new Map<string, { accessToken: string; refreshToken?: string }>();
 const LOCAL_PASSPHRASE =
@@ -235,6 +262,38 @@ export async function createOpenAiProvider(
   return json.data.provider.id;
 }
 
+export async function createDeepSeekProvider(
+  baseUrl: string,
+  token: string,
+  opts: {
+    name: string;
+    deepSeekBaseUrl: string;
+    models: string[];
+    defaultModel: string;
+    apiKeyEnvRef?: string;
+  },
+): Promise<string> {
+  const { status, json } = await apiFetch<{
+    ok: boolean;
+    data: { provider: { id: string } };
+  }>(baseUrl, token, "POST", "/v1/providers", {
+    kind: "deepseek",
+    name: opts.name,
+    baseUrl: opts.deepSeekBaseUrl,
+    authMode: "bearer-token",
+    api: "openai-completions",
+    apiKey: opts.apiKeyEnvRef ?? "$DEEPSEEK_API_KEY",
+    supportedModels: opts.models,
+    defaultModel: opts.defaultModel,
+    enabled: true,
+    validateOnSave: false,
+  });
+  if (status !== 200 || !json.ok) {
+    throw new Error(`Failed to create DeepSeek provider: ${JSON.stringify(json)}`);
+  }
+  return json.data.provider.id;
+}
+
 export async function createAnthropicProvider(
   baseUrl: string,
   token: string,
@@ -268,6 +327,69 @@ export async function createAnthropicProvider(
     throw new Error(`Failed to create Anthropic provider: ${JSON.stringify(json)}`);
   }
   return json.data.provider.id;
+}
+
+export async function verifyProviderTextCapability(
+  baseUrl: string,
+  token: string,
+  providerId: string,
+  model: string,
+  opts: { doctorProviderIds?: string[]; runDoctor?: boolean } = {},
+): Promise<void> {
+  let doctorReport: FridayCapabilityDoctorReportEnvelope | undefined;
+  if (opts.runDoctor !== false) {
+    const doctorProviderIds = opts.doctorProviderIds ?? [providerId];
+    const doctorRes = await apiFetch<{
+      ok: boolean;
+      data?: FridayCapabilityDoctorReportEnvelope;
+      error?: { code?: string; message?: string };
+    }>(
+      baseUrl,
+      token,
+      "POST",
+      "/v1/capabilities/doctor",
+      { providerIds: doctorProviderIds },
+      { timeoutMs: 180_000 },
+    );
+    if (doctorRes.status !== 200 || !doctorRes.json.ok) {
+      throw new Error(`Capability doctor failed: ${JSON.stringify(doctorRes.json)}`);
+    }
+    doctorReport = doctorRes.json.data;
+  }
+
+  const providerRes = await apiFetch<{
+    ok: boolean;
+    data?: { provider?: FridayProviderProfileEnvelope };
+    error?: { code?: string; message?: string };
+  }>(baseUrl, token, "GET", `/v1/providers/${encodeURIComponent(providerId)}`);
+  if (providerRes.status !== 200 || !providerRes.json.ok || !providerRes.json.data?.provider) {
+    throw new Error(`Failed to read provider after capability doctor: ${JSON.stringify(providerRes.json)}`);
+  }
+
+  const capabilities = providerRes.json.data.provider.config.runtimeCapabilities ?? [];
+  const verifiedText = capabilities.some((entry) =>
+    entry.capability === "text"
+    && (!entry.model || entry.model === model)
+    && (entry.status === "verified" || entry.verified === true)
+  );
+  if (verifiedText) {
+    return;
+  }
+
+  const doctorTextResults = (doctorReport?.capabilityResults ?? [])
+    .filter((entry) =>
+      entry.providerId === providerId
+      && entry.capability === "text"
+      && entry.model === model
+    )
+    .map((entry) => ({
+      status: entry.status,
+      errorCode: entry.errorCode,
+      message: entry.message,
+    }));
+  throw new Error(
+    `Provider ${providerId} did not verify text capability for ${model}: ${JSON.stringify(doctorTextResults)}`,
+  );
 }
 
 export async function setModelRouting(
@@ -323,6 +445,10 @@ export async function ensureOllamaProviders(
   });
 
   await setModelRouting(baseUrl, token, fastProviderId, [codeProviderId]);
+  await verifyProviderTextCapability(baseUrl, token, fastProviderId, fastModel, {
+    doctorProviderIds: [fastProviderId, codeProviderId],
+  });
+  await verifyProviderTextCapability(baseUrl, token, codeProviderId, codeModel, { runDoctor: false });
 
   return { fastProviderId, codeProviderId };
 }
@@ -365,6 +491,56 @@ export async function ensureOpenAiProviders(
   });
 
   await setModelRouting(baseUrl, token, fastProviderId, [codeProviderId]);
+  await verifyProviderTextCapability(baseUrl, token, fastProviderId, fastModel, {
+    doctorProviderIds: [fastProviderId, codeProviderId],
+  });
+  await verifyProviderTextCapability(baseUrl, token, codeProviderId, codeModel, { runDoctor: false });
+
+  return { fastProviderId, codeProviderId };
+}
+
+/**
+ * Create DeepSeek fast + code providers and set routing to fast as default.
+ * Returns { fastProviderId, codeProviderId }.
+ */
+export async function ensureDeepSeekProviders(
+  baseUrl: string,
+  token: string,
+  deepSeekBaseUrl: string,
+  fastModel: string,
+  codeModel: string,
+  apiKeyEnvRef?: string,
+  opts: { namePrefix?: string } = {},
+): Promise<{ fastProviderId: string; codeProviderId: string }> {
+  const normalizedPrefix = opts.namePrefix?.trim();
+  const fastName = normalizedPrefix
+    ? `${normalizedPrefix} DeepSeek Fast (E2E)`
+    : "DeepSeek Fast (E2E)";
+  const codeName = normalizedPrefix
+    ? `${normalizedPrefix} DeepSeek Code (E2E)`
+    : "DeepSeek Code (E2E)";
+
+  const fastProviderId = await createDeepSeekProvider(baseUrl, token, {
+    name: fastName,
+    deepSeekBaseUrl,
+    models: [fastModel],
+    defaultModel: fastModel,
+    apiKeyEnvRef,
+  });
+
+  const codeProviderId = await createDeepSeekProvider(baseUrl, token, {
+    name: codeName,
+    deepSeekBaseUrl,
+    models: [codeModel],
+    defaultModel: codeModel,
+    apiKeyEnvRef,
+  });
+
+  await setModelRouting(baseUrl, token, fastProviderId, [codeProviderId]);
+  await verifyProviderTextCapability(baseUrl, token, fastProviderId, fastModel, {
+    doctorProviderIds: [fastProviderId, codeProviderId],
+  });
+  await verifyProviderTextCapability(baseUrl, token, codeProviderId, codeModel, { runDoctor: false });
 
   return { fastProviderId, codeProviderId };
 }
@@ -407,6 +583,10 @@ export async function ensureAnthropicProviders(
   });
 
   await setModelRouting(baseUrl, token, fastProviderId, [codeProviderId]);
+  await verifyProviderTextCapability(baseUrl, token, fastProviderId, fastModel, {
+    doctorProviderIds: [fastProviderId, codeProviderId],
+  });
+  await verifyProviderTextCapability(baseUrl, token, codeProviderId, codeModel, { runDoctor: false });
 
   return { fastProviderId, codeProviderId };
 }

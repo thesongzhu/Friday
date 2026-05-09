@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
 import type { FridaySqliteLayer } from "#state";
@@ -101,6 +103,15 @@ import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridayStudioService } from "../../studio/index.js";
 import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  type FridayCanonicalApprovalResolution,
+  type FridayMutatingActionActor,
+  type FridayMutatingActionRequest,
+  type FridayMutatingActionTicket,
+  signFridayCanonicalApproval,
+} from "../../security/friday-mutating-action-gate.js";
+import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
   createFridayAgentAutomationRepository,
@@ -108,7 +119,7 @@ import {
   createFridayAgentPlanningGateService,
   createFridayAgentRunEventRepository,
   createFridayAgentRunRepository,
-  createFridayCompactionMemorySink,
+  createFridayCompactionContextReplaySink,
 } from "#agent";
 import type {
   FridayAgentAutomationService,
@@ -130,8 +141,8 @@ import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js
 import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
-import { createFridaySkillRepository } from "#skills";
-import { createFridayPluginRepository } from "#plugins";
+import { createFridaySkillRepository, type FridaySkillLifecycleDetail } from "#skills";
+import { createFridayPluginRepository, type FridayPluginEntity } from "#plugins";
 import { createFridayWorkflowRepository } from "#workflows";
 import { createFridayAutonomySubjectInventoryService } from "../../autonomy/services/friday-autonomy-subject-inventory-service.js";
 import { createFridayAutonomyImpactCensusService } from "../../autonomy/services/friday-autonomy-impact-census-service.js";
@@ -140,7 +151,11 @@ import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/service
 import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
 import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
-import { createFridayPluginUpgradeLifecycleService } from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import {
+  createFridayPluginLifecycleMutatingActionRequest,
+  createFridayPluginUpgradeLifecycleService,
+  type FridayPluginLifecycleApprovalRequestInput,
+} from "../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
 import { createFridayAutonomySubjectUpgradeStateRepository } from "../../autonomy/persistence/friday-autonomy-subject-upgrade-state-repository.js";
 import { createFridayMcpServerUpgradeLifecycleService } from "../../autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
 import { createFridayChannelAdapterUpgradeLifecycleService } from "../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
@@ -162,6 +177,97 @@ const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 const CURRENT_EPOCH = 1;
 const SESSION_CONTEXT_HISTORY_LIMIT = 24;
 const WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
+
+function createFridayPluginReviewEnablePlanDigest(input: {
+  plugin: FridayPluginEntity;
+  runtimeVersion: string;
+  providerModel?: string;
+}): string {
+  return createHash("sha256").update(stableStringify({
+    schemaVersion: "friday.plugin.review_enable.phase3.2D.v1",
+    pluginId: input.plugin.id,
+    version: input.plugin.version,
+    installPath: input.plugin.installPath,
+    manifest: input.plugin.manifest,
+    signatureVerified: input.plugin.signatureVerified,
+    trustedFingerprintSha256: input.plugin.trustedFingerprintSha256,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: input.providerModel,
+  })).digest("hex");
+}
+
+function createFridayPluginReviewEnableShadowVersionId(input: {
+  plugin: FridayPluginEntity;
+  planDigest: string;
+}): string {
+  return `${input.plugin.id}@${input.plugin.version}-${input.planDigest.slice(0, 12)}`;
+}
+
+function createFridayPluginReviewEnableParentRequest(input: {
+  plugin: FridayPluginEntity;
+  runtimeVersion: string;
+  providerModel?: string;
+  actor: FridayMutatingActionActor;
+  surface: string;
+  planDigest: string;
+  shadowVersionId: string;
+  idempotencyKey?: string;
+}): FridayMutatingActionRequest {
+  return {
+    action: "plugins.lifecycle.review_enable",
+    actor: input.actor,
+    surface: input.surface,
+    resource: {
+      type: "external_plugin_lifecycle",
+      id: input.plugin.id,
+      digest: input.planDigest,
+      attributes: {
+        pluginId: input.plugin.id,
+        version: input.plugin.version,
+        shadowVersionId: input.shadowVersionId,
+      },
+    },
+    mutating: true,
+    risk: "high",
+    parameters: {
+      pluginId: input.plugin.id,
+      version: input.plugin.version,
+      runtimeVersion: input.runtimeVersion,
+      providerModel: input.providerModel,
+      shadowVersionId: input.shadowVersionId,
+      childActions: ["plugins.lifecycle.shadow", "plugins.lifecycle.canary", "plugins.lifecycle.promote"],
+    },
+    planDigest: input.planDigest,
+    idempotencyKey: input.idempotencyKey,
+    localClaims: [
+      {
+        guardId: "plugin_review_enable_lifecycle_guard",
+        decision: "requires_approval",
+        risk: "high",
+        reason: "plugin_review_enable_requires_canonical_lifecycle_approval",
+        evidence: {
+          pluginId: input.plugin.id,
+          version: input.plugin.version,
+          shadowVersionId: input.shadowVersionId,
+        },
+      },
+    ],
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
 
 function readStringListQuery(
   value: unknown,
@@ -363,11 +469,46 @@ function resolveTenantIdFromContext(ctx: {
   );
 }
 
+const API_RUNTIME_CANONICAL_GATE_TRUE_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
+const API_RUNTIME_CANONICAL_GATE_FALSE_VALUES = new Set(["0", "false", "no", "off", "disabled"]);
+
+export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = env.FRIDAY_CANONICAL_GATE?.trim().toLowerCase();
+  const protectedProfile = env.NODE_ENV?.trim().toLowerCase() === "production"
+    || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+  if (explicit) {
+    if (API_RUNTIME_CANONICAL_GATE_TRUE_VALUES.has(explicit)) {
+      return true;
+    }
+    if (API_RUNTIME_CANONICAL_GATE_FALSE_VALUES.has(explicit)) {
+      if (protectedProfile) {
+        throw new Error(
+          "[friday] FRIDAY_CANONICAL_GATE cannot be disabled in production/release profiles. " +
+            "Use a development or test profile for mock lanes.",
+        );
+      }
+      return false;
+    }
+    throw new Error(
+      `[friday] Invalid FRIDAY_CANONICAL_GATE value "${env.FRIDAY_CANONICAL_GATE}". Use true or false.`,
+    );
+  }
+  return protectedProfile;
+}
+
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
   const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
   const serverVersion = deps.serverVersion ?? "1.0.0";
   const stateDir = deps.stateDir ?? ".";
+  const canonicalMutationGate = createFridayMutatingActionGate({
+    nowIso: deps.nowIso,
+    ticketIdGenerator: () => deps.idGenerator(),
+    approvalSignatureSecret: deps.tokenSecret,
+    requireApprovalSignature: true,
+  });
+  const providerMutationGateRequired = deps.canonicalMutatingActionGate
+    ?? resolveApiRuntimeCanonicalGateRequired(process.env);
 
   // Auth
   const tokenRepo = createFridayApiTokenRepository();
@@ -573,6 +714,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       computeChecksum: deps.computeChecksum,
       resolveSkill: deps.resolveSkill,
       invokeSkill: deps.invokeSkill,
+      userRulesContextProvider: deps.userRulesContextProvider,
       publishEvent: publishWorkflowRealtimeEvent,
       triggerRepo,
       resolveWebhookSecretRef: createWorkflowWebhookSecretResolver(deps.db),
@@ -668,11 +810,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   };
 
+  const skillRepo = createFridaySkillRepository();
+
   // ─── Builder runtime ───
   const builderRuntime = createFridayWorkflowBuilderRuntime({
     db: deps.db,
     crudService: workflowRuntime.crud,
     skillRegistry: deps.skillRegistry,
+    skillRepo,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
     computeChecksum: deps.computeChecksum,
@@ -692,8 +837,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     providerService: deps.providerService,
     converterService: deps.converterService,
     workflowImportExport: builderRuntime.importExport,
+    canonicalMutationGate,
+    providerMutationGateRequired,
   });
-  const skillRepo = createFridaySkillRepository();
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
   const pluginRepo = createFridayPluginRepository();
@@ -732,23 +878,148 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     skillRepo,
     nowIso: deps.nowIso,
+    managedSkillsDir: deps.managedSkillsDir,
+    resolveCandidate: deps.converterService
+      ? (input) => deps.converterService!.getCandidate(input)
+      : undefined,
+    skillExecutor: deps.skillExecutor,
+    canonicalMutationGate,
+    refreshRegistry: deps.skillRegistry
+      ? () => deps.skillRegistry!.refresh()
+      : undefined,
+    updateSkillStatus: deps.updateSkillStatus,
   });
+  const getSkillLifecycleDetail = (skillId: string): FridaySkillLifecycleDetail | null => {
+    const lifecycleDetail = deps.skillLifecycle?.getSkill(skillId);
+    if (lifecycleDetail) {
+      return lifecycleDetail;
+    }
+    const registeredSkill = deps.skillRegistry?.get(skillId);
+    const persistedSkill = skillRepo.getSkillById(deps.db.writer, skillId);
+    if (!registeredSkill && !persistedSkill) {
+      return null;
+    }
+    const manifest = registeredSkill?.manifest ?? persistedSkill?.currentManifest;
+    const status = persistedSkill?.status ?? registeredSkill?.status ?? "not_installed";
+    const latestVersion = persistedSkill?.latestVersion ?? manifest?.version;
+    const installedVersion = persistedSkill?.installedVersion
+      ?? (status === "installed" ? manifest?.version : undefined);
+    const requirementPreview = {
+      bins: [] as string[],
+      env: [] as string[],
+      config: [] as string[],
+      supportedOs: [],
+      requiredCapabilities: [] as string[],
+      missingBins: [] as string[],
+      missingEnv: [] as string[],
+      unresolvedConfig: [] as string[],
+      unsupportedOs: false,
+    };
+    const permissionPreview = {
+      required: [] as string[],
+      optional: [] as string[],
+      promptOn: [] as string[],
+      grants: [],
+    };
+    const eligibility = {
+      verdict: "eligible" as const,
+      installable: status !== "installed",
+      reviewRequired: status !== "installed",
+      reasons: [],
+    };
+    return {
+      skillId,
+      name: persistedSkill?.name ?? manifest?.name ?? skillId,
+      description: manifest?.description,
+      source: persistedSkill?.source ?? registeredSkill?.source ?? "local",
+      origin: persistedSkill?.origin ?? registeredSkill?.origin ?? "managed",
+      status,
+      starter: (manifest?.tags ?? []).includes("starter"),
+      category: manifest?.category,
+      tags: manifest?.tags ?? [],
+      publisher: persistedSkill?.publisher ?? manifest?.author?.name,
+      latestVersion,
+      installedVersion,
+      updateAvailable: false,
+      managed: (persistedSkill?.origin ?? registeredSkill?.origin) === "managed",
+      registryLoaded: Boolean(registeredSkill),
+      currentManifest: manifest,
+      originType: "generated",
+      maturity: status === "installed" ? "stable" : "draft",
+      verificationStatus: registeredSkill ? "local" : "unverified",
+      requirementPreview,
+      permissionPreview,
+      eligibility,
+      installPlan: {
+        strategy: installedVersion ? "update" : "install",
+        targetVersion: latestVersion,
+        targetCount: 1,
+        verificationStatus: registeredSkill ? "local" : "unverified",
+        eligibility,
+        requirements: requirementPreview,
+        permissions: permissionPreview,
+      },
+      versions: [],
+      installations: [],
+    };
+  };
+  const skillLifecycleActionsAvailable = Boolean(
+    deps.skillLifecycle || (deps.converterService && deps.skillExecutor && deps.managedSkillsDir),
+  );
   const providerProfileUpgradeLifecycle = createFridayProviderProfileUpgradeLifecycleService({
     db: deps.db,
     providerProfileRepo,
     nowIso: deps.nowIso,
+    stateDir,
+    validateProvider: deps.providerService
+      ? (providerId, options) => deps.providerService!.validateProvider(providerId, options)
+      : undefined,
+    canonicalMutationGate,
   });
   const pluginUpgradeLifecycle = createFridayPluginUpgradeLifecycleService({
     db: deps.db,
     pluginRepo,
     nowIso: deps.nowIso,
+    stateDir,
+    pluginRuntime: deps.pluginService,
+    canonicalMutationGate,
+    rollbackSnapshotSecret: deps.tokenSecret,
+  });
+  const signCanonicalApprovalForRequest = (
+    request: FridayMutatingActionRequest,
+    input: {
+      approvalIdPrefix: string;
+      childOfLifecycleTicketId?: string;
+    },
+  ): FridayCanonicalApprovalResolution => {
+    const evaluatedAtMs = Date.parse(deps.nowIso());
+    const expiresAt = new Date(
+      (Number.isFinite(evaluatedAtMs) ? evaluatedAtMs : Date.now()) + 10 * 60 * 1000,
+    ).toISOString();
+    return signFridayCanonicalApproval({
+      decision: "approved",
+      approvalId: `${input.approvalIdPrefix}-${deps.idGenerator()}`,
+      decidedByPrincipalId: request.actor.principalId ?? request.actor.id,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt,
+      childOfLifecycleTicketId: input.childOfLifecycleTicketId,
+    }, deps.tokenSecret);
+  };
+  const signPluginLifecycleApproval = (
+    input: FridayPluginLifecycleApprovalRequestInput,
+    options: { childOfLifecycleTicketId?: string } = {},
+  ) => signCanonicalApprovalForRequest(createFridayPluginLifecycleMutatingActionRequest(input), {
+    approvalIdPrefix: `plugin-review-enable-${input.action}`,
+    childOfLifecycleTicketId: options.childOfLifecycleTicketId,
   });
   const mcpServerUpgradeLifecycle = deps.mcpAdapter
-    ? createFridayMcpServerUpgradeLifecycleService({
+      ? createFridayMcpServerUpgradeLifecycleService({
         db: deps.db,
         stateRepo: subjectUpgradeStateRepo,
         mcpAdapter: deps.mcpAdapter,
         nowIso: deps.nowIso,
+        stateDir,
+        canonicalMutationGate,
       })
     : undefined;
   const channelAdapterUpgradeLifecycle = deps.channels?.registry
@@ -757,6 +1028,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         stateRepo: subjectUpgradeStateRepo,
         channelRegistry: deps.channels.registry,
         nowIso: deps.nowIso,
+        stateDir,
+        canonicalMutationGate,
       })
     : undefined;
   const autonomyPolicyService = createFridayAutonomyPolicyService({
@@ -907,6 +1180,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     listUpgradeStatus: (query) => ({
       items: autonomyUpgradeStatus.list(query),
     }),
+    canonicalMutationGate,
     policyService: autonomyPolicyService,
     acquisitionService: capabilityAcquisitionService,
     standingAgendaService,
@@ -940,16 +1214,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }),
       getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
     },
-    skillActions: deps.skillLifecycle
+    skillActions: skillLifecycleActionsAvailable
       ? {
-        registerShadow: (input) => {
-          skillUpgradeLifecycle.registerShadowVersion({
+        registerShadow: async (input) => {
+          await skillUpgradeLifecycle.registerShadowVersion({
             skillId: input.skillId,
+            candidateId: input.candidateId,
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -957,27 +1237,20 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           }
           return detail;
         },
-        recordCanary: (input) => {
-          skillUpgradeLifecycle.recordCanaryResult({
+        recordCanary: async (input) => {
+          await skillUpgradeLifecycle.recordCanaryResult({
             skillId: input.skillId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
-          });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
-          if (!detail) {
-            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
-              httpStatus: 404,
-            });
-          }
-          return detail;
-        },
-        promote: (input) => {
-          skillUpgradeLifecycle.promote({
-            skillId: input.skillId,
+            candidateId: input.candidateId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            canaryInput: input.input,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -985,13 +1258,40 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           }
           return detail;
         },
-        rollback: (input) => {
-          skillUpgradeLifecycle.rollback({
+        promote: async (input) => {
+          await skillUpgradeLifecycle.promote({
             skillId: input.skillId,
+            candidateId: input.candidateId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           });
-          const detail = deps.skillLifecycle!.getSkill(input.skillId);
+          const detail = getSkillLifecycleDetail(input.skillId);
+          if (!detail) {
+            throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
+              httpStatus: 404,
+            });
+          }
+          return detail;
+        },
+        rollback: async (input) => {
+          await skillUpgradeLifecycle.rollback({
+            skillId: input.skillId,
+            candidateId: input.candidateId,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
+          });
+          const detail = getSkillLifecycleDetail(input.skillId);
           if (!detail) {
             throw new FridayDomainError("SKILL_NOT_FOUND", `Skill "${input.skillId}" not found`, {
               httpStatus: 404,
@@ -1000,6 +1300,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return detail;
         },
         getStatus: (skillId) => autonomyUpgradeStatus.get("skill", skillId),
+        getEvidence: (input) =>
+          skillUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     pluginActions: deps.pluginService
@@ -1010,26 +1312,152 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           pluginUpgradeLifecycle.recordCanaryResult({
             pluginId: input.pluginId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           pluginUpgradeLifecycle.promote({
             pluginId: input.pluginId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           pluginUpgradeLifecycle.rollback({
             pluginId: input.pluginId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
+        reviewEnable: async (input) => {
+          const plugin = deps.pluginService!.getPlugin(input.pluginId);
+          if (!plugin) {
+            throw new FridayDomainError("PLUGIN_NOT_FOUND", `Plugin ${input.pluginId} not found`, {
+              httpStatus: 404,
+            });
+          }
+          const runtimeVersion = input.runtimeVersion ?? serverVersion;
+          const planDigest = createFridayPluginReviewEnablePlanDigest({
+            plugin,
+            runtimeVersion,
+            providerModel: input.providerModel,
+          });
+          const shadowVersionId = createFridayPluginReviewEnableShadowVersionId({ plugin, planDigest });
+          const parentRequest = createFridayPluginReviewEnableParentRequest({
+            plugin,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest,
+            shadowVersionId,
+            idempotencyKey: input.idempotencyKey,
+          });
+          const parentGate = canonicalMutationGate.evaluate({
+            ...parentRequest,
+            canonicalApproval: signCanonicalApprovalForRequest(parentRequest, {
+              approvalIdPrefix: "plugin-review-enable-parent",
+            }),
+          });
+          if (parentGate.decision !== "allow" || !parentGate.ticket) {
+            throw new FridayDomainError(
+              parentGate.decision === "requires_approval"
+                ? "PLUGIN_REVIEW_ENABLE_CANONICAL_APPROVAL_REQUIRED"
+                : "PLUGIN_REVIEW_ENABLE_CANONICAL_APPROVAL_DENIED",
+              parentGate.decision === "requires_approval"
+                ? "Plugin review-enable requires canonical approval before lifecycle child actions can run."
+                : `Plugin review-enable was blocked by the canonical approval gate: ${parentGate.reason}`,
+              {
+                httpStatus: parentGate.decision === "requires_approval" ? 403 : 409,
+                details: {
+                  pluginId: input.pluginId,
+                  actionDigest: parentGate.actionDigest,
+                  reason: parentGate.reason,
+                },
+              },
+            );
+          }
+          const parentTicket: FridayMutatingActionTicket = parentGate.ticket;
+          const childIdempotencyKey = (action: FridayPluginLifecycleApprovalRequestInput["action"]) =>
+            input.idempotencyKey ? `${input.idempotencyKey}:${action}` : undefined;
+          const buildLifecycleApprovalInput = (
+            action: FridayPluginLifecycleApprovalRequestInput["action"],
+          ): FridayPluginLifecycleApprovalRequestInput => ({
+            action,
+            pluginId: input.pluginId,
+            shadowVersionId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/${action}`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey(action),
+          });
+
+          pluginUpgradeLifecycle.registerShadowVersion({
+            pluginId: input.pluginId,
+            shadowVersionId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/shadow`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("shadow"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("shadow"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+          await pluginUpgradeLifecycle.recordCanaryResult({
+            pluginId: input.pluginId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/canary`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("canary"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("canary"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+          return pluginUpgradeLifecycle.promote({
+            pluginId: input.pluginId,
+            runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: `${input.surface}/promote`,
+            planDigest,
+            idempotencyKey: childIdempotencyKey("promote"),
+            canonicalApproval: signPluginLifecycleApproval(buildLifecycleApprovalInput("promote"), {
+              childOfLifecycleTicketId: parentTicket.ticketId,
+            }),
+          });
+        },
         getStatus: (pluginId) => autonomyUpgradeStatus.get("plugin", pluginId),
+        getEvidence: (input) =>
+          pluginUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     providerProfileActions: deps.providerService
@@ -1040,26 +1468,50 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           providerProfileUpgradeLifecycle.recordCanaryResult({
             providerId: input.providerId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            tenantContext: input.tenantContext,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           providerProfileUpgradeLifecycle.promote({
             providerId: input.providerId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           providerProfileUpgradeLifecycle.rollback({
             providerId: input.providerId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (providerId) => autonomyUpgradeStatus.get("provider_profile", providerId),
+        getEvidence: (input) =>
+          providerProfileUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     mcpServerActions: mcpServerUpgradeLifecycle
@@ -1070,26 +1522,49 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           mcpServerUpgradeLifecycle.recordCanaryResult({
             serverId: input.serverId,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           mcpServerUpgradeLifecycle.promote({
             serverId: input.serverId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           mcpServerUpgradeLifecycle.rollback({
             serverId: input.serverId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (serverId) => autonomyUpgradeStatus.get("mcp_server", serverId),
+        getEvidence: (input) =>
+          mcpServerUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
     channelAdapterActions: channelAdapterUpgradeLifecycle
@@ -1100,26 +1575,49 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           channelAdapterUpgradeLifecycle.recordCanaryResult({
             channelKind: input.channelKind,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           channelAdapterUpgradeLifecycle.promote({
             channelKind: input.channelKind,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           channelAdapterUpgradeLifecycle.rollback({
             channelKind: input.channelKind,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (channelKind) => autonomyUpgradeStatus.get("channel_adapter", channelKind),
+        getEvidence: (input) =>
+          channelAdapterUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
   })) {
@@ -1796,7 +2294,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register fleet routes
-  for (const route of createFridayFleetRoutes({ fleetService: fleet })) {
+  for (const route of createFridayFleetRoutes({ fleetService: fleet, canonicalMutationGate })) {
     routes.register(route);
   }
 
@@ -1887,7 +2385,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register deep link routes (always available)
   for (const route of createFridayDeepLinkRoutes({
-    applyDeepLink: (payload) => deepLinkApplyService.apply(payload),
+    applyDeepLink: (payload, options) => deepLinkApplyService.apply(payload, options),
   })) {
     routes.register(route);
   }
@@ -2027,6 +2525,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register provider routes (BYOK)
   for (const route of createFridayProviderRoutes({
     providerService: deps.providerService,
+    canonicalMutationGate,
+    providerMutationGateRequired,
   })) {
     routes.register(route);
   }
@@ -2056,8 +2556,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       skillRegistry: deps.skillRegistry,
       lifecycle: deps.skillLifecycle,
       skillExecutor: deps.skillExecutor,
-      managedSkillsDir: deps.managedSkillsDir,
-    })) {
+	      managedSkillsDir: deps.managedSkillsDir,
+	      getSkillLifecycleStatus: (skillId) => skillRepo.getSkillById(deps.db.writer, skillId)?.status,
+	      canonicalMutationGate,
+	      registerRetiredLegacySkillMutationRoutes: !deps.skillLifecycle && skillLifecycleActionsAvailable,
+	    })) {
       routes.register(route);
     }
   }
@@ -2090,6 +2593,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   if (deps.converterService) {
     for (const route of createFridaySkillConverterRoutes({
       converterService: deps.converterService,
+      canonicalMutationGate,
     })) {
       routes.register(route);
     }
@@ -2238,13 +2742,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       nowIso: deps.nowIso,
     })
     : undefined;
-  const engineCompactionMemorySink = deps.memoryService
-    ? createFridayCompactionMemorySink({
-      memoryService: deps.memoryService,
-      idGenerator: deps.idGenerator,
-      nowIso: deps.nowIso,
-    })
-    : undefined;
+  const engineCompactionContextReplaySink = createFridayCompactionContextReplaySink({
+    db: deps.db,
+    idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
+  });
 
   const orchestrationEngine = deps.agentRuntime
     ? createFridayOrchestrationEngine({
@@ -2257,9 +2759,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         classifyExecution: classifyFridayExecution,
         capabilitySnapshotGetter: deps.capabilitySnapshotGetter as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
         taskStatusSnapshotGetter: deps.taskStatusSnapshotGetter as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
-        persistCompactionEvidence: engineCompactionMemorySink
+        persistCompactionEvidence: engineCompactionContextReplaySink
           ? async (input) => {
-            await engineCompactionMemorySink.persist({
+            await engineCompactionContextReplaySink.persist({
               sessionKey: input.sessionKey,
               runId: input.runId,
               summary: input.summary,
@@ -2445,7 +2947,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const reflexUserId = input.tenantContext?.userId?.trim();
       if (deps.reflexService && reflexUserId) {
         for (const write of parseFridayReflexExplicitPreferenceMessage(input.task)) {
-          deps.reflexService.updatePreference({
+          deps.reflexService.requestPreferenceUpdate({
             userId: reflexUserId,
             category: write.category,
             key: write.key,
@@ -2615,8 +3117,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     });
 
     for (const route of createFridayAgentRoutes({
-      validateRequestedRoute: async (providerId, model) => {
-        await deps.providerService.resolveRoute(model, providerId);
+      validateRequestedRoute: async (providerId, model, tenantContext) => {
+        await deps.providerService.resolveRoute(model, providerId, {
+          tenantContext,
+          autoValidate: true,
+        });
       },
       startRun,
       getRun: (runId) => {
@@ -2641,11 +3146,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           agentAbortControllers.delete(runId);
         }
       },
-      approvePlan: async (runId) => {
+      approvePlan: async (input) => {
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
-        const result = await agentPlanningGate.approvePlan({ runId });
+        const result = await agentPlanningGate.approvePlan(input);
+        const { runId } = input;
         const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
         if (run?.sessionKey) {
           await sessionService.addMessage(run.sessionKey, {
@@ -2676,11 +3182,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
         return result;
       },
-      rejectPlan: async (runId) => {
+      rejectPlan: async (input) => {
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
-        const result = agentPlanningGate.rejectPlan({ runId });
+        const result = agentPlanningGate.rejectPlan(input);
+        const { runId } = input;
         const run = deps.db.withReadConnection((db) => agentRepo.getById(db, runId));
         if (run?.sessionKey) {
           await sessionService.addMessage(run.sessionKey, {

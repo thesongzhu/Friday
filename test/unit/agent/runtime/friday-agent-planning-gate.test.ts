@@ -353,6 +353,133 @@ describe("friday-agent-planning-gate", () => {
     const approvedPlan = runs.get("run-resume")?.planReview;
     expect(approvedPlan?.decision?.approved).toBe(true);
     expect(approvedPlan?.gate?.state).toBe("approved");
+    expect(runs.get("run-resume")?.status).toBe("planning");
+  });
+
+  it("records approved and rejected plan decisions as durable replay events", async () => {
+    const events = new Map<string, Array<ReturnType<FridayAgentRunEventRepository["list"]>[number]>>();
+    const service = createFridayAgentPlanningGateService({
+      repo: createRunRepository(runs),
+      runEventRepository: createRunEventRepository(events),
+      runtime,
+      eventEmitter: {
+        emit: vi.fn(),
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+      db: {
+        withReadConnection<T>(fn: (db: Database) => T): T {
+          return fn({} as Database);
+        },
+        withWriteTransaction<T>(fn: (db: Database) => T): T {
+          return fn({} as Database);
+        },
+      },
+      idGenerator: () => randomUUID(),
+      nowIso: () => "2026-03-16T08:00:00.000Z",
+    });
+
+    service.handleTurn({
+      runId: "run-approved",
+      task: "Generate a workflow that exports build evidence, validates the bundle, keeps deployment gated until review approval, runs inside the current workspace, and avoids destructive changes outside the repo.",
+      sessionKey: "ui:assistant:1",
+    });
+    await service.approvePlan({
+      runId: "run-approved",
+      principalId: "planner-1",
+      scopes: ["agent.write"],
+      executionContext: { surface: "api", interactive: true },
+    });
+
+    service.handleTurn({
+      runId: "run-rejected",
+      task: "Generate a workflow that exports build evidence, validates the bundle, keeps deployment gated until review approval, runs inside the current workspace, and avoids destructive changes outside the repo.",
+      sessionKey: "ui:assistant:2",
+    });
+    service.rejectPlan({
+      runId: "run-rejected",
+      principalId: "planner-2",
+      scopes: ["agent.write"],
+      executionContext: { surface: "api", interactive: true },
+    });
+
+    expect(events.get("run-approved")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventName: "agent.run.plan_approved",
+          payload: expect.objectContaining({
+            runId: "run-approved",
+            approverPrincipalId: "planner-1",
+            surface: "api",
+          }),
+        }),
+      ]),
+    );
+    expect(events.get("run-rejected")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventName: "agent.run.plan_rejected",
+          payload: expect.objectContaining({
+            runId: "run-rejected",
+            approverPrincipalId: "planner-2",
+            surface: "api",
+          }),
+        }),
+        expect.objectContaining({
+          eventName: "agent.run.cancelled",
+        }),
+      ]),
+    );
+  });
+
+  it("moves approved runs out of awaiting_plan_approval before executing so a late reject cannot append conflicting evidence", async () => {
+    const service = createService();
+
+    service.handleTurn({
+      runId: "run-approve-race",
+      task: "Generate a workflow that exports build evidence, validates the bundle, keeps deployment gated until review approval, runs inside the current workspace, and avoids destructive changes outside the repo.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    await service.approvePlan({ runId: "run-approve-race" });
+
+    expect(() => service.rejectPlan({ runId: "run-approve-race" })).toThrow("is not awaiting plan approval");
+    expect(runs.get("run-approve-race")?.planReview?.gate?.state).toBe("approved");
+  });
+
+  it("does not reject a run that is no longer awaiting plan approval", () => {
+    const service = createService();
+
+    runs.set("run-completed", {
+      id: "run-completed",
+      task: "Already done",
+      status: "completed",
+      sessionKey: "ui:assistant:1",
+      attempt: 0,
+      maxAttempts: 3,
+      createdAt: "2026-03-16T08:00:00.000Z",
+      completedAt: "2026-03-16T08:01:00.000Z",
+      planReview: {
+        plan: {
+          task: "Already done",
+          stepCount: 1,
+          description: "Already completed",
+        },
+        gate: {
+          kind: "major_decision",
+          state: "approved",
+        },
+        decision: {
+          approved: true,
+          mode: "manual-approve",
+          reviewedAt: "2026-03-16T08:00:30.000Z",
+        },
+      },
+    });
+
+    expect(() => service.rejectPlan({ runId: "run-completed" })).toThrow("is not awaiting plan approval");
+    expect(runs.get("run-completed")?.status).toBe("completed");
+    expect(runs.get("run-completed")?.planReview?.gate?.state).toBe("approved");
   });
 
   it("resyncs event sequence after downstream runtime already appended newer events", () => {

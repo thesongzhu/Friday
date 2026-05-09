@@ -121,6 +121,91 @@ describe("FridayLearningContextEnrichmentService", () => {
     expect(ctx.appliedFacts).toHaveLength(0);
   });
 
+  it("buildContext keeps a first inferred preference recorded but inactive", () => {
+    const factRepo = createFridayPreferenceFactRepository();
+    const factService = createFridayPreferenceFactService({
+      db,
+      factRepo,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    factService.applySignals({
+      event: {
+        eventId: "evt-001",
+        ts: NOW,
+        userId: "test-user",
+        kind: "user_message",
+        payload: { text: "please be more concise" },
+      },
+      signals: [
+        {
+          signalId: "sig-001",
+          kind: "preference",
+          key: "persona.verbosity",
+          value: "concise",
+          confidence: 0.65,
+          sourceEventId: "evt-001",
+          userId: "test-user",
+          ts: NOW,
+        },
+      ],
+      nowIso: NOW,
+    });
+
+    const ctx = service.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+
+    expect(ctx.preferences).not.toHaveProperty("persona.verbosity");
+    expect(ctx.appliedFacts).toEqual([]);
+  });
+
+  it("buildContext includes repeated inferred preferences after corroborating evidence", () => {
+    const factRepo = createFridayPreferenceFactRepository();
+    const factService = createFridayPreferenceFactService({
+      db,
+      factRepo,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    for (const eventId of ["evt-001", "evt-002"]) {
+      factService.applySignals({
+        event: {
+          eventId,
+          ts: NOW,
+          userId: "test-user",
+          kind: "user_message",
+          payload: { text: "please be more concise" },
+        },
+        signals: [
+          {
+            signalId: `sig-${eventId}`,
+            kind: "preference",
+            key: "persona.verbosity",
+            value: "concise",
+            confidence: 0.65,
+            sourceEventId: eventId,
+            userId: "test-user",
+            ts: NOW,
+          },
+        ],
+        nowIso: NOW,
+      });
+    }
+
+    const ctx = service.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+
+    expect(ctx.preferences).toHaveProperty("persona.verbosity", "concise");
+    expect(ctx.appliedFacts[0]!.key).toBe("persona.verbosity");
+    expect(ctx.appliedFacts[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+  });
+
   it("enrichSkillPayload adds __fridayLearning envelope", () => {
     const payload = { task: "compile", target: "main" };
     const enriched = service.enrichSkillPayload({

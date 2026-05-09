@@ -71,6 +71,22 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(withoutSystem).toContain("Agent OS system orchestration is not enabled in this deployment.");
   });
 
+  it("does not list MCP as an available tool when runtime capabilities mark MCP disabled", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["exec", "read", "mcp"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      runtimeCapabilities: {
+        mcpEnabled: false,
+        mcpServerCount: 0,
+      },
+    });
+
+    expect(prompt).not.toContain("Tools: exec, read, mcp");
+    expect(prompt).toContain("Tools: exec, read");
+    expect(prompt).toContain("MCP is not enabled in this deployment.");
+  });
+
   it("does not claim full-filesystem file access", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["exec", "read", "write", "edit"],

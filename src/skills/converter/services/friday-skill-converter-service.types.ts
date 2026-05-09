@@ -1,9 +1,14 @@
 /**
  * Skill converter service interface — orchestrates detection, conversion,
- * validation, installation, and packaging.
+ * validation, candidate staging, and packaging. Conversion is preview-only;
+ * import creates staged candidates and never installs or marks them available.
  */
 
 import type { FridaySkillValidationIssue } from "../../validation/friday-skill-validation.types.js";
+import type { FridayMutatingActionTicket } from "../../../security/friday-mutating-action-gate.js";
+import type {
+  FridayExternalSkillCandidate,
+} from "./friday-skill-candidate-store.js";
 import type {
   FridaySkillConversionSource,
   FridaySkillConverterDetection,
@@ -24,6 +29,8 @@ export interface FridaySkillConverterService {
 
   convert(input: FridaySkillConvertInput): Promise<FridaySkillConvertOutput>;
 
+  getCandidate(input: { skillId: string; candidateId: string }): FridayExternalSkillCandidate | null;
+
   import(input: FridaySkillImportInput): Promise<FridaySkillImportOutput>;
 
   pack(input: FridaySkillPackInput): Promise<FridaySkillPackOutput>;
@@ -34,7 +41,12 @@ export interface FridaySkillConverterService {
 export interface FridaySkillConvertInput {
   source: FridaySkillConversionSource;
   formatHint?: FridaySkillSourceFormat | "auto";
+  /**
+   * Retained for API compatibility. Convert is always preview-only and never
+   * persists candidates.
+   */
   dryRun?: boolean;
+  canonicalApprovalTicket?: FridayMutatingActionTicket;
   options?: {
     splitOperations?: boolean;
     skillIdPrefix?: string;
@@ -64,6 +76,11 @@ export interface FridaySkillConversionQualitySummary {
 export interface FridaySkillImportInput {
   source: FridaySkillConversionSource;
   formatHint?: FridaySkillSourceFormat | "auto";
+  canonicalApprovalTicket?: FridayMutatingActionTicket;
+  /**
+   * Retired direct-install compatibility fields. Import ignores install
+   * targets and only creates staged candidates.
+   */
   target?: "managed" | "workspace" | { path: string };
   replace?: boolean;
   refreshRegistry?: boolean;
@@ -77,12 +94,13 @@ export interface FridaySkillImportInput {
 export interface FridaySkillImportOutput {
   converterId: string;
   detectedFormat: FridaySkillSourceFormat;
-  imports: Array<{
+  candidates: FridayExternalSkillCandidate[];
+  validation: Array<{
     skillId: string;
-    skillDir: string;
-    installed: boolean;
+    ok: boolean;
     issues: FridaySkillValidationIssue[];
   }>;
+  quality?: FridaySkillConversionQualitySummary;
   registryRefreshed: boolean;
 }
 

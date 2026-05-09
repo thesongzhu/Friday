@@ -40,6 +40,10 @@ export {
   getFridayLocalSkillExecutionContext,
 } from "./friday-skill-execution-readiness.js";
 export { createFridaySkillExecutor } from "./friday-skill-executor.js";
+export {
+  createFridaySkillRunMutatingActionRequest,
+  type FridaySkillRunApprovalRequestInput,
+} from "./friday-skill-run-approval.js";
 
 // ─── Desktop Helper (C-002) ───
 export { createFridaySkillDesktopHelper } from "./friday-skill-desktop-helper.js";

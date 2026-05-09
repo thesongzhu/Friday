@@ -1,9 +1,11 @@
 import type {
+  FridayReflexCandidate,
   FridayReflexCandidateKind,
   FridayReflexCandidateStatus,
   FridayReflexService,
   FridayReflexSurface,
 } from "../../reflex/index.js";
+import { requiresFridayReflexPreferenceConfirmation } from "../../reflex/index.js";
 import type { FridayUserPreferenceCategory, JsonValue } from "../../uix/model/friday-uix.types.js";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import { jsonResult, readNumberParam, readStringParam } from "./friday-agent-tool-helpers.js";
@@ -35,7 +37,31 @@ const PREFERENCE_CATEGORIES = new Set<FridayUserPreferenceCategory>([
   "reflex",
 ]);
 
-const SURFACES = new Set<FridayReflexSurface>(["channel", "operate", "review_center"]);
+const SURFACES = new Set<FridayReflexSurface>(["channel", "operate"]);
+const HIGH_IMPACT_MEMORY_TERMS = [
+  "approval",
+  "automation",
+  "execute",
+  "execution",
+  "mcp",
+  "permission",
+  "provider",
+  "release",
+  "remote",
+  "safety",
+  "secret",
+  "skill",
+  "socket",
+  "system",
+  "test",
+  "token",
+  "workflow",
+  "安全",
+  "执行",
+  "权限",
+  "自动",
+  "密钥",
+] as const;
 
 export interface CreateFridayAgentReflexToolsOptions {
   reflexService?: FridayReflexService;
@@ -79,7 +105,7 @@ function readSurface(args: Record<string, unknown>): FridayReflexSurface {
   const surface = readStringParam(args, "sourceSurface");
   if (!surface) return "operate";
   if (!SURFACES.has(surface as FridayReflexSurface)) {
-    throw new Error("sourceSurface must be channel, operate, or review_center");
+    throw new Error("sourceSurface must be channel or operate");
   }
   return surface as FridayReflexSurface;
 }
@@ -89,6 +115,105 @@ function readJsonValue(args: Record<string, unknown>, key: string): JsonValue {
     throw new Error(`${key} is required`);
   }
   return args[key] as JsonValue;
+}
+
+function stringifyCandidateForSafetyScan(candidate: FridayReflexCandidate): string {
+  return JSON.stringify({
+    title: candidate.title,
+    summary: candidate.summary,
+    payload: candidate.payload,
+    evidence: candidate.evidence,
+  }).toLowerCase();
+}
+
+function readEvidenceCount(evidence: Record<string, JsonValue>): number {
+  const numericKeys = [
+    "evidenceCount",
+    "similarEvidenceCount",
+    "supportingEvidenceCount",
+    "observationCount",
+    "seenCount",
+  ];
+  for (const key of numericKeys) {
+    const value = evidence[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  for (const key of ["supportingEvidence", "observations", "examples"]) {
+    const value = evidence[key];
+    if (Array.isArray(value)) {
+      return value.length;
+    }
+  }
+  return 0;
+}
+
+function hasConflictEvidence(evidence: Record<string, JsonValue>): boolean {
+  return evidence["conflict"] === true
+    || evidence["hasConflict"] === true
+    || (typeof evidence["conflictCount"] === "number" && evidence["conflictCount"] > 0);
+}
+
+function evaluateLowRiskCandidateEnvelope(
+  candidate: FridayReflexCandidate,
+  options: { minimumEvidenceCount: number },
+): string | undefined {
+  const scanned = stringifyCandidateForSafetyScan(candidate);
+  if (candidate.riskTier > 1) {
+    return "Candidate risk tier is too high for agent approval.";
+  }
+  if (candidate.confidence < 0.75) {
+    return "Candidate confidence is too low for agent approval.";
+  }
+  if (hasConflictEvidence(candidate.evidence)) {
+    return "Candidate has conflicting evidence.";
+  }
+  if (readEvidenceCount(candidate.evidence) < options.minimumEvidenceCount) {
+    return `Candidate needs at least ${String(options.minimumEvidenceCount)} supporting observation(s).`;
+  }
+  if (HIGH_IMPACT_MEMORY_TERMS.some((term) => scanned.includes(term))) {
+    return "Candidate touches safety, execution, permission, secret, skill, workflow, provider, MCP, or release behavior.";
+  }
+  return undefined;
+}
+
+function evaluateAgentReflexApproval(candidate: FridayReflexCandidate): {
+  allowed: boolean;
+  reason?: string;
+} {
+  if (candidate.kind === "preference") {
+    const category = candidate.payload["category"];
+    const key = candidate.payload["key"];
+    const blockedReason = evaluateLowRiskCandidateEnvelope(candidate, { minimumEvidenceCount: 1 });
+    if (blockedReason) {
+      return { allowed: false, reason: blockedReason };
+    }
+    if (
+      (category === "communication" || category === "uix")
+      && typeof key === "string"
+      && !requiresFridayReflexPreferenceConfirmation({ category, key })
+    ) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: "Agent approval is limited to ordinary communication/uix preferences; high-impact preferences require Review Center confirmation.",
+    };
+  }
+
+  if (candidate.kind === "memory") {
+    const blockedReason = evaluateLowRiskCandidateEnvelope(candidate, { minimumEvidenceCount: 2 });
+    if (blockedReason) {
+      return { allowed: false, reason: blockedReason };
+    }
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason: "Skill, workflow, fix, recipe, and test-policy candidates require Review Center confirmation.",
+  };
 }
 
 export function createFridayAgentReflexTools(
@@ -180,6 +305,17 @@ export function createFridayAgentReflexTools(
           }));
         }
         if (action === "approve") {
+          const candidate = reflexService.getCandidate({ userId, candidateId });
+          const approval = evaluateAgentReflexApproval(candidate);
+          if (!approval.allowed) {
+            return jsonResult({
+              status: "blocked",
+              code: "REFLEX_CANDIDATE_USER_CONFIRMATION_REQUIRED",
+              candidateId,
+              kind: candidate.kind,
+              reason: approval.reason,
+            });
+          }
           return jsonResult(await reflexService.approveCandidate({ userId, candidateId }));
         }
         if (action === "reject") {
@@ -222,7 +358,7 @@ export function createFridayAgentReflexTools(
           sourceSurface: {
             type: "string",
             enum: [...SURFACES],
-            description: "Surface where the explicit preference was stated.",
+            description: "Surface where the explicit preference was stated. Review Center confirmation is handled by candidate approval.",
           },
         },
         required: ["category", "key", "value"],
@@ -230,7 +366,7 @@ export function createFridayAgentReflexTools(
       async execute(args) {
         const reflexService = getReflexService();
         const userId = resolveUserId(args, defaultUserId);
-        return jsonResult(reflexService.updatePreference({
+        return jsonResult(reflexService.requestPreferenceUpdate({
           userId,
           category: readPreferenceCategory(args),
           key: readStringParam(args, "key", { required: true }),

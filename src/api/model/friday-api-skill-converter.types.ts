@@ -4,10 +4,12 @@
 
 import type {
   FridayConvertedSkillDraft,
+  FridayExternalSkillCandidate,
   FridaySkillConversionQualitySummary,
   FridaySkillConversionSource,
   FridaySkillSourceFormat,
 } from "#skills/converter";
+import type { FridayCanonicalApprovalResolution } from "../../security/friday-mutating-action-gate.js";
 
 import type { FridaySkillValidationIssue } from "#skills";
 
@@ -29,6 +31,13 @@ export interface FridayApiImportRequest {
   target?: "managed" | "workspace" | { path: string };
   replace?: boolean;
   refreshRegistry?: boolean;
+  idempotencyKey?: string;
+  planDigest?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+  options?: {
+    splitOperations?: boolean;
+    skillIdPrefix?: string;
+  };
 }
 
 export interface FridayApiPackRequest {
@@ -61,12 +70,13 @@ export interface FridayApiConvertResponse {
 export interface FridayApiImportResponse {
   converterId: string;
   detectedFormat: FridaySkillSourceFormat;
-  imports: Array<{
+  candidates: FridayExternalSkillCandidate[];
+  validation: Array<{
     skillId: string;
-    skillDir: string;
-    installed: boolean;
+    ok: boolean;
     issues: FridaySkillValidationIssue[];
   }>;
+  quality: FridaySkillConversionQualitySummary;
   registryRefreshed: boolean;
 }
 
