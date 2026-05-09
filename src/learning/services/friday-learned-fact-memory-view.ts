@@ -11,6 +11,10 @@ export interface FridayLearnedFactView {
 export const FRIDAY_LEARNED_FACT_ID_PREFIX = "learned-fact:";
 export const FRIDAY_LEARNED_FACT_NAMESPACE = "preference";
 export const FRIDAY_LEARNED_FACT_SOURCE = "learned_fact";
+export const FRIDAY_LEARNED_FACT_TRUST_LEVEL = "confidence_scored_learning";
+export const FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY = "separate_from_durable_memory";
+export const FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY = "preference_fact_evidence";
+export const FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY = "learning_context_service_gated";
 
 function stringifyLearnedFactValue(value: unknown): string {
   if (typeof value === "string") {
@@ -105,6 +109,10 @@ export function toLearnedFactMemoryItem(fact: FridayLearnedFactView): FridayMemo
     tags: ["learned", "preference_fact"],
     metadata: {
       learnedFact: true,
+      trustLevel: FRIDAY_LEARNED_FACT_TRUST_LEVEL,
+      memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
+      evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
+      contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
       evidenceCount: fact.evidenceCount,
       lastConfirmedAt: fact.lastConfirmedAt,
     },

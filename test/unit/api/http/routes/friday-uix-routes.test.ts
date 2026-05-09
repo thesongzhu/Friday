@@ -485,6 +485,32 @@ describe("FridayUixRoutes", () => {
     expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
   });
 
+  it("lists learned facts with explicit memory and context-use boundaries", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({
+      service,
+      listLearnedFacts: vi.fn(() => [{
+        key: "pref:display_name",
+        value: "Captain Friday",
+        confidence: 0.8,
+        evidenceCount: 2,
+        lastConfirmedAt: NOW,
+      }]),
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.list")!;
+
+    const result = await route.handler(makeCtx()) as {
+      items: Array<{ boundary: Record<string, string> }>;
+    };
+
+    expect(result.items[0]!.boundary).toEqual({
+      trustLevel: "confidence_scored_learning",
+      memoryBoundary: "separate_from_durable_memory",
+      evidenceBoundary: "preference_fact_evidence",
+      contextUseBoundary: "learning_context_service_gated",
+    });
+  });
+
   it("keeps learned-facts routes behind agent.run scope", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
     const byId = new Map(routes.map((route) => [route.operationId, route]));

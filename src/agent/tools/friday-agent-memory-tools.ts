@@ -10,7 +10,11 @@ import {
 } from "./friday-agent-tool-helpers.js";
 import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import type { FridayLearnedFactView } from "../../learning/services/friday-learned-fact-memory-view.js";
-import { matchesLearnedFactQuery, toLearnedFactSearchResult } from "../../learning/services/friday-learned-fact-memory-view.js";
+import {
+  FRIDAY_LEARNED_FACT_SOURCE,
+  matchesLearnedFactQuery,
+  toLearnedFactSearchResult,
+} from "../../learning/services/friday-learned-fact-memory-view.js";
 
 // ─── Deps ───
 
@@ -616,6 +620,14 @@ function createMemorySearchTool(
             tags: r.item.tags,
             source: r.item.source,
             createdAt: r.item.createdAt,
+            ...(r.item.source === FRIDAY_LEARNED_FACT_SOURCE
+              ? {
+                trustLevel: r.item.metadata.trustLevel,
+                memoryBoundary: r.item.metadata.memoryBoundary,
+                evidenceBoundary: r.item.metadata.evidenceBoundary,
+                contextUseBoundary: r.item.metadata.contextUseBoundary,
+              }
+              : {}),
           },
         }));
 

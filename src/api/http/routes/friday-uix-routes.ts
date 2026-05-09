@@ -22,6 +22,12 @@ import type {
   FridayListUserPreferencesResponse,
   FridayUpdateUserPreferencesResponse,
 } from "../../../uix/api/friday-uix-api.types.js";
+import {
+  FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+  FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
+  FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
+  FRIDAY_LEARNED_FACT_TRUST_LEVEL,
+} from "../../../learning/services/friday-learned-fact-memory-view.js";
 
 export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
@@ -118,6 +124,29 @@ function readUserProfileResponse(
   return {
     profileType: (profilePref?.value as FridayUserProfileType | undefined) ?? null,
     onboardedAt: (onboardedPref?.value as string | undefined) ?? readSetupCompletedAt?.() ?? null,
+  };
+}
+
+function enrichLearnedFactBoundary<T extends {
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: string;
+}>(item: T): T & {
+  boundary: {
+    trustLevel: string;
+    memoryBoundary: string;
+    evidenceBoundary: string;
+    contextUseBoundary: string;
+  };
+} {
+  return {
+    ...item,
+    boundary: {
+      trustLevel: FRIDAY_LEARNED_FACT_TRUST_LEVEL,
+      memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
+      evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
+      contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+    },
   };
 }
 
@@ -460,7 +489,7 @@ export function createFridayUixRoutes(
         if (!deps.listLearnedFacts) {
           return { items: [] };
         }
-        const items = deps.listLearnedFacts({ userId });
+        const items = deps.listLearnedFacts({ userId }).map(enrichLearnedFactBoundary);
         return { items };
       },
     },

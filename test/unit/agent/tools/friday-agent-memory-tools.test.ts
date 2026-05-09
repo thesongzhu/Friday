@@ -230,6 +230,10 @@ describe("FridayAgentMemoryTools", () => {
           metadata: {
             id: "learned-fact:pref:display_name",
             source: "learned_fact",
+            trustLevel: "confidence_scored_learning",
+            memoryBoundary: "separate_from_durable_memory",
+            evidenceBoundary: "preference_fact_evidence",
+            contextUseBoundary: "learning_context_service_gated",
           },
         },
       ]);
