@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "2.0",
+  "id": "cross-border-customer-service-brief",
+  "name": "Cross-border Customer Service Brief",
+  "description": "Cluster refund, return, complaint, and bad-review notes into a support brief with response guidance and escalation hints.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.cross-border",
+    "cross-border",
+    "deterministic",
+    "support"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": [
+      "cross_border_customer_service_brief"
+    ],
+    "phrases": [
+      "summarize today's customer service notes",
+      "build the customer service brief",
+      "cluster refund and return signals"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 88,
+    "modes": [
+      "intent",
+      "workflow"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "serviceNotes",
+      "type": "string",
+      "required": true,
+      "label": "Service Notes",
+      "help": "Paste daily refund, return, complaint, and bad-review notes (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "serviceBrief",
+      "type": "string",
+      "description": "Multi-line summary of clustered support findings and escalation hints."
+    },
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "One-line headline for the support brief."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "Recommended next operator action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured cluster + escalation data for UI rendering."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked"
+    ]
+  }
+}

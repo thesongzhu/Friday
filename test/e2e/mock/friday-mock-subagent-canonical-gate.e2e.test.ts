@@ -66,6 +66,7 @@ interface SubagentListResponse {
     items: Array<{
       id: string;
       childRunId: string;
+      task: string;
       status: string;
     }>;
   };
@@ -239,7 +240,9 @@ describe("Friday mock subagent canonical gate E2E", () => {
           "GET",
           "/v1/agent/subagents",
         );
-        return res.json.data.items[0] ?? null;
+        return res.json.data.items.find(
+          (item) => item.task === "Create the canonical gate sentinel file.",
+        ) ?? null;
       });
 
       await new Promise((resolve) => setTimeout(resolve, 250));

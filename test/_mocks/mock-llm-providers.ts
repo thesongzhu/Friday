@@ -280,6 +280,7 @@ function buildOllamaTextJson(text: string): Record<string, unknown> {
   return {
     model: "mock-ollama",
     created_at: "2026-02-20T00:00:00.000Z",
+    response: text,
     message: { role: "assistant", content: text },
     done: true,
     prompt_eval_count: 10,
