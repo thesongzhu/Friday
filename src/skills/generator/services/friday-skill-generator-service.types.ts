@@ -76,4 +76,10 @@ export interface CreateFridaySkillGeneratorServiceDeps {
   memoryStateService: FridayHubMemoryStateService;
   idGenerator: () => string;
   nowIso: () => string;
+  userRulesContextProvider?: (input: {
+    task: string;
+    userId?: string;
+    channel?: string;
+    surface: "skill_generator";
+  }) => string | null | Promise<string | null>;
 }

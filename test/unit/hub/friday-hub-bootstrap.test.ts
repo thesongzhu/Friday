@@ -4,7 +4,10 @@ import * as path from "node:path";
 
 import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
 import type { FridayChannelMessage, FridayChannelPlugin } from "#channels";
-import { createFridayHub } from "#hub";
+import {
+  createFridayHub,
+  shouldFailClosedForFridayWorkspaceContext,
+} from "#hub";
 import type { FridayHub } from "#hub";
 import { resolveStateDir } from "#state";
 import {
@@ -90,6 +93,24 @@ describe("createFridayHub", () => {
       restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
       autoDetectEnvSnapshot = null;
     }
+  });
+
+  it("fails closed for standard general runs when user project rules cannot load", () => {
+    expect(shouldFailClosedForFridayWorkspaceContext({
+      promptProfile: "standard",
+      contextPolicy: { workspaceContext: "auto" },
+      toolRouting: { profile: "general" },
+    })).toBe(true);
+    expect(shouldFailClosedForFridayWorkspaceContext({
+      promptProfile: "minimal",
+      contextPolicy: { workspaceContext: "skip" },
+      toolRouting: { profile: "trivial" },
+    })).toBe(false);
+    expect(shouldFailClosedForFridayWorkspaceContext({
+      promptProfile: "standard",
+      contextPolicy: { workspaceContext: "skip" },
+      toolRouting: { profile: "status" },
+    })).toBe(false);
   });
 
   it("creates a hub with default config", async () => {

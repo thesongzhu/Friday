@@ -1,7 +1,7 @@
 /**
- * Workspace Context Loader — reads workspace bootstrap files
- * (AGENTS.md, SOUL.md, USER.md, MEMORY.md, etc.) and injects
- * their contents into the agent system prompt.
+ * Workspace Context Loader — reads Friday runtime user/project guidance files
+ * (context/AGENTS.md, context/SOUL.md, context/USER.md, context/MEMORY.md,
+ * .friday/rules/**, etc.) and injects their contents into LLM prompts.
  *
  * Durable user facts, preferences, and compaction summaries must stay behind
  * explicit memory/context-replay surfaces instead of silently entering the
@@ -52,6 +52,9 @@ export interface FridayWorkspaceContextSummary {
   promptChars: number;
   selectedChars: number;
   candidatePaths: string[];
+  selectedSourceNames: string[];
+  sourceSummaries: FridayWorkspaceContextSourceSummary[];
+  loadErrors: FridayWorkspaceContextLoadError[];
 }
 
 export interface FridayWorkspaceContext {
@@ -69,6 +72,22 @@ export interface FridayWorkspaceContextSelectionInput {
   candidatePaths?: string[];
 }
 
+export interface FridayWorkspaceContextLoadError {
+  name: string;
+  filePath: string;
+  code?: string;
+  message: string;
+}
+
+export interface FridayWorkspaceContextSourceSummary {
+  name: string;
+  kind: "identity" | "candidate";
+  selected: boolean;
+  selectionReason?: string;
+  ruleScopeKind?: "path" | "extension";
+  ruleScopePattern?: string;
+}
+
 interface FridayStoredMemoryCandidate {
   name: string;
   filePath: string;
@@ -77,6 +96,25 @@ interface FridayStoredMemoryCandidate {
 
 function isMissingFsError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
+}
+
+function readFsErrorCode(err: unknown): string | undefined {
+  return typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+    ? err.code
+    : undefined;
+}
+
+function toLoadError(input: {
+  name: string;
+  filePath: string;
+  err: unknown;
+}): FridayWorkspaceContextLoadError {
+  return {
+    name: input.name,
+    filePath: input.filePath,
+    code: readFsErrorCode(input.err),
+    message: input.err instanceof Error ? input.err.message : String(input.err),
+  };
 }
 
 // ─── Constants ───
@@ -296,7 +334,11 @@ function extractTaskPathCandidates(task?: string): string[] {
   return [...candidates];
 }
 
-async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
+async function collectMarkdownFiles(
+  rootDir: string,
+  loadErrors: FridayWorkspaceContextLoadError[],
+  rootName: string,
+): Promise<string[]> {
   const discovered: string[] = [];
   async function visit(currentDir: string): Promise<void> {
     let entries: Dirent[];
@@ -304,6 +346,12 @@ async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
       entries = await fs.readdir(currentDir, { withFileTypes: true });
     } catch (err) {
       if (!isMissingFsError(err)) {
+        const relative = path.relative(rootDir, currentDir).replace(/\\/g, "/");
+        loadErrors.push(toLoadError({
+          name: relative ? `${rootName}/${relative}` : rootName,
+          filePath: currentDir,
+          err,
+        }));
         console.warn("[friday][workspace-context] readdir:", err instanceof Error ? err.message : String(err));
       }
       return;
@@ -335,6 +383,7 @@ async function loadPathScopedRules(
   workspaceDir: string,
   candidatePaths: readonly string[],
   seenRealPaths: Set<string>,
+  loadErrors: FridayWorkspaceContextLoadError[],
 ): Promise<FridayWorkspaceContextFile[]> {
   const files: FridayWorkspaceContextFile[] = [];
   const normalizedCandidatePaths = candidatePaths
@@ -342,7 +391,7 @@ async function loadPathScopedRules(
     .filter((value) => value.length > 0);
 
   const pathRuleRoot = path.join(workspaceDir, PATH_RULES_DIR);
-  for (const absoluteRulePath of await collectMarkdownFiles(pathRuleRoot)) {
+  for (const absoluteRulePath of await collectMarkdownFiles(pathRuleRoot, loadErrors, "rules/path")) {
     const relativeRulePath = path.relative(pathRuleRoot, absoluteRulePath).replace(/\\/g, "/");
     const pattern = derivePathRulePattern(relativeRulePath);
     const matchedPaths = normalizedCandidatePaths.filter((candidate) =>
@@ -374,15 +423,15 @@ async function loadPathScopedRules(
         },
       });
     } catch (err) {
-      // Skip unreadable rule files.
       if (!isMissingFsError(err)) {
+        loadErrors.push(toLoadError({ name: `rules/path/${relativeRulePath}`, filePath: absoluteRulePath, err }));
         console.warn("[friday][workspace-context] load-path-rule:", err instanceof Error ? err.message : String(err));
       }
     }
   }
 
   const extensionRuleRoot = path.join(workspaceDir, EXTENSION_RULES_DIR);
-  for (const absoluteRulePath of await collectMarkdownFiles(extensionRuleRoot)) {
+  for (const absoluteRulePath of await collectMarkdownFiles(extensionRuleRoot, loadErrors, "rules/ext")) {
     const relativeRulePath = path.relative(extensionRuleRoot, absoluteRulePath).replace(/\\/g, "/");
     const extension = `.${derivePathRulePattern(relativeRulePath).replace(/^\./, "")}`;
     const matchedPaths = normalizedCandidatePaths.filter((candidate) => candidate.endsWith(extension));
@@ -412,8 +461,8 @@ async function loadPathScopedRules(
         },
       });
     } catch (err) {
-      // Skip unreadable rule files.
       if (!isMissingFsError(err)) {
+        loadErrors.push(toLoadError({ name: `rules/ext/${relativeRulePath}`, filePath: absoluteRulePath, err }));
         console.warn("[friday][workspace-context] load-ext-rule:", err instanceof Error ? err.message : String(err));
       }
     }
@@ -435,6 +484,7 @@ export async function loadFridayWorkspaceContext(
 ): Promise<FridayWorkspaceContext> {
   const resolvedDir = path.resolve(workspaceDir);
   const files: FridayWorkspaceContextFile[] = [];
+  const loadErrors: FridayWorkspaceContextLoadError[] = [];
   const seenRealPaths = new Set<string>();
   const candidatePaths = [
     ...(options?.candidatePaths ?? []),
@@ -470,6 +520,7 @@ export async function loadFridayWorkspaceContext(
       files.push({ name, filePath, content: truncated, missing: false, kind });
     } catch (err) {
       if (!isMissingFsError(err)) {
+        loadErrors.push(toLoadError({ name, filePath, err }));
         console.warn("[friday][workspace-context] load-named-file:", err instanceof Error ? err.message : String(err));
       }
       files.push({ name, filePath, missing: true, kind });
@@ -502,6 +553,11 @@ export async function loadFridayWorkspaceContext(
   } catch (err) {
     // Daily memory file is optional
     if (!isMissingFsError(err)) {
+      loadErrors.push(toLoadError({
+        name: `memory/${today}.md`,
+        filePath: dailyMemoryPath,
+        err,
+      }));
       console.warn("[friday][workspace-context] daily-memory:", err instanceof Error ? err.message : String(err));
     }
   }
@@ -520,7 +576,7 @@ export async function loadFridayWorkspaceContext(
     });
   }
 
-  const pathRules = await loadPathScopedRules(resolvedDir, candidatePaths, seenRealPaths);
+  const pathRules = await loadPathScopedRules(resolvedDir, candidatePaths, seenRealPaths, loadErrors);
   files.push(...pathRules);
 
   const selectedFiles = selectWorkspaceContextFiles(files, options);
@@ -560,6 +616,19 @@ export async function loadFridayWorkspaceContext(
   const selectedChars = selectedFiles.reduce((sum, file) => sum + (file.content?.trim().length ?? 0), 0);
   const pathRuleCount = annotatedFiles.filter((file) => Boolean(file.ruleScope)).length;
   const selectedPathRuleCount = annotatedFiles.filter((file) => file.selected && Boolean(file.ruleScope)).length;
+  const selectedSourceNames = annotatedFiles
+    .filter((file) => file.selected)
+    .map((file) => file.name);
+  const sourceSummaries = annotatedFiles
+    .filter((file) => !file.missing && Boolean(file.content?.trim()))
+    .map((file): FridayWorkspaceContextSourceSummary => ({
+      name: file.name,
+      kind: file.kind ?? "candidate",
+      selected: file.selected === true,
+      selectionReason: file.selectionReason,
+      ruleScopeKind: file.ruleScope?.kind,
+      ruleScopePattern: file.ruleScope?.pattern,
+    }));
 
   return {
     files: annotatedFiles,
@@ -572,6 +641,9 @@ export async function loadFridayWorkspaceContext(
       promptChars: promptFragment.length,
       selectedChars,
       candidatePaths,
+      selectedSourceNames,
+      sourceSummaries,
+      loadErrors,
     },
   };
 }

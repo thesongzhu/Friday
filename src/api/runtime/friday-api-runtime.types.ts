@@ -14,7 +14,13 @@ import type { FridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gat
 import type { FridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.types.js";
 import type { FridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.types.js";
 import type { FridayHttpRouteRegistry } from "../http/friday-http-route-registry.js";
-import type { FridayWorkflowBuilderDraftService, FridayWorkflowCrudService, FridayWorkflowExecutionService, FridayWorkflowRuntime } from "#workflows";
+import type {
+  CreateFridayWorkflowRuntimeDeps,
+  FridayWorkflowBuilderDraftService,
+  FridayWorkflowCrudService,
+  FridayWorkflowExecutionService,
+  FridayWorkflowRuntime,
+} from "#workflows";
 import type {
   FridayAutonomyPolicyService,
   FridayCapabilityAcquisitionService,
@@ -178,6 +184,8 @@ export interface CreateFridayApiRuntimeDeps {
   ) => Promise<unknown>;
   /** Optional: pass the hub's workflow runtime to avoid creating a duplicate. */
   workflowRuntime?: FridayWorkflowRuntime;
+  /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
+  userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */
   sessionService?: FridaySessionService;
   /** Optional: agent runtime for agent run endpoints. */

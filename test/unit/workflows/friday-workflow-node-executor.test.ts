@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createFridayWorkflowNodeExecutor } from "#workflows";
 import { createFridayExpressionEvaluator } from "#workflows";
 import type { FridayNodeExecutionInput } from "#workflows";
@@ -18,6 +18,7 @@ describe("FridayWorkflowNodeExecutor", () => {
       nodeId: string,
       payload: Record<string, unknown>,
     ) => Promise<unknown>;
+    userRulesContextProvider?: Parameters<typeof createFridayWorkflowNodeExecutor>[0]["userRulesContextProvider"];
   } = {}) {
     return createFridayWorkflowNodeExecutor({
       expressionEvaluator,
@@ -25,6 +26,7 @@ describe("FridayWorkflowNodeExecutor", () => {
       invokeSkill:
         overrides.invokeSkill ??
         (async (_id, _runId, _nodeId, payload) => payload),
+      userRulesContextProvider: overrides.userRulesContextProvider,
       nowIso: () => NOW,
     });
   }
@@ -197,5 +199,52 @@ describe("FridayWorkflowNodeExecutor", () => {
     await expect(executor.executeNode(makeInput(node))).rejects.toThrow(
       "action node missing skillId or ref",
     );
+  });
+
+  it("injects user project rules into AI node prompts only", async () => {
+    const invoked: Array<{ id: string; payload: Record<string, unknown> }> = [];
+    const userRulesContextProvider = vi.fn().mockResolvedValue("<friday-user-project-rules>Ask before generating files.</friday-user-project-rules>");
+    const executor = createExecutor({
+      userRulesContextProvider,
+      invokeSkill: async (id, _runId, _nodeId, payload) => {
+        invoked.push({ id, payload });
+        return { text: "ok" };
+      },
+    });
+
+    const node: FridayWorkflowNode = {
+      id: "ai-1",
+      type: "ai",
+      label: "AI",
+      config: {
+        prompt: "Summarize $inputs.topic",
+        model: "test-model",
+      } as Record<string, JsonValue>,
+    };
+
+    await executor.executeNode(makeInput(node, {
+      inputs: { topic: "Friday rules" },
+      steps: {},
+    }));
+
+    expect(invoked[0].id).toBe("ai-inference");
+    expect(invoked[0].payload.prompt).toContain("Ask before generating files.");
+    expect(invoked[0].payload.prompt).toContain("Workflow AI node prompt:");
+    expect(invoked[0].payload.prompt).toContain("Summarize Friday rules");
+
+    const actionNode: FridayWorkflowNode = {
+      id: "action-1",
+      type: "action",
+      label: "Action",
+      config: {
+        skillId: "my-skill",
+        args: { prompt: "Plain action payload" },
+      } as Record<string, JsonValue>,
+    };
+    await executor.executeNode(makeInput(actionNode));
+
+    expect(userRulesContextProvider).toHaveBeenCalledTimes(1);
+    expect(invoked[1].id).toBe("my-skill");
+    expect(invoked[1].payload).toEqual({ prompt: "Plain action payload" });
   });
 });

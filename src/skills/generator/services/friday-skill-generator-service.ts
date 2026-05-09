@@ -601,6 +601,33 @@ export function createFridaySkillGeneratorService(
       channelKind: session.channel,
     };
   }
+
+  async function resolveUserRulesContext(
+    session: FridaySkillGenerationSession,
+  ): Promise<string | null> {
+    const fragment = await deps.userRulesContextProvider?.({
+      task: session.goal,
+      userId: session.userId,
+      channel: session.channel,
+      surface: "skill_generator",
+    });
+    const trimmed = fragment?.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  function withUserRulesContext<T extends { system: string; user: string }>(
+    prompt: T,
+    userRulesContext: string | null,
+  ): T {
+    if (!userRulesContext) return prompt;
+    return {
+      ...prompt,
+      system:
+        `${prompt.system}\n\n` +
+        "Friday user/project rules (prompt guidance only; hard enforcement remains in approval and deterministic policy gates):\n" +
+        userRulesContext,
+    };
+  }
   const harness = createFridayTemplateHarnessService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -1222,12 +1249,12 @@ export function createFridaySkillGeneratorService(
     requestedModel?: string,
   ): Promise<RequirementsAnalyzerResponse> {
     const recentTurns = getRecentTurns(turns);
-    const prompt = buildRequirementsPrompt(
+    const prompt = withUserRulesContext(buildRequirementsPrompt(
       session.goal,
       session.specSummary,
       session.openQuestions,
       recentTurns,
-    );
+    ), await resolveUserRulesContext(session));
     const result = await llm.infer<RequirementsAnalyzerResponse>({
       prompt,
       requestedModel,
@@ -1282,7 +1309,10 @@ export function createFridaySkillGeneratorService(
     contract: FridaySkillGenerationContract,
     requestedModel?: string,
   ): Promise<SkillManifestV2> {
-    const prompt = buildManifestPrompt(spec, contract);
+    const prompt = withUserRulesContext(
+      buildManifestPrompt(spec, contract),
+      await resolveUserRulesContext(session),
+    );
     let parsed: unknown;
     try {
       const result = await llm.infer<unknown>({
@@ -1332,7 +1362,10 @@ export function createFridaySkillGeneratorService(
     contract: FridaySkillGenerationContract,
     requestedModel?: string,
   ): Promise<FridayGeneratedSkillFile[]> {
-    const prompt = buildCodePrompt(manifest, runtimeKind, contract);
+    const prompt = withUserRulesContext(
+      buildCodePrompt(manifest, runtimeKind, contract),
+      await resolveUserRulesContext(session),
+    );
     let parsed: unknown;
     try {
       const result = await llm.infer<unknown>({
@@ -1367,7 +1400,10 @@ export function createFridaySkillGeneratorService(
     manifest: SkillManifestV2,
     requestedModel?: string,
   ): Promise<FridaySkillUiSchemaV1> {
-    const prompt = buildUiPrompt(manifest);
+    const prompt = withUserRulesContext(
+      buildUiPrompt(manifest),
+      await resolveUserRulesContext(session),
+    );
     let parsed: unknown;
     try {
       const result = await llm.infer<unknown>({

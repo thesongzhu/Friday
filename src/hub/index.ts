@@ -34,6 +34,7 @@ export {
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveFridayHubConfig,
+  shouldFailClosedForFridayWorkspaceContext,
   resolveTokenSecret,
   type FridayHub,
   type FridayHubConfig,

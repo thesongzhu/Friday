@@ -47,6 +47,13 @@ export interface CreateNodeExecutorDeps {
     payload: Record<string, unknown>,
     signal?: AbortSignal,
   ) => Promise<unknown>;
+  userRulesContextProvider?: (input: {
+    task: string;
+    workflowId?: UUID;
+    runId: UUID;
+    nodeId: string;
+    surface: "workflow_ai_node";
+  }) => string | null | Promise<string | null>;
   nowIso: () => string;
 }
 
@@ -203,11 +210,29 @@ export function createFridayWorkflowNodeExecutor(
             }
           }
 
+          const userRulesContext = await deps.userRulesContextProvider?.({
+            task: interpolatedPrompt,
+            workflowId: input.workflowId,
+            runId: input.runId,
+            nodeId: input.nodeId,
+            surface: "workflow_ai_node",
+          });
+          const trimmedRulesContext = userRulesContext?.trim();
+          const finalPrompt = trimmedRulesContext
+            ? [
+                "Friday user/project rules (prompt guidance only; hard enforcement remains in workflow rules, approval, and deterministic policy gates):",
+                trimmedRulesContext,
+                "",
+                "Workflow AI node prompt:",
+                interpolatedPrompt,
+              ].join("\n")
+            : interpolatedPrompt;
+
           const result = await deps.invokeSkill(
             "ai-inference",
             input.runId,
             input.nodeId,
-            { prompt: interpolatedPrompt, model },
+            { prompt: finalPrompt, model },
             input.signal,
           );
           return { output: (result ?? null) as JsonValue };

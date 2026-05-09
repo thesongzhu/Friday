@@ -1,12 +1,12 @@
 # Stable Workspace Facts
 
-- Friday loads workspace context fresh on each agent run from `AGENTS.md`, `BELIEFS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, `memory/YYYY-MM-DD.md`, and prompt-safe exports under `.friday/exports/memory/` such as compaction summaries. Durable user facts and preferences stay behind explicit memory surfaces.
+- Friday loads runtime user/project prompt guidance from `context/AGENTS.md`, `context/BELIEFS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, `memory/YYYY-MM-DD.md`, and selected `.friday/rules/path/**.md` / `.friday/rules/ext/**.md` files. Root `AGENTS.md` is Codex repair workflow guidance and is not Friday runtime context. Exported memory under `.friday/exports/memory/` is not injected by default; durable user facts, preferences, compaction summaries, and runtime evidence stay behind explicit memory/context-replay surfaces.
 - In this repository, `skills` are the main extensibility backbone.
 - `skill.manifest.json` is the structured source of truth for a skill package. `SKILL.md` is lightweight human/model guidance.
-- Repo-wide routing and behavior rules belong in `AGENTS.md`.
-- Style and response defaults belong in `SOUL.md`.
-- Maintainer preferences belong in `USER.md`.
-- Durable project facts belong in `MEMORY.md`.
+- Repo-wide Friday runtime routing and behavior guidance belongs in `context/AGENTS.md`.
+- Style and response defaults belong in `context/SOUL.md`.
+- Maintainer preferences belong in `context/USER.md`.
+- Durable project facts belong in `context/MEMORY.md`.
 - Short-lived working notes belong in `memory/YYYY-MM-DD.md`.
 - Repeated operational routines should graduate into automations or workflows instead of expanding prompt instructions.
 - When product docs conflict with historical notes, prefer `docs/current-source-of-truth.md`.
@@ -18,4 +18,4 @@
 - Tool call summary (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe tool execution metadata (arg keys only, no values) for observability and world model training data.
 - Warn-once pattern is used across 7+ modules (hub-bootstrap, auth, memory, system, http-server, workspace-context, unix-socket-bridge) to deduplicate runtime warnings without losing critical signals.
 - OpenAI Responses API (`openai-responses`) streaming is now supported alongside `openai-completions` in the agent LLM client.
-- Database migration count: 76 (latest: v076-provider-oauth-user-scope).
+- Database migration count: 77 (latest: v077-agent-context-replay).

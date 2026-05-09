@@ -138,6 +138,24 @@ describe("FridaySubagentRegistry", () => {
       expect(events[1].event).toBe("completed");
     });
 
+    it("injects user project rules into child system prompt", async () => {
+      const createdParams: CreateChildRuntimeParams[] = [];
+      const registry = createRegistry({
+        userRulesContextProvider: vi.fn().mockResolvedValue("<friday-user-project-rules>Ask before saving generated workflows.</friday-user-project-rules>"),
+        createChildRuntime: (params) => {
+          createdParams.push(params);
+          return {
+            executeRun: vi.fn().mockResolvedValue(makeResult()),
+          };
+        },
+      });
+
+      await registry.spawn(spawnInput({ task: "Build workflow draft" }));
+
+      expect(createdParams[0].systemPrompt).toContain("## Friday User Project Rules");
+      expect(createdParams[0].systemPrompt).toContain("Ask before saving generated workflows.");
+    });
+
     it("rejects at max depth", async () => {
       const registry = createRegistry();
 

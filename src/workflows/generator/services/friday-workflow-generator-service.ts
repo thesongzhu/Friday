@@ -404,6 +404,33 @@ export function createFridayWorkflowGeneratorService(
       channelKind: session.channel,
     };
   }
+
+  async function resolveUserRulesContext(
+    session: FridayWorkflowGenerationSession,
+  ): Promise<string | null> {
+    const fragment = await deps.userRulesContextProvider?.({
+      task: session.goal,
+      userId: session.userId,
+      channel: session.channel,
+      surface: "workflow_generator",
+    });
+    const trimmed = fragment?.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  function withUserRulesContext<T extends { system: string; user: string }>(
+    prompt: T,
+    userRulesContext: string | null,
+  ): T {
+    if (!userRulesContext) return prompt;
+    return {
+      ...prompt,
+      system:
+        `${prompt.system}\n\n` +
+        "Friday user/project rules (prompt guidance only; hard enforcement remains in approval and deterministic policy gates):\n" +
+        userRulesContext,
+    };
+  }
   const harness = createFridayTemplateHarnessService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -973,13 +1000,16 @@ export function createFridayWorkflowGeneratorService(
   ): Promise<WorkflowRequirementsAnalyzerResponse> {
     const recentTurns = getRecentTurns(turns);
     const availableSkills = buildAvailableSkillContext();
-    const prompt = buildWorkflowRequirementsPrompt(
-      session.goal,
-      session.requirementsSummary,
-      session.openQuestions,
-      availableSkills,
-      recentTurns,
-      session.maintenanceTarget,
+    const prompt = withUserRulesContext(
+      buildWorkflowRequirementsPrompt(
+        session.goal,
+        session.requirementsSummary,
+        session.openQuestions,
+        availableSkills,
+        recentTurns,
+        session.maintenanceTarget,
+      ),
+      await resolveUserRulesContext(session),
     );
     const result = await llm.infer<WorkflowRequirementsAnalyzerResponse>({
       prompt,
@@ -996,11 +1026,14 @@ export function createFridayWorkflowGeneratorService(
     availableSkills: FridayWorkflowGeneratorSkillContext[],
     requestedModel?: string,
   ): Promise<FridayWorkflowSpecV1> {
-    const prompt = buildWorkflowSpecPrompt(
-      requirements,
-      availableSkills,
-      requirements._repairContext,
-      session.maintenanceTarget,
+    const prompt = withUserRulesContext(
+      buildWorkflowSpecPrompt(
+        requirements,
+        availableSkills,
+        requirements._repairContext,
+        session.maintenanceTarget,
+      ),
+      await resolveUserRulesContext(session),
     );
     const result = await llm.infer<FridayWorkflowSpecV1>({
       prompt,
@@ -1016,7 +1049,10 @@ export function createFridayWorkflowGeneratorService(
     spec: FridayWorkflowSpecV1,
     requestedModel?: string,
   ): Promise<FridayWorkflowVisualGraphV1> {
-    const prompt = buildWorkflowVisualLayoutPrompt(spec);
+    const prompt = withUserRulesContext(
+      buildWorkflowVisualLayoutPrompt(spec),
+      await resolveUserRulesContext(session),
+    );
     const result = await llm.infer<unknown>({
       prompt,
       requestedModel,
@@ -1031,7 +1067,10 @@ export function createFridayWorkflowGeneratorService(
     spec: FridayWorkflowSpecV1,
     requestedModel?: string,
   ): Promise<FridayWorkflowSpecTestCase[]> {
-    const prompt = buildWorkflowTestsPrompt(spec);
+    const prompt = withUserRulesContext(
+      buildWorkflowTestsPrompt(spec),
+      await resolveUserRulesContext(session),
+    );
     const result = await llm.infer<unknown>({
       prompt,
       requestedModel,

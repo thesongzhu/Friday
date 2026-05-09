@@ -714,6 +714,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       computeChecksum: deps.computeChecksum,
       resolveSkill: deps.resolveSkill,
       invokeSkill: deps.invokeSkill,
+      userRulesContextProvider: deps.userRulesContextProvider,
       publishEvent: publishWorkflowRealtimeEvent,
       triggerRepo,
       resolveWebhookSecretRef: createWorkflowWebhookSecretResolver(deps.db),

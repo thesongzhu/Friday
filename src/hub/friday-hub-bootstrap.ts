@@ -178,12 +178,13 @@ import {
   fetchWithFridayAgentSsrfGuard,
   inferFridaySubagentProfile,
   listFridayMcpServerReadiness,
+  loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
   taskLikelyNeedsWriteAccessForSubagent,
 } from "#agent";
-import type { FridayAgentModeChangedPayload, FridayAgentRunDegradedPayload, loadFridayWorkspaceContext } from "#agent";
+import type { FridayAgentModeChangedPayload, FridayAgentRunDegradedPayload } from "#agent";
 import { buildMcpServerToolFilter } from "./friday-mcp-safe-catalog.js";
 
 import { classifyFridayExecution } from "../sessions/services/friday-execution-classifier.js";
@@ -868,6 +869,29 @@ function resolveImportedSkillOrigin(target: FridaySkillInstallTarget): SkillOrig
   return "extra";
 }
 
+const FRIDAY_WORKSPACE_CONTEXT_FAIL_CLOSED_PROFILES = new Set([
+  "autonomy",
+  "browser",
+  "code",
+  "general",
+  "media",
+  "memory",
+  "skill",
+  "system",
+  "workflow",
+]);
+
+export function shouldFailClosedForFridayWorkspaceContext(input: {
+  promptProfile?: "standard" | "minimal";
+  contextPolicy?: { workspaceContext?: "auto" | "skip" };
+  toolRouting?: { profile?: string };
+}): boolean {
+  if (input.promptProfile === "minimal" || input.contextPolicy?.workspaceContext === "skip") {
+    return false;
+  }
+  return FRIDAY_WORKSPACE_CONTEXT_FAIL_CLOSED_PROFILES.has(input.toolRouting?.profile ?? "");
+}
+
 // ─── Factory ───
 
 export async function createFridayHub(
@@ -1167,6 +1191,44 @@ export async function createFridayHub(
     }
     return result.output;
   };
+  const workspaceRoot = config.stateDir ?? ".";
+  type FridayUserRulesPromptSurface =
+    | "skill_generator"
+    | "workflow_generator"
+    | "workflow_ai_node"
+    | "subagent";
+  const buildFridayUserRulesPromptContext = async (input: {
+    task: string;
+    surface: FridayUserRulesPromptSurface;
+  }): Promise<string | null> => {
+    const ctx = await loadFridayWorkspaceContext(workspaceRoot, { task: input.task });
+    if (ctx.summary.loadErrors.length > 0) {
+      throw new FridayDomainError(
+        "WORKSPACE_CONTEXT_UNAVAILABLE",
+        `Friday user/project rules could not be loaded for ${input.surface}: ${ctx.summary.loadErrors.map((err) => err.name).join(", ")}`,
+        {
+          httpStatus: 503,
+          details: {
+            surface: input.surface,
+            loadErrors: ctx.summary.loadErrors.map((err) => ({
+              name: err.name,
+              code: err.code,
+              message: err.message,
+            })),
+          },
+        },
+      );
+    }
+    const fragment = ctx.promptFragment.trim();
+    if (!fragment) {
+      return null;
+    }
+    return [
+      `<friday-user-project-rules surface="${input.surface}" enforcement="prompt-guidance-only">`,
+      fragment,
+      `</friday-user-project-rules>`,
+    ].join("\n");
+  };
 
   // 8. Create AI skill generator service
   const skillGenerator = createFridaySkillGeneratorService({
@@ -1177,6 +1239,11 @@ export async function createFridayHub(
     memoryStateService: memoryState,
     idGenerator,
     nowIso,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
   });
 
   // 9. Create converter service
@@ -1417,7 +1484,6 @@ export async function createFridayHub(
       return null;
     }
   };
-
   const workflowRuntime = createFridayWorkflowRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
@@ -1425,6 +1491,11 @@ export async function createFridayHub(
     computeChecksum,
     resolveSkill: resolveWorkflowSkill,
     invokeSkill: invokeSkillForWorkflow,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
     resolveWebhookSecretRef: resolveWorkflowWebhookSecretRef,
@@ -1474,6 +1545,11 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
     computeChecksum,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
   });
 
   // ─── Agent runtime ───
@@ -1493,7 +1569,6 @@ export async function createFridayHub(
   const agentSsrfGuard = createFridayAgentSsrfGuard(config.ssrfPolicy);
 
   // IMPL-7: Artifact writer
-  const workspaceRoot = config.stateDir ?? ".";
   const agentArtifactWriter = createFridayAgentArtifactWriter(workspaceRoot);
   const ttsService = createFridayProviderBackedTtsService({
     providerService,
@@ -3275,8 +3350,10 @@ export async function createFridayHub(
 
   // Dynamic system prompt builder — invoked at each executeRun() with the
   // current set of registered tool names, so the prompt is always accurate.
-  // Loads workspace context files (AGENTS.md, SOUL.md, USER.md, MEMORY.md)
+  // Loads Friday runtime user context files (context/AGENTS.md, context/USER.md,
+  // context/MEMORY.md, context/BELIEFS.md, context/SOUL.md, .friday/rules/**)
   // fresh on each run so edits take effect immediately.
+  const shouldFailClosedForWorkspaceContext = shouldFailClosedForFridayWorkspaceContext;
   const agentSystemPromptBuilder = async (input: {
     userId?: string;
     toolNames: string[];
@@ -3287,12 +3364,10 @@ export async function createFridayHub(
     executionContext?: {
       packId?: string;
     };
+    promptProfile?: "standard" | "minimal";
+    contextPolicy?: { workspaceContext?: "auto" | "skip" };
     conversationContext?: {
       selectedBlocks?: FridayConversationBlock[];
-    };
-    promptProfile?: "standard" | "minimal";
-    contextPolicy?: {
-      workspaceContext?: "auto" | "skip";
     };
     toolRouting?: {
       profile: string;
@@ -3320,9 +3395,43 @@ export async function createFridayHub(
           workspaceContext = ctx.promptFragment;
         }
         workspaceContextSummary = ctx.workspaceContext?.summary;
+        if (
+          workspaceContextSummary?.loadErrors.length
+          && shouldFailClosedForWorkspaceContext(input)
+        ) {
+          throw new FridayDomainError(
+            "WORKSPACE_CONTEXT_UNAVAILABLE",
+            `Friday user/project rules could not be loaded: ${workspaceContextSummary.loadErrors.map((err) => err.name).join(", ")}`,
+            {
+              httpStatus: 503,
+              details: {
+                loadErrors: workspaceContextSummary.loadErrors.map((err) => ({
+                  name: err.name,
+                  code: err.code,
+                  message: err.message,
+                })),
+              },
+            },
+          );
+        }
+        if (workspaceContextSummary?.loadErrors.length) {
+          const warningLines = workspaceContextSummary.loadErrors.map((err) =>
+            `- ${err.name}${err.code ? ` (${err.code})` : ""}: ${err.message}`
+          );
+          workspaceContext = [
+            workspaceContext ?? "",
+            "<workspace-context-warning>",
+            "Some Friday user/project rules could not be loaded. Continue only for low-risk chat or status tasks; do not perform mutation, generation, installation, promotion, or execution from this run.",
+            ...warningLines,
+            "</workspace-context-warning>",
+          ].filter((line) => line.length > 0).join("\n");
+        }
       } catch (err) {
+        if (shouldFailClosedForWorkspaceContext(input)) {
+          throw err;
+        }
         warnHubBootstrapOperationFailureOnce(err);
-        // Non-fatal: workspace context loading failure should not block agent runs.
+        // Non-fatal for low-risk chat/status runs only.
       }
     }
 
@@ -3486,14 +3595,25 @@ export async function createFridayHub(
     0);
     const mcpStates = mcpAdapter?.listServerStates() ?? [];
     const components = [
-      workspaceContextSummary && workspaceContextSummary.promptChars > 0
+      workspaceContextSummary && (
+        workspaceContextSummary.promptChars > 0
+        || workspaceContextSummary.loadErrors.length > 0
+      )
         ? {
             kind: "workspace_context" as const,
             estimatedChars: workspaceContextSummary.promptChars,
             count: workspaceContextSummary.selectedFileCount,
             metadata: {
               pathRuleCount: workspaceContextSummary.selectedPathRuleCount,
+              loadErrorCount: workspaceContextSummary.loadErrors.length,
               candidatePaths: workspaceContextSummary.candidatePaths,
+              selectedSourceNames: workspaceContextSummary.selectedSourceNames,
+              sourceSummaries: workspaceContextSummary.sourceSummaries,
+              loadErrors: workspaceContextSummary.loadErrors.map((err) => ({
+                name: err.name,
+                code: err.code,
+                message: err.message,
+              })),
             },
           }
         : null,
@@ -4402,6 +4522,11 @@ export async function createFridayHub(
   subagentRegistry = createFridaySubagentRegistry({
     db: stateRuntime!.sqlite,
     sessionService: hubSessionService,
+    userRulesContextProvider: (input) =>
+      buildFridayUserRulesPromptContext({
+        task: input.task,
+        surface: input.surface,
+      }),
     createChildRuntime: (params) => {
       let childRuntimeRef: FridayAgentRuntime | undefined;
       const childRuntimeGetter = () => childRuntimeRef;

@@ -220,6 +220,13 @@ export function createFridaySubagentRegistry(
     );
     const selectedModel = resolvedProfile.model ?? input.model;
     const inheritedModelSelection = selectedModel === undefined;
+    const userRulesContext = await deps.userRulesContextProvider?.({
+      task: input.task,
+      parentSessionKey: input.parentSessionKey,
+      depth: input.depth + 1,
+      mode: spawnMeta.mode,
+      surface: "subagent",
+    });
     // Build child system prompt
     const systemPrompt = buildFridaySubagentSystemPrompt({
       task: input.task,
@@ -232,6 +239,7 @@ export function createFridaySubagentRegistry(
       mode: spawnMeta.mode,
       forkedFromMessageId: spawnMeta.forkedFromMessageId,
       inheritedMessageCount: spawnMeta.inheritedMessageCount,
+      userRulesContext: userRulesContext ?? undefined,
     });
 
     // Create child runtime

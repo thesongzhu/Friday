@@ -65,4 +65,10 @@ export interface CreateFridayWorkflowGeneratorServiceDeps {
   idGenerator: () => string;
   nowIso: () => string;
   computeChecksum: (content: string) => string;
+  userRulesContextProvider?: (input: {
+    task: string;
+    userId?: string;
+    channel?: string;
+    surface: "workflow_generator";
+  }) => string | null | Promise<string | null>;
 }

@@ -16,7 +16,7 @@
 | `createSessionsSpawnTool` — sub-agents | `sessions-spawn-tool.ts` | *Deferred to Phase 3+* | Friday doesn't need sub-agents yet. |
 | `SubagentRunRecord` / registry | `subagent-registry.ts` | *Deferred* | Same reason. |
 | Tool result utilities | `tools-common.ts` | `friday-agent-tool-helpers.ts` | Port `readStringParam`, `jsonResult`, `ToolInputError`. Drop image/media helpers (not needed for agent MVP). |
-| Workspace bootstrap files | `workspace.ts` | `loadFridayWorkspaceContext()` | Friday loads repo-scoped context files (`AGENTS.md`, `SOUL.md`, `USER.md`, `MEMORY.md`, daily memory, exported memory) on each run instead of reusing ClawdBot's workspace bootstrap path. |
+| Workspace bootstrap files | `workspace.ts` | `loadFridayWorkspaceContext()` | Friday loads runtime user/project context from `context/AGENTS.md`, `context/BELIEFS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, daily memory, and selected `.friday/rules/path/**` / `.friday/rules/ext/**` prompt-guidance files. Root `AGENTS.md` is Codex repair workflow only, and exported memory is not injected by default. |
 | Tool definitions for subscription | `pi-embedded-subscribe-tools.ts` | Inline in `FridayAgentEventEmitter` | Only port `extractToolResultText`, `isToolResultError`, `extractToolErrorMessage` for status reporting. |
 
 ### A.2 What We Port Directly

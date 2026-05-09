@@ -3,7 +3,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { createFridayApiRuntime } from "#api";
 import type { CreateFridayApiRuntimeDeps } from "#api";
 import type { FridayProviderService } from "#providers";
-import type { FridayWorkflowGeneratorService } from "#workflows";
+import type { FridayCompiledWorkflowGraphV2, FridayWorkflowGeneratorService } from "#workflows";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 
@@ -55,6 +55,16 @@ function makeBaseDeps(): CreateFridayApiRuntimeDeps {
     resolveSkill: () => null,
     invokeSkill: async () => ({}),
   };
+}
+
+async function waitForWorkflowRunSettled(
+  runtime: ReturnType<typeof createFridayApiRuntime>,
+  runId: string,
+): Promise<void> {
+  await vi.waitFor(() => {
+    const run = runtime.workflowExecution.getRun(runId);
+    expect(run?.status).toMatch(/^(completed|failed|cancelled)$/u);
+  });
 }
 
 // ─── Tests ───
@@ -113,5 +123,72 @@ describe("API Runtime — Workflow Generator Registration", () => {
   it("runtime workflowGenerator is undefined when not provided", () => {
     const runtime = createFridayApiRuntime(makeBaseDeps());
     expect(runtime.workflowGenerator).toBeUndefined();
+  });
+
+  it("passes user rules context into fallback workflow runtime AI nodes", async () => {
+    let idCounter = 0;
+    const invokeSkill = vi.fn(async () => ({ text: "ok" }));
+    const userRulesContextProvider = vi.fn().mockResolvedValue(
+      "<friday-user-project-rules>Ask Alice before generating durable files.</friday-user-project-rules>",
+    );
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      idGenerator: () => `fallback-ai-id-${String(++idCounter)}`,
+      invokeSkill,
+      resolveSkill: () => ({ id: "ai-inference" }),
+      userRulesContextProvider,
+    });
+
+    const workflow = runtime.workflowCrud.createWorkflow({
+      slug: "fallback-ai-user-rules",
+      name: "Fallback AI User Rules",
+    });
+    const graph: FridayCompiledWorkflowGraphV2 = {
+      schemaVersion: "2.0",
+      workflowId: workflow.id,
+      workflowVersionId: "placeholder",
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "ai1",
+            type: "ai",
+            label: "AI",
+            config: { prompt: "Summarize launch notes", model: "test-model" },
+          },
+        ],
+        edges: [{ id: "edge1", sourceNodeId: "trigger", targetNodeId: "ai1" }],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "placeholder",
+    };
+    const version = runtime.workflowCrud.createVersion(workflow.id, graph);
+    runtime.workflowCrud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await runtime.workflowExecution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+    });
+    await waitForWorkflowRunSettled(runtime, run.id);
+
+    expect(userRulesContextProvider).toHaveBeenCalledWith({
+      task: "Summarize launch notes",
+      workflowId: workflow.id,
+      runId: run.id,
+      nodeId: "ai1",
+      surface: "workflow_ai_node",
+    });
+    expect(invokeSkill).toHaveBeenCalledWith(
+      "ai-inference",
+      run.id,
+      "ai1",
+      expect.objectContaining({
+        prompt: expect.stringContaining("Ask Alice before generating durable files."),
+      }),
+      expect.anything(),
+    );
   });
 });

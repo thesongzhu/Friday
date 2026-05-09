@@ -201,6 +201,13 @@ export interface CreateFridaySubagentRegistryDeps {
   idGenerator: () => string;
   nowIso: () => string;
   sessionService?: FridaySessionService;
+  userRulesContextProvider?: (input: {
+    task: string;
+    parentSessionKey: string;
+    depth: number;
+    mode: FridaySubagentSpawnMode;
+    surface: "subagent";
+  }) => string | null | Promise<string | null>;
 }
 
 export interface CreateChildRuntimeParams {

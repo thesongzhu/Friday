@@ -6,32 +6,45 @@ Use workspace context for repo policy and stable guidance. Use skills for reusab
 
 ## What Friday Loads Today
 
-The current runtime loads these files fresh on each agent run:
+The current Friday runtime loads these files fresh when it needs user/project
+prompt guidance:
 
-- `AGENTS.md`
-- `BELIEFS.md`
-- `SOUL.md`
-- `USER.md`
-- `MEMORY.md`
+- `context/AGENTS.md`
+- `context/BELIEFS.md`
+- `context/SOUL.md`
+- `context/USER.md`
+- `context/MEMORY.md`
+- `context/memory.md`
 - `memory/YYYY-MM-DD.md` for the current day
-- exported memory items from `.friday/exports/memory/*.json`
+- selected `.friday/rules/path/**/*.md`
+- selected `.friday/rules/ext/**/*.md`
 
 Current selection behavior:
 
-- `AGENTS.md`, `BELIEFS.md`, and `SOUL.md` are identity blocks. When present, they are always injected.
-- `BELIEFS.md` contains engineering principles and design beliefs loaded as workspace context.
-- `USER.md`, `MEMORY.md`, daily memory, and exported memory items are candidate blocks. When task-aware filtering is active, Friday selects only the relevant candidates.
+- Root `AGENTS.md` is not Friday runtime guidance. In this repository it is a Codex repair-workflow rule file.
+- `context/AGENTS.md`, `context/BELIEFS.md`, and `context/SOUL.md` are identity blocks. When present, they are always injected into eligible LLM surfaces.
+- `context/BELIEFS.md` contains engineering principles and design beliefs loaded as workspace context.
+- `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, and daily memory are candidate blocks. When task-aware filtering is active, Friday selects only the relevant candidates.
+- `.friday/rules/path/**/*.md` is selected by task/file path hints.
+- `.friday/rules/ext/**/*.md` is selected by file-extension hints.
+- Exported memory files are not injected into prompts by default; compaction/context replay and memory APIs own durable memory recovery.
 - Files are read fresh each run, so edits take effect without restarting the hub.
+
+These natural-language files are prompt guidance, not deterministic policy.
+Hard enforcement belongs to `/v1/rules/*`, the deterministic rules engine,
+readiness checks, approval gates, and runtime policy checks.
 
 ## Recommended Split
 
 | Layer | Put Here | Avoid Putting Here |
 |---|---|---|
-| `AGENTS.md` | repo rules, routing defaults, risk boundaries, evidence rules | long SOPs, step-by-step playbooks, reusable business logic |
-| `BELIEFS.md` | engineering principles, design beliefs, architectural values | implementation details, operational runbooks |
-| `SOUL.md` | style, tone, response discipline, anti-hallucination defaults | repo facts, operational runbooks |
-| `USER.md` | maintainer preferences and editing defaults | hard product contract, durable repo truth |
-| `MEMORY.md` | durable facts about how this repo works | per-day notes, ephemeral blockers |
+| `context/AGENTS.md` | repo rules, routing defaults, risk boundaries, evidence rules | long SOPs, step-by-step playbooks, reusable business logic |
+| `context/BELIEFS.md` | engineering principles, design beliefs, architectural values | implementation details, operational runbooks |
+| `context/SOUL.md` | style, tone, response discipline, anti-hallucination defaults | repo facts, operational runbooks |
+| `context/USER.md` | maintainer preferences and editing defaults | hard product contract, durable repo truth |
+| `context/MEMORY.md` | durable facts about how this repo works | per-day notes, ephemeral blockers |
+| `.friday/rules/path/**/*.md` | path-scoped prompt guidance | hard permission policy |
+| `.friday/rules/ext/**/*.md` | extension-scoped prompt guidance | hard permission policy |
 | `memory/YYYY-MM-DD.md` | current focus, recent blockers, temporary notes | stable policy or long-term truth |
 
 ## Skills vs Workspace Context vs Automations
@@ -61,15 +74,15 @@ Use agent automations or workflows when you need:
 
 This repository adopts the following pattern:
 
-- `AGENTS.md` acts as a skill router and risk-policy layer.
-- `SOUL.md` keeps the repo voice concise, evidence-first, and explicit about uncertainty.
-- `USER.md` captures maintainer editing preferences.
-- `MEMORY.md` stores durable facts about the repo's extensibility model.
+- `context/AGENTS.md` acts as a skill router and risk-policy guidance layer.
+- `context/SOUL.md` keeps the repo voice concise, evidence-first, and explicit about uncertainty.
+- `context/USER.md` captures maintainer editing preferences.
+- `context/MEMORY.md` stores durable facts about the repo's extensibility model.
 - repeated checks should move to `/v1/agent/automations` or workflows instead of growing the prompt layer
 
 ## Good Patterns
 
-Good `AGENTS.md` rules:
+Good `context/AGENTS.md` rules:
 
 - "Prefer `skills_list` before broad freeform work."
 - "Use `release-readiness-check` for ship-readiness."
@@ -114,8 +127,9 @@ Example automation payloads:
 
 ## Guardrails
 
-- Keep `AGENTS.md` short. Treat it as a router, not a knowledge dump.
+- Keep `context/AGENTS.md` short. Treat it as a router, not a knowledge dump.
 - Do not duplicate skill SOPs into workspace context.
 - Put structured, reusable behavior into skills, not prose.
 - Put recurring behavior into automations or workflows, not ever-growing prompts.
+- Do not treat `.friday/rules/*` prose as a hard policy block; convert it through a separate reviewed policy-design path before deterministic enforcement.
 - If docs disagree, prefer `docs/current-source-of-truth.md` and current runtime behavior.

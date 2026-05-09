@@ -34,6 +34,16 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.promptFragment).toContain("Do X, Y, Z.");
     });
 
+    it("does not load root AGENTS.md into Friday runtime prompts", async () => {
+      await fs.writeFile(path.join(tmpDir, "AGENTS.md"), "# Codex Repair Rules\nOnly for Codex.");
+      await fs.writeFile(path.join(tmpDir, "context", "AGENTS.md"), "# Friday Rules\nOnly for Friday.");
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir);
+
+      expect(ctx.promptFragment).toContain("Only for Friday.");
+      expect(ctx.promptFragment).not.toContain("Only for Codex.");
+    });
+
     it("loads BELIEFS.md as an identity block when present", async () => {
       await fs.writeFile(path.join(tmpDir, "context", "BELIEFS.md"), "# Engineering Principles\nNo claim without working code.");
       const ctx = await loadFridayWorkspaceContext(tmpDir);
@@ -69,6 +79,7 @@ describe("loadFridayWorkspaceContext", () => {
       try {
         const ctx = await loadFridayWorkspaceContext(tmpDir);
         expect(ctx.promptFragment).toBe("");
+        expect(ctx.summary.loadErrors).toEqual([]);
         // All files should be marked missing
         const missing = ctx.files.filter((f) => f.missing);
         expect(missing.length).toBeGreaterThanOrEqual(6);
@@ -506,6 +517,56 @@ describe("loadFridayWorkspaceContext", () => {
       expect(ctx.summary.pathRuleCount).toBe(1);
       expect(ctx.summary.selectedPathRuleCount).toBe(1);
       expect(ctx.summary.candidatePaths).toContain("src/agent/runtime/friday-agent-runtime.ts");
+      expect(ctx.summary.selectedSourceNames).toContain("rules/path/src/agent.md");
+      expect(ctx.summary.sourceSummaries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          name: "rules/path/src/agent.md",
+          selected: true,
+          ruleScopeKind: "path",
+          ruleScopePattern: "src/agent",
+        }),
+      ]));
+    });
+
+    it("loads extension-scoped rules only when task file extensions match", async () => {
+      const ruleDir = path.join(tmpDir, ".friday", "rules", "ext");
+      await fs.mkdir(ruleDir, { recursive: true });
+      await fs.writeFile(
+        path.join(ruleDir, "ts.md"),
+        "TypeScript changes must keep runtime prompt guidance separate from hard policy.",
+      );
+
+      const ctx = await loadFridayWorkspaceContext(tmpDir, {
+        task: "Please update src/workflows/runtime/friday-workflow-runtime.ts",
+      });
+
+      expect(ctx.promptFragment).toContain("TypeScript changes");
+      expect(ctx.summary.pathRuleCount).toBe(1);
+      expect(ctx.summary.selectedPathRuleCount).toBe(1);
+      expect(ctx.summary.candidatePaths).toContain("src/workflows/runtime/friday-workflow-runtime.ts");
+    });
+
+    it("records rule directory traversal failures for fail-closed callers", async () => {
+      const ruleDir = path.join(tmpDir, ".friday", "rules", "path");
+      await fs.mkdir(ruleDir, { recursive: true });
+      await fs.chmod(ruleDir, 0o000);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const ctx = await loadFridayWorkspaceContext(tmpDir, {
+          task: "Please update src/agent/runtime/friday-agent-runtime.ts",
+        });
+
+        expect(ctx.summary.loadErrors).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            name: "rules/path",
+            code: "EACCES",
+          }),
+        ]));
+      } finally {
+        await fs.chmod(ruleDir, 0o700);
+        warnSpy.mockRestore();
+      }
     });
   });
 });
