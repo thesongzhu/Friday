@@ -70,6 +70,9 @@ import type {
 import type {
   FridayPluginLifecycleApprovalRequestInput,
 } from "../../../autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
+import type {
+  FridayChannelAdapterLifecycleApprovalRequestInput,
+} from "../../../autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
 import {
   type FridayCanonicalApprovalResolution,
   type FridayMutatingActionGate,
@@ -215,18 +218,35 @@ export interface FridayAutonomyRoutesDeps {
   };
   channelAdapterActions?: {
     registerShadow: (
-      input: { channelKind: string } & FridayRegisterChannelAdapterShadowRequest,
+      input: {
+        channelKind: string;
+        actor: FridayChannelAdapterLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRegisterChannelAdapterShadowRequest,
     ) => void | Promise<void>;
     recordCanary: (
-      input: { channelKind: string } & FridayRecordChannelAdapterCanaryRequest,
+      input: {
+        channelKind: string;
+        actor: FridayChannelAdapterLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRecordChannelAdapterCanaryRequest,
     ) => void | Promise<void>;
     promote: (
-      input: { channelKind: string } & FridayPromoteChannelAdapterUpgradeRequest,
+      input: {
+        channelKind: string;
+        actor: FridayChannelAdapterLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayPromoteChannelAdapterUpgradeRequest,
     ) => void | Promise<void>;
     rollback: (
-      input: { channelKind: string } & FridayRollbackChannelAdapterUpgradeRequest,
+      input: {
+        channelKind: string;
+        actor: FridayChannelAdapterLifecycleApprovalRequestInput["actor"];
+        surface: string;
+      } & FridayRollbackChannelAdapterUpgradeRequest,
     ) => void | Promise<void>;
     getStatus: (channelKind: string) => FridayChannelAdapterUpgradeActionResponse["status"];
+    getEvidence?: (input: { channelKind: string }) => FridayChannelAdapterUpgradeActionResponse["evidence"] | null;
   };
 }
 
@@ -342,6 +362,20 @@ function requirePluginLifecycleCanonicalApproval(
   return canonicalApproval;
 }
 
+function requireChannelAdapterLifecycleCanonicalApproval(
+  action: FridayChannelAdapterLifecycleApprovalRequestInput["action"],
+  canonicalApproval: FridayCanonicalApprovalResolution | undefined,
+): FridayCanonicalApprovalResolution {
+  if (!canonicalApproval) {
+    throw new FridayDomainError(
+      "CANONICAL_APPROVAL_REQUIRED",
+      `Channel adapter lifecycle ${action} requires canonical approval before any mutation.`,
+      { httpStatus: 403 },
+    );
+  }
+  return canonicalApproval;
+}
+
 function requireSkillLifecycleEvidence(input: {
   deps: FridayAutonomyRoutesDeps;
   skillId: string;
@@ -402,6 +436,22 @@ function requireProviderProfileLifecycleEvidence(input: {
       "PROVIDER_LIFECYCLE_EVIDENCE_MISSING",
       `Provider lifecycle ${input.expectedStage} completed without readable lifecycle evidence.`,
       { httpStatus: 500, details: { providerId: input.providerId, stage: input.expectedStage } },
+    );
+  }
+  return evidence;
+}
+
+function requireChannelAdapterLifecycleEvidence(input: {
+  deps: FridayAutonomyRoutesDeps;
+  channelKind: string;
+  expectedStage: string;
+}): Record<string, unknown> {
+  const evidence = input.deps.channelAdapterActions!.getEvidence?.({ channelKind: input.channelKind });
+  if (!evidence) {
+    throw new FridayDomainError(
+      "CHANNEL_ADAPTER_LIFECYCLE_EVIDENCE_MISSING",
+      `Channel adapter lifecycle ${input.expectedStage} completed without readable lifecycle evidence.`,
+      { httpStatus: 500, details: { channelKind: input.channelKind, stage: input.expectedStage } },
     );
   }
   return evidence;
@@ -1492,14 +1542,29 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireChannelAdapterLifecycleCanonicalApproval(
+            "shadow",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.channelAdapterActions!.registerShadow({
             channelKind,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/channels/shadow",
           });
           const status = deps.channelAdapterActions!.getStatus(channelKind);
-          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+          return {
+            channel: buildChannelAdapterUpgradeActionPayload(status),
+            status,
+            evidence: requireChannelAdapterLifecycleEvidence({ deps, channelKind, expectedStage: "shadow" }),
+          };
         },
       },
       {
@@ -1510,18 +1575,35 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
-          if (typeof body.success !== "boolean") {
-            throw new FridayDomainError("VALIDATION_ERROR", "success must be a boolean", {
-              httpStatus: 400,
-            });
+          if (body.success !== undefined || body.evaluatedAt !== undefined) {
+            throw new FridayDomainError(
+              "CHANNEL_ADAPTER_CANARY_RUNTIME_PROOF_REQUIRED",
+              "Channel adapter canary results cannot be supplied by the caller; the lifecycle runtime must execute the canary.",
+              { httpStatus: 400 },
+            );
           }
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireChannelAdapterLifecycleCanonicalApproval(
+            "canary",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.channelAdapterActions!.recordCanary({
             channelKind,
-            success: body.success,
-            evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/channels/canary",
           });
           const status = deps.channelAdapterActions!.getStatus(channelKind);
-          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+          return {
+            channel: buildChannelAdapterUpgradeActionPayload(status),
+            status,
+            evidence: requireChannelAdapterLifecycleEvidence({ deps, channelKind, expectedStage: "canary" }),
+          };
         },
       },
       {
@@ -1532,13 +1614,28 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireChannelAdapterLifecycleCanonicalApproval(
+            "promote",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.channelAdapterActions!.promote({
             channelKind,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/channels/promote",
           });
           const status = deps.channelAdapterActions!.getStatus(channelKind);
-          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+          return {
+            channel: buildChannelAdapterUpgradeActionPayload(status),
+            status,
+            evidence: requireChannelAdapterLifecycleEvidence({ deps, channelKind, expectedStage: "active" }),
+          };
         },
       },
       {
@@ -1549,13 +1646,29 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined;
+          const canonicalApproval = requireChannelAdapterLifecycleCanonicalApproval(
+            "rollback",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           await deps.channelAdapterActions!.rollback({
             channelKind,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            reason: typeof body.reason === "string" ? body.reason : undefined,
+            planDigest,
+            idempotencyKey,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+            surface: "api:/v1/autonomy/channels/rollback",
           });
           const status = deps.channelAdapterActions!.getStatus(channelKind);
-          return { channel: buildChannelAdapterUpgradeActionPayload(status), status };
+          return {
+            channel: buildChannelAdapterUpgradeActionPayload(status),
+            status,
+            evidence: requireChannelAdapterLifecycleEvidence({ deps, channelKind, expectedStage: "rolled_back" }),
+          };
         },
       },
     );

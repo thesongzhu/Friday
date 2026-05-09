@@ -12,6 +12,14 @@ import type {
   FridayFleetRemediationPlan,
 } from "#api";
 import { FridayDomainError } from "#errors";
+import {
+  createFridayFleetRemediationMutatingActionRequest,
+} from "../../../../../src/api/http/routes/friday-fleet-routes.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  type FridayCanonicalApprovalResolution,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
 
 describe("FridayFleetRoutes", () => {
   let db: FridaySqliteLayer;
@@ -22,6 +30,7 @@ describe("FridayFleetRoutes", () => {
     expireByTtl: ReturnType<typeof vi.fn>;
   };
   const NOW = "2025-06-15T10:00:00.000Z";
+  const PLAN_DIGEST = "fleet-plan-1";
 
   function makeCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
     return {
@@ -47,6 +56,31 @@ describe("FridayFleetRoutes", () => {
 
   function findRoute(operationId: string) {
     return routes.find((r) => r.operationId === operationId)!;
+  }
+
+  function makeApproval(input: {
+    satelliteId: string;
+    actionId: string;
+    surface: string;
+  }): FridayCanonicalApprovalResolution {
+    const request = createFridayFleetRemediationMutatingActionRequest({
+      satelliteId: input.satelliteId,
+      actionId: input.actionId,
+      actor: {
+        kind: "user",
+        id: "user-1",
+        principalId: "user-1",
+      },
+      surface: input.surface,
+      planDigest: PLAN_DIGEST,
+    });
+    return {
+      decision: "approved",
+      approvalId: "fleet-remediation-approval",
+      decidedByPrincipalId: "user-1",
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2025-06-15T11:00:00.000Z",
+    };
   }
 
   function insertSatellite(id: string, pairingStatus: string = "online") {
@@ -101,7 +135,13 @@ describe("FridayFleetRoutes", () => {
       idGenerator: createTestIdGenerator(),
       outboxQueueService,
     });
-    routes = createFridayFleetRoutes({ fleetService });
+    routes = createFridayFleetRoutes({
+      fleetService,
+      canonicalMutationGate: createFridayMutatingActionGate({
+        nowIso: () => NOW,
+        ticketIdGenerator: () => "ticket-1",
+      }),
+    });
   });
 
   afterEach(() => {
@@ -222,7 +262,7 @@ describe("FridayFleetRoutes", () => {
     expect((result as FridayFleetRemediationPlan).actions.some((action) => action.actionId === "requeue_expired_leases")).toBe(true);
   });
 
-  it("POST /v1/fleet/satellites/:satelliteId/remediation/:actionId/execute returns execution result", async () => {
+  it("POST /v1/fleet/satellites/:satelliteId/remediation/:actionId/execute requires canonical approval before side effects", async () => {
     insertSatellite("sat-1", "degraded");
     insertOutboxMessage("msg-exec", "sat-1", "failed");
 
@@ -240,9 +280,40 @@ describe("FridayFleetRoutes", () => {
         issuedAt: NOW,
       },
     });
+    await expect(route.handler(ctx)).rejects.toMatchObject({ code: "FLEET_REMEDIATION_PLAN_DIGEST_REQUIRED" });
+    expect(outboxQueueService.requeueExpiredLeases).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/fleet/satellites/:satelliteId/remediation/:actionId/execute returns execution result with canonical evidence", async () => {
+    insertSatellite("sat-1", "degraded");
+    insertOutboxMessage("msg-exec", "sat-1", "failed");
+
+    const route = findRoute("fleet.execute.satellite.remediation");
+    const ctx = makeCtx({
+      params: { satelliteId: "sat-1", actionId: "requeue_expired_leases" },
+      body: {
+        planDigest: PLAN_DIGEST,
+        canonicalApproval: makeApproval({
+          satelliteId: "sat-1",
+          actionId: "requeue_expired_leases",
+          surface: "api:/v1/fleet/satellites/remediation/execute",
+        }),
+      },
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin",
+        scopes: ["hub.admin"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+    });
     const result = await route.handler(ctx);
 
     expect((result as FridayFleetRemediationActionExecutionResult).status).toBe("completed");
+    expect((result as FridayFleetRemediationActionExecutionResult).canonicalGate?.ticketId).toBe("ticket-1");
     expect(outboxQueueService.requeueExpiredLeases).toHaveBeenCalledTimes(1);
   });
 });

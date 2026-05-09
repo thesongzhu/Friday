@@ -994,6 +994,7 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    allowImplicitProviderStateMutation: !canonicalMutatingActionGateEnabled,
   });
 
   let browserManager: FridayBrowserManager | undefined;
@@ -3118,7 +3119,11 @@ export async function createFridayHub(
     if (routingWarning && providers.length > 0) {
       warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
       // Auto-configure fallback providers if none are set
-      if (routing.defaultProviderId && (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)) {
+      if (
+        !canonicalMutatingActionGateEnabled &&
+        routing.defaultProviderId &&
+        (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)
+      ) {
         const validatedAlternatives = providers
           .filter((p) => p.enabled && p.id !== routing.defaultProviderId)
           .slice(0, 3)
@@ -5901,6 +5906,7 @@ export async function createFridayHub(
     },
     system: systemRouteDeps,
     guideLens: guideLensRouteDeps,
+    canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
     uix: {
       service: uixService,
       readSetupCompletedAt,
@@ -7212,7 +7218,11 @@ export async function createFridayHub(
       }
 
       // 2d. Auto-detect LLM providers from environment variables
-      {
+      if (canonicalMutatingActionGateEnabled) {
+        console.warn(
+          "[friday] Skipping automatic provider setup/repair because canonical mutation gate is enabled; use approved provider setup routes.",
+        );
+      } else {
         const autoDetected = await autoDetectProvidersFromEnv(providerService);
         if (autoDetected.length > 0) {
           console.log(

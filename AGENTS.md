@@ -35,6 +35,17 @@ The external guideline principles are applied as behavior rules, not copied as a
 - Make surgical changes.
 - Define verifiable success criteria and loop until verified.
 
+## Execution Style Rules
+
+- Default to low process narration: keep user-facing updates concise and focused on current action, blocker, risk, verification, or result.
+- Do not dump internal planning steps when they are not needed for user decisions. Preserve important rationale when it affects safety, architecture, scope, or later phases.
+- Treat `Process_narration=false` as a communication preference, not as a guaranteed runtime setting. If a higher-priority instruction requires status updates or explanation, follow it.
+- Act as the orchestrator on complex work: split the task, assign clear read-only or implementation scopes, review agent outputs, send follow-up tasks when needed, and integrate only verified results.
+- Use isolated parallel agents by default for complex, high-risk, cross-module, audit, release, security, approval, provider, system, memory, workflow, skill, plugin, MCP, or reviewer work.
+- Do not force agents for small or local tasks where parallelism adds overhead, exhausts agent slots, or weakens control.
+- When delegating, give each agent concrete scope, acceptance criteria, no-fake-proof rules, and an explicit requirement to report evidence and unresolved risk.
+- When not in an explicitly forced Plan Mode, still plan before mutation: write or maintain a concise task list for non-trivial work, then execute against it. If a higher-priority instruction forces Plan Mode, follow Plan Mode and say so.
+
 ## Absolute Hard Rules
 
 - Do not change code, tests, config, docs, data, prompts, workflows, generated files, or repo state unless the user has clearly allowed that scope.
@@ -51,6 +62,8 @@ The external guideline principles are applied as behavior rules, not copied as a
 - Do not treat mock-only tests, green CI, stubs, skipped tests, FAST_MODE, disabled routes, or local assumptions as real closure proof.
 - Do not write or echo API keys, tokens, passkeys, cookies, secret fragments, or credentials into files, logs, screenshots, prompts, reports, tests, or commits.
 - Do not run destructive git commands, broad resets, broad checkout, or `git add .`.
+- Keep the codebase clean at all times: no unnecessary temp files, dead files, dead code, dead folders, noisy artifacts, or unexplained generated output.
+- Temporary files are allowed only when necessary for investigation or verification, must stay outside tracked source unless explicitly approved, and must be cleaned up or clearly accounted for before final handoff.
 
 ## Ask-Before-Act Rules
 
@@ -92,6 +105,18 @@ For bugs, failures, regressions, or reviewer blockers:
 
 Do not "just patch" without finding root cause. Do not stop after closing one route if equivalent routes remain open.
 
+## Measure Twice, Cut Once Policy
+
+For every non-trivial task:
+
+1. Read the controlling rules, current status, relevant diff, source, tests, and docs before editing.
+2. Identify the real goal, live entrypoints, state writes, approval/evidence boundaries, and likely downstream effects.
+3. Build a concise task list with verification criteria before mutation.
+4. Make the smallest complete change that closes the real route, not just the visible symptom.
+5. Verify the exact changed route and nearby regression paths before staging or handoff.
+
+If the root cause is not understood, keep investigating or ask the user. Do not patch from guesses.
+
 ## Surgical Change Protocol
 
 Every changed line must trace directly to the approved goal.
@@ -132,6 +157,13 @@ Before staging any meaningful change:
 - Inspect `git status --short --branch`.
 - Use two isolated read-only reviewers for meaningful subphases.
 - If either reviewer fails, fix only the blocker inside approved scope, then rerun verification and reviewers.
+
+## Infrastructure Uncertainty Protocol
+
+- Do not treat cache failures, expired indexes/statistics, noisy neighbors, infrastructure issues, network latency, memory pressure, or external dependency slowdown as proof of Friday behavior.
+- Do not treat those issues as a reason to weaken tests, change acceptance criteria, add fallback behavior, or hide failures.
+- When these issues appear, label the result as infrastructure-suspect, isolate the affected dependency, rerun when useful, and prefer deterministic local evidence before changing code.
+- If an external dependency is required for real proof, record the dependency, credentials source shape, network assumption, retry result, and whether the proof is release-grade or only diagnostic.
 
 ## Git Protocol
 

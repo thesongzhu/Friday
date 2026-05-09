@@ -78,6 +78,13 @@ export interface FridayRunCapabilityDoctorRequest {
   providerIds?: string[];
 }
 
+export interface FridayProviderCanonicalGateEvidence {
+  ticketId: string;
+  actionDigest: string;
+  approvalId: string;
+  planDigest?: string;
+}
+
 // ─── Response types ───
 
 export interface FridayListProvidersResponse {
@@ -100,24 +107,30 @@ export interface FridayGetProviderHealthSnapshotResponse {
   items: FridayProviderHealthSnapshotItem[];
 }
 
-export type FridayRunCapabilityDoctorResponse = FridayProviderCapabilityDoctorReport;
+export type FridayRunCapabilityDoctorResponse = FridayProviderCapabilityDoctorReport & {
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
+};
 
 export interface FridayCreateProviderResponse {
   provider: FridayProviderProfile;
   validation?: FridayProviderValidationState;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayUpdateProviderResponse {
   provider: FridayProviderProfile;
   validation?: FridayProviderValidationState;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayDeleteProviderResponse {
   deleted: true;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayValidateProviderResponse {
   validation: FridayProviderValidationState;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayGetProviderDoctorResponse {
@@ -138,6 +151,7 @@ export interface FridayPinProviderRouteRequest {
 
 export interface FridayPinProviderRouteResponse {
   pinned: true;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayClearProviderRoutePenaltyRequest {
@@ -149,6 +163,7 @@ export interface FridayClearProviderRoutePenaltyRequest {
 
 export interface FridayClearProviderRoutePenaltyResponse {
   cleared: boolean;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayListProviderAuthProfilesResponse {
@@ -161,6 +176,7 @@ export interface FridayActivateProviderAuthProfileRequest {
 
 export interface FridayActivateProviderAuthProfileResponse {
   profile: FridayAuthProfile;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayGetRoutingConfigResponse {
@@ -169,6 +185,7 @@ export interface FridayGetRoutingConfigResponse {
 
 export interface FridaySetRoutingConfigResponse {
   routing: FridayModelRoutingConfig;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayGetUsageSummaryResponse {
@@ -194,6 +211,7 @@ export interface FridayInitiateAnthropicOAuthRequest {
 
 export interface FridayInitiateAnthropicOAuthResponse {
   oauth: FridayOAuthLoginInitiation;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayCompleteAnthropicOAuthCallbackRequest {
@@ -207,6 +225,7 @@ export interface FridayCompleteAnthropicOAuthCallbackRequest {
 
 export interface FridayCompleteAnthropicOAuthCallbackResponse {
   oauth: FridayOAuthLoginResult;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayInitiateOpenAICodexDeviceOAuthRequest {
@@ -218,6 +237,7 @@ export interface FridayInitiateOpenAICodexDeviceOAuthRequest {
 
 export interface FridayInitiateOpenAICodexDeviceOAuthResponse {
   oauth: FridayOAuthDeviceAuthorizationRequest;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 export interface FridayCompleteOpenAICodexDeviceOAuthRequest {
@@ -230,4 +250,5 @@ export interface FridayCompleteOpenAICodexDeviceOAuthRequest {
 
 export interface FridayCompleteOpenAICodexDeviceOAuthResponse {
   oauth: FridayOAuthLoginResult;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }

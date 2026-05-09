@@ -1315,6 +1315,45 @@ describe("FridayProviderService", () => {
       });
     });
 
+    it("keeps explainRouting read-only when required capabilities are unverified", async () => {
+      process.env.TEST_KEY = "test-env-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$TEST_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: [],
+        });
+        markProviderValidated("test-id-0001");
+
+        await expect(service.explainRouting({
+          routingContext: {
+            estimatedInputTokens: 10,
+            complexity: "simple",
+            requiredCapabilities: ["text"],
+          },
+        })).rejects.toMatchObject({
+          code: "PROVIDER_NO_CANDIDATES",
+          message: expect.stringContaining("Configure and verify a capable provider"),
+        });
+
+        const provider = await service.getProvider("test-id-0001");
+        expect(provider?.config.runtimeCapabilities ?? []).toHaveLength(0);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.TEST_KEY;
+      }
+    });
+
     it("routes with context size, sensitivity, latency, and satellite availability constraints", async () => {
       const hosted = await service.createProvider({
         kind: "openai",
@@ -1544,6 +1583,43 @@ describe("FridayProviderService", () => {
       });
     });
 
+    it("does not auto-validate routing candidates when implicit provider mutation is disabled", async () => {
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        allowImplicitProviderStateMutation: false,
+      });
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$TEST_KEY",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(scopedService.runWithFallback({ run })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+      });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      await expect(scopedService.getProvider("test-id-0001")).resolves.toMatchObject({
+        config: {
+          validation: { status: "never" },
+        },
+      });
+    });
+
     it("runs with credential from env-ref", async () => {
       process.env.TEST_KEY = "test-env-key";
       try {
@@ -1619,6 +1695,49 @@ describe("FridayProviderService", () => {
       } finally {
         delete process.env.TEST_KEY;
       }
+    });
+
+    it("does not auto-run capability doctor when implicit provider mutation is disabled", async () => {
+      const scopedService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        allowImplicitProviderStateMutation: false,
+      });
+      await scopedService.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$TEST_KEY",
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      await scopedService.setRoutingConfig({
+        defaultProviderId: "test-id-0001",
+        fallbackProviderIds: [],
+      });
+      markProviderValidated("test-id-0001");
+      const run = vi.fn(async () => "should-not-run");
+
+      await expect(scopedService.runWithFallback({
+        routingContext: {
+          estimatedInputTokens: 10,
+          complexity: "simple",
+          requiredCapabilities: ["text"],
+        },
+        run,
+      })).rejects.toMatchObject({
+        code: "PROVIDER_NO_CANDIDATES",
+        message: expect.stringContaining("Configure and verify a capable provider"),
+      });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      const provider = await scopedService.getProvider("test-id-0001");
+      expect(provider?.config.runtimeCapabilities ?? []).toEqual([]);
     });
 
     it("prefers the active auth profile over provider config when resolving credentials", async () => {

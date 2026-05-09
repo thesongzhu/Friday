@@ -443,6 +443,7 @@ export function createFridayProviderService(
     usageRepo,
     nowIso: deps.nowIso,
   });
+  const allowImplicitProviderStateMutation = deps.allowImplicitProviderStateMutation !== false;
   const credentialHandles = createFridayEphemeralSecretHandleRegistry({
     nowMs: deps.nowMs,
   });
@@ -2366,6 +2367,9 @@ export function createFridayProviderService(
     candidates: FridayResolvedProviderRoute[];
     tenantContext?: FridayProviderTenantContext;
   }): Promise<boolean> {
+    if (!allowImplicitProviderStateMutation) {
+      return false;
+    }
     const providerIds = new Set<string>();
     for (const candidate of input.candidates) {
       if (shouldAutoValidateProviderForRouting(candidate.provider)) {
@@ -2633,33 +2637,6 @@ export function createFridayProviderService(
         && candidatesAfterCapabilityFilter.length === 0
         && Boolean(requiredCapabilities?.length);
 
-      if (capabilityFilterRemovedAllCandidates) {
-        await service.runCapabilityDoctor({
-          tenantContext: input.tenantContext,
-        });
-        currentProviders = deps.db.withReadConnection((db) => profileRepo.list(db));
-        ({
-          providers: currentProviders,
-          pinnedProvider,
-          candidates,
-        } = await buildValidatedRouteCandidates({
-          routing,
-          providers: currentProviders,
-          requestedModel: input.requestedModel,
-          requestedProviderId: input.requestedProviderId,
-          tenantContext: input.tenantContext,
-          autoValidate: false,
-        }));
-        candidatesBeforeCapabilityFilter = candidates;
-        candidatesAfterCapabilityFilter = applyRequiredCapabilityFilter({
-          candidates,
-          requiredCapabilities,
-        });
-        capabilityFilterRemovedAllCandidates =
-          candidatesBeforeCapabilityFilter.length > 0
-          && candidatesAfterCapabilityFilter.length === 0
-          && Boolean(requiredCapabilities?.length);
-      }
       candidates = candidatesAfterCapabilityFilter;
       const requiresNativeTools = input.routingContext?.requiresNativeTools === true;
       if (candidates.length === 0) {
@@ -3292,7 +3269,7 @@ export function createFridayProviderService(
         && candidatesAfterCapabilityFilter.length === 0
         && Boolean(requiredCapabilities?.length);
 
-      if (capabilityFilterRemovedAllCandidates) {
+      if (capabilityFilterRemovedAllCandidates && allowImplicitProviderStateMutation) {
         await service.runCapabilityDoctor({
           tenantContext: params.tenantContext,
         });

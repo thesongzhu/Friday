@@ -296,4 +296,10 @@ export interface CreateFridayProviderServiceDeps {
   nowMs?: () => number;
   /** Optional tenant credential resolver for multi-tenant deployments. */
   credentialResolver?: FridayProviderCredentialResolver;
+  /**
+   * Allow routing reads to perform implicit validation/capability writes.
+   * Protected gate-on profiles disable this so provider state changes only
+   * happen through explicit, approval-gated setup/doctor/validation routes.
+   */
+  allowImplicitProviderStateMutation?: boolean;
 }

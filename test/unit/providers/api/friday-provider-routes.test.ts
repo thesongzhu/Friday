@@ -3,9 +3,18 @@ import { createFridayProviderRoutes } from "#api";
 import type { FridayProviderService } from "#providers";
 import type { FridayProviderProfile, FridayProviderValidationState, FridayModelRoutingConfig } from "#providers";
 import type { FridayHttpContext } from "#api";
+import {
+  createFridayProviderSetupMutatingActionRequest,
+} from "../../../../src/api/http/routes/friday-provider-routes.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+  type FridayCanonicalApprovalResolution,
+} from "../../../../src/security/friday-mutating-action-gate.js";
 
 describe("FridayProviderRoutes", () => {
   const NOW = "2026-02-17T10:00:00.000Z";
+  const PLAN_DIGEST = "provider-setup-plan-1";
 
   const sampleProfile: FridayProviderProfile = {
     id: "prov-001",
@@ -74,6 +83,62 @@ describe("FridayProviderRoutes", () => {
       principal: null,
       ...overrides,
     };
+  }
+
+  function makeAdminCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
+    return makeCtx({
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin",
+        scopes: ["hub.admin"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+      ...overrides,
+    });
+  }
+
+  function makeProviderMutationApproval(input: {
+    action: string;
+    surface: string;
+    resourceId?: string;
+    parameters: Record<string, unknown>;
+    idempotencyKey?: string;
+  }): FridayCanonicalApprovalResolution {
+    const request = createFridayProviderSetupMutatingActionRequest({
+      action: input.action,
+      actor: {
+        kind: "user",
+        id: "user-1",
+        principalId: "user-1",
+      },
+      surface: input.surface,
+      resourceId: input.resourceId,
+      parameters: input.parameters,
+      planDigest: PLAN_DIGEST,
+      idempotencyKey: input.idempotencyKey,
+    });
+    return {
+      decision: "approved",
+      approvalId: `${input.action}-approval`,
+      decidedByPrincipalId: "user-1",
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-02-17T11:00:00.000Z",
+    };
+  }
+
+  function createProviderRoutesWithGate(mockService: FridayProviderService) {
+    return createFridayProviderRoutes({
+      providerService: mockService,
+      providerMutationGateRequired: true,
+      canonicalMutationGate: createFridayMutatingActionGate({
+        nowIso: () => NOW,
+        ticketIdGenerator: () => "ticket-1",
+      }),
+    });
   }
 
   function makeMockService(): FridayProviderService {
@@ -423,6 +488,62 @@ describe("FridayProviderRoutes", () => {
       expect(result).toHaveProperty("provider");
     });
 
+    it("providers.create requires canonical approval in gate-required profile before service mutation", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const createRoute = routes.find(
+        (r) => r.operationId === "providers.create",
+      )!;
+
+      const body = {
+        kind: "openai" as const,
+        name: "Test",
+        baseUrl: "https://test.com",
+        authMode: "api-key" as const,
+        api: "openai-completions" as const,
+        supportedModels: ["gpt-4o"],
+        planDigest: PLAN_DIGEST,
+      };
+
+      await expect(createRoute.handler(makeAdminCtx({ body }))).rejects.toMatchObject({
+        code: "CANONICAL_APPROVAL_REQUIRED",
+      });
+      expect(mockService.createProvider).not.toHaveBeenCalled();
+    });
+
+    it("providers.create accepts canonical approval in gate-required profile and strips control fields", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const createRoute = routes.find(
+        (r) => r.operationId === "providers.create",
+      )!;
+
+      const providerBody = {
+        kind: "openai" as const,
+        name: "Test",
+        baseUrl: "https://test.com",
+        authMode: "api-key" as const,
+        api: "openai-completions" as const,
+        supportedModels: ["gpt-4o"],
+      };
+      const body = {
+        ...providerBody,
+        planDigest: PLAN_DIGEST,
+        idempotencyKey: "provider-create-key",
+        canonicalApproval: makeProviderMutationApproval({
+          action: "providers.create",
+          surface: "api:/v1/providers/create",
+          parameters: providerBody,
+          idempotencyKey: "provider-create-key",
+        }),
+      };
+
+      const result = await createRoute.handler(makeAdminCtx({ body }));
+
+      expect(mockService.createProvider).toHaveBeenCalledWith(providerBody);
+      expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
+    });
+
     it("providers.create returns schema details and alias hints for invalid field names", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
@@ -502,6 +623,48 @@ describe("FridayProviderRoutes", () => {
       });
     });
 
+    it("providers.validate requires canonical approval in gate-required profile before service mutation", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const validateRoute = routes.find(
+        (r) => r.operationId === "providers.validate",
+      )!;
+
+      await expect(validateRoute.handler(makeAdminCtx({
+        params: { providerId: "prov-001" },
+        body: { planDigest: PLAN_DIGEST },
+      }))).rejects.toMatchObject({
+        code: "CANONICAL_APPROVAL_REQUIRED",
+      });
+      expect(mockService.validateProvider).not.toHaveBeenCalled();
+    });
+
+    it("providers.validate accepts canonical approval in gate-required profile", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const validateRoute = routes.find(
+        (r) => r.operationId === "providers.validate",
+      )!;
+
+      const result = await validateRoute.handler(makeAdminCtx({
+        params: { providerId: "prov-001" },
+        body: {
+          planDigest: PLAN_DIGEST,
+          canonicalApproval: makeProviderMutationApproval({
+            action: "providers.validate",
+            surface: "api:/v1/providers/validate",
+            resourceId: "prov-001",
+            parameters: { providerId: "prov-001" },
+          }),
+        },
+      }));
+
+      expect(mockService.validateProvider).toHaveBeenCalledWith("prov-001", {
+        ownerUserId: "user-1",
+      });
+      expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
+    });
+
     it("providers.doctor returns doctor report", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
@@ -562,6 +725,51 @@ describe("FridayProviderRoutes", () => {
           },
         ],
       });
+    });
+
+    it("capabilities.doctor requires canonical approval in gate-required profile before service mutation", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const doctorRoute = routes.find(
+        (r) => r.operationId === "capabilities.doctor",
+      )!;
+
+      await expect(doctorRoute.handler(makeAdminCtx({
+        body: {
+          providerIds: ["prov-001"],
+          planDigest: PLAN_DIGEST,
+        },
+      }))).rejects.toMatchObject({
+        code: "CANONICAL_APPROVAL_REQUIRED",
+      });
+      expect(mockService.runCapabilityDoctor).not.toHaveBeenCalled();
+    });
+
+    it("capabilities.doctor accepts canonical approval in gate-required profile", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const doctorRoute = routes.find(
+        (r) => r.operationId === "capabilities.doctor",
+      )!;
+
+      const result = await doctorRoute.handler(makeAdminCtx({
+        body: {
+          providerIds: ["prov-001"],
+          planDigest: PLAN_DIGEST,
+          canonicalApproval: makeProviderMutationApproval({
+            action: "capabilities.doctor",
+            surface: "api:/v1/capabilities/doctor",
+            resourceId: "prov-001",
+            parameters: { providerIds: ["prov-001"] },
+          }),
+        },
+      }));
+
+      expect(mockService.runCapabilityDoctor).toHaveBeenCalledWith({
+        ownerUserId: "user-1",
+        providerIds: ["prov-001"],
+      });
+      expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
     });
 
     it("capabilities.doctor rejects an explicit empty providerIds list", async () => {
@@ -754,6 +962,53 @@ describe("FridayProviderRoutes", () => {
 
       const result = await setRoutingRoute.handler(makeCtx({ body }));
       expect(result).toEqual({ routing: body });
+    });
+
+    it("providers.routing.set requires canonical approval in gate-required profile before service mutation", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const setRoutingRoute = routes.find(
+        (r) => r.operationId === "providers.routing.set",
+      )!;
+
+      const body = {
+        defaultProviderId: "prov-001",
+        fallbackProviderIds: [],
+        planDigest: PLAN_DIGEST,
+      };
+
+      await expect(setRoutingRoute.handler(makeAdminCtx({ body }))).rejects.toMatchObject({
+        code: "CANONICAL_APPROVAL_REQUIRED",
+      });
+      expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
+    });
+
+    it("providers.routing.set accepts canonical approval in gate-required profile", async () => {
+      const mockService = makeMockService();
+      const routes = createProviderRoutesWithGate(mockService);
+      const setRoutingRoute = routes.find(
+        (r) => r.operationId === "providers.routing.set",
+      )!;
+
+      const routingBody = {
+        defaultProviderId: "prov-001",
+        fallbackProviderIds: [],
+      };
+      const body = {
+        ...routingBody,
+        planDigest: PLAN_DIGEST,
+        canonicalApproval: makeProviderMutationApproval({
+          action: "providers.routing.set",
+          surface: "api:/v1/model-routing/set",
+          resourceId: "model-routing",
+          parameters: routingBody,
+        }),
+      };
+
+      const result = await setRoutingRoute.handler(makeAdminCtx({ body }));
+
+      expect(mockService.setRoutingConfig).toHaveBeenCalledWith(routingBody);
+      expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
     });
 
     it("providers.routing.set rejects non-boolean enforceRequestedModel", async () => {

@@ -37,7 +37,7 @@ import {
 import { createFridaySkillRunMutatingActionRequest } from "../../../src/api/http/routes/friday-skill-routes.js";
 
 const CANONICAL_STAGE_NOW = "2026-02-17T12:00:00.000Z";
-const PHASE32_TOKEN_SECRET = "phase32-token-secret";
+const PHASE32_TOKEN_SECRET = "phase32-token-secret"; // pragma: allowlist secret
 const PHASE32_PLAN_DIGEST = "phase32a-plan-digest";
 const PHASE32B_PROVIDER_PLAN_DIGEST = "phase32b-provider-plan-digest";
 
@@ -1895,6 +1895,92 @@ describe("FridayHub Bootstrap Integration", () => {
   });
 
   // ─── DeepSeek auto-detect from env ───
+
+  it("does not auto-register env providers when canonical gate is enabled", async () => {
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+    try {
+      const hub = await createIsolatedHub();
+      await hub.start();
+
+      const providers = await hub.providerService.listProviders();
+      const routing = await hub.providerService.getRoutingConfig();
+
+      expect(providers.find((p) => p.kind === "deepseek")).toBeUndefined();
+      expect(routing.defaultProviderId).toBe("");
+    } finally {
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
+
+  it("does not auto-configure provider fallbacks when canonical gate is enabled", async () => {
+    const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    process.env.FRIDAY_CANONICAL_GATE = "true";
+    try {
+      const hub = await createIsolatedHub();
+      const primary = await hub.providerService.createProvider({
+        kind: "openai",
+        name: "OpenAI Primary",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$BOOT_PROVIDER_PRIMARY_KEY",
+        supportedModels: ["gpt-4o-mini"],
+        defaultModel: "gpt-4o-mini",
+        validateOnSave: false,
+      });
+      const fallback = await hub.providerService.createProvider({
+        kind: "deepseek",
+        name: "DeepSeek Fallback",
+        baseUrl: "https://api.deepseek.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$BOOT_PROVIDER_FALLBACK_KEY",
+        supportedModels: ["deepseek-v4-pro"],
+        defaultModel: "deepseek-v4-pro",
+        validateOnSave: false,
+      });
+      const dbPath = path.join(lastStateDir ?? "", "friday.db");
+      const db = new Database(dbPath);
+      try {
+        for (const providerId of [primary.id, fallback.id]) {
+          const row = db.prepare("SELECT config_json FROM provider_profiles WHERE id = ?")
+            .get(providerId) as { config_json: string } | undefined;
+          expect(row).toBeDefined();
+          const config = JSON.parse(row!.config_json) as Record<string, unknown>;
+          db.prepare("UPDATE provider_profiles SET config_json = ? WHERE id = ?")
+            .run(JSON.stringify({
+              ...config,
+              validation: { status: "ok", checkedAt: "2026-05-08T00:00:00.000Z" },
+            }), providerId);
+        }
+      } finally {
+        db.close();
+      }
+      await hub.providerService.setRoutingConfig({
+        defaultProviderId: primary.id,
+        defaultModel: "gpt-4o-mini",
+        fallbackProviderIds: [],
+      });
+
+      await hub.start();
+
+      const routing = await hub.providerService.getRoutingConfig();
+      expect(routing.defaultProviderId).toBe(primary.id);
+      expect(routing.fallbackProviderIds).toEqual([]);
+    } finally {
+      if (previousCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = previousCanonicalGate;
+      }
+    }
+  });
 
   it("auto-registers DeepSeek provider with V4 defaults when DEEPSEEK_API_KEY is set", async () => {
     process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret

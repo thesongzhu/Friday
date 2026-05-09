@@ -5,6 +5,7 @@ import { FridayDomainError } from "#errors";
 import {
   createFridaySkillStageMutatingActionRequest,
 } from "#skills/converter";
+import { createFridayProviderSetupMutatingActionRequest } from "../../../../src/api/http/routes/friday-provider-routes.js";
 import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
@@ -24,6 +25,7 @@ const PRINCIPAL = {
   id: "user-1",
   principalId: "user-1",
 };
+const PROVIDER_PLAN_DIGEST = "deeplink-provider-plan-1";
 
 function makeProviderService(): FridayProviderService {
   return {
@@ -154,6 +156,45 @@ function makeSkillSourceApprovalOptions(url: string, secret?: string) {
   };
 }
 
+function makeProviderTemplateApprovalOptions() {
+  const parameters = {
+    kind: "openai",
+    name: "Imported OpenAI",
+    baseUrl: "https://api.openai.com",
+    backendKind: "http",
+    authMode: "api-key",
+    api: "openai-responses",
+    apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
+    supportedModels: ["gpt-4o-mini"],
+    defaultModel: "gpt-4o-mini",
+    deploymentKind: "hosted",
+    regionTag: "global",
+    enabled: true,
+    validateOnSave: false,
+  };
+  const request = createFridayProviderSetupMutatingActionRequest({
+    action: "providers.create",
+    actor: PRINCIPAL,
+    surface: "api:/v1/deeplink/apply",
+    parameters,
+    planDigest: PROVIDER_PLAN_DIGEST,
+    idempotencyKey: "deeplink-provider-1",
+  });
+  return {
+    actor: PRINCIPAL,
+    surface: "api:/v1/deeplink/apply",
+    idempotencyKey: "deeplink-provider-1",
+    planDigest: PROVIDER_PLAN_DIGEST,
+    canonicalApproval: {
+      decision: "approved" as const,
+      approvalId: "provider-template-approval-1",
+      decidedByPrincipalId: PRINCIPAL.principalId,
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-04-21T01:00:00.000Z",
+    },
+  };
+}
+
 describe("createFridayDeepLinkApplyService", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -167,6 +208,7 @@ describe("createFridayDeepLinkApplyService", () => {
       providerService,
       converterService: makeConverterService(),
       workflowImportExport: makeWorkflowImportExport(),
+      canonicalMutationGate: makeCanonicalMutationGate(),
     });
 
     const result = await service.apply({
@@ -178,7 +220,7 @@ describe("createFridayDeepLinkApplyService", () => {
         apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
         model: "gpt-4o-mini",
       },
-    });
+    }, makeProviderTemplateApprovalOptions());
 
     expect(result).toEqual({
       applied: true,
@@ -194,6 +236,66 @@ describe("createFridayDeepLinkApplyService", () => {
       supportedModels: ["gpt-4o-mini"],
       validateOnSave: false,
     }));
+  });
+
+  it("does not require provider-template canonical approval when provider mutation gate profile is off", async () => {
+    const providerService = makeProviderService();
+    const service = createFridayDeepLinkApplyService({
+      idGenerator: () => "id-1",
+      providerService,
+      converterService: makeConverterService(),
+      workflowImportExport: makeWorkflowImportExport(),
+      canonicalMutationGate: makeCanonicalMutationGate(),
+      providerMutationGateRequired: false,
+    });
+
+    const result = await service.apply({
+      version: 1,
+      type: "provider-template",
+      label: "Imported OpenAI",
+      providerTemplate: {
+        providerKind: "openai",
+        apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
+        model: "gpt-4o-mini",
+      },
+    });
+
+    expect(result.applied).toBe(true);
+    expect(providerService.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "openai",
+      name: "Imported OpenAI",
+      validateOnSave: false,
+    }));
+  });
+
+  it("requires canonical approval before provider-template payloads create providers", async () => {
+    const providerService = makeProviderService();
+    const service = createFridayDeepLinkApplyService({
+      idGenerator: () => "id-1",
+      providerService,
+      converterService: makeConverterService(),
+      workflowImportExport: makeWorkflowImportExport(),
+      canonicalMutationGate: makeCanonicalMutationGate(),
+    });
+
+    await expect(service.apply({
+      version: 1,
+      type: "provider-template",
+      label: "Imported OpenAI",
+      providerTemplate: {
+        providerKind: "openai",
+        apiKey: "sk-test", // pragma: allowlist secret -- fixture value for provider-template import coverage
+        model: "gpt-4o-mini",
+      },
+    }, {
+      actor: PRINCIPAL,
+      surface: "api:/v1/deeplink/apply",
+      idempotencyKey: "deeplink-provider-1",
+      planDigest: PROVIDER_PLAN_DIGEST,
+    })).rejects.toMatchObject({
+      code: "CANONICAL_APPROVAL_REQUIRED",
+    });
+    expect(providerService.createProvider).not.toHaveBeenCalled();
   });
 
   it("stages skill-source payloads as candidates without installing them", async () => {

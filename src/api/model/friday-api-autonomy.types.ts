@@ -201,21 +201,34 @@ export interface FridayRegisterChannelAdapterShadowRequest {
   shadowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordChannelAdapterCanaryRequest {
-  success: boolean;
-  evaluatedAt?: string;
+  runtimeVersion: string;
+  providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteChannelAdapterUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackChannelAdapterUpgradeRequest {
   runtimeVersion: string;
   providerModel?: string;
+  reason?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayPromoteSkillUpgradeRequest {
@@ -330,6 +343,7 @@ export interface FridayChannelAdapterUpgradeActionResponse {
     canaryStats?: FridayAutonomyCanaryStats;
   };
   status: FridayAutonomyUpgradeStatusItem | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface FridayCapabilityAcquisitionPlanRequest {

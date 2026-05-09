@@ -469,6 +469,33 @@ function resolveTenantIdFromContext(ctx: {
   );
 }
 
+const API_RUNTIME_CANONICAL_GATE_TRUE_VALUES = new Set(["1", "true", "yes", "on", "enabled"]);
+const API_RUNTIME_CANONICAL_GATE_FALSE_VALUES = new Set(["0", "false", "no", "off", "disabled"]);
+
+export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = env.FRIDAY_CANONICAL_GATE?.trim().toLowerCase();
+  const protectedProfile = env.NODE_ENV?.trim().toLowerCase() === "production"
+    || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+  if (explicit) {
+    if (API_RUNTIME_CANONICAL_GATE_TRUE_VALUES.has(explicit)) {
+      return true;
+    }
+    if (API_RUNTIME_CANONICAL_GATE_FALSE_VALUES.has(explicit)) {
+      if (protectedProfile) {
+        throw new Error(
+          "[friday] FRIDAY_CANONICAL_GATE cannot be disabled in production/release profiles. " +
+            "Use a development or test profile for mock lanes.",
+        );
+      }
+      return false;
+    }
+    throw new Error(
+      `[friday] Invalid FRIDAY_CANONICAL_GATE value "${env.FRIDAY_CANONICAL_GATE}". Use true or false.`,
+    );
+  }
+  return protectedProfile;
+}
+
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
   const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
@@ -480,6 +507,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     approvalSignatureSecret: deps.tokenSecret,
     requireApprovalSignature: true,
   });
+  const providerMutationGateRequired = deps.canonicalMutatingActionGate
+    ?? resolveApiRuntimeCanonicalGateRequired(process.env);
 
   // Auth
   const tokenRepo = createFridayApiTokenRepository();
@@ -808,6 +837,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     converterService: deps.converterService,
     workflowImportExport: builderRuntime.importExport,
     canonicalMutationGate,
+    providerMutationGateRequired,
   });
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
@@ -997,6 +1027,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         stateRepo: subjectUpgradeStateRepo,
         channelRegistry: deps.channels.registry,
         nowIso: deps.nowIso,
+        stateDir,
+        canonicalMutationGate,
       })
     : undefined;
   const autonomyPolicyService = createFridayAutonomyPolicyService({
@@ -1542,26 +1574,49 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             shadowVersionId: input.shadowVersionId,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         recordCanary: (input) =>
           channelAdapterUpgradeLifecycle.recordCanaryResult({
             channelKind: input.channelKind,
-            success: input.success,
-            evaluatedAt: input.evaluatedAt,
+            runtimeVersion: input.runtimeVersion,
+            providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         promote: (input) =>
           channelAdapterUpgradeLifecycle.promote({
             channelKind: input.channelKind,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         rollback: (input) =>
           channelAdapterUpgradeLifecycle.rollback({
             channelKind: input.channelKind,
             runtimeVersion: input.runtimeVersion,
             providerModel: input.providerModel,
+            reason: input.reason,
+            actor: input.actor,
+            surface: input.surface,
+            planDigest: input.planDigest,
+            idempotencyKey: input.idempotencyKey,
+            canonicalApproval: input.canonicalApproval,
           }),
         getStatus: (channelKind) => autonomyUpgradeStatus.get("channel_adapter", channelKind),
+        getEvidence: (input) =>
+          channelAdapterUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
   })) {
@@ -2238,7 +2293,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register fleet routes
-  for (const route of createFridayFleetRoutes({ fleetService: fleet })) {
+  for (const route of createFridayFleetRoutes({ fleetService: fleet, canonicalMutationGate })) {
     routes.register(route);
   }
 
@@ -2469,6 +2524,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register provider routes (BYOK)
   for (const route of createFridayProviderRoutes({
     providerService: deps.providerService,
+    canonicalMutationGate,
+    providerMutationGateRequired,
   })) {
     routes.register(route);
   }

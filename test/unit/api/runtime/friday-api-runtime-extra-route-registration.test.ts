@@ -19,18 +19,50 @@ import type {
   FridaySystemRoutesDeps,
   FridayUixRoutesDeps,
 } from "#api";
+import { FridayDomainError } from "#errors";
 import type { FridayProviderService } from "#providers";
+import type { FridayProviderProfile } from "#providers";
 import type { FridaySqliteLayer } from "#state";
+import { signFridayCanonicalApproval } from "../../../../src/security/friday-mutating-action-gate.js";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 
 const NOW = "2026-02-27T00:00:00.000Z";
 const allocatedDbs: FridaySqliteLayer[] = [];
+const providerBody = {
+  kind: "openai" as const,
+  name: "OpenAI",
+  baseUrl: "https://api.openai.com",
+  authMode: "api-key" as const,
+  api: "openai-completions" as const,
+  supportedModels: ["gpt-4o"],
+};
+
+function sampleProviderProfile(input: Partial<FridayProviderProfile> = {}): FridayProviderProfile {
+  return {
+    id: "p-1",
+    kind: "openai",
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com",
+    enabled: true,
+    defaultModel: "gpt-4o",
+    config: {
+      api: "openai-completions",
+      authMode: "api-key",
+      keySource: { kind: "env-ref", envVar: "OPENAI_API_KEY" },
+      supportedModels: ["gpt-4o"],
+      validation: { status: "ok", checkedAt: NOW },
+    },
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...input,
+  };
+}
 
 function makeMockProviderService(): FridayProviderService {
   return {
     listProviders: vi.fn(async () => []),
     getProvider: vi.fn(async () => null),
-    createProvider: vi.fn(async () => ({} as never)),
+    createProvider: vi.fn(async () => sampleProviderProfile()),
     updateProvider: vi.fn(async () => ({} as never)),
     deleteProvider: vi.fn(async () => undefined),
     validateProvider: vi.fn(async () => ({ status: "ok" as const, checkedAt: NOW })),
@@ -156,6 +188,232 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("autofix."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("agent.loop."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("uix."))).toBe(false);
+  });
+
+  it("does not require provider setup canonical approval when canonical gate profile is off", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: false,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "providers.create")!;
+
+    await route.handler({
+      requestId: "req-provider-create-off",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: providerBody,
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    });
+
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+  });
+
+  it("requires signed provider setup canonical approval when runtime canonical gate profile is on", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: true,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "providers.create")!;
+    const baseCtx = {
+      requestId: "req-provider-create-on",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: {
+        ...providerBody,
+        planDigest: "provider-runtime-plan-1",
+      },
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    };
+
+    let actionDigest = "";
+    await route.handler(baseCtx).catch((error: unknown) => {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      const domainError = error as FridayDomainError;
+      expect(domainError.code).toBe("CANONICAL_APPROVAL_REQUIRED");
+      const gate = domainError.details.canonicalGate as { actionDigest?: string } | undefined;
+      actionDigest = gate?.actionDigest ?? "";
+    });
+    expect(actionDigest).toBeTruthy();
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+
+    const result = await route.handler({
+      ...baseCtx,
+      body: {
+        ...baseCtx.body,
+        canonicalApproval: signFridayCanonicalApproval({
+          decision: "approved",
+          approvalId: "provider-runtime-approval",
+          decidedByPrincipalId: "tenant-a",
+          actionDigest,
+          expiresAt: "2026-02-27T01:00:00.000Z",
+        }, "test-secret"),
+      },
+    });
+
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+    expect(result).toHaveProperty("canonicalGate.ticketId");
+  });
+
+  it("does not require provider-template deeplink canonical approval when provider gate profile is off", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: false,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "deeplink.apply")!;
+
+    await route.handler({
+      requestId: "req-deeplink-provider-off",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: {
+        confirmed: true,
+        payload: {
+          version: 1,
+          type: "provider-template",
+          label: "Imported OpenAI",
+          providerTemplate: {
+            providerKind: "openai",
+            apiKey: "sk-test", // pragma: allowlist secret -- fixture value for deeplink provider import coverage
+            model: "gpt-4o-mini",
+          },
+        },
+      },
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    });
+
+    expect(providerService.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "openai",
+      name: "Imported OpenAI",
+      validateOnSave: false,
+    }));
+  });
+
+  it("requires provider-template deeplink canonical approval when provider gate profile is on", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: true,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "deeplink.apply")!;
+
+    await expect(route.handler({
+      requestId: "req-deeplink-provider-on",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: {
+        confirmed: true,
+        planDigest: "deeplink-provider-runtime-plan-1",
+        payload: {
+          version: 1,
+          type: "provider-template",
+          label: "Imported OpenAI",
+          providerTemplate: {
+            providerKind: "openai",
+            apiKey: "sk-test", // pragma: allowlist secret -- fixture value for deeplink provider import coverage
+            model: "gpt-4o-mini",
+          },
+        },
+      },
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    })).rejects.toMatchObject({
+      code: "CANONICAL_APPROVAL_REQUIRED",
+    });
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("does not require model-routing canonical approval when canonical gate profile is off", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: false,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "providers.routing.set")!;
+    const routingBody = {
+      defaultProviderId: "p-1",
+      fallbackProviderIds: [],
+    };
+
+    await route.handler({
+      requestId: "req-routing-off",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: routingBody,
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    });
+
+    expect(providerService.setRoutingConfig).toHaveBeenCalledWith(routingBody);
+  });
+
+  it("requires signed model-routing canonical approval when runtime canonical gate profile is on", async () => {
+    const providerService = makeMockProviderService();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      providerService,
+      canonicalMutatingActionGate: true,
+    });
+    const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "providers.routing.set")!;
+    const baseCtx = {
+      requestId: "req-routing-on",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: {
+        defaultProviderId: "p-1",
+        fallbackProviderIds: [],
+        planDigest: "provider-routing-plan-1",
+      },
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+    };
+
+    let actionDigest = "";
+    await route.handler(baseCtx).catch((error: unknown) => {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      const domainError = error as FridayDomainError;
+      expect(domainError.code).toBe("CANONICAL_APPROVAL_REQUIRED");
+      const gate = domainError.details.canonicalGate as { actionDigest?: string } | undefined;
+      actionDigest = gate?.actionDigest ?? "";
+    });
+    expect(actionDigest).toBeTruthy();
+    expect(providerService.setRoutingConfig).not.toHaveBeenCalled();
+
+    const result = await route.handler({
+      ...baseCtx,
+      body: {
+        ...baseCtx.body,
+        canonicalApproval: signFridayCanonicalApproval({
+          decision: "approved",
+          approvalId: "provider-routing-runtime-approval",
+          decidedByPrincipalId: "tenant-a",
+          actionDigest,
+          expiresAt: "2026-02-27T01:00:00.000Z",
+        }, "test-secret"),
+      },
+    });
+
+    expect(providerService.setRoutingConfig).toHaveBeenCalledWith({
+      defaultProviderId: "p-1",
+      fallbackProviderIds: [],
+    });
+    expect(result).toHaveProperty("canonicalGate.ticketId");
   });
 
   it("derives health enabled channel kinds from a live runtime getter", async () => {

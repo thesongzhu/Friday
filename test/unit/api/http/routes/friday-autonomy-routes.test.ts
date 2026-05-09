@@ -15,6 +15,9 @@ import {
   createFridayPluginLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-plugin-upgrade-lifecycle-service.js";
 import {
+  createFridayChannelAdapterLifecycleMutatingActionRequest,
+} from "../../../../../src/autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
+import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
@@ -30,6 +33,7 @@ const principal = {
 const PROVIDER_PLAN_DIGEST = "provider-plan-1";
 const MCP_PLAN_DIGEST = "mcp-plan-1";
 const PLUGIN_PLAN_DIGEST = "plugin-plan-1";
+const CHANNEL_PLAN_DIGEST = "channel-plan-1";
 
 function makeContext(body: Record<string, unknown>) {
   return {
@@ -72,6 +76,18 @@ function makePluginContext(body: Record<string, unknown>) {
     requestId: "req-1",
     receivedAt: "2026-05-07T18:00:00.000Z",
     params: { pluginId: "plugin-1" },
+    query: {},
+    body,
+    headers: {},
+    principal,
+  };
+}
+
+function makeChannelContext(body: Record<string, unknown>) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: { channelKind: "webchat" },
     query: {},
     body,
     headers: {},
@@ -206,6 +222,38 @@ function makePluginApproval(input: {
   return {
     decision: "approved",
     approvalId: `plugin-${input.action}-approval`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-05-07T19:00:00.000Z",
+  };
+}
+
+function makeChannelApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  shadowVersionId?: string;
+  runtimeVersion?: string;
+  planDigest?: string;
+}): FridayCanonicalApprovalResolution {
+  const planDigest = input.planDigest ?? CHANNEL_PLAN_DIGEST;
+  const request = createFridayChannelAdapterLifecycleMutatingActionRequest({
+    action: input.action,
+    channelKind: "webchat",
+    shadowVersionId: input.shadowVersionId ?? "webchat@shadow",
+    runtimeVersion: input.runtimeVersion ?? "runtime-v1",
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: `api:/v1/autonomy/channels/${input.action}`,
+    planDigest,
+    rollback: input.action === "rollback"
+      ? { planned: true, planDigest, actions: ["channel_adapters.lifecycle.promote"] }
+      : undefined,
+  });
+  return {
+    decision: "approved",
+    approvalId: `channel-${input.action}-approval`,
     decidedByPrincipalId: "user-1",
     actionDigest: createFridayMutatingActionDigest(request),
     expiresAt: "2026-05-07T19:00:00.000Z",
@@ -431,6 +479,49 @@ function createPluginRoutes() {
     },
   });
   return { routes, registerShadow, recordCanary, reviewEnable };
+}
+
+function createChannelRoutes() {
+  const evidence = {
+    channelKind: "webchat",
+    stage: "shadow",
+    canarySuccessCount: 0,
+    canaryFailureCount: 0,
+  };
+  const registerShadow = vi.fn(async () => undefined);
+  const recordCanary = vi.fn(async () => undefined);
+  const routes = createFridayAutonomyRoutes({
+    listUpgradeStatus: () => ({ items: [] }),
+    channelAdapterActions: {
+      registerShadow,
+      recordCanary,
+      promote: vi.fn(async () => undefined),
+      rollback: vi.fn(async () => undefined),
+      getStatus: () => ({
+        kind: "channel_adapter",
+        id: "webchat",
+        displayName: "webchat",
+        status: "connected",
+        compatibilityStatus: "compatible",
+        promotionChannel: "shadow",
+        recordedCompatibilityStatus: "compatible",
+        derivedCompatibilityStatus: "compatible",
+        requiresAdaptation: false,
+        statusDrift: false,
+        findings: [],
+        strategy: "noop",
+        nextStage: "promoted",
+        reasons: [],
+        details: {
+          running: true,
+          credentialStatus: "unknown",
+          authMode: "none",
+        },
+      }),
+      getEvidence: vi.fn(() => evidence),
+    },
+  });
+  return { routes, registerShadow, recordCanary };
 }
 
 describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
@@ -671,5 +762,56 @@ describe("createFridayAutonomyRoutes plugin lifecycle approval", () => {
     }));
     expect(result).toHaveProperty("plugin.promotionChannel", "active");
     expect(result).toHaveProperty("evidence.pluginId", "plugin-1");
+  });
+});
+
+describe("createFridayAutonomyRoutes channel adapter lifecycle approval", () => {
+  it("requires canonical approval before channel shadow can mutate", async () => {
+    const { routes, registerShadow } = createChannelRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.channels.shadow")!;
+
+    await expect(route.handler(makeChannelContext({
+      shadowVersionId: "webchat@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: CHANNEL_PLAN_DIGEST,
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+
+    expect(registerShadow).not.toHaveBeenCalled();
+  });
+
+  it("passes canonical approval metadata into channel shadow and returns evidence", async () => {
+    const { routes, registerShadow } = createChannelRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.channels.shadow")!;
+
+    const result = await route.handler(makeChannelContext({
+      shadowVersionId: "webchat@shadow",
+      runtimeVersion: "runtime-v1",
+      planDigest: CHANNEL_PLAN_DIGEST,
+      canonicalApproval: makeChannelApproval({ action: "shadow" }),
+    }));
+
+    expect(registerShadow).toHaveBeenCalledWith(expect.objectContaining({
+      channelKind: "webchat",
+      shadowVersionId: "webchat@shadow",
+      canonicalApproval: expect.objectContaining({ approvalId: "channel-shadow-approval" }),
+      actor: expect.objectContaining({ principalId: "user-1" }),
+      surface: "api:/v1/autonomy/channels/shadow",
+      planDigest: CHANNEL_PLAN_DIGEST,
+    }));
+    expect(result).toHaveProperty("evidence.stage", "shadow");
+  });
+
+  it("rejects caller-supplied channel canary success because proof must run internally", async () => {
+    const { routes, recordCanary } = createChannelRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.channels.canary")!;
+
+    await expect(route.handler(makeChannelContext({
+      runtimeVersion: "runtime-v1",
+      success: true,
+      planDigest: CHANNEL_PLAN_DIGEST,
+      canonicalApproval: makeChannelApproval({ action: "canary" }),
+    }))).rejects.toMatchObject({ code: "CHANNEL_ADAPTER_CANARY_RUNTIME_PROOF_REQUIRED" });
+
+    expect(recordCanary).not.toHaveBeenCalled();
   });
 });

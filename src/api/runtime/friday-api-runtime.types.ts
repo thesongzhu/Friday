@@ -240,6 +240,8 @@ export interface CreateFridayApiRuntimeDeps {
   system?: FridaySystemRoutesDeps;
   /** Optional: read-only native guidance overlay route surface. */
   guideLens?: FridayGuideLensRoutesDeps;
+  /** Whether canonical mutating approval gate is required for profile-gated API mutations. */
+  canonicalMutatingActionGate?: boolean;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
