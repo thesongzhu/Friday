@@ -10,6 +10,7 @@ export interface FridayWorkflowBuilderPublishInput {
   createdByUserId?: UUID;
   changeNote?: string;
   publishNow: boolean;
+  externalReviewConfirmed?: boolean;
 }
 
 // ─── Publish Result ───

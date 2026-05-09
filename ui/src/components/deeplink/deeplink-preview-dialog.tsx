@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { apiClient } from "@/lib/api/client";
 
 interface DeepLinkCheck {
@@ -24,6 +25,29 @@ interface DeepLinkPreviewResponse {
   preview: DeepLinkPreviewResult;
 }
 
+interface DeepLinkApplyResponse {
+  result: {
+    applied: boolean;
+    resourceType: string;
+    resourceId?: string;
+    workflowId?: string;
+    resourceUrl?: string;
+    message: string;
+  };
+}
+
+type DeepLinkRequestBody =
+  | { uri: string; confirmed?: boolean }
+  | { payload: unknown; confirmed?: boolean };
+
+function buildDeepLinkRequestBody(input: string, confirmed?: boolean): DeepLinkRequestBody {
+  const trimmed = input.trim();
+  const base = trimmed.startsWith("friday://")
+    ? { uri: trimmed }
+    : { payload: JSON.parse(trimmed) };
+  return confirmed === true ? { ...base, confirmed: true } : base;
+}
+
 function checkLevelBadge(level: string) {
   switch (level) {
     case "blocking":
@@ -36,17 +60,34 @@ function checkLevelBadge(level: string) {
 }
 
 export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: () => void }) {
+  const navigate = useNavigate();
   const [uri, setUri] = useState("");
   const [preview, setPreview] = useState<DeepLinkPreviewResult | null>(null);
+  const [applyResult, setApplyResult] = useState<DeepLinkApplyResponse["result"] | null>(null);
 
   const previewMutation = useMutation({
     mutationFn: async (input: string) => {
-      const body = input.startsWith("friday://") ? { uri: input } : { payload: JSON.parse(input) };
+      const body = buildDeepLinkRequestBody(input);
       const data = await apiClient.post<typeof body, DeepLinkPreviewResponse>("/v1/deeplink/preview", body);
       return data.preview;
     },
     onSuccess: (data) => setPreview(data),
   });
+  const applyMutation = useMutation({
+    mutationFn: async (input: string) => {
+      const body = buildDeepLinkRequestBody(input, true);
+      const data = await apiClient.post<typeof body, DeepLinkApplyResponse>("/v1/deeplink/apply", body);
+      return data.result;
+    },
+    onSuccess: (result) => {
+      setApplyResult(result);
+      if (result.resourceType === "workflow-template" && result.resourceUrl) {
+        navigate(result.resourceUrl);
+      }
+      props.onApplied?.();
+    },
+  });
+  const canApplyFromUi = preview?.valid === true && preview.payload.type === "workflow-template";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={props.onClose} role="presentation">
@@ -58,7 +99,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
       >
         <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">Import from URL</h2>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview it before canonical approval is wired.
+          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview it before importing.
         </p>
 
         <textarea
@@ -66,12 +107,17 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
           rows={3}
           placeholder="friday://skill-source?url=https://github.com/user/repo"
           value={uri}
-          onChange={(e) => { setUri(e.target.value); setPreview(null); }}
+          onChange={(e) => { setUri(e.target.value); setPreview(null); setApplyResult(null); }}
         />
 
         {previewMutation.error ? (
           <p className="mt-2 text-xs text-red-600 ">
             {previewMutation.error instanceof Error ? previewMutation.error.message : "Preview failed"}
+          </p>
+        ) : null}
+        {applyMutation.error ? (
+          <p className="mt-2 text-xs text-red-600 ">
+            {applyMutation.error instanceof Error ? applyMutation.error.message : "Import failed"}
           </p>
         ) : null}
 
@@ -122,15 +168,30 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
               </div>
             ) : null}
 
+            {applyResult ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+                {applyResult.message}
+              </div>
+            ) : null}
+
             <div className="flex justify-end gap-2">
               <button type="button" onClick={props.onClose} className="rounded-xl border border-[color:var(--color-border-soft)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-hover)]">Cancel</button>
-              <button type="button" disabled className="rounded-xl bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] opacity-50">
-                Preview Only
+              <button
+                type="button"
+                disabled={!canApplyFromUi || applyMutation.isPending || Boolean(applyResult)}
+                onClick={() => applyMutation.mutate(uri)}
+                className="rounded-xl bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-strong)] disabled:opacity-50"
+              >
+                {preview.payload.type === "workflow-template"
+                  ? applyMutation.isPending
+                    ? "Importing..."
+                    : "Import Draft"
+                  : "Approval Required"}
               </button>
             </div>
 
             <p className="text-xs text-[color:var(--color-text-tertiary)]">
-              Canonical approval UX is not wired in Phase 3.1. This dialog intentionally stops at preview instead of staging without a proof ticket.
+              Skill and provider imports require canonical approval before staging or writing. Workflow templates import as drafts only and require review confirmation before publish, deploy, or run.
             </p>
           </div>
         )}

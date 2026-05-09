@@ -275,10 +275,13 @@ describe("createFridayWorkflowProductService", () => {
       runNow: true,
       resyncTriggers: true,
       includeExport: true,
+      externalReviewConfirmed: true,
     });
 
     expect(builderRuntime.compositor.compileDraft).toHaveBeenCalledWith("draft-1");
-    expect(builderRuntime.compositor.publishDraft).toHaveBeenCalled();
+    expect(builderRuntime.compositor.publishDraft).toHaveBeenCalledWith(expect.objectContaining({
+      externalReviewConfirmed: true,
+    }));
     expect(workflowRuntime.triggers.syncPublishedVersionTriggers).toHaveBeenCalledWith("wf-1");
     expect(workflowRuntime.execution.startRun).toHaveBeenCalled();
     expect(builderRuntime.importExport.exportDraft).toHaveBeenCalledWith("draft-1");

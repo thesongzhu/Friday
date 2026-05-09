@@ -896,6 +896,7 @@ function WorkflowBuilderEditor() {
   const [dropFeedback, setDropFeedback] = useState<CanvasDropFeedbackState | null>(null);
   const [publishedVersionNumber, setPublishedVersionNumber] = useState<number | null>(null);
   const [localDraftOverride, setLocalDraftOverride] = useState<FridayWorkflowDraftEntity | null>(null);
+  const [externalDraftReviewConfirmed, setExternalDraftReviewConfirmed] = useState(false);
   const historyRef = useRef<EditorSnapshot[]>([]);
   const historyIndexRef = useRef(-1);
   const latestDraftStageKeyRef = useRef<string | null>(null);
@@ -1013,6 +1014,7 @@ function WorkflowBuilderEditor() {
   const selectedTemplate = templateDetailQuery.data?.template ?? selectedRegularTemplate;
   const activeDraft = localDraftOverride ?? draftQuery.data?.draft ?? null;
   const activeDraftFingerprint = activeDraft ? `${activeDraft.draftId}:${activeDraft.revision}` : null;
+  const externalDraftReviewRequired = activeDraft?.sourceReview?.requiresReviewBeforePublish === true;
   const isDraftHydrated = activeDraftFingerprint !== null && loadedDraftKeyRef.current === activeDraftFingerprint;
   const selectedNode = selectedNodeIds[0]
     ? nodes.find((node) => node.id === selectedNodeIds[0]) ?? null
@@ -1268,6 +1270,10 @@ function WorkflowBuilderEditor() {
       window.performance.mark("friday-workflow-builder-draft-data-ready");
     }
     latestDraftStageKeyRef.current = activeDraftFingerprint;
+  }, [activeDraftFingerprint]);
+
+  useEffect(() => {
+    setExternalDraftReviewConfirmed(false);
   }, [activeDraftFingerprint]);
 
   useEffect(() => {
@@ -1795,6 +1801,9 @@ function WorkflowBuilderEditor() {
       if (!requestedWorkflowId || !activeDraft || !lockState?.lockToken || !user?.id) {
         throw new Error("Workflow, draft, user, and edit lock are required before publish.");
       }
+      if (externalDraftReviewRequired && !externalDraftReviewConfirmed) {
+        throw new Error("Review the external workflow template and confirm it before publishing.");
+      }
       const persisted = await persistDraft("save");
       if (!persisted) {
         throw new Error("Draft save failed before publish.");
@@ -1814,6 +1823,7 @@ function WorkflowBuilderEditor() {
         createdByUserId: user.id,
         changeNote,
         publishNow: true,
+        externalReviewConfirmed: externalDraftReviewRequired ? externalDraftReviewConfirmed : undefined,
       });
     },
     onSuccess: async (result) => {
@@ -2716,6 +2726,9 @@ function WorkflowBuilderEditor() {
             compilePending={compileMutation.isPending}
             onCompile={() => compileMutation.mutate()}
             publishPending={publishMutation.isPending}
+            externalDraftReviewRequired={externalDraftReviewRequired}
+            externalDraftReviewConfirmed={externalDraftReviewConfirmed}
+            onExternalDraftReviewConfirmedChange={setExternalDraftReviewConfirmed}
             onPublish={() => publishMutation.mutate()}
             readonlyReason={readonlyReason}
             publishedVersionNumber={publishedVersionNumber}

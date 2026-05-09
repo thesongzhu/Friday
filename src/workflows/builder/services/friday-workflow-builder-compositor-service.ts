@@ -75,6 +75,21 @@ export function createFridayWorkflowBuilderCompositorService(
       if (draft.workflowId !== input.workflowId) {
         throw new FridayDomainError("DRAFT_WORKFLOW_MISMATCH", "Draft does not belong to the specified workflow", { httpStatus: 400 });
       }
+      if (draft.sourceReview?.requiresReviewBeforePublish && input.externalReviewConfirmed !== true) {
+        throw new FridayDomainError(
+          "WORKFLOW_EXTERNAL_DRAFT_REVIEW_REQUIRED",
+          "Externally imported workflow drafts require explicit review confirmation before publish or deploy.",
+          {
+            httpStatus: 403,
+            details: {
+              draftId: draft.draftId,
+              workflowId: draft.workflowId,
+              source: draft.sourceReview.source,
+              sourceUrl: draft.sourceReview.sourceUrl,
+            },
+          },
+        );
+      }
 
       // Use draft-derived workflowId for all subsequent operations
       const workflowId = draft.workflowId;

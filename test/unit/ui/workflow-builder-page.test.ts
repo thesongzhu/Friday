@@ -195,7 +195,17 @@ function defineGlobal<K extends keyof typeof globalThis>(key: K, value: (typeof 
   });
 }
 
-function buildDraft() {
+function triggerCheckboxChange(input: HTMLInputElement, checked: boolean): void {
+  input.checked = checked;
+  const propsKey = Object.keys(input).find((key) => key.startsWith("__reactProps$"));
+  const props = propsKey ? (input as unknown as Record<string, { onChange?: (event: { target: HTMLInputElement }) => void }>)[propsKey] : undefined;
+  if (!props?.onChange) {
+    throw new Error("React checkbox change handler was not attached");
+  }
+  props.onChange({ target: input });
+}
+
+function buildDraft(overrides: Record<string, unknown> = {}) {
   return {
     draftId: "draft-1",
     workflowId: "workflow-1",
@@ -267,6 +277,7 @@ function buildDraft() {
       intervalMs: 15000,
       lastSavedAt: "2026-03-25T00:00:00.000Z",
     },
+    ...overrides,
   };
 }
 
@@ -609,6 +620,65 @@ describe("workflow builder page", () => {
     expect(getByTestId("workflow-builder-issue-nav-status").textContent).toContain("Issue 1 of 2");
     expect(getByTestId("workflow-builder-node-step-a").getAttribute("data-active-issue")).toBe("true");
     expect(mocks.setCenter).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires explicit review confirmation before publishing external drafts", async () => {
+    const externalDraft = buildDraft({
+      sourceReview: {
+        source: "deeplink.workflow_template",
+        sourceUrl: "https://example.com/template.json",
+        importedAt: "2026-03-25T00:00:00.000Z",
+        requiresReviewBeforePublish: true,
+      },
+    });
+    mocks.listDrafts.mockResolvedValue({ items: [externalDraft] });
+    mocks.getDraft.mockResolvedValue({ draft: externalDraft });
+    mocks.saveDraft.mockResolvedValue({
+      draft: {
+        ...externalDraft,
+        revision: 4,
+        updatedAt: "2026-03-25T00:10:00.000Z",
+      },
+    });
+    mocks.compileDraft.mockResolvedValue({
+      compiled: {
+        schemaVersion: "2.0",
+        workflowId: "workflow-1",
+        graph: { nodes: [], edges: [] },
+      },
+      validation: {
+        valid: true,
+        generatedAt: "2026-03-25T00:06:00.000Z",
+        issues: [],
+      },
+    });
+
+    await renderPage();
+    await waitFor(
+      () => container?.textContent ?? "",
+      (value) => value.includes("I reviewed this external workflow template"),
+    );
+    expect(getButtonByText("Publish").disabled).toBe(true);
+
+    await act(async () => {
+      const checkbox = getByTestId<HTMLInputElement>("workflow-builder-external-draft-review-confirm");
+      triggerCheckboxChange(checkbox, true);
+      await flushCycles();
+    });
+    expect(getButtonByText("Publish").disabled).toBe(false);
+
+    await act(async () => {
+      getButtonByText("Publish").click();
+      await flushCycles();
+    });
+    await waitFor(
+      () => mocks.publishDraft.mock.calls.length,
+      (value) => value > 0,
+    );
+
+    expect(mocks.publishDraft).toHaveBeenCalledWith("workflow-1", "draft-1", expect.objectContaining({
+      externalReviewConfirmed: true,
+    }));
   });
 
   it("shows drag feedback, highlights drop targets, and commits dropped nodes", async () => {

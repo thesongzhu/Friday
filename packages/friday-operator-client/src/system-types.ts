@@ -1105,6 +1105,13 @@ export interface FridayWorkflowVisualGraph {
   }>;
 }
 
+export interface FridayWorkflowDraftSourceReview {
+  source: string;
+  sourceUrl?: string;
+  importedAt: string;
+  requiresReviewBeforePublish: boolean;
+}
+
 export interface FridayWorkflowEntity {
   id: string;
   slug: string;
@@ -1150,6 +1157,7 @@ export interface FridayWorkflowDraftEntity {
     intervalMs: number;
     lastSavedAt?: string;
   };
+  sourceReview?: FridayWorkflowDraftSourceReview;
 }
 
 export interface FridayWorkflowRunEntity {
@@ -1286,6 +1294,7 @@ export interface FridayDeployWorkflowDraftRequest {
   lockToken?: string;
   ownerSessionId?: string;
   lockTtlSec?: number;
+  externalReviewConfirmed?: boolean;
 }
 
 export interface FridayDeployWorkflowDraftResponse {
