@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: read
 
 jobs:
   public-preflight:
@@ -21,6 +22,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       tag_name: ${{ steps.resolve_tag.outputs.tag_name }}
+      tag_sha: ${{ steps.resolve_tag_sha.outputs.tag_sha }}
 
     steps:
       - name: Checkout
@@ -47,6 +49,18 @@ jobs:
             echo "::error::Tag must match v<semver> (for example: v0.3.1)"
             exit 1
           fi
+
+      - name: Resolve tag SHA
+        id: resolve_tag_sha
+        run: |
+          set -euo pipefail
+          # ^{commit} forces resolution to the underlying commit object even
+          # when TAG_NAME points to an annotated tag object. The downstream
+          # live-proof-gate uses this SHA to find the Real Green Gate run for
+          # this exact commit (P4-G1.1 strict same-SHA validator contract).
+          TAG_SHA="$(git rev-parse "${TAG_NAME}^{commit}")"
+          echo "tag_sha=${TAG_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved ${TAG_NAME} to commit ${TAG_SHA}"
 
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
@@ -132,8 +146,76 @@ jobs:
       - name: Final closeout
         run: npm run closeout:final
 
+  live-proof-gate:
+    needs:
+      - public-preflight
+      - verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG_NAME: ${{ needs.public-preflight.outputs.tag_name }}
+      TAG_SHA: ${{ needs.public-preflight.outputs.tag_sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.public-preflight.outputs.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+
+      - name: Find Real Green Gate run for tag SHA
+        id: find_run
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG_SHA}" ]; then
+            echo "::error::tag_sha output from public-preflight is empty; cannot locate Real Green Gate run."
+            exit 1
+          fi
+          # Workflow file path is the source of truth (per d-G1.2.2). Pulls the
+          # workflow-specific runs endpoint, filtered to successful runs on the
+          # exact tag SHA. GitHub returns runs sorted by created_at desc, so
+          # .workflow_runs[0] is the most recent successful run.
+          RUN_ID="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/real-green-gate.yml/runs" -f head_sha="${TAG_SHA}" -f status=success --jq '.workflow_runs[0].id // empty')"
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::No successful Real Green Gate run found on commit ${TAG_SHA} (tag ${TAG_NAME})."
+            echo "::error::Run \"gh workflow run real-green-gate.yml -r ${TAG_NAME}\" to generate release proof on this commit, then re-run this release workflow. (P4-G1.4: no auto-trigger; no break-glass.)"
+            exit 1
+          fi
+          echo "Found Real Green Gate run ${RUN_ID} for commit ${TAG_SHA}"
+          echo "run_id=${RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download Real Green Gate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: real-green-gate-${{ steps.find_run.outputs.run_id }}
+          path: ./real-green-gate-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate Real Green Gate result
+        run: |
+          set -euo pipefail
+          ARTIFACT_PATH="./real-green-gate-download/real-green-gate-result.json"
+          if [ ! -f "${ARTIFACT_PATH}" ]; then
+            echo "::error::Expected artifact file ${ARTIFACT_PATH} is not present after download. The Real Green Gate run may have published a different artifact shape, or the artifact has expired (default GitHub Actions retention is 90 days). Re-run the Real Green Gate workflow on commit ${TAG_SHA} to regenerate."
+            exit 1
+          fi
+          # Validator is the P4-G1.1 stable-token CLI. Exit 0 only on a clean
+          # release-proof pass: status=passed AND scenarios consistent AND
+          # blocked_reasons empty AND commit_sha matches expected. The CLI
+          # prints its own structured rejection JSON to stdout on failure.
+          node scripts/ops/validate-real-green-gate-result.mjs --path "${ARTIFACT_PATH}" --expected-sha "${TAG_SHA}"
+
   source-distribution:
-    needs: verify
+    needs:
+      - verify
+      - live-proof-gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -168,7 +250,9 @@ jobs:
           path: dist/releases/source
 
   macos-distribution:
-    needs: verify
+    needs:
+      - verify
+      - live-proof-gate
     runs-on: macos-latest
     timeout-minutes: 45
 
@@ -217,7 +301,9 @@ jobs:
             dist/releases/homebrew
 
   publish-npm:
-    needs: verify
+    needs:
+      - verify
+      - live-proof-gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -271,6 +357,7 @@ jobs:
   create-release:
     needs:
       - verify
+      - live-proof-gate
       - source-distribution
       - macos-distribution
       - publish-npm
