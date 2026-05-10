@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, AuthExpiredError } from "@/lib/api/types";
-import { describeSetupStatusFailure } from "@/lib/setup/setup-status-diagnostics";
+import {
+  classifyFridaySaveProviderValidation,
+  describeSetupStatusFailure,
+} from "@/lib/setup/setup-status-diagnostics";
 
 describe("describeSetupStatusFailure", () => {
   const origin = "http://127.0.0.1:50576";
@@ -59,5 +62,31 @@ describe("describeSetupStatusFailure", () => {
 
     expect(result.title).toContain("local connection reset");
     expect(result.actions.join(" ")).toContain("Reload the page");
+  });
+});
+
+describe("classifyFridaySaveProviderValidation", () => {
+  it("returns validation_ok when the saved provider doctored to ok", () => {
+    expect(classifyFridaySaveProviderValidation({ status: "ok" })).toBe("validation_ok");
+  });
+
+  it("returns validation_failed when the saved provider doctored to failed", () => {
+    expect(classifyFridaySaveProviderValidation({ status: "failed" })).toBe("validation_failed");
+  });
+
+  it("returns validation_unknown when the saved provider was not yet doctored", () => {
+    expect(classifyFridaySaveProviderValidation({ status: "never" })).toBe("validation_unknown");
+  });
+
+  it("returns validation_unknown when the save response carries no validation field", () => {
+    expect(classifyFridaySaveProviderValidation(undefined)).toBe("validation_unknown");
+  });
+
+  it("derives the verdict from status alone and ignores any errorMessage payload", () => {
+    const verdict = classifyFridaySaveProviderValidation({
+      status: "failed",
+    });
+    expect(verdict).toBe("validation_failed");
+    expect(verdict).not.toContain("ignored");
   });
 });

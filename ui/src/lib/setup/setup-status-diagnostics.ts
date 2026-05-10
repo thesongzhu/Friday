@@ -103,3 +103,20 @@ export function describeSetupStatusFailure(
     actions: buildCanonicalAccessHints(currentOrigin),
   };
 }
+
+export type FridaySaveProviderValidationVerdict =
+  | "validation_ok"
+  | "validation_failed"
+  | "validation_unknown";
+
+export function classifyFridaySaveProviderValidation(
+  validation: { status?: string } | undefined,
+): FridaySaveProviderValidationVerdict {
+  if (validation?.status === "ok") {
+    return "validation_ok";
+  }
+  if (validation?.status === "failed") {
+    return "validation_failed";
+  }
+  return "validation_unknown";
+}

@@ -23,7 +23,8 @@ import type {
   ProviderKind,
   SetupStepId,
 } from "@/lib/setup/types";
-import type { FridayProviderTemplate } from "@/lib/api/types";
+import type { FridayProviderTemplate, FridayProviderValidationState } from "@/lib/api/types";
+import { classifyFridaySaveProviderValidation } from "@/lib/setup/setup-status-diagnostics";
 import { ActionButton, ConfirmDialog, StatusPill } from "@/components/core/primitives";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
@@ -612,7 +613,9 @@ export function SetupPage() {
     setProviderValidated(result.validated);
   }
 
-  async function saveProviderDraft(draft: ProviderSaveDraft): Promise<void> {
+  async function saveProviderDraft(
+    draft: ProviderSaveDraft,
+  ): Promise<{ validation: FridayProviderValidationState | undefined }> {
     const existingSameKind = existingProviders.find((provider) => provider.kind === draft.kind);
     const commonPayload = {
       name: draft.name,
@@ -625,18 +628,21 @@ export function SetupPage() {
       enabled: true,
     };
 
-    const provider = existingSameKind
-      ? (await providersApi.update(existingSameKind.id, commonPayload)).provider
-      : (await providersApi.create({
+    const response = existingSameKind
+      ? await providersApi.update(existingSameKind.id, commonPayload)
+      : await providersApi.create({
         kind: draft.kind,
         ...commonPayload,
-      })).provider;
+      });
+    const provider = response.provider;
 
     await providersApi.setRouting({
       defaultProviderId: provider.id,
       defaultModel: draft.defaultModel,
       fallbackProviderIds: [],
     });
+
+    return { validation: response.validation };
   }
 
   async function setProviderAsDefault(providerId: string, defaultModel?: string): Promise<void> {
@@ -1183,13 +1189,28 @@ export function SetupPage() {
         saveProviderMutation.mutate(
           buildProviderSaveDraftFromDetection(result),
           {
-            onSuccess: () => {
-              setProviderFeedback({
-                status: "saved",
-                kind: result.kind as ProviderKind,
-                defaultModel: result.defaultModel ?? result.availableModels[0],
-                warnings: result.warnings,
-              });
+            onSuccess: ({ validation }) => {
+              const verdict = classifyFridaySaveProviderValidation(validation);
+              const detectedProviderName = providerDisplayName(result.kind as ProviderKind);
+              if (verdict === "validation_failed") {
+                setProviderFeedback({
+                  status: "error",
+                  kind: result.kind as ProviderKind,
+                  message: localize(
+                    locale,
+                    `${detectedProviderName} 已保存，但后端验证未通过。请到设置中重新验证；详情可通过 doctor 检查。`,
+                    `${detectedProviderName} was saved, but backend validation did not pass. Re-validate from Settings; check the doctor report for details.`,
+                  ),
+                  warnings: result.warnings,
+                });
+              } else {
+                setProviderFeedback({
+                  status: "saved",
+                  kind: result.kind as ProviderKind,
+                  defaultModel: result.defaultModel ?? result.availableModels[0],
+                  warnings: result.warnings,
+                });
+              }
               if (options.advance) {
                 goNext();
               }
