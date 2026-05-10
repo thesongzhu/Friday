@@ -3,19 +3,18 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, ensureAnthropicProviders } from "./_helpers/api.js";
+import { apiFetch } from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import { pollRunTerminal } from "./_helpers/workflow.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  ensureFridayDeepProofProviders,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
-
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 
 interface WorkflowCreateEnvelope {
   ok: boolean;
@@ -202,18 +201,10 @@ function decodeArtifactUri(uri: string): string {
   return Buffer.from(uri.slice(prefix.length), "base64").toString("utf8");
 }
 
-async function ensureAnthropicWorkflowProviders(env: RealHubEnv): Promise<void> {
-  const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-    ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })();
-  await ensureAnthropicProviders(
-    env.baseUrl,
-    env.accessToken,
-    ANTHROPIC_BASE_URL,
-    LIVE_ANTHROPIC_MODEL,
-    LIVE_ANTHROPIC_MODEL,
-    apiKeyEnvRef,
-    { namePrefix: "Workflow Generator Deep Proof" },
-  );
+async function ensureWorkflowGeneratorDeepProofProviders(env: RealHubEnv): Promise<void> {
+  await ensureFridayDeepProofProviders(env, {
+    namePrefix: "Workflow Generator Deep Proof",
+  });
 }
 
 async function createBaseWorkflow(
@@ -380,7 +371,7 @@ async function createValidatedWorkflowDraft(
       goal: input.goal,
       userId: "admin-001",
       channel: "deep-workflow-maintenance",
-      requestedModel: LIVE_ANTHROPIC_MODEL,
+      requestedModel: FRIDAY_DEEP_PROOF_MODEL,
       targetWorkflowId: input.targetWorkflowId,
     },
     { timeoutMs: 300_000 },
@@ -397,7 +388,7 @@ async function createValidatedWorkflowDraft(
       `/v1/workflows/generator/sessions/${encodeURIComponent(sessionId)}/messages`,
       {
         message: input.clarification,
-        requestedModel: LIVE_ANTHROPIC_MODEL,
+        requestedModel: FRIDAY_DEEP_PROOF_MODEL,
       },
       { timeoutMs: 300_000 },
     );
@@ -429,7 +420,7 @@ async function createValidatedWorkflowDraft(
       env.accessToken,
       "POST",
       `/v1/workflows/generator/sessions/${encodeURIComponent(sessionId)}/generate`,
-      { requestedModel: LIVE_ANTHROPIC_MODEL },
+      { requestedModel: FRIDAY_DEEP_PROOF_MODEL },
       { timeoutMs: 300_000 },
     );
     expect(generateRes.status).toBe(200);
@@ -462,7 +453,7 @@ async function createValidatedWorkflowDraft(
           message:
             `The previous workflow draft still has validation issues: ${lastIssues}. ` +
             "Keep the same workflow identity, fix those exact issues, and regenerate.",
-          requestedModel: LIVE_ANTHROPIC_MODEL,
+          requestedModel: FRIDAY_DEEP_PROOF_MODEL,
         },
         { timeoutMs: 300_000 },
       );
@@ -475,12 +466,12 @@ async function createValidatedWorkflowDraft(
   throw new Error(`Workflow generator draft never validated. Last issues: ${lastIssues}`);
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Workflow Generator Maintenance Live (Anthropic API key)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Generator Maintenance Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
 
   beforeAll(async () => {
     env = await createFridayDeepProofHubEnv();
-    await ensureAnthropicWorkflowProviders(env);
+    await ensureWorkflowGeneratorDeepProofProviders(env);
   }, 120_000);
 
   afterAll(async () => {

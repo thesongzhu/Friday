@@ -5,11 +5,18 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
-import { apiFetch, createOpenAiProvider, verifyProviderTextCapability } from "./_helpers/api.js";
+import {
+  apiFetch,
+  createDeepSeekProvider,
+  createOpenAiProvider,
+  verifyProviderTextCapability,
+} from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
   cleanupRealHubEnv,
   createRealHubEnv,
+  DEEPSEEK_API_KEY_ENV,
+  DEEPSEEK_BASE_URL,
   E2E_GATED,
   FAST_MODEL,
   LIVE_PROVIDER_KIND,
@@ -18,7 +25,14 @@ import {
   type RealHubEnv,
 } from "./_helpers/real-env.js";
 
-const OPENAI_PROOF_GATED = E2E_GATED && LIVE_PROVIDER_KIND === "openai";
+// Mirrors the learning-live gate pattern: accept openai or deepseek as the
+// active provider lane. Self-healing logic is provider-agnostic (incident +
+// lesson + auto-fix is Friday-internal); the provider only supplies the
+// underlying LLM substrate. Active-provider evidence labelling stays honest:
+// a DeepSeek run proves DeepSeek self-healing, not OpenAI.
+const SELF_HEALING_PROOF_GATED =
+  E2E_GATED && (LIVE_PROVIDER_KIND === "openai" || LIVE_PROVIDER_KIND === "deepseek");
+const LIVE_PROVIDER_LABEL = LIVE_PROVIDER_KIND === "deepseek" ? "DeepSeek" : "OpenAI";
 const LIVE_MODEL = FAST_MODEL;
 const BUNDLED_SKILLS_DIR = path.join(process.cwd(), "skills");
 
@@ -358,21 +372,29 @@ async function readUserId(env: RealHubEnv): Promise<string> {
 }
 
 async function createProviderPair(env: RealHubEnv): Promise<{ primaryProviderId: string; secondaryProviderId: string }> {
-  const apiKeyEnvRef = `$${OPENAI_API_KEY_ENV}`;
-  const primaryProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
-    name: "OpenAI Primary Self-Healing (Live Proof)",
-    openAiBaseUrl: OPENAI_BASE_URL,
-    models: [LIVE_MODEL],
-    defaultModel: LIVE_MODEL,
-    apiKeyEnvRef,
-  });
-  const secondaryProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
-    name: "OpenAI Secondary Self-Healing (Live Proof)",
-    openAiBaseUrl: OPENAI_BASE_URL,
-    models: [LIVE_MODEL],
-    defaultModel: LIVE_MODEL,
-    apiKeyEnvRef,
-  });
+  // Branch on LIVE_PROVIDER_KIND to create the active-lane primary +
+  // secondary provider pair. Mirrors learning-live's ensureLiveLearningProvider
+  // pattern. Provider names embed LIVE_PROVIDER_LABEL so the persisted rows
+  // are diagnosable per lane.
+  const create = async (name: string): Promise<string> =>
+    LIVE_PROVIDER_KIND === "deepseek"
+      ? createDeepSeekProvider(env.baseUrl, env.accessToken, {
+          name,
+          deepSeekBaseUrl: DEEPSEEK_BASE_URL,
+          models: [LIVE_MODEL],
+          defaultModel: LIVE_MODEL,
+          apiKeyEnvRef: `$${DEEPSEEK_API_KEY_ENV}`,
+        })
+      : createOpenAiProvider(env.baseUrl, env.accessToken, {
+          name,
+          openAiBaseUrl: OPENAI_BASE_URL,
+          models: [LIVE_MODEL],
+          defaultModel: LIVE_MODEL,
+          apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
+        });
+
+  const primaryProviderId = await create(`${LIVE_PROVIDER_LABEL} Primary Self-Healing (Live Proof)`);
+  const secondaryProviderId = await create(`${LIVE_PROVIDER_LABEL} Secondary Self-Healing (Live Proof)`);
   await verifyProviderTextCapability(env.baseUrl, env.accessToken, primaryProviderId, LIVE_MODEL, {
     doctorProviderIds: [primaryProviderId, secondaryProviderId],
   });
@@ -622,7 +644,7 @@ async function waitForWorkflowRunStable(
   return env.hub!.workflowRuntime.execution.getRun(runId)?.status ?? "unknown";
 }
 
-describe.skipIf(!OPENAI_PROOF_GATED)("Friday Self-Healing Full Matrix (OpenAI API key)", () => {
+describe.skipIf(!SELF_HEALING_PROOF_GATED)(`Friday Self-Healing Full Matrix (${LIVE_PROVIDER_LABEL} API key)`, () => {
   let env: RealHubEnv;
   let userId: string;
   let primaryProviderId: string;

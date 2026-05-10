@@ -3,8 +3,7 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, createAnthropicProvider } from "./_helpers/api.js";
+import { apiFetch } from "./_helpers/api.js";
 import {
   createFridayProviderProfileLifecycleMutatingActionRequest,
 } from "../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
@@ -16,12 +15,11 @@ import {
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  createFridayDeepProofProvider,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
-
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 const PROVIDER_LIFECYCLE_PLAN_DIGEST = "provider-profile-live-proof-plan";
 const PROVIDER_LIFECYCLE_SIGNING_MATERIAL =
   "provider-profile-live-proof-signing-material"; // pragma: allowlist secret
@@ -163,6 +161,7 @@ function makeProviderLifecycleApproval(input: {
   providerId: string;
   shadowVersionId?: string;
   runtimeVersion: string;
+  providerModel: string;
 }): FridayCanonicalApprovalResolution {
   const rollback = input.action === "rollback"
     ? { planned: true, planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST, actions: ["providers.lifecycle.promote"] }
@@ -172,7 +171,7 @@ function makeProviderLifecycleApproval(input: {
     providerId: input.providerId,
     shadowVersionId: input.shadowVersionId,
     runtimeVersion: input.runtimeVersion,
-    providerModel: LIVE_ANTHROPIC_MODEL,
+    providerModel: input.providerModel,
     actor: {
       kind: "user",
       id: LOCAL_LIVE_PRINCIPAL_ID,
@@ -216,7 +215,7 @@ async function getUpgradeStatus(env: RealHubEnv, providerId: string): Promise<Up
   return response.json.data.items[0]!;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade Live (Anthropic API key)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Provider Profile Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL} active provider)`, () => {
   let env: RealHubEnv;
 
   beforeAll(async () => {
@@ -237,18 +236,15 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
     "proves provider_profile detect-adapt-replay-shadow-canary-promote-rollback with API and SQLite readback",
     { timeout: 300_000, retry: 1 },
     async () => {
-      const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-        ?? (() => {
-          throw new Error(liveAnthropicCredentialMessage());
-        })();
       const runtimeVersion = await getRuntimeVersion(env);
-      const providerId = await createAnthropicProvider(env.baseUrl, env.accessToken, {
+      // Active-provider proof: a DeepSeek run proves DeepSeek provider-profile
+      // upgrade lifecycle, an Anthropic run proves Anthropic. Lane is fixed
+      // by the deep-proof env gate, not by this test body.
+      const providerCreation = await createFridayDeepProofProvider(env, {
         name: `Provider Self Upgrade ${Date.now().toString(36)}`,
-        anthropicBaseUrl: ANTHROPIC_BASE_URL,
-        models: [LIVE_ANTHROPIC_MODEL],
-        defaultModel: LIVE_ANTHROPIC_MODEL,
-        apiKeyEnvRef,
       });
+      const providerId = providerCreation.providerId;
+      const providerModel = providerCreation.model;
 
       const detectStatus = await getUpgradeStatus(env, providerId);
       expect(detectStatus.derivedCompatibilityStatus).toBe("adaptation_required");
@@ -283,9 +279,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         {
           shadowVersionId: firstShadowId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel,
           planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
           canonicalApproval: makeProviderLifecycleApproval({
+            providerModel,
             action: "shadow",
             providerId,
             shadowVersionId: firstShadowId,
@@ -306,9 +303,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         `/v1/autonomy/providers/${encodeURIComponent(providerId)}/canary`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel,
           planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
           canonicalApproval: makeProviderLifecycleApproval({
+            providerModel,
             action: "canary",
             providerId,
             shadowVersionId: firstShadowId,
@@ -329,9 +327,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         `/v1/autonomy/providers/${encodeURIComponent(providerId)}/promote`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel,
           planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
           canonicalApproval: makeProviderLifecycleApproval({
+            providerModel,
             action: "promote",
             providerId,
             shadowVersionId: firstShadowId,
@@ -352,10 +351,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Provider Profile Self Upgrade 
         `/v1/autonomy/providers/${encodeURIComponent(providerId)}/rollback`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel,
           planDigest: PROVIDER_LIFECYCLE_PLAN_DIGEST,
           reason: "live provider lifecycle rollback proof",
           canonicalApproval: makeProviderLifecycleApproval({
+            providerModel,
             action: "rollback",
             providerId,
             shadowVersionId: firstShadowId,

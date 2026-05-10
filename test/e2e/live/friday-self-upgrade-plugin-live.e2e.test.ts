@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL } from "../_helpers/live-anthropic.js";
 import { apiFetch } from "./_helpers/api.js";
 import {
   createFridayPluginLifecycleMutatingActionRequest,
@@ -19,6 +18,8 @@ import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
 
@@ -229,7 +230,7 @@ function makePluginLifecycleApproval(input: {
     pluginId: input.pluginId,
     shadowVersionId: input.shadowVersionId,
     runtimeVersion: input.runtimeVersion,
-    providerModel: LIVE_ANTHROPIC_MODEL,
+    providerModel: FRIDAY_DEEP_PROOF_MODEL,
     actor: {
       kind: "user",
       id: LOCAL_LIVE_PRINCIPAL_ID,
@@ -248,7 +249,7 @@ function makePluginLifecycleApproval(input: {
   }, PLUGIN_LIFECYCLE_SIGNING_MATERIAL);
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anthropic API key lane)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Plugin Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   let pluginRootDir: string;
 
@@ -317,7 +318,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anth
         `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/review-enable`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(reviewEnableRes.status).toBe(200);
@@ -363,7 +364,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Plugin Self Upgrade Live (Anth
         `/v1/autonomy/plugins/${encodeURIComponent(pluginId)}/rollback`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
           planDigest,
           reason: "live plugin lifecycle rollback proof",
           canonicalApproval: makePluginLifecycleApproval({
