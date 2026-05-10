@@ -157,6 +157,10 @@ function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isNonNegativeInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 /**
  * Validate a parsed result object. Returns { valid, reasons }. Reasons are
  * stable token strings; they never embed validator free-text from the input.
@@ -191,20 +195,36 @@ export function validateRealGreenGateResult(result, options = {}) {
     }
   }
 
-  if (typeof result.scenarios_total !== "number" || !Number.isFinite(result.scenarios_total)) {
+  // All three counts must be non-negative integers. Number.isFinite alone is
+  // not enough — it accepts negatives and decimals, which are structurally
+  // meaningless and would let a malformed `passed` artifact slip through
+  // (PR #187 review caught: status=passed with all counts = -1 was accepted).
+  const scenariosRunValid = isNonNegativeInteger(result.scenarios_run);
+  const scenariosTotalValid = isNonNegativeInteger(result.scenarios_total);
+  const scenariosPassedValid = isNonNegativeInteger(result.scenarios_passed);
+
+  if (!scenariosRunValid) {
+    reasons.push("scenarios_run_invalid");
+  }
+  if (!scenariosTotalValid) {
     reasons.push("scenarios_total_invalid");
   }
-  if (typeof result.scenarios_passed !== "number" || !Number.isFinite(result.scenarios_passed)) {
+  if (!scenariosPassedValid) {
     reasons.push("scenarios_passed_invalid");
   }
   if (
-    typeof result.scenarios_total === "number"
-    && typeof result.scenarios_passed === "number"
-    && Number.isFinite(result.scenarios_total)
-    && Number.isFinite(result.scenarios_passed)
+    scenariosTotalValid
+    && scenariosPassedValid
     && result.scenarios_passed !== result.scenarios_total
   ) {
     reasons.push("scenarios_passed_not_equal_total");
+  }
+  if (
+    scenariosTotalValid
+    && scenariosRunValid
+    && result.scenarios_run !== result.scenarios_total
+  ) {
+    reasons.push("scenarios_run_not_equal_total");
   }
 
   // Defense-in-depth: status=passed must have an empty blocked_reasons.
@@ -224,7 +244,7 @@ export function validateRealGreenGateResult(result, options = {}) {
   // scenarios is structurally meaningless and often indicates a skipped path.
   if (
     result.status === REAL_GREEN_GATE_RESULT_STATUSES.PASSED
-    && typeof result.scenarios_total === "number"
+    && scenariosTotalValid
     && result.scenarios_total === 0
   ) {
     reasons.push("passed_with_zero_scenarios");

@@ -312,6 +312,101 @@ describe("validateRealGreenGateResult — accepts only a clean pass", () => {
     expect(decision.valid).toBe(false);
     expect(decision.reasons).toContain("passed_with_zero_scenarios");
   });
+
+  it("PR #187 review regression: rejects status=passed with all three counts = -1", () => {
+    // The exact malformed artifact that an earlier validator wrongly accepted:
+    // -1 is finite and -1 === -1, so the previous finite/equality checks were
+    // both satisfied. The non-negative-integer check now catches all three.
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_run: -1, scenarios_total: -1, scenarios_passed: -1 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_run_invalid");
+    expect(decision.reasons).toContain("scenarios_total_invalid");
+    expect(decision.reasons).toContain("scenarios_passed_invalid");
+  });
+
+  it("rejects negative scenarios_total", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: -1, scenarios_passed: 47, scenarios_run: 47 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_total_invalid");
+  });
+
+  it("rejects negative scenarios_passed", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: 47, scenarios_passed: -1, scenarios_run: 47 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_passed_invalid");
+  });
+
+  it("rejects negative scenarios_run", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: 47, scenarios_passed: 47, scenarios_run: -1 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_run_invalid");
+  });
+
+  it("rejects decimal scenarios_total", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: 47.5, scenarios_passed: 47.5, scenarios_run: 47.5 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_total_invalid");
+  });
+
+  it("rejects decimal scenarios_passed", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: 47, scenarios_passed: 46.5, scenarios_run: 47 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_passed_invalid");
+  });
+
+  it("rejects decimal scenarios_run", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_total: 47, scenarios_passed: 47, scenarios_run: 46.5 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_run_invalid");
+  });
+
+  it("rejects when scenarios_run !== scenarios_total even if both are valid non-negative integers", () => {
+    // status=passed implies the gate ran every expected scenario.
+    // run=5 + total=10 + passed=10 is structurally impossible (passed cannot
+    // exceed run); the validator rejects with scenarios_run_not_equal_total.
+    const decision = validateRealGreenGateResult(
+      validPassedResult({ scenarios_run: 5, scenarios_total: 10, scenarios_passed: 10 }),
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("scenarios_run_not_equal_total");
+  });
+
+  it("accepts zero as a valid non-negative integer for non-passed statuses", () => {
+    // blocked_by_env writes all three counts as 0; the integer check should
+    // accept 0 as valid, even though the artifact still gets rejected because
+    // status !== passed.
+    const decision = validateRealGreenGateResult({
+      schema_version: 1,
+      status: "blocked_by_env",
+      commit_sha: SHA_A,
+      ref_name: "main",
+      evaluated_at: "2026-05-10T07:00:00.000Z",
+      evidence_kinds_observed: [],
+      blocked_reasons: ["env_var_missing:FRIDAY_BASE_URL"],
+      scenarios_run: 0,
+      scenarios_total: 0,
+      scenarios_passed: 0,
+    });
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toEqual(["status_not_passed:blocked_by_env"]);
+    expect(decision.reasons).not.toContain("scenarios_run_invalid");
+    expect(decision.reasons).not.toContain("scenarios_total_invalid");
+    expect(decision.reasons).not.toContain("scenarios_passed_invalid");
+  });
 });
 
 describe("validator round-trip with the writers", () => {
