@@ -44,9 +44,10 @@ export interface FridayProviderDoctorRemediationInput {
  *   5. payment_required        — key valid, account state needs attention (neutral copy at the surface)
  *   6. connectivity_problem    — provider unreachable
  *   7. model_problem           — model unavailable or supported-model list empty
- *   8. healthy                 — all green
+ *   8. healthy                 — validation ok, backend + auth healthy, no reasons, routing eligible
  *   9. unverified_or_unknown   — never validated, validation_unverified, or PROVIDER_UNKNOWN_ERROR
- *  10. out_of_scope_health     — backend/auth degraded with no specific reason matched
+ *  10. out_of_scope_health     — backend/auth degraded, routing not eligible, or any other
+ *                                non-actionable mismatch with no specific reason matched
  */
 export function classifyFridayProviderDoctorRemediation(
   input: FridayProviderDoctorRemediationInput,
@@ -92,8 +93,12 @@ export function classifyFridayProviderDoctorRemediation(
   const validationOk = input.validationStatus === "ok";
   const backendOk = input.backendHealth === undefined || input.backendHealth === "healthy";
   const authOk = input.authHealth === undefined || input.authHealth === "healthy";
+  // Only an explicit false blocks the healthy verdict; undefined is treated
+  // as "not asserted" so callers that don't yet plumb routing eligibility
+  // continue to behave as before.
+  const routingOk = input.routingEligible !== false;
 
-  if (validationOk && backendOk && authOk && reasons.length === 0) {
+  if (validationOk && backendOk && authOk && routingOk && reasons.length === 0) {
     return "healthy";
   }
 
