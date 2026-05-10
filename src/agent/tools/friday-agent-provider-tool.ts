@@ -476,11 +476,14 @@ export function createFridayAgentProviderTool(
 
     const validation = await providerService.validateProvider(providerId);
 
+    // Same whitelist as sanitizeProvider — errorMessage is validator
+    // free-text and belongs in the doctor action, not the agent's view.
     return jsonResult({
       providerId,
       status: validation.status,
-      checkedAt: validation.checkedAt,
-      errorMessage: validation.errorMessage,
+      ...(validation.checkedAt ? { checkedAt: validation.checkedAt } : {}),
+      ...(validation.errorCode ? { errorCode: validation.errorCode } : {}),
+      ...(validation.httpStatus !== undefined ? { httpStatus: validation.httpStatus } : {}),
     });
   }
 

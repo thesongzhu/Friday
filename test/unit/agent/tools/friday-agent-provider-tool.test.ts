@@ -515,6 +515,43 @@ describe("createFridayAgentProviderTool", () => {
     expect(parsed.providers[0].blockers).toEqual(["promotion_channel_blocked"]);
   });
 
+  it("validate action returns whitelisted fields and does not echo validation.errorMessage", async () => {
+    const providerService = createMockProviderService({
+      validateProvider: vi.fn().mockResolvedValue({
+        status: "failed",
+        checkedAt: "2026-05-09T00:00:00.000Z",
+        errorCode: "PROVIDER_AUTH_INVALID",
+        errorMessage: "validator-detail-must-not-leak-via-validate-action",
+        httpStatus: 401,
+      }),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute(
+      { action: "validate", providerId: "provider-validate-x" },
+      signal(),
+    );
+    const parsed = JSON.parse(result.content) as {
+      providerId: string;
+      status: string;
+      checkedAt?: string;
+      errorCode?: string;
+      httpStatus?: number;
+      errorMessage?: string;
+    };
+
+    expect(result.isError).toBeUndefined();
+    expect(parsed).toEqual({
+      providerId: "provider-validate-x",
+      status: "failed",
+      checkedAt: "2026-05-09T00:00:00.000Z",
+      errorCode: "PROVIDER_AUTH_INVALID",
+      httpStatus: 401,
+    });
+    expect(parsed).not.toHaveProperty("errorMessage");
+    expect(JSON.stringify(parsed)).not.toContain("validator-detail-must-not-leak-via-validate-action");
+  });
+
   it("list combines multiple blockers when multiple conditions fail", async () => {
     const provider = makeProvider({
       id: "provider-multi-blocked",
