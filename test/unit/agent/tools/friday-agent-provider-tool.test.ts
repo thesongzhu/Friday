@@ -399,7 +399,7 @@ describe("createFridayAgentProviderTool", () => {
         validation: {
           status: "failed",
           checkedAt: "2026-05-09T00:00:00.000Z",
-          errorMessage: "validator detail string must not appear in blockers",
+          errorMessage: "validator detail string must not appear anywhere in agent payload",
         },
       },
     });
@@ -418,6 +418,47 @@ describe("createFridayAgentProviderTool", () => {
     for (const blocker of parsed.providers[0].blockers) {
       expect(blocker).not.toContain("validator detail string");
     }
+    expect(JSON.stringify(parsed.providers[0])).not.toContain("validator detail string");
+  });
+
+  it("list strips validation.errorMessage from the agent-visible payload while keeping stable validation fields", async () => {
+    const provider = makeProvider({
+      id: "provider-validation-whitelist",
+      enabled: true,
+      config: {
+        api: "anthropic-messages",
+        authMode: "api-key",
+        keySource: { kind: "none" },
+        supportedModels: ["claude-sonnet-4-20250514"],
+        validation: {
+          status: "failed",
+          checkedAt: "2026-05-09T00:00:00.000Z",
+          errorCode: "PROVIDER_AUTH_INVALID",
+          errorMessage: "validator-free-text-payload-that-must-not-leak",
+          httpStatus: 401,
+        },
+      },
+    });
+    const providerService = createMockProviderService({
+      listProviders: vi.fn().mockResolvedValue([provider]),
+    });
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute({ action: "list" }, signal());
+    const parsed = JSON.parse(result.content) as {
+      providers: Array<{
+        validation: { status: string; checkedAt?: string; errorCode?: string; httpStatus?: number; errorMessage?: string };
+      }>;
+    };
+
+    expect(parsed.providers[0].validation).toEqual({
+      status: "failed",
+      checkedAt: "2026-05-09T00:00:00.000Z",
+      errorCode: "PROVIDER_AUTH_INVALID",
+      httpStatus: 401,
+    });
+    expect(parsed.providers[0].validation).not.toHaveProperty("errorMessage");
+    expect(JSON.stringify(parsed.providers[0])).not.toContain("validator-free-text-payload-that-must-not-leak");
   });
 
   it("list returns ready=false with provider_disabled blocker when enabled=false", async () => {

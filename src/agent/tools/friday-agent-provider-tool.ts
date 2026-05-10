@@ -508,7 +508,13 @@ export function createFridayAgentProviderTool(
       regionTag?: string;
       cliConfig?: { backendId: string; binaryPath?: string };
       supportedModels?: string[];
-      validation?: { status: string; checkedAt?: string; errorMessage?: string };
+      validation?: {
+        status: string;
+        checkedAt?: string;
+        errorCode?: string;
+        errorMessage?: string;
+        httpStatus?: number;
+      };
     };
   }): Record<string, unknown> {
     const validation = provider.config.validation ?? { status: "never" };
@@ -544,7 +550,14 @@ export function createFridayAgentProviderTool(
       regionTag: provider.config.regionTag ?? "global",
       cliConfig: provider.config.cliConfig,
       supportedModels: provider.config.supportedModels ?? [],
-      validation,
+      // errorMessage is validator free-text and is intentionally excluded
+      // from the agent's view; details belong in the doctor action.
+      validation: {
+        status: validation.status,
+        ...(validation.checkedAt ? { checkedAt: validation.checkedAt } : {}),
+        ...(validation.errorCode ? { errorCode: validation.errorCode } : {}),
+        ...(validation.httpStatus !== undefined ? { httpStatus: validation.httpStatus } : {}),
+      },
       ready: blockers.length === 0,
       blockers,
     };
