@@ -8,6 +8,10 @@ import { collectEnvironmentTruth } from "../../validation/real-world/lib/env-tru
 import { createRunId, ensureDir, writeJson, writeText } from "../../validation/real-world/lib/io.mjs";
 import { runRealWorldValidation } from "../../validation/real-world/lib/runner.mjs";
 import { checkBranchConformance } from "./check-branch-conformance.mjs";
+import {
+  REAL_GREEN_GATE_RESULT_FILENAME,
+  buildRealGreenGateResult,
+} from "./lib/real-green-gate-result.mjs";
 
 const DAILY_CORE_SCENARIOS = [
   "l0-runtime-health",
@@ -447,6 +451,19 @@ function buildSummary({
 function flushTerminalArtifacts(reportRoot, summary) {
   writeJson(path.join(reportRoot, "summary.json"), summary);
   writeText(path.join(reportRoot, "index.md"), renderMarkdown(summary));
+  const commitSha = process.env.GITHUB_SHA
+    ?? (typeof summary?.preflight?.gitHead?.stdout === "string"
+      ? summary.preflight.gitHead.stdout.trim()
+      : "");
+  const refName = process.env.GITHUB_REF_NAME
+    ?? (typeof summary?.branch === "string" ? summary.branch : "");
+  const result = buildRealGreenGateResult({
+    summary,
+    commitSha,
+    refName,
+    evaluatedAt: new Date().toISOString(),
+  });
+  writeJson(path.join(reportRoot, REAL_GREEN_GATE_RESULT_FILENAME), result);
 }
 
 async function main() {
