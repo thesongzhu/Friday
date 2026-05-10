@@ -17,7 +17,121 @@ permissions:
   actions: read
 
 jobs:
+  authorize-release-actor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACTOR: ${{ github.actor }}
+      REPOSITORY: ${{ github.repository }}
+      REF_TYPE: ${{ github.ref_type }}
+      REF_NAME: ${{ github.ref_name }}
+      EVENT_NAME: ${{ github.event_name }}
+      DISPATCH_TAG: ${{ github.event.inputs.tag }}
+
+    steps:
+      - name: Checkout (full history for ancestry check)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Authorize actor by permission tier
+        run: |
+          set -euo pipefail
+          # Mirrors the cloud-e2e.yml authorize-live-run permission tier
+          # check (same admin|maintain|write set per d-G1.3.2). This is the
+          # FIRST gate of the release workflow; nothing else runs until this
+          # passes.
+          permission="$(gh api "repos/${REPOSITORY}/collaborators/${ACTOR}/permission" --jq '.permission')"
+          case "${permission}" in
+            admin|maintain|write)
+              echo "Actor ${ACTOR} authorized with ${permission} permission."
+              ;;
+            *)
+              echo "::error::Actor ${ACTOR} has '${permission}' permission. Release authorization requires admin, maintain, or write."
+              exit 1
+              ;;
+          esac
+
+      - name: Validate trigger and ref
+        run: |
+          set -euo pipefail
+          # Per d-G1.3.1 the gate behaves differently per trigger:
+          #  - push-tag: workflow trigger filter already restricts to v*; the
+          #    ancestry check below validates the tag points at a main-history
+          #    commit. No further ref check needed here.
+          #  - workflow_dispatch: must originate from main (per d-G1.3.3) so
+          #    operators cannot bypass branch protection by dispatching from
+          #    a feature branch and supplying an arbitrary tag input.
+          case "${EVENT_NAME}" in
+            push)
+              if [ "${REF_TYPE}" != "tag" ]; then
+                echo "::error::push trigger expected ref_type=tag, got ref_type=${REF_TYPE} ref_name=${REF_NAME}."
+                exit 1
+              fi
+              echo "Push-tag trigger: tag=${REF_NAME}"
+              ;;
+            workflow_dispatch)
+              if [ "${REF_TYPE}" != "branch" ] || [ "${REF_NAME}" != "main" ]; then
+                echo "::error::Manual release dispatch must be run from the main branch (got ref_type=${REF_TYPE} ref_name=${REF_NAME}). To release from a tag, push the tag and let the push-tag trigger fire."
+                exit 1
+              fi
+              if [ -z "${DISPATCH_TAG}" ]; then
+                echo "::error::workflow_dispatch requires the 'tag' input."
+                exit 1
+              fi
+              echo "Dispatch trigger: tag=${DISPATCH_TAG} from ref_type=${REF_TYPE} ref_name=${REF_NAME}"
+              ;;
+            *)
+              echo "::error::Unsupported trigger '${EVENT_NAME}' for release.yml; only push-tag and workflow_dispatch are allowed."
+              exit 1
+              ;;
+          esac
+
+      - name: Ancestry check — tag commit must be reachable from origin/main
+        run: |
+          set -euo pipefail
+          # Per d-G1.3.1 the ancestor check is the load-bearing rule: actor
+          # tier alone is insufficient because a write actor could otherwise
+          # `git tag v* <some-non-main-sha>` and bypass branch protection.
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_NAME="${DISPATCH_TAG}"
+          else
+            TAG_NAME="${REF_NAME}"
+          fi
+
+          # ^{commit} forces resolution to the underlying commit object even
+          # when TAG_NAME points to an annotated tag. Same convention used by
+          # public-preflight's tag_sha resolution (P4-G1.2).
+          TAG_SHA="$(git rev-parse "${TAG_NAME}^{commit}")"
+          echo "Tag ${TAG_NAME} resolves to commit ${TAG_SHA}"
+
+          # Explicit fetch of origin/main + tags as defense-in-depth even
+          # though `fetch-depth: 0` above already pulled full history. Keeps
+          # the ancestor check unambiguous if actions/checkout ever changes
+          # its default ref-pruning behavior.
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          git fetch --tags --force origin
+
+          if ! git merge-base --is-ancestor "${TAG_SHA}" "origin/main"; then
+            echo "::error::Tag ${TAG_NAME} (commit ${TAG_SHA}) is NOT an ancestor of origin/main."
+            echo "::error::Releases must be cut from commits that have already been merged into main via the protected merge path. If this is a hotfix on an unmerged branch, merge to main first or coordinate with maintainers to extend this gate before re-attempting the release."
+            exit 1
+          fi
+          echo "Tag commit ${TAG_SHA} is reachable from origin/main."
+
+      - name: Authorization summary
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_NAME="${DISPATCH_TAG}"
+          else
+            TAG_NAME="${REF_NAME}"
+          fi
+          echo "Release authorized: actor=${ACTOR} trigger=${EVENT_NAME} tag=${TAG_NAME}"
+
   public-preflight:
+    needs: authorize-release-actor
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
