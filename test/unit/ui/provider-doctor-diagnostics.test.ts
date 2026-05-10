@@ -182,6 +182,34 @@ describe("classifyFridayProviderDoctorRemediation", () => {
     ).toBe("out_of_scope_health");
   });
 
+  it("returns out_of_scope_health when input is otherwise healthy but routingEligible is false", () => {
+    expect(
+      classifyFridayProviderDoctorRemediation(healthy({
+        routingEligible: false,
+      })),
+    ).toBe("out_of_scope_health");
+  });
+
+  it("priority: routingEligible=false does not override credential_problem when both signals present", () => {
+    expect(
+      classifyFridayProviderDoctorRemediation(healthy({
+        validationStatus: "failed",
+        validationErrorCode: "PROVIDER_AUTH_INVALID",
+        routingEligible: false,
+      })),
+    ).toBe("credential_problem");
+  });
+
+  it("priority: routingEligible=false does not override cli_problem when both signals present", () => {
+    expect(
+      classifyFridayProviderDoctorRemediation(healthy({
+        validationStatus: "failed",
+        reasons: ["cli_session_unhealthy"],
+        routingEligible: false,
+      })),
+    ).toBe("cli_problem");
+  });
+
   it("priority: provider_disabled wins over credential_problem", () => {
     expect(
       classifyFridayProviderDoctorRemediation({
