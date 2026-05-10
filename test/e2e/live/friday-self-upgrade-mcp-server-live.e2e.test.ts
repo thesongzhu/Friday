@@ -3,11 +3,12 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL } from "../_helpers/live-anthropic.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
 
@@ -188,7 +189,7 @@ async function getUpgradeStatus(env: RealHubEnv, serverId: string): Promise<Upgr
   return json.data.items[0]!;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (Anthropic API key lane)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   let previousMcpServers: string | undefined;
   let previousMcpServerEnabled: string | undefined;
@@ -271,7 +272,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (
         body: JSON.stringify({
           shadowVersionId: firstShadowId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const shadowJson = await shadowRes.json() as McpActionEnvelope;
@@ -303,7 +304,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (
         },
         body: JSON.stringify({
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const promoteJson = await promoteRes.json() as McpActionEnvelope;
@@ -317,7 +318,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (
       expect(rowAfterPromote?.promotionChannel).toBe("active");
       expect(rowAfterPromote?.compatibilityStatus).toBe("compatible");
       expect(rowAfterPromote?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
-      expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(LIVE_ANTHROPIC_MODEL);
+      expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(FRIDAY_DEEP_PROOF_MODEL);
 
       const secondShadowId = `${serverId}@shadow-rollback`;
       await fetch(`${env.baseUrl}/v1/autonomy/mcp-servers/${encodeURIComponent(serverId)}/shadow`, {
@@ -329,7 +330,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (
         body: JSON.stringify({
           shadowVersionId: secondShadowId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
 
@@ -353,7 +354,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday MCP Server Self Upgrade Live (
         },
         body: JSON.stringify({
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const rollbackJson = await rollbackRes.json() as McpActionEnvelope;

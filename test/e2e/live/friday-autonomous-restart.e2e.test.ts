@@ -4,8 +4,7 @@ import * as path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { createAnthropicProvider, setModelRouting } from "./_helpers/api.js";
+import { setModelRouting } from "./_helpers/api.js";
 import {
   listAutonomousSteps,
   readAutonomousGoal,
@@ -16,13 +15,12 @@ import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   createFridayDeepProofHubEnvFromStateDir,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  createFridayDeepProofProvider,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   shutdownFridayDeepProofHubEnv,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
-
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 
 function buildWorkspaceProofPath(stateDir: string, name: string): string {
   const proofDir = path.join(stateDir, ".tmp", "autonomous-live-proofs");
@@ -61,21 +59,20 @@ async function startStaticProofServer(html: string): Promise<{ url: string; clos
   };
 }
 
-async function ensureAnthropicProvider(env: RealHubEnv): Promise<string> {
-  const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-    ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })();
-  const providerId = await createAnthropicProvider(env.baseUrl, env.accessToken, {
-    name: "Anthropic Autonomous Restart Proof",
-    anthropicBaseUrl: ANTHROPIC_BASE_URL,
-    models: [LIVE_ANTHROPIC_MODEL],
-    defaultModel: LIVE_ANTHROPIC_MODEL,
-    apiKeyEnvRef,
-  });
-  await setModelRouting(env.baseUrl, env.accessToken, providerId, []);
-  return providerId;
+interface DeepProofProviderHandle {
+  providerId: string;
+  model: string;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Anthropic API key)", () => {
+async function ensureDeepProofProvider(env: RealHubEnv): Promise<DeepProofProviderHandle> {
+  const result = await createFridayDeepProofProvider(env, {
+    name: `${FRIDAY_DEEP_PROOF_PROVIDER_LABEL} Autonomous Restart Proof`,
+  });
+  await setModelRouting(env.baseUrl, env.accessToken, result.providerId, []);
+  return { providerId: result.providerId, model: result.model };
+}
+
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Autonomous Restart Matrix (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let envsToCleanup: RealHubEnv[] = [];
 
   afterEach(async () => {
@@ -93,7 +90,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
     async () => {
       let env = await createFridayDeepProofHubEnv();
       envsToCleanup.push(env);
-      const providerId = await ensureAnthropicProvider(env);
+      const { providerId, model } = await ensureDeepProofProvider(env);
       const marker = `planning-content-${Date.now()}`;
       const outputPath = buildWorkspaceProofPath(env.stateDir!, `${marker}-planning-content-proof.txt`);
       const expected = `planning-content-restart-${marker}`;
@@ -102,7 +99,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       const executePromise = env.hub!.autonomousEngine.executeGoal({
         description: goalDescription,
         providerId,
-        model: LIVE_ANTHROPIC_MODEL,
+        model: model,
       });
 
       const goal = await waitForAutonomousGoalByDescriptionMarker(env.stateDir!, marker, { intervalMs: 100, maxMs: 20_000 });
@@ -128,7 +125,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       const resumeResult = await env.hub!.autonomousEngine.resumeGoal({
         goalId,
         providerId,
-        model: LIVE_ANTHROPIC_MODEL,
+        model: model,
       });
       if (resumeResult.status !== "completed") {
         const failureGoal = readAutonomousGoal(env.stateDir!, goalId);
@@ -184,7 +181,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
     async () => {
       let env = await createFridayDeepProofHubEnv();
       envsToCleanup.push(env);
-      const providerId = await ensureAnthropicProvider(env);
+      const { providerId, model } = await ensureDeepProofProvider(env);
       const marker = `planning-${Date.now()}`;
       const outputPath = buildWorkspaceProofPath(env.stateDir!, `${marker}-planning-proof.txt`);
       const expected = `planning-restart-${marker}`;
@@ -193,7 +190,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       const executePromise = env.hub!.autonomousEngine.executeGoal({
         description: goalDescription,
         providerId,
-        model: LIVE_ANTHROPIC_MODEL,
+        model: model,
       });
 
       const goal = await waitForAutonomousGoalByDescriptionMarker(env.stateDir!, marker, { intervalMs: 100, maxMs: 20_000 });
@@ -219,7 +216,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       const resumeResult = await env.hub!.autonomousEngine.resumeGoal({
         goalId,
         providerId,
-        model: LIVE_ANTHROPIC_MODEL,
+        model: model,
       });
       if (resumeResult.status !== "completed") {
         const failureGoal = readAutonomousGoal(env.stateDir!, goalId);
@@ -253,7 +250,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
     async () => {
       let env = await createFridayDeepProofHubEnv();
       envsToCleanup.push(env);
-      const providerId = await ensureAnthropicProvider(env);
+      const { providerId, model } = await ensureDeepProofProvider(env);
       const marker = `executing-${Date.now()}`;
       const outputPath = path.join(env.stateDir!, "autonomous-executing-proof.txt");
       const expected = `executing-restart-${marker}`;
@@ -261,7 +258,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       const executePromise = env.hub!.autonomousEngine.executeGoal({
         description: goalDescription,
         providerId,
-        model: LIVE_ANTHROPIC_MODEL,
+        model: model,
       });
 
       const goal = await waitForAutonomousGoalByDescriptionMarker(env.stateDir!, marker, { intervalMs: 100, maxMs: 20_000 });
@@ -291,7 +288,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
         env.hub!.autonomousEngine.resumeGoal({
           goalId,
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: model,
         }),
       ).rejects.toThrow("cannot be resumed safely");
       expect(fs.existsSync(outputPath)).toBe(false);
@@ -318,13 +315,13 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
       let env = await createFridayDeepProofHubEnv();
       envsToCleanup.push(env);
       try {
-        const providerId = await ensureAnthropicProvider(env);
+        const { providerId, model } = await ensureDeepProofProvider(env);
         const marker = `verifying-${Date.now()}`;
         const goalDescription = `Marker ${marker}. Use only the browser tool, not any desktop tool. Open '${staticPage.url}?autonomous_marker=${encodeURIComponent(marker)}' in the browser, stay on that page, and then verify visually that the Friday login page is shown and that a local sign-in option is visible to the user.`;
         const executePromise = env.hub!.autonomousEngine.executeGoal({
           description: goalDescription,
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: model,
         });
 
         const goal = await waitForAutonomousGoalByDescriptionMarker(env.stateDir!, marker, { intervalMs: 100, maxMs: 20_000 });
@@ -360,7 +357,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Autonomous Restart Matrix (Ant
         const resumeResult = await env.hub!.autonomousEngine.resumeGoal({
           goalId,
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: model,
         });
         if (resumeResult.status !== "completed") {
           const failureGoal = readAutonomousGoal(env.stateDir!, goalId);

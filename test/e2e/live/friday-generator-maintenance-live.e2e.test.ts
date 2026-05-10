@@ -4,17 +4,16 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, ensureAnthropicProviders } from "./_helpers/api.js";
+import { apiFetch } from "./_helpers/api.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  ensureFridayDeepProofProviders,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
-
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 
 interface SkillGeneratorSessionEnvelope {
   ok: boolean;
@@ -283,18 +282,10 @@ function buildSkillRunInput(skillDir: string): Record<string, unknown> {
   return input;
 }
 
-async function ensureAnthropicGeneratorProviders(env: RealHubEnv): Promise<void> {
-  const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-    ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })();
-  await ensureAnthropicProviders(
-    env.baseUrl,
-    env.accessToken,
-    ANTHROPIC_BASE_URL,
-    LIVE_ANTHROPIC_MODEL,
-    LIVE_ANTHROPIC_MODEL,
-    apiKeyEnvRef,
-    { namePrefix: "Generator Maintenance Deep Proof" },
-  );
+async function ensureGeneratorMaintenanceDeepProofProviders(env: RealHubEnv): Promise<void> {
+  await ensureFridayDeepProofProviders(env, {
+    namePrefix: "Generator Maintenance Deep Proof",
+  });
 }
 
 async function getSkillDraftState(
@@ -329,7 +320,7 @@ async function createValidatedSkillDraft(
       goal,
       userId: "admin-001",
       channel: "deep-generator-maintenance",
-      requestedModel: LIVE_ANTHROPIC_MODEL,
+      requestedModel: FRIDAY_DEEP_PROOF_MODEL,
     },
     { timeoutMs: 240_000 },
   );
@@ -348,7 +339,7 @@ async function createValidatedSkillDraft(
         message:
           "Keep the implementation deterministic, shell-based, and as small as possible. " +
           "Preserve the exact requested skill id and version, and make the runtime output include the exact required marker.",
-        requestedModel: LIVE_ANTHROPIC_MODEL,
+        requestedModel: FRIDAY_DEEP_PROOF_MODEL,
       },
       { timeoutMs: 240_000 },
     );
@@ -381,7 +372,7 @@ async function createValidatedSkillDraft(
       env.accessToken,
       "POST",
       `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/generate`,
-      { requestedModel: LIVE_ANTHROPIC_MODEL },
+      { requestedModel: FRIDAY_DEEP_PROOF_MODEL },
       { timeoutMs: 240_000 },
     );
     expect(generateRes.status).toBe(200);
@@ -415,7 +406,7 @@ async function createValidatedSkillDraft(
           message:
             `The current draft still has validation issues: ${lastIssues}. ` +
             "Fix those exact issues, keep the requested skill identity, and regenerate.",
-          requestedModel: LIVE_ANTHROPIC_MODEL,
+          requestedModel: FRIDAY_DEEP_PROOF_MODEL,
         },
         { timeoutMs: 240_000 },
       );
@@ -484,7 +475,7 @@ async function testSkillDraft(
         message:
           `The explicit self-test failed: ${lastFailure}. ` +
           "Fix the draft so the self-test passes, preserve the exact skill id/version, and regenerate.",
-        requestedModel: LIVE_ANTHROPIC_MODEL,
+        requestedModel: FRIDAY_DEEP_PROOF_MODEL,
       },
       { timeoutMs: 240_000 },
     );
@@ -496,7 +487,7 @@ async function testSkillDraft(
       env.accessToken,
       "POST",
       `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/generate`,
-      { requestedModel: LIVE_ANTHROPIC_MODEL },
+      { requestedModel: FRIDAY_DEEP_PROOF_MODEL },
       { timeoutMs: 240_000 },
     );
     expect(generateRes.status).toBe(200);
@@ -614,13 +605,13 @@ async function getSkillUpgradeStatus(
   return response.json.data.items[0]!;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (Anthropic API key)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Generator Maintenance Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   const generatedSkillDirs = new Set<string>();
 
   beforeAll(async () => {
     env = await createFridayDeepProofHubEnv();
-    await ensureAnthropicGeneratorProviders(env);
+    await ensureGeneratorMaintenanceDeepProofProviders(env);
   }, 120_000);
 
   afterAll(async () => {
@@ -732,7 +723,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         {
           shadowVersionId: second.draft!.manifest!.version,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(shadowV2Res.status).toBe(200);
@@ -795,7 +786,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         `/v1/autonomy/skills/${encodeURIComponent(skillId)}/promote`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(promoteRes.status).toBe(200);
@@ -815,7 +806,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         promotionChannel: "active",
         shadowVersionId: "2.0.0",
         lastVerifiedRuntimeVersion: runtimeVersion,
-        lastVerifiedProviderModel: LIVE_ANTHROPIC_MODEL,
+        lastVerifiedProviderModel: FRIDAY_DEEP_PROOF_MODEL,
       });
       expect(JSON.parse(promotedRow!.canaryStatsJson)).toMatchObject({
         sampleSize: 1,
@@ -855,7 +846,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         {
           shadowVersionId: blockedPromotion.draft!.manifest!.version,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(shadowV3Res.status).toBe(200);
@@ -892,7 +883,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         `/v1/autonomy/skills/${encodeURIComponent(skillId)}/rollback`,
         {
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(rollbackRes.status).toBe(200);
@@ -925,7 +916,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Generator Maintenance Live (An
         promotionChannel: "rolled_back",
         shadowVersionId: null,
         lastVerifiedRuntimeVersion: runtimeVersion,
-        lastVerifiedProviderModel: LIVE_ANTHROPIC_MODEL,
+        lastVerifiedProviderModel: FRIDAY_DEEP_PROOF_MODEL,
       });
       expect(JSON.parse(rolledBackRow!.canaryStatsJson)).toMatchObject({
         sampleSize: 1,

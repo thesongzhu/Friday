@@ -5,11 +5,12 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL } from "../_helpers/live-anthropic.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
 
@@ -369,7 +370,7 @@ async function getChannel(env: RealHubEnv, channelKind: string): Promise<Channel
   return json.data.channel;
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade Live (Anthropic API key lane)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   const inboundMessages: Array<{ text: string; senderId: string }> = [];
 
@@ -463,7 +464,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade L
         body: JSON.stringify({
           shadowVersionId: firstShadowId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const shadowJson = await shadowRes.json() as ChannelActionEnvelope;
@@ -495,7 +496,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade L
         },
         body: JSON.stringify({
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const promoteJson = await promoteRes.json() as ChannelActionEnvelope;
@@ -509,7 +510,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade L
       expect(rowAfterPromote?.promotionChannel).toBe("active");
       expect(rowAfterPromote?.compatibilityStatus).toBe("compatible");
       expect(rowAfterPromote?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
-      expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(LIVE_ANTHROPIC_MODEL);
+      expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(FRIDAY_DEEP_PROOF_MODEL);
 
       const secondShadowId = "webchat@shadow-rollback";
       await fetch(`${env.baseUrl}/v1/autonomy/channels/webchat/shadow`, {
@@ -521,7 +522,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade L
         body: JSON.stringify({
           shadowVersionId: secondShadowId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
 
@@ -545,7 +546,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Channel Adapter Self Upgrade L
         },
         body: JSON.stringify({
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         }),
       });
       const rollbackJson = await rollbackRes.json() as ChannelActionEnvelope;

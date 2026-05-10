@@ -1,21 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, ensureAnthropicProviders } from "./_helpers/api.js";
+import { apiFetch } from "./_helpers/api.js";
 import { pollUntil } from "./_helpers/poll.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   createFridayDeepProofHubEnvFromStateDir,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  ensureFridayDeepProofProviders,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
+  selectFridayDeepProofProviderKind,
   shutdownFridayDeepProofHubEnv,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
 
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 const SUBAGENT_FORK_GATED = process.env.FRIDAY_SUBAGENT_FORK_MODE_ENABLED === "true";
-const INVALID_ANTHROPIC_MODEL = "claude-invalid-subagent-live";
+// Provider-aware obviously-invalid model fixture. Stays clearly-invalid for
+// every provider lane while signalling which lane the run is exercising.
+const INVALID_LIVE_MODEL = `${selectFridayDeepProofProviderKind() ?? "no-provider"}-invalid-subagent-live`;
 
 interface StartAgentRunResponse {
   ok: boolean;
@@ -156,24 +158,20 @@ async function listSessionMessages(
   );
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API key)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   let providerId: string;
+  let liveModel: string;
 
   beforeAll(async () => {
     env = await createFridayDeepProofHubEnv();
 
-    const providers = await ensureAnthropicProviders(
-      env.baseUrl,
-      env.accessToken,
-      ANTHROPIC_BASE_URL,
-      LIVE_ANTHROPIC_MODEL,
-      LIVE_ANTHROPIC_MODEL,
-      FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF ?? (() => { throw new Error(liveAnthropicCredentialMessage()); })(),
-      { namePrefix: "Subagent Live" },
-    );
+    const providers = await ensureFridayDeepProofProviders(env, {
+      namePrefix: "Subagent Live",
+    });
 
     providerId = providers.codeProviderId;
+    liveModel = providers.codeModel;
   }, 60_000);
 
   afterAll(async () => {
@@ -197,7 +195,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
         "/v1/agent/runs",
         {
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: liveModel,
           timeoutMs: 120_000,
           task: [
             "You must use spawn_subagent exactly once with wait=true because your final answer depends on the child result in this same run.",
@@ -305,11 +303,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
         "/v1/agent/runs",
         {
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: liveModel,
           timeoutMs: 120_000,
           task: [
             "You must use spawn_subagent exactly once with wait=true.",
-            `Override the child model to "${INVALID_ANTHROPIC_MODEL}" so the child fails deterministically.`,
+            `Override the child model to "${INVALID_LIVE_MODEL}" so the child fails deterministically.`,
             `The child task should attempt to return "CHILD_SHOULD_FAIL_${marker}" and nothing else.`,
             `When the child fails, do not retry and do not crash. Your final answer must be exactly "${parentAnswer}" and nothing else.`,
           ].join(" "),
@@ -341,7 +339,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
       const subagent = subagentList.json.data.items[0]!;
       expect(subagent.status).toBe("failed");
       expect(subagent.mode).toBe("fresh");
-      expect(subagent.model).toBe(INVALID_ANTHROPIC_MODEL);
+      expect(subagent.model).toBe(INVALID_LIVE_MODEL);
       expect(subagent.outcome?.status).toBe("failed");
       expect((subagent.outcome?.response ?? "").trim().length).toBeGreaterThan(0);
 
@@ -384,7 +382,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
         "/v1/agent/runs",
         {
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: liveModel,
           timeoutMs: 120_000,
           task: [
             "You must use spawn_subagent exactly once with wait=false.",
@@ -470,7 +468,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
         "/v1/agent/runs",
         {
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: liveModel,
           sessionKey,
           timeoutMs: 120_000,
           task: [
@@ -539,7 +537,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Subagent Live (Anthropic API k
         "/v1/agent/runs",
         {
           providerId,
-          model: LIVE_ANTHROPIC_MODEL,
+          model: liveModel,
           timeoutMs: 120_000,
           task: [
             "You must use spawn_subagent exactly once with wait=false.",

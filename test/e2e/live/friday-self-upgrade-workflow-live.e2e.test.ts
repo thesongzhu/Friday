@@ -3,18 +3,17 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LIVE_ANTHROPIC_MODEL, liveAnthropicCredentialMessage } from "../_helpers/live-anthropic.js";
-import { apiFetch, ensureAnthropicProviders } from "./_helpers/api.js";
+import { apiFetch } from "./_helpers/api.js";
 import { pollRunTerminal } from "./_helpers/workflow.js";
 import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
-  FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF,
+  ensureFridayDeepProofProviders,
   FRIDAY_DEEP_PROOF_GATED,
+  FRIDAY_DEEP_PROOF_MODEL,
+  FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
-
-const ANTHROPIC_BASE_URL = process.env.E2E_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
 
 interface WorkflowCreateEnvelope {
   ok: boolean;
@@ -179,20 +178,10 @@ function readWorkflowVersions(stateDir: string, workflowId: string): WorkflowVer
   }
 }
 
-async function ensureAnthropicWorkflowProviders(env: RealHubEnv): Promise<void> {
-  const apiKeyEnvRef = FRIDAY_DEEP_PROOF_ANTHROPIC_API_KEY_ENV_REF
-    ?? (() => {
-      throw new Error(liveAnthropicCredentialMessage());
-    })();
-  await ensureAnthropicProviders(
-    env.baseUrl,
-    env.accessToken,
-    ANTHROPIC_BASE_URL,
-    LIVE_ANTHROPIC_MODEL,
-    LIVE_ANTHROPIC_MODEL,
-    apiKeyEnvRef,
-    { namePrefix: "Workflow Self Upgrade Deep Proof" },
-  );
+async function ensureWorkflowDeepProofProviders(env: RealHubEnv): Promise<void> {
+  await ensureFridayDeepProofProviders(env, {
+    namePrefix: "Workflow Self Upgrade Deep Proof",
+  });
 }
 
 async function getRuntimeVersion(env: RealHubEnv): Promise<string> {
@@ -302,7 +291,7 @@ async function createUpgradeVersion(
             label: "Anthropic Upgrade Probe",
             config: {
               prompt: "Reply with the exact text: upgraded by anthropic",
-              model: LIVE_ANTHROPIC_MODEL,
+              model: FRIDAY_DEEP_PROOF_MODEL,
             },
           },
           {
@@ -414,12 +403,12 @@ async function runWorkflowVersion(
   };
 }
 
-describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Workflow Self Upgrade Live (Anthropic API key)", () => {
+describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
 
   beforeAll(async () => {
     env = await createFridayDeepProofHubEnv();
-    await ensureAnthropicWorkflowProviders(env);
+    await ensureWorkflowDeepProofProviders(env);
   }, 120_000);
 
   afterAll(async () => {
@@ -463,7 +452,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Workflow Self Upgrade Live (An
         {
           workflowVersionId: upgraded.versionId,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(shadowRes.status).toBe(200);
@@ -500,7 +489,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Workflow Self Upgrade Live (An
         {
           versionNumber: upgraded.versionNumber,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(promoteRes.status).toBe(200);
@@ -521,7 +510,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)("Friday Workflow Self Upgrade Live (An
         {
           targetVersionNumber: 1,
           runtimeVersion,
-          providerModel: LIVE_ANTHROPIC_MODEL,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
         },
       );
       expect(rollbackRes.status).toBe(200);
