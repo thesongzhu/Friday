@@ -476,11 +476,14 @@ export function createFridayAgentProviderTool(
 
     const validation = await providerService.validateProvider(providerId);
 
+    // Same whitelist as sanitizeProvider — errorMessage is validator
+    // free-text and belongs in the doctor action, not the agent's view.
     return jsonResult({
       providerId,
       status: validation.status,
-      checkedAt: validation.checkedAt,
-      errorMessage: validation.errorMessage,
+      ...(validation.checkedAt ? { checkedAt: validation.checkedAt } : {}),
+      ...(validation.errorCode ? { errorCode: validation.errorCode } : {}),
+      ...(validation.httpStatus !== undefined ? { httpStatus: validation.httpStatus } : {}),
     });
   }
 
@@ -499,6 +502,7 @@ export function createFridayAgentProviderTool(
     baseUrl: string;
     enabled: boolean;
     defaultModel?: string;
+    promotionChannel?: string;
     config: {
       api: string;
       authMode: string;
@@ -507,9 +511,33 @@ export function createFridayAgentProviderTool(
       regionTag?: string;
       cliConfig?: { backendId: string; binaryPath?: string };
       supportedModels?: string[];
-      validation?: { status: string; checkedAt?: string; errorMessage?: string };
+      validation?: {
+        status: string;
+        checkedAt?: string;
+        errorCode?: string;
+        errorMessage?: string;
+        httpStatus?: number;
+      };
     };
   }): Record<string, unknown> {
+    const validation = provider.config.validation ?? { status: "never" };
+    const promotionChannel = provider.promotionChannel ?? "none";
+    // Mirrors isProviderLifecycleAvailableForRuntime in
+    // src/providers/model/friday-runtime-capabilities.ts.
+    const promotionChannelBlocked =
+      promotionChannel !== "none" && promotionChannel !== "active";
+    const blockers: string[] = [];
+    if (!provider.enabled) {
+      blockers.push("provider_disabled");
+    }
+    if (validation.status === "failed") {
+      blockers.push("validation_failed");
+    } else if (validation.status !== "ok") {
+      blockers.push("validation_never");
+    }
+    if (promotionChannelBlocked) {
+      blockers.push("promotion_channel_blocked");
+    }
     // Never expose API keys in output
     return {
       id: provider.id,
@@ -525,7 +553,16 @@ export function createFridayAgentProviderTool(
       regionTag: provider.config.regionTag ?? "global",
       cliConfig: provider.config.cliConfig,
       supportedModels: provider.config.supportedModels ?? [],
-      validation: provider.config.validation ?? { status: "never" },
+      // errorMessage is validator free-text and is intentionally excluded
+      // from the agent's view; details belong in the doctor action.
+      validation: {
+        status: validation.status,
+        ...(validation.checkedAt ? { checkedAt: validation.checkedAt } : {}),
+        ...(validation.errorCode ? { errorCode: validation.errorCode } : {}),
+        ...(validation.httpStatus !== undefined ? { httpStatus: validation.httpStatus } : {}),
+      },
+      ready: blockers.length === 0,
+      blockers,
     };
   }
 
