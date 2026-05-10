@@ -43,6 +43,10 @@ import {
   supportsUseMyPlan,
   type ProviderConnectionMode,
 } from "@/lib/providers/provider-connection";
+import {
+  classifyFridayProviderDoctorRemediation,
+  type FridayProviderDoctorRemediationVerdict,
+} from "@/lib/providers/provider-doctor-diagnostics";
 
 type OpenAICodexDeviceOAuthState = {
   status: "idle" | "starting" | "pending" | "completing" | "connected" | "error";
@@ -84,6 +88,97 @@ function toneForProviderLane(value: "primary" | "fallback" | "standby" | "disabl
   if (value === "primary") return "success";
   if (value === "fallback") return "warning";
   return "neutral";
+}
+
+function describeFridayProviderDoctorRemediation(
+  verdict: FridayProviderDoctorRemediationVerdict,
+  locale: AppLocale,
+): { title: string; hint: string } | null {
+  switch (verdict) {
+    case "healthy":
+      return null;
+    case "provider_disabled":
+      return {
+        title: localize(locale, "Provider 已停用", "Provider is disabled"),
+        hint: localize(locale, "启用此 provider 才能继续路由。", "Enable this provider before it can route."),
+      };
+    case "cli_problem":
+      return {
+        title: localize(locale, "CLI 会话问题", "CLI session problem"),
+        hint: localize(
+          locale,
+          "CLI 后端尚未配置或会话已过期。请重新登录或检查 CLI 配置。",
+          "The CLI backend is not configured or its session has expired. Re-login or check the CLI configuration.",
+        ),
+      };
+    case "oauth_reauth_required":
+      return {
+        title: localize(locale, "OAuth 需要重新授权", "OAuth re-authorization required"),
+        hint: localize(
+          locale,
+          "请通过 OAuth 流程重新连接此 provider。",
+          "Reconnect this provider through the OAuth flow.",
+        ),
+      };
+    case "credential_problem":
+      return {
+        title: localize(locale, "凭据问题", "Credential problem"),
+        hint: localize(
+          locale,
+          "API 密钥或环境变量似乎无效或缺失。请重新输入或设置环境变量。",
+          "The API key or environment variable appears invalid or missing. Re-enter the key or set the environment variable.",
+        ),
+      };
+    case "payment_required":
+      return {
+        title: localize(locale, "账户或验证需关注", "Account or validation needs attention"),
+        hint: localize(
+          locale,
+          "此 provider 当前不可路由。详情请通过 provider doctor 查看。",
+          "This provider is currently not routable. Check the provider doctor for details.",
+        ),
+      };
+    case "connectivity_problem":
+      return {
+        title: localize(locale, "连接问题", "Connectivity problem"),
+        hint: localize(
+          locale,
+          "无法到达此 provider。请检查 baseURL 与网络。",
+          "Cannot reach this provider. Check the baseURL and network connectivity.",
+        ),
+      };
+    case "model_problem":
+      return {
+        title: localize(locale, "模型问题", "Model problem"),
+        hint: localize(
+          locale,
+          "所选模型不可用或可用模型列表为空。请检查 model 配置。",
+          "The selected model is unavailable, or the supported-model list is empty. Check the model configuration.",
+        ),
+      };
+    case "unverified_or_unknown":
+      return {
+        title: localize(locale, "尚未验证", "Not yet verified"),
+        hint: localize(
+          locale,
+          "此 provider 还未通过 doctor 验证。请运行 validate 或 doctor。",
+          "This provider has not passed doctor validation yet. Run validate or doctor.",
+        ),
+      };
+    case "out_of_scope_health":
+      return {
+        title: localize(locale, "健康降级", "Health degraded"),
+        hint: localize(
+          locale,
+          "后端或认证状态非健康，但未匹配到具体修复项。请通过 provider doctor 进一步排查。",
+          "Backend or auth health is degraded but no specific remediation matched. Investigate via the provider doctor.",
+        ),
+      };
+    default: {
+      const exhaustive: never = verdict;
+      return exhaustive;
+    }
+  }
 }
 
 function toneForMcpState(value: "configured" | "discoverable" | "loaded" | "deferred"): "neutral" | "success" | "warning" {
@@ -990,6 +1085,20 @@ export function SettingsPage() {
                   {(() => {
                     const template = providerTemplates.find((item) => item.providerKind === provider.kind);
                     const healthItem = providerHealth.find((item) => item.providerId === provider.id);
+                    const remediationVerdict = healthItem
+                      ? classifyFridayProviderDoctorRemediation({
+                          enabled: provider.enabled,
+                          validationStatus: healthItem.validationStatus,
+                          validationErrorCode: provider.config.validation?.errorCode,
+                          reasons: healthItem.reasons,
+                          backendHealth: healthItem.backendHealth,
+                          authHealth: healthItem.authHealth,
+                          routingEligible: healthItem.routingEligible,
+                        })
+                      : undefined;
+                    const remediationHint = remediationVerdict
+                      ? describeFridayProviderDoctorRemediation(remediationVerdict, locale)
+                      : null;
                     return (
                       <>
                   <div className="flex items-center justify-between gap-3">
@@ -1008,6 +1117,12 @@ export function SettingsPage() {
                   <p className="mt-3 text-sm text-[color:var(--color-text-secondary)]">
                     {localize(locale, "默认模型：", "Default model: ")}{provider.defaultModel ?? resolveFirstSupportedModel(provider) ?? localize(locale, "未设置", "Not set")}
                   </p>
+                  {remediationHint ? (
+                    <div className="mt-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                      <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{remediationHint.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">{remediationHint.hint}</p>
+                    </div>
+                  ) : null}
                   {healthItem ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <DiagnosticRow label={localize(locale, "后端健康", "Backend health")} value={healthItem.backendHealth} />
