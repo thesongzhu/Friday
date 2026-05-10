@@ -127,6 +127,8 @@
 
 ## Module 7: Multi-Tenant Security (FRI-PLAT-066, FRI-PLAT-067)
 
+> _Phase 1 status: in-memory engine only. The criteria in FRI-PLAT-066 and FRI-PLAT-067 below describe the Phase 2 acceptance gates and are deferred until SQLite persistence and per-domain repository scoping are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; do not read these criteria as already met._
+
 ### FRI-PLAT-066 — Security & Permissions
 1. RBAC engine enforces role hierarchy — child roles cannot exceed parent permissions
 2. Tenant deactivation immediately revokes all active sessions (fail-closed)

@@ -1,6 +1,6 @@
 # RFC: Multi-Tenant Security and Permissions
 
-**Status:** Draft
+**Status:** Draft — Phase 2 not started; current code is in-memory engine only and does not provide persistence-level tenant isolation.
 **Author:** Friday Platform Team
 **Created:** 2026-02-23
 **Tickets:** FRI-PLAT-061, FRI-PLAT-062, FRI-PLAT-063
@@ -8,6 +8,8 @@
 ---
 
 ## 1. Summary
+
+> _Phase 1 (current release) ships only the in-memory engine; the guarantees described in this Summary apply to Phase 2 once SQLite persistence and per-domain repository scoping are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; the Phase 2 work is unscheduled._
 
 The Multi-Tenant Security and Permissions workstream introduces tenant isolation, workspace-scoped RBAC, a scoped credential store with encryption at rest, and policy-based permission evaluation to the Friday platform. It guarantees that all data access, secret retrieval, and agent execution respect tenant boundaries with zero cross-tenant leakage, least-privilege defaults, and full audit coverage of every permission-denied decision.
 
