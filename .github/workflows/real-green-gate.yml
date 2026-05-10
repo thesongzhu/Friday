@@ -49,9 +49,18 @@ jobs:
 
       - name: Record skipped live gate
         if: env.FRIDAY_BASE_URL == '' && env.FRIDAY_ACCESS_TOKEN == '' && env.FRIDAY_LOCAL_PASSPHRASE == '' && env.FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN == ''
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/real-green-gate"
           printf '%s\n' 'Live real-world gate skipped: no Friday runtime credentials were configured in GitHub Actions secrets.' > "$RUNNER_TEMP/real-green-gate/skip.txt"
+          # P4-G1.1: also emit the structured release-proof artifact so the
+          # downstream release-time gate machine-reads status=blocked_by_env
+          # rather than inferring pass from a successful workflow status.
+          # Reuse the lib's pure builder so the schema stays single-source.
+          node -e "import('./scripts/ops/lib/real-green-gate-result.mjs').then((m) => process.stdout.write(JSON.stringify(m.buildBlockedByEnvResult({ commitSha: process.env.GITHUB_SHA || '', refName: process.env.GITHUB_REF_NAME || '', evaluatedAt: new Date().toISOString(), blockedReasons: ['env_var_missing:FRIDAY_BASE_URL_or_FRIDAY_ACCESS_TOKEN_or_FRIDAY_LOCAL_PASSPHRASE_or_FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN'] }), null, 2) + '\n'))" \
+            > "$RUNNER_TEMP/real-green-gate/real-green-gate-result.json"
 
       - name: Upload real green gate artifact
         if: always()
