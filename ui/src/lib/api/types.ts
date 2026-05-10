@@ -1255,6 +1255,13 @@ export interface FridayWorkflowDraftAutosaveState {
   lastSavedAt?: string;
 }
 
+export interface FridayWorkflowDraftSourceReview {
+  source: "deeplink.workflow_template" | "bundle_import";
+  sourceUrl?: string;
+  importedAt: string;
+  requiresReviewBeforePublish: boolean;
+}
+
 export interface FridayWorkflowDraftEntity {
   draftId: string;
   workflowId: string;
@@ -1269,6 +1276,7 @@ export interface FridayWorkflowDraftEntity {
   updatedAt: string;
   publishedVersionId?: string;
   autosave: FridayWorkflowDraftAutosaveState;
+  sourceReview?: FridayWorkflowDraftSourceReview;
 }
 
 export interface FridayWorkflowTemplateEntity {

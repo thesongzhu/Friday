@@ -55,6 +55,13 @@ function sanitizeDeepLinkPayloadForPreview(payload: FridayDeepLinkPayload): Frid
     };
   }
 
+  if (payload.workflowTemplate?.url) {
+    sanitized.workflowTemplate = {
+      ...payload.workflowTemplate,
+      url: redactFridaySkillCandidateSourceUri(payload.workflowTemplate.url),
+    };
+  }
+
   return sanitized;
 }
 
@@ -140,12 +147,13 @@ function validateProviderTemplate(
     checks.push({ id: "provider-kind", label: "Provider Kind", level: "blocking", summary: "Provider kind is required." });
   }
   if (template.apiKey) {
-    permissions.push("Will configure an API key for the provider.");
+    permissions.push("Provider API key will be previewed only and redacted.");
   }
   if (template.baseUrl && isPrivateUrl(template.baseUrl)) {
     checks.push({ id: "provider-url", label: "Base URL", level: "warning", summary: "Base URL points to a private/local address." });
   }
-  permissions.push("Will create or update a provider configuration.");
+  permissions.push("Provider template preview does not create, update, enable, or validate a provider.");
+  permissions.push("Provider setup must use the provider lifecycle with explicit validation and promotion before availability.");
 }
 
 function validateSkillSource(
@@ -163,8 +171,8 @@ function validateSkillSource(
   } else if (isPrivateUrl(source.url)) {
     checks.push({ id: "skill-url-private", label: "Source URL", level: "warning", summary: "Source URL points to a private/local address." });
   }
-  permissions.push("Will download and install a skill from an external source.");
-  permissions.push("Skill will go through preflight verification before activation.");
+  permissions.push("Will stage an external skill candidate for review.");
+  permissions.push("Skill will not be installed or made available until lifecycle validation, approval, and promotion complete.");
 }
 
 function validateMcpServer(
@@ -207,5 +215,6 @@ function validateWorkflowTemplate(
   } else if (isPrivateUrl(template.url)) {
     checks.push({ id: "workflow-url-private", label: "Template URL", level: "blocking", summary: "Workflow template URL points to a private/local address." });
   }
-  permissions.push("Will import a workflow template.");
+  permissions.push("Will import an external workflow template as a draft.");
+  permissions.push("Draft must be reviewed before publish, deploy, or run.");
 }

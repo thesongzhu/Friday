@@ -262,7 +262,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(result).toHaveProperty("canonicalGate.ticketId");
   });
 
-  it("does not require provider-template deeplink canonical approval when provider gate profile is off", async () => {
+  it("keeps provider-template deeplink preview-only when provider gate profile is off", async () => {
     const providerService = makeMockProviderService();
     const runtime = createFridayApiRuntime({
       ...makeBaseDeps(),
@@ -271,7 +271,7 @@ describe("API Runtime — Extended Route Registration", () => {
     });
     const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "deeplink.apply")!;
 
-    await route.handler({
+    const result = await route.handler({
       requestId: "req-deeplink-provider-off",
       receivedAt: NOW,
       params: {},
@@ -293,14 +293,17 @@ describe("API Runtime — Extended Route Registration", () => {
       principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
     });
 
-    expect(providerService.createProvider).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "openai",
-      name: "Imported OpenAI",
-      validateOnSave: false,
-    }));
+    expect(result).toMatchObject({
+      result: {
+        applied: false,
+        resourceType: "provider-template",
+      },
+    });
+    expect(String((result as { result?: { message?: string } }).result?.message)).toContain("preview-only");
+    expect(providerService.createProvider).not.toHaveBeenCalled();
   });
 
-  it("requires provider-template deeplink canonical approval when provider gate profile is on", async () => {
+  it("keeps provider-template deeplink preview-only when provider gate profile is on", async () => {
     const providerService = makeMockProviderService();
     const runtime = createFridayApiRuntime({
       ...makeBaseDeps(),
@@ -309,7 +312,7 @@ describe("API Runtime — Extended Route Registration", () => {
     });
     const route = runtime.routes.getRoutes().find((entry) => entry.operationId === "deeplink.apply")!;
 
-    await expect(route.handler({
+    const result = await route.handler({
       requestId: "req-deeplink-provider-on",
       receivedAt: NOW,
       params: {},
@@ -330,9 +333,15 @@ describe("API Runtime — Extended Route Registration", () => {
       },
       headers: {},
       principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
-    })).rejects.toMatchObject({
-      code: "CANONICAL_APPROVAL_REQUIRED",
     });
+
+    expect(result).toMatchObject({
+      result: {
+        applied: false,
+        resourceType: "provider-template",
+      },
+    });
+    expect(String((result as { result?: { message?: string } }).result?.message)).toContain("preview-only");
     expect(providerService.createProvider).not.toHaveBeenCalled();
   });
 

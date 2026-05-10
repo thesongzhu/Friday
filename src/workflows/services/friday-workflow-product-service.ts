@@ -40,6 +40,7 @@ export interface FridayWorkflowProductService {
     lockToken?: string;
     ownerSessionId?: string;
     lockTtlSec?: number;
+    externalReviewConfirmed?: boolean;
   }): Promise<FridayWorkflowDeployResult>;
   getOverview(input: {
     workflowId: UUID;
@@ -527,6 +528,7 @@ export function createFridayWorkflowProductService(
           createdByUserId: input.actorUserId,
           changeNote: input.changeNote,
           publishNow: true,
+          externalReviewConfirmed: input.externalReviewConfirmed,
         });
 
         if (!published.validation.valid || !published.workflowVersionId) {

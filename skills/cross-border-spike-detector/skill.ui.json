@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Spike Detector",
+  "description": "Cluster weekly spike notes into a screening-ready spike review.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "spikeSignals"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "spikeSignals",
+      "inputKey": "spikeSignals",
+      "kind": "textarea",
+      "label": "Spike Signals",
+      "required": true,
+      "help": "Paste weekly spike notes — sales jumps, viral mentions, ad surges, or search trends (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "spikeReview",
+      "outputKey": "spikeReview",
+      "label": "Spike Review",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Detect Spikes",
+      "style": "primary"
+    }
+  ]
+}

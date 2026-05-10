@@ -3,7 +3,10 @@ import type { FridaySqliteLayer } from "#state";
 import type { UUID } from "../../model/friday-workflow.types.js";
 import type { FridayWorkflowSpecV1 } from "../../model/friday-workflow-spec.types.js";
 import type { FridayWorkflowVisualGraphV1 } from "../model/friday-workflow-builder-canvas.types.js";
-import type { FridayWorkflowDraftEntity } from "../model/friday-workflow-builder-draft.types.js";
+import type {
+  FridayWorkflowDraftEntity,
+  FridayWorkflowDraftSourceReview,
+} from "../model/friday-workflow-builder-draft.types.js";
 import type {
   FridayWorkflowImportResult,
   FridayWorkflowSpecBundleV1,
@@ -25,7 +28,15 @@ export interface FridayWorkflowBuilderImportExportService {
     description?: string;
     tags?: string[];
   }): FridayWorkflowSpecBundleV1;
-  importBundle(bundle: FridayWorkflowSpecBundleV1, workflowId: UUID, ownerUserId?: UUID, options?: { force?: boolean }): FridayWorkflowImportResult;
+  importBundle(
+    bundle: FridayWorkflowSpecBundleV1,
+    workflowId: UUID,
+    ownerUserId?: UUID,
+    options?: {
+      force?: boolean;
+      sourceReview?: FridayWorkflowDraftSourceReview;
+    },
+  ): FridayWorkflowImportResult;
 }
 
 // ─── Dependencies ───
@@ -130,6 +141,7 @@ export function createFridayWorkflowBuilderImportExportService(
         spec: importedSpec,
         visual: importedVisual,
         ownerUserId,
+        sourceReview: options?.sourceReview,
       });
 
       // Run validation

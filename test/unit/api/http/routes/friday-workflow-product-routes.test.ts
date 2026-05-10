@@ -114,4 +114,22 @@ describe("createFridayWorkflowProductRoutes", () => {
     });
     expect(result.deployment.workflowId).toBe("wf-1");
   });
+
+  it("passes external review confirmation to deploy when present", async () => {
+    const service = makeService();
+    const routes = createFridayWorkflowProductRoutes({ service });
+
+    await routes[2]!.handler(
+      makeCtx({
+        params: { workflowId: "wf-1", draftId: "draft-1" },
+        body: { externalReviewConfirmed: true },
+      }),
+    );
+
+    expect(service.deployDraft).toHaveBeenCalledWith(expect.objectContaining({
+      workflowId: "wf-1",
+      draftId: "draft-1",
+      externalReviewConfirmed: true,
+    }));
+  });
 });

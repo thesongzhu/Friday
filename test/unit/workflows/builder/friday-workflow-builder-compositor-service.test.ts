@@ -198,6 +198,88 @@ describe("FridayWorkflowBuilderCompositorService", () => {
     expect(version!.isPublished).toBe(true);
   });
 
+  it("blocks externally imported drafts until review is explicitly confirmed", () => {
+    const {
+      draftService,
+      collaborationService,
+      compositorService,
+      crudService,
+    } = createAllServices();
+    const workflow = crudService.createWorkflow({
+      slug: "external-wf",
+      name: "External Workflow",
+    });
+    const draft = draftService.createDraft({
+      workflowId: workflow.id,
+      title: "External Draft",
+      spec: createTestSpec({ workflowId: workflow.id }),
+      visual: createTestVisual(workflow.id),
+      ownerUserId: "test-user",
+      sourceReview: {
+        source: "deeplink.workflow_template",
+        sourceUrl: "https://example.com/template.json",
+        importedAt: NOW,
+        requiresReviewBeforePublish: true,
+      },
+    });
+    const lockResult = collaborationService.acquireLock({
+      workflowId: workflow.id,
+      ownerUserId: "test-user",
+      ttlSec: 300,
+    });
+
+    expect(() =>
+      compositorService.publishDraft({
+        draftId: draft.draftId,
+        workflowId: workflow.id,
+        lockToken: lockResult.lock!.lockToken,
+        publishNow: true,
+      }),
+    ).toThrow("Externally imported workflow drafts require explicit review confirmation");
+  });
+
+  it("publishes externally imported drafts after explicit review confirmation", () => {
+    const {
+      draftService,
+      collaborationService,
+      compositorService,
+      crudService,
+    } = createAllServices();
+    const workflow = crudService.createWorkflow({
+      slug: "reviewed-external-wf",
+      name: "Reviewed External Workflow",
+    });
+    const draft = draftService.createDraft({
+      workflowId: workflow.id,
+      title: "Reviewed External Draft",
+      spec: createTestSpec({ workflowId: workflow.id }),
+      visual: createTestVisual(workflow.id),
+      ownerUserId: "test-user",
+      sourceReview: {
+        source: "deeplink.workflow_template",
+        sourceUrl: "https://example.com/template.json",
+        importedAt: NOW,
+        requiresReviewBeforePublish: true,
+      },
+    });
+    const lockResult = collaborationService.acquireLock({
+      workflowId: workflow.id,
+      ownerUserId: "test-user",
+      ttlSec: 300,
+    });
+
+    const result = compositorService.publishDraft({
+      draftId: draft.draftId,
+      workflowId: workflow.id,
+      lockToken: lockResult.lock!.lockToken,
+      publishNow: true,
+      externalReviewConfirmed: true,
+    });
+
+    expect(result.published).toBe(true);
+    expect(result.workflowVersionId).toBeTruthy();
+  });
+
   it("publishes the builtin blank template after compiling its transform starter into a data node", () => {
     const {
       draftService,

@@ -33,7 +33,9 @@ describe("validateFridayDeepLink", () => {
         providerTemplate: { providerKind: "openai", apiKey: "$KEY" },
       }));
       expect(result.verdict).toBe("ready");
-      expect(result.permissionSummary.length).toBeGreaterThan(0);
+      expect(result.permissionSummary).toContain("Provider API key will be previewed only and redacted.");
+      expect(result.permissionSummary).toContain("Provider template preview does not create, update, enable, or validate a provider.");
+      expect(result.permissionSummary).toContain("Provider setup must use the provider lifecycle with explicit validation and promotion before availability.");
       expect(result.payload.providerTemplate?.apiKey).toBe("[redacted]");
     });
 
@@ -71,6 +73,20 @@ describe("validateFridayDeepLink", () => {
         skillSource: { url: "https://github.com/user/repo" },
       }));
       expect(result.verdict).toBe("ready");
+      expect(result.permissionSummary).toContain("Will stage an external skill candidate for review.");
+      expect(result.permissionSummary).toContain("Skill will not be installed or made available until lifecycle validation, approval, and promotion complete.");
+    });
+
+    it("redacts token-bearing skill source URLs from preview payloads", () => {
+      const rawUrl = "https://example.com/skill-repo?token=deeplink-preview-secret-token";
+      const result = validateFridayDeepLink(makePayload({
+        type: "skill-source",
+        skillSource: { url: rawUrl },
+      }));
+
+      expect(result.payload.skillSource?.url).not.toBe(rawUrl);
+      expect(result.payload.skillSource?.url).not.toContain("deeplink-preview-secret-token");
+      expect(result.payload.skillSource?.url).toBe("https://example.com/skill-repo?redacted=1");
     });
 
     it("redacts token-bearing skill source URLs from preview payloads", () => {
@@ -147,6 +163,20 @@ describe("validateFridayDeepLink", () => {
       }));
 
       expect(result.verdict).toBe("ready");
+      expect(result.permissionSummary).toContain("Will import an external workflow template as a draft.");
+      expect(result.permissionSummary).toContain("Draft must be reviewed before publish, deploy, or run.");
+    });
+
+    it("redacts token-bearing workflow template URLs from preview payloads", () => {
+      const rawUrl = "https://example.com/workflows/template.json?token=workflow-preview-secret-token";
+      const result = validateFridayDeepLink(makePayload({
+        type: "workflow-template",
+        workflowTemplate: { url: rawUrl },
+      }));
+
+      expect(result.payload.workflowTemplate?.url).not.toBe(rawUrl);
+      expect(result.payload.workflowTemplate?.url).not.toContain("workflow-preview-secret-token");
+      expect(result.payload.workflowTemplate?.url).toBe("https://example.com/workflows/template.json?redacted=1");
     });
   });
 

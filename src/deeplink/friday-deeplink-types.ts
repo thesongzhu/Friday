@@ -80,5 +80,7 @@ export interface FridayDeepLinkApplyResult {
   applied: boolean;
   resourceType: FridayDeepLinkResourceType;
   resourceId?: string;
+  workflowId?: string;
+  resourceUrl?: string;
   message: string;
 }

@@ -87,6 +87,9 @@ export interface WorkflowBuilderRightSidebarProps {
   compilePending: boolean;
   onCompile: () => void;
   publishPending: boolean;
+  externalDraftReviewRequired: boolean;
+  externalDraftReviewConfirmed: boolean;
+  onExternalDraftReviewConfirmedChange: (value: boolean) => void;
   onPublish: () => void;
   readonlyReason: string | null;
   publishedVersionNumber: number | null;
@@ -142,6 +145,9 @@ export function WorkflowBuilderRightSidebar(props: WorkflowBuilderRightSidebarPr
             compilePending={props.compilePending}
             onCompile={props.onCompile}
             publishPending={props.publishPending}
+            externalDraftReviewRequired={props.externalDraftReviewRequired}
+            externalDraftReviewConfirmed={props.externalDraftReviewConfirmed}
+            onExternalDraftReviewConfirmedChange={props.onExternalDraftReviewConfirmedChange}
             onPublish={props.onPublish}
             readonlyReason={props.readonlyReason}
             publishedVersionNumber={props.publishedVersionNumber}
@@ -461,6 +467,9 @@ function DraftInspector(props: {
   compilePending: boolean;
   onCompile: () => void;
   publishPending: boolean;
+  externalDraftReviewRequired: boolean;
+  externalDraftReviewConfirmed: boolean;
+  onExternalDraftReviewConfirmedChange: (value: boolean) => void;
   onPublish: () => void;
   readonlyReason: string | null;
   publishedVersionNumber: number | null;
@@ -489,12 +498,29 @@ function DraftInspector(props: {
           className="agent-input"
         />
       </label>
+      {props.externalDraftReviewRequired ? (
+        <label className="flex items-start gap-3 rounded-[18px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <input
+            type="checkbox"
+            data-testid="workflow-builder-external-draft-review-confirm"
+            className="mt-0.5 h-4 w-4"
+            checked={props.externalDraftReviewConfirmed}
+            onChange={(event) => props.onExternalDraftReviewConfirmedChange(event.target.checked)}
+          />
+          <span>
+            I reviewed this external workflow template and want to allow publish/deploy for this draft.
+          </span>
+        </label>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <ActionButton tone="secondary" disabled={props.compilePending} onClick={props.onCompile}>
           {props.compilePending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
           Compile
         </ActionButton>
-        <ActionButton disabled={props.publishPending || Boolean(props.readonlyReason)} onClick={props.onPublish}>
+        <ActionButton
+          disabled={props.publishPending || Boolean(props.readonlyReason) || (props.externalDraftReviewRequired && !props.externalDraftReviewConfirmed)}
+          onClick={props.onPublish}
+        >
           {props.publishPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
           Publish
         </ActionButton>

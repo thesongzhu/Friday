@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "2.0",
+  "id": "cross-border-spike-detector",
+  "name": "Cross-border Spike Detector",
+  "description": "Detect product spikes from weekly trend notes and screen whether each spike is worth following up on.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.cross-border",
+    "cross-border",
+    "deterministic",
+    "spike-detector"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": [
+      "cross_border_spike_detector"
+    ],
+    "phrases": [
+      "detect product spikes",
+      "find this week's hot products",
+      "screen recent spikes"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 88,
+    "modes": [
+      "intent",
+      "workflow"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "spikeSignals",
+      "type": "string",
+      "required": true,
+      "label": "Spike Signals",
+      "help": "Paste weekly product spike notes — sales jumps, viral mentions, ad spikes, or trending search terms (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "spikeReview",
+      "type": "string",
+      "description": "Multi-line summary of detected spikes and screening recommendations."
+    },
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "One-line headline for the spike review."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "Recommended next operator action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured cluster + screening data for UI rendering."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked"
+    ]
+  }
+}

@@ -82,6 +82,7 @@ export function createFridayWorkflowProductRoutes(
             lockToken: typeof body.lockToken === "string" ? body.lockToken : undefined,
             ownerSessionId: typeof body.ownerSessionId === "string" ? body.ownerSessionId : undefined,
             lockTtlSec: typeof body.lockTtlSec === "number" ? body.lockTtlSec : undefined,
+            ...(body.externalReviewConfirmed === true ? { externalReviewConfirmed: true } : {}),
           }),
         };
       },

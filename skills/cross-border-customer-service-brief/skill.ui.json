@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Customer Service Brief",
+  "description": "Cluster refund / return / complaint signals into a daily support brief.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "serviceNotes"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "serviceNotes",
+      "inputKey": "serviceNotes",
+      "kind": "textarea",
+      "label": "Service Notes",
+      "required": true,
+      "help": "Paste daily refund / return / complaint / bad-review notes (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "serviceBrief",
+      "outputKey": "serviceBrief",
+      "label": "Service Brief",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Build Service Brief",
+      "style": "primary"
+    }
+  ]
+}

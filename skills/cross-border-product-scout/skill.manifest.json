@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "2.0",
+  "id": "cross-border-product-scout",
+  "name": "Cross-border Product Scout",
+  "description": "Turn detected market signals into screened follow-up directions and explicit human-review checkpoints.",
+  "version": "1.0.0",
+  "kind": "system",
+  "category": "utility",
+  "author": {
+    "name": "Friday"
+  },
+  "tags": [
+    "starter",
+    "starter.cross-border",
+    "cross-border",
+    "deterministic",
+    "product-scout"
+  ],
+  "runtime": {
+    "kind": "node",
+    "entrypoint": "index.mjs",
+    "minHubVersion": "1.0.0",
+    "apiVersion": "1",
+    "timeoutMsDefault": 60000
+  },
+  "triggers": {
+    "intents": [
+      "cross_border_product_scout"
+    ],
+    "phrases": [
+      "scout product directions",
+      "screen this week's spikes",
+      "build the product follow-up board"
+    ],
+    "channels": [
+      "*"
+    ]
+  },
+  "invocation": {
+    "userInvocable": true,
+    "modelInvocable": true,
+    "priority": 88,
+    "modes": [
+      "intent",
+      "workflow"
+    ]
+  },
+  "requirements": {
+    "bins": [],
+    "env": [],
+    "config": [],
+    "os": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "inputs": [
+    {
+      "key": "marketSignals",
+      "type": "string",
+      "required": true,
+      "label": "Market Signals",
+      "help": "Paste weekly market signals or a spike-review summary; one observation per line."
+    }
+  ],
+  "outputs": [
+    {
+      "key": "productScout",
+      "type": "string",
+      "description": "Multi-line summary of follow-up directions and human-review checkpoints."
+    },
+    {
+      "key": "summary",
+      "type": "string",
+      "description": "One-line headline for the product scouting board."
+    },
+    {
+      "key": "nextStep",
+      "type": "string",
+      "description": "Recommended next operator action."
+    },
+    {
+      "key": "details",
+      "type": "object",
+      "description": "Structured screening data for UI rendering."
+    }
+  ],
+  "permissions": {
+    "grants": [],
+    "promptOn": []
+  },
+  "schemas": null,
+  "flow": null,
+  "executionTargets": {
+    "allowedSatelliteTypes": [
+      "desktop",
+      "cloud-vm"
+    ],
+    "requiredCapabilities": []
+  },
+  "telemetry": {
+    "events": [
+      "starter_skill_invoked"
+    ]
+  }
+}

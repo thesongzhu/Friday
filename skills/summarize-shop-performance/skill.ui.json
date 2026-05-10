@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Summarize Shop Performance",
+  "description": "Cluster cross-border store-health notes into a daily action board.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "performanceNotes"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "performanceNotes",
+      "inputKey": "performanceNotes",
+      "kind": "textarea",
+      "label": "Performance Notes",
+      "required": true,
+      "help": "Paste store-performance / refund / fulfillment notes (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "issueClusters",
+      "outputKey": "issueClusters",
+      "label": "Risk Clusters",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Build Action Board",
+      "style": "primary"
+    }
+  ]
+}

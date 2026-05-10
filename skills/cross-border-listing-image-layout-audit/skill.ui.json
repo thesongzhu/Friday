@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Listing Image Layout Audit",
+  "description": "Audit listing image / detail-page / layout notes into a follow-up checklist.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "listingNotes"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "listingNotes",
+      "inputKey": "listingNotes",
+      "kind": "textarea",
+      "label": "Listing Notes",
+      "required": true,
+      "help": "Paste listing / detail-page / layout observations or a weekly review summary (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "listingAudit",
+      "outputKey": "listingAudit",
+      "label": "Listing Audit",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Audit Listing",
+      "style": "primary"
+    }
+  ]
+}

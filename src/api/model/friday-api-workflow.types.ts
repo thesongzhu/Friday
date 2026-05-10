@@ -204,6 +204,7 @@ export interface FridayPublishDraftRequest {
   createdByUserId?: UUID;
   changeNote?: string;
   publishNow: boolean;
+  externalReviewConfirmed?: boolean;
 }
 export interface FridayPublishDraftResponse {
   workflowId: UUID;

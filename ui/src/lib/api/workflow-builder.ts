@@ -193,6 +193,7 @@ export const workflowBuilderApi = {
       createdByUserId?: string;
       changeNote?: string;
       publishNow: boolean;
+      externalReviewConfirmed?: boolean;
     },
   ): Promise<PublishDraftResponse> {
     return apiClient.post<typeof input, PublishDraftResponse>(

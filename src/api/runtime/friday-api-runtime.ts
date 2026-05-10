@@ -834,11 +834,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   });
   const deepLinkApplyService = createFridayDeepLinkApplyService({
     idGenerator: deps.idGenerator,
+    nowIso: deps.nowIso,
     providerService: deps.providerService,
     converterService: deps.converterService,
     workflowImportExport: builderRuntime.importExport,
+    workflowCrud: workflowRuntime.crud,
     canonicalMutationGate,
-    providerMutationGateRequired,
   });
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
@@ -1883,6 +1884,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         createdByUserId: input.createdByUserId,
         changeNote: input.changeNote,
         publishNow: input.publishNow,
+        externalReviewConfirmed: input.externalReviewConfirmed,
       });
     },
     acquireLock: (workflowId, input, principal) => {

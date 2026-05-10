@@ -14,6 +14,13 @@ export interface FridayWorkflowDraftAutosaveState {
   lastSavedAt?: ISODateTime;
 }
 
+export interface FridayWorkflowDraftSourceReview {
+  source: "deeplink.workflow_template" | "bundle_import";
+  sourceUrl?: string;
+  importedAt: ISODateTime;
+  requiresReviewBeforePublish: boolean;
+}
+
 // ─── Draft Entity ───
 
 export interface FridayWorkflowDraftEntity {
@@ -30,6 +37,7 @@ export interface FridayWorkflowDraftEntity {
   updatedAt: ISODateTime;
   publishedVersionId?: UUID;
   autosave: FridayWorkflowDraftAutosaveState;
+  sourceReview?: FridayWorkflowDraftSourceReview;
 }
 
 // ─── Draft Save Input ───

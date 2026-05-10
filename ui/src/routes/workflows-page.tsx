@@ -130,6 +130,7 @@ export function WorkflowsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [externalDraftReviewConfirmed, setExternalDraftReviewConfirmed] = useState(false);
   const requestedWorkflowId = searchParams.get("workflowId");
   const focus = parseWorkflowFocus(searchParams.get("focus"));
 
@@ -214,11 +215,12 @@ export function WorkflowsPage() {
   });
 
   const deployMutation = useMutation({
-    mutationFn: (input: { workflowId: string; draftId: string; includeExport: boolean; runNow: boolean }) =>
+    mutationFn: (input: { workflowId: string; draftId: string; includeExport: boolean; runNow: boolean; externalReviewConfirmed?: boolean }) =>
       systemApi.deployWorkflowDraft(input.workflowId, input.draftId, {
         includeExport: input.includeExport,
         resyncTriggers: true,
         runNow: input.runNow,
+        externalReviewConfirmed: input.externalReviewConfirmed,
       }),
     onSuccess: (deployment) => {
       toast.success(
@@ -391,6 +393,26 @@ export function WorkflowsPage() {
   );
 
   const runnableWorkflowVersionId = overviewQuery.data?.publishedVersion?.id ?? overviewQuery.data?.latestVersion?.id;
+  const latestDraftRequiresExternalReview = overviewQuery.data?.latestDraft?.sourceReview?.requiresReviewBeforePublish === true;
+
+  useEffect(() => {
+    setExternalDraftReviewConfirmed(false);
+  }, [overviewQuery.data?.latestDraft?.draftId]);
+
+  const deployLatestDraft = (input: { runNow: boolean; includeExport: boolean }) => {
+    if (!overviewQuery.data?.latestDraft) return;
+    if (latestDraftRequiresExternalReview && !externalDraftReviewConfirmed) {
+      toast.error(locale === "zh" ? "请先确认已审查这个外部工作流草稿。" : "Review and confirm this external workflow draft before deploy.");
+      return;
+    }
+    void deployMutation.mutateAsync({
+      workflowId: overviewQuery.data.workflow.id,
+      draftId: overviewQuery.data.latestDraft.draftId,
+      runNow: input.runNow,
+      includeExport: input.includeExport,
+      externalReviewConfirmed: latestDraftRequiresExternalReview ? externalDraftReviewConfirmed : undefined,
+    });
+  };
 
   const handleSelectWorkflow = (workflowId: string) => {
     setSelectedWorkflowId(workflowId);
@@ -405,10 +427,7 @@ export function WorkflowsPage() {
   const handlePrimaryAction = () => {
     if (!overviewQuery.data || !attentionSummary) return;
     if (attentionSummary.focus === "deploy" || attentionSummary.focus === "export" || focus === "deploy" || focus === "export") {
-      if (!overviewQuery.data.latestDraft) return;
-      void deployMutation.mutateAsync({
-        workflowId: overviewQuery.data.workflow.id,
-        draftId: overviewQuery.data.latestDraft.draftId,
+      deployLatestDraft({
         runNow: attentionSummary.focus !== "export",
         includeExport: attentionSummary.focus === "export" || focus === "export",
       });
@@ -420,18 +439,14 @@ export function WorkflowsPage() {
   const handleSecondaryAction = () => {
     if (!overviewQuery.data || !attentionSummary) return;
     if (attentionSummary.secondaryLabel === "Deploy repaired draft" && overviewQuery.data.latestDraft) {
-      void deployMutation.mutateAsync({
-        workflowId: overviewQuery.data.workflow.id,
-        draftId: overviewQuery.data.latestDraft.draftId,
+      deployLatestDraft({
         runNow: true,
         includeExport: false,
       });
       return;
     }
     if (attentionSummary.secondaryLabel === "Export bundle" && overviewQuery.data.latestDraft) {
-      void deployMutation.mutateAsync({
-        workflowId: overviewQuery.data.workflow.id,
-        draftId: overviewQuery.data.latestDraft.draftId,
+      deployLatestDraft({
         runNow: false,
         includeExport: true,
       });
@@ -470,6 +485,22 @@ export function WorkflowsPage() {
                 <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">{locale === "zh" ? "当前需要关注的" : "What needs attention now"}</p>
                 <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{attentionSummary.title}</p>
                 <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{attentionSummary.summary}</p>
+                {latestDraftRequiresExternalReview ? (
+                  <label className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <input
+                      type="checkbox"
+                      data-testid="workflow-operator-external-draft-review-confirm"
+                      className="mt-0.5 h-4 w-4"
+                      checked={externalDraftReviewConfirmed}
+                      onChange={(event) => setExternalDraftReviewConfirmed(event.target.checked)}
+                    />
+                    <span>
+                      {locale === "zh"
+                        ? "我已审查这个外部导入的工作流草稿，并允许本次部署或导出。"
+                        : "I reviewed this externally imported workflow draft and allow this deploy or export."}
+                    </span>
+                  </label>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
                   <ActionButton onClick={handlePrimaryAction} disabled={deployMutation.isPending}>
                     {attentionSummary.focus === "deploy" || attentionSummary.focus === "export" ? (

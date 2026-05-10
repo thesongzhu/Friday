@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Product Scout",
+  "description": "Screen market signals into follow-up directions with explicit human-review prompts.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "marketSignals"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "marketSignals",
+      "inputKey": "marketSignals",
+      "kind": "textarea",
+      "label": "Market Signals",
+      "required": true,
+      "help": "Paste market signals or a spike review summary (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "productScout",
+      "outputKey": "productScout",
+      "label": "Scout Board",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Build Scout Board",
+      "style": "primary"
+    }
+  ]
+}

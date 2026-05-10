@@ -6,6 +6,7 @@ import type { FridayWorkflowVisualGraphV1 } from "../model/friday-workflow-build
 import type {
   FridayWorkflowDraftEntity,
   FridayWorkflowDraftSaveInput,
+  FridayWorkflowDraftSourceReview,
   FridayWorkflowDraftStatus,
 } from "../model/friday-workflow-builder-draft.types.js";
 import type { FridayWorkflowBuilderDraftRepository } from "../persistence/friday-workflow-builder-draft-repository.js";
@@ -21,6 +22,7 @@ export interface FridayWorkflowBuilderDraftService {
     visual: FridayWorkflowVisualGraphV1;
     ownerUserId?: UUID;
     baseWorkflowVersionId?: UUID;
+    sourceReview?: FridayWorkflowDraftSourceReview;
   }): FridayWorkflowDraftEntity;
 
   getDraft(draftId: UUID): FridayWorkflowDraftEntity | null;
@@ -72,6 +74,7 @@ export function createFridayWorkflowBuilderDraftService(
         createdAt: now,
         updatedAt: now,
         autosave: { enabled: true, intervalMs: 30000 },
+        sourceReview: input.sourceReview,
       };
 
       deps.db.withWriteTransaction((db) => {
@@ -185,6 +188,7 @@ export function createFridayWorkflowBuilderDraftService(
         updatedAt: now,
         publishedVersionId: undefined,
         autosave: { enabled: true, intervalMs: 30000 },
+        sourceReview: source.sourceReview,
       };
 
       deps.db.withWriteTransaction((db) => {

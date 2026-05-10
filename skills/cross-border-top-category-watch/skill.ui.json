@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Top Category Watch",
+  "description": "Cluster category Top 10 movement notes into a daily watch board.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "categoryWatchNotes"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "categoryWatchNotes",
+      "inputKey": "categoryWatchNotes",
+      "kind": "textarea",
+      "label": "Category Watch Notes",
+      "required": true,
+      "help": "Paste category Top 10 movement, seller shifts, price drops, or creative updates (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "watchBoard",
+      "outputKey": "watchBoard",
+      "label": "Watch Board",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Build Watch Board",
+      "style": "primary"
+    }
+  ]
+}

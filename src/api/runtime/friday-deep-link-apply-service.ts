@@ -1,6 +1,5 @@
 import { FridayDomainError } from "#errors";
 import {
-  type FridayProviderAuthMode,
   type FridayProviderService,
   getFridayProviderTemplate,
 } from "#providers";
@@ -15,13 +14,13 @@ import {
 } from "#skills/converter";
 import type {
   FridayWorkflowBuilderImportExportService,
+  FridayWorkflowCrudService,
   FridayWorkflowSpecBundleV1,
 } from "#workflows";
 import type {
   FridayDeepLinkApplyResult,
   FridayDeepLinkPayload,
 } from "../../deeplink/index.js";
-import { createFridayProviderSetupMutatingActionRequest } from "../http/routes/friday-provider-routes.js";
 import { fetchWithFridayAgentSsrfGuard } from "../../agent/security/friday-agent-fetch-guard.js";
 import {
   createFridayAgentSsrfGuard,
@@ -39,12 +38,13 @@ const WORKFLOW_TEMPLATE_FETCH_TIMEOUT_MS = 15_000;
 
 export interface CreateFridayDeepLinkApplyServiceDeps {
   idGenerator: () => string;
+  nowIso: () => string;
   providerService: FridayProviderService;
   converterService?: FridaySkillConverterService;
   workflowImportExport: Pick<FridayWorkflowBuilderImportExportService, "importBundle">;
+  workflowCrud: Pick<FridayWorkflowCrudService, "createWorkflow" | "archiveWorkflow">;
   workflowTemplateSsrfGuard?: FridayAgentSsrfGuard;
   canonicalMutationGate?: FridayMutatingActionGate;
-  providerMutationGateRequired?: boolean;
 }
 
 export interface FridayDeepLinkApplyOptions {
@@ -84,8 +84,8 @@ export function createFridayDeepLinkApplyService(
 
 async function applyProviderTemplateDeepLink(
   payload: FridayDeepLinkPayload,
-  deps: CreateFridayDeepLinkApplyServiceDeps,
-  options: FridayDeepLinkApplyOptions | undefined,
+  _deps: CreateFridayDeepLinkApplyServiceDeps,
+  _options: FridayDeepLinkApplyOptions | undefined,
 ): Promise<FridayDeepLinkApplyResult> {
   const providerTemplate = payload.providerTemplate;
   if (!providerTemplate) {
@@ -101,133 +101,11 @@ async function applyProviderTemplateDeepLink(
     );
   }
 
-  const authMode = resolvePreferredProviderAuthMode(template.authModes, providerTemplate.apiKey);
-  if (!authMode) {
-    return {
-      applied: false,
-      resourceType: payload.type,
-      message: `Provider template ${template.id} does not expose a supported auth mode for deep link import.`,
-    };
-  }
-
-  if ((authMode === "api-key" || authMode === "bearer-token" || authMode === "token")
-    && (!providerTemplate.apiKey || providerTemplate.apiKey.trim().length === 0)
-  ) {
-    return {
-      applied: false,
-      resourceType: payload.type,
-      message: `Provider template ${template.id} requires an apiKey for auth mode ${authMode}.`,
-    };
-  }
-
-  const baseUrl = providerTemplate.baseUrl?.trim() || template.baseUrlHints[0] || "";
-  if (baseUrl.length === 0) {
-    return {
-      applied: false,
-      resourceType: payload.type,
-      message: `Provider template ${template.id} requires an explicit baseUrl before it can be applied.`,
-    };
-  }
-
-  const defaultModel = providerTemplate.model?.trim()
-    || template.modelDefaults.recommended
-    || template.modelDefaults.examples[0];
-  if (!defaultModel) {
-    return {
-      applied: false,
-      resourceType: payload.type,
-      message: `Provider template ${template.id} does not define a default model for import.`,
-    };
-  }
-
-  const providerInput = {
-    kind: template.providerKind,
-    name: payload.label.trim() || template.displayName,
-    baseUrl,
-    backendKind: template.backendKind,
-    authMode,
-    api: template.api,
-    apiKey: providerTemplate.apiKey,
-    supportedModels: [defaultModel],
-    defaultModel,
-    deploymentKind: template.deploymentKind,
-    regionTag: template.regionTag,
-    enabled: true,
-    validateOnSave: false,
-  };
-
-  assertProviderTemplateCanonicalApproval({
-    deps,
-    options,
-    parameters: providerInput,
-  });
-
-  const provider = await deps.providerService.createProvider(providerInput);
-
   return {
-    applied: true,
+    applied: false,
     resourceType: payload.type,
-    resourceId: provider.id,
-    message: `Imported provider template ${template.displayName} as "${provider.name}".`,
+    message: `Provider template ${template.displayName} is preview-only until provider lifecycle staging, validation, and promotion are wired.`,
   };
-}
-
-function assertProviderTemplateCanonicalApproval(input: {
-  deps: CreateFridayDeepLinkApplyServiceDeps;
-  options: FridayDeepLinkApplyOptions | undefined;
-  parameters: Record<string, unknown>;
-}): void {
-  if (input.deps.providerMutationGateRequired === false) {
-    return;
-  }
-  if (!input.deps.canonicalMutationGate) {
-    throw new FridayDomainError(
-      "PROVIDER_TEMPLATE_DEEPLINK_CANONICAL_GATE_UNAVAILABLE",
-      "Provider-template deeplink apply requires the canonical approval gate.",
-      { httpStatus: 503 },
-    );
-  }
-  if (!input.options?.planDigest) {
-    throw new FridayDomainError(
-      "PROVIDER_TEMPLATE_DEEPLINK_PLAN_DIGEST_REQUIRED",
-      "Provider-template deeplink apply requires an approved plan digest before any provider is written.",
-      { httpStatus: 403 },
-    );
-  }
-  const actor = input.options.actor ?? {
-    kind: "api",
-    id: "api:deeplink",
-    principalId: "api:deeplink",
-  };
-  const request = createFridayProviderSetupMutatingActionRequest({
-    action: "providers.create",
-    actor,
-    surface: input.options.surface ?? "api:/v1/deeplink/apply",
-    parameters: input.parameters,
-    planDigest: input.options.planDigest,
-    idempotencyKey: input.options.idempotencyKey,
-  });
-  const gateResult = input.deps.canonicalMutationGate.evaluate({
-    ...request,
-    canonicalApproval: input.options.canonicalApproval,
-  });
-  if (gateResult.decision !== "allow" || !gateResult.ticket) {
-    throw new FridayDomainError(
-      gateResult.decision === "requires_approval"
-        ? "CANONICAL_APPROVAL_REQUIRED"
-        : "CANONICAL_APPROVAL_DENIED",
-      gateResult.decision === "requires_approval"
-        ? "Provider-template deeplink apply requires canonical approval before any provider is written."
-        : `Provider-template deeplink apply was blocked by the canonical approval gate: ${gateResult.reason}`,
-      {
-        httpStatus: 403,
-        details: {
-          canonicalGate: gateResult.evidenceRecord,
-          actionDigest: gateResult.actionDigest,
-        },
-      },
-    );
-  }
 }
 
 async function applySkillSourceDeepLink(
@@ -428,38 +306,44 @@ async function applyWorkflowTemplateDeepLink(
   }
 
   const bundle = await response.json() as FridayWorkflowSpecBundleV1;
-  const workflowId = deps.idGenerator();
-  const result = deps.workflowImportExport.importBundle(bundle, workflowId);
+  const workflowName = workflowTemplate.name?.trim() || bundle.workflow.name || payload.label || "Imported Workflow";
+  const workflow = deps.workflowCrud.createWorkflow({
+    slug: createWorkflowTemplateSlug(workflowName, deps.idGenerator()),
+    name: workflowName,
+    description: bundle.workflow.description ?? "Imported from a Friday workflow-template deep link.",
+    tags: [...new Set([...(bundle.workflow.tags ?? []), "deeplink", "external-template"])],
+  });
+  let result;
+  try {
+    result = deps.workflowImportExport.importBundle(bundle, workflow.id, undefined, {
+      sourceReview: {
+        source: "deeplink.workflow_template",
+        sourceUrl: redactFridaySkillCandidateSourceUri(workflowTemplate.url),
+        importedAt: deps.nowIso(),
+        requiresReviewBeforePublish: true,
+      },
+    });
+  } catch (err) {
+    deps.workflowCrud.archiveWorkflow(workflow.id, "deeplink.workflow_template");
+    throw err;
+  }
 
   return {
     applied: true,
     resourceType: payload.type,
     resourceId: result.draft.draftId,
-    message: `Imported workflow template as draft "${result.draft.title}".`,
+    workflowId: workflow.id,
+    resourceUrl: `/workflows/builder?workflowId=${encodeURIComponent(workflow.id)}&draftId=${encodeURIComponent(result.draft.draftId)}&focus=draft`,
+    message: `Imported workflow template as draft "${result.draft.title}". Review confirmation is required before publish or deploy.`,
   };
 }
 
-function resolvePreferredProviderAuthMode(
-  authModes: readonly FridayProviderAuthMode[],
-  apiKey: string | undefined,
-): FridayProviderAuthMode | null {
-  if (apiKey && authModes.includes("api-key")) {
-    return "api-key";
-  }
-  if (apiKey && authModes.includes("bearer-token")) {
-    return "bearer-token";
-  }
-  if (apiKey && authModes.includes("token")) {
-    return "token";
-  }
-  if (authModes.includes("none")) {
-    return "none";
-  }
-  if (authModes.includes("oauth")) {
-    return "oauth";
-  }
-  if (authModes.includes("external-session")) {
-    return "external-session";
-  }
-  return authModes[0] ?? null;
+function createWorkflowTemplateSlug(name: string, suffix: string): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return `${base || "imported-workflow"}-${suffix.slice(0, 8)}`;
 }

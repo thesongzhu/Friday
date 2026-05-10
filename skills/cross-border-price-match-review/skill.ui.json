@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Cross-border Price Match Review",
+  "description": "Cluster competitor price-gap signals and surface human-approval prompts.",
+  "sections": [
+    {
+      "id": "inputs",
+      "label": "Inputs",
+      "fieldIds": [
+        "priceSignals"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "priceSignals",
+      "inputKey": "priceSignals",
+      "kind": "textarea",
+      "label": "Price Signals",
+      "required": true,
+      "help": "Paste competitor price, coupon, shipping, and bundle observations (one observation per line)."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "summary",
+      "outputKey": "summary",
+      "label": "Summary",
+      "widget": "text"
+    },
+    {
+      "id": "priceReview",
+      "outputKey": "priceReview",
+      "label": "Price Review",
+      "widget": "text"
+    },
+    {
+      "id": "details",
+      "outputKey": "details",
+      "label": "Details",
+      "widget": "json"
+    }
+  ],
+  "actions": [
+    {
+      "id": "run",
+      "label": "Review Price Gap",
+      "style": "primary"
+    }
+  ]
+}
