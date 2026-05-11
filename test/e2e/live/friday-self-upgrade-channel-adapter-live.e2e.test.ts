@@ -6,6 +6,14 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  createFridayChannelAdapterLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-channel-adapter-upgrade-lifecycle-service.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
@@ -13,6 +21,11 @@ import {
   FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+const CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST = "channel-adapter-live-proof-plan";
+const CHANNEL_ADAPTER_LIFECYCLE_SIGNING_MATERIAL =
+  "channel-adapter-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface RuntimeVersionEnvelope {
   ok: boolean;
@@ -370,6 +383,44 @@ async function getChannel(env: RealHubEnv, channelKind: string): Promise<Channel
   return json.data.channel;
 }
 
+function makeChannelAdapterLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  channelKind: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+  providerModel: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? {
+      planned: true,
+      planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+      actions: ["channel_adapters.lifecycle.promote"],
+    }
+    : undefined;
+  const request = createFridayChannelAdapterLifecycleMutatingActionRequest({
+    action: input.action,
+    channelKind: input.channelKind,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: input.providerModel,
+    actor: {
+      kind: "user",
+      id: LOCAL_LIVE_PRINCIPAL_ID,
+      principalId: LOCAL_LIVE_PRINCIPAL_ID,
+    },
+    surface: `api:/v1/autonomy/channels/${input.action}`,
+    planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `channel-adapter-live-${input.action}`,
+    decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-05-07T00:00:00.000Z",
+  }, CHANNEL_ADAPTER_LIFECYCLE_SIGNING_MATERIAL);
+}
+
 describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   const inboundMessages: Array<{ text: string; senderId: string }> = [];
@@ -377,6 +428,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
   beforeAll(async () => {
     env = await createFridayDeepProofHubEnv({
       hubConfig: {
+        tokenSecret: CHANNEL_ADAPTER_LIFECYCLE_SIGNING_MATERIAL,
         channels: {
           enabled: true,
           instances: [
@@ -465,6 +517,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
           shadowVersionId: firstShadowId,
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeChannelAdapterLifecycleApproval({
+            action: "shadow",
+            channelKind: "webchat",
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const shadowJson = await shadowRes.json() as ChannelActionEnvelope;
@@ -479,7 +539,18 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
           Authorization: `Bearer ${env.accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ success: true }),
+        body: JSON.stringify({
+          runtimeVersion,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeChannelAdapterLifecycleApproval({
+            action: "canary",
+            channelKind: "webchat",
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
+        }),
       });
       const canaryJson = await canaryRes.json() as ChannelActionEnvelope;
       expect(canaryRes.status).toBe(200);
@@ -497,6 +568,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
         body: JSON.stringify({
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeChannelAdapterLifecycleApproval({
+            action: "promote",
+            channelKind: "webchat",
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const promoteJson = await promoteRes.json() as ChannelActionEnvelope;
@@ -512,32 +591,6 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
       expect(rowAfterPromote?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
       expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(FRIDAY_DEEP_PROOF_MODEL);
 
-      const secondShadowId = "webchat@shadow-rollback";
-      await fetch(`${env.baseUrl}/v1/autonomy/channels/webchat/shadow`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          shadowVersionId: secondShadowId,
-          runtimeVersion,
-          providerModel: FRIDAY_DEEP_PROOF_MODEL,
-        }),
-      });
-
-      const failingCanaryRes = await fetch(`${env.baseUrl}/v1/autonomy/channels/webchat/canary`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ success: false }),
-      });
-      const failingCanaryJson = await failingCanaryRes.json() as ChannelActionEnvelope;
-      expect(failingCanaryRes.status).toBe(200);
-      expect(failingCanaryJson.data.channel.canaryStats?.failureCount).toBeGreaterThanOrEqual(1);
-
       const rollbackRes = await fetch(`${env.baseUrl}/v1/autonomy/channels/webchat/rollback`, {
         method: "POST",
         headers: {
@@ -547,6 +600,15 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Channel Adapter Self Upgrade L
         body: JSON.stringify({
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: CHANNEL_ADAPTER_LIFECYCLE_PLAN_DIGEST,
+          reason: "live channel adapter lifecycle rollback proof",
+          canonicalApproval: makeChannelAdapterLifecycleApproval({
+            action: "rollback",
+            channelKind: "webchat",
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const rollbackJson = await rollbackRes.json() as ChannelActionEnvelope;
