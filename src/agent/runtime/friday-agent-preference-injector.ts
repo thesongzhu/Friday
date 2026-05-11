@@ -8,6 +8,7 @@
  */
 
 import type { FridayMemoryService } from "../../memory/services/friday-memory-service.types.js";
+import { isFridayReflexConfirmationRequiredKey } from "../../reflex/index.js";
 
 // ─── Types ───
 
@@ -59,6 +60,17 @@ export function createFridayPreferenceInjector(
       const sources: string[] = [];
       const items: Array<{ text: string; confidence: number; source: string }> = [];
 
+      // High-impact learned preferences (keys the Reflex 17-key set already
+      // gates as confirmation-required for UIX preferences) must NOT be
+      // auto-injected via the learned-fact path. They share the same risk
+      // shape (memory/automation/skills/safety/etc. policy) and the
+      // learned-fact pipeline has no equivalent of the UIX confirmation
+      // surface. Until that surface exists, we fail closed for these keys
+      // on both Source 1 and Source 2 paths.
+      // High-impact learned preference confirmation UX still needed;
+      // re-evaluate when Review Center / candidate-preference confirmation
+      // exists for learning.preferences.
+
       // ── Source 1: Learning pipeline (Bayesian preferences) ──
       if (learningContextBuilder) {
         try {
@@ -66,6 +78,10 @@ export function createFridayPreferenceInjector(
           if (ctx.preferences && typeof ctx.preferences === "object") {
             for (const [key, value] of Object.entries(ctx.preferences)) {
               if (value != null && String(value).trim().length > 0) {
+                if (isFridayReflexConfirmationRequiredKey(key)) {
+                  // Fail closed: high-impact learned key, no confirmation path.
+                  continue;
+                }
                 items.push({
                   text: `${key}: ${String(value)}`,
                   confidence: 0.8, // Learning pipeline default confidence
@@ -96,6 +112,16 @@ export function createFridayPreferenceInjector(
           const tags = item.tags ?? [];
           if (!tags.includes(userId) || !tags.includes("preference")) continue;
           if (tags.some((tag: string) => PERSONA_TAGS.has(tag.toLowerCase()))) continue;
+
+          // Fail closed if the item carries no usable key: without a key the
+          // injector cannot classify whether the fact is high-impact or
+          // benign, so we skip rather than guess.
+          const itemKey = typeof item.key === "string" ? item.key.trim() : "";
+          if (itemKey.length === 0) continue;
+          if (isFridayReflexConfirmationRequiredKey(itemKey)) {
+            // Fail closed: high-impact learned key, no confirmation path.
+            continue;
+          }
 
           const content = item.content ?? "";
           if (content.trim().length === 0) continue;
