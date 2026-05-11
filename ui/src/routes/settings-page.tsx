@@ -17,7 +17,7 @@ import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
-import type { FridayProviderKind, FridayProviderProfile, FridayRuntimeCapabilityState } from "@/lib/api/types";
+import { type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -635,6 +635,33 @@ export function SettingsPage() {
     },
   });
 
+  const validateMutation = useMutation({
+    mutationFn: (providerId: string) => providersApi.validate(providerId),
+    onSuccess: async (validation) => {
+      // Toast outcome is driven by the returned validation.status, not by
+      // HTTP success alone. The backend returns 2xx + status="failed" when
+      // the credential resolves but the provider rejects it; that path
+      // must surface as a failure, not a success.
+      if (validation.status === "ok") {
+        toast.success(localize(locale, "验证通过", "Validation passed"));
+      } else if (validation.status === "failed") {
+        const code = validation.errorCode ?? "VALIDATION_FAILED";
+        toast.error(localize(locale, `验证失败:${code}`, `Validation failed: ${code}`));
+      } else {
+        // status === "never" or any future value: stay neutral, never imply pass.
+        toast(localize(locale, "验证已完成", "Validation complete"));
+      }
+      await refreshProviderQueries();
+    },
+    onError: (error) => {
+      // Do NOT echo error.message or validation.errorMessage — those may
+      // contain provider/network response text. Only surface the structured
+      // ApiError.code when available, otherwise a fixed generic copy.
+      const code = error instanceof ApiError ? error.code : "UNKNOWN_ERROR";
+      toast.error(localize(locale, `验证请求失败:${code}`, `Validate request failed: ${code}`));
+    },
+  });
+
   const lessonToggleMutation = useMutation({
     mutationFn: (input: { lessonId: string; enabled: boolean }) =>
       learningApi.setLessonEnabled({
@@ -1099,6 +1126,8 @@ export function SettingsPage() {
                     const remediationHint = remediationVerdict
                       ? describeFridayProviderDoctorRemediation(remediationVerdict, locale)
                       : null;
+                    const isValidatingThisProvider =
+                      validateMutation.isPending && validateMutation.variables === provider.id;
                     return (
                       <>
                   <div className="flex items-center justify-between gap-3">
@@ -1139,6 +1168,17 @@ export function SettingsPage() {
                   {healthItem?.suggestedAction ? (
                     <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">{healthItem.suggestedAction}</p>
                   ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      disabled={validateMutation.isPending}
+                      onClick={() => validateMutation.mutate(provider.id)}
+                    >
+                      {isValidatingThisProvider
+                        ? localize(locale, "验证中...", "Validating...")
+                        : localize(locale, "立即验证", "Validate now")}
+                    </ActionButton>
+                  </div>
                   {provider.kind === "openai-codex" && provider.config.authMode === "oauth" ? (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <ActionButton
