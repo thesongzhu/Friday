@@ -60,6 +60,49 @@ export function groupCompactionContextReplayRecords(
 }
 
 /**
+ * Select the prompt header and boundary text for a context-replay block based
+ * on its persisted `trustLevel`. This makes `block.trustLevel` a load-bearing
+ * input to the prompt-text path rather than only a telemetry tag, so the
+ * structured marker the loader writes is actually consumed on the read side.
+ *
+ * Drift policy:
+ *  - Compile-time drift must fail. If a future change adds a value to the
+ *    `trustLevel` union without updating this switch, the `_exhaustive: never`
+ *    assignment below stops compilation.
+ *  - Runtime-invalid persisted data must NOT crash the run. If schema drift
+ *    or a forward/back-compat mismatch ever surfaces a value outside the
+ *    declared union at runtime, fall back to the unconfirmed replay
+ *    boundary — that is the safest text the model can receive.
+ */
+function selectHeaderAndBoundary(
+  trustLevel: FridayCompactionContextBlock["trustLevel"],
+  compactedAt: string,
+): { header: string; boundary: string } {
+  const unconfirmedHeader = compactedAt
+    ? `[Unconfirmed Context Replay — ${compactedAt}]`
+    : "[Unconfirmed Context Replay]";
+  const unconfirmedBoundary =
+    "Boundary: this is a compressed prior-session summary, not user-confirmed memory. Verify before high-risk or mutating action.";
+
+  switch (trustLevel) {
+    case "unconfirmed_summary":
+      return { header: unconfirmedHeader, boundary: unconfirmedBoundary };
+  }
+
+  // Compile-time exhaustive check: TypeScript narrows `trustLevel` to `never`
+  // here only when every union value is handled above. Adding a new value
+  // without a case branch breaks compilation and forces the reviewer to
+  // decide the new branch's prompt text explicitly.
+  const _exhaustive: never = trustLevel;
+  void _exhaustive;
+
+  // Runtime fail-closed fallback: persisted data may have a value outside the
+  // declared union (schema drift). Emit the unconfirmed boundary rather than
+  // throw, so the run continues with the safest possible warning to the model.
+  return { header: unconfirmedHeader, boundary: unconfirmedBoundary };
+}
+
+/**
  * Format compaction context blocks into a prompt fragment for injection
  * into the system prompt.
  */
@@ -76,13 +119,8 @@ export function formatCompactionContextForPrompt(
   const parts: string[] = [];
 
   for (const block of selected) {
-    const header = block.compactedAt
-      ? `[Unconfirmed Context Replay — ${block.compactedAt}]`
-      : "[Unconfirmed Context Replay]";
-    const sectionParts: string[] = [
-      header,
-      "Boundary: this is a compressed prior-session summary, not user-confirmed memory. Verify before high-risk or mutating action.",
-    ];
+    const { header, boundary } = selectHeaderAndBoundary(block.trustLevel, block.compactedAt);
+    const sectionParts: string[] = [header, boundary];
 
     if (block.summaryText) {
       sectionParts.push(`Summary: ${block.summaryText}`);
