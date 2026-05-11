@@ -549,6 +549,60 @@ describe("Compaction Pipeline Integration", () => {
       const prompt = formatCompactionContextForPrompt(blocks);
       expect(prompt).toBe("");
     });
+
+    it("formats unconfirmed_summary replay blocks with the unconfirmed boundary", () => {
+      const blocks = groupCompactionContextReplayRecords([
+        makeContextReplayRecord({
+          summary: {
+            summaryText: "User worked on something.",
+            decisions: [],
+            todos: [],
+            openQuestions: [],
+            toolFailures: [],
+            fileOperations: [],
+          },
+          compactedAt: "2026-04-15T09:00:00Z",
+        }),
+      ]);
+
+      // Sanity: the only declared trustLevel value today.
+      expect(blocks[0].trustLevel).toBe("unconfirmed_summary");
+
+      const prompt = formatCompactionContextForPrompt(blocks);
+
+      expect(prompt).toContain("[Unconfirmed Context Replay — 2026-04-15T09:00:00Z]");
+      expect(prompt).toContain(
+        "Boundary: this is a compressed prior-session summary, not user-confirmed memory. Verify before high-risk or mutating action.",
+      );
+      expect(prompt).toContain("Summary: User worked on something.");
+    });
+
+    it("falls back to the unconfirmed boundary when persisted trustLevel is outside the declared union (fail-closed)", () => {
+      // Simulate runtime-only schema drift: a persisted record carries a
+      // trustLevel value that the formatter's union does not declare. The
+      // formatter must NOT throw — it must emit the safest possible warning.
+      const driftBlock = {
+        entryId: "drift-1",
+        sessionKey: "session-drift",
+        runId: "run-drift",
+        compactedAt: "2026-04-15T09:00:00Z",
+        trustLevel: "future_unknown_value",
+        source: "context_replay" as const,
+        summaryText: "Drift summary.",
+        decisions: [],
+        todos: [],
+        openQuestions: [],
+        toolFailures: [],
+        fileOperations: [],
+      } as unknown as Parameters<typeof formatCompactionContextForPrompt>[0][number];
+
+      const prompt = formatCompactionContextForPrompt([driftBlock]);
+
+      expect(prompt).toContain("[Unconfirmed Context Replay");
+      expect(prompt).toContain("not user-confirmed memory");
+      expect(prompt).toContain("Verify before high-risk or mutating action.");
+      expect(prompt).toContain("Summary: Drift summary.");
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════
