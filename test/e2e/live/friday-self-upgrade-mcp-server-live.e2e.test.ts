@@ -4,6 +4,14 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  createFridayMcpServerLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-mcp-server-upgrade-lifecycle-service.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   FRIDAY_DEEP_PROOF_GATED,
@@ -11,6 +19,11 @@ import {
   FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+const MCP_LIFECYCLE_PLAN_DIGEST = "mcp-server-live-proof-plan";
+const MCP_LIFECYCLE_SIGNING_MATERIAL =
+  "mcp-server-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface RuntimeVersionEnvelope {
   ok: boolean;
@@ -189,6 +202,40 @@ async function getUpgradeStatus(env: RealHubEnv, serverId: string): Promise<Upgr
   return json.data.items[0]!;
 }
 
+function makeMcpLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  serverId: string;
+  shadowVersionId?: string;
+  runtimeVersion: string;
+  providerModel: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: MCP_LIFECYCLE_PLAN_DIGEST, actions: ["mcp_servers.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayMcpServerLifecycleMutatingActionRequest({
+    action: input.action,
+    serverId: input.serverId,
+    shadowVersionId: input.shadowVersionId,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: input.providerModel,
+    actor: {
+      kind: "user",
+      id: LOCAL_LIVE_PRINCIPAL_ID,
+      principalId: LOCAL_LIVE_PRINCIPAL_ID,
+    },
+    surface: `api:/v1/autonomy/mcp-servers/${input.action}`,
+    planDigest: MCP_LIFECYCLE_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `mcp-server-live-${input.action}`,
+    decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-05-07T00:00:00.000Z",
+  }, MCP_LIFECYCLE_SIGNING_MATERIAL);
+}
+
 describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (${FRIDAY_DEEP_PROOF_PROVIDER_LABEL})`, () => {
   let env: RealHubEnv;
   let previousMcpServers: string | undefined;
@@ -207,7 +254,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
         args: ["-e", buildStdioServerScript()],
       },
     ]);
-    env = await createFridayDeepProofHubEnv();
+    env = await createFridayDeepProofHubEnv({
+      hubConfig: {
+        tokenSecret: MCP_LIFECYCLE_SIGNING_MATERIAL,
+      },
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -273,6 +324,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
           shadowVersionId: firstShadowId,
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: MCP_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeMcpLifecycleApproval({
+            action: "shadow",
+            serverId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const shadowJson = await shadowRes.json() as McpActionEnvelope;
@@ -287,7 +346,18 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
           Authorization: `Bearer ${env.accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ success: true }),
+        body: JSON.stringify({
+          runtimeVersion,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: MCP_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeMcpLifecycleApproval({
+            action: "canary",
+            serverId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
+        }),
       });
       const canaryJson = await canaryRes.json() as McpActionEnvelope;
       expect(canaryRes.status).toBe(200);
@@ -305,6 +375,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
         body: JSON.stringify({
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: MCP_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeMcpLifecycleApproval({
+            action: "promote",
+            serverId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const promoteJson = await promoteRes.json() as McpActionEnvelope;
@@ -320,32 +398,6 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
       expect(rowAfterPromote?.lastVerifiedRuntimeVersion).toBe(runtimeVersion);
       expect(rowAfterPromote?.lastVerifiedProviderModel).toBe(FRIDAY_DEEP_PROOF_MODEL);
 
-      const secondShadowId = `${serverId}@shadow-rollback`;
-      await fetch(`${env.baseUrl}/v1/autonomy/mcp-servers/${encodeURIComponent(serverId)}/shadow`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          shadowVersionId: secondShadowId,
-          runtimeVersion,
-          providerModel: FRIDAY_DEEP_PROOF_MODEL,
-        }),
-      });
-
-      const failingCanaryRes = await fetch(`${env.baseUrl}/v1/autonomy/mcp-servers/${encodeURIComponent(serverId)}/canary`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ success: false }),
-      });
-      const failingCanaryJson = await failingCanaryRes.json() as McpActionEnvelope;
-      expect(failingCanaryRes.status).toBe(200);
-      expect(failingCanaryJson.data.server.canaryStats?.failureCount).toBeGreaterThanOrEqual(1);
-
       const rollbackRes = await fetch(`${env.baseUrl}/v1/autonomy/mcp-servers/${encodeURIComponent(serverId)}/rollback`, {
         method: "POST",
         headers: {
@@ -355,6 +407,15 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
         body: JSON.stringify({
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: MCP_LIFECYCLE_PLAN_DIGEST,
+          reason: "live mcp lifecycle rollback proof",
+          canonicalApproval: makeMcpLifecycleApproval({
+            action: "rollback",
+            serverId,
+            shadowVersionId: firstShadowId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         }),
       });
       const rollbackJson = await rollbackRes.json() as McpActionEnvelope;
