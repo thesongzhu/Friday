@@ -261,17 +261,13 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       expect(subagentGet.json.data.subagent.childRunId).toBe(subagent.childRunId);
       expect(subagentGet.json.data.subagent.outcome?.response).toContain(childAnswer);
 
-      const childRun = await apiFetch<AgentRunEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "GET",
-        `/v1/agent/runs/${encodeURIComponent(subagent.childRunId)}`,
-      );
-      expect(childRun.status).toBe(200);
-      expect(childRun.json.ok).toBe(true);
-      expect(childRun.json.data.run.status).toBe("completed");
-      expect(childRun.json.data.run.responseText).toContain(childAnswer);
-      expect(childRun.json.data.run.task).toContain(childAnswer);
+      // Subagent child runs are intentionally hidden from the user-facing
+      // /v1/agent/runs/:id endpoint (the route filters out runs whose
+      // sessionKey starts with "subagent:" via isSubagentChildRun). Assert
+      // child-run evidence through the subagent record fields the API does
+      // expose. childRunId presence pins that the spawn produced a real run id.
+      expect(typeof subagent.childRunId).toBe("string");
+      expect(subagent.childRunId.length).toBeGreaterThan(0);
 
       const parentRun = await apiFetch<AgentRunEnvelope>(
         env.baseUrl,
@@ -343,16 +339,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       expect(subagent.outcome?.status).toBe("failed");
       expect((subagent.outcome?.response ?? "").trim().length).toBeGreaterThan(0);
 
-      const childRun = await apiFetch<AgentRunEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "GET",
-        `/v1/agent/runs/${encodeURIComponent(subagent.childRunId)}`,
-      );
-      expect(childRun.status).toBe(200);
-      expect(childRun.json.ok).toBe(true);
-      expect(childRun.json.data.run.status).toBe("failed");
-      expect((childRun.json.data.run.errorMessage ?? childRun.json.data.run.responseText ?? "").trim().length).toBeGreaterThan(0);
+      // Subagent child runs are intentionally hidden from /v1/agent/runs/:id
+      // (route filters out sessionKey-starts-with-"subagent:"). Failure
+      // evidence is asserted via the subagent record's outcome fields above
+      // (status="failed", outcome.status="failed", outcome.response non-empty).
+      // Pin childRunId presence so we still verify a real child-run id was
+      // produced even though the run itself is not user-fetchable.
+      expect(typeof subagent.childRunId).toBe("string");
+      expect(subagent.childRunId.length).toBeGreaterThan(0);
 
       const parentRun = await apiFetch<AgentRunEnvelope>(
         env.baseUrl,
@@ -507,18 +501,21 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       expect(subagent.outcome?.response).toContain(marker);
       expect(subagent.outcome?.response).not.toContain("UNKNOWN");
 
-      const childRun = await apiFetch<AgentRunEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "GET",
-        `/v1/agent/runs/${encodeURIComponent(subagent.childRunId)}`,
-      );
-      expect(childRun.status).toBe(200);
-      expect(childRun.json.ok).toBe(true);
-      expect(childRun.json.data.run.status).toBe("completed");
-      expect(childRun.json.data.run.task).not.toContain(marker);
-      expect(childRun.json.data.run.responseText).toContain(marker);
-      expect(childRun.json.data.run.responseText).not.toContain("UNKNOWN");
+      // Subagent child runs are intentionally hidden from /v1/agent/runs/:id
+      // (route filters out sessionKey-starts-with-"subagent:" via
+      // isSubagentChildRun). The fork-mode child-run evidence is preserved
+      // through the subagent record fields above:
+      //   - subagent.task does NOT contain the marker (lines pre-fetch)
+      //     pins that the secret was not leaked via task params
+      //   - subagent.outcome?.status === "completed" pins child completion
+      //   - subagent.outcome?.response contains the marker pins that the
+      //     child found the secret via inherited session context
+      //   - subagent.outcome?.response does NOT contain "UNKNOWN" pins that
+      //     the inheritance worked, the child did not have to guess
+      // Pin childRunId presence so we still verify a real child-run id was
+      // produced even though the run itself is not user-fetchable.
+      expect(typeof subagent.childRunId).toBe("string");
+      expect(subagent.childRunId.length).toBeGreaterThan(0);
     },
   );
 
@@ -567,6 +564,18 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       );
       const subagent = subagentList.json.data.items[0]!;
       expect(subagent.childSessionKey).toBeTruthy();
+      // Pin pre-restart subagent-record evidence: completed status, child run
+      // id present, outcome response carries the child answer. The polling
+      // above (items[0].status === "completed") gates on subagent status only;
+      // the outcome.response check pins the actual child answer reached the
+      // subagent record before restart. Subagent child runs are intentionally
+      // hidden from /v1/agent/runs/:id (route filters sessionKey starts-with
+      // "subagent:"), so we verify child-run evidence through these subagent
+      // fields and through the child session messages instead.
+      expect(subagent.outcome?.status).toBe("completed");
+      expect(subagent.outcome?.response).toContain(childAnswer);
+      expect(typeof subagent.childRunId).toBe("string");
+      expect(subagent.childRunId.length).toBeGreaterThan(0);
 
       const parentAuditBefore = await fetchRunAudit(env, parentRunId);
       expect(parentAuditBefore.status).toBe(200);
@@ -574,17 +583,6 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       const toolNamesBefore = extractToolNames(parentAuditBefore.json);
       expect(toolNamesBefore).toContain("spawn_subagent");
       expect(toolNamesBefore).toContain("get_subagent");
-
-      const childRunBefore = await apiFetch<AgentRunEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "GET",
-        `/v1/agent/runs/${encodeURIComponent(subagent.childRunId)}`,
-      );
-      expect(childRunBefore.status).toBe(200);
-      expect(childRunBefore.json.ok).toBe(true);
-      expect(childRunBefore.json.data.run.status).toBe("completed");
-      expect(childRunBefore.json.data.run.responseText).toContain(childAnswer);
 
       const childSessionBefore = await listSessionMessages(env, subagent.childSessionKey!);
       expect(childSessionBefore.status).toBe(200);
@@ -632,16 +630,18 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Subagent Live (${FRIDAY_DEEP_P
       expect(listAfter.json.ok).toBe(true);
       expect(listAfter.json.data.items.map((item) => item.id)).toContain(subagent.id);
 
-      const childRunAfter = await apiFetch<AgentRunEnvelope>(
-        env.baseUrl,
-        env.accessToken,
-        "GET",
-        `/v1/agent/runs/${encodeURIComponent(subagent.childRunId)}`,
-      );
-      expect(childRunAfter.status).toBe(200);
-      expect(childRunAfter.json.ok).toBe(true);
-      expect(childRunAfter.json.data.run.status).toBe("completed");
-      expect(childRunAfter.json.data.run.responseText).toContain(childAnswer);
+      // Child-run evidence after restart is asserted via:
+      //  - subagentGetAfter.json.data.subagent.childRunId === subagent.childRunId
+      //    (above) pins the same child-run id survives restart
+      //  - subagentGetAfter.json.data.subagent.outcome?.response contains
+      //    childAnswer (above) pins the response is replayable from persisted
+      //    subagent state
+      //  - childSessionAfter (below) pins the child session messages survive
+      //    the runtime restart, with the assistant message containing the
+      //    expected answer.
+      // Subagent child runs are intentionally hidden from /v1/agent/runs/:id
+      // (route filters sessionKey starts-with "subagent:"), so we do not
+      // re-fetch the child run as a top-level agent run.
 
       const childSessionAfter = await listSessionMessages(env, subagent.childSessionKey!);
       expect(childSessionAfter.status).toBe(200);
