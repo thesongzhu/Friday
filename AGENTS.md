@@ -17,6 +17,8 @@ Before any code, test, config, docs, workflow, skill, memory, provider, UI, syst
 6. Read the relevant Friday source, tests, audit notes, route/runtime wiring, state model, approval boundary, memory boundary, and evidence path.
 7. If using an external guideline or repo, read the actual source before merging it into Friday behavior.
 
+These required reads are per-turn and per-subphase, not one-time session setup. After every new user message, interruption, context compaction, branch switch, or resume, reread the required files and current git state before acting. Do not rely on session memory, previous summaries, or another agent's report as a substitute.
+
 Never claim a fresh full-repo line-by-line reread unless it actually happened in the current session.
 
 ## Current Guideline Inputs
@@ -27,6 +29,7 @@ These rules merge:
 - The Friday master workflow prompt at `/Users/jarvis/Desktop/friday_master_workflow_prompt.md`.
 - The user's hard rules in this thread.
 - The Karpathy-inspired guideline repo `https://github.com/forrestchang/andrej-karpathy-skills`, read at commit `2c606141936f1eeef17fa3043a72095b4765b9c2`.
+- The Matt Pocock skills repo `https://github.com/mattpocock/skills`, read at commit `9fecab929abb904c68ce3366a1781df31ab22832`, absorbed into `/Users/jarvis/Desktop/friday_master_workflow_prompt.md` section 23 as workflow principles only.
 
 The external guideline principles are applied as behavior rules, not copied as a new architecture:
 
@@ -34,6 +37,7 @@ The external guideline principles are applied as behavior rules, not copied as a
 - Keep the solution simple.
 - Make surgical changes.
 - Define verifiable success criteria and loop until verified.
+- Use staged audit, plan, implementation, verification, reviewer, and CI workflows with two isolated reviewers for meaningful changes.
 
 ## Execution Style Rules
 
@@ -156,6 +160,7 @@ Before staging any meaningful change:
 - Run secret scan when keys or secret-like context were involved.
 - Inspect `git status --short --branch`.
 - Use two isolated read-only reviewers for meaningful subphases.
+- For meaningful code review, design-doc auditing, cross-file consistency checks, release/security review, or open-ended reviewer passes, use isolated `general-purpose` reviewers. Do not use Explore-style agents for review; Explore is only acceptable for narrow file, symbol, or location lookup.
 - If either reviewer fails, fix only the blocker inside approved scope, then rerun verification and reviewers.
 
 ## Infrastructure Uncertainty Protocol
