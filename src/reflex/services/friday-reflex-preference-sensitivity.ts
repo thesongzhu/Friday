@@ -26,3 +26,17 @@ export function requiresFridayReflexPreferenceConfirmation(input: {
 }): boolean {
   return input.category === "reflex" && CONFIRMATION_REQUIRED_REFLEX_KEYS.has(input.key);
 }
+
+/**
+ * Key-only check for membership in the confirmation-required set.
+ * For callers that have a preference key but no UIX category — e.g.
+ * learned-preference injectors that need to fail closed on high-impact-shaped
+ * keys regardless of which surface produced them.
+ *
+ * Distinct from requiresFridayReflexPreferenceConfirmation, which gates on
+ * (category === "reflex") AND key match: that signature stays unchanged so
+ * existing UIX preference callers keep their category guard.
+ */
+export function isFridayReflexConfirmationRequiredKey(key: string): boolean {
+  return CONFIRMATION_REQUIRED_REFLEX_KEYS.has(key);
+}

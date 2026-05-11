@@ -13,6 +13,7 @@ export {
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./services/friday-reflex-preference-resolver.js";
 export {
+  isFridayReflexConfirmationRequiredKey,
   requiresFridayReflexPreferenceConfirmation,
 } from "./services/friday-reflex-preference-sensitivity.js";
 export { createFridayReflexService } from "./services/friday-reflex-service.js";
