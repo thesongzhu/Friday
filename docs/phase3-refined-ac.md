@@ -107,6 +107,8 @@
 
 ## Module 6: Agent Packaging (FRI-PLAT-056, FRI-PLAT-057)
 
+> _Phase 1 status: in-memory engine only. The criteria in FRI-PLAT-056 and FRI-PLAT-057 below describe the Phase 2 acceptance gates and are deferred until SQLite persistence and real signature verification are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; do not read these criteria as already met._
+
 ### FRI-PLAT-056 — Security & Permissions
 1. Package install requires `package:install` scope — unsigned packages rejected
 2. Signature verification covers all package types (agent, skill, tool)

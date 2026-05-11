@@ -1,6 +1,7 @@
 # RFC: Friday Agent Package and Publishing
 
-**Status:** Draft  
+**Status:** Draft — Phase 2 not started; current code is Phase 1 in-memory engine only and does not persist package registry, install state, lifecycle events, or trusted keys. The bootstrap publish handler currently uses stub manifest data and real signature verification is not wired through that path.
+
 **Author:** Friday Platform Team  
 **Created:** 2026-02-23  
 **Tickets:** FRI-PLAT-051, FRI-PLAT-052, FRI-PLAT-053
@@ -8,6 +9,8 @@
 ---
 
 ## 1. Summary
+
+> _Phase 1 (current release) ships only the in-memory engine; the SQLite-backed registry, install-lifecycle persistence, trusted-key store, and end-to-end signature verification described in this RFC apply to Phase 2 once those subsystems are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; the Phase 2 work is unscheduled._
 
 The Agent Package and Publishing system provides a mechanism for packaging agent capabilities as signed, versioned, publishable units. Packages bundle manifests, assets, and metadata into a deterministic archive format with Ed25519 cryptographic signatures. The system manages the full lifecycle: build, publish, discover, install, upgrade, verify, and rollback — with tenant-scoped isolation via the Security (SEC) module.
 
