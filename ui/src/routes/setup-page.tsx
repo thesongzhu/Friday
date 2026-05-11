@@ -344,6 +344,7 @@ export function SetupPage() {
   const [providerRegion, setProviderRegion] = useState<"international" | "china">(
     locale === "zh" ? "china" : "international",
   );
+  const [showRegionLimitedTemplates, setShowRegionLimitedTemplates] = useState<boolean>(false);
 
   // ── Existing state (kept intact) ──
   const [acknowledgedSecurity, setAcknowledgedSecurity] = useState(false);
@@ -1743,6 +1744,53 @@ export function SetupPage() {
             );
           })}
         </div>
+
+        {/* More providers (region-limited): opposite-region templates rendered in a
+            collapsed section. Selecting an item reuses applyProviderTemplate() and the
+            existing setup save path with validateOnSave=true; the provider is never
+            marked ready/available/routing-eligible without validation passing. */}
+        {(() => {
+          const oppositeRegion: "international" | "china" = providerRegion === "china" ? "international" : "china";
+          const oppositeKinds = providerRegion === "china" ? internationalKinds : chinaKinds;
+          if (oppositeKinds.length === 0) return null;
+          return (
+            <div className="mt-3 w-full max-w-md">
+              <button
+                type="button"
+                onClick={() => setShowRegionLimitedTemplates((v) => !v)}
+                aria-expanded={showRegionLimitedTemplates}
+                className="flex w-full items-center justify-between rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+              >
+                <span>{localize(locale, "更多提供方（地区限定）", "More providers (region-limited)")}</span>
+                <span aria-hidden="true">{showRegionLimitedTemplates ? "▾" : "▸"}</span>
+              </button>
+              {showRegionLimitedTemplates ? (
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
+                  {oppositeKinds.map((kind) => {
+                    const tpl = providerTemplates.find((t) => t.providerKind === kind);
+                    const label = tpl?.displayName
+                      ? (locale === "zh" ? tpl.displayName : tpl.displayName.replace(/^[^\(]+\(([^\)]+)\)$/, "$1").trim() || tpl.displayName)
+                      : titleCase(kind);
+                    return (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => {
+                          setProviderRegion(oppositeRegion);
+                          applyProviderTemplate(kind);
+                        }}
+                        className="flex items-center gap-2 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-2.5 text-sm font-medium text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
+                      >
+                        <span>{label}</span>
+                        <StatusPill tone="neutral">{localize(locale, "地区限定", "Region-limited")}</StatusPill>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
 
         {(useMyPlanAvailable && keyConnectionAvailable) ? (
           <div className="mt-6 flex items-center justify-center gap-1 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-1">
