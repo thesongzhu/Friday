@@ -94,6 +94,60 @@ function createFridaySkillContentUpdateMutatingActionRequest(input: {
   };
 }
 
+export function createFridaySkillLifecycleRouteMutatingActionRequest(input: {
+  action: "update" | "delete";
+  skillId: string;
+  version?: string;
+  sourceId?: string;
+  targetSatelliteIds?: string[];
+  grantPermissions?: string[];
+  actor: FridayMutatingActionActor;
+  surface: string;
+  idempotencyKey?: string;
+}): FridayMutatingActionRequest {
+  const action = `skills.lifecycle.${input.action}`;
+  return {
+    action,
+    actor: input.actor,
+    surface: input.surface,
+    resource: {
+      type: "skill_lifecycle",
+      id: input.skillId,
+      digest: hashStableJson({
+        action: input.action,
+        skillId: input.skillId,
+        version: input.version,
+        sourceId: input.sourceId,
+        targetSatelliteIds: input.targetSatelliteIds,
+        grantPermissions: input.grantPermissions,
+      }),
+      attributes: {
+        skillId: input.skillId,
+        lifecycleAction: input.action,
+      },
+    },
+    mutating: true,
+    risk: "high",
+    parameters: {
+      skillId: input.skillId,
+      lifecycleAction: input.action,
+      version: input.version,
+      sourceId: input.sourceId,
+      targetSatelliteIds: input.targetSatelliteIds ?? [],
+      grantPermissions: input.grantPermissions ?? [],
+    },
+    idempotencyKey: input.idempotencyKey,
+    localClaims: [
+      {
+        guardId: "skill_lifecycle_mutation_guard",
+        decision: "requires_approval",
+        risk: "high",
+        reason: "skill_lifecycle_mutation_requires_canonical_approval",
+      },
+    ],
+  };
+}
+
 function toLegacyCompatibleListItem(item: {
   skillId: string;
   name: string;
@@ -380,13 +434,38 @@ export function createFridaySkillRoutes(
           if (isManagedExternalSkillArtifact(existing)) {
             throwLegacyExternalSkillLifecycleRequired({ skillId, operation: "update" });
           }
+          const version = asOptionalString(body.version, "version");
+          const sourceId = asOptionalString(body.sourceId, "sourceId");
+          const targetSatelliteIds = asStringArray(body.targetSatelliteIds, "targetSatelliteIds");
+          const grantPermissions = asStringArray(body.grantPermissions, "grantPermissions");
+          assertCanonicalApproval({
+            deps,
+            request: createFridaySkillLifecycleRouteMutatingActionRequest({
+              action: "update",
+              skillId,
+              version,
+              sourceId,
+              targetSatelliteIds,
+              grantPermissions,
+              actor: createActorFromPrincipal(ctx.principal, "skill-lifecycle-operator"),
+              surface: "api:/v1/skills/:skillId/update",
+              idempotencyKey: asOptionalString(body.idempotencyKey, "idempotencyKey"),
+            }),
+            canonicalApproval: readCanonicalApproval(body.canonicalApproval),
+            requiredCode: "SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED",
+            deniedCode: "SKILL_LIFECYCLE_UPDATE_APPROVAL_DENIED",
+            unavailableCode: "SKILL_LIFECYCLE_UPDATE_GATE_UNAVAILABLE",
+            requiredMessage: "Skill lifecycle updates require canonical approval before mutation.",
+            deniedMessage: "Skill lifecycle update was blocked by the canonical approval gate",
+            unavailableMessage: "Skill lifecycle updates require the canonical approval gate.",
+          });
           const result = await deps.lifecycle!.update({
             userId: ctx.principal?.principalId ?? "skill-operator",
             skillId,
-            version: asOptionalString(body.version, "version"),
-            sourceId: asOptionalString(body.sourceId, "sourceId"),
-            targetSatelliteIds: asStringArray(body.targetSatelliteIds, "targetSatelliteIds"),
-            grantPermissions: asStringArray(body.grantPermissions, "grantPermissions"),
+            version,
+            sourceId,
+            targetSatelliteIds,
+            grantPermissions,
           });
           return result;
         },
@@ -402,6 +481,24 @@ export function createFridaySkillRoutes(
           if (isManagedExternalSkillArtifact(existing)) {
             throwLegacyExternalSkillLifecycleRequired({ skillId, operation: "delete" });
           }
+          const body = asRecord(ctx.body);
+          assertCanonicalApproval({
+            deps,
+            request: createFridaySkillLifecycleRouteMutatingActionRequest({
+              action: "delete",
+              skillId,
+              actor: createActorFromPrincipal(ctx.principal, "skill-lifecycle-operator"),
+              surface: "api:/v1/skills/:skillId",
+              idempotencyKey: asOptionalString(body.idempotencyKey, "idempotencyKey"),
+            }),
+            canonicalApproval: readCanonicalApproval(body.canonicalApproval),
+            requiredCode: "SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED",
+            deniedCode: "SKILL_LIFECYCLE_DELETE_APPROVAL_DENIED",
+            unavailableCode: "SKILL_LIFECYCLE_DELETE_GATE_UNAVAILABLE",
+            requiredMessage: "Skill lifecycle deletes require canonical approval before mutation.",
+            deniedMessage: "Skill lifecycle delete was blocked by the canonical approval gate",
+            unavailableMessage: "Skill lifecycle deletes require the canonical approval gate.",
+          });
           return deps.lifecycle!.deleteSkill({
             skillId,
             deletedBy: ctx.principal?.principalId ?? "skill-operator",

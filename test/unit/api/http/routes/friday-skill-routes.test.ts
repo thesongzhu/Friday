@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FridayDomainError } from "#errors";
 import { FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV } from "#skills";
-import { createFridaySkillRoutes } from "../../../../../src/api/http/routes/friday-skill-routes.js";
+import {
+  createFridaySkillLifecycleRouteMutatingActionRequest,
+  createFridaySkillRoutes,
+} from "../../../../../src/api/http/routes/friday-skill-routes.js";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
+
+const NOW = "2026-03-07T00:00:00.000Z";
 
 function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
@@ -19,10 +28,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       scopes: ["skill.read", "skill.write", "hub.admin"],
       tokenId: "token-1",
       tokenKind: "access",
-      issuedAt: "2026-03-07T00:00:00.000Z",
+      issuedAt: NOW,
     },
     requestId: "req-1",
-    receivedAt: "2026-03-07T00:00:00.000Z",
+    receivedAt: NOW,
     ...overrides,
   } as never;
 }
@@ -125,7 +134,7 @@ function makeLifecycle() {
     deleteSkill: vi.fn(async ({ skillId }: { skillId: string }) => ({ deleted: true, skillId })),
     verifySkill: vi.fn(async (input) => ({
       skillId: input.skillId,
-      verifiedAt: "2026-03-07T00:00:00.000Z",
+      verifiedAt: NOW,
       ok: true,
       manifestVerdict: { ok: true, issues: [] },
       packageIntegrity: { available: true, ok: true },
@@ -134,6 +143,47 @@ function makeLifecycle() {
       trustSummary: { verdict: "trusted", reasons: ["ok"] },
     })),
     validateManifest: vi.fn(() => ({ ok: true, issues: [] })),
+  };
+}
+
+function makeCanonicalMutationGate() {
+  return createFridayMutatingActionGate({
+    nowIso: () => NOW,
+    ticketIdGenerator: () => "ticket-1",
+  });
+}
+
+function makeLifecycleRouteApproval(input: {
+  action: "update" | "delete";
+  skillId: string;
+  body?: Record<string, unknown>;
+}) {
+  const body = input.body ?? {};
+  const request = createFridaySkillLifecycleRouteMutatingActionRequest({
+    action: input.action,
+    skillId: input.skillId,
+    version: typeof body.version === "string" ? body.version : undefined,
+    sourceId: typeof body.sourceId === "string" ? body.sourceId : undefined,
+    targetSatelliteIds: input.action === "update"
+      ? Array.isArray(body.targetSatelliteIds) ? body.targetSatelliteIds as string[] : []
+      : undefined,
+    grantPermissions: input.action === "update"
+      ? Array.isArray(body.grantPermissions) ? body.grantPermissions as string[] : []
+      : undefined,
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: input.action === "update" ? "api:/v1/skills/:skillId/update" : "api:/v1/skills/:skillId",
+    idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+  });
+  return {
+    decision: "approved" as const,
+    approvalId: `${input.action}-approval-1`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-03-07T01:00:00.000Z",
   };
 }
 
@@ -285,7 +335,7 @@ describe("createFridaySkillRoutes", () => {
     expect(lifecycle.validateManifest).toHaveBeenCalledWith({ id: "skill.alpha" });
   });
 
-  it("keeps legacy update/delete available for non-managed skills", async () => {
+  it("requires canonical approval before non-managed lifecycle update/delete", async () => {
     const lifecycle = makeLifecycle();
     lifecycle.getSkill.mockImplementation((skillId: string) => ({
       skillId,
@@ -304,13 +354,75 @@ describe("createFridaySkillRoutes", () => {
     const routes = createFridaySkillRoutes({
       skillRegistry: { list: () => [] } as never,
       lifecycle: lifecycle as never,
+      canonicalMutationGate: makeCanonicalMutationGate(),
     });
 
     const update = routes.find((item) => item.operationId === "skills.update")!;
     const remove = routes.find((item) => item.operationId === "skills.delete")!;
 
-    await update.handler(makeCtx({ params: { skillId: "skill.alpha" }, body: { version: "1.1.0" } }));
-    await remove.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
+    await expect(
+      update.handler(makeCtx({ params: { skillId: "skill.alpha" }, body: { version: "1.1.0" } })),
+    ).rejects.toMatchObject({
+      code: "SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED",
+      httpStatus: 403,
+    });
+    await expect(
+      remove.handler(makeCtx({ params: { skillId: "skill.alpha" } })),
+    ).rejects.toMatchObject({
+      code: "SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED",
+      httpStatus: 403,
+    });
+
+    expect(lifecycle.update).not.toHaveBeenCalled();
+    expect(lifecycle.deleteSkill).not.toHaveBeenCalled();
+  });
+
+  it("passes canonical approval through non-managed lifecycle update/delete", async () => {
+    const lifecycle = makeLifecycle();
+    lifecycle.getSkill.mockImplementation((skillId: string) => ({
+      skillId,
+      name: "Workspace Skill",
+      source: "workspace",
+      origin: "workspace",
+      status: "installed",
+      starter: false,
+      tags: [],
+      updateAvailable: false,
+      managed: false,
+      registryLoaded: true,
+      versions: [],
+      installations: [],
+    }));
+    const routes = createFridaySkillRoutes({
+      skillRegistry: { list: () => [] } as never,
+      lifecycle: lifecycle as never,
+      canonicalMutationGate: makeCanonicalMutationGate(),
+    });
+
+    const update = routes.find((item) => item.operationId === "skills.update")!;
+    const remove = routes.find((item) => item.operationId === "skills.delete")!;
+    const updateBody = { version: "1.1.0", idempotencyKey: "update-1" };
+
+    await update.handler(makeCtx({
+      params: { skillId: "skill.alpha" },
+      body: {
+        ...updateBody,
+        canonicalApproval: makeLifecycleRouteApproval({
+          action: "update",
+          skillId: "skill.alpha",
+          body: updateBody,
+        }),
+      },
+    }));
+    await remove.handler(makeCtx({
+      params: { skillId: "skill.alpha" },
+      body: {
+        canonicalApproval: makeLifecycleRouteApproval({
+          action: "delete",
+          skillId: "skill.alpha",
+        }),
+      },
+    }));
 
     expect(lifecycle.update).toHaveBeenCalledWith(expect.objectContaining({
       skillId: "skill.alpha",
