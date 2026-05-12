@@ -72,26 +72,6 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.stateDir).toBe("/from-env");
   });
 
-  it("keeps workspaceRoot separate from stateDir when FRIDAY_WORKSPACE_ROOT is set", () => {
-    const resolved = resolveFridayHubConfig(
-      makeConfig(),
-      {
-        FRIDAY_STATE_DIR: "/tmp/friday-state",
-        FRIDAY_WORKSPACE_ROOT: "/repo/checkout",
-      },
-    );
-    expect(resolved.stateDir).toBe("/tmp/friday-state");
-    expect(resolved.workspaceRoot).toBe("/repo/checkout");
-  });
-
-  it("uses explicit workspaceRoot over env", () => {
-    const resolved = resolveFridayHubConfig(
-      makeConfig({ workspaceRoot: "/explicit-workspace" }),
-      { FRIDAY_WORKSPACE_ROOT: "/env-workspace" },
-    );
-    expect(resolved.workspaceRoot).toBe("/explicit-workspace");
-  });
-
   // ─── Skill dirs ───
 
   it("defaults skillDirs to ['skills', 'managed-skills']", () => {
@@ -153,6 +133,26 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.tokenSecret).toBe("env-secret");
     expect(resolved.tokenSecretSource).toBe("env");
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps workspaceRoot separate from stateDir when FRIDAY_WORKSPACE_ROOT is set", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig(),
+      {
+        FRIDAY_STATE_DIR: "/tmp/friday-state",
+        FRIDAY_WORKSPACE_ROOT: "/repo/checkout",
+      },
+    );
+    expect(resolved.stateDir).toBe("/tmp/friday-state");
+    expect(resolved.workspaceRoot).toBe("/repo/checkout");
+  });
+
+  it("uses explicit workspaceRoot over env", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig({ workspaceRoot: "/explicit-workspace" }),
+      { FRIDAY_WORKSPACE_ROOT: "/env-workspace" },
+    );
+    expect(resolved.workspaceRoot).toBe("/explicit-workspace");
   });
 
   it("defaults allowPrivateNetwork=false in dev mode", () => {
