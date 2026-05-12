@@ -115,4 +115,67 @@ describe("real-world reporting", () => {
     expect(JSON.stringify(written)).not.toContain("runtime-access-token");
     expect(JSON.stringify(written)).not.toContain("runtime-refresh-token");
   });
+
+  it("writes sanitized tool evidence without raw file content or secrets", () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-reporting-"));
+    const reportRoot = join(tempRoot, "report");
+
+    writeReports({
+      repoRoot: tempRoot,
+      reportRoot,
+      runId: "reporting-tool-evidence-test",
+      suite: "smoke",
+      scenarios: [{ id: "l4-file-tool-roundtrip", layer: "L4" }],
+      artifacts: [
+        {
+          runId: "reporting-tool-evidence-test",
+          scenarioId: "l4-file-tool-roundtrip",
+          suite: "smoke",
+          lane: "default",
+          result: "passed",
+          metrics: {},
+          raw: {
+            runId: "agent-run-1",
+            toolEvidence: [
+              {
+                index: 0,
+                toolName: "read",
+                isError: false,
+                argKeys: ["path"],
+                relativePath: "README.md",
+                resultLengthChars: 36,
+                outputShape: "multiline-text",
+                matchesExpectedPath: true,
+                matchesExpectedHeading: true,
+              },
+            ],
+          },
+        },
+      ],
+      envTruth: {
+        baseUrl: "http://127.0.0.1:3141",
+        uiBaseUrl: "http://127.0.0.1:3141",
+        collectedAt: "2026-05-12T00:00:00.000Z",
+        publicChecks: { health: { ok: true, status: 200 } },
+        auth: { ok: true, source: "local_passphrase_login", user: { id: "user" } },
+        setupStatus: { needsSetup: false },
+        userProfile: { profileType: "local", onboardedAt: "2026-05-12T00:00:00.000Z" },
+        providerLanes: { default: { providerName: "Provider", model: "model" }, fallback: null },
+        derived: { setupUserProfileTruthMismatch: false },
+      },
+      options: {},
+    });
+
+    const evidencePath = join(reportRoot, "tool-evidence", "l4-file-tool-roundtrip", "agent-run-1.json");
+    const written = JSON.parse(readFileSync(evidencePath, "utf8"));
+    expect(written.evidence[0]).toMatchObject({
+      toolName: "read",
+      isError: false,
+      argKeys: ["path"],
+      relativePath: "README.md",
+      matchesExpectedHeading: true,
+    });
+    expect(JSON.stringify(written)).not.toContain("# Friday");
+    expect(JSON.stringify(written)).not.toContain("sk-");
+  });
 });

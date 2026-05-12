@@ -2021,6 +2021,284 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
   });
 
+  it("does not count request_tool_pack as local workspace file read evidence", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "load-code-pack",
+          name: "request_tool_pack",
+          input: { pack: "code", reason: "Need local workspace file access." },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "I cannot access README.md directly." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Still unable to read README.md." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [createNamedTool("read"), createExecTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.toolCallCount).toBe(1);
+    expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+  });
+
+  it("does not count web or skill-list tools as local workspace file read evidence", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "web-fetch-readme",
+          name: "web_fetch",
+          input: { url: "https://example.com/README.md" },
+        },
+        {
+          type: "tool_use",
+          id: "list-skills",
+          name: "skills_list",
+          input: {},
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "I still cannot access README.md from the workspace." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "No local read evidence is available." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [createSuccessfulWebFetchTool(), createNamedTool("skills_list"), createNamedTool("read")],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.toolCallCount).toBe(2);
+    expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+  });
+
+  it("does not count capabilities as local workspace file read evidence", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "check-capabilities",
+          name: "capabilities",
+          input: {},
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Capabilities checked, but I cannot read README.md from the workspace." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "No local file read evidence is available." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [createNamedTool("capabilities"), createNamedTool("read")],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Use capabilities if needed, but read README.md from the local workspace and answer with the top H1 heading only.",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+  });
+
+  it("does not satisfy nested workspace file requests with a same-basename read", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-path-match-"));
+    writeFileSync(join(workspaceRoot, "README.md"), "# Wrong\n", "utf8");
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-root-readme",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Wrong" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Still no matching nested file read." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path docs/README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.toolCallCount).toBe(1);
+      expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retries local workspace file tasks until the requested file is read", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-evidence-"));
+    writeFileSync(join(workspaceRoot, "README.md"), "# Friday\n\nLocal fixture.\n", "utf8");
+    const llmClient = createMockLlmClient([
+      [
+        { type: "text_delta", text: "I cannot access README.md directly." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "read-readme",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(1);
+      expect(result.response).toBe("Friday");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retries local workspace file tasks when a successful read is followed by a refusal answer", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-refusal-"));
+    writeFileSync(join(workspaceRoot, "README.md"), "# Friday\n\nLocal fixture.\n", "utf8");
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-readme",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "无法直接访问 README.md，因此无法提取 H1。" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(1);
+      expect(result.response).toBe("Friday");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("re-prompts latest news answers until dates and URLs are included", async () => {
     let callCount = 0;
     const llmClient: FridayAgentLlmClient = {

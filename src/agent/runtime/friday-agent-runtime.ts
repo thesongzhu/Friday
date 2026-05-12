@@ -4221,6 +4221,32 @@ function detectEvidenceClosureGap(params: {
   const category = classifyEvidenceTask(normalizedTask);
   if (!category) return null;
 
+  if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
+    const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    const refusalAfterRead = hasReadEvidence && responseLooksLikeLocalFileAccessRefusal(params.responseText);
+    if (!hasReadEvidence || refusalAfterRead) {
+      const failedCalls = params.toolCalls.filter((call) => call.result.isError);
+      const latestFailure = failedCalls[failedCalls.length - 1];
+      const failureDetail = latestFailure?.result.content
+        ? latestFailure.result.content.replace(/\s+/g, " ").trim()
+        : "no successful read tool evidence for the requested workspace file";
+      return {
+        errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+        userMessage:
+          "Workspace file task could not be completed with verifiable read evidence. " +
+          "Retry after checking the requested path and file tool availability.",
+        developerMessage:
+          `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
+          `Workspace file evidence closure failed for task "${normalizedTask.slice(0, 120)}": ` +
+          `${String(params.toolCalls.length)} tool call(s), ` +
+          `${hasReadEvidence ? "successful read was followed by a file-access refusal" : "no matching successful read tool call"}. ` +
+          `Last failure: ${failureDetail}. Final response: ${params.responseText.trim().slice(0, 200)}`,
+        attemptedImageToolCalls: params.toolCalls.length,
+        failedImageToolCalls: failedCalls.length,
+      };
+    }
+  }
+
   const hasAttemptedEvidenceTool = params.toolCalls.some((call) => {
     if (category === "desktop") {
       return call.toolName === "system"
@@ -4722,6 +4748,53 @@ function hasSuccessfulToolEvidence(toolCalls: FridayAgentToolCallRecord[]): bool
   return false;
 }
 
+function extractLocalWorkspaceFileMentions(task: string): string[] {
+  const mentions = new Set<string>();
+  const fileMatches = task.match(/\b(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+\b/giu) ?? [];
+  for (const match of fileMatches) {
+    mentions.add(stripTrailingPunctuation(match).toLowerCase());
+  }
+  if (mentions.size === 0 && /\breadme\b/i.test(task)) {
+    mentions.add("readme.md");
+  }
+  return [...mentions];
+}
+
+function hasSuccessfulLocalWorkspaceReadEvidence(
+  task: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  const requestedFiles = extractLocalWorkspaceFileMentions(task);
+  return toolCalls.some((call) => {
+    if (call.toolName !== "read" || call.result.isError) {
+      return false;
+    }
+    const rawPath = typeof call.args.path === "string" ? call.args.path.trim() : "";
+    if (rawPath.length === 0) {
+      return false;
+    }
+    if (requestedFiles.length === 0) {
+      return true;
+    }
+    const normalizedPath = rawPath.replace(/\\/g, "/").toLowerCase();
+    const pathBase = basename(normalizedPath);
+    return requestedFiles.some((requested) => {
+      if (requested.includes("/")) {
+        return normalizedPath === requested || normalizedPath.endsWith(`/${requested}`);
+      }
+      return normalizedPath === requested
+        || normalizedPath.endsWith(`/${requested}`)
+        || pathBase === requested;
+    });
+  });
+}
+
+function responseLooksLikeLocalFileAccessRefusal(responseText: string): boolean {
+  return /\b(?:cannot|can't|unable to|not able to|could not|couldn't)\s+(?:directly\s+)?(?:access|read|open)\b/i.test(responseText)
+    || /\b(?:cannot|can't|unable to|not able to|could not|couldn't)\s+(?:extract|inspect)\b/i.test(responseText)
+    || /(无法直接访问|无法访问|无法读取|不能读取|不能访问|无法打开|无法提取)/u.test(responseText);
+}
+
 function hasFeedbackPersistenceEvidence(toolCalls: FridayAgentToolCallRecord[]): boolean {
   for (const call of toolCalls) {
     if (call.result.isError) continue;
@@ -4782,11 +4855,21 @@ function shouldEnforceToolEvidenceForTask(params: {
   if (isAutonomousInternalReasoningSurface(executionSurface)) {
     return false;
   }
-  if (hasSuccessfulToolEvidence(toolCalls)) return false;
 
   const normalizedTask = task.trim();
   if (normalizedTask.length === 0) return false;
   const taskCategory = classifyEvidenceTask(normalizedTask);
+  if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
+    const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, toolCalls);
+    if (!hasReadEvidence) {
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    if (responseLooksLikeLocalFileAccessRefusal(responseText)) {
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    return false;
+  }
+  if (hasSuccessfulToolEvidence(toolCalls)) return false;
   if (toolCalls.length > 0) {
     // If a desktop route attempted tools but all failed, force one more
     // evidence-oriented retry instead of silently accepting the failure text.
@@ -4935,9 +5018,9 @@ function taskLooksLikeLocalWorkspaceFileInspection(task: string): boolean {
   const englishLocal =
     /\b(local|workspace|repo|repository|project|current workspace|current repo|filesystem)\b/i;
   const englishFileAction =
-    /\b(read|open|inspect|check|cat|show)\b[\s\S]{0,64}\b(file|files|filesystem|folder|directory|path|readme|[a-z0-9_.-]+\.[a-z0-9]+)\b/i;
+    /\b(read|open|inspect|check|cat|show)\b[\s\S]{0,64}\b(file|files|filesystem|folder|directory|path|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b/i;
   const englishFileFirst =
-    /\b(file|files|filesystem|folder|directory|path|readme|[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,64}\b(read|open|inspect|check|cat|show)\b/i;
+    /\b(file|files|filesystem|folder|directory|path|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,64}\b(read|open|inspect|check|cat|show)\b/i;
   const chineseLocal = /(本地|工作区|仓库|项目|文件系统)/u;
   const chineseFileAction = /(读取|查看|检查|打开).{0,32}(文件|目录|路径|工作区|仓库)/u;
   return (

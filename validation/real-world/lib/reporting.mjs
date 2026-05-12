@@ -282,6 +282,27 @@ function renderIndex({ runId, suite, scenarios, grouped, envTruth, aggregates })
   return lines.join("\n") + "\n";
 }
 
+function writeToolEvidenceArtifacts({ reportRoot, artifacts }) {
+  for (const artifact of artifacts) {
+    const evidence = artifact?.raw?.toolEvidence;
+    if (!Array.isArray(evidence) || evidence.length === 0) {
+      continue;
+    }
+    const scenarioId = String(artifact.scenarioId ?? "unknown").replace(/[^a-zA-Z0-9_.-]/g, "-");
+    const runId = String(artifact.raw?.runId ?? artifact.runId ?? "run").replace(/[^a-zA-Z0-9_.-]/g, "-");
+    writeJson(
+      path.join(reportRoot, "tool-evidence", scenarioId, `${runId}.json`),
+      {
+        scenarioId: artifact.scenarioId,
+        suite: artifact.suite,
+        lane: artifact.lane,
+        runId: artifact.raw?.runId ?? artifact.runId ?? null,
+        evidence,
+      },
+    );
+  }
+}
+
 export function writeReports({
   repoRoot,
   reportRoot,
@@ -337,6 +358,7 @@ export function writeReports({
   writeText(path.join(reportRoot, "performance-report.md"), renderPerformanceReport({ grouped, aggregates }));
   writeText(path.join(reportRoot, "defect-ledger.md"), renderDefectLedger({ artifacts }));
   writeText(path.join(reportRoot, "index.md"), renderIndex({ runId, suite, scenarios, grouped, envTruth, aggregates }));
+  writeToolEvidenceArtifacts({ reportRoot, artifacts });
   writeJson(resolveLatestPointerPath(repoRoot), {
     runId,
     suite,

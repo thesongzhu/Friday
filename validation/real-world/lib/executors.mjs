@@ -41,6 +41,75 @@ function extractTopWorkspaceHeading(markdownText) {
   return markdownHeading ? normalizeHeadingText(markdownHeading) : null;
 }
 
+async function readAgentToolCalls(runRecord) {
+  const artifactDir = typeof runRecord?.artifactDir === "string" ? runRecord.artifactDir.trim() : "";
+  if (!artifactDir) {
+    return [];
+  }
+  const toolCallsPath = path.join(artifactDir, "tool-calls.json");
+  try {
+    const raw = await fs.readFile(toolCallsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function outputShapeForToolResult(content) {
+  if (typeof content !== "string") {
+    return typeof content;
+  }
+  const trimmed = content.trim();
+  if (trimmed.length === 0) {
+    return "empty";
+  }
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    return "json-like";
+  }
+  if (trimmed.includes("\n")) {
+    return "multiline-text";
+  }
+  return "text";
+}
+
+function sanitizeToolEvidence({ toolCalls, expectedHeading, expectedPath }) {
+  const expectedPathLower = typeof expectedPath === "string" ? expectedPath.toLowerCase() : "";
+  return toolCalls.map((call, index) => {
+    const argKeys = call?.args && typeof call.args === "object" ? Object.keys(call.args).sort() : [];
+    const rawPath = typeof call?.args?.path === "string" ? call.args.path : undefined;
+    const relativePath = call?.toolName === "read" && rawPath
+      ? rawPath.replace(/\\/g, "/").replace(/^\/+/, "")
+      : undefined;
+    const content = typeof call?.result?.content === "string" ? call.result.content : "";
+    const resultLengthChars = content.length;
+    const expectedHeadingHit = Boolean(
+      call?.toolName === "read"
+      && !call?.result?.isError
+      && expectedHeading
+      && content.includes(expectedHeading),
+    );
+    return {
+      index,
+      toolName: String(call?.toolName ?? "unknown"),
+      isError: Boolean(call?.result?.isError),
+      argKeys,
+      relativePath,
+      resultLengthChars,
+      outputShape: outputShapeForToolResult(content),
+      matchesExpectedPath: Boolean(
+        relativePath
+        && expectedPathLower
+        && (
+          relativePath.toLowerCase() === expectedPathLower
+          || relativePath.toLowerCase().endsWith(`/${expectedPathLower}`)
+        ),
+      ),
+      matchesExpectedHeading: expectedHeadingHit,
+    };
+  });
+}
+
 function getUrlPath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
   try {
@@ -853,6 +922,8 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     }
   }
 
+  const agentToolCalls = await readAgentToolCalls(lastRunRecord);
+
   artifact.raw = {
     ...(artifact.raw ?? {}),
     runId: lastData?.runId ?? null,
@@ -887,13 +958,33 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
         `workspace file ${relativeFilePath}`,
         `workspace top heading ${expectedHeading ?? "missing"}`,
       );
+      const toolEvidence = sanitizeToolEvidence({
+        toolCalls: agentToolCalls,
+        expectedHeading,
+        expectedPath: relativeFilePath,
+      });
+      const hasExpectedReadToolEvidence = toolEvidence.some((entry) =>
+        entry.toolName === "read"
+        && entry.isError === false
+        && entry.matchesExpectedPath === true
+        && entry.matchesExpectedHeading === true
+      );
       artifact.raw = {
         ...(artifact.raw ?? {}),
         workspaceFileOracle: {
           path: relativeFilePath,
           expectedHeading,
         },
+        toolEvidence,
       };
+      if (!hasExpectedReadToolEvidence) {
+        artifact.result = "failed";
+        artifact.failureClass = "tool_bridge";
+        artifact.notes = [
+          ...(artifact.notes ?? []),
+          `expected successful read tool evidence for ${relativeFilePath} containing workspace top heading ${JSON.stringify(expectedHeading)}`,
+        ];
+      }
       if (!expectedHeading || !normalizeHeadingText(outputText).includes(expectedHeading)) {
         artifact.result = "failed";
         artifact.failureClass = "tool_bridge";

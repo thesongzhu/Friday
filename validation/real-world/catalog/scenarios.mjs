@@ -830,6 +830,13 @@ export const REAL_WORLD_SCENARIOS = [
         forbiddenSubstrings: [
           "outside the allowed workspace root",
           "cannot access the file",
+          "cannot access",
+          "unable to access",
+          "unable to read",
+          "无法直接访问",
+          "无法读取",
+          "不能读取",
+          "无法访问",
         ],
       },
     },
