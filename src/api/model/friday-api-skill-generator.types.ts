@@ -80,9 +80,11 @@ export interface FridaySkillGenerationEvidence {
   };
   qaVerdict?: FridayHarnessQaVerdictV1 | null;
   harness?: FridayTemplateHarnessSummary | null;
-  savedSkillIdentity?: {
+  stagedCandidateIdentity?: {
     skillId: string;
-    skillDir?: string;
+    candidateId?: string;
+    candidateDir?: string;
+    filesDir?: string;
   };
 }
 
@@ -99,9 +101,11 @@ export interface FridayApproveResponse {
   sessionId: string;
   skillId: string;
   skillDir: string;
+  candidateId: string;
+  candidateDir: string;
   savedFiles: string[];
   registryRefreshed: boolean;
-  promotionStage: "stabilized";
+  promotionStage: "candidate_staged";
   promotedManifestTags: string[];
   evidence: FridaySkillGenerationEvidence;
 }

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridaySkillGeneratorRoutes } from "#api";
-import type { FridaySkillGeneratorService } from "#skills/generator";
+import {
+  createFridaySkillGeneratorStageMutatingActionRequest,
+  type FridaySkillGeneratorService,
+} from "#skills/generator";
+import {
+  createFridayMutatingActionDigest,
+  createFridayMutatingActionGate,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
 import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   FRIDAY_SKILL_PYTHON_BIN_ENV,
@@ -12,6 +19,14 @@ import type { SkillManifestV2 } from "#skills";
 import type { FridaySkillGenerationTurnResponse } from "#skills/generator";
 
 const NOW = "2026-02-17T10:00:00.000Z";
+const PRINCIPAL = {
+  principalType: "user" as const,
+  principalId: "user-1",
+  scopes: ["skill.write" as const],
+  tokenId: "token-1",
+  tokenKind: "access" as const,
+  issuedAt: NOW,
+};
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -164,10 +179,12 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
     approveAndSave: vi.fn(async () => ({
       sessionId: "sess-1",
       skillId: "test-skill",
-      skillDir: "/tmp/test/skills/test-skill",
+      skillDir: "/tmp/test/skill-candidates/test-skill/files",
+      candidateId: "test-skill-1.0.0-candidate",
+      candidateDir: "/tmp/test/skill-candidates/test-skill",
       savedFiles: ["skill.manifest.json", "index.mjs"],
-      registryRefreshed: true,
-      promotionStage: "stabilized" as const,
+      registryRefreshed: false,
+      promotionStage: "candidate_staged" as const,
       promotedManifestTags: ["starter.cli", "skill.stabilized"],
       evidence: {
         sessionId: "sess-1",
@@ -192,9 +209,11 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
           ready: true,
           reason: "Draft is ready",
         },
-        savedSkillIdentity: {
+        stagedCandidateIdentity: {
           skillId: "test-skill",
-          skillDir: "/tmp/test/skills/test-skill",
+          candidateId: "test-skill-1.0.0-candidate",
+          candidateDir: "/tmp/test/skill-candidates/test-skill",
+          filesDir: "/tmp/test/skill-candidates/test-skill/files",
         },
       },
     })),
@@ -229,11 +248,50 @@ describe("FridaySkillGeneratorRoutes", () => {
   function createRoutes() {
     const generatorService = makeMockGeneratorService();
     const registry = makeMockRegistry();
+    const canonicalMutationGate = createFridayMutatingActionGate({
+      nowIso: () => NOW,
+      ticketIdGenerator: () => "ticket-1",
+    });
     const routes = createFridaySkillGeneratorRoutes({
       skillGenerator: generatorService,
       registry,
+      canonicalMutationGate,
     });
     return { routes, generatorService, registry };
+  }
+
+  function withCanonicalApproval(body: {
+    idempotencyKey?: string;
+    planDigest?: string;
+  } = {}) {
+    const session = makeMockSession().session;
+    const draft = makeMockDraft();
+    const request = createFridaySkillGeneratorStageMutatingActionRequest({
+      session: {
+        ...session,
+        draftSkillId: "test-skill",
+        status: "ready_for_review",
+      },
+      draft,
+      actor: {
+        kind: PRINCIPAL.principalType,
+        id: PRINCIPAL.principalId,
+        principalId: PRINCIPAL.principalId,
+      },
+      surface: "api:/v1/skills/generator/sessions/:sessionId/approve",
+      idempotencyKey: body.idempotencyKey,
+      planDigest: body.planDigest,
+    });
+    return {
+      ...body,
+      canonicalApproval: {
+        decision: "approved" as const,
+        approvalId: "approval-1",
+        decidedByPrincipalId: PRINCIPAL.principalId,
+        actionDigest: createFridayMutatingActionDigest(request),
+        expiresAt: "2026-02-17T11:00:00.000Z",
+      },
+    };
   }
 
   it("creates 7 route definitions", () => {
@@ -432,19 +490,47 @@ describe("FridaySkillGeneratorRoutes", () => {
   });
 
   describe("POST /v1/skills/generator/sessions/:sessionId/approve", () => {
-    it("calls approveAndSave", async () => {
+    it("requires canonical approval before staging the generated skill candidate", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.approve",
+      )!;
+
+      await expect(
+        route.handler(
+          makeCtx({
+            params: { sessionId: "sess-1" },
+            principal: PRINCIPAL,
+          }),
+        ),
+      ).rejects.toThrow("requires canonical approval");
+      expect(generatorService.approveAndSave).not.toHaveBeenCalled();
+    });
+
+    it("calls approveAndSave with a canonical candidate staging ticket", async () => {
       const { routes, generatorService } = createRoutes();
       const route = routes.find(
         (r) => r.operationId === "skills.generator.sessions.approve",
       )!;
 
       const result = await route.handler(
-        makeCtx({ params: { sessionId: "sess-1" } }),
-      ) as { skillId: string };
+        makeCtx({
+          params: { sessionId: "sess-1" },
+          principal: PRINCIPAL,
+          body: withCanonicalApproval({ idempotencyKey: "approve-1" }),
+        }),
+      ) as { skillId: string; candidateId: string };
 
-      expect(generatorService.approveAndSave).toHaveBeenCalledWith("sess-1");
+      expect(generatorService.approveAndSave).toHaveBeenCalledWith("sess-1", {
+        canonicalApprovalTicket: expect.objectContaining({
+          action: "skills.import.stage_candidate",
+          approvalId: "approval-1",
+          ticketId: "ticket-1",
+        }),
+      });
       expect(result.skillId).toBe("test-skill");
-      expect(result.promotionStage).toBe("stabilized");
+      expect(result.candidateId).toBe("test-skill-1.0.0-candidate");
+      expect(result.promotionStage).toBe("candidate_staged");
     });
   });
 

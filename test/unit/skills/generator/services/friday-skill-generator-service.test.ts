@@ -1,6 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { rmSync } from "node:fs";
 
-import { createFridaySkillGeneratorService } from "#skills/generator";
+import {
+  createFridaySkillGeneratorService,
+  createFridaySkillGeneratorStageMutatingActionRequest,
+} from "#skills/generator";
 import type { CreateFridaySkillGeneratorServiceDeps } from "#skills/generator";
 import type { FridayProviderService } from "#providers";
 import type { FridaySkillRegistry } from "#skills";
@@ -10,6 +14,10 @@ import type { FridaySqliteLayer } from "#state";
 import type { SkillManifestV2 } from "#skills";
 import type { FridaySkillUiSchemaV1 } from "#skills/generator";
 import type { FridayGeneratedSkillFile } from "#skills/generator";
+import {
+  createFridayMutatingActionDigest,
+  type FridayMutatingActionTicket,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
 
 const NOW = "2026-02-17T10:00:00.000Z";
 
@@ -441,6 +449,10 @@ describe("FridaySkillGeneratorService", () => {
     service = createFridaySkillGeneratorService(deps);
   });
 
+  afterEach(() => {
+    rmSync("/tmp/test/skill-candidates", { recursive: true, force: true });
+  });
+
   function mockFetchForLlm(responses: unknown[]): void {
     let callIdx = 0;
     globalThis.fetch = vi.fn(async () => {
@@ -468,6 +480,43 @@ describe("FridaySkillGeneratorService", () => {
       messages?: Array<{ role?: string; content?: string }>;
     };
     return body.messages?.find((message) => message.role === "system")?.content ?? "";
+  }
+
+  async function makeCanonicalGeneratorCandidateTicket(sessionId: string): Promise<FridayMutatingActionTicket> {
+    const data = await service.getSession(sessionId);
+    if (!data?.draft) {
+      throw new Error(`Draft missing for ${sessionId}`);
+    }
+    const request = createFridaySkillGeneratorStageMutatingActionRequest({
+      session: data.session,
+      draft: data.draft,
+      actor: {
+        kind: "user",
+        id: data.session.userId,
+        principalId: data.session.userId,
+      },
+      surface: "unit:test",
+      idempotencyKey: `approve-${sessionId}`,
+    });
+    return {
+      ticketId: `ticket-${sessionId}`,
+      actionDigest: createFridayMutatingActionDigest(request),
+      action: request.action,
+      actor: request.actor,
+      surface: request.surface,
+      resource: request.resource,
+      risk: "high",
+      approvalId: `approval-${sessionId}`,
+      approvedByPrincipalId: data.session.userId,
+      issuedAt: NOW,
+      idempotencyKey: `approve-${sessionId}`,
+    };
+  }
+
+  async function approveWithCanonicalTicket(sessionId: string) {
+    return service.approveAndSave(sessionId, {
+      canonicalApprovalTicket: await makeCanonicalGeneratorCandidateTicket(sessionId),
+    });
   }
 
   describe("startSession", () => {
@@ -1285,7 +1334,7 @@ describe("FridaySkillGeneratorService", () => {
       }
     });
 
-    it("promotes generated drafts to stabilized manifests with evidence", async () => {
+    it("stages generated drafts as lifecycle candidates with evidence", async () => {
       const analyzerResponse = {
         state: "needs_clarification",
         questions: ["What?"],
@@ -1339,9 +1388,11 @@ describe("FridaySkillGeneratorService", () => {
             runStatus: "completed",
           },
         });
-        const result = await service.approveAndSave(startResult.session.sessionId);
+        const result = await approveWithCanonicalTicket(startResult.session.sessionId);
 
-        expect(result.promotionStage).toBe("stabilized");
+        expect(result.promotionStage).toBe("candidate_staged");
+        expect(result.candidateId).toContain("test-skill-1.0.0");
+        expect(result.registryRefreshed).toBe(false);
         expect(result.promotedManifestTags).toEqual(
           expect.arrayContaining(["generated", "skill.stabilized", "cli-backed"]),
         );
@@ -1349,8 +1400,14 @@ describe("FridaySkillGeneratorService", () => {
         expect(result.evidence).toEqual({
           packageLoaded: true,
           packageValidated: true,
-          registryRefreshed: true,
+          registryRefreshed: false,
+          candidateStaged: true,
         });
+        expect(deps.memoryStateService.updateSkillStatus).not.toHaveBeenCalledWith(
+          "test-skill",
+          "installed",
+        );
+        expect(deps.registry.refresh).not.toHaveBeenCalled();
       } finally {
         restoreFetch();
       }

@@ -2574,6 +2574,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       registry: deps.skillRegistry,
       selfHealing: deps.diagnosis?.service,
       observability: deps.observabilityService,
+      canonicalMutationGate,
     })) {
       routes.register(route);
     }

@@ -406,6 +406,44 @@ describe("Friday Reflex service", () => {
     expect(approveAndSave).not.toHaveBeenCalled();
   });
 
+  it("fails closed when approving a skill candidate without canonical staging approval", async () => {
+    const approveAndSave = vi.fn(async () => {
+      throw new Error("Generated skill approval now stages a lifecycle candidate and requires canonical approval.");
+    });
+    const service = createService({
+      skillGenerator: {
+        startSession: vi.fn(),
+        submitTurn: vi.fn(),
+        getSession: vi.fn(),
+        generateDraft: vi.fn(),
+        recordExplicitTestResult: vi.fn(),
+        getQaVerdict: vi.fn(),
+        getHarnessSummary: vi.fn(),
+        approveAndSave,
+        cancelSession: vi.fn(),
+      } as never,
+    });
+    const candidate = service.createCandidate({
+      userId: "user-1",
+      kind: "skill",
+      origin: "post_run",
+      title: "Generated skill candidate",
+      summary: "A generated skill waiting for review.",
+      payload: { skillId: "generated-skill" },
+      evidence: { generatorSessionId: "skill-session-1" },
+      confidence: 0.8,
+      riskTier: 2,
+    });
+
+    const approved = await service.approveCandidate({ userId: "user-1", candidateId: candidate.id });
+
+    expect(approveAndSave).toHaveBeenCalledWith("skill-session-1");
+    expect(approved.status).toBe("failed");
+    expect(approved.evidence.error).toContain("requires canonical approval");
+    expect(approved.evidence.savedSkillId).toBeUndefined();
+    expect(approved.evidence.promotionStage).toBeUndefined();
+  });
+
   it("adds curator review metadata without approving generated candidates", async () => {
     const approveAndSave = vi.fn();
     const service = createService({

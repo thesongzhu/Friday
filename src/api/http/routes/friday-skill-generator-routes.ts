@@ -6,7 +6,10 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import { FridayDomainError } from "#errors";
 import type { FridayProviderTenantContext } from "#providers";
 
-import type { FridaySkillGeneratorService } from "#skills/generator";
+import {
+  createFridaySkillGeneratorStageMutatingActionRequest,
+  type FridaySkillGeneratorService,
+} from "#skills/generator";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridaySkillUiSchemaV1 } from "#skills/generator";
 import {
@@ -26,6 +29,13 @@ import {
 import type { FridaySelfHealingApiService } from "#learning";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
 import { extractFridaySkillGenerationContract } from "../../../skills/generator/services/friday-skill-generator-contract.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
+import type {
+  FridayCanonicalApprovalResolution,
+  FridayMutatingActionActor,
+  FridayMutatingActionGate,
+  FridayMutatingActionTicket,
+} from "../../../security/friday-mutating-action-gate.js";
 
 import type {
   FridayApproveResponse,
@@ -70,6 +80,34 @@ function buildTenantContext(principal: unknown, fallbackUserId: string, fallback
     userId,
     channelKind: fallbackChannel,
   };
+}
+
+function createActorFromPrincipal(
+  principal: FridayAuthPrincipal | null,
+  fallbackId: string,
+): FridayMutatingActionActor {
+  if (!principal) {
+    return {
+      kind: "api",
+      id: fallbackId,
+      principalId: fallbackId,
+    };
+  }
+  return {
+    kind: principal.principalType,
+    id: principal.principalId,
+    principalId: principal.principalId,
+  };
+}
+
+function readCanonicalApproval(value: unknown): FridayCanonicalApprovalResolution | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as FridayCanonicalApprovalResolution;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "canonicalApproval must be an object", { httpStatus: 400 });
 }
 
 // ─── Validation helpers ───
@@ -162,6 +200,87 @@ function validateGenerateBody(
   }
 }
 
+function validateApproveBody(
+  body: unknown,
+): asserts body is {
+  idempotencyKey?: string;
+  planDigest?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+} {
+  if (body == null) return;
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "Request body must be a plain object when provided",
+      { httpStatus: 400 },
+    );
+  }
+  const b = body as Record<string, unknown>;
+  if (b.idempotencyKey !== undefined && typeof b.idempotencyKey !== "string") {
+    throw new FridayDomainError("VALIDATION_ERROR", "idempotencyKey must be a string when provided", { httpStatus: 400 });
+  }
+  if (b.planDigest !== undefined && typeof b.planDigest !== "string") {
+    throw new FridayDomainError("VALIDATION_ERROR", "planDigest must be a string when provided", { httpStatus: 400 });
+  }
+  readCanonicalApproval(b.canonicalApproval);
+}
+
+async function assertSkillGeneratorCandidateApproval(input: {
+  deps: FridaySkillGeneratorRoutesDeps;
+  principal: FridayAuthPrincipal | null;
+  requestId: string;
+  sessionId: string;
+  body: {
+    idempotencyKey?: string;
+    planDigest?: string;
+    canonicalApproval?: FridayCanonicalApprovalResolution;
+  };
+}): Promise<FridayMutatingActionTicket> {
+  if (!input.deps.canonicalMutationGate) {
+    throw new FridayDomainError(
+      "SKILL_GENERATOR_CANDIDATE_GATE_UNAVAILABLE",
+      "Generated skill approval requires the canonical approval gate before candidate staging.",
+      { httpStatus: 503 },
+    );
+  }
+  const sessionData = await input.deps.skillGenerator.getSession(input.sessionId);
+  if (!sessionData?.draft) {
+    throw new FridayDomainError(
+      "GENERATOR_DRAFT_NOT_FOUND",
+      "No draft found for session. Generate a draft first.",
+      { httpStatus: 404 },
+    );
+  }
+  const gateResult = input.deps.canonicalMutationGate.evaluate(
+    createFridaySkillGeneratorStageMutatingActionRequest({
+      session: sessionData.session,
+      draft: sessionData.draft,
+      actor: createActorFromPrincipal(input.principal, `api:${input.requestId}`),
+      surface: "api:/v1/skills/generator/sessions/:sessionId/approve",
+      idempotencyKey: input.body.idempotencyKey,
+      planDigest: input.body.planDigest,
+      canonicalApproval: input.body.canonicalApproval,
+    }),
+  );
+  if (gateResult.decision !== "allow" || !gateResult.ticket) {
+    throw new FridayDomainError(
+      gateResult.decision === "requires_approval"
+        ? "SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED"
+        : "SKILL_GENERATOR_CANDIDATE_APPROVAL_DENIED",
+      gateResult.decision === "requires_approval"
+        ? "Generated skill approval stages a lifecycle candidate and requires canonical approval before any candidate is written."
+        : `Generated skill candidate staging was blocked by the canonical approval gate: ${gateResult.reason}`,
+      {
+        httpStatus: 403,
+        details: {
+          canonicalGate: gateResult.evidenceRecord,
+        },
+      },
+    );
+  }
+  return gateResult.ticket;
+}
+
 // ─── Dependencies ───
 
 export interface FridaySkillGeneratorRoutesDeps {
@@ -169,6 +288,7 @@ export interface FridaySkillGeneratorRoutesDeps {
   registry: FridaySkillRegistry;
   selfHealing?: FridaySelfHealingApiService;
   observability?: FridayObservabilityApiService;
+  canonicalMutationGate?: FridayMutatingActionGate;
 }
 
 const GENERATED_SKILL_HUB_VERSION = "1.0.0";
@@ -644,18 +764,18 @@ export function createFridaySkillGeneratorRoutes(
             ? !test
               ? "Draft still needs to pass explicit self-test"
               : !test.ok
-                ? "Draft still needs to pass explicit self-test"
-                : !test.executable
-                  ? "Draft explicit self-test did not execute runtime behavior"
-                  : "Draft passed validation and explicit self-test"
+            ? "Draft still needs to pass explicit self-test"
+            : !test.executable
+              ? "Draft explicit self-test did not execute runtime behavior"
+              : "Draft passed validation and explicit self-test"
             : "Draft has validation issues that must be fixed before approval",
         }
         : savedOrApproved
           ? {
             ready: true,
             reason: result.session.status === "saved"
-              ? "Generated skill saved."
-              : "Generated skill approved and ready to save.",
+              ? "Generated skill candidate staged."
+              : "Generated skill approved and ready to stage as a candidate.",
           }
         : {
           ready: false,
@@ -678,7 +798,7 @@ export function createFridaySkillGeneratorRoutes(
       approvalReadiness,
       qaVerdict,
       harness,
-      savedSkillIdentity: result.session.draftSkillId
+      stagedCandidateIdentity: result.session.draftSkillId
         ? {
           skillId: result.session.draftSkillId,
         }
@@ -878,7 +998,18 @@ export function createFridaySkillGeneratorRoutes(
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
-        const result = await deps.skillGenerator.approveAndSave(sessionId);
+        validateApproveBody(ctx.body);
+        const body = ctx.body ?? {};
+        const canonicalApprovalTicket = await assertSkillGeneratorCandidateApproval({
+          deps,
+          principal: ctx.principal,
+          requestId: ctx.requestId,
+          sessionId,
+          body,
+        });
+        const result = await deps.skillGenerator.approveAndSave(sessionId, {
+          canonicalApprovalTicket,
+        });
         const evidence = await buildEvidence(sessionId).catch(() => ({
           sessionId,
           validationSummary: {
@@ -894,20 +1025,22 @@ export function createFridaySkillGeneratorRoutes(
           executableTestSummary: null,
           approvalReadiness: {
             ready: true,
-            reason: "Generated skill saved.",
+            reason: "Generated skill candidate staged.",
           },
           qaVerdict: result.qaVerdict ?? null,
           harness: result.harness ?? null,
-          savedSkillIdentity: {
+          stagedCandidateIdentity: {
             skillId: result.skillId,
-            skillDir: result.skillDir,
+            candidateId: result.candidateId,
+            candidateDir: result.candidateDir,
+            filesDir: result.skillDir,
           },
         }));
         await deps.observability?.recordSkillGeneratorEvent({
           sessionId,
           userId: "operator",
           event: "draft_saved",
-          summary: `Saved generated skill ${result.skillId}`,
+          summary: `Staged generated skill candidate ${result.candidateId}`,
           ok: true,
           evidence,
         });
@@ -917,13 +1050,15 @@ export function createFridaySkillGeneratorRoutes(
             ...evidence,
             qaVerdict: result.qaVerdict ?? evidence.qaVerdict ?? null,
             harness: result.harness ?? evidence.harness ?? null,
-            savedSkillIdentity: {
+            stagedCandidateIdentity: {
               skillId: result.skillId,
-              skillDir: result.skillDir,
+              candidateId: result.candidateId,
+              candidateDir: result.candidateDir,
+              filesDir: result.skillDir,
             },
             approvalReadiness: {
               ready: true,
-              reason: "Generated skill saved.",
+              reason: "Generated skill candidate staged.",
             },
           },
         };

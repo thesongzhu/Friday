@@ -189,10 +189,12 @@ describe("skill generator page", () => {
     mocks.approveSession.mockResolvedValue({
       sessionId: "session-1",
       skillId: "incident-triage",
-      skillDir: "/tmp/incident-triage",
+      skillDir: "/tmp/skill-candidates/incident-triage/files",
+      candidateId: "incident-triage-1-0-0-candidate",
+      candidateDir: "/tmp/skill-candidates/incident-triage",
       savedFiles: ["skill.manifest.json", "index.ts"],
-      registryRefreshed: true,
-      promotionStage: "stabilized",
+      registryRefreshed: false,
+      promotionStage: "candidate_staged",
       promotedManifestTags: ["generated", "stabilized"],
       evidence: {
         sessionId: "session-1",
@@ -216,9 +218,11 @@ describe("skill generator page", () => {
           ready: true,
           reason: "ready",
         },
-        savedSkillIdentity: {
+        stagedCandidateIdentity: {
           skillId: "incident-triage",
-          skillDir: "/tmp/incident-triage",
+          candidateId: "incident-triage-1-0-0-candidate",
+          candidateDir: "/tmp/skill-candidates/incident-triage",
+          filesDir: "/tmp/skill-candidates/incident-triage/files",
         },
       },
     });
@@ -291,7 +295,7 @@ describe("skill generator page", () => {
     const receipt = getByTestId("skill-generator-approve-receipt");
     expect(receipt.textContent).toContain("Approve success receipt");
     expect(receipt.textContent).toContain("incident-triage");
-    expect(receipt.textContent).toContain("/tmp/incident-triage");
-    expect(receipt.textContent).toContain("stabilized");
+    expect(receipt.textContent).toContain("/tmp/skill-candidates/incident-triage/files");
+    expect(receipt.textContent).toContain("candidate_staged");
   });
 });

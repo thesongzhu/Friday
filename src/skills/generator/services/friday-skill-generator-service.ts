@@ -3,7 +3,7 @@ import { dirname, extname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { FridayDomainError } from "#errors";
-import { resolveSafeInstallDir, resolveSafePath, safeJsonParse } from "#utilities";
+import { resolveSafePath, safeJsonParse } from "#utilities";
 import {
   buildHarnessSchemaTest,
   createFridayTemplateHarnessService,
@@ -67,7 +67,14 @@ import { validateUiSchema } from "../validation/friday-generated-skill-ui-valida
 import { safeParseFridaySkillManifestV2 } from "../../manifest/friday-skill-manifest.schema.js";
 import { loadFridaySkillPackage } from "../../manifest/friday-skill-package-loader.js";
 import { validateFridaySkillPackage } from "../../validation/friday-skill-validation-pipeline.js";
-import { createFridaySkillRepository } from "../../persistence/friday-skill-repository.js";
+import { createFridaySkillCandidateStore } from "../../converter/services/friday-skill-candidate-store.js";
+import { createFridayMutatingActionDigest, type FridayMutatingActionTicket } from "../../../security/friday-mutating-action-gate.js";
+import {
+  createFridayGeneratedSkillCandidateDraft,
+  createFridayGeneratedSkillCandidateSource,
+  createFridaySkillGeneratorStageMutatingActionRequest,
+  FRIDAY_SKILL_GENERATOR_CANDIDATE_CONVERTER_ID,
+} from "./friday-skill-generator-candidate-bridge.js";
 
 // ─── Constants ───
 
@@ -582,7 +589,6 @@ function autoResolveSkillGeneratorClarifications(input: {
 export function createFridaySkillGeneratorService(
   deps: CreateFridaySkillGeneratorServiceDeps,
 ): FridaySkillGeneratorService {
-  const skillRepo = createFridaySkillRepository();
   const repo: FridaySkillGenerationSessionRepository =
     createFridaySkillGenerationSessionRepository({
       db: deps.db,
@@ -1166,7 +1172,7 @@ export function createFridaySkillGeneratorService(
         ?? (session.status === "needs_clarification"
           ? "Waiting for one more answer before generation can continue."
           : session.status === "saved"
-            ? "Generated skill saved."
+            ? "Generated skill candidate staged."
             : "Skill generator state recorded."),
       completedWork: [
         planningSpec.artifactId ? "Planning spec recorded." : "",
@@ -1241,6 +1247,53 @@ export function createFridaySkillGeneratorService(
       ...manifest,
       tags: [...nextTags],
     };
+  }
+
+  function assertGeneratorCandidateApproval(input: {
+    session: FridaySkillGenerationSession;
+    draft: FridayGeneratedSkillDraft;
+    canonicalApprovalTicket?: FridayMutatingActionTicket;
+  }): FridayMutatingActionTicket {
+    const ticket = input.canonicalApprovalTicket;
+    if (!ticket) {
+      throw new FridayDomainError(
+        "SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED",
+        "Generated skill approval now stages a lifecycle candidate and requires canonical approval.",
+        { httpStatus: 403 },
+      );
+    }
+    if (ticket.action !== "skills.import.stage_candidate" || ticket.resource.type !== "external_skill_candidate") {
+      throw new FridayDomainError(
+        "SKILL_GENERATOR_CANDIDATE_APPROVAL_INVALID",
+        "Generated skill approval ticket does not authorize external skill candidate staging.",
+        { httpStatus: 403, details: { ticketId: ticket.ticketId, action: ticket.action, resourceType: ticket.resource.type } },
+      );
+    }
+
+    const expectedRequest = createFridaySkillGeneratorStageMutatingActionRequest({
+      session: input.session,
+      draft: input.draft,
+      actor: ticket.actor,
+      surface: ticket.surface,
+      idempotencyKey: ticket.idempotencyKey,
+      planDigest: ticket.planDigest,
+    });
+    const expectedDigest = createFridayMutatingActionDigest(expectedRequest);
+    if (expectedDigest !== ticket.actionDigest) {
+      throw new FridayDomainError(
+        "SKILL_GENERATOR_CANDIDATE_APPROVAL_DIGEST_MISMATCH",
+        "Generated skill approval ticket does not match the staged candidate request.",
+        {
+          httpStatus: 403,
+          details: {
+            ticketId: ticket.ticketId,
+            expectedDigest,
+            actualDigest: ticket.actionDigest,
+          },
+        },
+      );
+    }
+    return ticket;
   }
 
   async function runRequirementsAnalyzer(
@@ -2018,7 +2071,7 @@ export function createFridaySkillGeneratorService(
       return buildHarnessSummaryFromSession(session, qaVerdict);
     },
 
-    async approveAndSave(sessionId: string) {
+    async approveAndSave(sessionId: string, input = {}) {
       const session = requireSession(sessionId);
 
       if (session.status !== "ready_for_review") {
@@ -2073,122 +2126,42 @@ export function createFridaySkillGeneratorService(
         );
       }
 
-      // Resolve skills directory
       const settings = await deps.configManager.getSkillRegistrySettings(
         ".",
       );
-      const skillsDir = settings.managedSkillsDir;
       const skillId = draft.manifest.id;
-      const finalSkillDir = resolveSafeInstallDir(skillsDir, skillId);
       const promotedManifest = withStabilizedLifecycleTags(draft.manifest);
-
-      // ── Stage: Write to temp directory first ──
-      const tempDir = join(tmpdir(), `friday-skill-${sessionId}`);
-      mkdirSync(tempDir, { recursive: true });
-
-      const savedFiles: string[] = [];
-
-      try {
-        // Write manifest
-        const manifestPath = resolveSafePath(tempDir, "skill.manifest.json");
-        mkdirSync(dirname(manifestPath), { recursive: true });
-        writeFileSync(
-          manifestPath,
-          JSON.stringify(promotedManifest, null, 2),
-          "utf-8",
-        );
-        savedFiles.push("skill.manifest.json");
-
-        // Write UI schema
-        const uiPath = resolveSafePath(tempDir, "skill.ui.json");
-        mkdirSync(dirname(uiPath), { recursive: true });
-        writeFileSync(
-          uiPath,
-          JSON.stringify(draft.uiSchema, null, 2),
-          "utf-8",
-        );
-        savedFiles.push("skill.ui.json");
-
-        // Write generated files
-        for (const file of draft.files) {
-          const filePath = resolveSafePath(tempDir, file.path);
-          mkdirSync(dirname(filePath), { recursive: true });
-          writeFileSync(filePath, file.content, "utf-8");
-          savedFiles.push(file.path);
-
-          // chmod +x shell files (.sh extension or executable metadata)
-          const ext = extname(file.path).toLowerCase();
-          if (ext === ".sh" || ext === ".bash" || file.executable) {
-            chmodSync(filePath, 0o755);
-          }
-        }
-
-        // ── Stage: Validate package in temp dir ──
-        const loadResult = loadFridaySkillPackage({
-          skillDir: tempDir,
-          workspaceDir: skillsDir,
-        });
-
-        if (!loadResult.ok) {
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            `Package load failed in staging directory: ${loadResult.error.message}`,
-            { httpStatus: 422 },
-          );
-        }
-
-        const packageValidation = validateFridaySkillPackage({
-          loaded: loadResult.value,
-          workspaceDir: skillsDir,
-          hubVersion: FRIDAY_HUB_COMPAT_VERSION,
-          supportedApiVersions: SUPPORTED_API_VERSIONS,
-        });
-
-        if (!packageValidation.ok) {
-          const errors = packageValidation.issues
-            .filter((i) => i.severity === "error")
-            .map((i) => i.message)
-            .join("; ");
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            `Package validation failed: ${errors}`,
-            { httpStatus: 422 },
-          );
-        }
-
-        // ── Stage: Move from temp to final directory ──
-        mkdirSync(finalSkillDir, { recursive: true });
-
-        // Build a set of paths that have the executable metadata flag
-        const executablePaths = new Set(
-          draft.files
-            .filter((f) => f.executable)
-            .map((f) => f.path),
-        );
-
-        // Copy files from temp to final (renameSync can fail across mounts)
-        for (const relPath of savedFiles) {
-          const src = join(tempDir, relPath);
-          const dest = resolveSafePath(finalSkillDir, relPath);
-          mkdirSync(dirname(dest), { recursive: true });
-          const content = readFileSync(src);
-          writeFileSync(dest, content);
-
-          // Preserve executable permissions — check both extension and metadata
-          const ext = extname(relPath).toLowerCase();
-          if (ext === ".sh" || ext === ".bash" || executablePaths.has(relPath)) {
-            chmodSync(dest, 0o755);
-          }
-        }
-      } finally {
-        // ── Stage: Clean up temp dir ──
-        try {
-          rmSync(tempDir, { recursive: true, force: true });
-        } catch (err) {
-      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
-          // Best-effort cleanup
-        }
-      }
+      const canonicalApprovalTicket = assertGeneratorCandidateApproval({
+        session,
+        draft,
+        canonicalApprovalTicket: input.canonicalApprovalTicket,
+      });
+      const candidateStore = createFridaySkillCandidateStore({
+        context: {
+          workspaceDir: settings.workspaceDir,
+          managedSkillsDir: settings.managedSkillsDir,
+          nowIso: deps.nowIso,
+        },
+        hubVersion: FRIDAY_HUB_COMPAT_VERSION,
+        supportedApiVersions: SUPPORTED_API_VERSIONS,
+      });
+      const candidateDraft = createFridayGeneratedSkillCandidateDraft({
+        manifest: promotedManifest,
+        draft,
+        convertedAt: deps.nowIso(),
+      });
+      const candidate = await candidateStore.stage({
+        source: createFridayGeneratedSkillCandidateSource({ session, draft }),
+        converterId: FRIDAY_SKILL_GENERATOR_CANDIDATE_CONVERTER_ID,
+        detectedFormat: "friday-package",
+        draft: candidateDraft,
+        validation: {
+          ok: true,
+          issues: [],
+        },
+        canonicalApprovalTicket,
+      });
+      const savedFiles = candidateDraft.files.map((file) => file.path);
 
       // Update session status
       const approvedSession: FridaySkillGenerationSession = {
@@ -2199,13 +2172,6 @@ export function createFridaySkillGeneratorService(
       const syncedApproved = await syncSkillHarness(approvedSession);
       persistSession(syncedApproved.session);
 
-      // Update lifecycle status to "installed"
-      await deps.memoryStateService.updateSkillStatus(
-        skillId,
-        "installed",
-      );
-
-      // Save final status
       const savedSession: FridaySkillGenerationSession = {
         ...syncedApproved.session,
         status: "saved",
@@ -2214,51 +2180,24 @@ export function createFridaySkillGeneratorService(
       const syncedSaved = await syncSkillHarness(savedSession);
       persistSession(syncedSaved.session);
 
-      // Refresh the skill registry
-      let registryRefreshed = false;
-      try {
-        await deps.registry.refresh();
-        registryRefreshed = true;
-      } catch (err) {
-      console.warn("[friday][skill-generator-service] operation failed:", err instanceof Error ? err.message : String(err));
-        // Non-fatal — skill is saved but registry didn't refresh
-      }
-
-      deps.db.withWriteTransaction((conn) => {
-        skillRepo.upsertSkillFromCatalog(conn, {
-          id: skillId,
-          name: promotedManifest.name,
-          source: "local",
-          origin: "managed",
-          latestVersion: promotedManifest.version,
-          status: "installed",
-          currentManifest: promotedManifest,
-          nowIso: deps.nowIso(),
-        });
-        skillRepo.setInstalledVersion(
-          conn,
-          skillId,
-          promotedManifest.version,
-          promotedManifest,
-          deps.nowIso(),
-        );
-      });
-
       // Clean up persisted draft
       deleteDraft(sessionId);
 
       return {
         sessionId,
         skillId,
-        skillDir: finalSkillDir,
+        skillDir: candidate.filesDir,
+        candidateId: candidate.candidateId,
+        candidateDir: candidate.candidateDir,
         savedFiles,
-        registryRefreshed,
-        promotionStage: "stabilized",
+        registryRefreshed: false,
+        promotionStage: "candidate_staged",
         promotedManifestTags: promotedManifest.tags,
         evidence: {
           packageLoaded: true,
           packageValidated: true,
-          registryRefreshed,
+          registryRefreshed: false,
+          candidateStaged: true,
         },
         harness: syncedSaved.harnessSummary,
         qaVerdict: syncedReview.qaVerdict,

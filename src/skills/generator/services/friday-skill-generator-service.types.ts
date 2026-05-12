@@ -3,6 +3,7 @@ import type { FridayProviderService } from "#providers";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridayHubConfigManagerService, FridayHubMemoryStateService } from "#hub";
 import type { FridayHarnessQaVerdictV1, FridayTemplateHarnessSummary } from "#harness";
+import type { FridayMutatingActionTicket } from "../../../security/friday-mutating-action-gate.js";
 
 import type {
   FridayGeneratedSkillDraft,
@@ -46,18 +47,23 @@ export interface FridaySkillGeneratorService {
 
   getHarnessSummary(sessionId: string): Promise<FridayTemplateHarnessSummary | null>;
 
-  approveAndSave(sessionId: string): Promise<{
+  approveAndSave(sessionId: string, input?: {
+    canonicalApprovalTicket?: FridayMutatingActionTicket;
+  }): Promise<{
     sessionId: string;
     skillId: string;
     skillDir: string;
+    candidateId: string;
+    candidateDir: string;
     savedFiles: string[];
     registryRefreshed: boolean;
-    promotionStage: "stabilized";
+    promotionStage: "candidate_staged";
     promotedManifestTags: string[];
     evidence: {
       packageLoaded: boolean;
       packageValidated: boolean;
       registryRefreshed: boolean;
+      candidateStaged: boolean;
     };
     harness?: FridayTemplateHarnessSummary | null;
     qaVerdict?: FridayHarnessQaVerdictV1 | null;

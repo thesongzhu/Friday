@@ -55,7 +55,7 @@ export function createFridayAgentSkillGeneratorTool(
       "start (begin a generation session with a goal), " +
       "turn (submit a follow-up message to an active session), " +
       "generate (generate the skill draft from the conversation), " +
-      "approve (approve and save the generated skill), " +
+      "approve (stage the generated skill as a lifecycle candidate; requires canonical approval support), " +
       "cancel (cancel an active session), " +
       "status (check session status and draft).",
     parameters: {
@@ -182,6 +182,8 @@ export function createFridayAgentSkillGeneratorTool(
               approved: true,
               skillId: result.skillId,
               skillDir: result.skillDir,
+              candidateId: result.candidateId,
+              candidateDir: result.candidateDir,
               savedFiles: result.savedFiles,
               registryRefreshed: result.registryRefreshed,
               promotionStage: result.promotionStage,
@@ -190,9 +192,10 @@ export function createFridayAgentSkillGeneratorTool(
               requiredInputs,
               exampleRunInput,
               nextRecommendedAction: {
-                tool: "skill_run",
+                tool: "autonomy_skill_lifecycle",
                 skillId: result.skillId,
-                input: exampleRunInput,
+                candidateId: result.candidateId,
+                action: "shadow_then_canary_then_promote",
               },
             });
           }
