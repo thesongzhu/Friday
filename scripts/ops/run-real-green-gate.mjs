@@ -360,6 +360,10 @@ export function summarizeRun(run) {
   };
 }
 
+export function resolveGateSuiteReportRoot(reportRoot, suiteName) {
+  return path.join(reportRoot, "suites", suiteName);
+}
+
 function hasOnlyPassed(run) {
   if (!run) {
     return false;
@@ -549,6 +553,7 @@ async function main() {
       () => runRealWorldValidation({
         ...validationBaseOptions,
         suite: "smoke",
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "smoke"),
       }),
       async () => {
         await closeSharedUiProbeSession();
@@ -565,6 +570,7 @@ async function main() {
         suite: "daily",
         scenarioIds: DAILY_CORE_SCENARIOS,
         repetitions: options.dailyCoreRepetitions,
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "daily-core"),
       }),
       async () => {
         await closeSharedUiProbeSession();
@@ -581,6 +587,7 @@ async function main() {
         suite: "daily",
         scenarioIds: PUBLIC_SURFACE_SCENARIOS,
         repetitions: 1,
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "public-surface"),
       }),
       async () => {
         await closeSharedUiProbeSession();
