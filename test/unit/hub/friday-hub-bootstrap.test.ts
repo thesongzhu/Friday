@@ -162,6 +162,41 @@ describe("createFridayHub", () => {
     expect(operationIds).toContain("agent.loop.policy.get");
   });
 
+  it("wires canonical skill lifecycle routes into the API runtime", async () => {
+    hub = await createIsolatedHub();
+    const routes = hub.apiRuntime.routes.getRoutes();
+    const operationIds = routes.map((route) => route.operationId);
+
+    expect(operationIds).toContain("skills.catalog.list");
+    expect(operationIds).toContain("skills.get");
+    expect(operationIds).toContain("skills.install");
+    expect(operationIds).toContain("skills.update");
+    expect(operationIds).toContain("skills.delete");
+    expect(operationIds).toContain("skills.manifest.validate");
+    expect(operationIds).toContain("skills.verify");
+
+    const verifyRoute = routes.find((route) => route.operationId === "skills.verify");
+    await expect(verifyRoute!.handler({
+      requestId: "req-skill-verify-route",
+      receivedAt: "2026-05-12T00:00:00.000Z",
+      params: { skillId: "missing-skill" },
+      query: {},
+      body: null,
+      headers: {},
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        role: "admin",
+        scopes: ["hub.admin"],
+        tokenId: "token-1",
+        tokenKind: "access",
+        issuedAt: "2026-05-12T00:00:00.000Z",
+        expiresAt: "2026-05-12T01:00:00.000Z",
+      },
+    } as never)).rejects.toMatchObject({ code: "SKILL_NOT_FOUND" });
+  });
+
   it("deduplicates expected startup warnings across repeated hub bootstraps", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
