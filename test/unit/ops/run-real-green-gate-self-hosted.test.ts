@@ -23,7 +23,7 @@ describe("run-real-green-gate-self-hosted", () => {
     const repoRoot = join(tempRoot, "repo-without-dist");
     const reportRoot = join(tempRoot, "report");
     const scriptPath = join(process.cwd(), "scripts/ops/run-real-green-gate-self-hosted.mjs");
-    const sha = "718c23e97222a9eb34a6bb2e8244e51fd5b04c44";
+    const sha = "test-self-hosted-rgg-sha";
 
     expect(() =>
       execFileSync(process.execPath, [
