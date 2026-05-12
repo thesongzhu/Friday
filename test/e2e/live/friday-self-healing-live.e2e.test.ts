@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import Database from "better-sqlite3";
@@ -34,7 +35,9 @@ const SELF_HEALING_PROOF_GATED =
   E2E_GATED && (LIVE_PROVIDER_KIND === "openai" || LIVE_PROVIDER_KIND === "deepseek");
 const LIVE_PROVIDER_LABEL = LIVE_PROVIDER_KIND === "deepseek" ? "DeepSeek" : "OpenAI";
 const LIVE_MODEL = FAST_MODEL;
-const BUNDLED_SKILLS_DIR = path.join(process.cwd(), "skills");
+let BUNDLED_SKILLS_DIR: string;
+let SKILLS_TMPDIR: string | null = null;
+let ORIGINAL_FRIDAY_SKILLS_DIR: string | undefined;
 
 interface RoutingSnapshot {
   defaultProviderId: string;
@@ -653,6 +656,11 @@ describe.skipIf(!SELF_HEALING_PROOF_GATED)(`Friday Self-Healing Full Matrix (${L
   let learnedLessonId: string | null = null;
 
   beforeAll(async () => {
+    SKILLS_TMPDIR = fs.mkdtempSync(path.join(os.tmpdir(), "friday-self-healing-skills-"));
+    BUNDLED_SKILLS_DIR = SKILLS_TMPDIR;
+    ORIGINAL_FRIDAY_SKILLS_DIR = process.env.FRIDAY_SKILLS_DIR;
+    process.env.FRIDAY_SKILLS_DIR = SKILLS_TMPDIR;
+
     env = await createRealHubEnv();
     userId = await readUserId(env);
     ({ primaryProviderId, secondaryProviderId } = await createProviderPair(env));
@@ -660,7 +668,21 @@ describe.skipIf(!SELF_HEALING_PROOF_GATED)(`Friday Self-Healing Full Matrix (${L
   }, 90_000);
 
   afterAll(async () => {
-    await cleanupRealHubEnv(env);
+    try {
+      if (env) {
+        await cleanupRealHubEnv(env);
+      }
+    } finally {
+      if (SKILLS_TMPDIR) {
+        fs.rmSync(SKILLS_TMPDIR, { recursive: true, force: true });
+        SKILLS_TMPDIR = null;
+      }
+      if (ORIGINAL_FRIDAY_SKILLS_DIR === undefined) {
+        delete process.env.FRIDAY_SKILLS_DIR;
+      } else {
+        process.env.FRIDAY_SKILLS_DIR = ORIGINAL_FRIDAY_SKILLS_DIR;
+      }
+    }
   }, 30_000);
 
   it(
