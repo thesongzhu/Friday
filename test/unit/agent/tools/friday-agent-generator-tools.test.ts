@@ -79,20 +79,9 @@ function createMockSkillGeneratorService(): FridaySkillGeneratorService {
     recordExplicitTestResult: vi.fn(),
     getQaVerdict: vi.fn(),
     getHarnessSummary: vi.fn(),
-    approveAndSave: vi.fn().mockResolvedValue({
-      sessionId: "skill-session-1",
-      skillId: "generated-skill",
-      skillDir: "/tmp/generated-skill",
-      savedFiles: ["skill.manifest.json", "index.mjs"],
-      registryRefreshed: true,
-      promotionStage: "stabilized",
-      promotedManifestTags: ["generated"],
-      evidence: {
-        packageLoaded: true,
-        packageValidated: true,
-        registryRefreshed: true,
-      },
-    }),
+    approveAndSave: vi.fn().mockRejectedValue(
+      new Error("Generated skill approval now stages a lifecycle candidate and requires canonical approval."),
+    ),
     cancelSession: vi.fn(),
   } as unknown as FridaySkillGeneratorService;
 }
@@ -153,7 +142,7 @@ describe("generator tools", () => {
     );
   });
 
-  it("returns required input hints after skill approval", async () => {
+  it("fails closed when skill approval requires canonical candidate staging approval", async () => {
     const generatorService = createMockSkillGeneratorService();
     const tool = createFridayAgentSkillGeneratorTool({ generatorService });
 
@@ -162,15 +151,9 @@ describe("generator tools", () => {
       sessionId: "skill-session-1",
     });
 
-    const parsed = JSON.parse(result.content) as Record<string, unknown>;
-    expect(parsed.requiredInputs).toEqual([
-      { key: "topic", type: "string", label: "Topic" },
-    ]);
-    expect(parsed.exampleRunInput).toEqual({ topic: "<topic>" });
-    expect(parsed.nextRecommendedAction).toEqual({
-      tool: "skill_run",
-      skillId: "generated-skill",
-      input: { topic: "<topic>" },
-    });
+    expect(generatorService.approveAndSave).toHaveBeenCalledWith("skill-session-1");
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("skill_generate approve failed");
+    expect(result.content).toContain("requires canonical approval");
   });
 });

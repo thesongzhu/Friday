@@ -75,3 +75,10 @@ export {
 export type {
   FridaySkillGenerationContract,
 } from "./services/friday-skill-generator-contract.js";
+
+export {
+  FRIDAY_SKILL_GENERATOR_CANDIDATE_CONVERTER_ID,
+  createFridayGeneratedSkillCandidateDraft,
+  createFridayGeneratedSkillCandidateSource,
+  createFridaySkillGeneratorStageMutatingActionRequest,
+} from "./services/friday-skill-generator-candidate-bridge.js";

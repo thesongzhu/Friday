@@ -141,9 +141,11 @@ const stubSkillGenerator: FridaySkillGeneratorService = {
     sessionId: "stub",
     skillId: "stub",
     skillDir: "stub",
+    candidateId: "stub-candidate",
+    candidateDir: "stub-candidate-dir",
     savedFiles: [],
     registryRefreshed: false,
-    promotionStage: "stabilized" as const,
+    promotionStage: "candidate_staged" as const,
     promotedManifestTags: [],
     evidence: {
       sessionId: "stub",
