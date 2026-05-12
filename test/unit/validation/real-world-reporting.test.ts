@@ -94,11 +94,11 @@ describe("real-world reporting", () => {
         derived: { setupUserProfileTruthMismatch: false },
       },
       options: {
-        localPassphrase: "runtime-passphrase",
-        mintTokenSecret: "runtime-token-secret",
-        accessToken: "runtime-access-token",
+        localPassphrase: "runtime-passphrase", // pragma: allowlist secret
+        mintTokenSecret: "runtime-token-secret", // pragma: allowlist secret
+        accessToken: "runtime-access-token", // pragma: allowlist secret
         safeOption: "visible",
-        nested: { refreshToken: "runtime-refresh-token" },
+        nested: { refreshToken: "runtime-refresh-token" }, // pragma: allowlist secret
       },
     });
 
