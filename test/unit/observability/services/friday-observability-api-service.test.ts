@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
 
@@ -76,7 +76,7 @@ describe("createFridayObservabilityApiService", () => {
     expect(series.series.points.some((point) => point.value > 0)).toBe(true);
   });
 
-  it("raises a built-in alert for repeated self-healing failures", () => {
+  it("raises a built-in alert for repeated self-healing failures", async () => {
     const service = createService();
 
     service.recordSelfHealingProcessResults({
@@ -116,28 +116,114 @@ describe("createFridayObservabilityApiService", () => {
       ],
       correlationId: "corr-1",
     });
+    await service.drainAuditWrites();
 
     const alerts = service.routes.alerts.list({});
     expect(alerts.items.length).toBeGreaterThanOrEqual(1);
     expect(alerts.items[0]?.ruleId).toBe("builtin-self-healing-repeat-failures");
   });
 
+  it("drains self-healing background audit writes deterministically", async () => {
+    const service = createService();
+
+    service.recordSelfHealingProcessResults({
+      results: [
+        {
+          incidentsCreated: [
+            {
+              incidentId: "incident-drain",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "drain-failure",
+              status: "open",
+              createdAt: NOW,
+            },
+          ],
+          diagnosisCreated: [
+            {
+              id: "diagnosis-drain",
+              incidentId: "incident-drain",
+              confidence: 0.92,
+              errorFingerprint: "fingerprint-drain",
+              createdAt: NOW,
+            },
+          ],
+        },
+      ],
+    });
+
+    await service.drainAuditWrites();
+
+    const audit = service.routes.audit.search({ module: "learning" });
+    expect(audit.items.map((entry) => entry.action).sort()).toEqual([
+      "learning.diagnosis.recorded",
+      "learning.incident.opened",
+    ]);
+  });
+
+  it("surfaces background audit write failures during lifecycle drain", async () => {
+    const service = createService();
+    allocatedDbs.pop()?.close();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      service.recordSelfHealingProcessResults({
+        results: [
+          {
+            incidentsCreated: [
+              {
+                incidentId: "incident-after-close",
+                userId: "user-1",
+                category: "workflow",
+                severity: "high",
+                signature: "late-write",
+                status: "open",
+                createdAt: NOW,
+              },
+            ],
+            diagnosisCreated: [],
+          },
+        ],
+      });
+
+      await expect(service.drainAuditWrites()).rejects.toMatchObject({
+        code: "OBS_AUDIT_BACKGROUND_APPEND_FAILED",
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[friday] observability audit append failed",
+        expect.anything(),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("fails audited rule mutations when audit persistence is unavailable", async () => {
     const service = createService();
     allocatedDbs.pop()?.close();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    await expect(
-      service.routes.alertRules.create({
-        name: "Audit must persist",
-        description: "Exercise fail-closed audit behavior",
-        severity: "critical",
-        metric: "friday.learning.failures.total",
-        operator: ">",
-        threshold: 0,
-        evaluationIntervalSec: 60,
-        channelIds: [],
-      }),
-    ).rejects.toMatchObject({ code: "OBS_AUDIT_APPEND_FAILED" });
+    try {
+      await expect(
+        service.routes.alertRules.create({
+          name: "Audit must persist",
+          description: "Exercise fail-closed audit behavior",
+          severity: "critical",
+          metric: "friday.learning.failures.total",
+          operator: ">",
+          threshold: 0,
+          evaluationIntervalSec: 60,
+          channelIds: [],
+        }),
+      ).rejects.toMatchObject({ code: "OBS_AUDIT_APPEND_FAILED" });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[friday] observability audit append failed",
+        expect.anything(),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("records agent-loop events into traces, audit, and metrics", async () => {
@@ -453,6 +539,7 @@ describe("createFridayObservabilityApiService", () => {
           },
         ],
       });
+      await service.drainAuditWrites();
 
       const alert = service.routes.alerts.list({}).items[0];
       expect(alert).toBeDefined();
@@ -542,6 +629,7 @@ describe("createFridayObservabilityApiService", () => {
           },
         ],
       });
+      await service.drainAuditWrites();
 
       const alert = service.routes.alerts.list({}).items[0];
       expect(alert).toBeDefined();

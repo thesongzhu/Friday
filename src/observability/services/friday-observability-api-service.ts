@@ -225,6 +225,8 @@ export interface FridayObservabilityApiService {
   readonly dashboard: FridayDashboardDataProvider;
   readonly scheduler: FridayAlertEvaluationScheduler;
   observeAsync<T>(input: FridayObservedOperationInput, work: () => Promise<T>): Promise<T>;
+  drainAuditWrites(): Promise<void>;
+  shutdown(): Promise<void>;
   recordSelfHealingProcessResults(input: {
     results: Array<{
       incidentsCreated: Array<{
@@ -762,6 +764,8 @@ export function createFridayObservabilityApiService(
   const dispatchHistoryByKey = new Map<string, AlertDispatchAttemptRecord>();
   const resolvedAlertIds = new Set<string>();
   const observedAgentLoopRunIds = new Set<string>();
+  const pendingAuditWrites = new Set<Promise<void>>();
+  const backgroundAuditFailures: unknown[] = [];
 
   for (const metric of COUNTER_METRICS) {
     metrics.registerCounter(metric.name, metric.module);
@@ -1244,6 +1248,32 @@ export function createFridayObservabilityApiService(
         "OBS_AUDIT_APPEND_FAILED",
         "Observability audit append failed; refusing to complete audited operation",
         { httpStatus: 503, cause: error },
+      );
+    }
+  }
+
+  function enqueueBackgroundAudit(input: Parameters<typeof appendAudit>[0]): void {
+    const pending = appendAudit(input)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        backgroundAuditFailures.push(error);
+      })
+      .finally(() => {
+        pendingAuditWrites.delete(pending);
+      });
+    pendingAuditWrites.add(pending);
+  }
+
+  async function drainAuditWrites(): Promise<void> {
+    while (pendingAuditWrites.size > 0) {
+      await Promise.allSettled([...pendingAuditWrites]);
+    }
+    if (backgroundAuditFailures.length > 0) {
+      const [firstFailure] = backgroundAuditFailures.splice(0, backgroundAuditFailures.length);
+      throw new FridayDomainError(
+        "OBS_AUDIT_BACKGROUND_APPEND_FAILED",
+        "Observability background audit append failed; lifecycle drain refused to hide the failure",
+        { httpStatus: 503, cause: firstFailure },
       );
     }
   }
@@ -2267,6 +2297,11 @@ export function createFridayObservabilityApiService(
     health,
     dashboard,
     scheduler,
+    drainAuditWrites,
+    async shutdown() {
+      scheduler.stop();
+      await drainAuditWrites();
+    },
     async observeAsync<T>(input: FridayObservedOperationInput, work: () => Promise<T>): Promise<T> {
       const startedAt = Date.now();
       const correlation = startTrace(input.module, input.operationName, {
@@ -2345,7 +2380,7 @@ export function createFridayObservabilityApiService(
             correlationId: input.correlationId ?? incident.incidentId,
           });
           endTrace(correlation, "error", incident.signature);
-          void appendAudit({
+          enqueueBackgroundAudit({
             actor: { type: "system", id: "self-healing", displayName: "Friday Self-Healing" },
             actionCategory: "create",
             action: "learning.incident.opened",
@@ -2363,8 +2398,6 @@ export function createFridayObservabilityApiService(
               userId: incident.userId,
             },
             errorMessage: incident.signature,
-          }).catch((error: unknown) => {
-            console.warn("[friday] observability audit append failed", error);
           });
         }
 
@@ -2376,7 +2409,7 @@ export function createFridayObservabilityApiService(
             confidence: diagnosis.confidence,
           });
           endTrace(correlation, "ok");
-          void appendAudit({
+          enqueueBackgroundAudit({
             actor: { type: "system", id: "self-healing", displayName: "Friday Self-Healing" },
             actionCategory: "create",
             action: "learning.diagnosis.recorded",
@@ -2392,8 +2425,6 @@ export function createFridayObservabilityApiService(
               confidence: diagnosis.confidence,
               errorFingerprint: diagnosis.errorFingerprint,
             },
-          }).catch((error: unknown) => {
-            console.warn("[friday] observability audit append failed", error);
           });
         }
       }
