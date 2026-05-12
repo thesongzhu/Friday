@@ -8467,7 +8467,9 @@ export async function createFridayHub(
       upSince = null;
 
       // P1-SHUT-001/002/003: Stop services started during bootstrap
-      try { observabilityService?.scheduler?.stop(); } catch (err) {
+      let observabilityStopError: unknown;
+      try { await observabilityService.shutdown(); } catch (err) {
+      observabilityStopError = err;
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
       try { agentLearningBridge?.stop(); } catch (err) {
       warnHubBootstrapOperationFailureOnce(err); /* best-effort */ }
@@ -8508,6 +8510,9 @@ export async function createFridayHub(
       // 7. State
       stateRuntime?.close();
       hubState = "stopped";
+      if (observabilityStopError) {
+        throw observabilityStopError;
+      }
     },
 
     status(): FridayHubStatus {
