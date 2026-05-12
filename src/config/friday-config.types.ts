@@ -40,6 +40,7 @@ export interface LoadedFridayConfig {
   exists: boolean;
   rawText?: string;
   runtimeStateDir?: string;
+  workspaceRoot?: string;
   launchCwd?: string;
 }
 

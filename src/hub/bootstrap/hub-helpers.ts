@@ -826,11 +826,11 @@ function mapConfigValidationError(error: unknown): {
 }
 
 export function createStubConfigManager(
-  config: { stateDir?: string; skillDirs: string[] },
+  config: { stateDir?: string; workspaceRoot?: string; skillDirs: string[] },
   stateRuntime: FridayStateRuntime,
 ): FridayHubConfigManagerService {
   const skillSettings: FridaySkillRegistrySettings = {
-    workspaceDir: config.stateDir ?? ".",
+    workspaceDir: config.workspaceRoot ?? config.stateDir ?? ".",
     bundledSkillsDir: config.skillDirs[0] ?? "skills",
     managedSkillsDir: config.skillDirs[1] ?? "managed-skills",
     extraSkillDirs: config.skillDirs.slice(2),
@@ -946,6 +946,7 @@ export function createStubConfigManager(
         exists: true,
         rawText: JSON.stringify(snapshot.config, null, 2),
         runtimeStateDir: stateRuntime.stateDir,
+        workspaceRoot: config.workspaceRoot ?? config.stateDir ?? ".",
         launchCwd: process.cwd(),
       };
     },
@@ -1609,6 +1610,7 @@ export interface FridayHubStatus {
 
 export interface FridayHubConfig {
   stateDir?: string;
+  workspaceRoot?: string;
   skillDirs: string[];
   host?: string;
   port?: number;
@@ -1627,6 +1629,7 @@ export interface FridayHubConfig {
 
 export interface FridayResolvedHubConfig {
   stateDir?: string;
+  workspaceRoot?: string;
   skillDirs: string[];
   port: number;
   tokenSecret: string;

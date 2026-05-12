@@ -164,10 +164,11 @@ export async function completeSelfHostedSetup(baseUrl, localPassphrase) {
   }
 }
 
-function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSecret) {
+export function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSecret, workspaceRoot) {
   return {
     ...baseEnv,
     FRIDAY_STATE_DIR: paths.stateDir,
+    FRIDAY_WORKSPACE_ROOT: workspaceRoot,
     FRIDAY_TOKEN_SECRET: tokenSecret,
     FRIDAY_LOCAL_PASSPHRASE: localPassphrase,
     FRIDAY_PORT: String(port),
@@ -180,10 +181,11 @@ function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSecret) {
   };
 }
 
-function createGateEnv(baseEnv, paths, baseUrl, localPassphrase, tokenSecret) {
+export function createGateEnv(baseEnv, paths, baseUrl, localPassphrase, tokenSecret, workspaceRoot) {
   return {
     ...baseEnv,
     FRIDAY_STATE_DIR: paths.stateDir,
+    FRIDAY_WORKSPACE_ROOT: workspaceRoot,
     FRIDAY_TOKEN_SECRET: tokenSecret,
     FRIDAY_BASE_URL: baseUrl,
     FRIDAY_UI_BASE_URL: baseUrl,
@@ -280,7 +282,7 @@ export async function runSelfHostedRealGreenGate(options) {
   const baseUrl = `http://${DEFAULT_HOST}:${String(port)}`;
   const localPassphrase = randomHex(24);
   const tokenSecret = randomHex(32);
-  const runtimeEnv = createRuntimeEnv(process.env, paths, port, localPassphrase, tokenSecret);
+  const runtimeEnv = createRuntimeEnv(process.env, paths, port, localPassphrase, tokenSecret, repoRoot);
   const runtime = spawnLogged(process.execPath, [
     distCli,
     "start",
@@ -302,11 +304,12 @@ export async function runSelfHostedRealGreenGate(options) {
 
   try {
     appendLogLine(path.join(reportRoot, "self-hosted-runtime-meta.txt"), `baseUrl=${baseUrl}`);
+    appendLogLine(path.join(reportRoot, "self-hosted-runtime-meta.txt"), `workspaceRoot=${repoRoot}`);
     await waitForHealth(baseUrl, options.runtimeBootTimeoutMs ?? DEFAULT_RUNTIME_BOOT_TIMEOUT_MS);
     await bootstrapLocalPassphrase(baseUrl, localPassphrase);
     await completeSelfHostedSetup(baseUrl, localPassphrase);
 
-    const gateEnv = createGateEnv(process.env, paths, baseUrl, localPassphrase, tokenSecret);
+    const gateEnv = createGateEnv(process.env, paths, baseUrl, localPassphrase, tokenSecret, repoRoot);
     const gateArgs = [
       path.join(repoRoot, "scripts", "ops", "run-real-green-gate.mjs"),
       "--repo-root",

@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { REAL_GREEN_GATE_RESULT_FILENAME } from "../../../scripts/ops/lib/real-green-gate-result.mjs";
-import { completeSelfHostedSetup } from "../../../scripts/ops/run-real-green-gate-self-hosted.mjs";
+import {
+  completeSelfHostedSetup,
+  createGateEnv,
+  createRuntimeEnv,
+} from "../../../scripts/ops/run-real-green-gate-self-hosted.mjs";
 
 describe("run-real-green-gate-self-hosted", () => {
   let tempRoot: string | null = null;
@@ -93,6 +97,36 @@ describe("run-real-green-gate-self-hosted", () => {
       completedSteps: ["welcome", "security", "network", "skills"],
       skippedSteps: ["communication", "provider", "channels"],
     });
+  });
+
+  it("passes an explicit workspace root while keeping runtime state isolated", () => {
+    const paths = {
+      stateDir: "/tmp/friday-rgg-runtime/state",
+    };
+    const workspaceRoot = "/home/runner/work/Friday/Friday";
+
+    const runtimeEnv = createRuntimeEnv(
+      {},
+      paths,
+      3141,
+      "passphrase-placeholder",
+      "token-placeholder",
+      workspaceRoot,
+    );
+    const gateEnv = createGateEnv(
+      {},
+      paths,
+      "http://127.0.0.1:3141",
+      "passphrase-placeholder",
+      "token-placeholder",
+      workspaceRoot,
+    );
+
+    expect(runtimeEnv.FRIDAY_STATE_DIR).toBe(paths.stateDir);
+    expect(runtimeEnv.FRIDAY_WORKSPACE_ROOT).toBe(workspaceRoot);
+    expect(gateEnv.FRIDAY_STATE_DIR).toBe(paths.stateDir);
+    expect(gateEnv.FRIDAY_WORKSPACE_ROOT).toBe(workspaceRoot);
+    expect(gateEnv.FRIDAY_BASE_URL).toBe("http://127.0.0.1:3141");
   });
 
   it("keeps build failure inside the self-hosted workflow step so an errored artifact is uploaded", () => {

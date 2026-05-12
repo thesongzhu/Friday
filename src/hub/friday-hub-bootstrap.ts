@@ -712,6 +712,7 @@ export function resolveFridayHubConfig(
     3141;
 
   const stateDir = input.stateDir ?? env.FRIDAY_STATE_DIR ?? undefined;
+  const workspaceRoot = input.workspaceRoot ?? env.FRIDAY_WORKSPACE_ROOT ?? undefined;
 
   let skillDirs: string[];
   if (input.skillDirs.length > 0) {
@@ -765,6 +766,7 @@ export function resolveFridayHubConfig(
 
   return {
     stateDir,
+    workspaceRoot,
     skillDirs,
     port,
     tokenSecret,
@@ -918,6 +920,7 @@ export async function createFridayHub(
 
   // P0-001: Wrap remaining bootstrap in try/catch to ensure SQLite cleanup on partial failure
   try {
+  const workspaceRoot = config.workspaceRoot ?? process.env.FRIDAY_WORKSPACE_ROOT ?? config.stateDir ?? ".";
 
   const daemonService = createFridayLocalDaemonService({
     moduleUrl: import.meta.url,
@@ -976,13 +979,13 @@ export async function createFridayHub(
   // P2: configManager and memoryState are intentionally stubbed for v0.4.x standalone mode.
   // Full implementations with persistence are planned for the multi-node milestone.
   // Config mutations via API are silently no-ops; use env vars and friday.config.yaml instead.
-  const configManager = createStubConfigManager(config, stateRuntime);
+  const configManager = createStubConfigManager({ ...config, workspaceRoot }, stateRuntime);
   const auditLogPath = resolveFridayAuditLogPath(stateRuntime.stateDir);
   const memoryState = createStubMemoryState(auditLogPath);
 
   // 3. Create skill registry
   const registry = new FridaySkillRegistryImpl({
-    workspaceDir: config.stateDir ?? ".",
+    workspaceDir: workspaceRoot,
     hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
     supportedApiVersions: ["1"],
     configManager,
@@ -1200,7 +1203,6 @@ export async function createFridayHub(
     }
     return result.output;
   };
-  const workspaceRoot = config.stateDir ?? ".";
   type FridayUserRulesPromptSurface =
     | "skill_generator"
     | "workflow_generator"
