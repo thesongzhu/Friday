@@ -13,6 +13,7 @@ In scope:
 - DeepSeek queue evidence cleanup for tests with missing per-test logs.
 - Post-#204 ledger/matrix honesty where needed.
 - F-017/F-019 product-code slices only as separately approved, high-risk work with approval-boundary review.
+- F-010/F-011/F-016 P2 local closure work, limited to the slices actually approved and verified. For F-016, the current slice is **packaging architecture/runtime honesty only**: it records that the active runtime is Phase 1 in-memory preview and does not implement the Phase 2 SQLite registry/install/trusted-key/signature system.
 
 Out of scope for this goal:
 
@@ -20,12 +21,14 @@ Out of scope for this goal:
 - F-014 OTEL/Grafana external metrics/traces/export verification.
 - Any claim that `blocked_by_env` Real Green Gate output is a pass or release proof.
 - External launch readiness.
+- Full package distribution Phase 2 implementation or default-on package-distribution readiness. SQLite-backed package registry persistence, install/lifecycle persistence, trusted-key persistence, real signature verification through hub publish/verify, and package migration/backfill/rollback tests remain future implementation slices.
 
 ## Findings Boundary
 
 - F-009 remains `PARTIAL`: external deployment behavior is still unknown until a real cloud deployment exists.
 - F-014 remains `OPEN`: external OTEL/Grafana export is still unverified.
 - Both findings are deferred for this non-cloud/local closure goal and must be reopened when external launch or external observability comes back into scope.
+- F-016 is narrowed to a packaging-honesty boundary for this goal. The current runtime may expose `/v1/packages*` only behind `FRIDAY_PACKAGING_ENABLED=true`, and that route family is still an in-memory preview with stub publish/verify behavior. This does not block the current local closure goal, but it blocks any future "package distribution ready", "default-on packaging", or "Phase 2 packaging implemented" claim.
 
 ## Proof Framing
 
