@@ -18,9 +18,12 @@ import {
   createFridayDeepProofProvider,
   FRIDAY_DEEP_PROOF_GATED,
   FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
+  selectFridayDeepProofProviderKind,
   shutdownFridayDeepProofHubEnv,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+const AUTONOMOUS_RESTART_VISUAL_VERIFICATION_GATED = selectFridayDeepProofProviderKind() !== "deepseek";
 
 function buildWorkspaceProofPath(stateDir: string, name: string): string {
   const proofDir = path.join(stateDir, ".tmp", "autonomous-live-proofs");
@@ -295,7 +298,7 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Autonomous Restart Matrix (${F
     },
   );
 
-  it(
+  it.skipIf(!AUTONOMOUS_RESTART_VISUAL_VERIFICATION_GATED)(
     "marks verifying interruption as recoverable, resumes same step, and avoids duplicate step rows",
     { timeout: 240_000, retry: 1 },
     async () => {
