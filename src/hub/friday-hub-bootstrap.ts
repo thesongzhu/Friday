@@ -60,7 +60,16 @@ import {
 import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderProfile, FridayProviderService } from "#providers";
 import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import {
+  createFridaySkillInstallationRepository,
+  createFridaySkillInstallationService,
+  createFridaySkillLifecycleService,
+  createFridaySkillPackageInstaller,
+  createFridaySkillPermissionCheckService,
   createFridaySkillRepository,
+  createFridaySkillSignatureVerifier,
+  createFridaySkillTrustScoringService,
+  createFridaySkillVersionRepository,
+  createFridaySkillVersionResolutionService,
   FridaySkillRegistryImpl,
   safeParseFridaySkillManifestV2,
 } from "#skills";
@@ -1255,7 +1264,33 @@ export async function createFridayHub(
   const converterInstaller = createFridaySkillImportInstaller();
   const converterArchiver = createFridaySkillPackageArchiver();
   const converterSkillRepo = createFridaySkillRepository();
+  const skillVersionRepo = createFridaySkillVersionRepository();
+  const skillInstallationRepo = createFridaySkillInstallationRepository();
   const managedSkillsDir = config.skillDirs[1] ?? "managed-skills";
+  const skillSignatureVerifier = createFridaySkillSignatureVerifier();
+  const skillTrustScoring = createFridaySkillTrustScoringService();
+  const skillPackageInstaller = createFridaySkillPackageInstaller({
+    managedSkillsDir,
+    archiver: converterArchiver,
+  });
+  const skillVersionResolver = createFridaySkillVersionResolutionService({
+    db: stateRuntime.sqlite,
+    versionRepo: skillVersionRepo,
+    installationRepo: skillInstallationRepo,
+  });
+  const skillPermissionCheck = createFridaySkillPermissionCheckService();
+  const skillInstallationService = createFridaySkillInstallationService({
+    db: stateRuntime.sqlite,
+    skillRepo: converterSkillRepo,
+    installationRepo: skillInstallationRepo,
+    versionResolver: skillVersionResolver,
+    signatureVerifier: skillSignatureVerifier,
+    trustScoring: skillTrustScoring,
+    permissionCheck: skillPermissionCheck,
+    packageInstaller: skillPackageInstaller,
+    idGenerator,
+    nowIso,
+  });
   const getPersistedSkillLifecycleStatus = (skillId: string): SkillLifecycleStatus | undefined =>
     stateRuntime.sqlite.withReadConnection((db) =>
       converterSkillRepo.getSkillById(db, skillId)?.status,
@@ -5260,6 +5295,22 @@ export async function createFridayHub(
     },
   });
   selfHealingApiServiceRef = selfHealingApiService;
+  const skillLifecycle = createFridaySkillLifecycleService({
+    db: stateRuntime.sqlite,
+    nowIso,
+    managedSkillsDir,
+    hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
+    supportedApiVersions: ["1"],
+    registry,
+    installations: skillInstallationService,
+    packageInstaller: skillPackageInstaller,
+    signatureVerifier: skillSignatureVerifier,
+    trustScoring: skillTrustScoring,
+    skillRepo: converterSkillRepo,
+    versionRepo: skillVersionRepo,
+    installationRepo: skillInstallationRepo,
+    selfHealing: selfHealingApiService,
+  });
   agentLoopService = createFridayAgentLoopService({
     db: stateRuntime.sqlite,
     idGenerator,
@@ -5990,6 +6041,7 @@ export async function createFridayHub(
     skillGenerator,
     converterService,
     workflowGenerator,
+    skillLifecycle,
     skillRegistry: registry,
     skillExecutor: executor,
     updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
