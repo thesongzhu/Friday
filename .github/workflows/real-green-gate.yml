@@ -43,24 +43,44 @@ jobs:
       - name: Check branch conformance
         run: node scripts/ops/check-branch-conformance.mjs --branch "${{ github.ref_name }}" --report-root "$RUNNER_TEMP/real-green-gate/branch"
 
-      - name: Run real green gate
+      - name: Run real green gate against configured runtime
         if: env.FRIDAY_BASE_URL != '' || env.FRIDAY_ACCESS_TOKEN != '' || env.FRIDAY_LOCAL_PASSPHRASE != '' || env.FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN != ''
         run: npm run ops:real-green-gate -- --branch "${{ github.ref_name }}" --report-root "$RUNNER_TEMP/real-green-gate"
 
-      - name: Record skipped live gate
+      - name: Run real green gate against self-hosted runtime
         if: env.FRIDAY_BASE_URL == '' && env.FRIDAY_ACCESS_TOKEN == '' && env.FRIDAY_LOCAL_PASSPHRASE == '' && env.FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN == ''
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          FRIDAY_ANTHROPIC_API_KEY: ${{ secrets.FRIDAY_ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
         run: |
           mkdir -p "$RUNNER_TEMP/real-green-gate"
-          printf '%s\n' 'Live real-world gate skipped: no Friday runtime credentials were configured in GitHub Actions secrets.' > "$RUNNER_TEMP/real-green-gate/skip.txt"
-          # P4-G1.1: also emit the structured release-proof artifact so the
-          # downstream release-time gate machine-reads status=blocked_by_env
-          # rather than inferring pass from a successful workflow status.
-          # Reuse the lib's pure builder so the schema stays single-source.
-          node -e "import('./scripts/ops/lib/real-green-gate-result.mjs').then((m) => process.stdout.write(JSON.stringify(m.buildBlockedByEnvResult({ commitSha: process.env.GITHUB_SHA || '', refName: process.env.GITHUB_REF_NAME || '', evaluatedAt: new Date().toISOString(), blockedReasons: ['env_var_missing:FRIDAY_BASE_URL_or_FRIDAY_ACCESS_TOKEN_or_FRIDAY_LOCAL_PASSPHRASE_or_FRIDAY_REAL_WORLD_MINT_LOCAL_ADMIN_TOKEN'] }), null, 2) + '\n'))" \
-            > "$RUNNER_TEMP/real-green-gate/real-green-gate-result.json"
+          if ! npm run build; then
+            node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { buildErroredResult, REAL_GREEN_GATE_RESULT_FILENAME } from "./scripts/ops/lib/real-green-gate-result.mjs";
+
+          const reportRoot = path.join(process.env.RUNNER_TEMP ?? ".", "real-green-gate");
+          fs.mkdirSync(reportRoot, { recursive: true });
+          fs.writeFileSync(
+            path.join(reportRoot, REAL_GREEN_GATE_RESULT_FILENAME),
+            `${JSON.stringify(buildErroredResult({
+              commitSha: process.env.GITHUB_SHA ?? "",
+              refName: process.env.GITHUB_REF_NAME ?? "",
+              evaluatedAt: new Date().toISOString(),
+              blockedReasons: ["self_hosted_runtime_build_failed"],
+            }), null, 2)}\n`,
+            "utf8",
+          );
+          NODE
+            exit 1
+          fi
+          node scripts/ops/run-real-green-gate-self-hosted.mjs --branch "${{ github.ref_name }}" --report-root "$RUNNER_TEMP/real-green-gate"
 
       - name: Upload real green gate artifact
         if: always()

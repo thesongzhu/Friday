@@ -107,6 +107,18 @@ function summarizeAggregates({ artifacts, grouped, envTruth }) {
   };
 }
 
+function countProviderAttempts(artifacts) {
+  return artifacts.filter((artifact) =>
+    artifact?.lane === "default" || artifact?.lane === "fallback"
+  ).length;
+}
+
+function countBrowserProbeAttempts(artifacts) {
+  return artifacts.filter((artifact) =>
+    typeof artifact?.metrics?.uiRequestCount === "number"
+  ).length;
+}
+
 function renderCoverageMatrix({ scenarios, grouped }) {
   const byKey = new Map(grouped.map((entry) => [`${entry.scenarioId}::${entry.lane}`, entry]));
   const lines = [
@@ -285,6 +297,8 @@ export function writeReports({
     groupedCount: grouped.length,
     results: resultCounts,
     resultCounts,
+    providerAttemptCount: countProviderAttempts(artifacts),
+    browserProbeAttemptCount: countBrowserProbeAttempts(artifacts),
     failureClassCounts,
     defectBucketCounts,
     baseUrl: envTruth.baseUrl,

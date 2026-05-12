@@ -5,6 +5,7 @@ import {
   REAL_GREEN_GATE_RESULT_SCHEMA_VERSION,
   REAL_GREEN_GATE_RESULT_STATUSES,
   buildBlockedByEnvResult,
+  buildErroredResult,
   buildRealGreenGateResult,
   validateRealGreenGateResult,
 } from "../../../scripts/ops/lib/real-green-gate-result.mjs";
@@ -22,12 +23,18 @@ function passingSummary() {
     },
     smoke: {
       resultCounts: { passed: 4 },
+      providerAttemptCount: 0,
+      browserProbeAttemptCount: 0,
     },
     dailyCore: {
       resultCounts: { passed: 14 },
+      providerAttemptCount: 6,
+      browserProbeAttemptCount: 3,
     },
     publicSurface: {
       resultCounts: { passed: 29 },
+      providerAttemptCount: 0,
+      browserProbeAttemptCount: 18,
     },
     gate: {
       passed: true,
@@ -81,7 +88,7 @@ describe("REAL_GREEN_GATE_RESULT constants", () => {
 });
 
 describe("buildRealGreenGateResult", () => {
-  it("returns status=passed with full evidence kinds when the gate passed", () => {
+  it("returns status=passed with only observed evidence kinds when the gate passed", () => {
     const result = buildRealGreenGateResult({
       summary: passingSummary(),
       commitSha: SHA_A,
@@ -99,6 +106,28 @@ describe("buildRealGreenGateResult", () => {
       scenarios_run: 47,
       scenarios_total: 47,
       scenarios_passed: 47,
+    });
+  });
+
+  it("does not claim provider or browser evidence when passed suites did not observe those attempts", () => {
+    const summary = {
+      ...passingSummary(),
+      smoke: { resultCounts: { passed: 4 }, providerAttemptCount: 0, browserProbeAttemptCount: 0 },
+      dailyCore: { resultCounts: { passed: 3 }, providerAttemptCount: 0, browserProbeAttemptCount: 0 },
+      publicSurface: null,
+    };
+    const result = buildRealGreenGateResult({
+      summary,
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-10T07:00:00.000Z",
+    });
+    expect(result).toMatchObject({
+      status: "passed",
+      evidence_kinds_observed: ["real-runtime"],
+      scenarios_run: 7,
+      scenarios_total: 7,
+      scenarios_passed: 7,
     });
   });
 
@@ -181,6 +210,29 @@ describe("buildBlockedByEnvResult", () => {
       "env_var_missing:FRIDAY_BASE_URL",
       "env_var_missing:FRIDAY_ACCESS_TOKEN",
     ]);
+  });
+});
+
+describe("buildErroredResult", () => {
+  it("emits status=errored with zero scenarios and empty evidence", () => {
+    const result = buildErroredResult({
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-10T07:00:00.000Z",
+      blockedReasons: ["self_hosted_runtime_error"],
+    });
+    expect(result).toEqual({
+      schema_version: 1,
+      status: "errored",
+      commit_sha: SHA_A,
+      ref_name: "main",
+      evaluated_at: "2026-05-10T07:00:00.000Z",
+      evidence_kinds_observed: [],
+      blocked_reasons: ["self_hosted_runtime_error"],
+      scenarios_run: 0,
+      scenarios_total: 0,
+      scenarios_passed: 0,
+    });
   });
 });
 
