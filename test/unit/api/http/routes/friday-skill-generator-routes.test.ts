@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFridaySkillGeneratorRoutes } from "#api";
 import {
   createFridaySkillGeneratorStageMutatingActionRequest,
@@ -722,16 +724,11 @@ describe("FridaySkillGeneratorRoutes", () => {
 
     it("runs python draft self-tests through the configured interpreter", async () => {
       const fs = await import("node:fs/promises");
-      const tempDir = await fs.mkdtemp("/tmp/friday-generator-python-");
+      const tempDir = await fs.mkdtemp(join(tmpdir(), "friday-generator-python-"));
       const previousPythonBin = process.env[FRIDAY_SKILL_PYTHON_BIN_ENV];
 
       try {
-        await fs.writeFile(
-          `${tempDir}/python-shim`,
-          "#!/bin/sh\nprintf '{\"result\":\"OK-MARKER\"}'\n",
-          { mode: 0o755 },
-        );
-        process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = `${tempDir}/python-shim`;
+        process.env[FRIDAY_SKILL_PYTHON_BIN_ENV] = process.execPath;
 
         const generatorService = makeMockGeneratorService();
         generatorService.getSession = vi.fn(async (sessionId: string) => {
@@ -764,7 +761,7 @@ describe("FridaySkillGeneratorRoutes", () => {
                   path: "index.py",
                   language: "python" as const,
                   executable: false,
-                  content: "print('unused by shim')\n",
+                  content: "process.stdout.write('{\"result\":\"OK-MARKER\"}')\n",
                 },
               ],
             },
