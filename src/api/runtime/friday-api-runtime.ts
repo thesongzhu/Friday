@@ -137,8 +137,6 @@ import { createFridayImmediateRunPersistence } from "#engine";
 import type { FridayEngineRunResult } from "#engine";
 import type { CreateFridayEngineTurnPreparerDeps } from "#engine";
 import type { CreateFridayEngineRunExecutorDeps } from "#engine";
-import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
-import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-api-token-repository.js";
 import { createFridayProviderProfileRepository } from "#providers";
 import { createFridaySkillRepository, type FridaySkillLifecycleDetail } from "#skills";
@@ -171,6 +169,7 @@ import type {
   FridayRunTimelineEntry,
 } from "../model/friday-api-workflow.types.js";
 import { createFridayDeepLinkApplyService } from "./friday-deep-link-apply-service.js";
+import { installFridayApiRuntimeBaseRoutes } from "./friday-api-runtime-base-routes.js";
 
 const DEFAULT_ACCESS_TTL = 3600; // 1 hour
 const DEFAULT_REFRESH_TTL = 604_800; // 7 days
@@ -1060,72 +1059,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
-  // Register health routes FIRST (public, no auth)
-  for (const route of createFridayHealthRoutes({
-    version: serverVersion,
-    getCapabilities: async () => {
-      const searchHealth = typeof deps.searchHealth === "function"
-        ? await Promise.resolve(deps.searchHealth())
-        : deps.searchHealth;
-      const systemHealth = typeof deps.systemHealth === "function"
-        ? await Promise.resolve(deps.systemHealth())
-        : deps.systemHealth;
-      const enabledChannelKinds = typeof deps.enabledChannelKinds === "function"
-        ? await Promise.resolve(deps.enabledChannelKinds())
-        : deps.enabledChannelKinds;
-
-      let runtimeSnapshot: Awaited<ReturnType<NonNullable<typeof deps.capabilitySnapshotGetter>>> | undefined;
-      if (deps.capabilitySnapshotGetter) {
-        try {
-          runtimeSnapshot = await Promise.resolve(deps.capabilitySnapshotGetter({ readOnly: false }));
-        } catch {
-          runtimeSnapshot = undefined;
-        }
-      }
-
-      return {
-        schemaVersion: "1.0" as const,
-        plugins: {
-          runtimeMode: deps.pluginRuntimeMode ?? "stub",
-        },
-        channels: {
-          supportedKinds: deps.supportedChannelKinds ?? [],
-          enabledKinds: enabledChannelKinds ?? [],
-          webhookEndpoints: {
-            line: deps.channelWebhooks?.lineWebhookRelay?.isListening() === true,
-            whatsapp: deps.channelWebhooks?.whatsappWebhookRelay?.isListening() === true,
-            lark: deps.channelWebhooks?.larkWebhookRelay?.isListening() === true,
-          },
-        },
-        mcp: {
-          enabled: deps.mcpServer !== undefined,
-        },
-        packaging: {
-          enabled: deps.packaging !== undefined,
-        },
-        search: searchHealth ?? {
-          provider: "duckduckgo_html",
-          latestness: "unverified" as const,
-        },
-        ...(runtimeSnapshot?.runtime ? { runtime: runtimeSnapshot.runtime } : {}),
-        system: systemHealth ?? {
-          enabled: false,
-          remoteMode: "unavailable" as const,
-          companionReadiness: "unavailable" as const,
-        },
-      };
-    },
-  })) {
-    routes.register(route);
-  }
-
-  for (const route of createFridayTuiRoutes({
-    db: deps.db,
-    version: serverVersion,
-    fleetService: fleet,
-  })) {
-    routes.register(route);
-  }
+  installFridayApiRuntimeBaseRoutes({
+    routes,
+    deps,
+    fleet,
+    serverVersion,
+  });
 
   for (const route of createFridayRuntimeAdminRoutes({
     version: {
