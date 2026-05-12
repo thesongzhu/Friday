@@ -3,6 +3,7 @@ import { resolveLatestPointerPath, writeJson, writeText } from "./io.mjs";
 import { summarizeNumbers } from "./stats.mjs";
 
 const RESULT_ORDER = ["failed", "manual_review", "partial", "blocked", "passed"];
+const SENSITIVE_OPTION_KEY_RE = /(?:access[_-]?token|refresh[_-]?token|password|passphrase|secret|api[_-]?key|credential|authorization|cookie)/iu;
 
 function formatPercent(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
@@ -19,6 +20,24 @@ function countBy(values) {
     acc[value] = (acc[value] ?? 0) + 1;
     return acc;
   }, {});
+}
+
+function sanitizeReportValue(value, key = "") {
+  if (SENSITIVE_OPTION_KEY_RE.test(key)) {
+    return typeof value === "string" && value.length > 0 ? "[redacted]" : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeReportValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeReportValue(entryValue, entryKey),
+      ]),
+    );
+  }
+  return value;
 }
 
 function worstResult(results) {
@@ -305,7 +324,7 @@ export function writeReports({
     uiBaseUrl: envTruth.uiBaseUrl,
     providerLanes: envTruth.providerLanes,
     aggregates,
-    options,
+    options: sanitizeReportValue(options),
   };
 
   writeJson(path.join(reportRoot, "summary.json"), summary);

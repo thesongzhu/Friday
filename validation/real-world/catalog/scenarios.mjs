@@ -812,7 +812,7 @@ export const REAL_WORLD_SCENARIOS = [
     entrySurface: "/v1/agent/runs",
     routeFamily: "file tool",
     providerLane: "default_only",
-    realWorldPrompt: "Use the filesystem to read README.md from the current workspace root and answer with its top H1 heading only.",
+    realWorldPrompt: "Use the workspace file read tool to read README.md from the current workspace root and answer with its top H1 heading only. Do not use web search for this workspace file.",
     expectedEvidence: [
       "agent uses at least one tool call",
       "output reflects filesystem content rather than a guess",

@@ -63,4 +63,56 @@ describe("real-world reporting", () => {
     expect(written.providerAttemptCount).toBe(1);
     expect(written.browserProbeAttemptCount).toBe(1);
   });
+
+  it("redacts credential-shaped options from written summaries", () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-reporting-"));
+    const reportRoot = join(tempRoot, "report");
+
+    writeReports({
+      repoRoot: tempRoot,
+      reportRoot,
+      runId: "reporting-redaction-test",
+      suite: "daily",
+      scenarios: [{ id: "runtime-scenario", layer: "L0" }],
+      artifacts: [
+        {
+          scenarioId: "runtime-scenario",
+          lane: "none",
+          result: "passed",
+          metrics: {},
+        },
+      ],
+      envTruth: {
+        baseUrl: "http://127.0.0.1:3141",
+        uiBaseUrl: "http://127.0.0.1:3141",
+        collectedAt: "2026-05-12T00:00:00.000Z",
+        publicChecks: { health: { ok: true, status: 200 } },
+        auth: { ok: true, source: "local_passphrase_login", user: { id: "user" } },
+        setupStatus: { needsSetup: false },
+        userProfile: { profileType: "local", onboardedAt: "2026-05-12T00:00:00.000Z" },
+        providerLanes: { default: null, fallback: null },
+        derived: { setupUserProfileTruthMismatch: false },
+      },
+      options: {
+        localPassphrase: "runtime-passphrase",
+        mintTokenSecret: "runtime-token-secret",
+        accessToken: "runtime-access-token",
+        safeOption: "visible",
+        nested: { refreshToken: "runtime-refresh-token" },
+      },
+    });
+
+    const written = JSON.parse(readFileSync(join(reportRoot, "summary.json"), "utf8"));
+    expect(written.options).toMatchObject({
+      localPassphrase: "[redacted]",
+      mintTokenSecret: "[redacted]",
+      accessToken: "[redacted]",
+      safeOption: "visible",
+      nested: { refreshToken: "[redacted]" },
+    });
+    expect(JSON.stringify(written)).not.toContain("runtime-passphrase");
+    expect(JSON.stringify(written)).not.toContain("runtime-token-secret");
+    expect(JSON.stringify(written)).not.toContain("runtime-access-token");
+    expect(JSON.stringify(written)).not.toContain("runtime-refresh-token");
+  });
 });

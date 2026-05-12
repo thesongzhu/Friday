@@ -98,6 +98,18 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).not.toContain("File read/write/edit across the entire filesystem");
   });
 
+  it("routes local workspace file reads to the read tool before web lookup", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "web_search", "web_fetch"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("Local workspace files, repository paths, or filesystem reads");
+    expect(prompt).toContain("use read first for file contents");
+    expect(prompt).toContain("do not use web_search or web_fetch for workspace files");
+  });
+
   it("documents supervised autonomy and destructive approval gates", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["exec", "read", "write", "edit", "system"],

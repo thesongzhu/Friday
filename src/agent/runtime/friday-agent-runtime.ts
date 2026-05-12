@@ -4931,6 +4931,21 @@ function taskLooksLikeExternalAction(task: string): boolean {
   return english.test(task) || chinese.test(task);
 }
 
+function taskLooksLikeLocalWorkspaceFileInspection(task: string): boolean {
+  const englishLocal =
+    /\b(local|workspace|repo|repository|project|current workspace|current repo|filesystem)\b/i;
+  const englishFileAction =
+    /\b(read|open|inspect|check|cat|show)\b[\s\S]{0,64}\b(file|files|filesystem|folder|directory|path|readme|[a-z0-9_.-]+\.[a-z0-9]+)\b/i;
+  const englishFileFirst =
+    /\b(file|files|filesystem|folder|directory|path|readme|[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,64}\b(read|open|inspect|check|cat|show)\b/i;
+  const chineseLocal = /(本地|工作区|仓库|项目|文件系统)/u;
+  const chineseFileAction = /(读取|查看|检查|打开).{0,32}(文件|目录|路径|工作区|仓库)/u;
+  return (
+    (englishLocal.test(task) && (englishFileAction.test(task) || englishFileFirst.test(task)))
+    || (chineseLocal.test(task) && chineseFileAction.test(task))
+  );
+}
+
 /**
  * Detect Q&A tasks that contain web-action keywords but are asking about
  * provided/internal content — NOT requesting an external lookup.
@@ -5120,6 +5135,7 @@ function toolCallViolatesDesktopInspectionIntent(params: {
 }
 
 function classifyEvidenceTask(task: string): "web" | "desktop" | null {
+  if (taskLooksLikeLocalWorkspaceFileInspection(task)) return "desktop";
   if (taskLooksLikeDesktopAction(task)) return "desktop";
   // Q&A tasks may contain web-action keywords ("search", "check") but are
   // asking about provided/internal content — skip evidence closure for these.
@@ -5133,15 +5149,23 @@ function buildEvidenceRetryPrompt(params: {
   toolMap: Map<string, FridayAgentToolDefinition>;
   disabledToolNames?: ReadonlySet<string>;
 }): string {
-  const category = classifyEvidenceTask(params.task.trim()) ?? "web";
+  const task = params.task.trim();
+  const localWorkspaceFileInspection = taskLooksLikeLocalWorkspaceFileInspection(task);
+  const category = classifyEvidenceTask(task) ?? "web";
   const isEnabled = (name: string) => !(params.disabledToolNames?.has(name) ?? false);
-  const preferredTools = category === "desktop"
+  const preferredTools = localWorkspaceFileInspection
+    ? ["read", "exec"]
+    : category === "desktop"
     ? ["system", "desktop", "exec", "read", "browser"]
     : ["web_fetch", "web_search", "browser"];
   const enabledPreferred = preferredTools.filter((name) => params.toolMap.has(name) && isEnabled(name));
   const toolHint = enabledPreferred.length > 0 ? enabledPreferred.join("/") : "available tools";
-  const taskLabel = category === "desktop" ? "this local desktop/device task" : "this external task";
-  const approachHint = category === "desktop"
+  const taskLabel = localWorkspaceFileInspection
+    ? "this local workspace file task"
+    : category === "desktop" ? "this local desktop/device task" : "this external task";
+  const approachHint = localWorkspaceFileInspection
+    ? "Use read for the requested workspace path; do not use web_search or web_fetch because they cannot inspect local workspace files."
+    : category === "desktop"
     ? "Start with system snapshot, then use system intents before falling back to desktop session_info or desktop screenshot for visible evidence."
     : "Use web tools to gather evidence before concluding.";
 
