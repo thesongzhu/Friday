@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { extname } from "node:path";
 import type {
   FridayShellExecutor,
   FridayShellRunOptions,
@@ -8,6 +9,7 @@ import type {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 500;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
+const WINDOWS_SHELL_SCRIPT_EXTENSIONS = new Set([".bash", ".sh"]);
 const SAFE_PARENT_ENV_KEYS = [
   "PATH",
   "HOME",
@@ -37,6 +39,20 @@ function buildChildEnv(overrides?: Record<string, string>): NodeJS.ProcessEnv {
     }
   }
   return overrides ? { ...env, ...overrides } : env;
+}
+
+function resolveSpawnSpec(command: string, args: string[] = []): { command: string; args: string[] } {
+  if (
+    process.platform === "win32"
+    && WINDOWS_SHELL_SCRIPT_EXTENSIONS.has(extname(command).toLowerCase())
+  ) {
+    return {
+      command: "bash",
+      args: [command, ...args],
+    };
+  }
+
+  return { command, args };
 }
 
 function createBoundedOutputCollector(streamName: "stdout" | "stderr", maxBytes: number = DEFAULT_MAX_OUTPUT_BYTES) {
@@ -86,12 +102,27 @@ export function createFridayShellExecutor(): FridayShellExecutor {
         let settled = false;
         let terminationFallbackTimer: NodeJS.Timeout | null = null;
 
-        const child = spawn(options.command, options.args ?? [], {
-          cwd: options.cwd,
-          env: buildChildEnv(options.env),
-          stdio: ["pipe", "pipe", "pipe"],
-          detached: true,
-        });
+        const spawnSpec = resolveSpawnSpec(options.command, options.args ?? []);
+        let child: ChildProcessWithoutNullStreams;
+        try {
+          child = spawn(spawnSpec.command, spawnSpec.args, {
+            cwd: options.cwd,
+            env: buildChildEnv(options.env),
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: true,
+          });
+        } catch (err) {
+          stderr.append(err instanceof Error ? err.message : String(err));
+          resolve({
+            exitCode: 1,
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            timedOut: false,
+            cancelled: false,
+            durationMs: Date.now() - startMs,
+          });
+          return;
+        }
 
         const killProcessGroup = () => {
           try {
