@@ -2590,6 +2590,25 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            const localWorkspaceFileIntentViolation = toolCallViolatesLocalWorkspaceFileIntent({
+              task: params.task,
+              toolName: toolUse.name,
+              toolArgs: toolUse.input ?? {},
+            });
+            if (localWorkspaceFileIntentViolation) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.local_workspace_file",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: localWorkspaceFileIntentViolation,
+              }));
+              continue;
+            }
+
             if (explicitAutonomousTask && isAutonomousTaskBypassTool(toolUse.name)) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
@@ -3919,6 +3938,59 @@ function resolveToolPathArg(input: Record<string, unknown> | undefined): string 
   return pathArg?.trim().length ? pathArg.trim() : undefined;
 }
 
+function normalizeLocalWorkspacePathForMatch(pathArg: string): string {
+  return pathArg.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function localWorkspacePathMatchesRequested(pathArg: string, requested: string): boolean {
+  const normalizedPath = normalizeLocalWorkspacePathForMatch(pathArg);
+  const normalizedRequested = normalizeLocalWorkspacePathForMatch(requested);
+  const pathBase = basename(normalizedPath);
+  if (normalizedRequested.includes("/")) {
+    return normalizedPath === normalizedRequested || normalizedPath.endsWith(`/${normalizedRequested}`);
+  }
+  return normalizedPath === normalizedRequested
+    || normalizedPath.endsWith(`/${normalizedRequested}`)
+    || pathBase === normalizedRequested;
+}
+
+function taskExplicitlyRequiresReadToolForWorkspaceFile(task: string): boolean {
+  return taskLooksLikeLocalWorkspaceFileInspection(task)
+    && (
+      /\bcall\s+the\s+`?read`?\s+tool\b/i.test(task)
+      || /\buse\s+the\s+`?read`?\s+tool\b/i.test(task)
+      || /\buse\s+`?read`?\s+for\s+the\s+requested\s+workspace\s+path\b/i.test(task)
+      || /`read`\s+tool/u.test(task)
+    );
+}
+
+function toolCallViolatesLocalWorkspaceFileIntent(params: {
+  task: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+}): string | null {
+  if (!taskExplicitlyRequiresReadToolForWorkspaceFile(params.task)) {
+    return null;
+  }
+  const requestedPath = extractLocalWorkspaceFileMentions(params.task)[0];
+  const requestedLabel = requestedPath ?? "the requested workspace file";
+  if (params.toolName !== "read") {
+    return `This task explicitly requires tool 'read' for local workspace file '${requestedLabel}'. Do not use '${params.toolName}', web, browser, search, capabilities, or tool-pack detours for this workspace file. Call read with path="${requestedLabel}" next.`;
+  }
+
+  if (!requestedPath) {
+    return null;
+  }
+  const actualPath = resolveToolPathArg(params.toolArgs);
+  if (!actualPath) {
+    return `The read tool call is missing the requested local workspace path. Call read with path="${requestedLabel}".`;
+  }
+  if (!localWorkspacePathMatchesRequested(actualPath, requestedPath)) {
+    return `The read tool path '${actualPath}' does not match the requested local workspace file '${requestedLabel}'. Call read with path="${requestedLabel}".`;
+  }
+  return null;
+}
+
 function isRuntimeSkillAuthoringPath(input: Record<string, unknown> | undefined): boolean {
   const pathArg = resolveToolPathArg(input);
   if (!pathArg) return false;
@@ -4220,6 +4292,42 @@ function detectEvidenceClosureGap(params: {
 
   const category = classifyEvidenceTask(normalizedTask);
   if (!category) return null;
+
+  if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
+    const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    const refusalAfterRead = hasReadEvidence && responseLooksLikeLocalFileAccessRefusal(params.responseText);
+    const missingRequestedHeading = hasReadEvidence
+      && taskRequestsTopWorkspaceHeading(normalizedTask)
+      && !hasSuccessfulLocalWorkspaceReadEvidenceWithHeading(normalizedTask, params.toolCalls);
+    if (!hasReadEvidence || refusalAfterRead || missingRequestedHeading) {
+      const failedCalls = params.toolCalls.filter((call) => call.result.isError);
+      const latestFailure = failedCalls[failedCalls.length - 1];
+      const failureDetail = latestFailure?.result.content
+        ? latestFailure.result.content.replace(/\s+/g, " ").trim()
+        : missingRequestedHeading
+        ? "read tool evidence did not include the requested top heading"
+        : "no successful read tool evidence for the requested workspace file";
+      const closureReason = missingRequestedHeading
+        ? "read result did not include the requested top heading"
+        : hasReadEvidence
+        ? "successful read was followed by a file-access refusal"
+        : "no matching successful read tool call";
+      return {
+        errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+        userMessage:
+          "Workspace file task could not be completed with verifiable read evidence. " +
+          "Retry after checking the requested path and file tool availability.",
+        developerMessage:
+          `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
+          `Workspace file evidence closure failed for task "${normalizedTask.slice(0, 120)}": ` +
+          `${String(params.toolCalls.length)} tool call(s), ` +
+          `${closureReason}. ` +
+          `Last failure: ${failureDetail}. Final response: ${params.responseText.trim().slice(0, 200)}`,
+        attemptedImageToolCalls: params.toolCalls.length,
+        failedImageToolCalls: failedCalls.length,
+      };
+    }
+  }
 
   const hasAttemptedEvidenceTool = params.toolCalls.some((call) => {
     if (category === "desktop") {
@@ -4722,6 +4830,75 @@ function hasSuccessfulToolEvidence(toolCalls: FridayAgentToolCallRecord[]): bool
   return false;
 }
 
+function extractLocalWorkspaceFileMentions(task: string): string[] {
+  const mentions = new Set<string>();
+  const fileMatches = task.match(/\b(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+\b/giu) ?? [];
+  for (const match of fileMatches) {
+    mentions.add(stripTrailingPunctuation(match).toLowerCase());
+  }
+  if (mentions.size === 0 && /\breadme\b/i.test(task)) {
+    mentions.add("readme.md");
+  }
+  return [...mentions];
+}
+
+function hasSuccessfulLocalWorkspaceReadEvidence(
+  task: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  const requestedFiles = extractLocalWorkspaceFileMentions(task);
+  return toolCalls.some((call) => {
+    if (call.toolName !== "read" || call.result.isError) {
+      return false;
+    }
+    const rawPath = typeof call.args.path === "string" ? call.args.path.trim() : "";
+    if (rawPath.length === 0) {
+      return false;
+    }
+    if (requestedFiles.length === 0) {
+      return true;
+    }
+    return requestedFiles.some((requested) => {
+      return localWorkspacePathMatchesRequested(rawPath, requested);
+    });
+  });
+}
+
+function taskRequestsTopWorkspaceHeading(task: string): boolean {
+  return /\btop\s+(?:h1|heading)\b/i.test(task)
+    || /\b(?:h1|heading)\b[\s\S]{0,32}\bonly\b/i.test(task);
+}
+
+function readContentIncludesWorkspaceHeading(content: string): boolean {
+  return /(^|\n)\s*#\s+\S/u.test(content)
+    || /<h1\b[^>]*>[\s\S]*?<\/h1>/iu.test(content);
+}
+
+function hasSuccessfulLocalWorkspaceReadEvidenceWithHeading(
+  task: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  const requestedFiles = extractLocalWorkspaceFileMentions(task);
+  return toolCalls.some((call) => {
+    if (call.toolName !== "read" || call.result.isError) {
+      return false;
+    }
+    const rawPath = typeof call.args.path === "string" ? call.args.path.trim() : "";
+    if (rawPath.length === 0) {
+      return false;
+    }
+    const matchesRequestedPath = requestedFiles.length === 0
+      || requestedFiles.some((requested) => localWorkspacePathMatchesRequested(rawPath, requested));
+    return matchesRequestedPath && readContentIncludesWorkspaceHeading(call.result.content);
+  });
+}
+
+function responseLooksLikeLocalFileAccessRefusal(responseText: string): boolean {
+  return /\b(?:cannot|can't|unable to|not able to|could not|couldn't)\s+(?:directly\s+)?(?:access|read|open)\b/i.test(responseText)
+    || /\b(?:cannot|can't|unable to|not able to|could not|couldn't)\s+(?:extract|inspect)\b/i.test(responseText)
+    || /(无法直接访问|无法访问|无法读取|不能读取|不能访问|无法打开|无法提取|未能读取|没能读取|未能访问|没能访问|未能打开|没能打开|未能提取|没能提取)/u.test(responseText);
+}
+
 function hasFeedbackPersistenceEvidence(toolCalls: FridayAgentToolCallRecord[]): boolean {
   for (const call of toolCalls) {
     if (call.result.isError) continue;
@@ -4782,11 +4959,26 @@ function shouldEnforceToolEvidenceForTask(params: {
   if (isAutonomousInternalReasoningSurface(executionSurface)) {
     return false;
   }
-  if (hasSuccessfulToolEvidence(toolCalls)) return false;
 
   const normalizedTask = task.trim();
   if (normalizedTask.length === 0) return false;
   const taskCategory = classifyEvidenceTask(normalizedTask);
+  if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
+    const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, toolCalls);
+    if (!hasReadEvidence) {
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    const missingRequestedHeading = taskRequestsTopWorkspaceHeading(normalizedTask)
+      && !hasSuccessfulLocalWorkspaceReadEvidenceWithHeading(normalizedTask, toolCalls);
+    if (missingRequestedHeading) {
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    if (responseLooksLikeLocalFileAccessRefusal(responseText)) {
+      return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
+    }
+    return false;
+  }
+  if (hasSuccessfulToolEvidence(toolCalls)) return false;
   if (toolCalls.length > 0) {
     // If a desktop route attempted tools but all failed, force one more
     // evidence-oriented retry instead of silently accepting the failure text.
@@ -4929,6 +5121,21 @@ function taskLooksLikeExternalAction(task: string): boolean {
   const chinese =
     /(打开|访问|浏览|搜索|查找|查看|抓取|视频|网页|网站|链接|新闻|油管|YouTube)/;
   return english.test(task) || chinese.test(task);
+}
+
+function taskLooksLikeLocalWorkspaceFileInspection(task: string): boolean {
+  const englishLocal =
+    /\b(local|workspace|repo|repository|project|current workspace|current repo|filesystem)\b/i;
+  const englishFileAction =
+    /\b(read|open|inspect|check|cat|show)\b[\s\S]{0,64}\b(file|files|filesystem|folder|directory|path|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b/i;
+  const englishFileFirst =
+    /\b(file|files|filesystem|folder|directory|path|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,64}\b(read|open|inspect|check|cat|show)\b/i;
+  const chineseLocal = /(本地|工作区|仓库|项目|文件系统)/u;
+  const chineseFileAction = /(读取|查看|检查|打开).{0,32}(文件|目录|路径|工作区|仓库)/u;
+  return (
+    (englishLocal.test(task) && (englishFileAction.test(task) || englishFileFirst.test(task)))
+    || (chineseLocal.test(task) && chineseFileAction.test(task))
+  );
 }
 
 /**
@@ -5120,6 +5327,7 @@ function toolCallViolatesDesktopInspectionIntent(params: {
 }
 
 function classifyEvidenceTask(task: string): "web" | "desktop" | null {
+  if (taskLooksLikeLocalWorkspaceFileInspection(task)) return "desktop";
   if (taskLooksLikeDesktopAction(task)) return "desktop";
   // Q&A tasks may contain web-action keywords ("search", "check") but are
   // asking about provided/internal content — skip evidence closure for these.
@@ -5133,15 +5341,40 @@ function buildEvidenceRetryPrompt(params: {
   toolMap: Map<string, FridayAgentToolDefinition>;
   disabledToolNames?: ReadonlySet<string>;
 }): string {
-  const category = classifyEvidenceTask(params.task.trim()) ?? "web";
+  const task = params.task.trim();
+  const localWorkspaceFileInspection = taskLooksLikeLocalWorkspaceFileInspection(task);
+  const explicitWorkspaceReadToolTask = taskExplicitlyRequiresReadToolForWorkspaceFile(task);
+  const requestedWorkspacePath = explicitWorkspaceReadToolTask
+    ? extractLocalWorkspaceFileMentions(task)[0]
+    : undefined;
+  const category = classifyEvidenceTask(task) ?? "web";
   const isEnabled = (name: string) => !(params.disabledToolNames?.has(name) ?? false);
-  const preferredTools = category === "desktop"
+  const preferredTools = explicitWorkspaceReadToolTask
+    ? ["read"]
+    : localWorkspaceFileInspection
+    ? ["read", "exec"]
+    : category === "desktop"
     ? ["system", "desktop", "exec", "read", "browser"]
     : ["web_fetch", "web_search", "browser"];
   const enabledPreferred = preferredTools.filter((name) => params.toolMap.has(name) && isEnabled(name));
   const toolHint = enabledPreferred.length > 0 ? enabledPreferred.join("/") : "available tools";
-  const taskLabel = category === "desktop" ? "this local desktop/device task" : "this external task";
-  const approachHint = category === "desktop"
+  const taskLabel = localWorkspaceFileInspection
+    ? "this local workspace file task"
+    : category === "desktop" ? "this local desktop/device task" : "this external task";
+  const headingRetryHint = taskRequestsTopWorkspaceHeading(task)
+    ? "If a previous read used offset/limit and did not include the H1, call read again without offset/limit or with enough lines so the read result includes the requested top H1 before answering."
+    : "";
+  const approachHint = explicitWorkspaceReadToolTask
+    ? [
+        `Call read with path="${requestedWorkspacePath ?? "the requested workspace path"}"; do not use web, browser, search, capabilities, or tool-pack detours because they cannot satisfy local file read evidence.`,
+        headingRetryHint,
+      ].filter((part) => part.length > 0).join(" ")
+    : localWorkspaceFileInspection
+    ? [
+        "Use read for the requested workspace path; do not use web_search or web_fetch because they cannot inspect local workspace files.",
+        headingRetryHint,
+      ].filter((part) => part.length > 0).join(" ")
+    : category === "desktop"
     ? "Start with system snapshot, then use system intents before falling back to desktop session_info or desktop screenshot for visible evidence."
     : "Use web tools to gather evidence before concluding.";
 

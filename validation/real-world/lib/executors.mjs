@@ -41,6 +41,75 @@ function extractTopWorkspaceHeading(markdownText) {
   return markdownHeading ? normalizeHeadingText(markdownHeading) : null;
 }
 
+async function readAgentToolCalls(runRecord) {
+  const artifactDir = typeof runRecord?.artifactDir === "string" ? runRecord.artifactDir.trim() : "";
+  if (!artifactDir) {
+    return [];
+  }
+  const toolCallsPath = path.join(artifactDir, "tool-calls.json");
+  try {
+    const raw = await fs.readFile(toolCallsPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function outputShapeForToolResult(content) {
+  if (typeof content !== "string") {
+    return typeof content;
+  }
+  const trimmed = content.trim();
+  if (trimmed.length === 0) {
+    return "empty";
+  }
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    return "json-like";
+  }
+  if (trimmed.includes("\n")) {
+    return "multiline-text";
+  }
+  return "text";
+}
+
+function sanitizeToolEvidence({ toolCalls, expectedHeading, expectedPath }) {
+  const expectedPathLower = typeof expectedPath === "string" ? expectedPath.toLowerCase() : "";
+  return toolCalls.map((call, index) => {
+    const argKeys = call?.args && typeof call.args === "object" ? Object.keys(call.args).sort() : [];
+    const rawPath = typeof call?.args?.path === "string" ? call.args.path : undefined;
+    const relativePath = call?.toolName === "read" && rawPath
+      ? rawPath.replace(/\\/g, "/").replace(/^\/+/, "")
+      : undefined;
+    const content = typeof call?.result?.content === "string" ? call.result.content : "";
+    const resultLengthChars = content.length;
+    const expectedHeadingHit = Boolean(
+      call?.toolName === "read"
+      && !call?.result?.isError
+      && expectedHeading
+      && content.includes(expectedHeading),
+    );
+    return {
+      index,
+      toolName: String(call?.toolName ?? "unknown"),
+      isError: Boolean(call?.result?.isError),
+      argKeys,
+      relativePath,
+      resultLengthChars,
+      outputShape: outputShapeForToolResult(content),
+      matchesExpectedPath: Boolean(
+        relativePath
+        && expectedPathLower
+        && (
+          relativePath.toLowerCase() === expectedPathLower
+          || relativePath.toLowerCase().endsWith(`/${expectedPathLower}`)
+        ),
+      ),
+      matchesExpectedHeading: expectedHeadingHit,
+    };
+  });
+}
+
 function getUrlPath(value) {
   if (typeof value !== "string" || value.length === 0) return "";
   try {
@@ -80,9 +149,38 @@ function isIgnorableUiRequestFailure(message) {
   return parsed.method === "GET" && parsed.pathname.startsWith("/v1/");
 }
 
-function isIgnorableUiConsoleError(message) {
+function parseUiResponseError(message) {
+  if (typeof message !== "string" || message.length === 0) return null;
+  const match = message.match(/^(\d{3})\s+(\S+)$/u);
+  if (!match) {
+    return null;
+  }
+  return {
+    status: Number.parseInt(match[1], 10),
+    url: match[2],
+    pathname: getUrlPath(match[2]),
+  };
+}
+
+function isIgnorableUiResponseError(message) {
+  const parsed = parseUiResponseError(message);
+  if (!parsed) {
+    return false;
+  }
+  return parsed.status === 400 && parsed.pathname === "/v1/providers/routing/explain";
+}
+
+function isIgnorableUiConsoleError(message, responseErrors = []) {
   if (typeof message !== "string" || message.length === 0) return false;
-  return /status of 401 \(Unauthorized\)/i.test(message);
+  if (/status of 401 \(Unauthorized\)/i.test(message)) {
+    return true;
+  }
+  if (/status of 400 \(Bad Request\)/i.test(message)) {
+    const hasResponseErrors = responseErrors.length > 0;
+    const allResponseErrorsIgnorable = responseErrors.every((entry) => isIgnorableUiResponseError(entry));
+    return hasResponseErrors && allResponseErrorsIgnorable;
+  }
+  return false;
 }
 
 function isRetryableUiProbeError(error) {
@@ -167,6 +265,32 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
   throw new Error(
     "UI probe landed on /login but no real browser login credential was available. Provide localPassphrase or email/password for proof runs.",
   );
+}
+
+async function seedUiAuthStorageIfAvailable({ context, client, artifact }) {
+  const accessToken = typeof client?.accessToken === "string" ? client.accessToken.trim() : "";
+  const refreshToken = typeof client?.refreshToken === "string" ? client.refreshToken.trim() : "";
+  if (accessToken.length === 0) {
+    return false;
+  }
+  await context.addInitScript(
+    ({ accessToken: seededAccessToken, refreshToken: seededRefreshToken, user }) => {
+      window.localStorage.setItem("friday.auth.accessToken", seededAccessToken);
+      if (seededRefreshToken) {
+        window.localStorage.setItem("friday.auth.refreshToken", seededRefreshToken);
+      }
+      if (user) {
+        window.localStorage.setItem("friday.auth.user", JSON.stringify(user));
+      }
+    },
+    {
+      accessToken,
+      refreshToken,
+      user: client.user ?? null,
+    },
+  );
+  artifact.observedEvidence.push("seeded browser auth storage from validation login session");
+  return true;
 }
 
 async function settleAndCompleteUiLoginIfNeeded({ page, client, execution, artifact, timeoutMs }) {
@@ -438,6 +562,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
   const requestFailures = [];
   const reloadAbortedRequestFailures = [];
   const consoleErrors = [];
+  const responseErrors = [];
   const requestOrder = new WeakMap();
   let requestSequence = 0;
   let reloadAbortCutoff = null;
@@ -451,8 +576,11 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     });
     const bootstrapStatus = bootstrapResponse.json?.data ?? bootstrapResponse.json ?? null;
     const authCapabilities = bootstrapStatus ?? {};
+    const hasBrowserAuthToken =
+      typeof client?.accessToken === "string" && client.accessToken.trim().length > 0;
     const hasBrowserLoginCredential =
-      (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0)
+      hasBrowserAuthToken
+      || (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0)
       || (
         typeof client?.email === "string" && client.email.trim().length > 0
         && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
@@ -476,6 +604,7 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     }
 
     ({ context } = await getSharedUiProbeSession(uiBaseUrl));
+    await seedUiAuthStorageIfAvailable({ context, client, artifact });
     page = await context.newPage();
     page.on("request", (request) => {
       requestUrls.push(request.url());
@@ -492,6 +621,11 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
         return;
       }
       requestFailures.push(message);
+    });
+    page.on("response", (response) => {
+      if (response.status() >= 400) {
+        responseErrors.push(`${String(response.status())} ${response.url()}`);
+      }
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -563,8 +697,13 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     const requestedPath = getUrlPath(execution.path);
     const allowedFinalPathPrefixes = execution.allowedFinalPathPrefixes ?? [requestedPath];
     const significantRequestFailures = requestFailures.filter((message) => !isIgnorableUiRequestFailure(message));
-    const significantConsoleErrors = consoleErrors.filter((message) => !isIgnorableUiConsoleError(message));
-    artifact.toolErrors = [...significantRequestFailures, ...significantConsoleErrors];
+    const significantResponseErrors = responseErrors.filter((message) => !isIgnorableUiResponseError(message));
+    const significantConsoleErrors = consoleErrors.filter((message) => !isIgnorableUiConsoleError(message, responseErrors));
+    artifact.toolErrors = [
+      ...significantRequestFailures,
+      ...significantConsoleErrors,
+      ...significantResponseErrors,
+    ];
     artifact.observedEvidence.push(
       `loaded ${execution.path}`,
       `final url ${finalUrl}`,
@@ -586,6 +725,8 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       allowedFinalPathPrefixes,
       consoleErrors,
       significantConsoleErrors,
+      responseErrors,
+      significantResponseErrors,
       requestFailures,
       reloadAbortedRequestFailures,
       significantRequestFailures,
@@ -614,13 +755,14 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
       return artifact;
     }
 
-    if (significantRequestFailures.length > 0 || significantConsoleErrors.length > 0) {
+    if (significantRequestFailures.length > 0 || significantConsoleErrors.length > 0 || significantResponseErrors.length > 0) {
       artifact.result = "partial";
       artifact.failureClass = "ui_loading";
       artifact.notes = [
         ...(artifact.notes ?? []),
         significantRequestFailures.length > 0 ? `${String(significantRequestFailures.length)} failed UI requests` : "",
         significantConsoleErrors.length > 0 ? `${String(significantConsoleErrors.length)} console errors` : "",
+        significantResponseErrors.length > 0 ? `${String(significantResponseErrors.length)} HTTP error responses` : "",
       ].filter(Boolean);
     }
     return artifact;
@@ -780,6 +922,8 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     }
   }
 
+  const agentToolCalls = await readAgentToolCalls(lastRunRecord);
+
   artifact.raw = {
     ...(artifact.raw ?? {}),
     runId: lastData?.runId ?? null,
@@ -814,13 +958,33 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
         `workspace file ${relativeFilePath}`,
         `workspace top heading ${expectedHeading ?? "missing"}`,
       );
+      const toolEvidence = sanitizeToolEvidence({
+        toolCalls: agentToolCalls,
+        expectedHeading,
+        expectedPath: relativeFilePath,
+      });
+      const hasExpectedReadToolEvidence = toolEvidence.some((entry) =>
+        entry.toolName === "read"
+        && entry.isError === false
+        && entry.matchesExpectedPath === true
+        && entry.matchesExpectedHeading === true
+      );
       artifact.raw = {
         ...(artifact.raw ?? {}),
         workspaceFileOracle: {
           path: relativeFilePath,
           expectedHeading,
         },
+        toolEvidence,
       };
+      if (!hasExpectedReadToolEvidence) {
+        artifact.result = "failed";
+        artifact.failureClass = "tool_bridge";
+        artifact.notes = [
+          ...(artifact.notes ?? []),
+          `expected successful read tool evidence for ${relativeFilePath} containing workspace top heading ${JSON.stringify(expectedHeading)}`,
+        ];
+      }
       if (!expectedHeading || !normalizeHeadingText(outputText).includes(expectedHeading)) {
         artifact.result = "failed";
         artifact.failureClass = "tool_bridge";

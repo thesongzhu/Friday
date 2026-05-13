@@ -2,6 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { FridayClient } from "../../validation/real-world/lib/client.mjs";
 import { closeSharedUiProbeSession } from "../../validation/real-world/lib/executors.mjs";
 import { collectEnvironmentTruth } from "../../validation/real-world/lib/env-truth.mjs";
@@ -345,7 +346,7 @@ function buildClientOptions(options) {
   };
 }
 
-function summarizeRun(run) {
+export function summarizeRun(run) {
   return {
     runId: run.runId,
     suite: run.suite,
@@ -354,7 +355,13 @@ function summarizeRun(run) {
     failureClassCounts: run.failureClassCounts ?? {},
     defectBucketCounts: run.defectBucketCounts ?? {},
     providerLanes: run.providerLanes ?? {},
+    providerAttemptCount: run.providerAttemptCount ?? 0,
+    browserProbeAttemptCount: run.browserProbeAttemptCount ?? 0,
   };
+}
+
+export function resolveGateSuiteReportRoot(reportRoot, suiteName) {
+  return path.join(reportRoot, "suites", suiteName);
 }
 
 function hasOnlyPassed(run) {
@@ -546,6 +553,7 @@ async function main() {
       () => runRealWorldValidation({
         ...validationBaseOptions,
         suite: "smoke",
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "smoke"),
       }),
       async () => {
         await closeSharedUiProbeSession();
@@ -562,6 +570,7 @@ async function main() {
         suite: "daily",
         scenarioIds: DAILY_CORE_SCENARIOS,
         repetitions: options.dailyCoreRepetitions,
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "daily-core"),
       }),
       async () => {
         await closeSharedUiProbeSession();
@@ -578,6 +587,7 @@ async function main() {
         suite: "daily",
         scenarioIds: PUBLIC_SURFACE_SCENARIOS,
         repetitions: 1,
+        reportRoot: resolveGateSuiteReportRoot(reportRoot, "public-surface"),
       }),
       async () => {
         await closeSharedUiProbeSession();
@@ -648,7 +658,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

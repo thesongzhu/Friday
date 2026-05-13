@@ -812,7 +812,7 @@ export const REAL_WORLD_SCENARIOS = [
     entrySurface: "/v1/agent/runs",
     routeFamily: "file tool",
     providerLane: "default_only",
-    realWorldPrompt: "Use the filesystem to read README.md from the current workspace root and answer with its top H1 heading only.",
+    realWorldPrompt: "Call the `read` tool with path `README.md` from the current workspace root, then answer with the top H1 heading only. Do not use web search for this workspace file.",
     expectedEvidence: [
       "agent uses at least one tool call",
       "output reflects filesystem content rather than a guess",
@@ -830,6 +830,13 @@ export const REAL_WORLD_SCENARIOS = [
         forbiddenSubstrings: [
           "outside the allowed workspace root",
           "cannot access the file",
+          "cannot access",
+          "unable to access",
+          "unable to read",
+          "无法直接访问",
+          "无法读取",
+          "不能读取",
+          "无法访问",
         ],
       },
     },

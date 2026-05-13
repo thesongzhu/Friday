@@ -135,6 +135,26 @@ describe("resolveFridayHubConfig", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it("keeps workspaceRoot separate from stateDir when FRIDAY_WORKSPACE_ROOT is set", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig(),
+      {
+        FRIDAY_STATE_DIR: "/tmp/friday-state",
+        FRIDAY_WORKSPACE_ROOT: "/repo/checkout",
+      },
+    );
+    expect(resolved.stateDir).toBe("/tmp/friday-state");
+    expect(resolved.workspaceRoot).toBe("/repo/checkout");
+  });
+
+  it("uses explicit workspaceRoot over env", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig({ workspaceRoot: "/explicit-workspace" }),
+      { FRIDAY_WORKSPACE_ROOT: "/env-workspace" },
+    );
+    expect(resolved.workspaceRoot).toBe("/explicit-workspace");
+  });
+
   it("defaults allowPrivateNetwork=false in dev mode", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
     expect(resolved.ssrfPolicy?.allowPrivateNetwork).toBe(false);

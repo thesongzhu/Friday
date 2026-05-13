@@ -85,12 +85,18 @@ function deriveEvidenceKindsObserved(summary, status) {
   if (status !== REAL_GREEN_GATE_RESULT_STATUSES.PASSED) {
     return [];
   }
-  // When the gate passed end-to-end, the run-real-green-gate.mjs flow has
-  // exercised real-runtime + real-provider + real-browser tiers across the
-  // smoke / dailyCore / publicSurface suites. We only emit these tokens on
-  // status=passed; otherwise we emit an empty list so downstream readers
-  // cannot mistake partial coverage for full coverage.
-  return ["real-runtime", "real-provider", "real-browser"];
+  const counts = deriveScenarioCounts(summary);
+  const observed = [];
+  if (counts.scenariosRun > 0) {
+    observed.push("real-runtime");
+  }
+  if (SUITE_KEYS.some((key) => safeNumber(summary?.[key]?.providerAttemptCount) > 0)) {
+    observed.push("real-provider");
+  }
+  if (SUITE_KEYS.some((key) => safeNumber(summary?.[key]?.browserProbeAttemptCount) > 0)) {
+    observed.push("real-browser");
+  }
+  return observed;
 }
 
 function normalizeStringList(value) {
@@ -142,6 +148,25 @@ export function buildBlockedByEnvResult({ commitSha, refName, evaluatedAt, block
   return {
     schema_version: REAL_GREEN_GATE_RESULT_SCHEMA_VERSION,
     status: REAL_GREEN_GATE_RESULT_STATUSES.BLOCKED_BY_ENV,
+    commit_sha: typeof commitSha === "string" ? commitSha : "",
+    ref_name: typeof refName === "string" ? refName : "",
+    evaluated_at: typeof evaluatedAt === "string" ? evaluatedAt : "",
+    evidence_kinds_observed: [],
+    blocked_reasons: normalizeStringList(blockedReasons),
+    scenarios_run: 0,
+    scenarios_total: 0,
+    scenarios_passed: 0,
+  };
+}
+
+/**
+ * Build a result artifact for failures that happen before the normal gate
+ * runner can emit its own summary, such as self-hosted runtime boot failure.
+ */
+export function buildErroredResult({ commitSha, refName, evaluatedAt, blockedReasons }) {
+  return {
+    schema_version: REAL_GREEN_GATE_RESULT_SCHEMA_VERSION,
+    status: REAL_GREEN_GATE_RESULT_STATUSES.ERRORED,
     commit_sha: typeof commitSha === "string" ? commitSha : "",
     ref_name: typeof refName === "string" ? refName : "",
     evaluated_at: typeof evaluatedAt === "string" ? evaluatedAt : "",

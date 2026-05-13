@@ -3,6 +3,7 @@ import { resolveLatestPointerPath, writeJson, writeText } from "./io.mjs";
 import { summarizeNumbers } from "./stats.mjs";
 
 const RESULT_ORDER = ["failed", "manual_review", "partial", "blocked", "passed"];
+const SENSITIVE_OPTION_KEY_RE = /(?:access[_-]?token|refresh[_-]?token|password|passphrase|secret|api[_-]?key|credential|authorization|cookie)/iu;
 
 function formatPercent(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
@@ -19,6 +20,24 @@ function countBy(values) {
     acc[value] = (acc[value] ?? 0) + 1;
     return acc;
   }, {});
+}
+
+function sanitizeReportValue(value, key = "") {
+  if (SENSITIVE_OPTION_KEY_RE.test(key)) {
+    return typeof value === "string" && value.length > 0 ? "[redacted]" : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeReportValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeReportValue(entryValue, entryKey),
+      ]),
+    );
+  }
+  return value;
 }
 
 function worstResult(results) {
@@ -105,6 +124,18 @@ function summarizeAggregates({ artifacts, grouped, envTruth }) {
     fallbackComparison,
     setupUserProfileTruthMismatch: envTruth?.derived?.setupUserProfileTruthMismatch === true,
   };
+}
+
+function countProviderAttempts(artifacts) {
+  return artifacts.filter((artifact) =>
+    artifact?.lane === "default" || artifact?.lane === "fallback"
+  ).length;
+}
+
+function countBrowserProbeAttempts(artifacts) {
+  return artifacts.filter((artifact) =>
+    typeof artifact?.metrics?.uiRequestCount === "number"
+  ).length;
 }
 
 function renderCoverageMatrix({ scenarios, grouped }) {
@@ -251,6 +282,27 @@ function renderIndex({ runId, suite, scenarios, grouped, envTruth, aggregates })
   return lines.join("\n") + "\n";
 }
 
+function writeToolEvidenceArtifacts({ reportRoot, artifacts }) {
+  for (const artifact of artifacts) {
+    const evidence = artifact?.raw?.toolEvidence;
+    if (!Array.isArray(evidence) || evidence.length === 0) {
+      continue;
+    }
+    const scenarioId = String(artifact.scenarioId ?? "unknown").replace(/[^a-zA-Z0-9_.-]/g, "-");
+    const runId = String(artifact.raw?.runId ?? artifact.runId ?? "run").replace(/[^a-zA-Z0-9_.-]/g, "-");
+    writeJson(
+      path.join(reportRoot, "tool-evidence", scenarioId, `${runId}.json`),
+      {
+        scenarioId: artifact.scenarioId,
+        suite: artifact.suite,
+        lane: artifact.lane,
+        runId: artifact.raw?.runId ?? artifact.runId ?? null,
+        evidence,
+      },
+    );
+  }
+}
+
 export function writeReports({
   repoRoot,
   reportRoot,
@@ -285,13 +337,15 @@ export function writeReports({
     groupedCount: grouped.length,
     results: resultCounts,
     resultCounts,
+    providerAttemptCount: countProviderAttempts(artifacts),
+    browserProbeAttemptCount: countBrowserProbeAttempts(artifacts),
     failureClassCounts,
     defectBucketCounts,
     baseUrl: envTruth.baseUrl,
     uiBaseUrl: envTruth.uiBaseUrl,
     providerLanes: envTruth.providerLanes,
     aggregates,
-    options,
+    options: sanitizeReportValue(options),
   };
 
   writeJson(path.join(reportRoot, "summary.json"), summary);
@@ -304,6 +358,7 @@ export function writeReports({
   writeText(path.join(reportRoot, "performance-report.md"), renderPerformanceReport({ grouped, aggregates }));
   writeText(path.join(reportRoot, "defect-ledger.md"), renderDefectLedger({ artifacts }));
   writeText(path.join(reportRoot, "index.md"), renderIndex({ runId, suite, scenarios, grouped, envTruth, aggregates }));
+  writeToolEvidenceArtifacts({ reportRoot, artifacts });
   writeJson(resolveLatestPointerPath(repoRoot), {
     runId,
     suite,

@@ -196,6 +196,7 @@ export function buildFridayAgentSystemPrompt(
     "- Capabilities/runtime questions (what Friday can do, which features are enabled/disabled, messaging/MCP/provider status): use capabilities first — never guess runtime state\n" +
     "- Status/progress questions (current task, delegated task progress, latest result, blockers): use task_status first — never fabricate progress\n" +
     "- Approval and workflow control commands (approve, reject, cancel, retry, workflow status): use the corresponding control tool directly\n" +
+    "- Local workspace files, repository paths, or filesystem reads: use read first for file contents; do not use web_search or web_fetch for workspace files\n" +
     "- Information lookup (news, facts, documentation): use web_search first, then web_fetch for specific URLs\n" +
     "- Fetch a specific URL (articles, docs, pages): use web_fetch — HTML is auto-parsed to readable text\n" +
     "- JS-heavy sites (Reddit, Twitter/X, SPA apps), interactive pages, login-required pages: use browser (snapshot action to read content)\n" +
