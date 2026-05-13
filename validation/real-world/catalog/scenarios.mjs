@@ -98,6 +98,30 @@ function manualExternalScenario(input) {
   });
 }
 
+function discordRoundtripScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "external_channels.ready"])],
+    providerLane: "none",
+    suites: input.suites ?? ["weekly"],
+    expectedEvidence: [
+      "Discord bot token resolves to a bot identity",
+      "sandbox guild and channel are reachable",
+      "a real outbound message can be sent and read back",
+      "a real reply message can be sent and read back",
+    ],
+    execution: {
+      kind: "discord_roundtrip",
+      tokenEnv: "FRIDAY_DISCORD_BOT_TOKEN",
+      setupUserIdEnv: "FRIDAY_DISCORD_SETUP_USER_ID",
+      guildIdEnv: "FRIDAY_DISCORD_GUILD_ID",
+      channelIdEnv: "FRIDAY_DISCORD_CHANNEL_ID",
+      ...input.execution,
+    },
+    tags: [...new Set([...(input.tags ?? []), "external-channel", "discord"])],
+  });
+}
+
 export const REAL_WORLD_SCENARIOS = [
   baseScenario({
     id: "l0-runtime-health",
@@ -970,6 +994,15 @@ export const REAL_WORLD_SCENARIOS = [
       "capture Friday outbound reply and attachment behavior",
       "record dedupe/retry evidence in the report folder",
     ],
+  }),
+  discordRoundtripScenario({
+    id: "l6-discord-channel-roundtrip",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "discord",
+    routeFamily: "distributed channel",
+    severityOnFailure: "P1",
+    suites: ["weekly"],
   }),
   manualExternalScenario({
     id: "l6-slack-roundtrip-manual",

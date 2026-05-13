@@ -165,6 +165,7 @@ export async function completeSelfHostedSetup(baseUrl, localPassphrase) {
 }
 
 export function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSecret, workspaceRoot) {
+  const channelsEnv = buildExplicitChannelsEnv(baseEnv);
   return {
     ...baseEnv,
     FRIDAY_STATE_DIR: paths.stateDir,
@@ -176,12 +177,13 @@ export function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSec
     FRIDAY_AUTO_OPEN_UI: "false",
     FRIDAY_BROWSER_HEADLESS: "true",
     FRIDAY_LOG_REQUESTS: "false",
-    FRIDAY_CHANNELS_JSON: baseEnv.FRIDAY_CHANNELS_JSON ?? '{"enabled":true,"instances":[]}',
     FRIDAY_SYSTEM_ENABLED: baseEnv.FRIDAY_SYSTEM_ENABLED ?? "true",
+    ...channelsEnv,
   };
 }
 
 export function createGateEnv(baseEnv, paths, baseUrl, localPassphrase, tokenSecret, workspaceRoot) {
+  const channelsEnv = buildExplicitChannelsEnv(baseEnv);
   return {
     ...baseEnv,
     FRIDAY_STATE_DIR: paths.stateDir,
@@ -190,9 +192,16 @@ export function createGateEnv(baseEnv, paths, baseUrl, localPassphrase, tokenSec
     FRIDAY_BASE_URL: baseUrl,
     FRIDAY_UI_BASE_URL: baseUrl,
     FRIDAY_LOCAL_PASSPHRASE: localPassphrase,
-    FRIDAY_CHANNELS_JSON: baseEnv.FRIDAY_CHANNELS_JSON ?? '{"enabled":true,"instances":[]}',
     FRIDAY_BROWSER_HEADLESS: "true",
+    ...channelsEnv,
   };
+}
+
+function buildExplicitChannelsEnv(baseEnv) {
+  const channelsJson = typeof baseEnv.FRIDAY_CHANNELS_JSON === "string"
+    ? baseEnv.FRIDAY_CHANNELS_JSON.trim()
+    : "";
+  return channelsJson ? { FRIDAY_CHANNELS_JSON: channelsJson } : {};
 }
 
 async function stopChild(child, graceMs = DEFAULT_CHILD_STOP_GRACE_MS) {

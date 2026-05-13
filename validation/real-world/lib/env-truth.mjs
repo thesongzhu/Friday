@@ -31,6 +31,32 @@ function readCapabilityStatus(processEnv, key) {
   };
 }
 
+function readExternalChannelsStatus(processEnv) {
+  const declared = readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY");
+  if (declared.status !== "ready") {
+    return declared;
+  }
+  const requiredEnv = [
+    "FRIDAY_DISCORD_BOT_TOKEN",
+    "FRIDAY_DISCORD_SETUP_USER_ID",
+    "FRIDAY_DISCORD_GUILD_ID",
+    "FRIDAY_DISCORD_CHANNEL_ID",
+  ];
+  const missing = requiredEnv.filter((key) => !String(processEnv[key] ?? "").trim());
+  if (missing.length > 0) {
+    return {
+      status: "missing",
+      source: declared.source,
+      missingEnv: missing,
+      note: "External channels were declared ready, but Discord proof env is incomplete.",
+    };
+  }
+  return {
+    ...declared,
+    requiredEnv,
+  };
+}
+
 function resolveProviderModel(provider, preferredModel) {
   if (!provider) return undefined;
   const supportedModels = asArray(provider.config?.supportedModels).filter((value) => typeof value === "string");
@@ -404,7 +430,7 @@ export async function collectEnvironmentTruth({
     enabledProviderLanes,
     prerequisites: {
       desktop: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_DESKTOP_READY"),
-      externalChannels: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY"),
+      externalChannels: readExternalChannelsStatus(processEnv),
       cloud: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_CLOUD_READY"),
       satellite: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_SATELLITE_READY"),
       mcp: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_MCP_READY"),

@@ -29,7 +29,7 @@ export const REAL_GREEN_GATE_RESULT_STATUSES = Object.freeze({
 
 const VALID_STATUS_SET = new Set(Object.values(REAL_GREEN_GATE_RESULT_STATUSES));
 
-const SUITE_KEYS = ["smoke", "dailyCore", "publicSurface"];
+const SUITE_KEYS = ["smoke", "dailyCore", "publicSurface", "externalChannels"];
 
 function safeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -95,6 +95,9 @@ function deriveEvidenceKindsObserved(summary, status) {
   }
   if (SUITE_KEYS.some((key) => safeNumber(summary?.[key]?.browserProbeAttemptCount) > 0)) {
     observed.push("real-browser");
+  }
+  if (safeNumber(summary?.externalChannels?.resultCounts?.passed) > 0) {
+    observed.push("manual-external");
   }
   return observed;
 }
@@ -273,6 +276,18 @@ export function validateRealGreenGateResult(result, options = {}) {
     && result.scenarios_total === 0
   ) {
     reasons.push("passed_with_zero_scenarios");
+  }
+
+  const requiredEvidenceKinds = Array.isArray(options.requiredEvidenceKinds)
+    ? options.requiredEvidenceKinds.filter((value) => typeof value === "string" && value.length > 0)
+    : [];
+  if (requiredEvidenceKinds.length > 0 && result.status === REAL_GREEN_GATE_RESULT_STATUSES.PASSED) {
+    const observed = Array.isArray(result.evidence_kinds_observed) ? result.evidence_kinds_observed : [];
+    for (const requiredKind of requiredEvidenceKinds) {
+      if (!observed.includes(requiredKind)) {
+        reasons.push(`evidence_kind_missing:${requiredKind}`);
+      }
+    }
   }
 
   return { valid: reasons.length === 0, reasons };
