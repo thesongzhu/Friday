@@ -892,6 +892,48 @@ describe("FridayAgentRuntime", () => {
     expect(capturedToolNames).not.toContain("desktop");
   });
 
+  it("exposes only read for explicit workspace read-tool tasks", async () => {
+    const capturedToolNamesByTurn: string[][] = [];
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolNamesByTurn.push(params.tools.map((tool) => tool.name).sort());
+        yield { type: "text_delta", text: "I cannot access README.md directly." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [
+        createNamedTool("read"),
+        createNamedTool("write"),
+        createNamedTool("edit"),
+        createExecTool(),
+        createSuccessfulWebSearchTool(),
+        createSuccessfulWebFetchTool(),
+        createNamedTool("skills_list"),
+        createNamedTool("capabilities"),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Call the `read` tool with path `README.md` from the current workspace root, then answer with the top H1 heading only. Do not use web search for this workspace file.",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(capturedToolNamesByTurn.length).toBeGreaterThan(0);
+    for (const toolNames of capturedToolNamesByTurn) {
+      expect(toolNames).toEqual(["read"]);
+    }
+  });
+
   it("routes channel full-agent workflow follow-ups to workflow tools", async () => {
     let capturedToolNames: string[] = [];
     let capturedPromptContext: FridayAgentSystemPromptContext | undefined;

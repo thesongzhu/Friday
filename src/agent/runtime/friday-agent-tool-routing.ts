@@ -97,6 +97,7 @@ export function resolveFridayAgentToolRouting(input: {
   const task = input.task?.trim() ?? "";
   const availableTools = input.tools.filter((tool) => !(input.disabledToolNames?.has(tool.name) ?? false));
   const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+  const explicitWorkspaceReadToolTask = taskExplicitlyRequiresWorkspaceReadTool(task);
   const profile = classifyFridayToolRoutingProfile({
     task,
     images: input.images,
@@ -122,9 +123,15 @@ export function resolveFridayAgentToolRouting(input: {
     availableTools,
     input.disabledToolNames,
   ));
+  if (explicitWorkspaceReadToolTask) {
+    selected.clear();
+    if (availableToolNames.has("read")) {
+      selected.add("read");
+    }
+  }
 
   // Preserve small custom-tool runtimes and focused tests without reopening the full production registry.
-  if (availableTools.length <= 6) {
+  if (!explicitWorkspaceReadToolTask && availableTools.length <= 6) {
     for (const tool of availableTools) {
       if (!FRIDAY_KNOWN_TOOL_NAMES.has(tool.name)) {
         selected.add(tool.name);
@@ -133,9 +140,11 @@ export function resolveFridayAgentToolRouting(input: {
   }
 
   const selectedToolNames = [...selected].filter((name) => availableToolNames.has(name));
-  const deferredToolNames = availableTools
-    .map((tool) => tool.name)
-    .filter((name) => !selected.has(name));
+  const deferredToolNames = explicitWorkspaceReadToolTask
+    ? []
+    : availableTools
+        .map((tool) => tool.name)
+        .filter((name) => !selected.has(name));
 
   return {
     profile,
@@ -272,6 +281,9 @@ function classifyFridayToolRoutingProfile(input: {
   if (/\b(skill|skills|plugin)\b|技能|插件/u.test(text)) {
     return "skill";
   }
+  if (taskExplicitlyRequiresWorkspaceReadTool(text)) {
+    return "code";
+  }
   if (/\b(latest|current|today|news|search|lookup|source|url|https?:\/\/|documentation|docs)\b|最新|今天|最近|新闻|搜索|查一下|资料|来源/u.test(text)) {
     return "web";
   }
@@ -291,6 +303,11 @@ function classifyFridayToolRoutingProfile(input: {
     return "trivial";
   }
   return "general";
+}
+
+function taskExplicitlyRequiresWorkspaceReadTool(task: string): boolean {
+  return /\b(call|use)\s+the\s+`?read`?\s+tool\b[\s\S]{0,160}\b(?:file|repo|repository|workspace|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b/i.test(task)
+    || /\b(?:file|repo|repository|workspace|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,160}\b(call|use)\s+the\s+`?read`?\s+tool\b/i.test(task);
 }
 
 function buildToolRoutingIntentText(input: {
