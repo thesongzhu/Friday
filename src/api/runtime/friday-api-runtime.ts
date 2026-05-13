@@ -65,6 +65,10 @@ import { createFridaySecurityRoutes } from "../http/routes/friday-security-route
 import { createFridayRealtimeRoutes } from "../http/routes/friday-realtime-routes.js";
 import { createFridayProviderRoutes } from "../http/routes/friday-provider-routes.js";
 import { createFridayProviderUsageRoutes } from "../http/routes/friday-provider-usage-routes.js";
+import {
+  createFridayMediaUnderstandingRoutes,
+  type FridayMediaUnderstandingRoutesDeps,
+} from "../http/routes/friday-media-understanding-routes.js";
 import { createFridaySkillGeneratorRoutes } from "../http/routes/friday-skill-generator-routes.js";
 import { createFridayDiagnosisRoutes } from "../http/routes/friday-diagnosis-routes.js";
 import { createFridayAutoFixRoutes } from "../http/routes/friday-auto-fix-routes.js";
@@ -2468,6 +2472,29 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     providerService: deps.providerService,
     canonicalMutationGate,
     providerMutationGateRequired,
+  })) {
+    routes.register(route);
+  }
+
+  // Register media-understanding routes (Phase 02a).
+  //
+  // Routes are always registered; the disabled state is represented inside the
+  // handlers via null `service`/`doctorProvider` plus a structured
+  // `disabledReason`. When deps.mediaUnderstanding is undefined (e.g. test
+  // fixtures or runtimes that do not opt in to the media-understanding wiring)
+  // we coalesce to a honest-disabled shape so disabled deployments return 503
+  // MEDIA_UNDERSTANDING_DISABLED, never 404.
+  const mediaUnderstandingDeps: FridayMediaUnderstandingRoutesDeps =
+    deps.mediaUnderstanding ?? {
+      service: null,
+      doctorProvider: null,
+      disabledReason: "media understanding deps not provided",
+    };
+  for (const route of createFridayMediaUnderstandingRoutes({
+    service: mediaUnderstandingDeps.service,
+    doctorProvider: mediaUnderstandingDeps.doctorProvider,
+    disabledReason: mediaUnderstandingDeps.disabledReason,
+    nowIso: deps.nowIso,
   })) {
     routes.register(route);
   }

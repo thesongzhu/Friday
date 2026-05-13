@@ -27,6 +27,7 @@ import type {
   FridayStandingAgendaService,
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
+import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
 import type {
@@ -254,6 +255,19 @@ export interface CreateFridayApiRuntimeDeps {
   uix?: FridayUixRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
+  /**
+   * Phase 02a media-understanding route surface.
+   *
+   * Optional. The routes are always registered regardless of whether this slot
+   * is supplied — `createFridayApiRuntime` coalesces a missing/undefined value
+   * to a honest-disabled deps shape so disabled deployments return
+   * `503 MEDIA_UNDERSTANDING_DISABLED` (never 404). When supplied, the hub
+   * bootstrap sets non-null `service` + `doctorProvider` only when the runtime
+   * flag and provider credential resolution both succeed; otherwise fields are
+   * null with a structured `disabledReason` that never echoes any env value or
+   * credential.
+   */
+  mediaUnderstanding?: FridayMediaUnderstandingRoutesDeps;
   /** Optional: search capability metadata surfaced by /v1/health. */
   searchHealth?: {
     provider: string;
