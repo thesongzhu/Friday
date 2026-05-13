@@ -69,6 +69,10 @@ import {
   createFridayMediaUnderstandingRoutes,
   type FridayMediaUnderstandingRoutesDeps,
 } from "../http/routes/friday-media-understanding-routes.js";
+import {
+  createFridaySocialImportRoutes,
+  type FridaySocialImportRoutesDeps,
+} from "../http/routes/friday-social-import-routes.js";
 import { createFridaySkillGeneratorRoutes } from "../http/routes/friday-skill-generator-routes.js";
 import { createFridayDiagnosisRoutes } from "../http/routes/friday-diagnosis-routes.js";
 import { createFridayAutoFixRoutes } from "../http/routes/friday-auto-fix-routes.js";
@@ -2495,6 +2499,31 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     doctorProvider: mediaUnderstandingDeps.doctorProvider,
     disabledReason: mediaUnderstandingDeps.disabledReason,
     nowIso: deps.nowIso,
+  })) {
+    routes.register(route);
+  }
+
+  // Register Phase 02b social-import route.
+  //
+  // The route is always registered; the disabled state is represented inside
+  // the handler via null `service` / `converterService` / `canonicalMutationGate`
+  // plus a structured `disabledReason`. When deps.socialImport is undefined
+  // (e.g. test fixtures or runtimes that do not opt in to XHS browser deps)
+  // we coalesce to an honest-disabled shape so disabled deployments return
+  // `503 SOCIAL_IMPORT_DISABLED`, never 404. The converter service and the
+  // canonical mutation gate are injected by the api-runtime so the route can
+  // build the stage-candidate mutation request and stage the candidate
+  // through the existing converter path after gate approval.
+  const socialImportDeps: FridaySocialImportRoutesDeps =
+    deps.socialImport ?? {
+      service: null,
+      disabledReason: "social import deps not provided",
+    };
+  for (const route of createFridaySocialImportRoutes({
+    service: socialImportDeps.service,
+    disabledReason: socialImportDeps.disabledReason,
+    converterService: deps.converterService ?? null,
+    canonicalMutationGate: socialImportDeps.service ? canonicalMutationGate : null,
   })) {
     routes.register(route);
   }

@@ -28,6 +28,7 @@ import type {
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
+import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
 import type {
@@ -268,6 +269,19 @@ export interface CreateFridayApiRuntimeDeps {
    * credential.
    */
   mediaUnderstanding?: FridayMediaUnderstandingRoutesDeps;
+  /**
+   * Phase 02b social-import route surface.
+   *
+   * Optional. The route is always registered regardless of whether this slot
+   * is supplied — `createFridayApiRuntime` coalesces a missing/undefined
+   * value to an honest-disabled deps shape so disabled deployments return
+   * `503 SOCIAL_IMPORT_DISABLED` (never 404). When supplied, the hub
+   * bootstrap sets non-null `service` only when XHS browser deps, the
+   * converter service, and the canonical mutation gate are all available;
+   * otherwise the field is null with a structured `disabledReason` that
+   * never echoes cookies, session strings, env values, or credentials.
+   */
+  socialImport?: FridaySocialImportRoutesDeps;
   /** Optional: search capability metadata surfaced by /v1/health. */
   searchHealth?: {
     provider: string;

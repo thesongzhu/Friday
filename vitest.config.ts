@@ -14,6 +14,7 @@ const pathAliases = {
   "#satellites": resolve(__dirname, "src/satellites/index.ts"),
   "#skills/converter": resolve(__dirname, "src/skills/converter/index.ts"),
   "#skills/generator": resolve(__dirname, "src/skills/generator/index.ts"),
+  "#skills/social-import": resolve(__dirname, "src/skills/social-import/index.ts"),
   "#memory": resolve(__dirname, "src/memory/index.ts"),
   "#sessions": resolve(__dirname, "src/sessions/index.ts"),
   "#skills": resolve(__dirname, "src/skills/index.ts"),

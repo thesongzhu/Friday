@@ -115,6 +115,7 @@ import {
   createFridayOpenAiVisionProvider,
   DEFAULT_OPENAI_VISION_MODEL,
 } from "#media-understanding";
+import { createFridaySocialImportService } from "#skills/social-import";
 import { parseFridaySecretInput, resolveFridaySecretInput } from "../security/friday-secret-ref.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
@@ -3335,6 +3336,33 @@ export async function createFridayHub(
     );
   }
 
+  // ── Phase 02b Social Import (partial slice) ──
+  // The social-import service exposes the partial first-half of module_01:
+  // XHS real-browser extraction + provenance + social-aware planDigest. The
+  // route itself drives the canonical mutation gate and the converter import
+  // for candidate staging. Autonomy shadow/canary/promote/rollback + verify
+  // + learning emit remain operator-driven via existing routes.
+  const socialImportService =
+    xhsPageInteractions !== undefined && xhsSessionManager !== undefined
+      ? createFridaySocialImportService({
+          xhsPageInteractions,
+          xhsSessionManager,
+        })
+      : null;
+  const socialImportDeps: NonNullable<
+    Parameters<typeof createFridayApiRuntime>[0]["socialImport"]
+  > = socialImportService
+    ? { service: socialImportService, disabledReason: null }
+    : {
+        service: null,
+        disabledReason: "XHS browser deps not initialised in this runtime",
+      };
+  if (socialImportDeps.service === null) {
+    console.warn(
+      `[friday][W-SOCIAL-IMPORT-001] Social-import disabled: ${socialImportDeps.disabledReason}; POST /v1/skills/social-import will return 503 SOCIAL_IMPORT_DISABLED`,
+    );
+  }
+
   // ── Link Understanding pipeline ──
   // Wire the full auto-detect-links service for session message enrichment.
   {
@@ -6315,6 +6343,7 @@ export async function createFridayHub(
     multiTenantSecurity: multiTenantSecurityDeps,
     desktop: desktopRouteDeps,
     mediaUnderstanding: mediaUnderstandingDeps,
+    socialImport: socialImportDeps,
   });
 
   if (reflexService) {
