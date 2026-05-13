@@ -127,6 +127,35 @@ describe("run-real-green-gate-self-hosted", () => {
     expect(gateEnv.FRIDAY_STATE_DIR).toBe(paths.stateDir);
     expect(gateEnv.FRIDAY_WORKSPACE_ROOT).toBe(workspaceRoot);
     expect(gateEnv.FRIDAY_BASE_URL).toBe("http://127.0.0.1:3141");
+    expect(runtimeEnv.FRIDAY_CHANNELS_JSON).toBeUndefined();
+    expect(gateEnv.FRIDAY_CHANNELS_JSON).toBeUndefined();
+  });
+
+  it("preserves an explicitly provided channel config for self-hosted runs", () => {
+    const paths = {
+      stateDir: "/tmp/friday-rgg-runtime/state",
+    };
+    const explicitChannelsJson = '{"enabled":true,"instances":[{"kind":"discord","enabled":true}]}';
+
+    const runtimeEnv = createRuntimeEnv(
+      { FRIDAY_CHANNELS_JSON: explicitChannelsJson },
+      paths,
+      3141,
+      "passphrase-placeholder",
+      "token-placeholder",
+      "/home/runner/work/Friday/Friday",
+    );
+    const gateEnv = createGateEnv(
+      { FRIDAY_CHANNELS_JSON: explicitChannelsJson },
+      paths,
+      "http://127.0.0.1:3141",
+      "passphrase-placeholder",
+      "token-placeholder",
+      "/home/runner/work/Friday/Friday",
+    );
+
+    expect(runtimeEnv.FRIDAY_CHANNELS_JSON).toBe(explicitChannelsJson);
+    expect(gateEnv.FRIDAY_CHANNELS_JSON).toBe(explicitChannelsJson);
   });
 
   it("keeps build failure inside the self-hosted workflow step so an errored artifact is uploaded", () => {
