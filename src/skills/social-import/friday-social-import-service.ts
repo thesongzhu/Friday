@@ -21,8 +21,8 @@
 import { FridayDomainError } from "#errors";
 import {
   createFridaySkillCandidateSourceProvenance,
-  redactFridaySkillCandidateSourceUri,
   type FridaySkillConversionSource,
+  redactFridaySkillCandidateSourceUri,
 } from "#skills/converter";
 import {
   createFridayMutatingActionDigest,
