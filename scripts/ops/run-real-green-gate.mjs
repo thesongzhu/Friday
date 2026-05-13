@@ -63,6 +63,10 @@ const PUBLIC_SURFACE_SCENARIOS = [
   "l2-sessions-contract",
 ];
 
+const EXTERNAL_CHANNEL_SCENARIOS = [
+  "l6-discord-channel-roundtrip",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -211,6 +215,7 @@ function createInitialPhaseStatus() {
     publicSurface: { status: "pending" },
     branchConformance: { status: "pending" },
     skillConformance: { status: "pending" },
+    externalChannels: { status: "pending" },
   };
 }
 
@@ -285,6 +290,7 @@ function renderMarkdown(summary) {
     `- Smoke report: ${summary.smoke?.reportRoot ?? "n/a"}`,
     `- Daily core report: ${summary.dailyCore?.reportRoot ?? "n/a"}`,
     `- Public surface report: ${summary.publicSurface?.reportRoot ?? "n/a"}`,
+    `- External channel report: ${summary.externalChannels?.reportRoot ?? "n/a"}`,
     `- Branch conformance: ${summary.branchConformance?.recommendation ?? "n/a"}`,
     `- Skill conformance: ${summary.skillConformance?.ok === true ? "passed" : "failed"}`,
     `- Last completed phase: ${summary.lastCompletedPhase ?? "none"}`,
@@ -372,7 +378,16 @@ function hasOnlyPassed(run) {
   return Object.entries(counts).every(([key, value]) => key === "passed" || Number(value) === 0);
 }
 
-function deriveGateReasons({ preflight, smoke, dailyCore, publicSurface, branchConformance, skillConformance, error }) {
+function deriveGateReasons({
+  preflight,
+  smoke,
+  dailyCore,
+  publicSurface,
+  externalChannels,
+  branchConformance,
+  skillConformance,
+  error,
+}) {
   const reasons = [];
   const fallbackRequired = preflight?.envTruth?.providerLaneRequirements?.fallbackRequired !== false;
   if (!preflight) {
@@ -402,6 +417,16 @@ function deriveGateReasons({ preflight, smoke, dailyCore, publicSurface, branchC
   } else if (!hasOnlyPassed(publicSurface)) {
     reasons.push("public surface suite is not fully passed");
   }
+  const externalChannelStatus = preflight?.envTruth?.prerequisites?.externalChannels?.status;
+  if (externalChannelStatus !== "ready") {
+    reasons.push(`external channel prerequisite is not ready: ${externalChannelStatus ?? "missing"}`);
+  } else {
+    if (!externalChannels) {
+      reasons.push("external channel suite did not complete while external channels were declared ready");
+    } else if (!hasOnlyPassed(externalChannels)) {
+      reasons.push("external channel suite is not fully passed");
+    }
+  }
   if (!branchConformance) {
     reasons.push("branch conformance did not complete");
   } else if (!(branchConformance.shouldNoop === true || branchConformance.shouldMerge === true)) {
@@ -427,6 +452,7 @@ function buildSummary({
   smoke,
   dailyCore,
   publicSurface,
+  externalChannels,
   branchConformance,
   skillConformance,
   error,
@@ -443,6 +469,7 @@ function buildSummary({
     smoke: smoke ? summarizeRun(smoke) : null,
     dailyCore: dailyCore ? summarizeRun(dailyCore) : null,
     publicSurface: publicSurface ? summarizeRun(publicSurface) : null,
+    externalChannels: externalChannels ? summarizeRun(externalChannels) : null,
     branchConformance: branchConformance ?? null,
     skillConformance: skillConformance ?? null,
     error: error ?? null,
@@ -505,6 +532,7 @@ async function main() {
   let smoke = null;
   let dailyCore = null;
   let publicSurface = null;
+  let externalChannels = null;
   let branchConformance = null;
   let skillConformance = null;
   let terminalError = null;
@@ -595,6 +623,30 @@ async function main() {
     );
     completePhase("publicSurface", { reportRoot: publicSurface.reportRoot });
 
+    if (preflight?.envTruth?.prerequisites?.externalChannels?.status === "ready") {
+      startPhase("externalChannels");
+      externalChannels = await withTimeout(
+        "external channel validation",
+        options.validationTimeoutMs,
+        () => runRealWorldValidation({
+          ...validationBaseOptions,
+          suite: "weekly",
+          scenarioIds: EXTERNAL_CHANNEL_SCENARIOS,
+          repetitions: 1,
+          reportRoot: resolveGateSuiteReportRoot(reportRoot, "external-channels"),
+        }),
+        async () => {
+          await closeSharedUiProbeSession();
+        },
+      );
+      completePhase("externalChannels", { reportRoot: externalChannels.reportRoot });
+    } else {
+      markPhase(phaseStatus, "externalChannels", "skipped", {
+        reason: "external_channels.ready is not true",
+      });
+      writePhaseStatus(reportRoot, phaseStatus);
+    }
+
     startPhase("branchConformance");
     const branchReportRoot = path.join(reportRoot, "branch");
     branchConformance = checkBranchConformance({
@@ -643,6 +695,7 @@ async function main() {
       smoke,
       dailyCore,
       publicSurface,
+      externalChannels,
       branchConformance,
       skillConformance,
       error: terminalError,

@@ -131,6 +131,30 @@ describe("buildRealGreenGateResult", () => {
     });
   });
 
+  it("counts passed external channel scenarios and reports manual-external evidence", () => {
+    const summary = {
+      ...passingSummary(),
+      externalChannels: {
+        resultCounts: { passed: 1 },
+        providerAttemptCount: 0,
+        browserProbeAttemptCount: 0,
+      },
+    };
+    const result = buildRealGreenGateResult({
+      summary,
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-10T07:00:00.000Z",
+    });
+    expect(result).toMatchObject({
+      status: "passed",
+      evidence_kinds_observed: ["real-runtime", "real-provider", "real-browser", "manual-external"],
+      scenarios_run: 48,
+      scenarios_total: 48,
+      scenarios_passed: 48,
+    });
+  });
+
   it("returns status=failed and empty evidence kinds when the gate did not pass", () => {
     const result = buildRealGreenGateResult({
       summary: failingSummary(),
@@ -363,6 +387,25 @@ describe("validateRealGreenGateResult — accepts only a clean pass", () => {
     );
     expect(decision.valid).toBe(false);
     expect(decision.reasons).toContain("passed_with_zero_scenarios");
+  });
+
+  it("rejects a passed artifact that is missing a required evidence kind", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult(),
+      { requiredEvidenceKinds: ["manual-external"] },
+    );
+    expect(decision.valid).toBe(false);
+    expect(decision.reasons).toContain("evidence_kind_missing:manual-external");
+  });
+
+  it("accepts a passed artifact when the required evidence kind is observed", () => {
+    const decision = validateRealGreenGateResult(
+      validPassedResult({
+        evidence_kinds_observed: ["real-runtime", "real-provider", "real-browser", "manual-external"],
+      }),
+      { requiredEvidenceKinds: ["manual-external"] },
+    );
+    expect(decision).toEqual({ valid: true, reasons: [] });
   });
 
   it("PR #187 review regression: rejects status=passed with all three counts = -1", () => {

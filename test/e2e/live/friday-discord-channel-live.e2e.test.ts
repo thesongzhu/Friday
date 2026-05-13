@@ -11,6 +11,8 @@ import { createFridayHub, type FridayHub } from "#hub";
 const RUN_LIVE_DISCORD = process.env.FRIDAY_E2E_LIVE_DISCORD === "1";
 const DISCORD_BOT_TOKEN = process.env.FRIDAY_DISCORD_BOT_TOKEN?.trim() ?? "";
 const DISCORD_SETUP_USER_ID = process.env.FRIDAY_DISCORD_SETUP_USER_ID?.trim() ?? "";
+const DISCORD_GUILD_ID = process.env.FRIDAY_DISCORD_GUILD_ID?.trim() ?? "";
+const DISCORD_CHANNEL_ID = process.env.FRIDAY_DISCORD_CHANNEL_ID?.trim() ?? "";
 
 function authHeaders(accessToken: string): Record<string, string> {
   return {
@@ -36,9 +38,18 @@ function findFreePort(): Promise<number> {
   });
 }
 
-async function discordGet(pathname: string): Promise<{ ok: boolean; status: number; json?: unknown }> {
+async function discordRequest(
+  method: string,
+  pathname: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; json?: unknown }> {
   const res = await fetch(`https://discord.com/api/v10${pathname}`, {
-    headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+    method,
+    headers: {
+      Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();
   let json: unknown;
@@ -50,19 +61,34 @@ async function discordGet(pathname: string): Promise<{ ok: boolean; status: numb
   return { ok: res.ok, status: res.status, json };
 }
 
-describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discord channel closure", () => {
+async function discordGet(pathname: string): Promise<{ ok: boolean; status: number; json?: unknown }> {
+  return discordRequest("GET", pathname);
+}
+
+async function discordDelete(pathname: string): Promise<{ ok: boolean; status: number; json?: unknown }> {
+  return discordRequest("DELETE", pathname);
+}
+
+describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID || !DISCORD_GUILD_ID || !DISCORD_CHANNEL_ID)("Friday live Discord channel closure", () => {
   let stateDir = "";
   let hub: FridayHub | undefined;
   let restartedHub: FridayHub | undefined;
   let httpServer: FridayHttpServer | undefined;
+  const sentChannelMessageIds: string[] = [];
 
   beforeAll(() => {
     expect(DISCORD_BOT_TOKEN.length).toBeGreaterThan(0);
     expect(DISCORD_SETUP_USER_ID.length).toBeGreaterThan(0);
+    expect(DISCORD_GUILD_ID.length).toBeGreaterThan(0);
+    expect(DISCORD_CHANNEL_ID.length).toBeGreaterThan(0);
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-discord-channel-live-"));
   });
 
   afterAll(async () => {
+    for (const messageId of sentChannelMessageIds.reverse()) {
+      await discordDelete(`/channels/${encodeURIComponent(DISCORD_CHANNEL_ID)}/messages/${encodeURIComponent(messageId)}`)
+        .catch(() => {});
+    }
     if (httpServer) await httpServer.close().catch(() => {});
     if (hub) await hub.stop().catch(() => {});
     if (restartedHub) await restartedHub.stop().catch(() => {});
@@ -78,6 +104,15 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discor
 
     const gateway = await discordGet("/gateway");
     expect(gateway.ok, `Discord gateway discovery must pass; HTTP ${String(gateway.status)}`).toBe(true);
+    const guild = await discordGet(`/guilds/${encodeURIComponent(DISCORD_GUILD_ID)}`);
+    expect(guild.ok, `Discord sandbox guild must be visible to the bot; HTTP ${String(guild.status)}`).toBe(true);
+    const guildJson = guild.json as { id?: string } | undefined;
+    expect(guildJson?.id).toBe(DISCORD_GUILD_ID);
+    const channel = await discordGet(`/channels/${encodeURIComponent(DISCORD_CHANNEL_ID)}`);
+    expect(channel.ok, `Discord sandbox channel must be visible to the bot; HTTP ${String(channel.status)}`).toBe(true);
+    const channelJson = channel.json as { id?: string; guild_id?: string } | undefined;
+    expect(channelJson?.id).toBe(DISCORD_CHANNEL_ID);
+    expect(channelJson?.guild_id).toBe(DISCORD_GUILD_ID);
 
     hub = await createFridayHub({
       stateDir,
@@ -113,12 +148,13 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discor
       token: DISCORD_BOT_TOKEN,
       intents: 0,
       botUserId: meJson?.id,
+      allowedChannels: [DISCORD_CHANNEL_ID],
     };
 
     const verificationBeginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
       method: "POST",
       headers: authHeaders(accessToken!),
-      body: JSON.stringify({ token: DISCORD_BOT_TOKEN }),
+      body: JSON.stringify({ token: DISCORD_BOT_TOKEN, guildId: DISCORD_GUILD_ID }),
     });
     const verificationBeginJson = await verificationBeginRes.json() as { ok: boolean; data?: { verificationId?: string } };
     expect(verificationBeginRes.status).toBe(200);
@@ -132,6 +168,7 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discor
       body: JSON.stringify({
         verificationId: setupVerificationId,
         userId: DISCORD_SETUP_USER_ID,
+        guildId: DISCORD_GUILD_ID,
       }),
     });
     const verificationCompleteJson = await verificationCompleteRes.json() as { ok: boolean; data?: { status?: string; dmVerified?: boolean } };
@@ -216,5 +253,49 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID)("Friday live Discor
     const view = restartedHub.channelRegistry.describe("discord");
     expect(view?.status).toBe("connected");
     expect(view?.running).toBe(true);
+
+    const probeText = `Friday F-008 live Discord channel proof ${Date.now().toString(36)}`;
+    const delivery = await restartedHub.channelRegistry.send("discord", {
+      chatId: DISCORD_CHANNEL_ID,
+      chatType: "group",
+      text: probeText,
+    });
+    sentChannelMessageIds.push(delivery.messageId);
+    expect(typeof delivery.messageId).toBe("string");
+
+    const readBack = await discordGet(
+      `/channels/${encodeURIComponent(DISCORD_CHANNEL_ID)}/messages/${encodeURIComponent(delivery.messageId)}`,
+    );
+    expect(readBack.ok, `Discord channel message readback must pass; HTTP ${String(readBack.status)}`).toBe(true);
+    const readBackJson = readBack.json as { id?: string; channel_id?: string; guild_id?: string; content?: string } | undefined;
+    expect(readBackJson?.id).toBe(delivery.messageId);
+    expect(readBackJson?.channel_id).toBe(DISCORD_CHANNEL_ID);
+    expect(readBackJson?.guild_id).toBe(DISCORD_GUILD_ID);
+    expect(readBackJson?.content).toBe(probeText);
+
+    const replyText = `Friday F-008 live Discord channel reply ${Date.now().toString(36)}`;
+    const reply = await restartedHub.channelRegistry.send("discord", {
+      chatId: DISCORD_CHANNEL_ID,
+      chatType: "group",
+      replyTo: delivery.messageId,
+      text: replyText,
+    });
+    sentChannelMessageIds.push(reply.messageId);
+    const replyReadBack = await discordGet(
+      `/channels/${encodeURIComponent(DISCORD_CHANNEL_ID)}/messages/${encodeURIComponent(reply.messageId)}`,
+    );
+    expect(replyReadBack.ok, `Discord reply readback must pass; HTTP ${String(replyReadBack.status)}`).toBe(true);
+    const replyJson = replyReadBack.json as {
+      id?: string;
+      channel_id?: string;
+      guild_id?: string;
+      content?: string;
+      message_reference?: { message_id?: string };
+    } | undefined;
+    expect(replyJson?.id).toBe(reply.messageId);
+    expect(replyJson?.channel_id).toBe(DISCORD_CHANNEL_ID);
+    expect(replyJson?.guild_id).toBe(DISCORD_GUILD_ID);
+    expect(replyJson?.message_reference?.message_id).toBe(delivery.messageId);
+    expect(replyJson?.content).toBe(replyText);
   }, 60_000);
 });
