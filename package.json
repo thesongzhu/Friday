@@ -239,6 +239,7 @@
     "#skills": "./dist/skills/index.js",
     "#skills/converter": "./dist/skills/converter/index.js",
     "#skills/generator": "./dist/skills/generator/index.js",
+    "#skills/social-import": "./dist/skills/social-import/index.js",
     "#state": "./dist/state/index.js",
     "#memory": "./dist/memory/index.js",
     "#sessions": "./dist/sessions/index.js",

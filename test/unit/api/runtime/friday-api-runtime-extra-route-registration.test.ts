@@ -193,6 +193,36 @@ describe("API Runtime — Extended Route Registration", () => {
     // MEDIA_UNDERSTANDING_DISABLED, never 404.
     expect(operationIds).toContain("media.understanding.doctor");
     expect(operationIds).toContain("media.understanding.analyze");
+    // Phase 02b: social-import route is ALWAYS registered even when
+    // deps.socialImport is omitted. Disabled deployments return 503
+    // SOCIAL_IMPORT_DISABLED, never 404.
+    expect(operationIds).toContain("skills.social.import");
+  });
+
+  it("registers skills.social.import in disabled state when deps.socialImport is omitted", async () => {
+    const runtime = createFridayApiRuntime(makeBaseDeps());
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "skills.social.import");
+    expect(route).toBeDefined();
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-social-import-disabled",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: {
+          socialUrl: "https://www.xiaohongshu.com/explore/abc",
+          targetGithubRepoUrl: "https://github.com/octocat/Hello-World",
+        },
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("SOCIAL_IMPORT_DISABLED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
   });
 
   it("registers media-understanding routes in disabled state when deps.mediaUnderstanding is omitted", async () => {

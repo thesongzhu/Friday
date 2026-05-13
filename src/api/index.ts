@@ -138,6 +138,8 @@ export type {
   FridayMediaUnderstandingAnalyzeRequestAttachment,
   FridayMediaUnderstandingAnalyzeResponse,
 } from "./http/routes/friday-media-understanding-routes.js";
+export { createFridaySocialImportRoutes } from "./http/routes/friday-social-import-routes.js";
+export type { FridaySocialImportRoutesDeps } from "./http/routes/friday-social-import-routes.js";
 export { createFridayAuthRoutes } from "./http/routes/friday-auth-routes.js";
 export { createFridayRealtimeRoutes } from "./http/routes/friday-realtime-routes.js";
 export { createFridayFleetRoutes } from "./http/routes/friday-fleet-routes.js";
