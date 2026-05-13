@@ -63,6 +63,69 @@ describe("controlled autonomy closed loops", () => {
     expect(approved.registeredCapabilities.some((item) => item.capability === "ocr")).toBe(false);
   });
 
+  it("registers external setup_recipe candidate when live matrix confirms capability is available", async () => {
+    let currentMatrix = matrixWith();
+    const mutableService = createFridayCapabilityAcquisitionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+      policyService,
+      capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: currentMatrix }),
+    });
+
+    const run = await mutableService.startRun({
+      userId: "test-user",
+      goal: "识别这张扫描件里的文字",
+      requiredCapabilities: ["text", "ocr"],
+    });
+    expect(run.status).toBe("human_blocked");
+    expect(run.humanBlockers.join("\n")).toContain("API key");
+
+    const stillBlocked = await mutableService.approveRun(run.id);
+    expect(stillBlocked.status).toBe("human_blocked");
+
+    currentMatrix = matrixWith("ocr");
+
+    const approved = await mutableService.approveRun(run.id);
+    expect(approved.status).toBe("verified");
+    expect(approved.executionSuggestion.canExecute).toBe(true);
+    expect(approved.executionSuggestion.nextAction).toBe("execute_task");
+    expect(approved.registeredCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ capability: "ocr", state: "available" }),
+      ]),
+    );
+    const ocrVerification = approved.verificationResults.find((v) => v.capability === "ocr");
+    expect(ocrVerification?.status).toBe("passed");
+    expect(ocrVerification?.evidence).toContain("Live runtime capability matrix");
+  });
+
+  it("keeps partial blockers when only some external capabilities become available", async () => {
+    let currentMatrix = matrixWith();
+    const mutableService = createFridayCapabilityAcquisitionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+      policyService,
+      capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: currentMatrix }),
+    });
+
+    const run = await mutableService.startRun({
+      userId: "test-user",
+      goal: "识别扫描件并生成语音",
+      requiredCapabilities: ["text", "ocr", "tts"],
+    });
+    expect(run.status).toBe("human_blocked");
+    expect(run.humanBlockers.length).toBeGreaterThanOrEqual(2);
+
+    currentMatrix = matrixWith("ocr");
+
+    const partial = await mutableService.approveRun(run.id);
+    expect(partial.status).toBe("human_blocked");
+    expect(partial.humanBlockers.some((b) => b.includes("ocr"))).toBe(false);
+    expect(partial.humanBlockers.some((b) => b.includes("tts"))).toBe(true);
+  });
+
   it("requires approval before a generated custom capability can register", async () => {
     const run = await acquisitionService.startRun({
       userId: "test-user",
@@ -150,7 +213,7 @@ function emptyAgentSnapshot() {
   };
 }
 
-function matrixWith(): FridayRuntimeCapabilityMatrix {
+function matrixWith(...extraAvailable: FridayRuntimeCapabilityId[]): FridayRuntimeCapabilityMatrix {
   const available = new Set<FridayRuntimeCapabilityId>([
     "text",
     "web_search",
@@ -160,6 +223,7 @@ function matrixWith(): FridayRuntimeCapabilityMatrix {
     "pdf_parse",
     "browser",
     "skills",
+    ...extraAvailable,
   ]);
   const needsAuth = new Set<FridayRuntimeCapabilityId>(["vision", "ocr", "embedding", "tts"]);
   const buildable = new Set<FridayRuntimeCapabilityId>(["custom"]);

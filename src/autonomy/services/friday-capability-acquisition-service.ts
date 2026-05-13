@@ -143,14 +143,25 @@ export function createFridayCapabilityAcquisitionService(
     if (current.status === "cancelled") {
       return current;
     }
+
+    const liveMatrix = await resolveMatrix(false);
+    const liveItemByCapability = new Map(liveMatrix.items.map((item) => [item.capability, item]));
+
     if (current.humanBlockers.length > 0) {
-      const blocked = {
-        ...current,
-        status: "human_blocked" as const,
-        updatedAt: nowIso(),
-      };
-      saveRun(blocked);
-      return blocked;
+      const unresolvedBlockers = collectHumanBlockers(
+        current.candidates,
+        current.requiredCapabilities.filter((cap) => liveItemByCapability.get(cap)?.state !== "available"),
+      );
+      if (unresolvedBlockers.length > 0) {
+        const blocked = {
+          ...current,
+          status: "human_blocked" as const,
+          humanBlockers: unresolvedBlockers,
+          updatedAt: nowIso(),
+        };
+        saveRun(blocked);
+        return blocked;
+      }
     }
 
     const verifiedAt = nowIso();
@@ -175,16 +186,25 @@ export function createFridayCapabilityAcquisitionService(
         });
         continue;
       }
+      const liveItem = liveItemByCapability.get(capability);
       const passed = candidate.sourceType === "available_runtime"
         || candidate.sourceType === "skill_generator"
         || candidate.sourceType === "workflow_generator"
-        || candidate.sourceType === "builtin_catalog";
+        || candidate.sourceType === "builtin_catalog"
+        || liveItem?.state === "available";
+      const liveVerified = passed
+        && candidate.sourceType !== "available_runtime"
+        && candidate.sourceType !== "skill_generator"
+        && candidate.sourceType !== "workflow_generator"
+        && candidate.sourceType !== "builtin_catalog";
       verificationResults.push({
         candidateId: candidate.id,
         capability,
         status: passed ? "passed" : "blocked",
         evidence: passed
-          ? `Sandbox/doctor dry-run accepted ${candidate.label}; runtime registration may proceed.`
+          ? liveVerified
+            ? `Live runtime capability matrix confirms ${capability} is available after external setup; doctor state verified at runtime.`
+            : `Sandbox/doctor dry-run accepted ${candidate.label}; runtime registration may proceed.`
           : `${candidate.label} still requires external setup or installation evidence before registration.`,
         verifiedAt,
         ...(passed ? {} : { blocker: "External setup/install must complete and pass doctor verification." }),
@@ -195,9 +215,11 @@ export function createFridayCapabilityAcquisitionService(
           sourceCandidateId: candidate.id,
           registeredAt: verifiedAt,
           state: "available",
-          note: candidate.sourceType === "available_runtime"
-            ? "Already present in runtime capability matrix."
-            : "Generated/local candidate passed the sandbox gate and can be routed.",
+          note: liveVerified
+            ? "External setup completed; live capability matrix confirms availability via runtime doctor."
+            : candidate.sourceType === "available_runtime"
+              ? "Already present in runtime capability matrix."
+              : "Generated/local candidate passed the sandbox gate and can be routed.",
         });
       }
     }
