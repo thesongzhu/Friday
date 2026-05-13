@@ -73,7 +73,7 @@ export function createFridayRuntimeAdminRoutes(
         operationId: "config.get",
         method: "GET",
         path: "/v1/config",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const query = ctx.query as Record<string, unknown>;
           return deps.config!.get({
@@ -85,7 +85,7 @@ export function createFridayRuntimeAdminRoutes(
         operationId: "config.update",
         method: "PATCH",
         path: "/v1/config",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const body = (ctx.body ?? {}) as Record<string, unknown>;
           if (!Number.isInteger(body.expectedRevision) || Number(body.expectedRevision) < 1) {
@@ -109,7 +109,7 @@ export function createFridayRuntimeAdminRoutes(
         operationId: "config.revisions.list",
         method: "GET",
         path: "/v1/config/revisions",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const query = ctx.query as Record<string, unknown>;
           const limit =
@@ -133,7 +133,7 @@ export function createFridayRuntimeAdminRoutes(
         operationId: "config.revisions.revert",
         method: "POST",
         path: "/v1/config/revert",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const body = (ctx.body ?? {}) as Record<string, unknown>;
           if (!Number.isInteger(body.toRevision) || Number(body.toRevision) < 1) {
@@ -152,7 +152,7 @@ export function createFridayRuntimeAdminRoutes(
       operationId: "audit.logs.list",
       method: "GET",
       path: "/v1/audit/logs",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.auditLogs!.list(ctx.query as FridayListAuditLogsQuery);
       },

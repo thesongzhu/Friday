@@ -126,7 +126,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.list",
       method: "GET",
       path: "/v1/auto-fix/actions",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListAutoFixActionsResponse> {
         const userId = requireUserId(ctx.principal);
         const query = (ctx.query ?? {}) as Record<string, unknown>;
@@ -146,7 +146,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.run.ready",
       method: "POST",
       path: "/v1/auto-fix/actions/run-ready",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixRunReadyResponse> {
         const userId = requireUserId(ctx.principal);
@@ -171,7 +171,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.get",
       method: "GET",
       path: "/v1/auto-fix/actions/:actionId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetAutoFixActionResponse> {
         requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
@@ -188,7 +188,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.approve",
       method: "POST",
       path: "/v1/auto-fix/actions/:actionId/approve",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixApprovalResponse> {
         const respondedBy = requireUserId(ctx.principal);
@@ -208,7 +208,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.deny",
       method: "POST",
       path: "/v1/auto-fix/actions/:actionId/deny",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixApprovalResponse> {
         const respondedBy = requireUserId(ctx.principal);
@@ -232,7 +232,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.execute",
       method: "POST",
       path: "/v1/auto-fix/actions/:actionId/execute",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixExecutionResponse> {
         requireUserId(ctx.principal);
@@ -254,7 +254,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.actions.rollback",
       method: "POST",
       path: "/v1/auto-fix/actions/:actionId/rollback",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixExecutionResponse> {
         requireUserId(ctx.principal);
@@ -282,7 +282,7 @@ export function createFridayAutoFixRoutes(
       operationId: "autofix.metrics.get",
       method: "GET",
       path: "/v1/auto-fix/metrics",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAutoFixMetricsResponse> {
         requireUserId(ctx.principal);
         const query = (ctx.query ?? {}) as Record<string, unknown>;

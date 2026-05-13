@@ -117,7 +117,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.publish",
       method: "POST",
       path: "/v1/packages",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const body = ctx.body as FridayPublishPackageRequest;
@@ -130,7 +130,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.list",
       method: "GET",
       path: "/v1/packages",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         return services.packages.list(ctx.query as FridayListPackagesQuery);
@@ -140,7 +140,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.get",
       method: "GET",
       path: "/v1/packages/:packageId",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageId } = ctx.params as { packageId: UUID };
@@ -151,7 +151,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.versions.list",
       method: "GET",
       path: "/v1/packages/:packageName/versions",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -162,7 +162,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.verify",
       method: "POST",
       path: "/v1/packages/:packageId/verify",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageId } = ctx.params as { packageId: UUID };
@@ -175,7 +175,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.packages.dependencies.check",
       method: "POST",
       path: "/v1/packages/:packageName/check-dependencies",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -193,7 +193,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.install",
       method: "POST",
       path: "/v1/packages/:packageName/install",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -207,7 +207,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.upgrade",
       method: "POST",
       path: "/v1/packages/:packageName/upgrade",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -221,7 +221,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.rollback",
       method: "POST",
       path: "/v1/packages/:packageName/rollback",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -237,7 +237,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.uninstall",
       method: "POST",
       path: "/v1/packages/:packageName/uninstall",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { packageName } = ctx.params as { packageName: string };
@@ -251,7 +251,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.list",
       method: "GET",
       path: "/v1/packages/installs",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         return services.installs.list(ctx.query as FridayListInstallsQuery);
@@ -261,7 +261,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.installs.get",
       method: "GET",
       path: "/v1/packages/installs/:installId",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { installId } = ctx.params as { installId: UUID };
@@ -277,7 +277,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.lifecycle.list",
       method: "GET",
       path: "/v1/packages/lifecycle",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         return services.lifecycle.list(ctx.query as FridayListLifecycleEventsQuery);
@@ -292,7 +292,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.keys.list",
       method: "GET",
       path: "/v1/packages/keys",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         return services.keys.list(ctx.query as FridayListTrustedKeysRequest);
@@ -302,7 +302,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.keys.add",
       method: "POST",
       path: "/v1/packages/keys",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const body = ctx.body as FridayAddTrustedKeyRequest;
@@ -317,7 +317,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.keys.revoke",
       method: "POST",
       path: "/v1/packages/keys/:keyId/revoke",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { keyId } = ctx.params as { keyId: string };
@@ -331,7 +331,7 @@ export function createFridayPackagingRoutes(
       operationId: "packaging.keys.rotate",
       method: "POST",
       path: "/v1/packages/keys/:keyId/rotate",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const services = requireEnabled();
         const { keyId } = ctx.params as { keyId: string };

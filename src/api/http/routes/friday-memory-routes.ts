@@ -212,7 +212,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.store",
       method: "POST",
       path: "/v1/memory/store",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "memory.write",
       async handler(ctx): Promise<FridayMemoryStoreResponse> {
         // DX-003: Default namespace to "default" if not provided (immutable clone)
@@ -280,7 +280,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.items.create",
       method: "POST",
       path: "/v1/memory/items",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "memory.write",
       async handler(ctx): Promise<FridayMemoryStoreResponse> {
         const rawBody = ctx.body != null && typeof ctx.body === "object"
@@ -347,7 +347,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.search",
       method: "POST",
       path: "/v1/memory/search",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayMemorySearchResponse> {
         validateSearchBody(ctx.body);
         const body = ctx.body;
@@ -384,7 +384,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.get",
       method: "GET",
       path: "/v1/memory/items/:id",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetMemoryItemResponse> {
         const { id } = ctx.params as { id: string };
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
@@ -405,7 +405,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.list",
       method: "GET",
       path: "/v1/memory/items",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListMemoryItemsResponse> {
         const query = ctx.query as Record<string, string | undefined>;
         const namespace = query.namespace;
@@ -443,7 +443,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.delete",
       method: "DELETE",
       path: "/v1/memory/items/:id",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayDeleteMemoryItemResponse> {
         const { id } = ctx.params as { id: string };
         if (isLearnedFactSyntheticId(id)) {
@@ -493,7 +493,7 @@ export function createFridayMemoryRoutes(
       operationId: "memory.prune",
       method: "POST",
       path: "/v1/memory/prune",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayMemoryPruneResponse> {
         const rawBody = ctx.body ?? {};
         validatePruneBody(rawBody);

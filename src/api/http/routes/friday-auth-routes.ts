@@ -102,7 +102,7 @@ export function createFridayAuthRoutes(
       operationId: "auth.logout",
       method: "POST",
       path: "/v1/auth/logout",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "auth.logout",
       async handler(ctx) {
         return deps.authService.logout(ctx.body as FridayLogoutRequest, ctx.principal!);
@@ -112,7 +112,7 @@ export function createFridayAuthRoutes(
       operationId: "auth.me",
       method: "GET",
       path: "/v1/auth/me",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.authService.me(ctx.principal!);
       },

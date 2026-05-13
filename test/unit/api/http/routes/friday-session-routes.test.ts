@@ -111,7 +111,7 @@ describe("FridaySessionRoutes", () => {
     const svc = createMockService();
     const routes = createFridaySessionRoutes({ sessionService: svc });
     for (const route of routes) {
-      expect(route.auth).toHaveProperty("public", false);
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

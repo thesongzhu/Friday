@@ -96,7 +96,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.bundles.list",
       method: "GET",
       path: "/v1/rules/bundles",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.rules.listBundles(ctx.query as Record<string, unknown>);
       },
@@ -106,7 +106,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.bundles.get",
       method: "GET",
       path: "/v1/rules/bundles/:bundleId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { bundleId } = ctx.params as { bundleId: string };
         return deps.rules.getBundle(bundleId);
@@ -117,7 +117,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.bundles.create",
       method: "POST",
       path: "/v1/rules/bundles",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.name !== "string" || body.name.trim() === "") {
@@ -134,7 +134,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.bundles.update",
       method: "PATCH",
       path: "/v1/rules/bundles/:bundleId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { bundleId } = ctx.params as { bundleId: string };
         const body = ctx.body as Record<string, unknown> | null;
@@ -152,7 +152,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.bundles.versions.list",
       method: "GET",
       path: "/v1/rules/bundles/:bundleId/versions",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { bundleId } = ctx.params as { bundleId: string };
         return deps.rules.listBundleVersions(bundleId, ctx.query as Record<string, unknown>);
@@ -163,7 +163,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.list",
       method: "GET",
       path: "/v1/rules/bundles/:bundleId/rules",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { bundleId } = ctx.params as { bundleId: string };
         return deps.rules.listRules(bundleId, ctx.query as Record<string, unknown>);
@@ -174,7 +174,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.evaluate",
       method: "POST",
       path: "/v1/rules/evaluate",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.bundleId !== "string") {
@@ -192,7 +192,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.simulate",
       method: "POST",
       path: "/v1/rules/simulate",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.bundleId !== "string") {
@@ -210,7 +210,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.versions.list",
       method: "GET",
       path: "/v1/rules/:ruleId/versions",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { ruleId } = ctx.params as { ruleId: string };
         return deps.rules.listRuleVersions(ruleId, ctx.query as Record<string, unknown>);
@@ -221,7 +221,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "rules.audit.log.list",
       method: "GET",
       path: "/v1/rules/audit-log",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.rules.listEvaluationAuditLog(ctx.query as Record<string, unknown>);
       },
@@ -235,7 +235,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "node.runner.execute",
       method: "POST",
       path: "/v1/node-runner/execute",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.nodeId !== "string") {
@@ -253,7 +253,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "node.runner.executions.get",
       method: "GET",
       path: "/v1/node-runner/executions/:executionId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { executionId } = ctx.params as { executionId: string };
         return deps.nodeRunner.getExecution(executionId);
@@ -264,7 +264,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "node.runner.executions.list",
       method: "GET",
       path: "/v1/node-runner/executions",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.nodeRunner.listExecutions(ctx.query as Record<string, unknown>);
       },
@@ -278,7 +278,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.run",
       method: "POST",
       path: "/v1/acceptance/run",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.artifactType !== "string") {
@@ -296,7 +296,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.results.get",
       method: "GET",
       path: "/v1/acceptance/results/:resultId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { resultId } = ctx.params as { resultId: string };
         return deps.acceptance.getResult(resultId);
@@ -307,7 +307,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.results.list",
       method: "GET",
       path: "/v1/acceptance/results",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.acceptance.listResults(ctx.query as Record<string, unknown>);
       },
@@ -317,7 +317,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.runs.get",
       method: "GET",
       path: "/v1/acceptance/runs/:runId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         return deps.acceptance.getResult(runId);
@@ -328,7 +328,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.list",
       method: "GET",
       path: "/v1/acceptance/tests",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.acceptance.listTests(ctx.query as Record<string, unknown>);
       },
@@ -338,7 +338,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.get",
       method: "GET",
       path: "/v1/acceptance/tests/:testId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { testId } = ctx.params as { testId: string };
         return deps.acceptance.getTest(testId);
@@ -349,7 +349,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.create",
       method: "POST",
       path: "/v1/acceptance/tests",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.name !== "string" || typeof body.artifactType !== "string") {
@@ -367,7 +367,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.update",
       method: "PUT",
       path: "/v1/acceptance/tests/:testId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.etag !== "string") {
@@ -386,7 +386,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.delete",
       method: "DELETE",
       path: "/v1/acceptance/tests/:testId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.etag !== "string") {
@@ -405,7 +405,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.tests.versions.list",
       method: "GET",
       path: "/v1/acceptance/tests/:testId/versions",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { testId } = ctx.params as { testId: string };
         return deps.acceptance.listVersions(testId, ctx.query as Record<string, unknown>);
@@ -416,7 +416,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "acceptance.artifacts.history",
       method: "GET",
       path: "/v1/acceptance/artifacts/history",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         if (typeof (ctx.query as Record<string, unknown>).artifactUri !== "string") {
           throw new FridayDomainError(
@@ -437,7 +437,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.policies.list",
       method: "GET",
       path: "/v1/retry/policies",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.retry.listPolicies(ctx.query as Record<string, unknown>);
       },
@@ -447,7 +447,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.policies.get",
       method: "GET",
       path: "/v1/retry/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId } = ctx.params as { policyId: string };
         return deps.retry.getPolicy(policyId);
@@ -458,7 +458,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.policies.create",
       method: "POST",
       path: "/v1/retry/policies",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.name !== "string") {
@@ -476,7 +476,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.policies.update",
       method: "PUT",
       path: "/v1/retry/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.etag !== "string") {
@@ -495,7 +495,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.policies.delete",
       method: "DELETE",
       path: "/v1/retry/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.etag !== "string") {
@@ -514,7 +514,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.classify",
       method: "POST",
       path: "/v1/retry/classify",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.error !== "object" || body.error === null) {
@@ -532,7 +532,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.decide",
       method: "POST",
       path: "/v1/retry/decide",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.runId !== "string" || typeof body.workflowId !== "string" || typeof body.nodeId !== "string") {
@@ -550,7 +550,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.traces.list",
       method: "GET",
       path: "/v1/retry/traces",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.retry.listTraces(ctx.query as Record<string, unknown>);
       },
@@ -560,7 +560,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.traces.get",
       method: "GET",
       path: "/v1/retry/traces/:traceId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { traceId } = ctx.params as { traceId: string };
         return deps.retry.getTrace(traceId);
@@ -571,7 +571,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.costs.summary",
       method: "GET",
       path: "/v1/retry/costs",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.retry.getCostSummary(ctx.query as Record<string, unknown>);
       },
@@ -581,7 +581,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.escalations.list",
       method: "GET",
       path: "/v1/retry/escalations",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.retry.listEscalations(ctx.query as Record<string, unknown>);
       },
@@ -591,7 +591,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.escalations.acknowledge",
       method: "POST",
       path: "/v1/retry/escalations/:escalationId/acknowledge",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { escalationId } = ctx.params as { escalationId: string };
         return deps.retry.acknowledgeEscalation(escalationId, ctx.body);
@@ -602,7 +602,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "retry.circuit.breakers.list",
       method: "GET",
       path: "/v1/retry/circuit-breakers",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.retry.listCircuitBreakers(ctx.query as Record<string, unknown>);
       },
@@ -616,7 +616,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.list",
       method: "GET",
       path: "/v1/playbooks",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.playbook.listPlaybooks(ctx.query as Record<string, unknown>);
       },
@@ -626,7 +626,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.get",
       method: "GET",
       path: "/v1/playbooks/:playbookId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { playbookId } = ctx.params as { playbookId: string };
         return deps.playbook.getPlaybook(playbookId);
@@ -637,7 +637,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.select",
       method: "POST",
       path: "/v1/playbooks/select",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.workflowType !== "string") {
@@ -655,7 +655,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.candidates.list",
       method: "GET",
       path: "/v1/playbooks/candidates",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.playbook.listCandidates(ctx.query as Record<string, unknown>);
       },
@@ -665,7 +665,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.candidates.promote",
       method: "POST",
       path: "/v1/playbooks/candidates/:candidateId/promote",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { candidateId } = ctx.params as { candidateId: string };
         return deps.playbook.promoteCandidate(candidateId, ctx.body);
@@ -676,7 +676,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.rollback",
       method: "POST",
       path: "/v1/playbooks/:playbookId/rollback",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { playbookId } = ctx.params as { playbookId: string };
         const body = ctx.body as Record<string, unknown> | null;
@@ -695,7 +695,7 @@ export function createFridayDeterministicPipelineRoutes(
       operationId: "playbook.scores",
       method: "GET",
       path: "/v1/playbooks/:playbookId/scores",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { playbookId } = ctx.params as { playbookId: string };
         return deps.playbook.getScoreHistory(playbookId, ctx.query as Record<string, unknown>);

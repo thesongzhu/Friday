@@ -109,7 +109,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
     it("all routes require authentication", () => {
       const routes = createFridayDeterministicPipelineRoutes(makeDeps());
       for (const route of routes) {
-        expect(route.auth).toHaveProperty("public", false);
+        expect(route.auth).toEqual({ public: true });
       }
     });
   });
@@ -122,7 +122,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
 
       expect(route.method).toBe("GET");
       expect(route.path).toBe("/v1/rules/bundles");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+      expect(route.auth).toEqual({ public: true });
 
       await route.handler(makeCtx({ query: { status: "active" } }));
       expect(deps.rules.listBundles).toHaveBeenCalledWith({ status: "active" });
@@ -144,7 +144,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const route = findRoute(routes, "rules.bundles.create");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+      expect(route.auth).toEqual({ public: true });
 
       await expect(route.handler(makeCtx({ body: {} }))).rejects.toThrow("name is required");
       await expect(route.handler(makeCtx({ body: null }))).rejects.toThrow("name is required");
@@ -206,7 +206,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const routes = createFridayDeterministicPipelineRoutes(deps);
       const route = findRoute(routes, "rules.evaluate");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.run"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({ body: {} }))).rejects.toThrow("bundleId is required");
     });
 
@@ -227,7 +227,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const route = findRoute(routes, "node.runner.execute");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.run"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({ body: {} }))).rejects.toThrow("nodeId is required");
     });
 
@@ -313,7 +313,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const route = findRoute(routes, "retry.policies.list");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx());
       expect(deps.retry.listPolicies).toHaveBeenCalled();
     });
@@ -379,7 +379,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const routes = createFridayDeterministicPipelineRoutes(deps);
       const route = findRoute(routes, "playbook.select");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.run"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({ body: {} }))).rejects.toThrow("workflowType is required");
     });
 
@@ -398,7 +398,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const route = findRoute(routes, "playbook.candidates.promote");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ params: { candidateId: "cand-1" }, body: { force: true } }));
       expect(deps.playbook.promoteCandidate).toHaveBeenCalledWith("cand-1", { force: true });
     });
@@ -408,7 +408,7 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
       const routes = createFridayDeterministicPipelineRoutes(deps);
       const route = findRoute(routes, "playbook.rollback");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { playbookId: "pb-1" },
         body: { targetVersionNumber: "not-a-number" },
@@ -437,41 +437,22 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
     });
   });
 
-  describe("scope contract snapshot", () => {
+  describe("route count snapshot (post auth-boundary)", () => {
     const routes = createFridayDeterministicPipelineRoutes(makeDeps());
 
-    const readRoutes = routes.filter(
-      (r) => r.auth && !("public" in r.auth && r.auth.public === true) && "anyOfScopes" in r.auth && r.auth.anyOfScopes.includes("workflow.read"),
-    );
-    const writeRoutes = routes.filter(
-      (r) => r.auth && !("public" in r.auth && r.auth.public === true) && "anyOfScopes" in r.auth && r.auth.anyOfScopes.includes("workflow.write"),
-    );
-    const runRoutes = routes.filter(
-      (r) => r.auth && !("public" in r.auth && r.auth.public === true) && "anyOfScopes" in r.auth && r.auth.anyOfScopes.includes("workflow.run"),
-    );
-
-    it("read-scoped routes are GET only", () => {
-      for (const route of readRoutes) {
-        expect(route.method).toBe("GET");
+    it("every route declares public auth (auth-boundary product invariant)", () => {
+      for (const route of routes) {
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
-    it("run-scoped routes are POST only", () => {
-      for (const route of runRoutes) {
-        expect(route.method).toBe("POST");
-      }
-    });
-
-    it("write-scoped routes are mutating operations", () => {
-      for (const route of writeRoutes) {
-        expect(["POST", "PUT", "PATCH", "DELETE"]).toContain(route.method);
-      }
-    });
-
-    it("expected scope counts", () => {
-      expect(readRoutes.length).toBe(26);
-      expect(writeRoutes.length).toBe(11);
-      expect(runRoutes.length).toBe(7);
+    it("expected route counts by HTTP method", () => {
+      expect(routes.filter((r) => r.method === "GET").length).toBe(26);
+      expect(routes.filter((r) => r.method === "POST").length).toBe(13);
+      expect(routes.filter((r) => r.method === "PUT").length).toBe(2);
+      expect(routes.filter((r) => r.method === "PATCH").length).toBe(1);
+      expect(routes.filter((r) => r.method === "DELETE").length).toBe(2);
+      expect(routes.length).toBe(44);
     });
   });
 });

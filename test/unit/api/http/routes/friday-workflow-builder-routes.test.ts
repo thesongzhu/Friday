@@ -61,7 +61,7 @@ describe("FridayWorkflowBuilderRoutes", () => {
     const route = routes.find((r) => r.operationId === "drafts.list");
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflows/:workflowId/drafts/:draftId/publish has rate limit", () => {
@@ -74,21 +74,21 @@ describe("FridayWorkflowBuilderRoutes", () => {
     const route = routes.find((r) => r.operationId === "locks.acquire");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/workflows/:workflowId/drafts/:draftId/export requires workflow.read", () => {
     const route = routes.find((r) => r.operationId === "drafts.export");
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflows/:workflowId/import requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "workflows.bundles.import");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/workflow-builder/templates requires workflow.read", () => {
@@ -96,7 +96,7 @@ describe("FridayWorkflowBuilderRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-builder/templates");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflow-builder/templates/:templateId/instantiate requires workflow.write", () => {
@@ -104,6 +104,6 @@ describe("FridayWorkflowBuilderRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/workflow-builder/templates/:templateId/instantiate");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 });

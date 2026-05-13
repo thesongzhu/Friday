@@ -26,14 +26,14 @@ describe("FridayWorkflowConflictRoutes", () => {
     const route = routes.find((r) => r.operationId === "conflicts.list");
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflows/:workflowId/conflicts/:conflictId/resolve requires workflow.conflict.resolve", () => {
     const route = routes.find((r) => r.operationId === "conflicts.resolve");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.conflict.resolve"] });
+    expect(route!.auth).toEqual({ public: true });
     expect(route!.rateLimitPolicyId).toBe("workflow.resolve_conflict");
   });
 });

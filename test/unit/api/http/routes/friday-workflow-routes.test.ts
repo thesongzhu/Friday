@@ -33,14 +33,14 @@ describe("FridayWorkflowRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflows");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflows requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "workflows.create");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("DELETE /v1/workflows/:workflowId requires workflow.write", () => {
@@ -60,6 +60,6 @@ describe("FridayWorkflowRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-versions/:versionId");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 });

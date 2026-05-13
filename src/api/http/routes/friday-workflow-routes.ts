@@ -39,7 +39,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.list",
       method: "GET",
       path: "/v1/workflows",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
         let limit: number | undefined;
@@ -66,7 +66,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.create",
       method: "POST",
       path: "/v1/workflows",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.slug !== "string" || body.slug.trim() === "") {
@@ -104,7 +104,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.get",
       method: "GET",
       path: "/v1/workflows/:workflowId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.getWorkflow(workflowId);
@@ -114,7 +114,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.update",
       method: "PATCH",
       path: "/v1/workflows/:workflowId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         const body = ctx.body as Record<string, unknown> | null;
@@ -144,7 +144,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.archive",
       method: "DELETE",
       path: "/v1/workflows/:workflowId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.archiveWorkflow(workflowId);
@@ -154,7 +154,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.publish",
       method: "POST",
       path: "/v1/workflows/:workflowId/publish",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
@@ -165,7 +165,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflows.list.versions",
       method: "GET",
       path: "/v1/workflows/:workflowId/versions",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.listVersions(workflowId, ctx.query as FridayListVersionsQuery);
@@ -175,7 +175,7 @@ export function createFridayWorkflowRoutes(
       operationId: "workflow.versions.get",
       method: "GET",
       path: "/v1/workflow-versions/:versionId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { versionId } = ctx.params as { versionId: UUID };
         return deps.getVersion(versionId);

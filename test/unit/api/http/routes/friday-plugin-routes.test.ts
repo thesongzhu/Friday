@@ -230,9 +230,9 @@ describe("FridayPluginRoutes", () => {
 
   // ─── Auth configuration ───
 
-  it("all routes require authentication", () => {
+  it("every route declares public auth (auth-boundary product invariant)", () => {
     for (const route of routes) {
-      expect(route.auth).toMatchObject({ public: false });
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

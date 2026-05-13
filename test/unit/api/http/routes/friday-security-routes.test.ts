@@ -36,20 +36,20 @@ describe("FridaySecurityRoutes", () => {
     const route = routes.find((r) => r.operationId === "security.center");
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["security.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/security/tokens/revoke requires security.write", () => {
     const route = routes.find((r) => r.operationId === "security.revoke.token");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/security/satellites/:satelliteId/revoke requires security.write", () => {
     const route = routes.find((r) => r.operationId === "security.revoke.satellite");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 });

@@ -1904,7 +1904,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.status",
       method: "GET",
       path: "/v1/setup/status",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<SetupStatusResponse> {
         const state = getSetupState();
         const providers = await deps.providerService.listProviders();
@@ -1977,7 +1977,7 @@ export function createFridaySetupRoutes(
       operationId: "providers.detect",
       method: "POST",
       path: "/v1/providers/detect",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<DetectProviderResponse> {
         const body = ctx.body as DetectProviderRequest | null;
@@ -2151,7 +2151,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.network.get",
       method: "GET",
       path: "/v1/setup/network",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<SetupNetworkResponse> {
         const state = getSetupState();
         const host = state.network_host;
@@ -2173,7 +2173,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.network.save",
       method: "POST",
       path: "/v1/setup/network",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupNetworkResponse> {
         const body = ctx.body as SetupNetworkRequest | null;
         if (!body || typeof body !== "object") {
@@ -2238,7 +2238,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.feishu.registration.begin",
       method: "POST",
       path: "/v1/setup/channels/feishu/registration/begin",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<SetupFeishuRegistrationBeginResponse> {
         return beginFeishuAppRegistration();
       },
@@ -2249,7 +2249,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.feishu.registration.poll",
       method: "POST",
       path: "/v1/setup/channels/feishu/registration/poll",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupFeishuRegistrationPollResponse> {
         const body = ctx.body as SetupFeishuRegistrationPollRequest | null;
         const registrationId = typeof body?.registrationId === "string" ? body.registrationId.trim() : "";
@@ -2269,7 +2269,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.telegram.verification.begin",
       method: "POST",
       path: "/v1/setup/channels/telegram/verification/begin",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupTelegramVerificationBeginResponse> {
         return beginTelegramVerification(ctx.body as SetupTelegramVerificationBeginRequest | null);
       },
@@ -2280,7 +2280,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.telegram.verification.poll",
       method: "POST",
       path: "/v1/setup/channels/telegram/verification/poll",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupTelegramVerificationPollResponse> {
         const body = ctx.body as SetupTelegramVerificationPollRequest | null;
         const verificationId = typeof body?.verificationId === "string" ? body.verificationId.trim() : "";
@@ -2300,7 +2300,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.discord.verification.begin",
       method: "POST",
       path: "/v1/setup/channels/discord/verification/begin",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupDiscordVerificationBeginResponse> {
         return beginDiscordVerification(ctx.body as SetupDiscordVerificationBeginRequest | null);
       },
@@ -2311,7 +2311,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.discord.verification.complete",
       method: "POST",
       path: "/v1/setup/channels/discord/verification/complete",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupDiscordVerificationCompleteResponse> {
         return completeDiscordVerification(ctx.body as SetupDiscordVerificationCompleteRequest | null);
       },
@@ -2322,7 +2322,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.test",
       method: "POST",
       path: "/v1/setup/channels/test",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupChannelTestResponse> {
         const body = ctx.body as SetupChannelTestRequest | null;
         if (!body || typeof body !== "object" || typeof body.kind !== "string") {
@@ -2355,7 +2355,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.channels.save",
       method: "POST",
       path: "/v1/setup/channels",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupChannelsResponse> {
         const body = ctx.body as SetupChannelsRequest | null;
         if (!body || typeof body !== "object" || !Array.isArray(body.channels)) {
@@ -2544,7 +2544,7 @@ export function createFridaySetupRoutes(
       operationId: "setup.complete",
       method: "POST",
       path: "/v1/setup/complete",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<SetupCompleteResponse> {
         const body = ctx.body as SetupCompleteRequest | null;
         if (!body || typeof body !== "object") {

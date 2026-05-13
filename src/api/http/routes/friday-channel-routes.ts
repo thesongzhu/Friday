@@ -94,7 +94,7 @@ export function createFridayChannelRoutes(
       operationId: "channels.list",
       method: "GET",
       path: "/v1/channels",
-      auth: { public: false, anyOfScopes: ["agent.run", "diagnosis.read", "hub.admin"] },
+      auth: { public: true },
       async handler() {
         const views = deps.registry.listViews();
         // Enrich with persona config
@@ -109,7 +109,7 @@ export function createFridayChannelRoutes(
       operationId: "channels.get",
       method: "GET",
       path: "/v1/channels/:kind",
-      auth: { public: false, anyOfScopes: ["agent.run", "diagnosis.read", "hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const kind = String((ctx.params as Record<string, unknown>).kind ?? "").trim();
         const channel = deps.registry.describe(kind);
@@ -126,7 +126,7 @@ export function createFridayChannelRoutes(
       operationId: "channels.persona.get",
       method: "GET",
       path: "/v1/channels/:kind/persona",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const kind = String((ctx.params as Record<string, unknown>).kind ?? "").trim();
         requirePersonaChannelKind(deps, kind);
@@ -138,7 +138,7 @@ export function createFridayChannelRoutes(
       operationId: "channels.persona.update",
       method: "PUT",
       path: "/v1/channels/:kind/persona",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const kind = String((ctx.params as Record<string, unknown>).kind ?? "").trim();
         requirePersonaChannelKind(deps, kind);

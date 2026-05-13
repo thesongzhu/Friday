@@ -68,7 +68,7 @@ export function createFridayDeepLinkRoutes(
       operationId: "deeplink.preview",
       method: "POST",
       path: "/v1/deeplink/preview",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx: { body: unknown }): Promise<FridayDeepLinkPreviewResponse> {
         const body = ctx.body as FridayDeepLinkPreviewRequest;
 
@@ -102,7 +102,7 @@ export function createFridayDeepLinkRoutes(
       operationId: "deeplink.apply",
       method: "POST",
       path: "/v1/deeplink/apply",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayDeepLinkApplyResponse> {
         const body = ctx.body as FridayDeepLinkApplyRequest;
 

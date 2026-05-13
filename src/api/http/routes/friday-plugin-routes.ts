@@ -72,7 +72,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.list",
       method: "GET",
       path: "/v1/plugins",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListPluginsResponse> {
         const query = ctx.query as Record<string, string | undefined>;
         const items = pluginService.listPlugins({
@@ -90,7 +90,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.get",
       method: "GET",
       path: "/v1/plugins/:id",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetPluginResponse> {
         const { id } = ctx.params as { id: string };
         const plugin = pluginService.getPlugin(id);
@@ -110,7 +110,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.versions.list",
       method: "GET",
       path: "/v1/plugins/:id/versions",
-      auth: { public: false, anyOfScopes: ["plugin.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayPluginVersionsResponse> {
         const { id } = ctx.params as { id: string };
         const versions = pluginService.listPluginVersions(id);
@@ -123,7 +123,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.install",
       method: "POST",
       path: "/v1/plugins/:id/install",
-      auth: { public: false, anyOfScopes: ["plugin.install"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayInstallPluginResponse> {
         const { id } = ctx.params as { id: string };
         validateInstallBody(ctx.body);
@@ -157,7 +157,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.enable",
       method: "POST",
       path: "/v1/plugins/:id/enable",
-      auth: { public: false, anyOfScopes: ["plugin.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayEnablePluginResponse> {
         const { id } = ctx.params as { id: string };
         const plugin = await pluginService.enablePlugin(id);
@@ -170,7 +170,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.disable",
       method: "POST",
       path: "/v1/plugins/:id/disable",
-      auth: { public: false, anyOfScopes: ["plugin.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayDisablePluginResponse> {
         const { id } = ctx.params as { id: string };
         const plugin = await pluginService.disablePlugin(id);
@@ -183,7 +183,7 @@ export function createFridayPluginRoutes(
       operationId: "plugins.uninstall",
       method: "DELETE",
       path: "/v1/plugins/:id",
-      auth: { public: false, anyOfScopes: ["plugin.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUninstallPluginResponse> {
         const { id } = ctx.params as { id: string };
         const query = ctx.query as Record<string, string | undefined>;

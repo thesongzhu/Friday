@@ -811,7 +811,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.start",
       method: "POST",
       path: "/v1/agent/runs",
-      auth: { public: false, anyOfScopes: [...AGENT_RUN_SCOPES] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx) {
         const body = ctx.body as FridayStartAgentRunRequest | null;
@@ -1022,7 +1022,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.list",
       method: "GET",
       path: "/v1/agent/runs",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as FridayListAgentRunsQuery;
 
@@ -1066,7 +1066,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.summary",
       method: "GET",
       path: "/v1/agent/runs/summary",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as { since?: string };
         const allRuns = filterVisibleAgentRuns(deps.listRuns({ limit: AGENT_MAX_LIST_LIMIT }));
@@ -1110,7 +1110,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.get",
       method: "GET",
       path: "/v1/agent/runs/:runId",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const run = getVisibleRunOrThrow(runId);
@@ -1124,7 +1124,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.cancel",
       method: "POST",
       path: "/v1/agent/runs/:runId/cancel",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const run = getVisibleRunOrThrow(runId);
@@ -1146,7 +1146,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.audit",
       method: "GET",
       path: "/v1/agent/runs/:runId/audit",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const run = getVisibleRunOrThrow(runId);
@@ -1200,7 +1200,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.rollback",
       method: "POST",
       path: "/v1/agent/runs/:runId/rollback",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
@@ -1228,7 +1228,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.approve.plan",
       method: "POST",
       path: "/v1/agent/runs/:runId/approve-plan",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
@@ -1241,7 +1241,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.reject.plan",
       method: "POST",
       path: "/v1/agent/runs/:runId/reject-plan",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
@@ -1254,7 +1254,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.approve.tool",
       method: "POST",
       path: "/v1/agent/runs/:runId/approve-tool",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const body = ctx.body as { toolCallId?: string } | undefined;
@@ -1276,7 +1276,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.reject.tool",
       method: "POST",
       path: "/v1/agent/runs/:runId/reject-tool",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const body = ctx.body as { toolCallId?: string; reason?: string } | undefined;
@@ -1301,7 +1301,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.runs.events",
       method: "GET",
       path: "/v1/agent/runs/:runId/events",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const query = ctx.query as Record<string, string | undefined>;
@@ -1461,7 +1461,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.create",
       method: "POST",
       path: "/v1/agent/automations",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.name !== "string" || body.name.trim() === "") {
@@ -1510,7 +1510,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.list",
       method: "GET",
       path: "/v1/agent/automations",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
 
@@ -1554,7 +1554,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.get",
       method: "GET",
       path: "/v1/agent/automations/:automationId",
-      auth: { public: false, anyOfScopes: [...AGENT_READ_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { automationId } = ctx.params as { automationId: string };
         const automation = deps.automationService.get(automationId);
@@ -1574,7 +1574,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.update",
       method: "PATCH",
       path: "/v1/agent/automations/:automationId",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { automationId } = ctx.params as { automationId: string };
         const body = ctx.body as Record<string, unknown> | null;
@@ -1616,7 +1616,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.delete",
       method: "DELETE",
       path: "/v1/agent/automations/:automationId",
-      auth: { public: false, anyOfScopes: [...AGENT_WRITE_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { automationId } = ctx.params as { automationId: string };
         deps.automationService.remove(automationId);
@@ -1629,7 +1629,7 @@ export function createFridayAgentRoutes(
       operationId: "agent.automations.run",
       method: "POST",
       path: "/v1/agent/automations/:automationId/run",
-      auth: { public: false, anyOfScopes: [...AGENT_RUN_SCOPES] },
+      auth: { public: true },
       async handler(ctx) {
         const { automationId } = ctx.params as { automationId: string };
         const body = (ctx.body as Record<string, unknown> | null) ?? {};

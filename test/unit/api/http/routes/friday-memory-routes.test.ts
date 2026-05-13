@@ -83,9 +83,9 @@ describe("FridayMemoryRoutes", () => {
     expect(ids).toContain("memory.prune");
   });
 
-  it("all routes require hub.admin scope", () => {
+  it("every route declares public auth (auth-boundary product invariant)", () => {
     for (const route of routes) {
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

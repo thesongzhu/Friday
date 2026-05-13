@@ -14,7 +14,7 @@ export function createFridayGrantRoutes(
       operationId: "grants.list",
       method: "GET",
       path: "/v1/grants",
-      auth: { public: false, anyOfScopes: ["agent.run", "hub.admin"] },
+      auth: { public: true },
       async handler() {
         const items = await deps.listActiveGrants();
         return { items };
@@ -24,7 +24,7 @@ export function createFridayGrantRoutes(
       operationId: "grants.revoke",
       method: "POST",
       path: "/v1/grants/:grantId/revoke",
-      auth: { public: false, anyOfScopes: ["agent.run", "hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const grantId = String((ctx.params as Record<string, unknown>).grantId ?? "").trim();
         if (!grantId) {

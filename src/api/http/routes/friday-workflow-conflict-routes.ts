@@ -28,7 +28,7 @@ export function createFridayWorkflowConflictRoutes(
       operationId: "conflicts.list",
       method: "GET",
       path: "/v1/workflows/:workflowId/conflicts",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.listConflicts(workflowId, ctx.query as FridayListWorkflowConflictsQuery);
@@ -38,7 +38,7 @@ export function createFridayWorkflowConflictRoutes(
       operationId: "conflicts.resolve",
       method: "POST",
       path: "/v1/workflows/:workflowId/conflicts/:conflictId/resolve",
-      auth: { public: false, anyOfScopes: ["workflow.conflict.resolve"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.resolve_conflict",
       async handler(ctx) {
         const { workflowId, conflictId } = ctx.params as { workflowId: UUID; conflictId: UUID };

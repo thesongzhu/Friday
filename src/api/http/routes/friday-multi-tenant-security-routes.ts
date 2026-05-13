@@ -174,7 +174,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.tenants.create",
       method: "POST",
       path: "/v1/security/tenants",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayCreateTenantRequest;
         requireString(body, "name");
@@ -187,7 +187,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.tenants.list",
       method: "GET",
       path: "/v1/security/tenants",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.tenants.list(ctx.query as FridayListTenantsQuery);
       },
@@ -196,7 +196,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.tenants.get",
       method: "GET",
       path: "/v1/security/tenants/:tenantId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.tenants.get(tenantId);
@@ -206,7 +206,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.tenants.update",
       method: "PATCH",
       path: "/v1/security/tenants/:tenantId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayUpdateTenantRequest;
@@ -219,7 +219,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.tenants.delete",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayDeleteTenantRequest;
@@ -237,7 +237,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.workspaces.create",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/workspaces",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayCreateWorkspaceRequest;
@@ -251,7 +251,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.workspaces.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/workspaces",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.workspaces.list(tenantId, ctx.query as FridayListWorkspacesQuery);
@@ -261,7 +261,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.workspaces.get",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId } = ctx.params as { tenantId: UUID; workspaceId: UUID };
         return deps.workspaces.get(tenantId, workspaceId);
@@ -271,7 +271,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.workspaces.update",
       method: "PATCH",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId } = ctx.params as { tenantId: UUID; workspaceId: UUID };
         const body = ctx.body as FridayUpdateWorkspaceRequest;
@@ -284,7 +284,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.workspaces.delete",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId } = ctx.params as { tenantId: UUID; workspaceId: UUID };
         const body = ctx.body as FridayDeleteWorkspaceRequest;
@@ -302,7 +302,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.members.add",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId/members",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId } = ctx.params as { tenantId: UUID; workspaceId: UUID };
         const body = ctx.body as FridayAddMemberRequest;
@@ -316,7 +316,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.members.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId/members",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId } = ctx.params as { tenantId: UUID; workspaceId: UUID };
         return deps.members.list(tenantId, workspaceId, ctx.query as FridayListMembersQuery);
@@ -326,7 +326,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.members.revoke",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/workspaces/:workspaceId/members/:membershipId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, workspaceId, membershipId } = ctx.params as { tenantId: UUID; workspaceId: UUID; membershipId: UUID };
         const body = ctx.body as FridayRevokeMemberRequest;
@@ -343,7 +343,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.roles.create",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/roles",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayCreateRoleRequest;
@@ -358,7 +358,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.roles.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/roles",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.roles.list(tenantId, ctx.query as FridayListRolesQuery);
@@ -368,7 +368,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.roles.get",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/roles/:roleId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, roleId } = ctx.params as { tenantId: UUID; roleId: UUID };
         return deps.roles.get(tenantId, roleId);
@@ -378,7 +378,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.roles.update",
       method: "PATCH",
       path: "/v1/security/tenants/:tenantId/roles/:roleId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, roleId } = ctx.params as { tenantId: UUID; roleId: UUID };
         const body = ctx.body as FridayUpdateRoleRequest;
@@ -391,7 +391,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.roles.delete",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/roles/:roleId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, roleId } = ctx.params as { tenantId: UUID; roleId: UUID };
         const body = ctx.body as FridayDeleteRoleRequest;
@@ -409,7 +409,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.assignments.grant",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/role-assignments",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayGrantRoleRequest;
@@ -423,7 +423,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.assignments.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/role-assignments",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.assignments.list(tenantId, ctx.query as FridayListRoleAssignmentsQuery);
@@ -433,7 +433,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.assignments.revoke",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/role-assignments/:assignmentId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, assignmentId } = ctx.params as { tenantId: UUID; assignmentId: UUID };
         const body = ctx.body as FridayRevokeRoleRequest;
@@ -450,7 +450,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.create",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/secrets",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayCreateSecretRequest;
@@ -468,7 +468,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/secrets",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.secrets.list(tenantId, ctx.query as FridayListSecretsQuery);
@@ -478,7 +478,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.get",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, secretId } = ctx.params as { tenantId: UUID; secretId: UUID };
         return deps.secrets.get(tenantId, secretId);
@@ -488,7 +488,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.update",
       method: "PATCH",
       path: "/v1/security/tenants/:tenantId/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, secretId } = ctx.params as { tenantId: UUID; secretId: UUID };
         const body = ctx.body as FridayUpdateSecretRequest;
@@ -501,7 +501,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.delete",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/secrets/:secretId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, secretId } = ctx.params as { tenantId: UUID; secretId: UUID };
         const body = ctx.body as FridayDeleteSecretRequest;
@@ -514,7 +514,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.rotate",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/secrets/:secretId/rotate",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, secretId } = ctx.params as { tenantId: UUID; secretId: UUID };
         const body = ctx.body as FridayRotateSecretRequest;
@@ -528,7 +528,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.secrets.access.log",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/secrets/:secretId/access-log",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, secretId } = ctx.params as { tenantId: UUID; secretId: UUID };
         return deps.secrets.listAccessLog(tenantId, secretId, ctx.query as FridayListSecretAccessLogQuery);
@@ -543,7 +543,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.create",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/policies",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayCreatePolicyRequest;
@@ -556,7 +556,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/policies",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.policies.list(tenantId, ctx.query as FridayListPoliciesQuery);
@@ -566,7 +566,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.get",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, policyId } = ctx.params as { tenantId: UUID; policyId: UUID };
         return deps.policies.get(tenantId, policyId);
@@ -576,7 +576,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.update",
       method: "PATCH",
       path: "/v1/security/tenants/:tenantId/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, policyId } = ctx.params as { tenantId: UUID; policyId: UUID };
         const body = ctx.body as FridayUpdatePolicyRequest;
@@ -589,7 +589,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.delete",
       method: "DELETE",
       path: "/v1/security/tenants/:tenantId/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, policyId } = ctx.params as { tenantId: UUID; policyId: UUID };
         const body = ctx.body as FridayDeletePolicyRequest;
@@ -602,7 +602,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.policies.evaluate",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/policies/evaluate",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         const body = ctx.body as FridayEvaluatePolicyRequest;
@@ -622,7 +622,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.audit.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/audit-log",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.audit.list(tenantId, ctx.query as FridayListAuditLogQuery);
@@ -637,7 +637,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.violations.list",
       method: "GET",
       path: "/v1/security/tenants/:tenantId/violations",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId } = ctx.params as { tenantId: UUID };
         return deps.violations.list(tenantId, ctx.query as FridayListViolationsQuery);
@@ -647,7 +647,7 @@ export function createFridayMultiTenantSecurityRoutes(
       operationId: "security.violations.resolve",
       method: "POST",
       path: "/v1/security/tenants/:tenantId/violations/:violationId/resolve",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { tenantId, violationId } = ctx.params as { tenantId: UUID; violationId: UUID };
         const body = ctx.body as FridayResolveViolationRequest;

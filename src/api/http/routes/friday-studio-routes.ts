@@ -63,7 +63,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.products.list",
       method: "GET",
       path: "/v1/studio/products",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(): Promise<FridayStudioProductsResponse> {
         return { products: deps.service.listProducts() };
       },
@@ -72,7 +72,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.runs.create",
       method: "POST",
       path: "/v1/studio/runs",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx): Promise<FridayStudioRunResponse> {
         return { run: await deps.service.runProduct(readRunRequest(ctx.body)) };
@@ -82,7 +82,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.runs.get",
       method: "GET",
       path: "/v1/studio/runs/:runId",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayStudioRunResponse> {
         return { run: deps.service.getRun(requireStringParam(ctx.params, "runId")) };
       },
@@ -91,7 +91,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.artifacts.get",
       method: "GET",
       path: "/v1/studio/runs/:runId/artifacts/:artifactId",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayStudioArtifactResponse> {
         return deps.service.getArtifact(
           requireStringParam(ctx.params, "runId"),
@@ -103,7 +103,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.runs.export",
       method: "GET",
       path: "/v1/studio/runs/:runId/export",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayStudioExportResponse> {
         return deps.service.exportRun(requireStringParam(ctx.params, "runId"));
       },
@@ -112,7 +112,7 @@ export function createFridayStudioRoutes(
       operationId: "studio.imports.create",
       method: "POST",
       path: "/v1/studio/imports",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayStudioImportResponse> {
         return deps.service.importLocalPack(readImportRequest(ctx.body));
       },

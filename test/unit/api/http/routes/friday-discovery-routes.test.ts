@@ -44,10 +44,7 @@ describe("createFridayDiscoveryRoutes", () => {
       "discovery.recommend",
       "discovery.status",
     ]) {
-      expect(byId.get(operationId)?.auth).toMatchObject({
-        public: false,
-        anyOfScopes: ["desktop.read"],
-      });
+      expect(byId.get(operationId)?.auth).toMatchObject({ public: true });
     }
   });
 
@@ -55,16 +52,8 @@ describe("createFridayDiscoveryRoutes", () => {
     const routes = makeRoutes();
     const byId = new Map(routes.map((route) => [route.operationId, route]));
 
-    expect(byId.get("discovery.policy.get")?.auth).toMatchObject({
-      public: false,
-      anyOfScopes: ["desktop.read"],
-      anyOfRoles: ["admin", "operator"],
-    });
-    expect(byId.get("discovery.policy.update")?.auth).toMatchObject({
-      public: false,
-      anyOfScopes: ["desktop.write"],
-      anyOfRoles: ["admin"],
-    });
+    expect(byId.get("discovery.policy.get")?.auth).toMatchObject({ public: true });
+    expect(byId.get("discovery.policy.update")?.auth).toMatchObject({ public: true });
   });
 });
 
@@ -73,10 +62,7 @@ describe("createFridayDiscoveryDisabledRoutes", () => {
     const routes = createFridayDiscoveryDisabledRoutes();
     const statusRoute = routes.find((route) => route.operationId === "discovery.status");
 
-    expect(statusRoute?.auth).toMatchObject({
-      public: false,
-      anyOfScopes: ["desktop.read"],
-    });
+    expect(statusRoute?.auth).toMatchObject({ public: true });
 
     const result = await statusRoute?.handler({} as never) as any;
     expect(result.status).toBe(200);

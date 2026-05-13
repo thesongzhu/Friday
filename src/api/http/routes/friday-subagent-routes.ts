@@ -95,7 +95,7 @@ export function createFridaySubagentRoutes(
       operationId: "agent.subagents.list",
       method: "GET",
       path: "/v1/agent/subagents",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
 
@@ -138,7 +138,7 @@ export function createFridaySubagentRoutes(
       operationId: "agent.subagents.get",
       method: "GET",
       path: "/v1/agent/subagents/:subagentId",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const { subagentId } = ctx.params as { subagentId: string };
         const subagent = deps.subagentRegistry.getById(subagentId);
@@ -163,7 +163,7 @@ export function createFridaySubagentRoutes(
       operationId: "agent.runs.subagents.list",
       method: "GET",
       path: "/v1/agent/runs/:runId/subagents",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const items = deps.subagentRegistry.listByParentRunId(runId);

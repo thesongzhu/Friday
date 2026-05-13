@@ -121,7 +121,7 @@ describe("createFridaySystemRoutes", () => {
     for (const route of routes) {
       expect(route.path).toMatch(/^\/v1\/system\//);
       expect(route.method).toMatch(/^(GET|POST|PATCH|DELETE)$/);
-      expect((route.auth as { public: boolean }).public).toBe(false);
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

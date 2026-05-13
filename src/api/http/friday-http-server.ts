@@ -25,6 +25,7 @@ import { isFridayHttpRawTextResponse } from "./friday-http-raw-response.js";
 import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api-error-codes.js";
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
+import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
 
 // ─── Types ───
 
@@ -682,6 +683,11 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           }
           if (roleResult.headers) Object.assign(middlewareHeaders, roleResult.headers);
         }
+      } else {
+        // Public-route auth-boundary posture: handlers still read ctx.principal.userId
+        // / tenantId / scopes. Inject a stable synthetic principal so no-Authorization
+        // requests can reach handler logic without an UNAUTHENTICATED throw.
+        ctx.principal = createFridayDefaultPublicHttpPrincipal();
       }
 
       // Rate limit enforcement (applies to both public and authenticated routes)

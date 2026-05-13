@@ -202,7 +202,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.create",
       method: "POST",
       path: "/v1/workflows/generator/sessions",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayWorkflowGeneratorStartSessionResponse> {
         validateCreateSessionBody(ctx.body);
@@ -238,7 +238,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.get",
       method: "GET",
       path: "/v1/workflows/generator/sessions/:sessionId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorGetSessionResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         const result = await workflowGenerator.getSession(sessionId);
@@ -258,7 +258,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.messages.create",
       method: "POST",
       path: "/v1/workflows/generator/sessions/:sessionId/messages",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorSubmitMessageResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -284,7 +284,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.generate",
       method: "POST",
       path: "/v1/workflows/generator/sessions/:sessionId/generate",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorGenerateResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -338,7 +338,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.evidence.get",
       method: "GET",
       path: "/v1/workflows/generator/sessions/:sessionId/evidence",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorEvidenceResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         const evidence = await buildEvidence(sessionId);
@@ -351,7 +351,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.approve",
       method: "POST",
       path: "/v1/workflows/generator/sessions/:sessionId/approve",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<FridayWorkflowGeneratorApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -404,7 +404,7 @@ export function createFridayWorkflowGeneratorRoutes(
       operationId: "workflows.generator.sessions.cancel",
       method: "DELETE",
       path: "/v1/workflows/generator/sessions/:sessionId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorCancelResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         await workflowGenerator.cancelSession(sessionId);

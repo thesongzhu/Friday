@@ -126,7 +126,7 @@ export function createFridayHealthRoutes(
       operationId: "health.capabilities",
       method: "GET",
       path: "/v1/health/capabilities",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler() {
         return buildHealthPayload(true);
       },

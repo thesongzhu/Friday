@@ -96,7 +96,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.start",
       method: "POST",
       path: "/v1/workflow-runs",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.start_run",
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
@@ -114,7 +114,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.get",
       method: "GET",
       path: "/v1/workflow-runs/:runId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.getRun(runId, ctx.principal);
@@ -124,7 +124,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.list.nodes",
       method: "GET",
       path: "/v1/workflow-runs/:runId/nodes",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.listRunNodes(runId, ctx.query as FridayListRunNodesQuery, ctx.principal);
@@ -134,7 +134,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.timeline",
       method: "GET",
       path: "/v1/workflow-runs/:runId/timeline",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.getRunTimeline(runId, ctx.query as FridayGetRunTimelineQuery, ctx.principal);
@@ -144,7 +144,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.evidence",
       method: "GET",
       path: "/v1/workflow-runs/:runId/evidence",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.getRunEvidence(runId, ctx.query as FridayGetRunEvidenceQuery, ctx.principal);
@@ -154,7 +154,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.evidence.exports.list",
       method: "GET",
       path: "/v1/workflow-runs/:runId/evidence/exports",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.listRunEvidenceExports(
@@ -168,7 +168,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.evidence.export",
       method: "POST",
       path: "/v1/workflow-runs/:runId/evidence/exports",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.exportRunEvidence(runId, (ctx.body ?? {}) as FridayExportRunEvidenceRequest, ctx.principal);
@@ -178,7 +178,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.evidence.exports.get",
       method: "GET",
       path: "/v1/workflow-runs/:runId/evidence/exports/:exportId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId, exportId } = ctx.params as { runId: UUID; exportId: UUID };
         return deps.getRunEvidenceExport(runId, exportId, ctx.principal);
@@ -188,7 +188,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.evidence.exports.download",
       method: "GET",
       path: "/v1/workflow-runs/:runId/evidence/exports/:exportId/download",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId, exportId } = ctx.params as { runId: UUID; exportId: UUID };
         return deps.downloadRunEvidenceExport(runId, exportId, ctx.principal);
@@ -198,7 +198,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.cancel",
       method: "POST",
       path: "/v1/workflow-runs/:runId/cancel",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.cancelRun(runId, ctx.body as FridayCancelRunRequest, ctx.principal);
@@ -208,7 +208,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "runs.retry",
       method: "POST",
       path: "/v1/workflow-runs/:runId/retry",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.retryRun(runId, ctx.body as FridayRetryRunRequest, ctx.principal);
@@ -218,7 +218,7 @@ export function createFridayWorkflowRunRoutes(
       operationId: "workflows.runs.resume",
       method: "POST",
       path: "/v1/workflow-runs/:runId/resume",
-      auth: { public: false, anyOfScopes: ["workflow.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
         return deps.resumeRun(runId, ctx.principal);

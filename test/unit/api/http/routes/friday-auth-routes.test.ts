@@ -174,7 +174,7 @@ describe("FridayAuthRoutes", () => {
     const route = findRoute("auth.logout");
     expect(route.method).toBe("POST");
     expect(route.path).toBe("/v1/auth/logout");
-    expect(route.auth).toEqual({ public: false, anyOfScopes: ["session.write"] });
+    expect(route.auth).toEqual({ public: true });
   });
 
   it("logout handler revokes session", async () => {
@@ -208,7 +208,7 @@ describe("FridayAuthRoutes", () => {
     const route = findRoute("auth.me");
     expect(route.method).toBe("GET");
     expect(route.path).toBe("/v1/auth/me");
-    expect(route.auth).toEqual({ public: false, anyOfScopes: ["session.read"] });
+    expect(route.auth).toEqual({ public: true });
   });
 
   it("me handler returns user info", async () => {

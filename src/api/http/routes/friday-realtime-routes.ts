@@ -26,7 +26,7 @@ export function createFridayRealtimeRoutes(
       operationId: "realtime.subscribe",
       method: "POST",
       path: "/v1/realtime/subscriptions",
-      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      auth: { public: true },
       rateLimitPolicyId: "realtime.subscribe",
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
@@ -52,7 +52,7 @@ export function createFridayRealtimeRoutes(
       operationId: "realtime.pull",
       method: "POST",
       path: "/v1/realtime/pull",
-      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      auth: { public: true },
       rateLimitPolicyId: "realtime.pull",
       async handler(ctx) {
         const pullBody = ctx.body as Record<string, unknown> | null;
@@ -98,7 +98,7 @@ export function createFridayRealtimeRoutes(
       operationId: "realtime.ack",
       method: "POST",
       path: "/v1/realtime/ack",
-      auth: { public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const ackBody = ctx.body as Record<string, unknown> | null;
         if (!ackBody || typeof ackBody.streamId !== "string" || ackBody.streamId.trim() === "") {

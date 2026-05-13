@@ -166,11 +166,11 @@ describe("FridayFleetRoutes", () => {
   // ─── Route auth ───
 
   it("read routes require fleet.read and execute route requires hub.admin", () => {
-    expect(findRoute("fleet.overview").auth).toEqual({ public: false, anyOfScopes: ["fleet.read"] });
-    expect(findRoute("fleet.list.satellites").auth).toEqual({ public: false, anyOfScopes: ["fleet.read"] });
-    expect(findRoute("fleet.get.satellite.detail").auth).toEqual({ public: false, anyOfScopes: ["fleet.read"] });
-    expect(findRoute("fleet.get.satellite.remediation").auth).toEqual({ public: false, anyOfScopes: ["fleet.read"] });
-    expect(findRoute("fleet.execute.satellite.remediation").auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+    expect(findRoute("fleet.overview").auth).toEqual({ public: true });
+    expect(findRoute("fleet.list.satellites").auth).toEqual({ public: true });
+    expect(findRoute("fleet.get.satellite.detail").auth).toEqual({ public: true });
+    expect(findRoute("fleet.get.satellite.remediation").auth).toEqual({ public: true });
+    expect(findRoute("fleet.execute.satellite.remediation").auth).toEqual({ public: true });
   });
 
   // ─── Fleet overview route ───

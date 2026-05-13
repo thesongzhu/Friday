@@ -158,7 +158,7 @@ export function createFridayUixRoutes(
       operationId: "uix.intents.resolve",
       method: "POST",
       path: "/v1/uix/intents/resolve",
-      auth: { public: false, anyOfScopes: ["skill.read", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayBeginnerIntentResolution> {
         const userId = requireUserId(ctx.principal);
         const text = readText(ctx.body, "text");
@@ -169,7 +169,7 @@ export function createFridayUixRoutes(
       operationId: "uix.templates.list",
       method: "GET",
       path: "/v1/uix/templates",
-      auth: { public: false, anyOfScopes: ["skill.read", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixTemplatesResponse> {
         requireUserId(ctx.principal);
         return { templates: deps.service.listTemplates() };
@@ -179,7 +179,7 @@ export function createFridayUixRoutes(
       operationId: "uix.home.snapshot.get",
       method: "GET",
       path: "/v1/uix/home-snapshot",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixHomeSnapshotResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -191,7 +191,7 @@ export function createFridayUixRoutes(
       operationId: "uix.assistant.inbox.snapshot.get",
       method: "GET",
       path: "/v1/uix/assistant-inbox-snapshot",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixAssistantInboxSnapshotResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -203,7 +203,7 @@ export function createFridayUixRoutes(
       operationId: "uix.diagnostics.get",
       method: "GET",
       path: "/v1/uix/diagnostics",
-      auth: { public: false, anyOfScopes: ["skill.read", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixDiagnosticsResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -215,7 +215,7 @@ export function createFridayUixRoutes(
       operationId: "uix.preferences.list",
       method: "GET",
       path: "/v1/uix/preferences",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListUserPreferencesResponse> {
         const userId = requireUserId(ctx.principal);
         const category = typeof (ctx.query as Record<string, unknown> | undefined)?.category === "string"
@@ -228,7 +228,7 @@ export function createFridayUixRoutes(
       operationId: "uix.preferences.update",
       method: "PUT",
       path: "/v1/uix/preferences",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUpdateUserPreferencesResponse> {
         const userId = requireUserId(ctx.principal);
         const body = (ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body))
@@ -283,7 +283,7 @@ export function createFridayUixRoutes(
       operationId: "uix.preferences.delete",
       method: "DELETE",
       path: "/v1/uix/preferences/:preferenceId",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayDeleteUserPreferenceResponse> {
         const userId = requireUserId(ctx.principal);
         const { preferenceId } = ctx.params as { preferenceId: string };
@@ -294,7 +294,7 @@ export function createFridayUixRoutes(
       operationId: "uix.persona.get",
       method: "GET",
       path: "/v1/uix/persona",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetCommunicationPersonaResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -306,7 +306,7 @@ export function createFridayUixRoutes(
       operationId: "uix.persona.update",
       method: "PUT",
       path: "/v1/uix/persona",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetCommunicationPersonaResponse> {
         const userId = requireUserId(ctx.principal);
         const body = ctx.body as Record<string, unknown> | null;
@@ -339,7 +339,7 @@ export function createFridayUixRoutes(
       operationId: "uix.templates.execute",
       method: "POST",
       path: "/v1/uix/templates/:templateId/execute",
-      auth: { public: false, anyOfScopes: ["skill.write", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayUixTemplateExecutionResponse> {
         const userId = requireUserId(ctx.principal);
@@ -360,7 +360,7 @@ export function createFridayUixRoutes(
       operationId: "uix.wizards.start",
       method: "POST",
       path: "/v1/uix/wizards/:wizardId/start",
-      auth: { public: false, anyOfScopes: ["skill.read", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixWizardResponse> {
         const userId = requireUserId(ctx.principal);
         const { wizardId } = ctx.params as { wizardId: string };
@@ -376,7 +376,7 @@ export function createFridayUixRoutes(
       operationId: "uix.wizards.continue",
       method: "POST",
       path: "/v1/uix/wizards/:wizardId/continue",
-      auth: { public: false, anyOfScopes: ["skill.write", "diagnosis.read", "agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixWizardResponse> {
         const userId = requireUserId(ctx.principal);
         const { wizardId } = ctx.params as { wizardId: string };
@@ -396,7 +396,7 @@ export function createFridayUixRoutes(
       operationId: "uix.issues.list",
       method: "GET",
       path: "/v1/uix/issues",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUixIssuesResponse> {
         const userId = requireUserId(ctx.principal);
         const query = (ctx.query ?? {}) as Record<string, unknown>;
@@ -415,7 +415,7 @@ export function createFridayUixRoutes(
       operationId: "uix.user.profile.get",
       method: "GET",
       path: "/v1/uix/user-profile",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUserProfileResponse> {
         const userId = requireUserId(ctx.principal);
         const current = readUserProfileResponse(deps.service, userId, deps.readSetupCompletedAt);
@@ -428,7 +428,7 @@ export function createFridayUixRoutes(
       operationId: "uix.user.profile.update",
       method: "PUT",
       path: "/v1/uix/user-profile",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUserProfileResponse> {
         const userId = requireUserId(ctx.principal);
         const body = (ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body))
@@ -456,7 +456,7 @@ export function createFridayUixRoutes(
       operationId: "uix.investigate",
       method: "POST",
       path: "/v1/uix/investigate",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayInvestigateResponse> {
         const userId = requireUserId(ctx.principal);
         const body = (ctx.body && typeof ctx.body === "object" && !Array.isArray(ctx.body))
@@ -483,7 +483,7 @@ export function createFridayUixRoutes(
       operationId: "uix.learnedfacts.list",
       method: "GET",
       path: "/v1/uix/learned-facts",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         if (!deps.listLearnedFacts) {
@@ -497,7 +497,7 @@ export function createFridayUixRoutes(
       operationId: "uix.learnedfacts.clear",
       method: "DELETE",
       path: "/v1/uix/learned-facts",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<{ deletedCount: number }> {
         const userId = requireUserId(ctx.principal);
         return { deletedCount: deps.clearLearnedFacts ? deps.clearLearnedFacts({ userId }) : 0 };
@@ -507,7 +507,7 @@ export function createFridayUixRoutes(
       operationId: "uix.learnedfacts.delete",
       method: "DELETE",
       path: "/v1/uix/learned-facts/:factKey",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<{ deleted: true; key: string }> {
         const userId = requireUserId(ctx.principal);
         const { factKey } = ctx.params as { factKey: string };

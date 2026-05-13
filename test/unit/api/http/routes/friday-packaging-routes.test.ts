@@ -82,7 +82,7 @@ describe("B-008 FridayPackagingRoutes", () => {
     it("all routes require authentication", () => {
       const routes = createFridayPackagingRoutes(makeDeps());
       for (const route of routes) {
-        expect(route.auth).toHaveProperty("public", false);
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
@@ -117,7 +117,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const route = findRoute(routes, "packaging.packages.publish");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["plugin.install"] });
+      expect(route.auth).toEqual({ public: true });
 
       // Missing archive
       await expect(route.handler(makeCtx({
@@ -197,7 +197,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const route = findRoute(routes, "packaging.installs.install");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["plugin.install"] });
+      expect(route.auth).toEqual({ public: true });
 
       await expect(route.handler(makeCtx({
         params: { packageName: "@friday/test" },
@@ -276,7 +276,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const route = findRoute(routes, "packaging.lifecycle.list");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["plugin.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ query: { packageName: "@friday/test" } }));
       expect(deps.lifecycle.list).toHaveBeenCalledWith({ packageName: "@friday/test" });
     });
@@ -289,7 +289,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const route = findRoute(routes, "packaging.keys.list");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["plugin.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ query: { includeRevoked: true } }));
       expect(deps.keys.list).toHaveBeenCalledWith({ includeRevoked: true });
     });
@@ -300,7 +300,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const route = findRoute(routes, "packaging.keys.add");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
 
       await expect(route.handler(makeCtx({
         body: { publicKey: "pk", owner: "admin", idempotencyKey: "key-1" },
@@ -317,7 +317,7 @@ describe("B-008 FridayPackagingRoutes", () => {
       const routes = createFridayPackagingRoutes(deps);
       const route = findRoute(routes, "packaging.keys.revoke");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
 
       await expect(route.handler(makeCtx({
         params: { keyId: "k-1" },
@@ -349,36 +349,30 @@ describe("B-008 FridayPackagingRoutes", () => {
     });
   });
 
-  describe("scope contract snapshot", () => {
+  describe("route count snapshot (post auth-boundary)", () => {
     const routes = createFridayPackagingRoutes(makeDeps());
 
-    const getScopes = (r: FridayRouteDefinition<unknown, unknown, unknown, unknown>) =>
-      "anyOfScopes" in r.auth ? r.auth.anyOfScopes : [];
-
-    const readRoutes = routes.filter((r) => getScopes(r).includes("plugin.read"));
-    const installRoutes = routes.filter((r) => getScopes(r).includes("plugin.install"));
-    const securityRoutes = routes.filter((r) => getScopes(r).includes("security.write"));
-
-    it("GET routes are all read-scoped", () => {
-      const getRoutes = routes.filter((r) => r.method === "GET");
-      for (const route of getRoutes) {
-        expect(getScopes(route)).toContain("plugin.read");
+    it("every route declares public auth (auth-boundary product invariant)", () => {
+      for (const route of routes) {
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
-    it("expected scope distribution", () => {
-      // 8 plugin.read routes (7 GET + check-dependencies POST which is a dry-run)
-      expect(readRoutes.length).toBe(8);
-      // 6 plugin.install routes (publish, verify, install, upgrade, rollback, uninstall)
-      expect(installRoutes.length).toBe(6);
-      // 3 security.write routes (add key, revoke key, rotate key)
-      expect(securityRoutes.length).toBe(3);
+    it("expected route counts by HTTP method", () => {
+      expect(routes.filter((r) => r.method === "GET").length).toBe(7);
+      expect(routes.filter((r) => r.method === "POST").length).toBe(10);
+      expect(routes.length).toBe(17);
     });
 
-    it("key management routes require security.write", () => {
-      for (const route of securityRoutes) {
-        expect(route.method).toBe("POST");
-      }
+    it("expected lifecycle operationId coverage", () => {
+      const opIds = new Set(routes.map((r) => r.operationId));
+      // Install / upgrade / rollback / uninstall surface still present
+      expect(opIds.has("packaging.packages.publish")).toBe(true);
+      expect(opIds.has("packaging.installs.install")).toBe(true);
+      expect(opIds.has("packaging.installs.upgrade")).toBe(true);
+      expect(opIds.has("packaging.installs.rollback")).toBe(true);
+      expect(opIds.has("packaging.installs.uninstall")).toBe(true);
+      expect(opIds.has("packaging.packages.verify")).toBe(true);
     });
   });
 });

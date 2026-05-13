@@ -41,7 +41,7 @@ export function createFridaySessionUsageRoutes(
       operationId: "sessions.usage.get",
       method: "GET",
       path: "/v1/sessions/:sessionKey/usage",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
 
       async handler(ctx) {
         const { sessionKey } = ctx.params as { sessionKey: string };
@@ -100,7 +100,7 @@ export function createFridaySessionUsageRoutes(
       operationId: "sessions.usage.list",
       method: "GET",
       path: "/v1/sessions/usage",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
 
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
