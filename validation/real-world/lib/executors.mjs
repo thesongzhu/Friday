@@ -1299,6 +1299,37 @@ function redactDiscordErrorMessage(error) {
   return message.replace(/\d{12,}/gu, (value) => `<id:${idTail(value)}>`);
 }
 
+function discordDiagnosticText(value, max = 320) {
+  const redacted = redactDiscordErrorMessage(String(value ?? ""));
+  return redacted.length > max ? `${redacted.slice(0, max)}...` : redacted;
+}
+
+function summarizeDiscordSetupVerification(data) {
+  const source = data && typeof data === "object" ? data : {};
+  const warnings = Array.isArray(source.warnings)
+    ? source.warnings.map((warning) => discordDiagnosticText(warning)).slice(0, 5)
+    : [];
+  return {
+    status: typeof source.status === "string" ? source.status : "unknown",
+    dmVerified: source.dmVerified === true,
+    ...(typeof source.guildVerified === "boolean" ? { guildVerified: source.guildVerified } : {}),
+    ...(typeof source.message === "string" && source.message.trim()
+      ? { message: discordDiagnosticText(source.message) }
+      : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+function formatDiscordSetupVerificationSummary(summary) {
+  return [
+    `status=${summary.status}`,
+    `dmVerified=${String(summary.dmVerified)}`,
+    ...(typeof summary.guildVerified === "boolean" ? [`guildVerified=${String(summary.guildVerified)}`] : []),
+    ...(summary.message ? [`message=${summary.message}`] : []),
+    ...(summary.warnings?.length ? [`warnings=${summary.warnings.join(" | ")}`] : []),
+  ].join("; ");
+}
+
 async function discordApiJson({ token, method = "GET", pathname, body }) {
   const response = await fetch(`${DISCORD_API_BASE}${pathname}`, {
     method,
@@ -1399,7 +1430,16 @@ async function executeDiscordRoundtrip({ artifact, scenario, client }) {
       guildId,
     });
     if (verificationComplete.data?.status !== "success" || verificationComplete.data?.dmVerified !== true) {
-      throw new Error("Friday Discord setup verification did not complete successfully.");
+      const setupVerification = summarizeDiscordSetupVerification(verificationComplete.data);
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordSetupVerification: setupVerification,
+      };
+      throw new Error(
+        `Friday Discord setup verification did not complete successfully (${formatDiscordSetupVerificationSummary(
+          setupVerification,
+        )}).`,
+      );
     }
     if (typeof verificationComplete.data?.welcomeMessageId === "string") {
       sentMessages.push({ channelId: dmChannel.id, messageId: verificationComplete.data.welcomeMessageId });

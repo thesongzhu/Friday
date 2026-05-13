@@ -156,4 +156,69 @@ describe("real-world Discord roundtrip executor", () => {
     expect(artifact.result).toBe("failed");
     expect(artifact.notes?.join("\n")).toContain("missing required environment variable: FRIDAY_DISCORD_CHANNEL_ID");
   });
+
+  it("records sanitized Friday setup verification details when setup completion fails", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/v10/users/@me") {
+        return jsonResponse({ id: "bot-user-1", bot: true });
+      }
+      if (pathname === "/api/v10/guilds/1476443522000486548") {
+        return jsonResponse({ id: "1476443522000486548" });
+      }
+      if (pathname === "/api/v10/channels/1476443521543180388") {
+        return jsonResponse({ id: "1476443521543180388", guild_id: "1476443522000486548" });
+      }
+      if (pathname === "/api/v10/users/@me/channels" && init?.method === "POST") {
+        return jsonResponse({ id: "dm-channel-1" });
+      }
+      return jsonResponse({ code: 10003 }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const apiMock = vi.fn(async (method: string, routePath: string) => {
+      if (method === "POST" && routePath === "/v1/setup/channels/discord/verification/begin") {
+        return { data: { verificationId: "verify-1" } };
+      }
+      if (method === "POST" && routePath === "/v1/setup/channels/discord/verification/complete") {
+        return {
+          data: {
+            status: "dm_failed",
+            dmVerified: false,
+            guildVerified: true,
+            message: "Discord POST /channels/1476443521543180388/messages failed with HTTP 403 code=50007",
+            warnings: [
+              "Discord DM verification failed for user 370355408730324993.",
+            ],
+          },
+        };
+      }
+      throw new Error(`unexpected API call ${method} ${routePath}`);
+    });
+
+    const artifact = await executeScenario({
+      runId: "run-1",
+      suite: "weekly",
+      scenario: makeScenario(),
+      lane: { laneKey: "none" },
+      client: { api: apiMock },
+      envTruth: {},
+      reportRoot: "/tmp/friday-real-world-test",
+      uiBaseUrl: "http://127.0.0.1:3141",
+      blockers: [],
+    });
+
+    expect(artifact.result).toBe("failed");
+    const notes = artifact.notes?.join("\n") ?? "";
+    expect(notes).toContain("status=dm_failed");
+    expect(notes).toContain("dmVerified=false");
+    expect(notes).toContain("guildVerified=true");
+    expect(notes).toContain("<id:180388>");
+    expect(notes).toContain("<id:324993>");
+    const raw = JSON.stringify(artifact.raw);
+    expect(raw).toContain("discordSetupVerification");
+    expect(raw).not.toContain("test-discord-token");
+    expect(raw).not.toContain("1476443521543180388");
+    expect(raw).not.toContain("370355408730324993");
+  });
 });
