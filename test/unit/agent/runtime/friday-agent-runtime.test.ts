@@ -2417,7 +2417,7 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
       ],
       [
-        { type: "text_delta", text: "无法直接访问 README.md，因此无法提取 H1。" },
+        { type: "text_delta", text: "未能读取到 README.md 文件的内容。请确认文件存在或路径正确。" },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
       ],
       [
@@ -2446,6 +2446,76 @@ describe("FridayAgentRuntime", () => {
 
       expect(result.status).toBe("completed");
       expect(result.toolCallCount).toBe(1);
+      expect(result.response).toBe("Friday");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retries top-heading workspace reads when the first read is too narrow", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-heading-"));
+    writeFileSync(
+      join(workspaceRoot, "README.md"),
+      [
+        '<p align="right">',
+        '  <a href="README.zh-CN.md">中文</a>',
+        "</p>",
+        "",
+        '<h1 align="center">Friday</h1>',
+        "",
+        "Local fixture.",
+      ].join("\n"),
+      "utf8",
+    );
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-readme-narrow",
+          name: "read",
+          input: { path: "README.md", limit: 1 },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: 'The top H1 is <p align="right">.' },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "read-readme-full",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(2);
       expect(result.response).toBe("Friday");
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
