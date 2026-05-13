@@ -2590,6 +2590,25 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            const localWorkspaceFileIntentViolation = toolCallViolatesLocalWorkspaceFileIntent({
+              task: params.task,
+              toolName: toolUse.name,
+              toolArgs: toolUse.input ?? {},
+            });
+            if (localWorkspaceFileIntentViolation) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.local_workspace_file",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: localWorkspaceFileIntentViolation,
+              }));
+              continue;
+            }
+
             if (explicitAutonomousTask && isAutonomousTaskBypassTool(toolUse.name)) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
@@ -3919,6 +3938,59 @@ function resolveToolPathArg(input: Record<string, unknown> | undefined): string 
   return pathArg?.trim().length ? pathArg.trim() : undefined;
 }
 
+function normalizeLocalWorkspacePathForMatch(pathArg: string): string {
+  return pathArg.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function localWorkspacePathMatchesRequested(pathArg: string, requested: string): boolean {
+  const normalizedPath = normalizeLocalWorkspacePathForMatch(pathArg);
+  const normalizedRequested = normalizeLocalWorkspacePathForMatch(requested);
+  const pathBase = basename(normalizedPath);
+  if (normalizedRequested.includes("/")) {
+    return normalizedPath === normalizedRequested || normalizedPath.endsWith(`/${normalizedRequested}`);
+  }
+  return normalizedPath === normalizedRequested
+    || normalizedPath.endsWith(`/${normalizedRequested}`)
+    || pathBase === normalizedRequested;
+}
+
+function taskExplicitlyRequiresReadToolForWorkspaceFile(task: string): boolean {
+  return taskLooksLikeLocalWorkspaceFileInspection(task)
+    && (
+      /\bcall\s+the\s+`?read`?\s+tool\b/i.test(task)
+      || /\buse\s+the\s+`?read`?\s+tool\b/i.test(task)
+      || /\buse\s+`?read`?\s+for\s+the\s+requested\s+workspace\s+path\b/i.test(task)
+      || /`read`\s+tool/u.test(task)
+    );
+}
+
+function toolCallViolatesLocalWorkspaceFileIntent(params: {
+  task: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+}): string | null {
+  if (!taskExplicitlyRequiresReadToolForWorkspaceFile(params.task)) {
+    return null;
+  }
+  const requestedPath = extractLocalWorkspaceFileMentions(params.task)[0];
+  const requestedLabel = requestedPath ?? "the requested workspace file";
+  if (params.toolName !== "read") {
+    return `This task explicitly requires tool 'read' for local workspace file '${requestedLabel}'. Do not use '${params.toolName}', web, browser, search, capabilities, or tool-pack detours for this workspace file. Call read with path="${requestedLabel}" next.`;
+  }
+
+  if (!requestedPath) {
+    return null;
+  }
+  const actualPath = resolveToolPathArg(params.toolArgs);
+  if (!actualPath) {
+    return `The read tool call is missing the requested local workspace path. Call read with path="${requestedLabel}".`;
+  }
+  if (!localWorkspacePathMatchesRequested(actualPath, requestedPath)) {
+    return `The read tool path '${actualPath}' does not match the requested local workspace file '${requestedLabel}'. Call read with path="${requestedLabel}".`;
+  }
+  return null;
+}
+
 function isRuntimeSkillAuthoringPath(input: Record<string, unknown> | undefined): boolean {
   const pathArg = resolveToolPathArg(input);
   if (!pathArg) return false;
@@ -4776,15 +4848,8 @@ function hasSuccessfulLocalWorkspaceReadEvidence(
     if (requestedFiles.length === 0) {
       return true;
     }
-    const normalizedPath = rawPath.replace(/\\/g, "/").toLowerCase();
-    const pathBase = basename(normalizedPath);
     return requestedFiles.some((requested) => {
-      if (requested.includes("/")) {
-        return normalizedPath === requested || normalizedPath.endsWith(`/${requested}`);
-      }
-      return normalizedPath === requested
-        || normalizedPath.endsWith(`/${requested}`)
-        || pathBase === requested;
+      return localWorkspacePathMatchesRequested(rawPath, requested);
     });
   });
 }
@@ -5234,9 +5299,15 @@ function buildEvidenceRetryPrompt(params: {
 }): string {
   const task = params.task.trim();
   const localWorkspaceFileInspection = taskLooksLikeLocalWorkspaceFileInspection(task);
+  const explicitWorkspaceReadToolTask = taskExplicitlyRequiresReadToolForWorkspaceFile(task);
+  const requestedWorkspacePath = explicitWorkspaceReadToolTask
+    ? extractLocalWorkspaceFileMentions(task)[0]
+    : undefined;
   const category = classifyEvidenceTask(task) ?? "web";
   const isEnabled = (name: string) => !(params.disabledToolNames?.has(name) ?? false);
-  const preferredTools = localWorkspaceFileInspection
+  const preferredTools = explicitWorkspaceReadToolTask
+    ? ["read"]
+    : localWorkspaceFileInspection
     ? ["read", "exec"]
     : category === "desktop"
     ? ["system", "desktop", "exec", "read", "browser"]
@@ -5246,7 +5317,9 @@ function buildEvidenceRetryPrompt(params: {
   const taskLabel = localWorkspaceFileInspection
     ? "this local workspace file task"
     : category === "desktop" ? "this local desktop/device task" : "this external task";
-  const approachHint = localWorkspaceFileInspection
+  const approachHint = explicitWorkspaceReadToolTask
+    ? `Call read with path="${requestedWorkspacePath ?? "the requested workspace path"}"; do not use web, browser, search, capabilities, or tool-pack detours because they cannot satisfy local file read evidence.`
+    : localWorkspaceFileInspection
     ? "Use read for the requested workspace path; do not use web_search or web_fetch because they cannot inspect local workspace files."
     : category === "desktop"
     ? "Start with system snapshot, then use system intents before falling back to desktop session_info or desktop screenshot for visible evidence."

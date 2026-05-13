@@ -2111,6 +2111,117 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).toContain("AGENT_OUTPUT_CLOSURE_ERROR");
   });
 
+  it("blocks non-read detours for explicit local workspace read-tool tasks", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-detour-"));
+    writeFileSync(join(workspaceRoot, "README.md"), "# Friday\n\nLocal fixture.\n", "utf8");
+    const webFetchSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "web-fetch-readme",
+          name: "web_fetch",
+          input: { url: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "read-readme",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [createSuccessfulWebFetchTool(webFetchSpy), ...createFridayAgentFileTools({ workspaceRoot })],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(2);
+      expect(result.response).toBe("Friday");
+      expect(webFetchSpy).not.toHaveBeenCalled();
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks read calls that target the wrong local workspace path", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-read-wrong-path-"));
+    writeFileSync(join(workspaceRoot, "README.md"), "# Friday\n\nLocal fixture.\n", "utf8");
+    writeFileSync(join(workspaceRoot, "NOTES.md"), "# Wrong\n", "utf8");
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-notes",
+          name: "read",
+          input: { path: "NOTES.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        {
+          type: "tool_use",
+          id: "read-readme",
+          name: "read",
+          input: { path: "README.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Friday" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: "Call the read tool with path README.md from the current workspace root, then answer with the top H1 heading only.",
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(2);
+      expect(result.response).toBe("Friday");
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not count capabilities as local workspace file read evidence", async () => {
     const llmClient = createMockLlmClient([
       [
