@@ -1275,6 +1275,350 @@ async function executePersonaLearning({ artifact, client, scenario }) {
   return artifact;
 }
 
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+
+function readRequiredEnv(name) {
+  const value = process.env[name]?.trim() ?? "";
+  if (!value) {
+    throw new Error(`missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+function idTail(value) {
+  const raw = String(value ?? "");
+  return raw.length > 6 ? raw.slice(-6) : raw;
+}
+
+function redactDiscordPathname(pathname) {
+  return String(pathname).replace(/\d{12,}/gu, (value) => `<id:${idTail(value)}>`);
+}
+
+function redactDiscordErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\d{12,}/gu, (value) => `<id:${idTail(value)}>`);
+}
+
+function discordDiagnosticText(value, max = 320) {
+  const redacted = redactDiscordErrorMessage(String(value ?? ""));
+  return redacted.length > max ? `${redacted.slice(0, max)}...` : redacted;
+}
+
+function summarizeDiscordSetupVerification(data) {
+  const source = data && typeof data === "object" ? data : {};
+  const warnings = Array.isArray(source.warnings)
+    ? source.warnings.map((warning) => discordDiagnosticText(warning)).slice(0, 5)
+    : [];
+  return {
+    status: typeof source.status === "string" ? source.status : "unknown",
+    dmVerified: source.dmVerified === true,
+    ...(typeof source.guildVerified === "boolean" ? { guildVerified: source.guildVerified } : {}),
+    ...(typeof source.message === "string" && source.message.trim()
+      ? { message: discordDiagnosticText(source.message) }
+      : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+function formatDiscordSetupVerificationSummary(summary) {
+  return [
+    `status=${summary.status}`,
+    `dmVerified=${String(summary.dmVerified)}`,
+    ...(typeof summary.guildVerified === "boolean" ? [`guildVerified=${String(summary.guildVerified)}`] : []),
+    ...(summary.message ? [`message=${summary.message}`] : []),
+    ...(summary.warnings?.length ? [`warnings=${summary.warnings.join(" | ")}`] : []),
+  ].join("; ");
+}
+
+function buildDiscordDirectDmPreflightSummary({
+  setupUserId,
+  guildId,
+  channelId,
+  dmChannelId,
+  directDmPreflight,
+  error,
+}) {
+  return {
+    directDmPreflight,
+    setupUserIdTail: idTail(setupUserId),
+    guildIdTail: idTail(guildId),
+    channelIdTail: idTail(channelId),
+    dmChannelIdTail: idTail(dmChannelId),
+    ...(error ? { error: discordDiagnosticText(error) } : {}),
+  };
+}
+
+function formatDiscordDirectDmPreflightSummary(summary) {
+  return [
+    `directDmPreflight=${String(summary.directDmPreflight)}`,
+    `setupUserIdTail=${summary.setupUserIdTail}`,
+    `guildIdTail=${summary.guildIdTail}`,
+    `channelIdTail=${summary.channelIdTail}`,
+    ...(summary.error ? [`error=${summary.error}`] : []),
+  ].join("; ");
+}
+
+async function discordApiJson({ token, method = "GET", pathname, body }) {
+  const response = await fetch(`${DISCORD_API_BASE}${pathname}`, {
+    method,
+    headers: {
+      Authorization: `Bot ${token}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) {
+    const code = json && typeof json === "object" && "code" in json ? String(json.code) : "unknown";
+    throw new Error(`Discord ${method} ${redactDiscordPathname(pathname)} failed with HTTP ${String(response.status)} code=${code}`);
+  }
+  return { status: response.status, json };
+}
+
+async function cleanupDiscordMessages({ artifact, token, messages }) {
+  for (const { channelId, messageId } of messages.toReversed()) {
+    try {
+      await discordApiJson({
+        token,
+        method: "DELETE",
+        pathname: `/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,
+      });
+    } catch (error) {
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `best-effort Discord cleanup failed for message <id:${idTail(messageId)}>: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ];
+    }
+  }
+}
+
+async function executeDiscordRoundtrip({ artifact, scenario, client }) {
+  const tokenEnv = scenario.execution.tokenEnv ?? "FRIDAY_DISCORD_BOT_TOKEN";
+  const setupUserIdEnv = scenario.execution.setupUserIdEnv ?? "FRIDAY_DISCORD_SETUP_USER_ID";
+  const guildIdEnv = scenario.execution.guildIdEnv ?? "FRIDAY_DISCORD_GUILD_ID";
+  const channelIdEnv = scenario.execution.channelIdEnv ?? "FRIDAY_DISCORD_CHANNEL_ID";
+
+  const token = readRequiredEnv(tokenEnv);
+  const setupUserId = readRequiredEnv(setupUserIdEnv);
+  const guildId = readRequiredEnv(guildIdEnv);
+  const channelId = readRequiredEnv(channelIdEnv);
+  const proofNonce = `${artifact.runId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  const baseMessage = `Friday F-008 live Discord proof ${proofNonce}`;
+  const replyMessage = `Friday F-008 live Discord reply ${proofNonce}`;
+  const sentMessages = [];
+
+  try {
+    const me = (await discordApiJson({ token, pathname: "/users/@me" })).json ?? {};
+    if (me.bot !== true || typeof me.id !== "string") {
+      throw new Error("Discord token did not resolve to a bot user.");
+    }
+
+    const guild = (await discordApiJson({ token, pathname: `/guilds/${encodeURIComponent(guildId)}` })).json ?? {};
+    if (guild.id !== guildId) {
+      throw new Error("Discord guild lookup did not return the expected guild id.");
+    }
+
+    const channel = (await discordApiJson({ token, pathname: `/channels/${encodeURIComponent(channelId)}` })).json ?? {};
+    if (channel.id !== channelId) {
+      throw new Error("Discord channel lookup did not return the expected channel id.");
+    }
+    if (channel.guild_id !== guildId) {
+      throw new Error("Discord channel is not in the expected sandbox guild.");
+    }
+
+    const dmChannel = (await discordApiJson({
+      token,
+      method: "POST",
+      pathname: "/users/@me/channels",
+      body: { recipient_id: setupUserId },
+    })).json ?? {};
+    if (typeof dmChannel.id !== "string") {
+      throw new Error("Discord did not return a setup-user DM channel id.");
+    }
+
+    try {
+      const directDmPreflight = (await discordApiJson({
+        token,
+        method: "POST",
+        pathname: `/channels/${encodeURIComponent(dmChannel.id)}/messages`,
+        body: { content: `Friday F-008 setup DM preflight ${proofNonce}` },
+      })).json ?? {};
+      if (typeof directDmPreflight.id !== "string") {
+        throw new Error("Discord setup-user DM preflight did not return a message id.");
+      }
+      sentMessages.push({ channelId: dmChannel.id, messageId: directDmPreflight.id });
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordDirectDmPreflight: buildDiscordDirectDmPreflightSummary({
+          setupUserId,
+          guildId,
+          channelId,
+          dmChannelId: dmChannel.id,
+          directDmPreflight: true,
+        }),
+      };
+    } catch (error) {
+      const preflight = buildDiscordDirectDmPreflightSummary({
+        setupUserId,
+        guildId,
+        channelId,
+        dmChannelId: dmChannel.id,
+        directDmPreflight: false,
+        error,
+      });
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordDirectDmPreflight: preflight,
+      };
+      throw new Error(`Discord setup-user DM preflight failed (${formatDiscordDirectDmPreflightSummary(preflight)}).`);
+    }
+
+    const verificationBegin = await client.api("POST", "/v1/setup/channels/discord/verification/begin", {
+      token,
+      guildId,
+    });
+    const setupVerificationId = verificationBegin.data?.verificationId;
+    if (typeof setupVerificationId !== "string") {
+      throw new Error("Friday Discord setup did not return a verification id.");
+    }
+    const verificationComplete = await client.api("POST", "/v1/setup/channels/discord/verification/complete", {
+      verificationId: setupVerificationId,
+      userId: setupUserId,
+      guildId,
+    });
+    if (verificationComplete.data?.status !== "success" || verificationComplete.data?.dmVerified !== true) {
+      const setupVerification = summarizeDiscordSetupVerification(verificationComplete.data);
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordSetupVerification: setupVerification,
+      };
+      throw new Error(
+        `Friday Discord setup verification did not complete successfully (${formatDiscordSetupVerificationSummary(
+          setupVerification,
+        )}).`,
+      );
+    }
+    if (typeof verificationComplete.data?.welcomeMessageId === "string") {
+      sentMessages.push({ channelId: dmChannel.id, messageId: verificationComplete.data.welcomeMessageId });
+    }
+    await client.api("POST", "/v1/setup/channels", {
+      controlConfirmed: true,
+      channels: [{
+        kind: "discord",
+        enabled: true,
+        config: {
+          token,
+          intents: 0,
+          botUserId: me.id,
+          allowedChannels: [channelId],
+          setupVerificationId,
+          setupUserId,
+        },
+      }],
+    });
+
+    const session = await client.api("POST", "/v1/sessions", {
+      channel: "discord",
+      chatId: channelId,
+      accountId: "real-world-validation",
+      chatKind: "group",
+      metadata: {
+        scenarioId: scenario.id,
+        proof: "f008-discord-roundtrip",
+      },
+    });
+    const sessionKey = session.data?.session?.key;
+    if (typeof sessionKey !== "string") {
+      throw new Error("Friday session create did not return a session key.");
+    }
+
+    const outbound = await client.api("POST", `/v1/sessions/${encodeURIComponent(sessionKey)}/outbound`, {
+      text: baseMessage,
+      metadata: { proof: "f008-discord-roundtrip" },
+    });
+    const sentMessageId = outbound.data?.delivery?.messageId;
+    if (typeof sentMessageId !== "string") {
+      throw new Error("Friday channel outbound did not return a Discord message id.");
+    }
+    sentMessages.push({ channelId, messageId: sentMessageId });
+
+    const readBack = (await discordApiJson({
+      token,
+      pathname: `/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(sentMessageId)}`,
+    })).json ?? {};
+    if (readBack.content !== baseMessage) {
+      throw new Error("Discord channel message readback did not match Friday outbound content.");
+    }
+
+    const replyOutbound = await client.api("POST", `/v1/sessions/${encodeURIComponent(sessionKey)}/outbound`, {
+      text: replyMessage,
+      replyToMessageId: sentMessageId,
+      metadata: { proof: "f008-discord-roundtrip" },
+    });
+    const replyMessageId = replyOutbound.data?.delivery?.messageId;
+    if (typeof replyMessageId !== "string") {
+      throw new Error("Friday channel outbound did not return a Discord reply message id.");
+    }
+    sentMessages.push({ channelId, messageId: replyMessageId });
+
+    const replyReadBack = (await discordApiJson({
+      token,
+      pathname: `/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(replyMessageId)}`,
+    })).json ?? {};
+    if (replyReadBack.content !== replyMessage) {
+      throw new Error("Discord reply readback did not match Friday outbound content.");
+    }
+
+    artifact.result = "passed";
+    artifact.observedEvidence.push(
+      "Discord bot identity resolved",
+      "sandbox guild/channel resolved",
+      "Friday Discord setup verification completed",
+      "Friday session outbound channel message sent and read back",
+      "Friday session outbound reply sent and read back",
+      "setup user DM channel resolved",
+    );
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      discordMessagesReadBack: 2,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      discordEvidence: {
+        botUserIdTail: idTail(me.id),
+        guildIdTail: idTail(guildId),
+        channelIdTail: idTail(channelId),
+        setupUserIdTail: idTail(setupUserId),
+        dmChannelIdTail: idTail(dmChannel.id),
+        sessionKeyTail: idTail(sessionKey),
+        outboundMessageIdTail: idTail(sentMessageId),
+        replyMessageIdTail: idTail(replyMessageId),
+        channelGuildMatched: true,
+        fridaySetupVerified: true,
+        readBackMatched: true,
+        replyReadBackMatched: true,
+        contentLengths: {
+          outbound: baseMessage.length,
+          reply: replyMessage.length,
+        },
+      },
+    };
+    return artifact;
+  } catch (error) {
+    throw new Error(redactDiscordErrorMessage(error));
+  } finally {
+    await cleanupDiscordMessages({ artifact, token, messages: sentMessages });
+  }
+}
+
 async function executeManualExternal({ artifact, scenario, blockers }) {
   const manualEvidenceTemplate = [
     `surface=${scenario.entrySurface}`,
@@ -1356,6 +1700,9 @@ export async function executeScenario({
         break;
       case "persona_learning":
         await executePersonaLearning({ artifact, client, scenario });
+        break;
+      case "discord_roundtrip":
+        await executeDiscordRoundtrip({ artifact, scenario, client });
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });
