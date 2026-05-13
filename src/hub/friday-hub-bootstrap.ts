@@ -110,6 +110,12 @@ import {
   getChannelPersona,
   hydrateChannelPersonaStore,
 } from "#api";
+import {
+  createFridayMediaUnderstandingService,
+  createFridayOpenAiVisionProvider,
+  DEFAULT_OPENAI_VISION_MODEL,
+} from "#media-understanding";
+import { parseFridaySecretInput, resolveFridaySecretInput } from "../security/friday-secret-ref.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
@@ -3260,12 +3266,72 @@ export async function createFridayHub(
     // Non-fatal: provider routing diagnostics should not block startup.
   }
 
-  // ── Media Understanding pipeline (opt-in) ──
-  // Keep this surface honest until media-understanding providers can actually
-  // be registered through the runtime.
-  if (process.env.FRIDAY_MEDIA_UNDERSTANDING_ENABLED === "true") {
+  // ── Media Understanding pipeline (Phase 02a) ──
+  //
+  // Always construct the mediaUnderstanding deps slot for createFridayApiRuntime;
+  // disabled state is represented by null fields plus a structured
+  // disabledReason so the routes are always registered and return
+  // `503 MEDIA_UNDERSTANDING_DISABLED` (never 404) when disabled. We never echo
+  // any env value or credential into the disabledReason.
+  const mediaUnderstandingDeps: Parameters<typeof createFridayApiRuntime>[0]["mediaUnderstanding"] =
+    await (async () => {
+      if (process.env.FRIDAY_MEDIA_UNDERSTANDING_ENABLED !== "true") {
+        return {
+          service: null,
+          doctorProvider: null,
+          disabledReason: "FRIDAY_MEDIA_UNDERSTANDING_ENABLED is not set to true",
+        };
+      }
+      const parsed = parseFridaySecretInput("env:OPENAI_API_KEY");
+      const resolved = await resolveFridaySecretInput(parsed);
+      if (!resolved.ok) {
+        // Use only the blocker.code (structured non-secret enum); never include
+        // blocker.details which can carry the env var name and value shape.
+        return {
+          service: null,
+          doctorProvider: null,
+          disabledReason: `media understanding credential resolution failed: ${resolved.blocker.code}`,
+        };
+      }
+      const apiKey = resolved.value;
+      const model = process.env.FRIDAY_MEDIA_UNDERSTANDING_MODEL ?? DEFAULT_OPENAI_VISION_MODEL;
+      const provider = createFridayOpenAiVisionProvider({ apiKey, model });
+      const service = createFridayMediaUnderstandingService({
+        providers: [provider],
+        // Phase 02a analyze route only accepts http(s):// sourceUrls (the route
+        // boundary at parseAnalyzeAttachment rejects other schemes). data:
+        // URLs are NOT supported by the production fetchContent — the doctor
+        // probe never routes through this closure (it supplies its own inline
+        // buffer via the helper in friday-media-doctor.ts).
+        fetchContent: async (attachment) => {
+          const response = await fetchWithFridayAgentSsrfGuard({
+            url: attachment.sourceUrl,
+            guard: agentSsrfGuard,
+            init: {
+              headers: { "User-Agent": "Friday/1.0" },
+              signal: AbortSignal.timeout(30_000),
+            },
+            options: { maxRedirects: 3 },
+          });
+          if (!response.ok) {
+            throw new Error(
+              `Failed to fetch attachment ${attachment.id}: HTTP ${response.status}`,
+            );
+          }
+          const arrayBuf = await response.arrayBuffer();
+          return Buffer.from(arrayBuf);
+        },
+      });
+      return {
+        service,
+        doctorProvider: provider,
+        disabledReason: null,
+      };
+    })();
+
+  if (mediaUnderstandingDeps.service === null) {
     console.warn(
-      "[friday] Media understanding flag ignored: no provider registration path is wired for media-understanding yet.",
+      `[friday][W-MEDIA-001] Media understanding disabled: ${mediaUnderstandingDeps.disabledReason}; /v1/media-understanding/* will return 503 MEDIA_UNDERSTANDING_DISABLED`,
     );
   }
 
@@ -6248,6 +6314,7 @@ export async function createFridayHub(
     packaging: packagingDeps,
     multiTenantSecurity: multiTenantSecurityDeps,
     desktop: desktopRouteDeps,
+    mediaUnderstanding: mediaUnderstandingDeps,
   });
 
   if (reflexService) {

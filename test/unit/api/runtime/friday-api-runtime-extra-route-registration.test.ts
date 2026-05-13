@@ -188,6 +188,59 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds.some((id) => id.startsWith("autofix."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("agent.loop."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("uix."))).toBe(false);
+    // Phase 02a: media-understanding routes are ALWAYS registered even when
+    // deps.mediaUnderstanding is omitted. Disabled deployments return 503
+    // MEDIA_UNDERSTANDING_DISABLED, never 404.
+    expect(operationIds).toContain("media.understanding.doctor");
+    expect(operationIds).toContain("media.understanding.analyze");
+  });
+
+  it("registers media-understanding routes in disabled state when deps.mediaUnderstanding is omitted", async () => {
+    // makeBaseDeps() does NOT supply mediaUnderstanding; the runtime must
+    // coalesce to honest-disabled deps and still register both routes.
+    const runtime = createFridayApiRuntime(makeBaseDeps());
+    const doctorRoute = runtime.routes.getRoutes().find((r) => r.operationId === "media.understanding.doctor");
+    const analyzeRoute = runtime.routes.getRoutes().find((r) => r.operationId === "media.understanding.analyze");
+    expect(doctorRoute).toBeDefined();
+    expect(analyzeRoute).toBeDefined();
+
+    // Disabled-state behavior: both routes throw 503 MEDIA_UNDERSTANDING_DISABLED.
+    let doctorThrown: unknown = null;
+    try {
+      await doctorRoute!.handler({
+        requestId: "req-media-doctor-disabled",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      });
+    } catch (err) {
+      doctorThrown = err;
+    }
+    expect(doctorThrown).toBeInstanceOf(FridayDomainError);
+    expect((doctorThrown as FridayDomainError).code).toBe("MEDIA_UNDERSTANDING_DISABLED");
+    expect((doctorThrown as FridayDomainError).httpStatus).toBe(503);
+    expect((doctorThrown as FridayDomainError).message).toMatch(/media understanding deps not provided/);
+
+    let analyzeThrown: unknown = null;
+    try {
+      await analyzeRoute!.handler({
+        requestId: "req-media-analyze-disabled",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { attachments: [{ mimeType: "image/png", sizeBytes: 1, sourceUrl: "https://example.com/x.png" }] },
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      });
+    } catch (err) {
+      analyzeThrown = err;
+    }
+    expect(analyzeThrown).toBeInstanceOf(FridayDomainError);
+    expect((analyzeThrown as FridayDomainError).code).toBe("MEDIA_UNDERSTANDING_DISABLED");
+    expect((analyzeThrown as FridayDomainError).httpStatus).toBe(503);
   });
 
   it("does not require provider setup canonical approval when canonical gate profile is off", async () => {

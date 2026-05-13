@@ -31,3 +31,23 @@ export type {
   FridayMediaUnderstandingServiceDeps,
   FridayMediaUnderstandingService,
 } from "./friday-media-understanding-service.js";
+
+// ─── Phase 02a: doctor + OpenAI vision adapter ───
+
+export {
+  probeMediaUnderstandingProvider,
+  FRIDAY_MEDIA_DOCTOR_DEFAULT_PNG_BASE64,
+  FRIDAY_MEDIA_DOCTOR_DEFAULT_TIMEOUT_MS,
+} from "./friday-media-doctor.js";
+export type {
+  FridayMediaUnderstandingDoctorReport,
+  ProbeMediaUnderstandingProviderOptions,
+} from "./friday-media-doctor.js";
+
+export {
+  createFridayOpenAiVisionProvider,
+  FRIDAY_OPENAI_VISION_PROVIDER_ID,
+  DEFAULT_OPENAI_VISION_MODEL,
+  DEFAULT_OPENAI_VISION_BASE_URL,
+} from "./providers/friday-openai-vision-provider.js";
+export type { FridayOpenAiVisionProviderConfig } from "./providers/friday-openai-vision-provider.js";

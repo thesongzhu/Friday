@@ -129,6 +129,15 @@ export type { FridaySecretRoutesDeps } from "./http/routes/friday-secret-routes.
 
 // HTTP Routes
 export { createFridayProviderRoutes } from "./http/routes/friday-provider-routes.js";
+export { createFridayMediaUnderstandingRoutes } from "./http/routes/friday-media-understanding-routes.js";
+export type {
+  FridayMediaUnderstandingRoutesDeps,
+  FridayMediaUnderstandingDoctorRequest,
+  FridayMediaUnderstandingDoctorResponse,
+  FridayMediaUnderstandingAnalyzeRequest,
+  FridayMediaUnderstandingAnalyzeRequestAttachment,
+  FridayMediaUnderstandingAnalyzeResponse,
+} from "./http/routes/friday-media-understanding-routes.js";
 export { createFridayAuthRoutes } from "./http/routes/friday-auth-routes.js";
 export { createFridayRealtimeRoutes } from "./http/routes/friday-realtime-routes.js";
 export { createFridayFleetRoutes } from "./http/routes/friday-fleet-routes.js";
