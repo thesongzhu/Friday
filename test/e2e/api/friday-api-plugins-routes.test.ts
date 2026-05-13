@@ -83,18 +83,18 @@ describe("API — Plugin routes", () => {
     expect(json.error.code).toBe("PLUGIN_NOT_FOUND");
   });
 
-  it("plugin_scope_enforcement — access plugin routes without proper scope → 403", async () => {
+  it("auth-boundary: plugin routes return 200 on a no-scope token (scope-gating off at HTTP layer)", async () => {
+    // Under the auth-boundary product invariant, scope-gating is intentionally
+    // OFF at the HTTP route level. A token with no scopes reaching /v1/plugins
+    // GET returns a 200 success envelope (the plugin list, possibly empty).
+    // Function-level scope evaluation is preserved by
+    // test/unit/api/auth/friday-rbac-policy.test.ts.
     const tokenNoScopes = createTokenWithScopes([]);
     const res = await fetch(`${env.baseUrl}/v1/plugins`, {
       headers: authHeaders(tokenNoScopes),
     });
-    expect(res.status).toBe(403);
-
-    const json = (await res.json()) as {
-      ok: boolean;
-      error: { code: string };
-    };
-    expect(json.ok).toBe(false);
-    expect(["FORBIDDEN", "INSUFFICIENT_SCOPE"]).toContain(json.error.code);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data?: unknown };
+    expect(json.ok).toBe(true);
   });
 });

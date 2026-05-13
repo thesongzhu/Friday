@@ -315,4 +315,170 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
     // Idempotency cache returns the first response — handler not called twice.
     expect(handlerCalls).toBe(1);
   });
+
+  // ─── Bearer hydration (Stage 3 fix for PR #221 Stage 7 CI failures) ───
+
+  /**
+   * Stub middleware that mimics the real `requireAuth`:
+   *   - no Authorization header  → 401 rejection
+   *   - `Authorization: Bearer <known-token>` → set ctx.principal to the mapped principal, pass
+   *   - any other Authorization shape → 401 rejection
+   */
+  function makeBearerStubMiddleware(
+    validTokens: Record<string, { principalId: string; userId: string; tenantId: string; role: string; scopes: string[] }>,
+  ): FridayAuthMiddlewareFactory {
+    return {
+      requireAuth: (ctx) => {
+        if (ctx.principal) return { passed: true as const };
+        const auth = ctx.headers["authorization"] ?? ctx.headers["Authorization"];
+        if (!auth) return { passed: false as const, statusCode: 401, code: "UNAUTHORIZED", message: "missing token" };
+        const parts = auth.split(" ");
+        if (parts.length !== 2 || parts[0] !== "Bearer") {
+          return { passed: false as const, statusCode: 401, code: "UNAUTHORIZED", message: "malformed header" };
+        }
+        const principal = validTokens[parts[1]];
+        if (!principal) {
+          return { passed: false as const, statusCode: 401, code: "UNAUTHORIZED", message: "invalid token" };
+        }
+        (ctx as { principal: unknown }).principal = principal;
+        return { passed: true as const };
+      },
+      requireAnyScope: () => ({ passed: true as const }),
+      requireAnyRole: () => ({ passed: true as const }),
+      enforceRateLimit: () => ({ passed: true as const }),
+    };
+  }
+
+  it("bearer-hydration: valid Bearer token preserves the real principal (not public:default)", async () => {
+    const realPrincipal = {
+      principalId: "user:alice",
+      userId: "11111111-1111-1111-1111-111111111111",
+      tenantId: "22222222-2222-2222-2222-222222222222",
+      role: "viewer",
+      scopes: ["session.read"],
+    };
+    const routes = createFridayHttpRouteRegistry();
+    routes.register({
+      operationId: "test.auth.me",
+      method: "GET",
+      path: "/v1/test/auth/me",
+      auth: { public: true },
+      async handler(ctx) {
+        const p = ctx.principal!;
+        return {
+          principalId: p.principalId,
+          userId: p.userId,
+          tenantId: p.tenantId,
+          role: p.role,
+        };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeBearerStubMiddleware({ "real-token-abc": realPrincipal }),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const response = await fetch(`${baseUrl}/v1/test/auth/me`, {
+      headers: { Authorization: "Bearer real-token-abc" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { ok: true; data: { principalId: string; userId: string; tenantId: string; role: string } };
+    expect(body.data.principalId).toBe("user:alice");
+    expect(body.data.principalId).not.toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
+    expect(body.data.userId).toBe("11111111-1111-1111-1111-111111111111");
+    expect(body.data.tenantId).toBe("22222222-2222-2222-2222-222222222222");
+    expect(body.data.role).toBe("viewer");
+  });
+
+  it("bearer-hydration: malformed Authorization (Basic scheme) falls back to public:default and does NOT 401", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    routes.register({
+      operationId: "test.auth.me",
+      method: "GET",
+      path: "/v1/test/auth/me",
+      auth: { public: true },
+      async handler(ctx) {
+        return { principalId: ctx.principal!.principalId };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeBearerStubMiddleware({ "real-token-abc": { principalId: "x", userId: "x", tenantId: "x", role: "x", scopes: [] } }),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const response = await fetch(`${baseUrl}/v1/test/auth/me`, {
+      headers: { Authorization: "Basic dXNlcjpwYXNz" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { ok: true; data: { principalId: string } };
+    expect(body.data.principalId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
+  });
+
+  it("bearer-hydration: lowercase 'bearer' scheme falls back to public:default", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    routes.register({
+      operationId: "test.auth.me",
+      method: "GET",
+      path: "/v1/test/auth/me",
+      auth: { public: true },
+      async handler(ctx) {
+        return { principalId: ctx.principal!.principalId };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeBearerStubMiddleware({ "real-token-abc": { principalId: "x", userId: "x", tenantId: "x", role: "x", scopes: [] } }),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const response = await fetch(`${baseUrl}/v1/test/auth/me`, {
+      headers: { Authorization: "bearer real-token-abc" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { ok: true; data: { principalId: string } };
+    expect(body.data.principalId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
+  });
+
+  it("bearer-hydration: Bearer with unknown token value falls back to public:default", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    routes.register({
+      operationId: "test.auth.me",
+      method: "GET",
+      path: "/v1/test/auth/me",
+      auth: { public: true },
+      async handler(ctx) {
+        return { principalId: ctx.principal!.principalId };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeBearerStubMiddleware({}),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const response = await fetch(`${baseUrl}/v1/test/auth/me`, {
+      headers: { Authorization: "Bearer nope.nope.nope" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { ok: true; data: { principalId: string } };
+    expect(body.data.principalId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
+  });
 });

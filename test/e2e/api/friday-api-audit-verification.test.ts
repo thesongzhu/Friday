@@ -197,17 +197,30 @@ describe("API Audit Verification", () => {
       expect(trackedAfter?.revoked_at).not.toBeNull();
       expect(sessionAfter?.revoked_at).not.toBeNull();
 
+      // Under the auth-boundary product invariant, a revoked bearer token at
+      // HTTP route layer no longer 401s — the public-route hydration sees the
+      // tokenValidator reject the revoked token and falls back to the synthetic
+      // public:default principal. /v1/auth/me then returns the stable Friday
+      // Public synthetic-user envelope (200, ok: true, id="00000000-0000-0000-0000-000000000001"),
+      // NOT the real revoked user's identity. The function-level revocation
+      // behavior (rejecting revoked tokens with FridayTokenValidationError) is
+      // pinned by test/unit/api/auth/friday-token-validator.test.ts; the DB-side
+      // revocation rows asserted above prove the revocation persisted.
       const meRes = await fetch(`${env.baseUrl}/v1/auth/me`, {
         headers: authHeaders(accessToken),
       });
+      expect(meRes.status).toBe(200);
       const meJson = (await meRes.json()) as {
         ok: boolean;
-        error?: { code: string };
+        data: { user: { id: string; displayName: string }; scopes: string[] };
+        requestId: string;
       };
-
-      expect(meRes.status).toBe(401);
-      expect(meJson.ok).toBe(false);
-      expect(meJson.error?.code).toBe("TOKEN_REVOKED");
+      // Envelope is a success envelope returning the synthetic public user.
+      expect(meJson.ok).toBe(true);
+      expect(meJson.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
+      expect(meJson.data.user.displayName).toBe("Friday Public");
+      // Real revoked-user identity is NOT returned (non-leakage invariant).
+      expect(meJson.data.user.id).not.toBe("test-user");
     });
   });
 

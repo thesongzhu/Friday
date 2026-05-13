@@ -70,8 +70,14 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
     { label: "no space", header: (t: string) => `Bearer${t}` },
   ];
 
+  // Auth-boundary product invariant: under the no-login-required HTTP posture,
+  // a malformed Authorization header MUST NOT downgrade the request to 401.
+  // The HTTP server falls back to the synthetic default-public principal so the
+  // route still responds. Function-level bearer-scheme parsing remains pinned
+  // by test/unit/api/auth/friday-auth-middleware.test.ts and
+  // test/unit/api/auth/friday-token-validator.test.ts.
   it.each(caseVariants)(
-    "rejects authorization header with $label — returns 401",
+    "auth-boundary: non-standard Authorization scheme '$label' falls through to public:default and returns 200",
     async ({ header }) => {
       const res = await fetch(`${env.baseUrl}/v1/sessions`, {
         headers: {
@@ -80,8 +86,11 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
         },
       });
 
-      // All non-standard Bearer formats must be rejected
-      expect(res.status).toBe(401);
+      // Non-standard Bearer formats fall back to the synthetic public:default
+      // principal; /v1/sessions GET handler runs and returns a success envelope.
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; data?: unknown; requestId?: string };
+      expect(json.ok).toBe(true);
     },
   );
 
@@ -96,7 +105,7 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
     expect(res.status).toBe(200);
   });
 
-  it("rejects empty authorization header", async () => {
+  it("auth-boundary: empty authorization header falls through to public:default and returns 200", async () => {
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: {
         Authorization: "",
@@ -104,10 +113,12 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
       },
     });
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
   });
 
-  it("rejects 'Basic' scheme with valid token value", async () => {
+  it("auth-boundary: 'Basic' scheme with valid token value falls through to public:default and returns 200", async () => {
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: {
         Authorization: `Basic ${validToken}`,
@@ -115,7 +126,9 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
       },
     });
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
   });
 });
 

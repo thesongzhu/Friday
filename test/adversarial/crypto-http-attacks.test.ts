@@ -208,10 +208,13 @@ describe("TEST-41: CORS Origin Validation Bypass", () => {
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });
 
-  it("security headers are present on 401 responses", async () => {
+  it("auth-boundary: security headers are present on no-auth-header public-route 200 responses", async () => {
+    // Under the auth-boundary product invariant, /v1/sessions is public and
+    // no-auth requests reach the handler (with synthetic public:default), which
+    // returns a 200 business envelope. Security headers must still be emitted.
     const res = await fetch(`${env.baseUrl}/v1/sessions`);
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("x-frame-options")).toBe("DENY");
   });

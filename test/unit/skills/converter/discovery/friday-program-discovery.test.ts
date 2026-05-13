@@ -474,11 +474,11 @@ describe("FridayDiscoveryRoutes", () => {
       expect(routes).toHaveLength(7);
     });
 
-    it("all routes require auth (none are public)", () => {
+    it("every route declares public auth (auth-boundary product invariant)", () => {
       const { deps } = makeTestDeps();
       const routes = createFridayDiscoveryRoutes(deps);
       for (const route of routes) {
-        expect((route.auth as any).public).toBe(false);
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
@@ -623,11 +623,11 @@ describe("FridayDiscoveryRoutes", () => {
       expect(result.body.policy.enabled).toBe(true);
     });
 
-    it("requires admin or operator role", () => {
+    it("discovery.policy.get is public under auth-boundary product invariant", () => {
       const { deps } = makeTestDeps();
       const routes = createFridayDiscoveryRoutes(deps);
       const route = routes.find((r) => r.operationId === "discovery.policy.get")!;
-      expect((route.auth as any).anyOfRoles).toEqual(["admin", "operator"]);
+      expect(route.auth).toEqual({ public: true });
     });
   });
 
@@ -646,11 +646,11 @@ describe("FridayDiscoveryRoutes", () => {
       );
     });
 
-    it("requires admin role", () => {
+    it("discovery.policy.update is public under auth-boundary product invariant", () => {
       const { deps } = makeTestDeps();
       const routes = createFridayDiscoveryRoutes(deps);
       const route = routes.find((r) => r.operationId === "discovery.policy.update")!;
-      expect((route.auth as any).anyOfRoles).toEqual(["admin"]);
+      expect(route.auth).toEqual({ public: true });
     });
 
     it("ignores invalid field types in body", async () => {
@@ -677,23 +677,25 @@ describe("FridayDiscoveryRoutes", () => {
     });
   });
 
-  describe("scope assignments", () => {
-    it("read routes use desktop.read scope", () => {
+  describe("route shape under auth-boundary product invariant", () => {
+    it("former read routes are present and public", () => {
       const { deps } = makeTestDeps();
       const routes = createFridayDiscoveryRoutes(deps);
       const readRoutes = routes.filter((r) =>
         ["discovery.catalog.get", "discovery.programs.list", "discovery.recommend", "discovery.status"].includes(r.operationId),
       );
+      expect(readRoutes.length).toBe(4);
       for (const route of readRoutes) {
-        expect((route.auth as any).anyOfScopes).toContain("desktop.read");
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
-    it("write route uses desktop.write scope", () => {
+    it("former write route (discovery.policy.update) is present and public", () => {
       const { deps } = makeTestDeps();
       const routes = createFridayDiscoveryRoutes(deps);
       const writeRoute = routes.find((r) => r.operationId === "discovery.policy.update")!;
-      expect((writeRoute.auth as any).anyOfScopes).toContain("desktop.write");
+      expect(writeRoute).toBeDefined();
+      expect(writeRoute.auth).toEqual({ public: true });
     });
   });
 });
