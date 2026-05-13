@@ -1330,6 +1330,34 @@ function formatDiscordSetupVerificationSummary(summary) {
   ].join("; ");
 }
 
+function buildDiscordDirectDmPreflightSummary({
+  setupUserId,
+  guildId,
+  channelId,
+  dmChannelId,
+  directDmPreflight,
+  error,
+}) {
+  return {
+    directDmPreflight,
+    setupUserIdTail: idTail(setupUserId),
+    guildIdTail: idTail(guildId),
+    channelIdTail: idTail(channelId),
+    dmChannelIdTail: idTail(dmChannelId),
+    ...(error ? { error: discordDiagnosticText(error) } : {}),
+  };
+}
+
+function formatDiscordDirectDmPreflightSummary(summary) {
+  return [
+    `directDmPreflight=${String(summary.directDmPreflight)}`,
+    `setupUserIdTail=${summary.setupUserIdTail}`,
+    `guildIdTail=${summary.guildIdTail}`,
+    `channelIdTail=${summary.channelIdTail}`,
+    ...(summary.error ? [`error=${summary.error}`] : []),
+  ].join("; ");
+}
+
 async function discordApiJson({ token, method = "GET", pathname, body }) {
   const response = await fetch(`${DISCORD_API_BASE}${pathname}`, {
     method,
@@ -1414,6 +1442,43 @@ async function executeDiscordRoundtrip({ artifact, scenario, client }) {
     })).json ?? {};
     if (typeof dmChannel.id !== "string") {
       throw new Error("Discord did not return a setup-user DM channel id.");
+    }
+
+    try {
+      const directDmPreflight = (await discordApiJson({
+        token,
+        method: "POST",
+        pathname: `/channels/${encodeURIComponent(dmChannel.id)}/messages`,
+        body: { content: `Friday F-008 setup DM preflight ${proofNonce}` },
+      })).json ?? {};
+      if (typeof directDmPreflight.id !== "string") {
+        throw new Error("Discord setup-user DM preflight did not return a message id.");
+      }
+      sentMessages.push({ channelId: dmChannel.id, messageId: directDmPreflight.id });
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordDirectDmPreflight: buildDiscordDirectDmPreflightSummary({
+          setupUserId,
+          guildId,
+          channelId,
+          dmChannelId: dmChannel.id,
+          directDmPreflight: true,
+        }),
+      };
+    } catch (error) {
+      const preflight = buildDiscordDirectDmPreflightSummary({
+        setupUserId,
+        guildId,
+        channelId,
+        dmChannelId: dmChannel.id,
+        directDmPreflight: false,
+        error,
+      });
+      artifact.raw = {
+        ...(artifact.raw ?? {}),
+        discordDirectDmPreflight: preflight,
+      };
+      throw new Error(`Discord setup-user DM preflight failed (${formatDiscordDirectDmPreflightSummary(preflight)}).`);
     }
 
     const verificationBegin = await client.api("POST", "/v1/setup/channels/discord/verification/begin", {

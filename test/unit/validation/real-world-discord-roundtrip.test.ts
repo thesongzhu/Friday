@@ -66,6 +66,12 @@ describe("real-world Discord roundtrip executor", () => {
       if (pathname === "/api/v10/users/@me/channels" && init?.method === "POST") {
         return jsonResponse({ id: "dm-channel-1" });
       }
+      if (pathname === "/api/v10/channels/dm-channel-1/messages" && init?.method === "POST") {
+        return jsonResponse({ id: "dm-preflight-1" });
+      }
+      if (pathname === "/api/v10/channels/dm-channel-1/messages/dm-preflight-1" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
       if (pathname === "/api/v10/channels/dm-channel-1/messages/welcome-1" && init?.method === "DELETE") {
         return new Response(null, { status: 204 });
       }
@@ -133,6 +139,8 @@ describe("real-world Discord roundtrip executor", () => {
     const raw = JSON.stringify(artifact.raw);
     expect(raw).not.toContain("test-discord-token");
     expect(raw).not.toContain("Friday F-008 live Discord proof");
+    expect(raw).not.toContain("Friday F-008 setup DM preflight");
+    expect(raw).toContain("discordDirectDmPreflight");
     expect(raw).toContain("readBackMatched");
     expect(messages.size).toBe(0);
   });
@@ -172,6 +180,12 @@ describe("real-world Discord roundtrip executor", () => {
       }
       if (pathname === "/api/v10/users/@me/channels" && init?.method === "POST") {
         return jsonResponse({ id: "dm-channel-1" });
+      }
+      if (pathname === "/api/v10/channels/dm-channel-1/messages" && init?.method === "POST") {
+        return jsonResponse({ id: "dm-preflight-1" });
+      }
+      if (pathname === "/api/v10/channels/dm-channel-1/messages/dm-preflight-1" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
       }
       return jsonResponse({ code: 10003 }, 404);
     });
@@ -216,8 +230,60 @@ describe("real-world Discord roundtrip executor", () => {
     expect(notes).toContain("<id:180388>");
     expect(notes).toContain("<id:324993>");
     const raw = JSON.stringify(artifact.raw);
+    expect(raw).toContain("discordDirectDmPreflight");
     expect(raw).toContain("discordSetupVerification");
     expect(raw).not.toContain("test-discord-token");
+    expect(raw).not.toContain("Friday F-008 setup DM preflight");
+    expect(raw).not.toContain("1476443521543180388");
+    expect(raw).not.toContain("370355408730324993");
+  });
+
+  it("fails before Friday setup when direct setup-user DM preflight fails", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/v10/users/@me") {
+        return jsonResponse({ id: "bot-user-1", bot: true });
+      }
+      if (pathname === "/api/v10/guilds/1476443522000486548") {
+        return jsonResponse({ id: "1476443522000486548" });
+      }
+      if (pathname === "/api/v10/channels/1476443521543180388") {
+        return jsonResponse({ id: "1476443521543180388", guild_id: "1476443522000486548" });
+      }
+      if (pathname === "/api/v10/users/@me/channels" && init?.method === "POST") {
+        return jsonResponse({ id: "dm-channel-1" });
+      }
+      if (pathname === "/api/v10/channels/dm-channel-1/messages" && init?.method === "POST") {
+        return jsonResponse({ code: 50278, message: "Cannot send messages to this user due to having no mutual guilds" }, 403);
+      }
+      return jsonResponse({ code: 10003 }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const apiMock = vi.fn();
+
+    const artifact = await executeScenario({
+      runId: "run-1",
+      suite: "weekly",
+      scenario: makeScenario(),
+      lane: { laneKey: "none" },
+      client: { api: apiMock },
+      envTruth: {},
+      reportRoot: "/tmp/friday-real-world-test",
+      uiBaseUrl: "http://127.0.0.1:3141",
+      blockers: [],
+    });
+
+    expect(artifact.result).toBe("failed");
+    expect(apiMock).not.toHaveBeenCalled();
+    const notes = artifact.notes?.join("\n") ?? "";
+    expect(notes).toContain("Discord setup-user DM preflight failed");
+    expect(notes).toContain("directDmPreflight=false");
+    const raw = JSON.stringify(artifact.raw);
+    expect(raw).toContain("discordDirectDmPreflight");
+    expect(raw).toContain("\"directDmPreflight\":false");
+    expect(raw).not.toContain("test-discord-token");
+    expect(raw).not.toContain("Friday F-008 setup DM preflight");
     expect(raw).not.toContain("1476443521543180388");
     expect(raw).not.toContain("370355408730324993");
   });
