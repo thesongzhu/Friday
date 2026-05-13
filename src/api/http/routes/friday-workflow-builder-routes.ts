@@ -48,7 +48,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       operationId: "templates.list",
       method: "GET",
       path: "/v1/workflow-builder/templates",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, unknown>;
         return deps.listTemplates({
@@ -60,7 +60,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       operationId: "templates.get",
       method: "GET",
       path: "/v1/workflow-builder/templates/:templateId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { templateId } = ctx.params as { templateId: string };
         return deps.getTemplate(templateId);
@@ -70,7 +70,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       operationId: "templates.instantiate",
       method: "POST",
       path: "/v1/workflow-builder/templates/:templateId/instantiate",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { templateId } = ctx.params as { templateId: string };
         const body = ctx.body as FridayInstantiateWorkflowBuilderTemplateRequest;
@@ -115,7 +115,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.list",
       method: "GET",
       path: "/v1/workflows/:workflowId/drafts",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.listDrafts(workflowId, ctx.query as FridayPaginationQuery);
@@ -125,7 +125,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.create",
       method: "POST",
       path: "/v1/workflows/:workflowId/drafts",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.createDraft(workflowId, ctx.body as FridayCreateDraftRequest);
@@ -135,7 +135,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.get",
       method: "GET",
       path: "/v1/workflows/:workflowId/drafts/:draftId",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.getDraft(workflowId, draftId);
@@ -145,7 +145,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.export",
       method: "GET",
       path: "/v1/workflows/:workflowId/drafts/:draftId/export",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.exportDraftBundle(workflowId, draftId);
@@ -155,7 +155,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "workflows.bundles.import",
       method: "POST",
       path: "/v1/workflows/:workflowId/import",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.importWorkflowBundle(workflowId, ctx.body as FridayImportWorkflowBundleRequest);
@@ -165,7 +165,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.save",
       method: "PATCH",
       path: "/v1/workflows/:workflowId/drafts/:draftId",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.saveDraft(workflowId, draftId, ctx.body as FridaySaveDraftRequest);
@@ -175,7 +175,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.autosave",
       method: "POST",
       path: "/v1/workflows/:workflowId/drafts/:draftId/autosave",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.autosaveDraft(workflowId, draftId, ctx.body as FridayAutosaveDraftRequest);
@@ -185,7 +185,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.compile",
       method: "POST",
       path: "/v1/workflows/:workflowId/drafts/:draftId/compile",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.compileDraft(workflowId, draftId);
@@ -195,7 +195,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "drafts.publish",
       method: "POST",
       path: "/v1/workflows/:workflowId/drafts/:draftId/publish",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
@@ -206,7 +206,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "locks.acquire",
       method: "POST",
       path: "/v1/workflows/:workflowId/locks/acquire",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.acquireLock(workflowId, ctx.body as FridayAcquireWorkflowLockRequest, ctx.principal);
@@ -216,7 +216,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "locks.renew",
       method: "POST",
       path: "/v1/workflows/:workflowId/locks/renew",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.renewLock(workflowId, ctx.body as FridayRenewWorkflowLockRequest, ctx.principal);
@@ -226,7 +226,7 @@ export function createFridayWorkflowBuilderRoutes(
       operationId: "locks.release",
       method: "POST",
       path: "/v1/workflows/:workflowId/locks/release",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.releaseLock(workflowId, ctx.body as FridayReleaseWorkflowLockRequest, ctx.principal);

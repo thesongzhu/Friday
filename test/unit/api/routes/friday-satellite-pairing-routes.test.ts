@@ -165,7 +165,7 @@ describe("createFridaySatellitePairingRoutes", () => {
 
       expect(route.method).toBe("GET");
       expect(route.path).toBe("/v1/satellites/pairing");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["satellite.read"] });
+      expect(route.auth).toEqual({ public: true });
 
       const result = await route.handler(makeCtx() as any);
       expect(result).toEqual(expect.arrayContaining([expect.objectContaining({ requestId: "req-001" })]));
@@ -204,7 +204,7 @@ describe("createFridaySatellitePairingRoutes", () => {
 
       expect(route.method).toBe("POST");
       expect(route.path).toBe("/v1/satellites/:satelliteId/pairing/approve");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["satellite.write"] });
+      expect(route.auth).toEqual({ public: true });
 
       const result = await route.handler(makeCtx({
         params: { satelliteId: "sat-001" },
@@ -323,7 +323,7 @@ describe("createFridaySatellitePairingRoutes", () => {
 
       expect(route.method).toBe("POST");
       expect(route.path).toBe("/v1/satellites/:satelliteId/revoke");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
 
       const result = await route.handler(makeCtx({
         params: { satelliteId: "sat-001" },

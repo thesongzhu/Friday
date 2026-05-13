@@ -136,7 +136,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
     it("all routes require authentication", () => {
       const routes = createFridayObservabilityRoutes(makeDeps());
       for (const route of routes) {
-        expect(route.auth).toHaveProperty("public", false);
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
@@ -189,7 +189,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.traces.search");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ query: { module: "workflows", status: "error" } }));
       expect(deps.traces.search).toHaveBeenCalledWith({ module: "workflows", status: "error" });
     });
@@ -269,7 +269,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.alerts.acknowledge");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.write"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ params: { alertId: "a-1" }, body: { note: "investigating" } }));
       expect(deps.alerts.acknowledge).toHaveBeenCalledWith("a-1", { note: "investigating" });
     });
@@ -355,7 +355,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.alert.rules.create");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         body: { condition: { type: "threshold" }, channelIds: [] },
       }))).rejects.toThrow("name is required");
@@ -417,7 +417,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.alert.rules.delete");
 
       expect(route.method).toBe("DELETE");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { ruleId: "r-1" },
         body: {},
@@ -444,7 +444,7 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.heartbeat.status");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx());
       expect(deps.heartbeat?.getStatus).toHaveBeenCalledTimes(1);
     });
@@ -455,30 +455,28 @@ describe("B-005 FridayObservabilityRoutes", () => {
       const route = findRoute(routes, "observability.heartbeat.trigger");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["diagnosis.write"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx());
       expect(deps.heartbeat?.trigger).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe("scope contract snapshot", () => {
+  describe("route count snapshot (post auth-boundary)", () => {
     const routes = createFridayObservabilityRoutes(makeDeps());
 
-    const getScopes = (r: FridayRouteDefinition<unknown, unknown, unknown, unknown>) =>
-      "anyOfScopes" in r.auth ? r.auth.anyOfScopes : [];
-
-    const readRoutes = routes.filter((r) => getScopes(r).includes("diagnosis.read"));
-    const writeRoutes = routes.filter((r) => getScopes(r).includes("diagnosis.write"));
-
-    it("read routes are GET only", () => {
-      for (const route of readRoutes) {
-        expect(route.method).toBe("GET");
+    it("every route declares public auth (auth-boundary product invariant)", () => {
+      for (const route of routes) {
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
-    it("expected scope distribution", () => {
-      expect(readRoutes.length).toBe(14);
-      expect(writeRoutes.length).toBe(12);
+    it("expected route counts by HTTP method", () => {
+      expect(routes.filter((r) => r.method === "GET").length).toBe(14);
+      expect(routes.filter((r) => r.method === "POST").length).toBe(6);
+      expect(routes.filter((r) => r.method === "PUT").length).toBe(2);
+      expect(routes.filter((r) => r.method === "PATCH").length).toBe(1);
+      expect(routes.filter((r) => r.method === "DELETE").length).toBe(3);
+      expect(routes.length).toBe(26);
     });
   });
 });

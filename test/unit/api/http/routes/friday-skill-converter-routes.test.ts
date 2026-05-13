@@ -234,16 +234,16 @@ describe("FridaySkillConverterRoutes", () => {
     const find = (opId: string) => routes.find((r) => r.operationId === opId);
 
     const listRoute = find("skills.converters.list")!;
-    expect(listRoute.auth).toEqual({ public: false, anyOfScopes: ["skill.read"] });
+    expect(listRoute.auth).toEqual({ public: true });
 
     const convertRoute = find("skills.convert")!;
-    expect(convertRoute.auth).toEqual({ public: false, anyOfScopes: ["skill.write"] });
+    expect(convertRoute.auth).toEqual({ public: true });
 
     const importRoute = find("skills.import")!;
-    expect(importRoute.auth).toEqual({ public: false, anyOfScopes: ["skill.write"] });
+    expect(importRoute.auth).toEqual({ public: true });
 
     const packRoute = find("skills.pack")!;
-    expect(packRoute.auth).toEqual({ public: false, anyOfScopes: ["skill.write"] });
+    expect(packRoute.auth).toEqual({ public: true });
   });
 
   describe("GET /v1/skills/converters", () => {

@@ -112,7 +112,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
     it("all routes require authentication", () => {
       const routes = createFridayMultiTenantSecurityRoutes(makeDeps());
       for (const route of routes) {
-        expect(route.auth).toHaveProperty("public", false);
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
@@ -131,7 +131,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const route = findRoute(routes, "security.tenants.create");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+      expect(route.auth).toEqual({ public: true });
 
       await expect(route.handler(makeCtx({ body: { slug: "s", idempotencyKey: "k" } }))).rejects.toThrow("name is required");
       await expect(route.handler(makeCtx({ body: { name: "n", idempotencyKey: "k" } }))).rejects.toThrow("slug is required");
@@ -152,7 +152,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const route = findRoute(routes, "security.tenants.list");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ query: { status: "active" } }));
       expect(deps.tenants.list).toHaveBeenCalledWith({ status: "active" });
     });
@@ -184,7 +184,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const route = findRoute(routes, "security.tenants.delete");
 
       expect(route.method).toBe("DELETE");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1" },
         body: { etag: "e" },
@@ -199,7 +199,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const route = findRoute(routes, "security.workspaces.create");
 
       expect(route.method).toBe("POST");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1" },
         body: { slug: "s", idempotencyKey: "k" },
@@ -265,7 +265,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(deps);
       const route = findRoute(routes, "security.members.add");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1", workspaceId: "ws-1" },
         body: { roleId: "r-1", idempotencyKey: "k" },
@@ -375,7 +375,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(deps);
       const route = findRoute(routes, "security.assignments.grant");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1" },
         body: { roleId: "r-1", scope: { scopeType: "tenant" }, idempotencyKey: "k" },
@@ -583,7 +583,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(deps);
       const route = findRoute(routes, "security.policies.evaluate");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.read"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1" },
         body: { resource: "secret", action: "read", idempotencyKey: "k" },
@@ -608,7 +608,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const route = findRoute(routes, "security.audit.list");
 
       expect(route.method).toBe("GET");
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.read"] });
+      expect(route.auth).toEqual({ public: true });
       await route.handler(makeCtx({ params: { tenantId: "t-1" }, query: { decision: "deny" } }));
       expect(deps.audit.list).toHaveBeenCalledWith("t-1", { decision: "deny" });
     });
@@ -630,7 +630,7 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(deps);
       const route = findRoute(routes, "security.violations.resolve");
 
-      expect(route.auth).toEqual({ public: false, anyOfScopes: ["security.write"] });
+      expect(route.auth).toEqual({ public: true });
       await expect(route.handler(makeCtx({
         params: { tenantId: "t-1", violationId: "v-1" },
         body: {},
@@ -650,42 +650,25 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
     });
   });
 
-  describe("scope contract snapshot", () => {
+  describe("route count snapshot (post auth-boundary)", () => {
     const routes = createFridayMultiTenantSecurityRoutes(makeDeps());
 
-    const getScopes = (r: FridayRouteDefinition<unknown, unknown, unknown, unknown>) => {
-      if ("anyOfScopes" in r.auth) return r.auth.anyOfScopes;
-      return [];
-    };
-
-    const readRoutes = routes.filter((r) => getScopes(r).includes("security.read"));
-    const writeRoutes = routes.filter((r) => getScopes(r).includes("security.write"));
-    const adminRoutes = routes.filter((r) => getScopes(r).includes("hub.admin"));
-
-    it("read-scoped routes are GET only", () => {
-      for (const route of readRoutes) {
-        expect(["GET", "POST"]).toContain(route.method); // POST for evaluate (has audit side effects)
+    it("every route declares public auth (auth-boundary product invariant)", () => {
+      for (const route of routes) {
+        expect(route.auth).toEqual({ public: true });
       }
     });
 
-    it("expected scope distribution", () => {
-      // 15 GET read + 1 POST evaluate = 16 security.read
-      expect(readRoutes.length).toBe(16);
-      // 18 write routes (POST/PATCH/DELETE non-admin)
-      expect(writeRoutes.length).toBe(18);
-      // 3 hub.admin routes (tenant create/update/delete)
-      expect(adminRoutes.length).toBe(3);
+    it("tenant lifecycle routes match the expected operationId family", () => {
+      const tenantLifecycle = routes.filter((r) => /^security\.tenants\.(create|update|delete)$/.test(r.operationId));
+      expect(tenantLifecycle.length).toBe(3);
     });
 
-    it("admin routes are for tenant lifecycle only", () => {
-      for (const route of adminRoutes) {
-        expect(route.operationId).toMatch(/^security\.tenants\./);
-      }
-    });
-
-    it("total routes sum equals 37", () => {
-      // 16 read + 18 write + 3 admin = 37 (no overlap between categories)
-      expect(readRoutes.length + writeRoutes.length + adminRoutes.length).toBe(37);
+    it("expected route counts by HTTP method", () => {
+      expect(routes.filter((r) => r.method === "GET").length).toBe(15);
+      expect(routes.filter((r) => r.method === "POST").length).toBe(10);
+      expect(routes.filter((r) => r.method === "PATCH").length).toBe(5);
+      expect(routes.filter((r) => r.method === "DELETE").length).toBe(7);
       expect(routes.length).toBe(37);
     });
   });

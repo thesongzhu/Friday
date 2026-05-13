@@ -25,6 +25,7 @@ import { isFridayHttpRawTextResponse } from "./friday-http-raw-response.js";
 import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api-error-codes.js";
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
+import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
 
 // ─── Types ───
 
@@ -681,6 +682,26 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             return;
           }
           if (roleResult.headers) Object.assign(middlewareHeaders, roleResult.headers);
+        }
+      } else {
+        // Public-route auth-boundary posture: every HTTP route is reachable without
+        // an Authorization header. But if the caller DID supply a valid
+        // `Authorization: Bearer <token>`, hydrate ctx.principal with the real
+        // validated principal so token-backed identity (e.g. /v1/auth/me, audit
+        // actor stamping, canonical-mutation-gate actor recording) keeps working
+        // for authenticated clients. Malformed / invalid / missing Authorization
+        // headers fall back to the synthetic default-public principal — they do
+        // NOT downgrade to 401, because the product decision is no-login-required.
+        const authHeader = ctx.headers["authorization"] ?? ctx.headers["Authorization"];
+        if (authHeader) {
+          const authResult = middleware.requireAuth(ctx);
+          if (authResult.passed) {
+            if (authResult.headers) Object.assign(middlewareHeaders, authResult.headers);
+          } else {
+            ctx.principal = createFridayDefaultPublicHttpPrincipal();
+          }
+        } else {
+          ctx.principal = createFridayDefaultPublicHttpPrincipal();
         }
       }
 

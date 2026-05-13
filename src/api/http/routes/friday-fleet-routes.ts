@@ -152,7 +152,7 @@ export function createFridayFleetRoutes(
       operationId: "fleet.overview",
       method: "GET",
       path: "/v1/fleet/overview",
-      auth: { public: false, anyOfScopes: ["fleet.read"] },
+      auth: { public: true },
       async handler() {
         return deps.fleetService.getOverview();
       },
@@ -161,7 +161,7 @@ export function createFridayFleetRoutes(
       operationId: "fleet.list.satellites",
       method: "GET",
       path: "/v1/fleet/satellites",
-      auth: { public: false, anyOfScopes: ["fleet.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
         let limit: number | undefined;
@@ -188,7 +188,7 @@ export function createFridayFleetRoutes(
       operationId: "fleet.get.satellite.detail",
       method: "GET",
       path: "/v1/fleet/satellites/:satelliteId",
-      auth: { public: false, anyOfScopes: ["fleet.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { satelliteId } = ctx.params as { satelliteId: UUID };
         const detail = deps.fleetService.getSatelliteDetail(satelliteId);
@@ -206,7 +206,7 @@ export function createFridayFleetRoutes(
       operationId: "fleet.get.satellite.remediation",
       method: "GET",
       path: "/v1/fleet/satellites/:satelliteId/remediation",
-      auth: { public: false, anyOfScopes: ["fleet.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { satelliteId } = ctx.params as { satelliteId: UUID };
         const remediation = deps.fleetService.getSatelliteRemediationPlan(satelliteId);
@@ -224,7 +224,7 @@ export function createFridayFleetRoutes(
       operationId: "fleet.execute.satellite.remediation",
       method: "POST",
       path: "/v1/fleet/satellites/:satelliteId/remediation/:actionId/execute",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const { satelliteId, actionId } = ctx.params as {
           satelliteId: UUID;

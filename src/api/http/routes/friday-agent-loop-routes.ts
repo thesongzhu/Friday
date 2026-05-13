@@ -68,7 +68,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.expertmode.get",
       method: "GET",
       path: "/v1/agent-loop/expert-mode",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetAgentLoopExpertModeResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -80,7 +80,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.expertmode.update",
       method: "PUT",
       path: "/v1/agent-loop/expert-mode",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUpdateAgentLoopExpertModeResponse> {
         requireUserId(ctx.principal);
         const body = (ctx.body ?? {}) as FridayUpdateAgentLoopExpertModeRequest;
@@ -107,7 +107,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.policy.get",
       method: "GET",
       path: "/v1/agent-loop/policy",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(): Promise<FridayGetAgentLoopPolicyResponse> {
         return {
           policy: deps.service.getPolicy(),
@@ -118,7 +118,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.policy.update",
       method: "PUT",
       path: "/v1/agent-loop/policy",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayUpdateAgentLoopPolicyResponse> {
         requireUserId(ctx.principal);
         const body = (ctx.body ?? {}) as FridayUpdateAgentLoopPolicyRequest;
@@ -131,7 +131,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.runs.list",
       method: "GET",
       path: "/v1/agent-loop/runs",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListAgentLoopRunsResponse> {
         const userId = requireUserId(ctx.principal);
         const query = (ctx.query ?? {}) as Record<string, unknown>;
@@ -148,7 +148,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.expertruns.list",
       method: "GET",
       path: "/v1/agent-loop/expert-runs",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListExpertAgentLoopRunsResponse> {
         const userId = requireUserId(ctx.principal);
         const query = (ctx.query ?? {}) as Record<string, unknown>;
@@ -165,7 +165,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.runs.get",
       method: "GET",
       path: "/v1/agent-loop/runs/:loopRunId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetAgentLoopRunResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
@@ -182,7 +182,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.expertruns.get",
       method: "GET",
       path: "/v1/agent-loop/expert-runs/:loopRunId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetExpertAgentLoopRunResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
@@ -199,7 +199,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.runs.pause",
       method: "POST",
       path: "/v1/agent-loop/runs/:loopRunId/pause",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
@@ -212,7 +212,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.runs.resume",
       method: "POST",
       path: "/v1/agent-loop/runs/:loopRunId/resume",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
@@ -225,7 +225,7 @@ export function createFridayAgentLoopRoutes(
       operationId: "agent.loop.runs.cancel",
       method: "POST",
       path: "/v1/agent-loop/runs/:loopRunId/cancel",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };

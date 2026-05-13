@@ -286,20 +286,33 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       bRefreshedRefreshToken = json.data.refreshToken ?? bRefreshToken;
     });
 
-    it("B4: Reject missing auth", async () => {
+    it("B4: No-auth /v1/auth/me returns synthetic Friday Public user (auth-boundary product invariant)", async () => {
       const res = await fetch(`${baseUrl}/v1/auth/me`);
-      expect(res.status).toBe(401);
-      const json = (await res.json()) as { ok: boolean };
-      expect(json.ok).toBe(false);
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        ok: boolean;
+        data: { user: { id: string; displayName: string; role: string }; scopes: string[] };
+      };
+      expect(json.ok).toBe(true);
+      expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
+      expect(json.data.user.displayName).toBe("Friday Public");
+      expect(json.data.user.role).toBe("admin");
+      expect(json.data.scopes).toContain("hub.admin");
     });
 
-    it("B5: Reject invalid token", async () => {
+    it("B5: Invalid Bearer falls back to synthetic Friday Public user (auth-boundary product invariant)", async () => {
       const res = await fetch(`${baseUrl}/v1/auth/me`, {
         headers: { Authorization: "Bearer garbage-token-123" },
       });
-      expect(res.status).toBe(401);
-      const json = (await res.json()) as { ok: boolean };
-      expect(json.ok).toBe(false);
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        ok: boolean;
+        data: { user: { id: string; displayName: string; role: string }; scopes: string[] };
+      };
+      expect(json.ok).toBe(true);
+      expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
+      expect(json.data.user.displayName).toBe("Friday Public");
+      expect(json.data.user.role).toBe("admin");
     });
 
     it("B6: Logout", async () => {

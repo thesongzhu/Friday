@@ -343,7 +343,7 @@ export function createFridaySkillConverterRoutes(
       operationId: "skills.converters.list",
       method: "GET",
       path: "/v1/skills/converters",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       async handler(): Promise<FridayApiListConvertersResponse> {
         const converters = deps.converterService.listConverters();
         return { converters };
@@ -355,7 +355,7 @@ export function createFridaySkillConverterRoutes(
       operationId: "skills.convert",
       method: "POST",
       path: "/v1/skills/convert",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_converter.write",
       async handler(ctx): Promise<FridayApiConvertResponse> {
         validateConvertBody(ctx.body);
@@ -379,7 +379,7 @@ export function createFridaySkillConverterRoutes(
       operationId: "skills.import",
       method: "POST",
       path: "/v1/skills/import",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_converter.write",
       async handler(ctx): Promise<FridayApiImportResponse> {
         validateImportBody(ctx.body);
@@ -410,7 +410,7 @@ export function createFridaySkillConverterRoutes(
       operationId: "skills.pack",
       method: "POST",
       path: "/v1/skills/pack",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_converter.write",
       async handler(ctx): Promise<FridayApiPackResponse> {
         validatePackBody(ctx.body);

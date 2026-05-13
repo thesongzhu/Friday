@@ -100,36 +100,53 @@ describe("API — Auth / RBAC / Error mapping", () => {
     expect(typeof json.requestId).toBe("string");
   });
 
-  // ── missing_token_returns_401 ──────────────────────────────────────────
+  // ── auth-boundary: missing token returns 200 + synthetic public user ──
 
-  it("missing_token_returns_401", async () => {
+  it("auth-boundary: missing_token_returns_200_with_public_default_user", async () => {
+    // Under the auth-boundary product invariant, no-Authorization requests do
+    // NOT 401 — the HTTP server injects the synthetic public:default principal
+    // and /v1/auth/me's handler short-circuits to return a stable synthetic
+    // public-user envelope (status 200, ok: true) instead of looking up the
+    // synthetic principalId in the user table. Function-level token-validator
+    // rejection coverage (malformed/expired/revoked tokens) is preserved by
+    // test/unit/api/auth/friday-token-validator.test.ts.
     const res = await fetch(`${env.baseUrl}/v1/auth/me`);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
     const json = (await res.json()) as {
       ok: boolean;
-      error: { code: string; message: string };
+      data: { user: { id: string; displayName: string; role: string }; scopes: string[] };
       requestId: string;
     };
-    expect(json.ok).toBe(false);
-    expect(json.error.code).toBe("UNAUTHORIZED");
-    expect(typeof json.error.message).toBe("string");
+    expect(json.ok).toBe(true);
+    expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
+    expect(json.data.user.displayName).toBe("Friday Public");
+    expect(json.data.user.role).toBe("admin");
+    expect(json.data.scopes).toContain("hub.admin");
     expect(typeof json.requestId).toBe("string");
+    expect(json.requestId.length).toBeGreaterThan(0);
   });
 
-  // ── invalid_token_returns_401 ──────────────────────────────────────────
+  // ── auth-boundary: invalid bearer also falls back to synthetic ────────
 
-  it("invalid_token_returns_401", async () => {
+  it("auth-boundary: invalid_token_falls_back_to_public_default_user", async () => {
+    // Under the auth-boundary product invariant, an invalid/malformed Bearer
+    // header does NOT 401 — the HTTP server's bearer-hydration branch sees
+    // tokenValidator reject the token and falls back to the synthetic
+    // public:default principal. /v1/auth/me returns the synthetic public user.
+    // Function-level invalid-token rejection (with FridayTokenValidationError)
+    // is preserved by test/unit/api/auth/friday-token-validator.test.ts.
     const res = await fetch(`${env.baseUrl}/v1/auth/me`, {
       headers: authHeaders("garbage.token.here"),
     });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
     const json = (await res.json()) as {
       ok: boolean;
-      error: { code: string; message: string };
+      data: { user: { id: string; displayName: string; role: string }; scopes: string[] };
       requestId: string;
     };
-    expect(json.ok).toBe(false);
-    expect(typeof json.error.code).toBe("string");
+    expect(json.ok).toBe(true);
+    expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
+    expect(json.data.user.displayName).toBe("Friday Public");
     expect(typeof json.requestId).toBe("string");
   });
 
@@ -169,13 +186,17 @@ describe("API — Auth / RBAC / Error mapping", () => {
     expect(typeof json.requestId).toBe("string");
   });
 
-  // ── insufficient_scope_returns_403 ─────────────────────────────────────
+  // ── auth-boundary: insufficient scope reaches handler (scope-gating off at HTTP) ──
 
-  it("insufficient_scope_returns_403", async () => {
-    // Create a token with only session.read scope — not enough for session.write endpoints
+  it("auth-boundary: insufficient_scope_reaches_handler_with_200_envelope", async () => {
+    // Under the auth-boundary product invariant, scope-gating is intentionally
+    // OFF at the HTTP route level — every route is public. A token with only
+    // session.read (formerly insufficient for /v1/sessions POST) now reaches
+    // the handler and creates a session. Function-level RBAC enforcement is
+    // preserved by test/unit/api/auth/friday-rbac-policy.test.ts
+    // (principalHasAnyScope rejects insufficient scopes at the function level).
     const limitedToken = createTokenWithScopes(["session.read"]);
 
-    // Call session create which requires session.write scope
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       method: "POST",
       headers: authHeaders(limitedToken),
@@ -185,15 +206,10 @@ describe("API — Auth / RBAC / Error mapping", () => {
       }),
     });
 
-    expect(res.status).toBe(403);
-    const json = (await res.json()) as {
-      ok: boolean;
-      error: { code: string; message: string };
-      requestId: string;
-    };
-    expect(json.ok).toBe(false);
-    expect(json.error.code).toBe("FORBIDDEN");
-    expect(json.error.message).toContain("scope");
+    // Handler runs; response is a successful business envelope, not 403.
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data?: unknown; requestId: string };
+    expect(json.ok).toBe(true);
     expect(typeof json.requestId).toBe("string");
   });
 
@@ -250,7 +266,7 @@ describe("API — Auth / RBAC / Error mapping", () => {
   it("request_id_propagated_in_all_responses", async () => {
     const { accessToken } = await loginTestUser(env.baseUrl);
 
-    // 200 response
+    // 200 response (real user via valid Bearer)
     const res200 = await fetch(`${env.baseUrl}/v1/auth/me`, {
       headers: authHeaders(accessToken),
     });
@@ -260,13 +276,15 @@ describe("API — Auth / RBAC / Error mapping", () => {
     expect(typeof json200.requestId).toBe("string");
     expect(json200.requestId.length).toBeGreaterThan(0);
 
-    // 401 response
-    const res401 = await fetch(`${env.baseUrl}/v1/auth/me`);
-    expect(res401.status).toBe(401);
-    const json401 = (await res401.json()) as { ok: boolean; requestId: string };
-    expect(json401.ok).toBe(false);
-    expect(typeof json401.requestId).toBe("string");
-    expect(json401.requestId.length).toBeGreaterThan(0);
+    // 200 response (synthetic public user via no Authorization header)
+    // Under the auth-boundary product invariant, this is also a 200 success
+    // envelope — the request reaches the handler with public:default principal.
+    const resPublic = await fetch(`${env.baseUrl}/v1/auth/me`);
+    expect(resPublic.status).toBe(200);
+    const jsonPublic = (await resPublic.json()) as { ok: boolean; requestId: string };
+    expect(jsonPublic.ok).toBe(true);
+    expect(typeof jsonPublic.requestId).toBe("string");
+    expect(jsonPublic.requestId.length).toBeGreaterThan(0);
 
     // 404 response (unknown route)
     const res404 = await fetch(`${env.baseUrl}/v1/nonexistent`);
@@ -276,42 +294,20 @@ describe("API — Auth / RBAC / Error mapping", () => {
     expect(typeof json404.requestId).toBe("string");
     expect(json404.requestId.length).toBeGreaterThan(0);
 
-    // All request IDs should be distinct
-    expect(json200.requestId).not.toBe(json401.requestId);
+    // All request IDs should be distinct across the three responses
+    expect(json200.requestId).not.toBe(jsonPublic.requestId);
     expect(json200.requestId).not.toBe(json404.requestId);
-    expect(json401.requestId).not.toBe(json404.requestId);
+    expect(jsonPublic.requestId).not.toBe(json404.requestId);
   });
 
   // ── error_envelope_consistent ──────────────────────────────────────────
 
   it("error_envelope_consistent", async () => {
-    // Check that all error responses conform to { ok: false, error: { code, message }, requestId }
-
-    // 401 — missing auth
-    const res401 = await fetch(`${env.baseUrl}/v1/auth/me`);
-    expect(res401.status).toBe(401);
-    const json401 = (await res401.json()) as Record<string, unknown>;
-    expect(json401.ok).toBe(false);
-    expect(json401.requestId).toBeDefined();
-    expect(typeof json401.requestId).toBe("string");
-    const err401 = json401.error as { code: string; message: string };
-    expect(typeof err401.code).toBe("string");
-    expect(typeof err401.message).toBe("string");
-
-    // 403 — insufficient scope
-    const limitedToken = createTokenWithScopes(["fleet.read"]);
-    const res403 = await fetch(`${env.baseUrl}/v1/sessions`, {
-      method: "POST",
-      headers: authHeaders(limitedToken),
-      body: JSON.stringify({ channel: "c", chatId: "c" }),
-    });
-    expect(res403.status).toBe(403);
-    const json403 = (await res403.json()) as Record<string, unknown>;
-    expect(json403.ok).toBe(false);
-    expect(typeof json403.requestId).toBe("string");
-    const err403 = json403.error as { code: string; message: string };
-    expect(typeof err403.code).toBe("string");
-    expect(typeof err403.message).toBe("string");
+    // Check that error responses conform to { ok: false, error: { code, message }, requestId }.
+    // Under the auth-boundary product invariant, 401/403 paths no longer fire at
+    // the HTTP route layer; the meaningful remaining error paths at the HTTP
+    // level are 404 (unknown route, unknown domain resource) and 400-ish
+    // validation. This test pins the envelope shape on those.
 
     // 404 — unknown route
     const res404 = await fetch(`${env.baseUrl}/v1/nonexistent`);

@@ -574,7 +574,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.templates.list",
       method: "GET",
       path: "/v1/providers/templates",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<FridayListProviderTemplatesResponse> {
         return { items: listFridayProviderTemplates() };
       },
@@ -584,7 +584,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.templates.get",
       method: "GET",
       path: "/v1/providers/templates/:templateId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetProviderTemplateResponse> {
         const { templateId } = ctx.params as { templateId: string };
         const template = getFridayProviderTemplate(templateId);
@@ -600,7 +600,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.list",
       method: "GET",
       path: "/v1/providers",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<FridayListProvidersResponse> {
         const items = await deps.providerService.listProviders();
         return { items };
@@ -611,7 +611,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.health.list",
       method: "GET",
       path: "/v1/providers/health",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<FridayGetProviderHealthSnapshotResponse> {
         return listHealthSnapshot();
       },
@@ -621,7 +621,7 @@ export function createFridayProviderRoutes(
       operationId: "capabilities.doctor",
       method: "POST",
       path: "/v1/capabilities/doctor",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<FridayRunCapabilityDoctorResponse> {
         const raw = ctx.body as Record<string, unknown> | null;
@@ -647,7 +647,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.get",
       method: "GET",
       path: "/v1/providers/:providerId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
         const provider = await deps.providerService.getProvider(providerId);
@@ -667,7 +667,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.create",
       method: "POST",
       path: "/v1/providers",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCreateProviderResponse> {
         // DX-001: Accept both flat and nested (config) formats.
@@ -707,7 +707,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.update",
       method: "PATCH",
       path: "/v1/providers/:providerId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayUpdateProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
@@ -740,7 +740,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.delete",
       method: "DELETE",
       path: "/v1/providers/:providerId",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayDeleteProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
@@ -763,7 +763,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.validate",
       method: "POST",
       path: "/v1/providers/:providerId/validate",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<FridayValidateProviderResponse> {
         const { providerId } = ctx.params as { providerId: string };
@@ -788,7 +788,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.doctor",
       method: "GET",
       path: "/v1/providers/:providerId/doctor",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetProviderDoctorResponse> {
         const { providerId } = ctx.params as { providerId: string };
         const doctor = await deps.providerService.doctorProvider(providerId);
@@ -799,7 +799,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.routing.explain",
       method: "GET",
       path: "/v1/providers/routing/explain",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetProviderRoutingExplainResponse> {
         const query = (ctx.query ?? {}) as Record<string, unknown>;
         const requestedProviderId = typeof query.requestedProviderId === "string" && query.requestedProviderId.trim().length > 0
@@ -841,7 +841,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.routing.pin",
       method: "POST",
       path: "/v1/providers/routing/pin",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayPinProviderRouteResponse> {
         if (!ctx.principal?.userId) {
@@ -885,7 +885,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.routing.penalty.clear",
       method: "POST",
       path: "/v1/providers/routing/penalties/clear",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayClearProviderRoutePenaltyResponse> {
         if (!ctx.principal?.userId) {
@@ -929,7 +929,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.auth.profiles.list",
       method: "GET",
       path: "/v1/providers/:providerId/auth-profiles",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListProviderAuthProfilesResponse> {
         const { providerId } = ctx.params as { providerId: string };
         const items = await deps.providerService.listAuthProfiles(providerId);
@@ -941,7 +941,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.auth.profiles.activate",
       method: "POST",
       path: "/v1/providers/:providerId/auth-profiles/:profileKey/activate",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayActivateProviderAuthProfileResponse> {
         const { providerId, profileKey } = ctx.params as { providerId: string; profileKey: string };
@@ -964,7 +964,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.routing.get",
       method: "GET",
       path: "/v1/model-routing",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<FridayGetRoutingConfigResponse> {
         const routing = await deps.providerService.getRoutingConfig();
         return { routing };
@@ -976,7 +976,7 @@ export function createFridayProviderRoutes(
       operationId: "providers.routing.set",
       method: "PUT",
       path: "/v1/model-routing",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridaySetRoutingConfigResponse> {
         const raw = ctx.body as Record<string, unknown> | null;
@@ -1002,7 +1002,7 @@ export function createFridayProviderRoutes(
       operationId: "auth.oauth.anthropic.initiate",
       method: "POST",
       path: "/v1/auth/oauth/anthropic/initiate",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateAnthropicOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
@@ -1038,7 +1038,7 @@ export function createFridayProviderRoutes(
       operationId: "auth.oauth.anthropic.callback",
       method: "POST",
       path: "/v1/auth/oauth/anthropic/callback",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteAnthropicOAuthCallbackResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
@@ -1094,7 +1094,7 @@ export function createFridayProviderRoutes(
       operationId: "auth.oauth.openai.codex.device.initiate",
       method: "POST",
       path: "/v1/auth/oauth/openai-codex/device/initiate",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateOpenAICodexDeviceOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
@@ -1128,7 +1128,7 @@ export function createFridayProviderRoutes(
       operationId: "auth.oauth.openai.codex.device.complete",
       method: "POST",
       path: "/v1/auth/oauth/openai-codex/device/complete",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteOpenAICodexDeviceOAuthResponse> {
         const ownerUserId = requireOAuthOwnerUserId(ctx.principal);

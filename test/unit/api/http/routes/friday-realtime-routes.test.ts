@@ -56,7 +56,7 @@ describe("FridayRealtimeRoutes", () => {
     const routes = makeRoutes();
     const route = routes.find((r) => r.operationId === "realtime.subscribe");
     expect(route).toBeDefined();
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] });
+    expect(route!.auth).toEqual({ public: true });
     expect(route!.rateLimitPolicyId).toBe("realtime.subscribe");
   });
 
@@ -71,7 +71,7 @@ describe("FridayRealtimeRoutes", () => {
     const routes = makeRoutes();
     const route = routes.find((r) => r.operationId === "realtime.ack");
     expect(route).toBeDefined();
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read", "fleet.read", "satellite.read", "security.read", "diagnosis.read", "session.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("pull rejects unauthorized stream", async () => {

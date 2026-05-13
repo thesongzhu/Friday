@@ -623,7 +623,7 @@ export function createFridayAutonomyRoutes(
       operationId: "autonomy.upgrade.status.list",
       method: "GET",
       path: "/v1/autonomy/upgrade-status",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as Record<string, unknown>;
         return deps.listUpgradeStatus({
@@ -636,7 +636,7 @@ export function createFridayAutonomyRoutes(
       operationId: "capabilities.acquisition.plan",
       method: "GET",
       path: "/v1/capabilities/acquisition/plan",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCapabilityAcquisitionPlanResponse> {
         if (!deps.acquisitionService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
@@ -657,7 +657,7 @@ export function createFridayAutonomyRoutes(
       operationId: "capabilities.acquisition.runs.create",
       method: "POST",
       path: "/v1/capabilities/acquisition/runs",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
         if (!deps.acquisitionService) {
@@ -679,7 +679,7 @@ export function createFridayAutonomyRoutes(
       operationId: "capabilities.acquisition.runs.approve",
       method: "POST",
       path: "/v1/capabilities/acquisition/runs/:id/approve",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
         if (!deps.acquisitionService) {
@@ -694,7 +694,7 @@ export function createFridayAutonomyRoutes(
       operationId: "capabilities.acquisition.runs.cancel",
       method: "POST",
       path: "/v1/capabilities/acquisition/runs/:id/cancel",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCapabilityAcquisitionRunResponse> {
         if (!deps.acquisitionService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Capability acquisition service is not configured", { httpStatus: 501 });
@@ -708,7 +708,7 @@ export function createFridayAutonomyRoutes(
       operationId: "autonomy.policy.get",
       method: "GET",
       path: "/v1/autonomy-policy",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(): Promise<FridayAutonomyPolicyResponse> {
         if (!deps.policyService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Autonomy policy service is not configured", { httpStatus: 501 });
@@ -720,7 +720,7 @@ export function createFridayAutonomyRoutes(
       operationId: "autonomy.policy.patch",
       method: "PATCH",
       path: "/v1/autonomy-policy",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAutonomyPolicyResponse> {
         if (!deps.policyService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Autonomy policy service is not configured", { httpStatus: 501 });
@@ -734,7 +734,7 @@ export function createFridayAutonomyRoutes(
       operationId: "standing.goals.list",
       method: "GET",
       path: "/v1/standing-goals",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListStandingGoalsResponse> {
         if (!deps.standingAgendaService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
@@ -753,7 +753,7 @@ export function createFridayAutonomyRoutes(
       operationId: "standing.goals.create",
       method: "POST",
       path: "/v1/standing-goals",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx): Promise<FridayStandingGoalResponse> {
         if (!deps.standingAgendaService) {
@@ -773,7 +773,7 @@ export function createFridayAutonomyRoutes(
       operationId: "standing.goals.patch",
       method: "PATCH",
       path: "/v1/standing-goals/:id",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayStandingGoalResponse> {
         if (!deps.standingAgendaService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
@@ -788,7 +788,7 @@ export function createFridayAutonomyRoutes(
       operationId: "agenda.list",
       method: "GET",
       path: "/v1/agenda",
-      auth: { public: false, anyOfScopes: ["agent.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayListAgendaResponse> {
         if (!deps.standingAgendaService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
@@ -808,7 +808,7 @@ export function createFridayAutonomyRoutes(
       operationId: "agenda.approve",
       method: "POST",
       path: "/v1/agenda/:id/approve",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayAgendaItemResponse> {
         if (!deps.standingAgendaService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
@@ -822,7 +822,7 @@ export function createFridayAutonomyRoutes(
       operationId: "agenda.run",
       method: "POST",
       path: "/v1/agenda/:id/run",
-      auth: { public: false, anyOfScopes: ["agent.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "agent.run",
       async handler(ctx): Promise<FridayAgendaRunResponse> {
         if (!deps.standingAgendaService) {
@@ -841,7 +841,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.workflows.shadow",
         method: "POST",
         path: "/v1/autonomy/workflows/:workflowId/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -858,7 +858,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.workflows.canary",
         method: "POST",
         path: "/v1/autonomy/workflows/:workflowId/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -879,7 +879,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.workflows.promote",
         method: "POST",
         path: "/v1/autonomy/workflows/:workflowId/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -896,7 +896,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.workflows.rollback",
         method: "POST",
         path: "/v1/autonomy/workflows/:workflowId/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -918,7 +918,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.skills.shadow",
         method: "POST",
         path: "/v1/autonomy/skills/:skillId/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -958,7 +958,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.skills.canary",
         method: "POST",
         path: "/v1/autonomy/skills/:skillId/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1002,7 +1002,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.skills.promote",
         method: "POST",
         path: "/v1/autonomy/skills/:skillId/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1038,7 +1038,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.skills.rollback",
         method: "POST",
         path: "/v1/autonomy/skills/:skillId/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { skillId } = ctx.params as { skillId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1080,7 +1080,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.plugins.review.enable",
         method: "POST",
         path: "/v1/autonomy/plugins/:pluginId/review-enable",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           if (!deps.pluginActions!.reviewEnable) {
             throw new FridayDomainError(
@@ -1111,7 +1111,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.plugins.shadow",
         method: "POST",
         path: "/v1/autonomy/plugins/:pluginId/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { pluginId } = ctx.params as { pluginId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1144,7 +1144,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.plugins.canary",
         method: "POST",
         path: "/v1/autonomy/plugins/:pluginId/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { pluginId } = ctx.params as { pluginId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1183,7 +1183,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.plugins.promote",
         method: "POST",
         path: "/v1/autonomy/plugins/:pluginId/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { pluginId } = ctx.params as { pluginId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1215,7 +1215,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.plugins.rollback",
         method: "POST",
         path: "/v1/autonomy/plugins/:pluginId/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { pluginId } = ctx.params as { pluginId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1253,7 +1253,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.providers.shadow",
         method: "POST",
         path: "/v1/autonomy/providers/:providerId/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { providerId } = ctx.params as { providerId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1286,7 +1286,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.providers.canary",
         method: "POST",
         path: "/v1/autonomy/providers/:providerId/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { providerId } = ctx.params as { providerId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1328,7 +1328,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.providers.promote",
         method: "POST",
         path: "/v1/autonomy/providers/:providerId/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { providerId } = ctx.params as { providerId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1360,7 +1360,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.providers.rollback",
         method: "POST",
         path: "/v1/autonomy/providers/:providerId/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { providerId } = ctx.params as { providerId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1398,7 +1398,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.mcp.servers.shadow",
         method: "POST",
         path: "/v1/autonomy/mcp-servers/:serverId/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1431,7 +1431,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.mcp.servers.canary",
         method: "POST",
         path: "/v1/autonomy/mcp-servers/:serverId/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1468,7 +1468,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.mcp.servers.promote",
         method: "POST",
         path: "/v1/autonomy/mcp-servers/:serverId/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1500,7 +1500,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.mcp.servers.rollback",
         method: "POST",
         path: "/v1/autonomy/mcp-servers/:serverId/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { serverId } = ctx.params as { serverId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1538,7 +1538,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.channels.shadow",
         method: "POST",
         path: "/v1/autonomy/channels/:channelKind/shadow",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1571,7 +1571,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.channels.canary",
         method: "POST",
         path: "/v1/autonomy/channels/:channelKind/canary",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1610,7 +1610,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.channels.promote",
         method: "POST",
         path: "/v1/autonomy/channels/:channelKind/promote",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
@@ -1642,7 +1642,7 @@ export function createFridayAutonomyRoutes(
         operationId: "autonomy.channels.rollback",
         method: "POST",
         path: "/v1/autonomy/channels/:channelKind/rollback",
-        auth: { public: false, anyOfScopes: ["hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const { channelKind } = ctx.params as { channelKind: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;

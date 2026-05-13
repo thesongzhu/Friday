@@ -43,7 +43,7 @@ describe("createFridayHealthRoutes", () => {
     expect(route).toBeDefined();
     expect(route.method).toBe("GET");
     expect(route.path).toBe("/v1/health/capabilities");
-    expect(route.auth).toEqual({ public: false, anyOfScopes: ["session.read"] });
+    expect(route.auth).toEqual({ public: true });
   });
 
   it("is public (no auth)", () => {

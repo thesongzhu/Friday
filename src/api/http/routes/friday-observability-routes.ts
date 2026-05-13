@@ -130,7 +130,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.overview",
       method: "GET",
       path: "/v1/observability/overview",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler() {
         return deps.overview.get();
       },
@@ -139,7 +139,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.time.series",
       method: "GET",
       path: "/v1/observability/time-series",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.timeSeries.get(ctx.query as FridayGetObservabilityTimeSeriesQuery);
       },
@@ -152,7 +152,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.traces.search",
       method: "GET",
       path: "/v1/observability/traces",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.traces.search(ctx.query as FridaySearchTracesQuery);
       },
@@ -161,7 +161,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.traces.get",
       method: "GET",
       path: "/v1/observability/traces/:traceId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { traceId } = ctx.params as { traceId: string };
         return deps.traces.get(traceId);
@@ -176,7 +176,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.audit.search",
       method: "GET",
       path: "/v1/observability/audit",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.audit.search(ctx.query as FridaySearchAuditEntriesQuery);
       },
@@ -185,7 +185,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.audit.get",
       method: "GET",
       path: "/v1/observability/audit/:entryId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { entryId } = ctx.params as { entryId: UUID };
         return deps.audit.get(entryId);
@@ -200,7 +200,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.slos.list",
       method: "GET",
       path: "/v1/observability/slos",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.slos.list(ctx.query as FridayListSlosQuery);
       },
@@ -209,7 +209,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.slos.get",
       method: "GET",
       path: "/v1/observability/slos/:sloId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sloId } = ctx.params as { sloId: UUID };
         return deps.slos.get(sloId);
@@ -219,7 +219,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.slos.create",
       method: "POST",
       path: "/v1/observability/slos",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as { name: string; sliMetric: Record<string, unknown>; target: number; description?: string; complianceWindowDays?: number; enabled?: boolean; tags?: string[] };
         if (!body || typeof body.name !== "string" || body.name.trim() === "") {
@@ -235,7 +235,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.slos.update",
       method: "PUT",
       path: "/v1/observability/slos/:sloId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sloId } = ctx.params as { sloId: UUID };
         const body = ctx.body as { etag: string; name?: string; description?: string; target?: number; complianceWindowDays?: number; enabled?: boolean; tags?: string[] };
@@ -249,7 +249,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.slos.delete",
       method: "DELETE",
       path: "/v1/observability/slos/:sloId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sloId } = ctx.params as { sloId: UUID };
         const etag = (ctx.query as Record<string, string>).etag ?? ((ctx.body as Record<string, string> | null)?.etag);
@@ -268,7 +268,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alerts.list",
       method: "GET",
       path: "/v1/observability/alerts",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.alerts.list(ctx.query as FridayListAlertsQuery);
       },
@@ -277,7 +277,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alerts.get",
       method: "GET",
       path: "/v1/observability/alerts/:alertId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { alertId } = ctx.params as { alertId: UUID };
         return deps.alerts.get(alertId);
@@ -287,7 +287,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alerts.acknowledge",
       method: "POST",
       path: "/v1/observability/alerts/:alertId/acknowledge",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { alertId } = ctx.params as { alertId: UUID };
         const body = (ctx.body ?? {}) as FridayAcknowledgeAlertRequest;
@@ -298,7 +298,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alerts.test.dispatch",
       method: "POST",
       path: "/v1/observability/alerts/:alertId/test-dispatch",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { alertId } = ctx.params as { alertId: UUID };
         return deps.alerts.testDispatch(
@@ -316,7 +316,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.destinations.list",
       method: "GET",
       path: "/v1/observability/alert-destinations",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler() {
         return deps.alertDestinations.list();
       },
@@ -325,7 +325,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.destinations.create",
       method: "POST",
       path: "/v1/observability/alert-destinations",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.alertDestinations.create(ctx.body as FridayCreateAlertDestinationRequest);
       },
@@ -334,7 +334,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.destinations.update",
       method: "PATCH",
       path: "/v1/observability/alert-destinations/:destinationId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { destinationId } = ctx.params as { destinationId: UUID };
         return deps.alertDestinations.update(
@@ -347,7 +347,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.destinations.delete",
       method: "DELETE",
       path: "/v1/observability/alert-destinations/:destinationId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { destinationId } = ctx.params as { destinationId: UUID };
         return deps.alertDestinations.delete(destinationId);
@@ -362,7 +362,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.rules.list",
       method: "GET",
       path: "/v1/observability/alert-rules",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.alertRules.list(ctx.query as FridayListAlertRulesQuery);
       },
@@ -371,7 +371,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.rules.get",
       method: "GET",
       path: "/v1/observability/alert-rules/:ruleId",
-      auth: { public: false, anyOfScopes: ["diagnosis.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { ruleId } = ctx.params as { ruleId: UUID };
         return deps.alertRules.get(ruleId);
@@ -381,7 +381,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.rules.create",
       method: "POST",
       path: "/v1/observability/alert-rules",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayCreateAlertRuleRequest;
         if (!body || typeof body.name !== "string" || body.name.trim() === "") {
@@ -397,7 +397,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.rules.update",
       method: "PUT",
       path: "/v1/observability/alert-rules/:ruleId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { ruleId } = ctx.params as { ruleId: UUID };
         const body = ctx.body as FridayUpdateAlertRuleRequest;
@@ -411,7 +411,7 @@ export function createFridayObservabilityRoutes(
       operationId: "observability.alert.rules.delete",
       method: "DELETE",
       path: "/v1/observability/alert-rules/:ruleId",
-      auth: { public: false, anyOfScopes: ["diagnosis.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { ruleId } = ctx.params as { ruleId: UUID };
         const body = ctx.body as FridayDeleteAlertRuleRequest;
@@ -428,7 +428,7 @@ export function createFridayObservabilityRoutes(
             operationId: "observability.metrics.snapshot",
             method: "GET" as const,
             path: "/v1/observability/metrics",
-            auth: { public: false as const, anyOfScopes: ["diagnosis.read" as const] },
+            auth: { public: true } as const,
             async handler() {
               return deps.metrics!.getSnapshot();
             },
@@ -442,7 +442,7 @@ export function createFridayObservabilityRoutes(
             operationId: "observability.heartbeat.status",
             method: "GET" as const,
             path: "/v1/heartbeat/status",
-            auth: { public: false as const, anyOfScopes: ["diagnosis.read" as const] },
+            auth: { public: true } as const,
             async handler() {
               return deps.heartbeat!.getStatus!();
             },
@@ -455,7 +455,7 @@ export function createFridayObservabilityRoutes(
             operationId: "observability.heartbeat.trigger",
             method: "POST" as const,
             path: "/v1/heartbeat/trigger",
-            auth: { public: false as const, anyOfScopes: ["diagnosis.write" as const] },
+            auth: { public: true } as const,
             async handler() {
               return deps.heartbeat!.trigger!();
             },

@@ -57,7 +57,7 @@ export function createFridayProviderUsageRoutes(
       operationId: "providers.usage.get",
       method: "GET",
       path: "/v1/providers/usage",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetUsageSummaryResponse> {
         const query = ctx.query as Record<string, string | undefined>;
         // DX-004: Default 'from' to start of current month, 'to' to today
@@ -109,7 +109,7 @@ export function createFridayProviderUsageRoutes(
       operationId: "providers.budget.get",
       method: "GET",
       path: "/v1/providers/budget",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(): Promise<FridayGetBudgetStatusResponse> {
         const budget = await deps.providerService.getBudgetStatus();
         return { budget };
@@ -121,7 +121,7 @@ export function createFridayProviderUsageRoutes(
       operationId: "providers.budget.set",
       method: "PUT",
       path: "/v1/providers/budget",
-      auth: { public: false, anyOfScopes: ["hub.admin"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySetBudgetConfigResponse> {
         validateBudgetBody(ctx.body);
         const body = ctx.body;

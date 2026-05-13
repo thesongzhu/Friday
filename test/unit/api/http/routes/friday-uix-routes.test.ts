@@ -520,10 +520,7 @@ describe("FridayUixRoutes", () => {
       "uix.learnedfacts.clear",
       "uix.learnedfacts.delete",
     ]) {
-      expect(byId.get(operationId)?.auth).toMatchObject({
-        public: false,
-        anyOfScopes: ["agent.run"],
-      });
+      expect(byId.get(operationId)?.auth).toMatchObject({ public: true });
     }
   });
 });

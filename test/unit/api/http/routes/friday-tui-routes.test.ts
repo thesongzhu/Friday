@@ -55,8 +55,8 @@ describe("createFridayTuiRoutes", () => {
       "tui.status.get",
       "tui.jobs.list",
     ]);
-    expect(routes[0]?.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
-    expect(routes[1]?.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+    expect(routes[0]?.auth).toEqual({ public: true });
+    expect(routes[1]?.auth).toEqual({ public: true });
   });
 
   it("GET /v1/status returns counts backed by live state", async () => {

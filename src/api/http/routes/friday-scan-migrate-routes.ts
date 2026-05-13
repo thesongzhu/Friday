@@ -44,7 +44,7 @@ export function createFridayScanMigrateRoutes(
       operationId: "skills.scan.local",
       method: "POST",
       path: "/v1/skills/scan-local",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       handler: async (_ctx: Ctx) => {
         const result = deps.scanLocal();
         return { status: 200, body: result };
@@ -56,7 +56,7 @@ export function createFridayScanMigrateRoutes(
       operationId: "skills.catalog.community",
       method: "GET",
       path: "/v1/skills/catalog/community",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       handler: async (ctx: Ctx) => {
         const query = ctx.query ?? {};
         const q = query.q ?? undefined;
@@ -70,7 +70,7 @@ export function createFridayScanMigrateRoutes(
       operationId: "skills.convert.batch",
       method: "POST",
       path: "/v1/skills/convert-batch",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       handler: async (ctx: Ctx) => {
         const body = (ctx.body ?? {}) as {
           items?: Array<{ sourcePath: string; formatHint?: string }>;

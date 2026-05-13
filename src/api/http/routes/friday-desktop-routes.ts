@@ -140,7 +140,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.actions.execute",
       method: "POST",
       path: "/v1/desktop/actions/execute",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayExecuteDesktopActionRequest;
         requirePresent(body, "action");
@@ -152,7 +152,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.actions.batch",
       method: "POST",
       path: "/v1/desktop/actions/batch",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayBatchDesktopActionsRequest;
         if (!body.actions || !Array.isArray(body.actions) || body.actions.length === 0) {
@@ -166,7 +166,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.actions.cancel",
       method: "POST",
       path: "/v1/desktop/actions/:actionId/cancel",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const { actionId } = ctx.params as { actionId: string };
         const body = ctx.body as FridayCancelDesktopActionRequest;
@@ -178,7 +178,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.actions.log",
       method: "GET",
       path: "/v1/desktop/actions/log",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.actions.log(ctx.query as FridayListDesktopActionLogQuery);
       },
@@ -192,7 +192,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.start",
       method: "POST",
       path: "/v1/desktop/recordings",
-      auth: { public: false, anyOfScopes: ["desktop.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayStartDesktopRecordingRequest;
         requireString(body, "name");
@@ -204,7 +204,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.list",
       method: "GET",
       path: "/v1/desktop/recordings",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.recordings.list(ctx.query as FridayListDesktopRecordingsQuery);
       },
@@ -213,7 +213,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.get",
       method: "GET",
       path: "/v1/desktop/recordings/:recordingId",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         return deps.recordings.get(recordingId);
@@ -223,7 +223,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.stop",
       method: "POST",
       path: "/v1/desktop/recordings/:recordingId/stop",
-      auth: { public: false, anyOfScopes: ["desktop.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayStopDesktopRecordingRequest;
@@ -235,7 +235,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.pause",
       method: "POST",
       path: "/v1/desktop/recordings/:recordingId/pause",
-      auth: { public: false, anyOfScopes: ["desktop.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayPauseDesktopRecordingRequest;
@@ -247,7 +247,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.resume",
       method: "POST",
       path: "/v1/desktop/recordings/:recordingId/resume",
-      auth: { public: false, anyOfScopes: ["desktop.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayResumeDesktopRecordingRequest;
@@ -259,7 +259,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.steps.list",
       method: "GET",
       path: "/v1/desktop/recordings/:recordingId/steps",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         return deps.recordings.listSteps(recordingId, ctx.query as FridayListDesktopRecordingStepsQuery);
@@ -269,7 +269,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.replay",
       method: "POST",
       path: "/v1/desktop/recordings/:recordingId/replay",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayReplayDesktopRecordingRequest;
@@ -281,7 +281,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.recordings.delete",
       method: "DELETE",
       path: "/v1/desktop/recordings/:recordingId",
-      auth: { public: false, anyOfScopes: ["desktop.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayDeleteDesktopRecordingRequest;
@@ -298,7 +298,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.create",
       method: "POST",
       path: "/v1/desktop/policies",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayCreateDesktopPolicyRequest;
         requireString(body, "name");
@@ -310,7 +310,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.list",
       method: "GET",
       path: "/v1/desktop/policies",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.policies.list(ctx.query as FridayListDesktopPoliciesQuery);
       },
@@ -319,7 +319,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.get",
       method: "GET",
       path: "/v1/desktop/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId } = ctx.params as { policyId: string };
         return deps.policies.get(policyId);
@@ -329,7 +329,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.update",
       method: "PATCH",
       path: "/v1/desktop/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId } = ctx.params as { policyId: string };
         const body = ctx.body as FridayUpdateDesktopPolicyRequest;
@@ -342,7 +342,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.delete",
       method: "DELETE",
       path: "/v1/desktop/policies/:policyId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId } = ctx.params as { policyId: string };
         const body = ctx.body as FridayDeleteDesktopPolicyRequest;
@@ -355,7 +355,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.rules.create",
       method: "POST",
       path: "/v1/desktop/policies/:policyId/rules",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId } = ctx.params as { policyId: string };
         const body = ctx.body as FridayAddDesktopPolicyRuleRequest;
@@ -369,7 +369,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.policies.rules.delete",
       method: "DELETE",
       path: "/v1/desktop/policies/:policyId/rules/:ruleId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { policyId, ruleId } = ctx.params as { policyId: string; ruleId: string };
         const body = ctx.body as FridayRemoveDesktopPolicyRuleRequest;
@@ -387,7 +387,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.permissions.list",
       method: "GET",
       path: "/v1/desktop/permissions",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.permissions.list();
       },
@@ -396,7 +396,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.permissions.respond",
       method: "POST",
       path: "/v1/desktop/permissions/prompts/:promptId/respond",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const { promptId } = ctx.params as { promptId: string };
         const body = ctx.body as FridayRespondToPermissionPromptRequest;
@@ -409,7 +409,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.permissions.decisions.list",
       method: "GET",
       path: "/v1/desktop/permissions/decisions",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.permissions.listDecisions(
           ctx.query as FridayListDesktopPermissionDecisionsQuery,
@@ -425,7 +425,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.platform.get",
       method: "GET",
       path: "/v1/desktop/platform",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.platform.get();
       },
@@ -434,7 +434,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.elements.inspect",
       method: "POST",
       path: "/v1/desktop/elements/inspect",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayInspectDesktopElementRequest;
         requirePresent(body, "selector");
@@ -445,7 +445,7 @@ export function createFridayDesktopRoutes(
       operationId: "desktop.elements.search",
       method: "GET",
       path: "/v1/desktop/elements/search",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as FridaySearchDesktopElementsQuery;
         if (!query.query) {

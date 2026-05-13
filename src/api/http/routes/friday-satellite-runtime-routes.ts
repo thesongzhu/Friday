@@ -199,7 +199,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.heartbeat",
       method: "POST",
       path: "/v1/satellites/:satelliteId/heartbeat",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -221,7 +221,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.capabilities.update",
       method: "POST",
       path: "/v1/satellites/:satelliteId/capabilities",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -239,7 +239,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.sync.pull",
       method: "POST",
       path: "/v1/satellites/:satelliteId/sync/pull",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -259,7 +259,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.sync.push",
       method: "POST",
       path: "/v1/satellites/:satelliteId/sync/push",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -282,7 +282,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.commands.poll",
       method: "POST",
       path: "/v1/satellites/:satelliteId/commands/poll",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -314,7 +314,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.commands.ack",
       method: "POST",
       path: "/v1/satellites/:satelliteId/commands/:commandId/ack",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
@@ -371,7 +371,7 @@ export function createFridaySatelliteRuntimeRoutes(
       operationId: "satellites.events.poll",
       method: "POST",
       path: "/v1/satellites/:satelliteId/events/poll",
-      auth: { public: false, anyOfScopes: ["satellite.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);

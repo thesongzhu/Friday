@@ -136,7 +136,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.onboarding.get",
       method: "GET",
       path: "/v1/reflex/onboarding",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         return deps.service.getOnboarding(requireUserId(ctx.principal));
       },
@@ -145,7 +145,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.onboarding.start",
       method: "POST",
       path: "/v1/reflex/onboarding/start",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -160,7 +160,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.onboarding.answer",
       method: "POST",
       path: "/v1/reflex/onboarding/answer",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -176,7 +176,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.onboarding.skip",
       method: "POST",
       path: "/v1/reflex/onboarding/skip",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -191,7 +191,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.list",
       method: "GET",
       path: "/v1/reflex/candidates",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const query = ctx.query as Record<string, unknown>;
@@ -209,7 +209,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.get",
       method: "GET",
       path: "/v1/reflex/candidates/:id",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -220,7 +220,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.test",
       method: "POST",
       path: "/v1/reflex/candidates/:id/test",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -236,7 +236,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.approve",
       method: "POST",
       path: "/v1/reflex/candidates/:id/approve",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -247,7 +247,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.reject",
       method: "POST",
       path: "/v1/reflex/candidates/:id/reject",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -263,7 +263,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.candidates.dismiss",
       method: "POST",
       path: "/v1/reflex/candidates/:id/dismiss",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -279,7 +279,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.preferences.list",
       method: "GET",
       path: "/v1/reflex/preferences",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         return { items: deps.service.listPreferences(requireUserId(ctx.principal)) };
       },
@@ -288,7 +288,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.preferences.revoke",
       method: "POST",
       path: "/v1/reflex/preferences/:id/revoke",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
@@ -304,7 +304,7 @@ export function createFridayReflexRoutes(
       operationId: "reflex.preferences.update",
       method: "PATCH",
       path: "/v1/reflex/preferences/:key",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx) {
         const userId = requireUserId(ctx.principal);
         const { key } = ctx.params as { key: string };

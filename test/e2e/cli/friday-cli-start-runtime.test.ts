@@ -152,9 +152,15 @@ describe("CLI start runtime (http server boot)", () => {
     });
     expect(authRes.status).not.toBe(404);
 
-    // GET /v1/auth/me requires auth — should return 401
+    // Under the auth-boundary product invariant, GET /v1/auth/me with no
+    // Authorization header returns 200 with the synthetic public-default user.
+    // (Function-level token-validator rejection is pinned by
+    // test/unit/api/auth/friday-token-validator.test.ts.)
     const meRes = await fetch(`http://127.0.0.1:${port}/v1/auth/me`);
-    expect(meRes.status).toBe(401);
+    expect(meRes.status).toBe(200);
+    const meJson = (await meRes.json()) as { ok: boolean; data: { user: { id: string; displayName: string } } };
+    expect(meJson.ok).toBe(true);
+    expect(meJson.data.user.displayName).toBe("Friday Public");
   });
 
   it("run_loop_graceful_shutdown", async () => {
@@ -258,9 +264,13 @@ describe("CLI start runtime (http server boot)", () => {
     // Give the server time to start listening
     await new Promise((r) => setTimeout(r, 200));
 
-    // Verify the server is actually responding
+    // Verify the server is actually responding. Under the auth-boundary
+    // product invariant, no-Authorization GET /v1/auth/me returns 200 with
+    // the synthetic public-default user envelope.
     const res = await fetch(`http://127.0.0.1:${port}/v1/auth/me`);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
 
     // Trigger shutdown via SIGINT (the run loop listens for this)
     process.emit("SIGINT", "SIGINT");

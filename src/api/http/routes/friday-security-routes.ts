@@ -24,7 +24,7 @@ export function createFridaySecurityRoutes(
       operationId: "security.center",
       method: "GET",
       path: "/v1/security/center",
-      auth: { public: false, anyOfScopes: ["security.read"] },
+      auth: { public: true },
       async handler() {
         return deps.fleetService.getSecurityCenter();
       },
@@ -33,7 +33,7 @@ export function createFridaySecurityRoutes(
       operationId: "security.revoke.token",
       method: "POST",
       path: "/v1/security/tokens/revoke",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayRevokeTokenRequest | undefined;
         if (!body || typeof body.tokenId !== "string" || body.tokenId.trim().length === 0) {
@@ -46,7 +46,7 @@ export function createFridaySecurityRoutes(
       operationId: "security.revoke.satellite",
       method: "POST",
       path: "/v1/security/satellites/:satelliteId/revoke",
-      auth: { public: false, anyOfScopes: ["security.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { satelliteId } = ctx.params as { satelliteId: UUID };
         const body = (ctx.body ?? {}) as Record<string, unknown>;

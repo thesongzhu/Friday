@@ -107,7 +107,7 @@ describe("FridayAgentRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/agent/runs");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.run", "workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/agent/runs requires agent.read scope with workflow.run compatibility", () => {
@@ -116,7 +116,7 @@ describe("FridayAgentRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/agent/runs");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.read", "workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/agent/runs/:runId requires agent.read scope with workflow.run compatibility", () => {
@@ -125,7 +125,7 @@ describe("FridayAgentRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/agent/runs/:runId");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.read", "workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/agent/runs/:runId/cancel requires agent.write scope with workflow.run compatibility", () => {
@@ -134,7 +134,7 @@ describe("FridayAgentRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/agent/runs/:runId/cancel");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.write", "workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/agent/runs/:runId/approve-tool accepts subagent child run approval targets", async () => {
@@ -214,7 +214,7 @@ describe("FridayAgentRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/agent/runs/:runId/events");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["agent.read", "workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/agent/runs/:runId/audit includes autonomous events in the audit surface", async () => {

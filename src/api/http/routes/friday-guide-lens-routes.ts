@@ -47,7 +47,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.state.get",
       method: "GET",
       path: "/v1/guide-lens/state",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.service.getState();
       },
@@ -56,7 +56,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.snapshot.create",
       method: "POST",
       path: "/v1/guide-lens/snapshot",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.captureSnapshot(ctx.body as FridayGuideLensSnapshotRequest);
@@ -66,7 +66,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.targets.resolve",
       method: "POST",
       path: "/v1/guide-lens/targets/resolve",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         requireString(ctx.body, "instruction");
         validateNoMutatingIntent(deps.service, ctx.body);
@@ -77,7 +77,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.overlay.show",
       method: "POST",
       path: "/v1/guide-lens/overlay",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         requireString(ctx.body, "message");
         validateNoMutatingIntent(deps.service, ctx.body);
@@ -88,7 +88,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.overlay.clear",
       method: "DELETE",
       path: "/v1/guide-lens/overlay",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as { sessionId?: string };
         return deps.service.clearOverlay(query.sessionId);
@@ -98,7 +98,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.screenshots.analyze",
       method: "POST",
       path: "/v1/guide-lens/screenshots/analyze",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.analyzeScreenshot(ctx.body as FridayGuideLensScreenshotIntakeRequest);
@@ -108,7 +108,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.verifications.create",
       method: "POST",
       path: "/v1/guide-lens/verifications",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.verify(ctx.body as FridayGuideLensVerificationRequest);
@@ -118,7 +118,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.preferences.update",
       method: "PATCH",
       path: "/v1/guide-lens/preferences",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const patch = requireBodyObject(ctx.body) as Partial<FridayGuideLensPreferences>;
         return deps.service.updatePreferences(patch);
@@ -128,7 +128,7 @@ export function createFridayGuideLensRoutes(
       operationId: "guidelens.avatar.update",
       method: "POST",
       path: "/v1/guide-lens/avatar",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const avatar = requireBodyObject(ctx.body) as Partial<FridayGuideLensAvatarPreference>;
         return deps.service.updateAvatar(avatar);

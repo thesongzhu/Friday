@@ -186,7 +186,7 @@ describe("FridayWorkflowRunRoutes", () => {
     const route = routes.find((r) => r.operationId === "runs.start");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
     expect(route!.rateLimitPolicyId).toBe("workflow.start_run");
   });
 
@@ -194,7 +194,7 @@ describe("FridayWorkflowRunRoutes", () => {
     const route = routes.find((r) => r.operationId === "runs.get");
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/workflow-runs/:runId/evidence requires workflow.read", () => {
@@ -202,7 +202,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-runs/:runId/evidence");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("POST /v1/workflow-runs/:runId/evidence/exports requires workflow.read", () => {
@@ -210,7 +210,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/workflow-runs/:runId/evidence/exports");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/workflow-runs/:runId/evidence/exports/:exportId requires workflow.read", () => {
@@ -218,7 +218,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-runs/:runId/evidence/exports/:exportId");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("GET /v1/workflow-runs/:runId/evidence/exports/:exportId/download requires workflow.read", () => {
@@ -226,7 +226,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-runs/:runId/evidence/exports/:exportId/download");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.read"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 
   it("passes principal through to evidence handlers", async () => {
@@ -328,6 +328,6 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/workflow-runs/:runId/resume");
-    expect(route!.auth).toEqual({ public: false, anyOfScopes: ["workflow.run"] });
+    expect(route!.auth).toEqual({ public: true });
   });
 });

@@ -192,7 +192,7 @@ export function createFridayMcpServerRoutes(
       operationId: "mcp.server.rpc",
       method: "POST",
       path: "/v1/mcp",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       handler: async (ctx) => {
         const services = requireEnabled();
         const request = asRecord(ctx.body);

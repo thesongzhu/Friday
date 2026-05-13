@@ -692,6 +692,29 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
     }
   });
 
+  it("every HTTP route is public (auth-boundary product invariant)", () => {
+    const fixture = createContractRuntime({ includeExtendedRouteFamilies: true });
+
+    try {
+      const routes = fixture.runtime.routes.getRoutes();
+      const offenders: { method: string; path: string; operationId: string; auth: unknown }[] = [];
+      for (const route of routes) {
+        if (route.auth.public !== true) {
+          offenders.push({
+            method: route.method,
+            path: route.path,
+            operationId: route.operationId,
+            auth: route.auth,
+          });
+        }
+      }
+      expect(offenders).toEqual([]);
+      expect(routes.length).toBeGreaterThan(0);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("keeps extended capability-gated route families explicit in contract coverage", () => {
     const baselineFixture = createContractRuntime();
     const extendedFixture = createContractRuntime({ includeExtendedRouteFamilies: true });

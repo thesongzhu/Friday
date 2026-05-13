@@ -812,7 +812,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.create",
       method: "POST",
       path: "/v1/skills/generator/sessions",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayStartSessionResponse> {
         validateStartSessionBody(ctx.body);
@@ -855,7 +855,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.get",
       method: "GET",
       path: "/v1/skills/generator/sessions/:sessionId",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetSessionResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         const result = await deps.skillGenerator.getSession(sessionId);
@@ -875,7 +875,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.messages.create",
       method: "POST",
       path: "/v1/skills/generator/sessions/:sessionId/messages",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_generator.llm",
       async handler(ctx): Promise<FridaySubmitTurnResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -901,7 +901,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.generate",
       method: "POST",
       path: "/v1/skills/generator/sessions/:sessionId/generate",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_generator.llm",
       async handler(ctx): Promise<FridayGenerateResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -942,7 +942,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.test",
       method: "POST",
       path: "/v1/skills/generator/sessions/:sessionId/test",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridaySkillGeneratorTestResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -981,7 +981,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.evidence.get",
       method: "GET",
       path: "/v1/skills/generator/sessions/:sessionId/evidence",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySkillGeneratorEvidenceResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         const evidence = await buildEvidence(sessionId);
@@ -994,7 +994,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.approve",
       method: "POST",
       path: "/v1/skills/generator/sessions/:sessionId/approve",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
@@ -1070,7 +1070,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.generator.sessions.cancel",
       method: "DELETE",
       path: "/v1/skills/generator/sessions/:sessionId",
-      auth: { public: false, anyOfScopes: ["skill.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCancelSessionResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
         await deps.skillGenerator.cancelSession(sessionId);
@@ -1083,7 +1083,7 @@ export function createFridaySkillGeneratorRoutes(
       operationId: "skills.ui.get",
       method: "GET",
       path: "/v1/skills/:skillId/ui",
-      auth: { public: false, anyOfScopes: ["skill.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayGetSkillUiResponse> {
         const { skillId } = ctx.params as { skillId: string };
 

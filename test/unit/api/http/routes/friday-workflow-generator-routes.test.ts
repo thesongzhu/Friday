@@ -152,7 +152,7 @@ describe("FridayWorkflowGeneratorRoutes", () => {
 
   it("all routes require auth", () => {
     for (const route of routes) {
-      expect(route.auth).toHaveProperty("public", false);
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

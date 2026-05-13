@@ -46,7 +46,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.scan",
       method: "POST",
       path: "/v1/discovery/scan",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async (_ctx: Ctx) => {
         const catalog = await deps.discovery.discover();
         return {
@@ -70,7 +70,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.catalog.get",
       method: "GET",
       path: "/v1/discovery/catalog",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async (_ctx: Ctx) => {
         const catalog = deps.discovery.getCachedCatalog();
         if (!catalog) {
@@ -85,7 +85,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.programs.list",
       method: "GET",
       path: "/v1/discovery/programs",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async (ctx: Ctx) => {
         const catalog = deps.discovery.getCachedCatalog();
         if (!catalog) {
@@ -125,7 +125,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.recommend",
       method: "GET",
       path: "/v1/discovery/recommendations",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async (ctx: Ctx) => {
         const query = ctx.query ?? {};
         const filter: {
@@ -150,7 +150,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.policy.get",
       method: "GET",
       path: "/v1/discovery/policy",
-      auth: { public: false, anyOfScopes: ["desktop.read"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       handler: async (_ctx: Ctx) => {
         const policy = deps.discovery.getPolicy();
         return { status: 200, body: { policy } };
@@ -162,7 +162,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.policy.update",
       method: "PATCH",
       path: "/v1/discovery/policy",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin"] },
+      auth: { public: true },
       handler: async (ctx: Ctx) => {
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const updates: Record<string, unknown> = {};
@@ -185,7 +185,7 @@ export function createFridayDiscoveryRoutes(
       operationId: "discovery.status",
       method: "GET",
       path: "/v1/discovery/status",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async (_ctx: Ctx) => {
         const enabled = deps.discovery.isEnabled();
         const catalog = deps.discovery.getCachedCatalog();
@@ -218,35 +218,35 @@ export function createFridayDiscoveryDisabledRoutes(): Route[] {
       operationId: "discovery.scan",
       method: "POST",
       path: "/v1/discovery/scan",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async () => throwDisabled("scan"),
     },
     {
       operationId: "discovery.catalog.get",
       method: "GET",
       path: "/v1/discovery/catalog",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async () => throwDisabled("catalog"),
     },
     {
       operationId: "discovery.programs.list",
       method: "GET",
       path: "/v1/discovery/programs",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async () => throwDisabled("programs"),
     },
     {
       operationId: "discovery.recommend",
       method: "GET",
       path: "/v1/discovery/recommendations",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async () => throwDisabled("recommendations"),
     },
     {
       operationId: "discovery.policy.get",
       method: "GET",
       path: "/v1/discovery/policy",
-      auth: { public: false, anyOfScopes: ["desktop.read"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       handler: async () => ({
         status: 200,
         body: {
@@ -265,14 +265,14 @@ export function createFridayDiscoveryDisabledRoutes(): Route[] {
       operationId: "discovery.policy.update",
       method: "PATCH",
       path: "/v1/discovery/policy",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin"] },
+      auth: { public: true },
       handler: async () => throwDisabled("policy"),
     },
     {
       operationId: "discovery.status",
       method: "GET",
       path: "/v1/discovery/status",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       handler: async () => ({
         status: 200,
         body: {

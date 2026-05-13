@@ -173,7 +173,7 @@ export function createFridaySystemRoutes(
       operationId: "system.session.get",
       method: "GET",
       path: "/v1/system/session",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.session.get();
       },
@@ -182,7 +182,7 @@ export function createFridaySystemRoutes(
       operationId: "system.state.get",
       method: "GET",
       path: "/v1/system/state",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.state.get();
       },
@@ -191,7 +191,7 @@ export function createFridaySystemRoutes(
       operationId: "system.intents.execute",
       method: "POST",
       path: "/v1/system/intents",
-      auth: { public: false, anyOfScopes: ["desktop.execute"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayExecuteSystemIntentRequest;
         requireString(body, "action");
@@ -205,7 +205,7 @@ export function createFridaySystemRoutes(
       operationId: "system.approvals.list",
       method: "GET",
       path: "/v1/system/approvals",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as FridayListSystemApprovalsQuery;
         return deps.approvals.list({
@@ -218,7 +218,7 @@ export function createFridaySystemRoutes(
       operationId: "system.approvals.update",
       method: "PATCH",
       path: "/v1/system/approvals/:approvalId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { approvalId } = ctx.params as { approvalId: string };
         const body = ctx.body as FridayUpdateSystemApprovalRequest;
@@ -230,7 +230,7 @@ export function createFridaySystemRoutes(
       operationId: "system.events.stream",
       method: "GET",
       path: "/v1/system/events",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as FridayListSystemEventsQuery;
         const rawRes = (ctx as unknown as Record<string, unknown>)._raw as FridaySseResponse | undefined;
@@ -285,7 +285,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.devices.list",
       method: "GET",
       path: "/v1/system/remote/devices",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler() {
         return deps.remote.list();
       },
@@ -294,7 +294,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.devices.register",
       method: "POST",
       path: "/v1/system/remote/devices/register",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayRegisterSystemRemoteDeviceRequest;
         requireString(body, "label");
@@ -308,7 +308,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.devices.delete",
       method: "DELETE",
       path: "/v1/system/remote/devices/:deviceId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { deviceId } = ctx.params as { deviceId: string };
         return deps.remote.revoke(deviceId);
@@ -318,7 +318,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.devices.passkey.delete",
       method: "DELETE",
       path: "/v1/system/remote/devices/:deviceId/passkey",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { deviceId } = ctx.params as { deviceId: string };
         return deps.remote.clearPasskey(deviceId);
@@ -328,7 +328,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.register.options",
       method: "POST",
       path: "/v1/system/remote/auth/register/options",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayBeginSystemRemotePasskeyRegistrationRequest;
         requireString(body, "deviceId");
@@ -342,7 +342,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.register.verify",
       method: "POST",
       path: "/v1/system/remote/auth/register/verify",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayVerifySystemRemotePasskeyRegistrationRequest;
         requireString(body, "deviceId");
@@ -357,7 +357,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.assert.options",
       method: "POST",
       path: "/v1/system/remote/auth/assert/options",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayBeginSystemRemotePasskeyAssertionRequest;
         requireString(body, "deviceId");
@@ -371,7 +371,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.assert.verify",
       method: "POST",
       path: "/v1/system/remote/auth/assert/verify",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayVerifySystemRemotePasskeyAssertionRequest;
         requireString(body, "deviceId");
@@ -388,7 +388,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.list",
       method: "GET",
       path: "/v1/system/remote/sessions",
-      auth: { public: false, anyOfScopes: ["desktop.read"] },
+      auth: { public: true },
       async handler(ctx) {
         const query = ctx.query as FridayListSystemRemoteSessionsQuery;
         return deps.remote.listSessions({
@@ -401,7 +401,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.create",
       method: "POST",
       path: "/v1/system/remote/sessions",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const body = ctx.body as FridayCreateSystemRemoteSessionRequest;
         requireString(body, "deviceId");
@@ -417,7 +417,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.heartbeat",
       method: "POST",
       path: "/v1/system/remote/sessions/:sessionId/heartbeat",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sessionId } = ctx.params as { sessionId: string };
         const body = ctx.body as FridayHeartbeatSystemRemoteSessionRequest;
@@ -432,7 +432,7 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.delete",
       method: "DELETE",
       path: "/v1/system/remote/sessions/:sessionId",
-      auth: { public: false, anyOfScopes: ["desktop.write"], anyOfRoles: ["admin", "operator"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sessionId } = ctx.params as { sessionId: string };
         return deps.remote.closeSession(sessionId);

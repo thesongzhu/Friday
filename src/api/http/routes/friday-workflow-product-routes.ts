@@ -20,7 +20,7 @@ export function createFridayWorkflowProductRoutes(
       operationId: "workflows.overview",
       method: "GET",
       path: "/v1/workflows/:workflowId/overview",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<{ overview: FridayWorkflowOverview }> {
         const { workflowId } = ctx.params as { workflowId: UUID };
         const query = ctx.query as Record<string, unknown>;
@@ -39,7 +39,7 @@ export function createFridayWorkflowProductRoutes(
       operationId: "workflows.visualization",
       method: "GET",
       path: "/v1/workflows/:workflowId/visualization",
-      auth: { public: false, anyOfScopes: ["workflow.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<{ visualization: FridayWorkflowVisualization }> {
         const { workflowId } = ctx.params as { workflowId: UUID };
         const query = ctx.query as Record<string, unknown>;
@@ -59,7 +59,7 @@ export function createFridayWorkflowProductRoutes(
       operationId: "workflows.deploy",
       method: "POST",
       path: "/v1/workflows/:workflowId/drafts/:draftId/deploy",
-      auth: { public: false, anyOfScopes: ["workflow.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<{ deployment: FridayWorkflowDeployResult }> {
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };

@@ -416,15 +416,12 @@ describe("FridayProviderRoutes", () => {
     expect(operationIds).toContain("auth.oauth.openai.codex.device.complete");
   });
 
-  it("all routes require hub.admin scope", () => {
+  it("every route declares public auth (auth-boundary product invariant)", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
     for (const route of routes) {
-      expect(route.auth).toEqual({
-        public: false,
-        anyOfScopes: ["hub.admin"],
-      });
+      expect(route.auth).toEqual({ public: true });
     }
   });
 

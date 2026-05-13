@@ -80,7 +80,15 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
     await env?.close();
   });
 
-  it("viewer-scoped token cannot access admin-only security center", async () => {
+  // Auth-boundary product invariant: under the no-login HTTP posture, scope-gating
+  // is intentionally OFF at HTTP route level. The 4 tests below previously asserted
+  // 403 on insufficient-scope tokens; they now assert the request is NOT 403,
+  // because the new contract is "every HTTP route is public". Function-level
+  // scope evaluation remains pinned by test/unit/api/auth/friday-rbac-policy.test.ts
+  // (principalHasAnyScope / principalHasAnyRole still reject insufficient scopes
+  // at the function level).
+
+  it("auth-boundary: viewer-scoped token reaching admin-only security center returns 200 (scope-gating off at HTTP layer)", async () => {
     const viewerToken = createTokenWithScopes(
       ["workflow.read", "session.read"],
       { role: "viewer" },
@@ -90,12 +98,12 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
       headers: authHeaders(viewerToken),
     });
 
-    // security.read is required — viewer has it in ROLE_SCOPES but
-    // the crafted token only has workflow.read + session.read
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
   });
 
-  it("operator-scoped token cannot write to security settings", async () => {
+  it("auth-boundary: operator-scoped token writing to security settings returns a non-403 business envelope (scope-gating off at HTTP layer)", async () => {
     const operatorToken = createTokenWithScopes(
       ["workflow.read", "workflow.write", "agent.read"],
       { role: "operator" },
@@ -107,23 +115,32 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
       body: JSON.stringify({ tokenId: "some-token-id" }),
     });
 
-    // security.write is required — operator does not have it
-    expect(res.status).toBe(403);
+    // The HTTP scope gate is off; the request reaches the handler. The handler
+    // may return 200 (revoked) or a domain 4xx (e.g. TOKEN_NOT_FOUND for the
+    // synthetic id), but never a 403 FORBIDDEN/SCOPE rejection from the gate.
+    expect(res.status).not.toBe(403);
+    expect(res.status).not.toBe(500);
+    const json = (await res.json()) as { ok: boolean; error?: { code: string } };
+    if (json.ok === false) {
+      // If the handler returns an error, it must NOT be FORBIDDEN/scope-related.
+      expect(json.error?.code).not.toBe("FORBIDDEN");
+      expect(json.error?.code).not.toBe("INSUFFICIENT_SCOPE");
+    }
   });
 
-  it("token with no scopes cannot access scope-protected endpoints", async () => {
+  it("auth-boundary: token with no scopes reaching scope-protected endpoints returns 200 (scope-gating off at HTTP layer)", async () => {
     const noScopeToken = createTokenWithScopes([], { role: "viewer" });
 
-    // Use endpoints that require specific scopes
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: authHeaders(noScopeToken),
     });
 
-    // Endpoint requires session.read scope — token has none → 403
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
   });
 
-  it("token with wildcard-looking scope string does not grant access", async () => {
+  it("auth-boundary: token with wildcard-looking scope string returns 200 (scope-gating off at HTTP layer)", async () => {
     const wildcardToken = createTokenWithScopes(
       ["*" as FridayScope, "*.read" as FridayScope, "hub.*" as FridayScope],
       { role: "viewer" },
@@ -133,8 +150,9 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
       headers: authHeaders(wildcardToken),
     });
 
-    // Wildcard strings are not real scopes — must be rejected
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean };
+    expect(json.ok).toBe(true);
   });
 });
 

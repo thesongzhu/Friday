@@ -617,7 +617,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.list",
       method: "GET",
       path: "/v1/sessions",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionListResponse> {
         const query = ctx.query as Record<string, string | undefined>;
 
@@ -664,7 +664,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.create",
       method: "POST",
       path: "/v1/sessions",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "session.write",
       async handler(ctx): Promise<FridaySessionCreateResponse> {
         validateCreateSessionBody(ctx.body);
@@ -687,7 +687,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.get",
       method: "GET",
       path: "/v1/sessions/:sessionKey",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionGetResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -708,7 +708,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.delete",
       method: "DELETE",
       path: "/v1/sessions/:sessionKey",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionArchiveResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -722,7 +722,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.archive",
       method: "POST",
       path: "/v1/sessions/:sessionKey/archive",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionArchiveResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -736,7 +736,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.reset",
       method: "POST",
       path: "/v1/sessions/:sessionKey/reset",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx) {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -750,7 +750,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.prune",
       method: "POST",
       path: "/v1/sessions/prune",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionPruneResponse> {
         validatePruneBody(ctx.body);
         const body = ctx.body;
@@ -764,7 +764,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.sweep",
       method: "POST",
       path: "/v1/sessions/sweep",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(): Promise<FridaySessionSweepResponse> {
         const result = await deps.sessionService.sweepLifecycle();
         return { result };
@@ -776,7 +776,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.compact",
       method: "POST",
       path: "/v1/sessions/:sessionKey/compact",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionCompactResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -828,7 +828,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.messages.list",
       method: "GET",
       path: "/v1/sessions/:sessionKey/messages",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMessageListResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -857,7 +857,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.export",
       method: "GET",
       path: "/v1/sessions/:sessionKey/export",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<{ content: string; format: string }> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -885,7 +885,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.messages.create",
       method: "POST",
       path: "/v1/sessions/:sessionKey/messages",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMessageCreateResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -906,7 +906,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.outbound.send",
       method: "POST",
       path: "/v1/sessions/:sessionKey/outbound",
-      auth: { public: false, anyOfScopes: ["session.write", "agent.run"] },
+      auth: { public: true },
       rateLimitPolicyId: "session.write",
       async handler(ctx): Promise<FridaySessionOutboundResponse> {
         if (!deps.channelRegistry) {
@@ -982,7 +982,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.run",
       method: "POST",
       path: "/v1/sessions/:sessionKey/run",
-      auth: { public: false, anyOfScopes: ["session.write", "agent.run", "workflow.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionRunResponse> {
         if (!deps.runSession) {
           throw new FridayDomainError(
@@ -1069,7 +1069,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.memory.namespace.get",
       method: "GET",
       path: "/v1/sessions/:sessionKey/memory-namespace",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMemoryNamespaceResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -1085,7 +1085,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.forks.create",
       method: "POST",
       path: "/v1/sessions/:sessionKey/fork",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionForkResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -1107,7 +1107,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.forks.list",
       method: "GET",
       path: "/v1/sessions/:sessionKey/forks",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionForkListResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -1148,7 +1148,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.forks.merge",
       method: "POST",
       path: "/v1/sessions/:sessionKey/merge",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMergeResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
@@ -1173,7 +1173,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.memory.extract",
       method: "POST",
       path: "/v1/sessions/:sessionKey/memory/extract",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMemoryExtractResponse> {
         if (!deps.extractionService) {
           throw new FridayDomainError(
@@ -1202,7 +1202,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.memory.remember",
       method: "POST",
       path: "/v1/sessions/:sessionKey/memory/remember",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMemoryRememberResponse> {
         if (!deps.extractionService) {
           throw new FridayDomainError(
@@ -1230,7 +1230,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.memory.extraction.get",
       method: "GET",
       path: "/v1/sessions/:sessionKey/memory/extraction",
-      auth: { public: false, anyOfScopes: ["session.read"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMemoryExtractionStatusResponse> {
         if (!deps.extractionService) {
           throw new FridayDomainError(
@@ -1251,7 +1251,7 @@ export function createFridaySessionRoutes(
       operationId: "sessions.memory.extraction.retry",
       method: "POST",
       path: "/v1/sessions/memory/extraction/retry",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridaySessionMemoryExtractionRetryResponse> {
         if (!deps.extractionService) {
           throw new FridayDomainError(

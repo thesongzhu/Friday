@@ -3,12 +3,19 @@ import type {
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthMeResponse,
   FridayLoginRequest,
   FridayLogoutRequest,
   FridayRefreshRequest,
 } from "../../model/friday-api-auth.types.js";
 import type { FridayAuthService } from "../../auth/friday-auth-service.types.js";
+import {
+  FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
+  FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
+} from "../friday-default-public-principal.js";
 import { FridayDomainError } from "#errors";
+
+const FRIDAY_DEFAULT_PUBLIC_HTTP_DISPLAY_NAME = "Friday Public";
 
 export interface FridayAuthRoutesDeps {
   authService: FridayAuthService;
@@ -102,7 +109,7 @@ export function createFridayAuthRoutes(
       operationId: "auth.logout",
       method: "POST",
       path: "/v1/auth/logout",
-      auth: { public: false, anyOfScopes: ["session.write"] },
+      auth: { public: true },
       rateLimitPolicyId: "auth.logout",
       async handler(ctx) {
         return deps.authService.logout(ctx.body as FridayLogoutRequest, ctx.principal!);
@@ -112,9 +119,28 @@ export function createFridayAuthRoutes(
       operationId: "auth.me",
       method: "GET",
       path: "/v1/auth/me",
-      auth: { public: false, anyOfScopes: ["session.read"] },
-      async handler(ctx) {
-        return deps.authService.me(ctx.principal!);
+      auth: { public: true },
+      async handler(ctx): Promise<FridayAuthMeResponse> {
+        const principal = ctx.principal!;
+        // Auth-boundary product invariant: no-login is the default. When the
+        // request had no Authorization header (or an invalid one), the HTTP
+        // server injected the synthetic public:default principal. /v1/auth/me
+        // returns a stable synthetic public-user response so no-login callers
+        // never hit a USER_NOT_FOUND envelope on this route. Real authenticated
+        // callers (those who supplied a valid Bearer token that the middleware
+        // hydrated into a real principal) fall through to authService.me() and
+        // get their actual user.
+        if (principal.principalId === FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID) {
+          return {
+            user: {
+              id: FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
+              displayName: FRIDAY_DEFAULT_PUBLIC_HTTP_DISPLAY_NAME,
+              role: principal.role ?? "admin",
+            },
+            scopes: principal.scopes,
+          };
+        }
+        return deps.authService.me(principal);
       },
     },
   ];

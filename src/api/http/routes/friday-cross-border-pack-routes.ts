@@ -53,7 +53,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.profile.get",
       method: "GET",
       path: "/v1/packs/cross-border/profile",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderProfileResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -65,7 +65,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.profile.put",
       method: "PUT",
       path: "/v1/packs/cross-border/profile",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderProfileResponse> {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -93,7 +93,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.snapshot.get",
       method: "GET",
       path: "/v1/packs/cross-border/snapshot",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderSnapshotResponse> {
         const userId = requireUserId(ctx.principal);
         return {
@@ -105,7 +105,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.import.post",
       method: "POST",
       path: "/v1/packs/cross-border/import",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderImportResponse> {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -134,7 +134,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.workflow.presets.apply",
       method: "POST",
       path: "/v1/packs/cross-border/workflow-presets/apply",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderWorkflowPresetResponse> {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);
@@ -155,7 +155,7 @@ export function createFridayCrossBorderPackRoutes(
       operationId: "packs.cross.border.workflow.presets.toggle",
       method: "PATCH",
       path: "/v1/packs/cross-border/workflow-presets/:workflowId",
-      auth: { public: false, anyOfScopes: ["agent.run"] },
+      auth: { public: true },
       async handler(ctx): Promise<FridayCrossBorderWorkflowPresetResponse> {
         const userId = requireUserId(ctx.principal);
         const body = readBodyObject(ctx.body);

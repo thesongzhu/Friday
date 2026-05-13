@@ -2075,7 +2075,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.approvals.list",
     method: "GET",
     path: "/v1/workflow-approvals",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: listWorkflowApprovals,
   });
 
@@ -2083,7 +2083,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.approvals.get",
     method: "GET",
     path: "/v1/workflow-approvals/:approvalId",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: getWorkflowApproval,
   });
 
@@ -2091,7 +2091,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.approvals.approve",
     method: "POST",
     path: "/v1/workflow-approvals/:approvalId/approve",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: approveWorkflowApproval,
   });
 
@@ -2099,7 +2099,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.approvals.reject",
     method: "POST",
     path: "/v1/workflow-approvals/:approvalId/reject",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: rejectWorkflowApproval,
   });
 
@@ -2107,7 +2107,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "approvals.list",
     method: "GET",
     path: "/v1/approvals",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: listWorkflowApprovals,
   });
 
@@ -2115,7 +2115,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "approvals.get",
     method: "GET",
     path: "/v1/approvals/:approvalId",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: getWorkflowApproval,
   });
 
@@ -2123,7 +2123,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "approvals.approve",
     method: "POST",
     path: "/v1/approvals/:approvalId/approve",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: approveWorkflowApproval,
   });
 
@@ -2131,7 +2131,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "approvals.reject",
     method: "POST",
     path: "/v1/approvals/:approvalId/reject",
-    auth: { public: false, anyOfScopes: ["workflow.run"] },
+    auth: { public: true },
     handler: rejectWorkflowApproval,
   });
 
@@ -2140,7 +2140,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.triggers.list",
     method: "GET",
     path: "/v1/workflows/:workflowId/triggers",
-    auth: { public: false, anyOfScopes: ["workflow.read"] },
+    auth: { public: true },
     async handler(ctx) {
       const { workflowId } = ctx.params as { workflowId: string };
       const items = workflowRuntime.triggers.listRegistrations(workflowId);
@@ -2152,7 +2152,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.triggers.update",
     method: "PATCH",
     path: "/v1/workflow-triggers/:registrationId",
-    auth: { public: false, anyOfScopes: ["workflow.write"] },
+    auth: { public: true },
     async handler(ctx) {
       const { registrationId } = ctx.params as { registrationId: string };
       const body = ctx.body as { enabled?: boolean };
@@ -2170,7 +2170,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.triggers.resync",
     method: "POST",
     path: "/v1/workflows/:workflowId/triggers/resync",
-    auth: { public: false, anyOfScopes: ["workflow.write"] },
+    auth: { public: true },
     async handler(ctx) {
       const { workflowId } = ctx.params as { workflowId: string };
       await workflowRuntime.triggers.syncPublishedVersionTriggers(workflowId);

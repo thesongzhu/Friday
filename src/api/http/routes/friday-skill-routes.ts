@@ -336,7 +336,7 @@ export function createFridaySkillRoutes(
       operationId: "skills.list",
       method: "GET",
       path: "/v1/skills",
-      auth: { public: false, anyOfScopes: ["skill.read", "hub.admin"] },
+      auth: { public: true },
       async handler() {
         if (deps.lifecycle) {
           return { items: deps.lifecycle.listSkills().map((item) => toLegacyCompatibleListItem(item)) };
@@ -376,7 +376,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.catalog.list",
         method: "GET",
         path: "/v1/skills/catalog",
-        auth: { public: false, anyOfScopes: ["skill.read", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const query = asRecord(ctx.query);
           const result = deps.lifecycle!.listCatalog({
@@ -394,7 +394,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.get",
         method: "GET",
         path: "/v1/skills/:skillId",
-        auth: { public: false, anyOfScopes: ["skill.read", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const skill = deps.lifecycle!.getSkill(skillId);
@@ -410,7 +410,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.install",
         method: "POST",
         path: "/v1/skills/install",
-        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const body = asRecord(ctx.body);
           const skillId = asOptionalString(body.skillId, "skillId");
@@ -426,7 +426,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.update",
         method: "POST",
         path: "/v1/skills/:skillId/update",
-        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const body = asRecord(ctx.body);
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
@@ -474,7 +474,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.delete",
         method: "DELETE",
         path: "/v1/skills/:skillId",
-        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const existing = deps.lifecycle!.getSkill(skillId);
@@ -509,7 +509,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.manifest.validate",
         method: "POST",
         path: "/v1/skills/validate-manifest",
-        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const body = asRecord(ctx.body);
           if (body.manifest === undefined) {
@@ -526,7 +526,7 @@ export function createFridaySkillRoutes(
         operationId: "skills.verify",
         method: "POST",
         path: "/v1/skills/:skillId/verify",
-        auth: { public: false, anyOfScopes: ["skill.read", "hub.admin"] },
+        auth: { public: true },
         async handler(ctx) {
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const evidence = await deps.lifecycle!.verifySkill({
@@ -543,7 +543,7 @@ export function createFridaySkillRoutes(
 	        operationId: "skills.install",
 	        method: "POST",
 	        path: "/v1/skills/install",
-	        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+	        auth: { public: true },
 	        async handler(ctx) {
 	          const body = asRecord(ctx.body);
 	          const skillId = asOptionalString(body.skillId, "skillId");
@@ -559,7 +559,7 @@ export function createFridaySkillRoutes(
 	        operationId: "skills.update",
 	        method: "POST",
 	        path: "/v1/skills/:skillId/update",
-	        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+	        auth: { public: true },
 	        async handler(ctx) {
 	          const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
 	          return throwLegacyExternalSkillLifecycleRequired({ skillId, operation: "update" });
@@ -569,7 +569,7 @@ export function createFridaySkillRoutes(
 	        operationId: "skills.delete",
 	        method: "DELETE",
 	        path: "/v1/skills/:skillId",
-	        auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+	        auth: { public: true },
 	        async handler(ctx) {
 	          const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
 	          return throwLegacyExternalSkillLifecycleRequired({ skillId, operation: "delete" });
@@ -583,7 +583,7 @@ export function createFridaySkillRoutes(
       operationId: "skills.content.update",
       method: "PATCH",
       path: "/v1/skills/:skillId/content",
-      auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+      auth: { public: true },
       async handler(ctx) {
         const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
         const body = asRecord(ctx.body);
@@ -676,7 +676,7 @@ export function createFridaySkillRoutes(
     operationId: "skills.run",
     method: "POST",
     path: "/v1/skills/:skillId/run",
-    auth: { public: false, anyOfScopes: ["skill.write", "hub.admin"] },
+    auth: { public: true },
     async handler(ctx) {
       const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
       if (!skillId) {
