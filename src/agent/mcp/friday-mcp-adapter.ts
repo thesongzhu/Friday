@@ -145,6 +145,13 @@ export function isForbiddenEnvVar(key: string): boolean {
   return FORBIDDEN_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix));
 }
 
+const SECRET_SHAPED_FRAGMENTS = ["SECRET", "TOKEN", "KEY", "PASSWORD", "CREDENTIAL"];
+
+export function isSecretShapedEnvKey(key: string): boolean {
+  const upper = key.toUpperCase();
+  return SECRET_SHAPED_FRAGMENTS.some((fragment) => upper.includes(fragment));
+}
+
 // ─── Safe env for child processes ───
 
 /**

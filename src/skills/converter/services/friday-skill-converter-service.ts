@@ -272,6 +272,7 @@ export function createFridaySkillConverterService(
 function getConverterSourceFormats(converterId: string): FridaySkillSourceFormat[] {
   const formatMap: Record<string, FridaySkillSourceFormat[]> = {
     "native-friday-package": ["friday-package"],
+    "discovery-integration": ["friday-package"],
     "adk-skill": ["adk-skill"],
     "clawdbot-skill-md": ["clawdbot-skill-md"],
     "n8n-node": ["n8n-node"],

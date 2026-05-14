@@ -42,6 +42,7 @@ import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayMcpAdapter } from "../../agent/mcp/friday-mcp-adapter.types.js";
+import type { FridayMcpConfigStore } from "../../agent/mcp/friday-mcp-config-store.js";
 import type { FridayReflexService } from "../../reflex/index.js";
 import type {
   FridayAgentAutomationService,
@@ -206,6 +207,8 @@ export interface CreateFridayApiRuntimeDeps {
   listMcpServers?: () => ReadonlyArray<{ id: string; transport?: string }>;
   /** Optional: live MCP adapter used by autonomy inventory and upgrade actions. */
   mcpAdapter?: Pick<FridayMcpAdapter, "listServers" | "listServerStates" | "listTools">;
+  /** Optional: durable MCP server config store for deeplink apply persistence. */
+  mcpConfigStore?: FridayMcpConfigStore;
   /** Optional: agent event emitter for SSE streaming. */
   agentEventEmitter?: FridayAgentEventEmitter;
   /** Optional: resolves a pending tool approval gate (approve or reject). */

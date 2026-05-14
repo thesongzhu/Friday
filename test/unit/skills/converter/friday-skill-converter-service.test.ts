@@ -11,6 +11,7 @@ import { createNativeSkillPackageConverter } from "#skills/converter";
 import { createFridayN8nNodeConverter } from "#skills/converter";
 import { createFridayOpenAiGptActionConverter } from "#skills/converter";
 import { createFridayCodeRepoConverter } from "#skills/converter";
+import { createFridayDiscoveryIntegrationConverter } from "#skills/converter";
 import { createFridayUndocumentedApiConverter } from "#skills/converter";
 import { createFridayRecordingConverter } from "#skills/converter";
 import { createFridaySkillStageMutatingActionRequest } from "#skills/converter";
@@ -159,6 +160,7 @@ describe("FridaySkillConverterService", () => {
     registry.register(createFridayN8nNodeConverter());
     registry.register(createFridayOpenAiGptActionConverter());
     registry.register(createFridayCodeRepoConverter());
+    registry.register(createFridayDiscoveryIntegrationConverter());
     registry.register(createFridayUndocumentedApiConverter());
     registry.register(createFridayRecordingConverter());
 
@@ -183,10 +185,11 @@ describe("FridaySkillConverterService", () => {
       const service = createService();
       const converters = service.listConverters();
 
-      expect(converters.length).toBe(7);
+      expect(converters.length).toBe(8);
 
       const ids = converters.map((c) => c.id);
       expect(ids).toContain("native-friday-package");
+      expect(ids).toContain("discovery-integration");
       expect(ids).toContain("clawdbot-skill-md");
       expect(ids).toContain("n8n-node");
       expect(ids).toContain("openai-gpt-action");
@@ -199,6 +202,8 @@ describe("FridaySkillConverterService", () => {
         expect(converter.sourceFormats.length).toBeGreaterThan(0);
         expect(converter.displayName).toBeTruthy();
       }
+      expect(converters.find((c) => c.id === "discovery-integration")?.sourceFormats)
+        .toEqual(["friday-package"]);
     });
   });
 
