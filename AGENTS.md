@@ -219,6 +219,10 @@ boundaries. It only changes who may coordinate routine stage approvals.
   current Codex prompt and must stop on blocker, scope drift, reviewer failure,
   proof failure, secret/provider/approval/release boundary, or merge-boundary
   ambiguity.
+- The Codex orchestrator session should use GPT-5.5 with xhigh / extra-high
+  reasoning when that model/effort is available in the active Codex client. If
+  the client cannot provide or verify that configuration, stop and report instead
+  of silently downgrading the conveyor controller.
 - Codex must not trust Claude's summaries, tables, screenshots, or claims. Before
   approving the next stage, Codex must independently inspect the filesystem, git
   state, diffs, touched files, tests, CI checks, RGG artifacts, PR metadata,
@@ -240,6 +244,32 @@ boundaries. It only changes who may coordinate routine stage approvals.
   satisfied. This standing stage authority does not allow new policy, scope,
   requirement, branch-protection, external credential, or release-standard
   changes.
+- After Codex gives Claude a bounded task prompt, Codex should end its active
+  turn. Do not keep a model session alive with `sleep`, busy polling, or
+  low-value status checks. The next Codex turn should be triggered by an
+  approved handoff bridge, a user message, or an external non-model watchdog
+  signal.
+- Claude must end every task with a machine-scannable `CODEX_HANDOFF_READY`
+  block containing phase, stage, cwd, branch, HEAD, git status, files changed,
+  commands run, verification, proof tier, blockers, and next requested Codex
+  action. Codex must still verify the block independently before trusting it.
+- The preferred handoff bridge is a separately approved local bridge built on
+  Claude Code's official `Stop` hook or Claude Agent SDK `Stop` hook. The hook
+  should pass structured event JSON/transcript context to a local relay, and the
+  relay should invoke Codex through a supported Codex automation surface such as
+  `codex exec`, Codex SDK, or Codex app-server. Do not parse terminal scrollback
+  as the primary signal.
+- If Claude does not produce a handoff within 70 minutes of the last Codex prompt,
+  the bridge watchdog or an external non-model watchdog should wake Codex with a
+  failure handoff for one bounded health check of the terminal/session/process/PR
+  state. If the cause is not found and resolved within 20 minutes, stop the
+  Claude run, summarize all known progress, write a fresh handoff, and wait for
+  the user.
+- Claude terminal output does not automatically wake Codex unless an approved
+  bridge posts the handoff back into the Codex thread. Codex heartbeat is not the
+  conveyor watchdog and must not be used as the default 70-minute timer. Until
+  the bridge exists, use manual handoff delivery plus an external non-model timer
+  only.
 - Ask the user before any new policy, changed phase scope, changed requirement,
   external credential/platform action, branch protection change, owner/admin
   bypass, missing/blocked RGG override, unresolved reviewer disagreement, or
