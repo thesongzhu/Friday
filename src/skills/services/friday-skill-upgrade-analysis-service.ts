@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.js";
-import type { SkillManifestV2, SkillInvocationMode } from "../model/friday-skill-manifest-v2.types.js";
+import type { SkillInvocationMode, SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
 import type { PermissionGrant } from "../model/friday-skill-permission-policy.types.js";
 import type { FridaySkillEntity } from "../model/friday-skill-catalog.types.js";
 import type { FridaySkillRepository } from "../persistence/friday-skill-repository.js";
