@@ -232,14 +232,20 @@ describe("friday-api-channels-routes (E2E)", () => {
     expect(updateJson.data.persona.persona).toBe("Discord persona before channel is active");
   });
 
-  // ── channel_webhook_relay_returns_404_when_no_listeners ─────────────────
+  // ── channel_webhook_relay_disabled_without_listener ──────────────────────
 
-  it("channel_webhook_relay_returns_404_when_no_listeners", async () => {
-    const res = await fetch(`${env.baseUrl}/v1/channels/webhooks/line`, {
+  it("channel_webhook_relay_disabled_without_listener", async () => {
+    const res = await fetch(`${env.baseUrl}/v1/channel-webhooks/line`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ events: [] }),
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(501);
+    const json = (await res.json()) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(json.ok).toBe(false);
+    expect(json.error.code).toBe("CAPABILITY_DISABLED");
   });
 });
