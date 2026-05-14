@@ -790,6 +790,122 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
   }
 }
 
+async function executeUiAuthoring({ artifact, client, scenario, reportRoot, uiBaseUrl }) {
+  const execution = scenario.execution;
+  const startedAt = Date.now();
+  let context;
+  let page;
+
+  try {
+    const hasBrowserAuthToken =
+      typeof client?.accessToken === "string" && client.accessToken.trim().length > 0;
+    const hasBrowserLoginCredential =
+      hasBrowserAuthToken
+      || (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0)
+      || (
+        typeof client?.email === "string" && client.email.trim().length > 0
+        && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
+      );
+    if (!hasBrowserLoginCredential) {
+      artifact.result = "blocked";
+      artifact.failureClass = "environment";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        "Browser authoring requires localPassphrase or email/password credentials.",
+      ];
+      return artifact;
+    }
+
+    ({ context } = await getSharedUiProbeSession(uiBaseUrl));
+    await seedUiAuthStorageIfAvailable({ context, client, artifact });
+    page = await context.newPage();
+
+    await page.goto(execution.path, {
+      waitUntil: "domcontentloaded",
+      timeout: scenarioTimeout(scenario, 90_000),
+    });
+    await settleAndCompleteUiLoginIfNeeded({
+      page,
+      client,
+      execution,
+      artifact,
+      timeoutMs: execution.readyTimeoutMs ?? 30_000,
+    });
+
+    const readySelector = execution.readySelector ?? "[data-testid='workflow-builder-node-library']";
+    await page.locator(readySelector).waitFor({ timeout: scenarioTimeout(scenario, 30_000) });
+    const firstVisibleSignalMs = Date.now() - startedAt;
+    artifact.observedEvidence.push("workflow builder loaded and interactive");
+
+    const draftTitle = execution.draftTitle ?? `RGG-authoring-${Date.now().toString(36)}`;
+    await page.locator("input[placeholder=\"Workflow title\"]").fill(draftTitle);
+    artifact.observedEvidence.push(`draft title set via UI: ${draftTitle}`);
+
+    await page.getByRole("button", { name: "Blank draft" }).click();
+    artifact.observedEvidence.push("blank draft creation requested via UI click");
+
+    await page.locator("[data-testid='workflow-builder-canvas']").waitFor({
+      timeout: scenarioTimeout(scenario, 30_000),
+    });
+    await page.locator("[data-testid^='workflow-builder-node-']").first().waitFor({
+      timeout: scenarioTimeout(scenario, 30_000),
+    });
+    artifact.observedEvidence.push("canvas rendered with trigger node after UI creation");
+
+    let compileSucceeded = false;
+    try {
+      await page.getByRole("button", { name: "Compile" }).click();
+      await page.waitForTimeout(3_000);
+      if (await page.locator("[data-testid='workflow-builder-compile-summary']").isVisible()) {
+        artifact.observedEvidence.push("compile executed via UI, summary visible");
+        compileSucceeded = true;
+      }
+    } catch {
+      artifact.observedEvidence.push("compile attempted via UI (non-blocking)");
+    }
+
+    let published = false;
+    try {
+      const publishBtn = page.getByRole("button", { name: "Publish" });
+      if (await publishBtn.isVisible({ timeout: 3_000 })) {
+        await publishBtn.click();
+        await page.getByText("Publish result").waitFor({ timeout: 15_000 });
+        artifact.observedEvidence.push("workflow published via browser UI");
+        published = true;
+      }
+    } catch {
+      artifact.observedEvidence.push("publish attempted via UI (trigger-only graph may require additional nodes)");
+    }
+
+    const screenshotPath = path.join(
+      reportRoot,
+      "screenshots",
+      `${slugify(`${scenario.id}-${artifact.lane}-${Date.now()}`)}.png`,
+    );
+    ensureDir(path.dirname(screenshotPath));
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    artifact.screenshots.push(screenshotPath);
+
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      timeToFirstVisibleSignalMs: firstVisibleSignalMs,
+      compileSucceeded,
+      published,
+    };
+
+    artifact.result = "passed";
+    return artifact;
+  } catch (error) {
+    artifact.result = "failed";
+    artifact.failureClass = "ui_loading";
+    artifact.notes = [...(artifact.notes ?? []), error instanceof Error ? error.message : String(error)];
+    return artifact;
+  } finally {
+    await page?.close().catch(() => undefined);
+    await context?.close().catch(() => undefined);
+  }
+}
+
 function detectMisroute({ scenario, outputText, run }) {
   const behavior = scenario.oracles?.behavior ?? {};
   for (const snippet of behavior.misrouteTriggers ?? []) {
@@ -1706,6 +1822,9 @@ export async function executeScenario({
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });
+        break;
+      case "ui_authoring":
+        await executeUiAuthoring({ artifact, client, scenario, reportRoot, uiBaseUrl, envTruth });
         break;
       default:
         artifact.result = "failed";

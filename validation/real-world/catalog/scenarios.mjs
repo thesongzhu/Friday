@@ -326,6 +326,28 @@ export const REAL_WORLD_SCENARIOS = [
     execution: { path: "/workflows/builder", readySelector: "[data-testid='workflow-builder-node-library']" },
     suites: ["daily", "nightly", "weekly"],
   }),
+  baseScenario({
+    id: "l3-workflow-browser-authoring",
+    layer: "L3",
+    productArea: "workflows",
+    entrySurface: "/workflows/builder",
+    routeFamily: "browser authoring",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "workflow builder loads and becomes interactive",
+      "blank draft created via UI interaction",
+      "workflow canvas renders with trigger node",
+    ],
+    execution: {
+      kind: "ui_authoring",
+      path: "/workflows/builder",
+      draftTitle: "RGG Browser Authoring Proof",
+      readySelector: "[data-testid='workflow-builder-node-library']",
+      timeoutMs: 120_000,
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
   uiScenario({
     id: "l1-memory-ui",
     layer: "L1",
