@@ -235,6 +235,20 @@ export {
   type CreateFridaySkillLifecycleServiceDeps,
 } from "./services/friday-skill-lifecycle-service.js";
 
+export {
+  createFridaySkillUpgradeAnalysisService,
+  type FridaySkillUpgradeAnalysisService,
+  type FridaySkillUpgradeAnalysis,
+  type FridaySkillUpgradeDecisionRecord,
+  type FridaySkillManifestComparisonReport,
+  type FridaySkillBreakingChange,
+  type FridaySkillAffectedWorkflow,
+  type FridaySkillAffectedWorkflowNodeDetail,
+  type FridaySkillWorkflowRegressionProof,
+  type FridaySkillWorkflowRegressionEntry,
+  type CreateFridaySkillUpgradeAnalysisServiceDeps,
+} from "./services/friday-skill-upgrade-analysis-service.js";
+
 // Generator (re-export key types for convenience; full module at #skills/generator)
 export type { FridaySkillGeneratorService } from "./generator/services/friday-skill-generator-service.types.js";
 

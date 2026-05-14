@@ -23,6 +23,7 @@ import type {
   FridaySkillLifecycleService,
   FridaySkillRegistry,
 } from "#skills";
+import type { FridaySkillUpgradeAnalysisService } from "../../../skills/services/friday-skill-upgrade-analysis-service.js";
 import { FridayDomainError } from "#errors";
 import { resolveSafeInstallDir } from "#utilities";
 import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
@@ -44,6 +45,7 @@ export interface FridaySkillRoutesDeps {
 	  getSkillLifecycleStatus?: (skillId: string) => string | null | undefined;
 	  canonicalMutationGate?: FridayMutatingActionGate;
 	  registerRetiredLegacySkillMutationRoutes?: boolean;
+	  upgradeAnalysis?: FridaySkillUpgradeAnalysisService;
 	}
 
 function createFridaySkillContentUpdateMutatingActionRequest(input: {
@@ -669,6 +671,115 @@ export function createFridaySkillRoutes(
         return { updated: true, skillId, skill };
       },
     });
+  }
+
+  // ── Skill upgrade analysis + decision (Phase 06) ──
+  if (deps.upgradeAnalysis) {
+    routes.push(
+      {
+        operationId: "skills.upgrade.analyze",
+        method: "POST",
+        path: "/v1/skills/:skillId/upgrade/analyze",
+        auth: { public: true },
+        async handler(ctx) {
+          const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
+          const body = asRecord(ctx.body);
+          const candidateId = asOptionalString(body.candidateId, "candidateId");
+          if (!candidateId) {
+            throw new FridayDomainError("VALIDATION_ERROR", '"candidateId" is required', {
+              httpStatus: 400,
+            });
+          }
+          const analysis = deps.upgradeAnalysis!.analyze({ skillId, candidateId });
+          return { analysis };
+        },
+      },
+      {
+        operationId: "skills.upgrade.decide",
+        method: "POST",
+        path: "/v1/skills/:skillId/upgrade/decide",
+        auth: { public: true },
+        async handler(ctx) {
+          const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
+          const body = asRecord(ctx.body);
+          const candidateId = asOptionalString(body.candidateId, "candidateId");
+          if (!candidateId) {
+            throw new FridayDomainError("VALIDATION_ERROR", '"candidateId" is required', {
+              httpStatus: 400,
+            });
+          }
+          const decision = asOptionalString(body.decision, "decision");
+          if (decision !== "replace" && decision !== "keep") {
+            throw new FridayDomainError("VALIDATION_ERROR", '"decision" must be "replace" or "keep"', {
+              httpStatus: 400,
+            });
+          }
+
+          const analysis = deps.upgradeAnalysis!.analyze({ skillId, candidateId });
+
+          const ticket = assertCanonicalApproval({
+            deps,
+            request: {
+              action: "skills.upgrade.decide",
+              actor: createActorFromPrincipal(ctx.principal, "skill-upgrade-operator"),
+              surface: "api:/v1/skills/:skillId/upgrade/decide",
+              resource: {
+                type: "skill_upgrade",
+                id: skillId,
+                digest: hashStableJson({
+                  skillId,
+                  candidateId,
+                  decision,
+                  analysisDigest: analysis.analysisDigest,
+                  recommendation: analysis.recommendation,
+                  regressionVerdict: analysis.regressionProof.overallVerdict,
+                }),
+                attributes: {
+                  skillId,
+                  candidateId,
+                  analysisDigest: analysis.analysisDigest,
+                },
+              },
+              mutating: true,
+              risk: "high",
+              parameters: {
+                skillId,
+                candidateId,
+                decision,
+                analysisDigest: analysis.analysisDigest,
+                recommendation: analysis.recommendation,
+                regressionVerdict: analysis.regressionProof.overallVerdict,
+              },
+              idempotencyKey: asOptionalString(body.idempotencyKey, "idempotencyKey"),
+              localClaims: [
+                {
+                  guardId: "skill_upgrade_decision_guard",
+                  decision: "requires_approval",
+                  risk: "high",
+                  reason: "skill_upgrade_decision_requires_canonical_approval",
+                },
+              ],
+            },
+            canonicalApproval: readCanonicalApproval(body.canonicalApproval),
+            requiredCode: "SKILL_UPGRADE_DECIDE_APPROVAL_REQUIRED",
+            deniedCode: "SKILL_UPGRADE_DECIDE_APPROVAL_DENIED",
+            unavailableCode: "SKILL_UPGRADE_DECIDE_GATE_UNAVAILABLE",
+            requiredMessage: "Skill upgrade decisions require canonical approval before mutation.",
+            deniedMessage: "Skill upgrade decision was blocked by the canonical approval gate",
+            unavailableMessage: "Skill upgrade decisions require the canonical approval gate.",
+          });
+
+          const record = deps.upgradeAnalysis!.applyDecision({
+            skillId,
+            candidateId,
+            decision,
+            analysisDigest: analysis.analysisDigest,
+            ticket,
+          });
+          return { record };
+        },
+      },
+    );
   }
 
   // ── Skill execution dispatch (POST /v1/skills/:skillId/run) ──

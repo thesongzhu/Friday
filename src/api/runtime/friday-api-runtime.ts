@@ -157,6 +157,7 @@ import { createFridayAutonomyUpgradePlannerService } from "../../autonomy/servic
 import { createFridayAutonomyUpgradeStatusService } from "../../autonomy/services/friday-autonomy-upgrade-status-service.js";
 import { createFridayWorkflowUpgradeLifecycleService } from "../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
 import { createFridaySkillUpgradeLifecycleService } from "../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import { createFridaySkillUpgradeAnalysisService } from "../../skills/services/friday-skill-upgrade-analysis-service.js";
 import { createFridayProviderProfileUpgradeLifecycleService } from "../../autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
 import {
   createFridayPluginLifecycleMutatingActionRequest,
@@ -897,6 +898,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       ? () => deps.skillRegistry!.refresh()
       : undefined,
     updateSkillStatus: deps.updateSkillStatus,
+  });
+  const upgradeAnalysis = createFridaySkillUpgradeAnalysisService({
+    db: deps.db,
+    nowIso: deps.nowIso,
+    skillRepo,
+    workflowRepo,
+    workspaceDir: stateDir,
+    resolveCandidate: deps.converterService
+      ? (input) => deps.converterService!.getCandidate(input)
+      : undefined,
   });
   const getSkillLifecycleDetail = (skillId: string): FridaySkillLifecycleDetail | null => {
     const lifecycleDetail = deps.skillLifecycle?.getSkill(skillId);
@@ -2558,6 +2569,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 	      getSkillLifecycleStatus: (skillId) => skillRepo.getSkillById(deps.db.writer, skillId)?.status,
 	      canonicalMutationGate,
 	      registerRetiredLegacySkillMutationRoutes: !deps.skillLifecycle && skillLifecycleActionsAvailable,
+	      upgradeAnalysis,
 	    })) {
       routes.register(route);
     }
