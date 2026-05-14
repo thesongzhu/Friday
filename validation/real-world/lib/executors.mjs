@@ -549,7 +549,8 @@ async function executeHttpProbe({ artifact, client, scenario }) {
       cleanupResults,
     };
   }
-  if (!response.ok && artifact.result !== "failed") {
+  const statusAsExpected = Number.isInteger(execution.expectStatus) && response.status === execution.expectStatus;
+  if (!response.ok && !statusAsExpected && artifact.result !== "failed") {
     artifact.result = "failed";
     artifact.failureClass = "http_contract";
   }
