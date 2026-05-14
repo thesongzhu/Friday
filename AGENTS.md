@@ -204,8 +204,12 @@ different workflow:
   SHA, scenarios are nonzero, all scenarios pass, and blockers are empty.
 - **Stage 8 - Merge / post-merge ledger.** Merge is user-controlled unless an
   active Codex conveyor merge gate is fully satisfied. After merge, fetch origin,
-  verify main advanced to the expected merge commit, record merge facts, update
-  reports/index, and preserve proof wording honestly.
+  verify main advanced to the expected merge commit, verify PR-head-to-merge
+  content parity when the merge rewrites the SHA, record merge facts, update
+  reports/index, and preserve proof wording honestly. Do not wait for
+  post-merge CI/RGG/check workflows before beginning the next phase when the
+  pre-merge PR-head CI/RGG gate passed and content parity is verified; record
+  post-merge runs as pending/not-waited unless they were separately inspected.
 
 ## Codex-Orchestrated Claude Conveyor
 
@@ -234,9 +238,11 @@ boundaries. It only changes who may coordinate routine stage approvals.
 - Each phase uses a fresh clean worktree and a `codex/phase-*` branch unless the
   user explicitly approves a different base. The branch prefix is required so
   branch-head RGG runs on `codex/**`.
-- Claude sessions must be isolated per phase. The launch pattern is:
-  `claude --model opus-4-6 --effort max --permission-mode auto --name phase-XX-claude --remote-control phase-XX`.
-  `/fast` is an interactive Claude slash command, not a shell flag. Do not use
+- Claude sessions must be isolated per phase. The interactive launch pattern is:
+  `claude --model claude-opus-4-6[1m] --effort max --permission-mode acceptEdits --name phase-XX-claude --remote-control phase-XX`.
+  `/fast` is an interactive Claude slash command, not a shell flag. If fast or
+  auto mode is unavailable because of model policy or spending caps, continue
+  with `acceptEdits` and do not claim fast/auto mode. Do not use
   `--dangerously-skip-permissions`.
 - Codex may, within an active conveyor phase, approve Claude to proceed through
   Stages 0-8 including exact-file staging, commit, push, PR creation, CI/RGG
@@ -244,6 +250,13 @@ boundaries. It only changes who may coordinate routine stage approvals.
   satisfied. This standing stage authority does not allow new policy, scope,
   requirement, branch-protection, external credential, or release-standard
   changes.
+- Within an active conveyor phase, Codex may also run bounded in-scope correction
+  loops for reviewer failures, CI failures, RGG artifact wiring failures, or
+  merge-gate blockers. These loops must preserve the original phase
+  requirements, acceptance criteria, proof standards, and out-of-scope
+  boundaries. Codex may correct Claude back onto the approved scope, but neither
+  Codex nor Claude may narrow scope, defer modules, weaken proof, skip tests, or
+  rewrite acceptance criteria without explicit user approval.
 - After Codex gives Claude a bounded task prompt, Codex should end its active
   turn. Do not keep a model session alive with `sleep`, busy polling, or
   low-value status checks. The next Codex turn should be triggered by an
@@ -259,23 +272,23 @@ boundaries. It only changes who may coordinate routine stage approvals.
   relay should invoke Codex through a supported Codex automation surface such as
   `codex exec`, Codex SDK, or Codex app-server. Do not parse terminal scrollback
   as the primary signal.
-- If Claude does not produce a handoff within 70 minutes of the last Codex prompt,
-  the bridge watchdog or an external non-model watchdog should wake Codex with a
-  failure handoff for one bounded health check of the terminal/session/process/PR
-  state. If the cause is not found and resolved within 20 minutes, stop the
-  Claude run, summarize all known progress, write a fresh handoff, and wait for
-  the user.
+- The local outer runner is the preferred automation path. Each Claude task
+  defaults to a 30 minute timeout. If no progress is visible 30 minutes after
+  the last Codex prompt, the bridge watchdog records a first no-progress mark,
+  then checks every 10 minutes. After three consecutive 10-minute no-progress
+  checks, it wakes Codex for one bounded diagnosis/fix. If the cause is not
+  found and resolved within 20 minutes, stop the Claude run, summarize all known
+  progress, write a fresh handoff, and wait for the user.
 - Claude terminal output does not automatically wake Codex unless an approved
   bridge posts the handoff back into the Codex thread. Codex heartbeat is not the
-  conveyor watchdog and must not be used as the default 70-minute timer. Until
-  the bridge exists, use manual handoff delivery plus an external non-model timer
-  only.
+  conveyor watchdog and must not be used as the default timer.
 - Ask the user before any new policy, changed phase scope, changed requirement,
   external credential/platform action, branch protection change, owner/admin
   bypass, missing/blocked RGG override, unresolved reviewer disagreement, or
   merge-gate exception.
 - The conveyor merge gate requires all of the following at the PR head SHA:
-  branch name `codex/**`; required CI checks success; same-SHA RGG artifact
+  branch name `codex/**`; PR is ready and not draft; required CI checks success;
+  same-SHA RGG artifact
   present and passed with scenarios total > 0, scenarios passed == total, and
   blockers empty; two isolated read-only reviewers PASS; no unresolved PR
   conversations; PR body/report proof wording does not overclaim; completion
