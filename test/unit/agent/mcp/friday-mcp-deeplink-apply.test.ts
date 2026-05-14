@@ -245,7 +245,7 @@ describe("MCP deeplink apply", () => {
   it("throws MCP_ENV_REJECTED for secret-shaped env keys", async () => {
     const service = createService({ stateDir: testDir, gate: makeGate() });
     await expect(
-      service.apply(makeMcpPayload({ env: { MY_SECRET_KEY: "value" } })),
+      service.apply(makeMcpPayload({ env: { MY_SECRET_KEY: "value" } })), // pragma: allowlist secret
     ).rejects.toThrow(
       expect.objectContaining({ code: "MCP_ENV_REJECTED" }),
     );

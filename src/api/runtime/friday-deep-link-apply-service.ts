@@ -34,9 +34,9 @@ import type {
   FridayMutatingActionTicket,
 } from "../../security/friday-mutating-action-gate.js";
 import {
+  createFridayMcpAdapter,
   isForbiddenEnvVar,
   isSecretShapedEnvKey,
-  createFridayMcpAdapter,
 } from "../../agent/mcp/friday-mcp-adapter.js";
 import type { FridayMcpConfigStore } from "../../agent/mcp/friday-mcp-config-store.js";
 import type { FridayMcpServerConfig } from "../../agent/mcp/friday-mcp-adapter.types.js";
