@@ -234,6 +234,8 @@ export type { FridayStudioRoutesDeps } from "./http/routes/friday-studio-routes.
 // Discovery routes (C-005)
 export { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "./http/routes/friday-discovery-routes.js";
 export type { FridayDiscoveryRoutesDeps } from "./http/routes/friday-discovery-routes.js";
+export { createFridayDiscoveryIntegrationRoutes } from "./http/routes/friday-discovery-integration-routes.js";
+export type { FridayDiscoveryIntegrationRoutesDeps } from "./http/routes/friday-discovery-integration-routes.js";
 export type {
   FridayAgentRunExecutionResponse,
   FridayCancelAgentRunResponse,

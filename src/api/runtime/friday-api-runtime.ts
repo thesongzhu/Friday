@@ -103,6 +103,7 @@ import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-b
 import { createFridayAssetInventoryRoutes } from "../http/routes/friday-asset-inventory-routes.js";
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
+import { createFridayDiscoveryIntegrationRoutes } from "../http/routes/friday-discovery-integration-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
 import { createFridayMultiTenantSecurityRoutes } from "../http/routes/friday-multi-tenant-security-routes.js";
 import { createFridayObservabilityRoutes } from "../http/routes/friday-observability-routes.js";
@@ -849,6 +850,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     workflowImportExport: builderRuntime.importExport,
     workflowCrud: workflowRuntime.crud,
     canonicalMutationGate,
+    mcpConfigStore: deps.mcpConfigStore,
   });
   const workflowRepo = createFridayWorkflowRepository({ db: deps.db });
   const providerProfileRepo = createFridayProviderProfileRepository();
@@ -2421,6 +2423,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   for (const route of deps.discovery
     ? createFridayDiscoveryRoutes(deps.discovery)
     : createFridayDiscoveryDisabledRoutes()) {
+    routes.register(route as unknown as Parameters<typeof routes.register>[0]);
+  }
+
+  // Register discovery integration route (always registered; disabled when deps absent)
+  for (const route of createFridayDiscoveryIntegrationRoutes({
+    discovery: deps.discovery?.discovery ?? null,
+    converterService: deps.converterService ?? null,
+    canonicalMutationGate: deps.discovery ? canonicalMutationGate : null,
+    disabledReason: deps.discovery ? null : "discovery service not provided",
+  })) {
     routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
 

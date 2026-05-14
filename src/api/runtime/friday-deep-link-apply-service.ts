@@ -33,6 +33,13 @@ import type {
   FridayMutatingActionGate,
   FridayMutatingActionTicket,
 } from "../../security/friday-mutating-action-gate.js";
+import {
+  isForbiddenEnvVar,
+  isSecretShapedEnvKey,
+  createFridayMcpAdapter,
+} from "../../agent/mcp/friday-mcp-adapter.js";
+import type { FridayMcpConfigStore } from "../../agent/mcp/friday-mcp-config-store.js";
+import type { FridayMcpServerConfig } from "../../agent/mcp/friday-mcp-adapter.types.js";
 
 const WORKFLOW_TEMPLATE_FETCH_TIMEOUT_MS = 15_000;
 
@@ -45,6 +52,7 @@ export interface CreateFridayDeepLinkApplyServiceDeps {
   workflowCrud: Pick<FridayWorkflowCrudService, "createWorkflow" | "archiveWorkflow">;
   workflowTemplateSsrfGuard?: FridayAgentSsrfGuard;
   canonicalMutationGate?: FridayMutatingActionGate;
+  mcpConfigStore?: FridayMcpConfigStore;
 }
 
 export interface FridayDeepLinkApplyOptions {
@@ -72,11 +80,7 @@ export function createFridayDeepLinkApplyService(
         case "workflow-template":
           return applyWorkflowTemplateDeepLink(payload, deps);
         case "mcp-server":
-          return {
-            applied: false,
-            resourceType: payload.type,
-            message: "Deep link apply for mcp-server is not yet supported by the runtime config surface.",
-          };
+          return applyMcpServerDeepLink(payload, deps, options);
       }
     },
   };
@@ -346,4 +350,138 @@ function createWorkflowTemplateSlug(name: string, suffix: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
   return `${base || "imported-workflow"}-${suffix.slice(0, 8)}`;
+}
+
+async function applyMcpServerDeepLink(
+  payload: FridayDeepLinkPayload,
+  deps: CreateFridayDeepLinkApplyServiceDeps,
+  options: FridayDeepLinkApplyOptions | undefined,
+): Promise<FridayDeepLinkApplyResult> {
+  const mcpServer = payload.mcpServer;
+  if (!mcpServer) {
+    throw new FridayDomainError("VALIDATION_FAILED", "MCP server configuration is missing from payload.", { httpStatus: 400 });
+  }
+
+  if (mcpServer.transport !== "stdio") {
+    return {
+      applied: false,
+      resourceType: payload.type,
+      message: `MCP deeplink apply supports only stdio transport. ${mcpServer.transport} transport is not supported for apply.`,
+    };
+  }
+
+  if (!mcpServer.command || mcpServer.command.trim().length === 0) {
+    throw new FridayDomainError("VALIDATION_FAILED", "MCP server with stdio transport requires a command.", { httpStatus: 400 });
+  }
+
+  if (mcpServer.env) {
+    const rejectedKeys = Object.keys(mcpServer.env).filter(
+      (key) => isForbiddenEnvVar(key) || isSecretShapedEnvKey(key),
+    );
+    if (rejectedKeys.length > 0) {
+      throw new FridayDomainError(
+        "MCP_ENV_REJECTED",
+        `MCP server env contains forbidden or secret-shaped keys: ${rejectedKeys.join(", ")}`,
+        { httpStatus: 400, details: { rejectedKeys } },
+      );
+    }
+  }
+
+  if (!deps.mcpConfigStore) {
+    return {
+      applied: false,
+      resourceType: payload.type,
+      message: "MCP config store is not available. MCP deeplink apply requires a state directory.",
+    };
+  }
+
+  const serverId = mcpServer.name.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || `mcp-${deps.idGenerator().slice(0, 8)}`;
+
+  if (!deps.canonicalMutationGate) {
+    throw new FridayDomainError(
+      "MCP_INSTALL_CANONICAL_GATE_UNAVAILABLE",
+      "MCP server deeplink install requires the canonical approval gate.",
+      { httpStatus: 503 },
+    );
+  }
+
+  const actor: FridayMutatingActionActor = options?.actor ?? {
+    kind: "api",
+    id: "api:deeplink",
+    principalId: "api:deeplink",
+  };
+
+  const mcpGateResult = deps.canonicalMutationGate.evaluate({
+    action: "mcp.deeplink.install_server",
+    actor,
+    surface: options?.surface ?? "api:/v1/deeplink/apply",
+    resource: {
+      type: "mcp_server_config",
+      id: `mcp-server:${serverId}`,
+    },
+    mutating: true,
+    risk: "high",
+    parameters: {
+      transport: mcpServer.transport,
+      serverName: mcpServer.name,
+    },
+    idempotencyKey: options?.idempotencyKey,
+    planDigest: options?.planDigest,
+    canonicalApproval: options?.canonicalApproval,
+    localClaims: [{
+      guardId: "mcp_install_lifecycle_guard",
+      decision: "requires_approval",
+      reason: "MCP server installation requires explicit approval before persisting configuration.",
+    }],
+  });
+
+  if (mcpGateResult.decision !== "allow" || !mcpGateResult.ticket) {
+    throw new FridayDomainError(
+      mcpGateResult.decision === "requires_approval"
+        ? "CANONICAL_APPROVAL_REQUIRED"
+        : "CANONICAL_APPROVAL_DENIED",
+      mcpGateResult.decision === "requires_approval"
+        ? "MCP server deeplink install requires canonical approval before persisting configuration."
+        : `MCP server deeplink install was blocked by the canonical approval gate: ${mcpGateResult.reason}`,
+      {
+        httpStatus: 403,
+        details: {
+          canonicalGate: mcpGateResult.evidenceRecord,
+        },
+      },
+    );
+  }
+
+  const serverConfig: FridayMcpServerConfig = {
+    id: serverId,
+    transport: "stdio",
+    command: mcpServer.command,
+    args: mcpServer.args,
+    env: mcpServer.env,
+  };
+
+  deps.mcpConfigStore.addServer(serverConfig);
+
+  let doctorReady = false;
+  let doctorToolCount = 0;
+  let doctorError: string | undefined;
+
+  try {
+    const probeAdapter = createFridayMcpAdapter({ servers: [serverConfig] });
+    const tools = await probeAdapter.listTools({ serverId });
+    doctorReady = true;
+    doctorToolCount = tools.length;
+  } catch (err) {
+    doctorReady = false;
+    doctorError = err instanceof Error ? err.message : String(err);
+  }
+
+  return {
+    applied: true,
+    resourceType: payload.type,
+    resourceId: serverId,
+    message: doctorReady
+      ? `MCP server "${mcpServer.name}" (stdio) persisted and doctor-verified with ${String(doctorToolCount)} tool(s). Available after runtime restart.`
+      : `MCP server "${mcpServer.name}" (stdio) persisted but doctor probe failed: ${doctorError ?? "unknown error"}. Config saved; verify command and retry.`,
+  };
 }

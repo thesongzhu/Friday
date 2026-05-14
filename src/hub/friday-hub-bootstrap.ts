@@ -196,6 +196,7 @@ import {
   listFridayMcpServerReadiness,
   loadFridayWorkspaceContext,
   parseFridayMcpServersFromEnv,
+  createFridayMcpConfigStore,
   resolveFridayAgentTaskProfile,
   resolveFridayContextEnginePromptFragment,
   taskLikelyNeedsWriteAccessForSubagent,
@@ -2218,15 +2219,21 @@ export async function createFridayHub(
   const agentRuntimeGetter = () => _agentRuntimeRef;
   let subagentRegistry!: ReturnType<typeof createFridaySubagentRegistry>;
 
-  // Optional MCP adapter (JSON config from FRIDAY_MCP_SERVERS).
-  // Example:
-  // FRIDAY_MCP_SERVERS='[{"id":"filesystem","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/Users/me"]}]'
-  const mcpServers = parseFridayMcpServersFromEnv(process.env);
-  const mcpAdapter = mcpServers.length > 0
-    ? createFridayMcpAdapter({ servers: mcpServers })
+  // Optional MCP adapter (JSON config from FRIDAY_MCP_SERVERS + persisted mcp-servers.json).
+  // Env config takes precedence on ID collision.
+  const mcpConfigStore = config.stateDir ? createFridayMcpConfigStore(config.stateDir) : undefined;
+  const envMcpServers = parseFridayMcpServersFromEnv(process.env);
+  const persistedMcpServers = mcpConfigStore?.load() ?? [];
+  const envServerIds = new Set(envMcpServers.map((s) => s.id));
+  const mergedMcpServers = [
+    ...envMcpServers,
+    ...persistedMcpServers.filter((s) => !envServerIds.has(s.id)),
+  ];
+  const mcpAdapter = mergedMcpServers.length > 0
+    ? createFridayMcpAdapter({ servers: mergedMcpServers })
     : undefined;
   if (mcpAdapter) {
-    console.log(`[friday] MCP adapter enabled with ${String(mcpServers.length)} server(s)`);
+    console.log(`[friday] MCP adapter enabled with ${String(mergedMcpServers.length)} server(s) (${String(envMcpServers.length)} env, ${String(persistedMcpServers.filter((s) => !envServerIds.has(s.id)).length)} persisted)`);
   }
   const mcpServerUpgradeStateRepoForAgent = createFridayAutonomySubjectUpgradeStateRepository();
   const getMcpServerAvailability = (serverId: string) => {
@@ -6158,6 +6165,7 @@ export async function createFridayHub(
       ? () => mcpAdapter.listServers().map((server) => ({ id: server.id, transport: server.transport }))
       : undefined,
     mcpAdapter,
+    mcpConfigStore,
     serverVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     serverHost: config.host ?? "127.0.0.1",
     serverPort: config.port ?? 3141,

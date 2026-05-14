@@ -26,3 +26,10 @@ export { generateRecommendations } from "./friday-integration-recommendation-eng
 // Discovery service
 export { createFridayProgramDiscoveryService } from "./friday-program-discovery-service.js";
 export type { CreateFridayProgramDiscoveryServiceDeps } from "./friday-program-discovery-service.js";
+
+// Discovery integration bridge
+export { buildDiscoveryIntegrationSource } from "./friday-discovery-integration-bridge.js";
+export type {
+  FridayDiscoveryIntegrationBridgeInput,
+  FridayDiscoveryIntegrationBridgeResult,
+} from "./friday-discovery-integration-bridge.js";

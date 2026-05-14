@@ -430,8 +430,12 @@ export {
   FRIDAY_MCP_ADAPTER_ERROR_CODES,
   createFridayMcpAdapter,
   isFridayMcpAdapterError,
+  isForbiddenEnvVar,
+  isSecretShapedEnvKey,
   parseFridayMcpServersFromEnv,
 } from "./mcp/friday-mcp-adapter.js";
+export { createFridayMcpConfigStore } from "./mcp/friday-mcp-config-store.js";
+export type { FridayMcpConfigStore } from "./mcp/friday-mcp-config-store.js";
 export type {
   FridayMcpServerReadiness,
   FridaySkillMcpReadiness,

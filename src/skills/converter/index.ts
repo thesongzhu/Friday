@@ -58,6 +58,7 @@ export type {
 export {
   createClawdbotSkillMdConverter,
   createFridayCodeRepoConverter,
+  createFridayDiscoveryIntegrationConverter,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
   createNativeSkillPackageConverter,
   createFridayN8nNodeConverter,
