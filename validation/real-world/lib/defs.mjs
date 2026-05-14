@@ -51,6 +51,7 @@ export const REAL_WORLD_EXECUTION_KINDS = Object.freeze([
   "persona_learning",
   "discord_roundtrip",
   "manual_external",
+  "ui_authoring",
 ]);
 
 export const REAL_WORLD_PROVIDER_LANE_POLICIES = Object.freeze([

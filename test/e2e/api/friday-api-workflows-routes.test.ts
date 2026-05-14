@@ -969,6 +969,33 @@ describe("API — Workflow routes", () => {
     expect(webhookJson.ok).toBe(true);
     expect(webhookJson.data.accepted).toBe(true);
     expect(webhookJson.data.runId).toBeTruthy();
+
+    // 6. Poll the run until it reaches a terminal state
+    const runId = webhookJson.data.runId;
+    let terminalStatus: string | undefined;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const runRes = await fetch(
+        `${env.baseUrl}/v1/workflow-runs/${runId}`,
+        { headers: authHeaders(token) },
+      );
+      expect(runRes.status).toBe(200);
+      const runJson = (await runRes.json()) as {
+        ok: boolean;
+        data: { run: { id: string; status: string; startedAt?: string; finishedAt?: string } };
+      };
+      expect(runJson.ok).toBe(true);
+      expect(typeof runJson.data.run.status).toBe("string");
+      if (
+        runJson.data.run.status === "completed" ||
+        runJson.data.run.status === "failed" ||
+        runJson.data.run.status === "cancelled"
+      ) {
+        terminalStatus = runJson.data.run.status;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(terminalStatus).toBeDefined();
   });
 
   // ── workflow_error_shapes ──────────────────────────────────────────────

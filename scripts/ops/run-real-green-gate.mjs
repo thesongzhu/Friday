@@ -61,6 +61,8 @@ const PUBLIC_SURFACE_SCENARIOS = [
   "l2-fleet-overview-contract",
   "l2-automations-contract",
   "l2-sessions-contract",
+  "l2-workflow-webhook-contract",
+  "l3-workflow-browser-authoring",
 ];
 
 const EXTERNAL_CHANNEL_SCENARIOS = [
