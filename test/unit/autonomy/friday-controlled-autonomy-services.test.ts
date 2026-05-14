@@ -146,6 +146,179 @@ describe("controlled autonomy closed loops", () => {
     );
   });
 
+  it("accepts studio artifact candidates in startRun and stays awaiting_approval before registration", async () => {
+    const studioArtifactCandidates = [
+      {
+        id: "studio_artifact:run-001:custom",
+        capability: "custom" as FridayRuntimeCapabilityId,
+        sourceType: "studio_artifact" as const,
+        trustTier: "generated" as const,
+        label: "Integration - Example API",
+        description: "Generated from Studio integration_builder run",
+        risks: ["network_call" as const],
+        requiresApproval: true,
+        requiresHuman: false,
+        rank: 35,
+      },
+      {
+        id: "studio_artifact:run-001:skills",
+        capability: "skills" as FridayRuntimeCapabilityId,
+        sourceType: "studio_artifact" as const,
+        trustTier: "generated" as const,
+        label: "Integration - Example API",
+        description: "Generated from Studio integration_builder run",
+        risks: [] as string[],
+        requiresApproval: true,
+        requiresHuman: false,
+        rank: 35,
+      },
+    ];
+
+    const run = await acquisitionService.startRun({
+      userId: "test-user",
+      goal: "Register a Studio-generated API integration",
+      requiredCapabilities: ["text", "custom", "skills"],
+      studioArtifactCandidates,
+    });
+
+    expect(run.status).toBe("awaiting_approval");
+    expect(run.candidates.some((c) => c.sourceType === "studio_artifact" && c.capability === "custom")).toBe(true);
+    expect(run.candidates.some((c) => c.sourceType === "studio_artifact" && c.capability === "skills")).toBe(true);
+    expect(run.approvalReasons.join("\n")).toContain("custom");
+    expect(run.executionSuggestion.canExecute).toBe(false);
+    expect(run.executionSuggestion.nextAction).toBe("approve_run");
+
+    const approved = await acquisitionService.approveRun(run.id);
+    expect(approved.status).toBe("verified");
+    expect(approved.executionSuggestion.canExecute).toBe(true);
+    expect(approved.registeredCapabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ capability: "custom", state: "available" }),
+        expect.objectContaining({ capability: "skills", state: "available" }),
+      ]),
+    );
+    const customVerification = approved.verificationResults.find((v) => v.capability === "custom");
+    expect(customVerification?.status).toBe("passed");
+  });
+
+  it("completes the studio artifact bridge pipeline: validate → candidates → startRun → approveRun → verified (sandbox/local proof only)", async () => {
+    const { validateStudioArtifactAsCandidate, buildStudioArtifactCapabilityCandidate } = await import("../../../src/studio/friday-studio-artifact-candidate-bridge.js");
+
+    const mockRun = {
+      id: "bridge-run-001",
+      productId: "guided_browser_automation" as const,
+      status: "completed" as const,
+      title: "Guide - Bridge Test",
+      createdAt: "2026-05-14T00:00:00.000Z",
+      completedAt: "2026-05-14T00:00:01.000Z",
+      artifactRoot: "/tmp/test",
+      summary: { zh: "步骤包已生成", en: "Guided step pack generated." },
+      inputs: { goal: "Audit a page" },
+      artifacts: [
+        { id: "guide_pack", kind: "json" as const, label: { zh: "步骤包", en: "Step pack" }, relativePath: "pack.json", mimeType: "application/json", sizeBytes: 100, previewable: true },
+      ],
+      checks: [],
+      nextActions: [],
+    };
+
+    const validation = validateStudioArtifactAsCandidate({ run: mockRun });
+    expect(validation.valid).toBe(true);
+    expect(validation.risks).toHaveLength(0);
+
+    const candidates = buildStudioArtifactCapabilityCandidate(validation, mockRun.id);
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(candidates.every((c) => c.sourceType === "studio_artifact")).toBe(true);
+    expect(candidates.every((c) => c.requiresApproval)).toBe(true);
+    expect(candidates.every((c) => !c.requiresHuman)).toBe(true);
+
+    const run = await acquisitionService.startRun({
+      userId: "test-user",
+      goal: "Register bridge-test guided automation",
+      requiredCapabilities: ["text", "custom"],
+      studioArtifactCandidates: candidates,
+    });
+
+    expect(run.status).toBe("awaiting_approval");
+    expect(run.candidates.some((c) => c.sourceType === "studio_artifact")).toBe(true);
+
+    const approved = await acquisitionService.approveRun(run.id);
+    expect(approved.status).toBe("verified");
+    expect(approved.executionSuggestion.canExecute).toBe(true);
+
+    const customReg = approved.registeredCapabilities.find((r) => r.capability === "custom");
+    expect(customReg).toBeDefined();
+    expect(customReg!.state).toBe("available");
+    expect(customReg!.note).toContain("sandbox");
+
+    const customVerification = approved.verificationResults.find((v) => v.capability === "custom");
+    expect(customVerification?.status).toBe("passed");
+    expect(customVerification?.evidence).toContain("Sandbox");
+  });
+
+  it("proves the full Studio runProduct → validate → acquire → approve chain with cancelRun rollback (local sandbox proof only)", async () => {
+    const { createFridayStudioService } = await import("../../../src/studio/friday-studio-service.js");
+    const { validateStudioArtifactAsCandidate, buildStudioArtifactCapabilityCandidate } = await import("../../../src/studio/friday-studio-artifact-candidate-bridge.js");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "friday-e2e-studio-"));
+    try {
+      const studioService = createFridayStudioService({ workspaceRoot });
+      const studioRun = await studioService.runProduct({
+        productId: "integration_builder",
+        inputs: {
+          sourceType: "curl",
+          source: "curl -X GET https://api.example.com/items -H 'Content-Type: application/json'",
+          name: "E2E Chain Test API",
+        },
+      });
+      expect(studioRun.status).toBe("completed");
+
+      const serviceResult = studioService.validateArtifactCandidate(studioRun.id);
+      expect(serviceResult.validation.valid).toBe(true);
+      expect(serviceResult.validation.sourceType).toBe("studio_artifact");
+      expect(serviceResult.candidates.length).toBeGreaterThan(0);
+      expect(serviceResult.candidates.every((c) => c.requiresApproval)).toBe(true);
+
+      const validation = validateStudioArtifactAsCandidate({ run: serviceResult.run });
+      const candidates = buildStudioArtifactCapabilityCandidate(validation, serviceResult.run.id);
+
+      const acqRun = await acquisitionService.startRun({
+        userId: "test-user",
+        goal: "Register studio-generated E2E chain test API",
+        requiredCapabilities: ["text", "custom"],
+        studioArtifactCandidates: candidates,
+      });
+      expect(acqRun.status).toBe("awaiting_approval");
+      expect(acqRun.candidates.some((c) => c.sourceType === "studio_artifact")).toBe(true);
+      expect(acqRun.executionSuggestion.canExecute).toBe(false);
+      expect(acqRun.executionSuggestion.nextAction).toBe("approve_run");
+
+      const approved = await acquisitionService.approveRun(acqRun.id);
+      expect(approved.status).toBe("verified");
+      expect(approved.executionSuggestion.canExecute).toBe(true);
+      expect(approved.registeredCapabilities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ capability: "custom", state: "available" }),
+        ]),
+      );
+
+      const rollbackRun = await acquisitionService.startRun({
+        userId: "test-user",
+        goal: "Rollback test - studio artifact cancellation",
+        requiredCapabilities: ["text", "custom"],
+        studioArtifactCandidates: candidates,
+      });
+      expect(rollbackRun.status).toBe("awaiting_approval");
+      const cancelled = acquisitionService.cancelRun(rollbackRun.id);
+      expect(cancelled.status).toBe("cancelled");
+      expect(cancelled.executionSuggestion.canExecute).toBe(false);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps OAuth, payment, CAPTCHA, and sensitive permissions human-gated even in max autonomy", () => {
     const policy = policyService.updatePolicy({ mode: "max_autonomy" });
 

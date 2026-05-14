@@ -68,6 +68,8 @@ export interface FridayCrossBorderAdaptationState {
   firstReviewDueAt: ISODateTime;
   stableReviewDueAt: ISODateTime;
   lastRecommendedAt?: ISODateTime;
+  lastLearningAt?: ISODateTime;
+  learningNotes?: string[];
 }
 
 export interface FridayCrossBorderOperatingProfile {
@@ -99,7 +101,18 @@ export interface FridayCrossBorderImportBatch {
   rawText?: string;
   publicLinks: string[];
   fileNames: string[];
+  stale?: boolean;
   createdAt: ISODateTime;
+}
+
+export interface FridayCrossBorderRunEvidence {
+  id: string;
+  workflowId: FridayCrossBorderWorkflowId;
+  managedWorkflowId: string;
+  status: "completed" | "failed" | "skipped";
+  summary: string;
+  capturedAt: ISODateTime;
+  inputSnapshotAt?: ISODateTime;
 }
 
 export interface FridayCrossBorderWorkflowRecommendation {
@@ -182,4 +195,5 @@ export interface FridayCrossBorderSnapshot {
     totalImports: number;
     sourceTypes: FridayCrossBorderImportSource[];
   };
+  runEvidenceLog: FridayCrossBorderRunEvidence[];
 }

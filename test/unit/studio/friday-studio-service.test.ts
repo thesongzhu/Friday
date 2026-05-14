@@ -157,6 +157,33 @@ describe("createFridayStudioService", () => {
     expect(zipImport.pack.productIds).toEqual(["guided_browser_automation"]);
   });
 
+  it("validates an integration builder run as a capability candidate", async () => {
+    const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
+
+    const run = await service.runProduct({
+      productId: "integration_builder",
+      inputs: {
+        sourceType: "curl",
+        source: "curl -X GET https://api.example.com/items -H 'Content-Type: application/json'",
+        name: "Example API",
+      },
+    });
+
+    const result = service.validateArtifactCandidate(run.id);
+
+    expect(result.validation.valid).toBe(true);
+    expect(result.validation.sourceType).toBe("studio_artifact");
+    expect(result.validation.inferredCapabilities).toContain("custom");
+    expect(result.validation.inferredCapabilities).toContain("skills");
+    expect(result.run.id).toBe(run.id);
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates[0]?.sourceType).toBe("studio_artifact");
+    expect(result.candidates[0]?.capability).toBe("custom");
+    expect(result.candidates[0]?.requiresApproval).toBe(true);
+    expect(result.candidates[1]?.capability).toBe("skills");
+    expect(result.candidates[0]?.id).toMatch(/^studio_artifact:/);
+  });
+
   it("rejects private URLs in public audit and integration lanes", async () => {
     const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
 

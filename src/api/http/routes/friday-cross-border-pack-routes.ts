@@ -1,10 +1,13 @@
 import { FridayDomainError } from "#errors";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
+  FridayCrossBorderDisableAllResponse,
   FridayCrossBorderImportRequest,
   FridayCrossBorderImportResponse,
+  FridayCrossBorderImportStaleResponse,
   FridayCrossBorderProfileResponse,
   FridayCrossBorderProfileUpdateRequest,
+  FridayCrossBorderRunEvidenceCaptureResponse,
   FridayCrossBorderSnapshotResponse,
   FridayCrossBorderWorkflowPresetApplyRequest,
   FridayCrossBorderWorkflowPresetResponse,
@@ -173,6 +176,56 @@ export function createFridayCrossBorderPackRoutes(
                 : {}),
             },
           }),
+        };
+      },
+    },
+    {
+      operationId: "packs.cross.border.run.evidence.capture",
+      method: "POST",
+      path: "/v1/packs/cross-border/run-evidence",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayCrossBorderRunEvidenceCaptureResponse> {
+        const userId = requireUserId(ctx.principal);
+        const body = readBodyObject(ctx.body);
+        const evidence = deps.service.captureRunEvidence({
+          userId,
+          evidence: {
+            workflowId: readString(body, "workflowId") as FridayCrossBorderWorkflowId,
+            managedWorkflowId: readString(body, "managedWorkflowId"),
+            status: readString(body, "status") as "completed" | "failed" | "skipped",
+            summary: readString(body, "summary"),
+          },
+        });
+        return {
+          evidence,
+          snapshot: deps.service.getSnapshot({ userId }),
+        };
+      },
+    },
+    {
+      operationId: "packs.cross.border.import.stale",
+      method: "PATCH",
+      path: "/v1/packs/cross-border/imports/:importBatchId/stale",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayCrossBorderImportStaleResponse> {
+        const userId = requireUserId(ctx.principal);
+        return {
+          snapshot: deps.service.markImportStale({
+            userId,
+            importBatchId: readString(ctx.params as Record<string, unknown>, "importBatchId"),
+          }),
+        };
+      },
+    },
+    {
+      operationId: "packs.cross.border.workflows.disable.all",
+      method: "POST",
+      path: "/v1/packs/cross-border/workflows/disable-all",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayCrossBorderDisableAllResponse> {
+        const userId = requireUserId(ctx.principal);
+        return {
+          snapshot: await deps.service.disableAllWorkflows({ userId }),
         };
       },
     },

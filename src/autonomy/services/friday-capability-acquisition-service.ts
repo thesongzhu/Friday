@@ -121,6 +121,7 @@ export function createFridayCapabilityAcquisitionService(
       matrix,
       policy,
       now: nowIso(),
+      externalCandidates: input.studioArtifactCandidates,
     });
     saveRun(run);
     return run;
@@ -190,12 +191,14 @@ export function createFridayCapabilityAcquisitionService(
       const passed = candidate.sourceType === "available_runtime"
         || candidate.sourceType === "skill_generator"
         || candidate.sourceType === "workflow_generator"
+        || candidate.sourceType === "studio_artifact"
         || candidate.sourceType === "builtin_catalog"
         || liveItem?.state === "available";
       const liveVerified = passed
         && candidate.sourceType !== "available_runtime"
         && candidate.sourceType !== "skill_generator"
         && candidate.sourceType !== "workflow_generator"
+        && candidate.sourceType !== "studio_artifact"
         && candidate.sourceType !== "builtin_catalog";
       verificationResults.push({
         candidateId: candidate.id,
@@ -348,20 +351,25 @@ function buildRun(input: {
   matrix: FridayRuntimeCapabilityMatrix;
   policy: FridayAutonomyPolicy;
   now: string;
+  externalCandidates?: FridayCapabilityCandidate[];
 }): FridayCapabilityAcquisitionRun {
   const now = input.now;
   const itemByCapability = new Map(input.matrix.items.map((item) => [item.capability, item]));
   const missingCapabilities = input.requiredCapabilities.filter((capability) =>
     itemByCapability.get(capability)?.state !== "available",
   );
-  const candidates = rankCandidates(input.requiredCapabilities.flatMap((capability) =>
+  const builtCandidates = input.requiredCapabilities.flatMap((capability) =>
     buildCandidatesForCapability({
       capability,
       item: itemByCapability.get(capability),
       policy: input.policy,
       goal: input.goal,
     }),
-  ));
+  );
+  const merged = input.externalCandidates
+    ? [...builtCandidates, ...input.externalCandidates]
+    : builtCandidates;
+  const candidates = rankCandidates(merged);
   const humanBlockers = collectHumanBlockers(candidates, input.requiredCapabilities);
   const approvalReasons = collectApprovalReasons(candidates, input.requiredCapabilities);
   const plan = buildAcquisitionPlan(input.requiredCapabilities, missingCapabilities, candidates);

@@ -545,4 +545,322 @@ describe("createFridayCrossBorderPackService", () => {
 
     db.close();
   });
+
+  it("captures run evidence for a real managed workflow and updates adaptation state", async () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    let currentTime = "2026-04-01T12:00:00.000Z";
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => currentTime,
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    const presetSnapshot = await service.applyWorkflowPreset({
+      userId: "test-user",
+      preset: {
+        workflowIds: ["daily-store-health-check"],
+        timezone: "America/Los_Angeles",
+      },
+    });
+
+    const managedWorkflowId = presetSnapshot.workflowRecommendations
+      .find((r) => r.id === "daily-store-health-check")?.automation?.managedWorkflowId;
+    expect(managedWorkflowId).toBeDefined();
+
+    currentTime = "2026-04-10T12:00:00.000Z";
+
+    const evidence = service.captureRunEvidence({
+      userId: "test-user",
+      evidence: {
+        workflowId: "daily-store-health-check",
+        managedWorkflowId: managedWorkflowId!,
+        status: "completed",
+        summary: "Store health check completed with no urgent issues.",
+      },
+    });
+
+    expect(evidence.workflowId).toBe("daily-store-health-check");
+    expect(evidence.status).toBe("completed");
+    expect(evidence.capturedAt).toBe("2026-04-10T12:00:00.000Z");
+
+    const snapshot = service.getSnapshot({ userId: "test-user" });
+    expect(snapshot.runEvidenceLog).toHaveLength(1);
+    expect(snapshot.runEvidenceLog[0]?.workflowId).toBe("daily-store-health-check");
+    expect(snapshot.profile?.adaptationState.lastLearningAt).toBe("2026-04-10T12:00:00.000Z");
+    expect(snapshot.profile?.adaptationState.learningNotes).toHaveLength(1);
+    expect(snapshot.profile?.adaptationState.status).toBe("tuning");
+
+    db.close();
+  });
+
+  it("rejects run evidence for a non-existent managed workflow", () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-04-08T12:00:00.000Z",
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    expect(() =>
+      service.captureRunEvidence({
+        userId: "test-user",
+        evidence: {
+          workflowId: "daily-store-health-check",
+          managedWorkflowId: "fake-workflow-id",
+          status: "completed",
+          summary: "Fake evidence for non-existent workflow",
+        },
+      }),
+    ).toThrow("does not match a known managed workflow");
+
+    db.close();
+  });
+
+  it("marks import batches as stale", () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-04-08T12:00:00.000Z",
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    const batch = service.importBatch({
+      userId: "test-user",
+      batch: {
+        kind: "store_report",
+        source: "paste",
+        title: "Old report",
+        rawText: "outdated store report data",
+      },
+    });
+
+    const snapshot = service.markImportStale({
+      userId: "test-user",
+      importBatchId: batch.id,
+    });
+
+    expect(snapshot.importSummary.totalImports).toBe(1);
+
+    db.close();
+  });
+
+  it("excludes stale imports from boards and recommendations after rollback", () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-04-08T12:00:00.000Z",
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    const batch = service.importBatch({
+      userId: "test-user",
+      batch: {
+        kind: "store_report",
+        source: "paste",
+        title: "Stale store report",
+        rawText: "refund pressure increasing cancel rate high",
+      },
+    });
+
+    const beforeStale = service.getSnapshot({ userId: "test-user" });
+    expect(beforeStale.storeHealth?.bullets.some((b) => b.includes("refund"))).toBe(true);
+    expect(beforeStale.riskClusters.some((r) => r.title.includes("店铺健康"))).toBe(true);
+    expect(beforeStale.importSummary.lastImportedAt).toBe(batch.createdAt);
+
+    service.markImportStale({ userId: "test-user", importBatchId: batch.id });
+
+    const afterStale = service.getSnapshot({ userId: "test-user" });
+    expect(afterStale.storeHealth?.bullets.some((b) => b.includes("refund"))).toBe(false);
+    expect(afterStale.riskClusters.some((r) => r.title.includes("店铺健康"))).toBe(false);
+    expect(afterStale.importSummary.totalImports).toBe(1);
+    expect(afterStale.importSummary.lastImportedAt).toBeNull();
+
+    db.close();
+  });
+
+  it("preserves active imports in boards after staling a different import", () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    let currentTime = "2026-04-08T12:00:00.000Z";
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => currentTime,
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    const oldBatch = service.importBatch({
+      userId: "test-user",
+      batch: {
+        kind: "store_report",
+        source: "paste",
+        title: "Old report",
+        rawText: "cancel rate critical refund spike",
+      },
+    });
+
+    currentTime = "2026-04-09T12:00:00.000Z";
+
+    service.importBatch({
+      userId: "test-user",
+      batch: {
+        kind: "category_watch_seed",
+        source: "paste",
+        title: "Fresh category seed",
+        rawText: "trending product spike in hair dryers",
+      },
+    });
+
+    service.markImportStale({ userId: "test-user", importBatchId: oldBatch.id });
+
+    const snapshot = service.getSnapshot({ userId: "test-user" });
+    expect(snapshot.storeHealth?.bullets.some((b) => b.includes("cancel rate critical"))).toBe(false);
+    expect(snapshot.categoryWatch?.bullets.some((b) => b.includes("trending"))).toBe(true);
+    expect(snapshot.importSummary.totalImports).toBe(2);
+
+    db.close();
+  });
+
+  it("disables all managed workflows for rollback", async () => {
+    const db = createTestDb();
+    const workflowDeps = createWorkflowDeps();
+    const service = createFridayCrossBorderPackService({
+      db,
+      preferenceRepo: createFridayUixUserPreferenceRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-04-08T12:00:00.000Z",
+      ...workflowDeps,
+    });
+
+    service.upsertProfile({
+      userId: "test-user",
+      profile: {
+        regionFocus: "sea_tiktok",
+        storeStage: "scaling",
+        categoryL1: "Beauty",
+        categoryL2: "Hair Dryers",
+        fulfillmentMode: "platform_fulfilled",
+        priceBand: "US$19-29",
+        adUsage: "active",
+        customerServiceMode: "solo_inbox",
+        monitoringDepth: "standard",
+        watchTargets: [],
+        competitorTargets: [],
+      },
+    });
+
+    await service.applyWorkflowPreset({
+      userId: "test-user",
+      preset: {
+        workflowIds: ["daily-store-health-check"],
+        timezone: "America/Los_Angeles",
+      },
+    });
+
+    const snapshot = await service.disableAllWorkflows({ userId: "test-user" });
+
+    expect(
+      snapshot.workflowRecommendations.find((item) => item.id === "daily-store-health-check")?.automation?.status,
+    ).toBe("paused");
+
+    db.close();
+  });
 });

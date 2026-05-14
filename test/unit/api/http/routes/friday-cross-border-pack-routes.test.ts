@@ -16,6 +16,28 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+function makeEmptySnapshot() {
+  return {
+    generatedAt: "2026-04-08T12:00:00.000Z",
+    profile: null,
+    storeHealth: null,
+    categoryWatch: null,
+    spikingProducts: null,
+    priceGapBoard: null,
+    listingQualityBoard: null,
+    customerServiceBoard: null,
+    workflowRecommendations: [],
+    riskClusters: [],
+    nextActions: [],
+    importSummary: {
+      lastImportedAt: null,
+      totalImports: 0,
+      sourceTypes: [],
+    },
+    runEvidenceLog: [],
+  };
+}
+
 function makeService() {
   return {
     getProfile: vi.fn(() => null),
@@ -60,60 +82,20 @@ function makeService() {
       fileNames: [],
       createdAt: "2026-04-08T12:00:00.000Z",
     })),
-    getSnapshot: vi.fn(() => ({
-      generatedAt: "2026-04-08T12:00:00.000Z",
-      profile: null,
-      storeHealth: null,
-      categoryWatch: null,
-      spikingProducts: null,
-      priceGapBoard: null,
-      listingQualityBoard: null,
-      customerServiceBoard: null,
-      workflowRecommendations: [],
-      riskClusters: [],
-      nextActions: [],
-      importSummary: {
-        lastImportedAt: null,
-        totalImports: 0,
-        sourceTypes: [],
-      },
+    getSnapshot: vi.fn(() => makeEmptySnapshot()),
+    applyWorkflowPreset: vi.fn(async () => makeEmptySnapshot()),
+    setWorkflowPresetEnabled: vi.fn(async () => makeEmptySnapshot()),
+    buildWorkflowInputContext: vi.fn(() => null),
+    captureRunEvidence: vi.fn(() => ({
+      id: "ev-1",
+      workflowId: "daily-store-health-check",
+      managedWorkflowId: "wf-1",
+      status: "completed",
+      summary: "Health check passed",
+      capturedAt: "2026-04-08T12:00:00.000Z",
     })),
-    applyWorkflowPreset: vi.fn(async () => ({
-      generatedAt: "2026-04-08T12:00:00.000Z",
-      profile: null,
-      storeHealth: null,
-      categoryWatch: null,
-      spikingProducts: null,
-      priceGapBoard: null,
-      listingQualityBoard: null,
-      customerServiceBoard: null,
-      workflowRecommendations: [],
-      riskClusters: [],
-      nextActions: [],
-      importSummary: {
-        lastImportedAt: null,
-        totalImports: 0,
-        sourceTypes: [],
-      },
-    })),
-    setWorkflowPresetEnabled: vi.fn(async () => ({
-      generatedAt: "2026-04-08T12:00:00.000Z",
-      profile: null,
-      storeHealth: null,
-      categoryWatch: null,
-      spikingProducts: null,
-      priceGapBoard: null,
-      listingQualityBoard: null,
-      customerServiceBoard: null,
-      workflowRecommendations: [],
-      riskClusters: [],
-      nextActions: [],
-      importSummary: {
-        lastImportedAt: null,
-        totalImports: 0,
-        sourceTypes: [],
-      },
-    })),
+    markImportStale: vi.fn(() => makeEmptySnapshot()),
+    disableAllWorkflows: vi.fn(async () => makeEmptySnapshot()),
   };
 }
 
@@ -127,7 +109,7 @@ function findRoute(operationId: string) {
 }
 
 describe("createFridayCrossBorderPackRoutes", () => {
-  it("registers the four cross-border pack routes", () => {
+  it("registers the cross-border pack routes", () => {
     const routes = createFridayCrossBorderPackRoutes({ service: makeService() });
     expect(routes.map((route) => route.operationId)).toEqual([
       "packs.cross.border.profile.get",
@@ -136,6 +118,9 @@ describe("createFridayCrossBorderPackRoutes", () => {
       "packs.cross.border.import.post",
       "packs.cross.border.workflow.presets.apply",
       "packs.cross.border.workflow.presets.toggle",
+      "packs.cross.border.run.evidence.capture",
+      "packs.cross.border.import.stale",
+      "packs.cross.border.workflows.disable.all",
     ]);
   });
 
@@ -242,6 +227,53 @@ describe("createFridayCrossBorderPackRoutes", () => {
         workflowId: "daily-price-gap-watch",
         enabled: false,
       },
+    });
+    expect(result.snapshot.generatedAt).toBe("2026-04-08T12:00:00.000Z");
+  });
+
+  it("captures run evidence and returns updated snapshot", async () => {
+    const { route, service } = findRoute("packs.cross.border.run.evidence.capture");
+    const result = await route.handler(makeCtx({
+      body: {
+        workflowId: "daily-store-health-check",
+        managedWorkflowId: "wf-1",
+        status: "completed",
+        summary: "Health check completed",
+      },
+    }));
+
+    expect(service.captureRunEvidence).toHaveBeenCalledWith({
+      userId: "test-user",
+      evidence: {
+        workflowId: "daily-store-health-check",
+        managedWorkflowId: "wf-1",
+        status: "completed",
+        summary: "Health check completed",
+      },
+    });
+    expect(result.evidence.id).toBe("ev-1");
+    expect(result.snapshot.generatedAt).toBe("2026-04-08T12:00:00.000Z");
+  });
+
+  it("marks an import batch as stale", async () => {
+    const { route, service } = findRoute("packs.cross.border.import.stale");
+    const result = await route.handler(makeCtx({
+      params: { importBatchId: "import-1" },
+    }));
+
+    expect(service.markImportStale).toHaveBeenCalledWith({
+      userId: "test-user",
+      importBatchId: "import-1",
+    });
+    expect(result.snapshot.generatedAt).toBe("2026-04-08T12:00:00.000Z");
+  });
+
+  it("disables all managed workflows", async () => {
+    const { route, service } = findRoute("packs.cross.border.workflows.disable.all");
+    const result = await route.handler(makeCtx());
+
+    expect(service.disableAllWorkflows).toHaveBeenCalledWith({
+      userId: "test-user",
     });
     expect(result.snapshot.generatedAt).toBe("2026-04-08T12:00:00.000Z");
   });

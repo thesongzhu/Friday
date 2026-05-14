@@ -12,6 +12,13 @@ function makeService(): FridayStudioService {
     getArtifact: vi.fn().mockReturnValue({ artifact: { id: "report" }, content: "ok", encoding: "utf-8" }),
     exportRun: vi.fn().mockReturnValue({ fileName: "run.zip", mimeType: "application/zip", base64: "eA==", sizeBytes: 1 }),
     importLocalPack: vi.fn().mockReturnValue({ pack: { id: "pack-1", name: "Pack" }, checks: [] }),
+    validateArtifactCandidate: vi.fn().mockReturnValue({
+      validation: { valid: true, sourceType: "studio_artifact", checks: [] },
+      run: { id: "run-1", productId: "integration_builder", status: "completed" },
+      candidates: [
+        { id: "studio_artifact:run-1:custom", capability: "custom", sourceType: "studio_artifact", trustTier: "generated", label: "Test", description: "Test", risks: [], requiresApproval: true, requiresHuman: false, rank: 35 },
+      ],
+    }),
   } as unknown as FridayStudioService;
 }
 
@@ -57,6 +64,7 @@ describe("createFridayStudioRoutes", () => {
       "studio.artifacts.get",
       "studio.runs.export",
       "studio.imports.create",
+      "studio.artifacts.validate.candidate",
     ]);
     for (const route of routes) {
       expect(route.path).toMatch(/^\/v1\/studio/);
@@ -99,5 +107,20 @@ describe("createFridayStudioRoutes", () => {
       kind: "directory",
       files: [{ relativePath: "pack.json", content: "{}" }],
     });
+  });
+
+  it("delegates artifact candidate validation", async () => {
+    const service = makeService();
+    const routes = createFridayStudioRoutes({ service });
+
+    const result = await findRoute(routes, "studio.artifacts.validate.candidate").handler(makeCtx({
+      params: { runId: "00000000-0000-4000-8000-000000000001" },
+    }));
+
+    expect(service.validateArtifactCandidate).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000001");
+    expect(result.validation.valid).toBe(true);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].sourceType).toBe("studio_artifact");
+    expect(result.candidates[0].requiresApproval).toBe(true);
   });
 });

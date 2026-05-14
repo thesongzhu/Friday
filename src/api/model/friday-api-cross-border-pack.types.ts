@@ -3,6 +3,7 @@ import type {
   FridayCrossBorderImportKind,
   FridayCrossBorderImportSource,
   FridayCrossBorderOperatingProfile,
+  FridayCrossBorderRunEvidence,
   FridayCrossBorderSnapshot,
   FridayCrossBorderWorkflowId,
 } from "../../packs/cross-border/friday-cross-border-pack.types.js";
@@ -54,5 +55,29 @@ export interface FridayCrossBorderWorkflowPresetToggleRequest {
 }
 
 export interface FridayCrossBorderWorkflowPresetResponse {
+  snapshot: FridayCrossBorderSnapshot;
+}
+
+export interface FridayCrossBorderRunEvidenceCaptureRequest {
+  workflowId: FridayCrossBorderWorkflowId;
+  managedWorkflowId: string;
+  status: FridayCrossBorderRunEvidence["status"];
+  summary: string;
+}
+
+export interface FridayCrossBorderRunEvidenceCaptureResponse {
+  evidence: FridayCrossBorderRunEvidence;
+  snapshot: FridayCrossBorderSnapshot;
+}
+
+export interface FridayCrossBorderImportStaleRequest {
+  importBatchId: string;
+}
+
+export interface FridayCrossBorderImportStaleResponse {
+  snapshot: FridayCrossBorderSnapshot;
+}
+
+export interface FridayCrossBorderDisableAllResponse {
   snapshot: FridayCrossBorderSnapshot;
 }
