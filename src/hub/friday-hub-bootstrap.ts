@@ -6212,7 +6212,7 @@ export async function createFridayHub(
         const updated = selfLearningRuntime.facts.updateFact({
           userId: input.userId,
           key: input.key,
-          value: input.value as import("#learning").JsonValue | undefined,
+          value: input.value as JsonValue | undefined,
           confidence: input.confidence,
         });
         if (!updated) return null;
