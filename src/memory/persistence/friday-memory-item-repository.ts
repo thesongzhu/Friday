@@ -26,6 +26,10 @@ interface MemoryItemRow {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
+  memory_type: string | null;
+  confidence: number | null;
+  access_count: number;
+  last_accessed_at: string | null;
 }
 
 // ─── Interface ───
@@ -82,6 +86,10 @@ function rowToItem(row: MemoryItemRow): FridayMemoryItem {
     expiresAt: row.expires_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    memoryType: (row.memory_type as FridayMemoryItem["memoryType"]) ?? undefined,
+    confidence: row.confidence ?? undefined,
+    accessCount: row.access_count ?? undefined,
+    lastAccessedAt: row.last_accessed_at ?? undefined,
   };
 }
 
@@ -152,8 +160,8 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       const metadataJson = JSON.stringify(item.metadata);
 
       db.prepare(
-        `INSERT INTO memory_items (id, namespace, key, value_json, content_text, source, tags_json, tags_text, metadata_json, ttl_seconds, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memory_items (id, namespace, key, value_json, content_text, source, tags_json, tags_text, metadata_json, ttl_seconds, expires_at, created_at, updated_at, memory_type, confidence, access_count, last_accessed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         item.id,
         item.namespace,
@@ -168,6 +176,10 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
         item.expiresAt ?? null,
         item.createdAt,
         item.updatedAt,
+        item.memoryType ?? null,
+        item.confidence ?? null,
+        item.accessCount ?? 0,
+        item.lastAccessedAt ?? null,
       );
     },
 

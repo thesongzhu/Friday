@@ -23,6 +23,13 @@ export interface FridayPreferenceFactService {
 
   deleteFact(input: { userId: string; key: string }): boolean;
 
+  updateFact(input: {
+    userId: string;
+    key: string;
+    value?: JsonValue;
+    confidence?: number;
+  }): FridayPreferenceFactEntity | null;
+
   runDecay(input: {
     nowIso?: string;
     userId?: string;
@@ -156,6 +163,25 @@ export function createFridayPreferenceFactService(
       return deps.db.withWriteTransaction((db) =>
         deps.factRepo.deleteByUserAndKey(db, input.userId, input.key),
       );
+    },
+
+    updateFact(input) {
+      return deps.db.withWriteTransaction((db) => {
+        const existing = deps.factRepo.getByUserAndKey(db, input.userId, input.key);
+        if (!existing) return null;
+        const nowIso = deps.nowIso();
+        return deps.factRepo.upsert(db, {
+          factId: existing.factId,
+          userId: input.userId,
+          key: input.key,
+          value: input.value !== undefined ? input.value : existing.value,
+          confidence: input.confidence !== undefined ? input.confidence : existing.confidence,
+          evidenceCountDelta: 0,
+          lastConfirmedAt: nowIso,
+          sourceEventId: deps.idGenerator(),
+          nowIso,
+        });
+      });
     },
 
     runDecay(input) {

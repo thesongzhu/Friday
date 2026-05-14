@@ -213,7 +213,7 @@ function makePreference(input: {
 describe("FridayUixRoutes", () => {
   it("creates assistant route definitions", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
-    expect(routes).toHaveLength(20);
+    expect(routes).toHaveLength(21);
     expect(routes.map((route) => route.operationId)).toEqual([
       "uix.intents.resolve",
       "uix.templates.list",
@@ -234,6 +234,7 @@ describe("FridayUixRoutes", () => {
       "uix.investigate",
       "uix.learnedfacts.list",
       "uix.learnedfacts.clear",
+      "uix.learnedfacts.update",
       "uix.learnedfacts.delete",
     ]);
   });
@@ -511,6 +512,56 @@ describe("FridayUixRoutes", () => {
     });
   });
 
+  it("updates a learned fact via PATCH with value and confidence", async () => {
+    const service = makeService();
+    const updateLearnedFact = vi.fn(() => ({
+      key: "pref:display_name",
+      value: "Updated Friday",
+      confidence: 0.95,
+      evidenceCount: 3,
+      lastConfirmedAt: NOW,
+    }));
+    const routes = createFridayUixRoutes({
+      service,
+      updateLearnedFact,
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.update")!;
+
+    const result = await route.handler(
+      makeCtx({
+        params: { factKey: encodeURIComponent("pref:display_name") },
+        body: { value: "Updated Friday", confidence: 0.95 },
+      }),
+    ) as { key: string; confidence: number; boundary: Record<string, string> };
+
+    expect(result.confidence).toBe(0.95);
+    expect(result.boundary).toBeDefined();
+    expect(updateLearnedFact).toHaveBeenCalledWith({
+      userId: "user-1",
+      key: "pref:display_name",
+      value: "Updated Friday",
+      confidence: 0.95,
+    });
+  });
+
+  it("rejects PATCH learned fact with confidence > 1.0", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({
+      service,
+      updateLearnedFact: vi.fn(),
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.update")!;
+
+    await expect(
+      route.handler(
+        makeCtx({
+          params: { factKey: "some-key" },
+          body: { confidence: 1.5 },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
   it("keeps learned-facts routes behind agent.run scope", () => {
     const routes = createFridayUixRoutes({ service: makeService() });
     const byId = new Map(routes.map((route) => [route.operationId, route]));
@@ -519,6 +570,7 @@ describe("FridayUixRoutes", () => {
       "uix.learnedfacts.list",
       "uix.learnedfacts.clear",
       "uix.learnedfacts.delete",
+      "uix.learnedfacts.update",
     ]) {
       expect(byId.get(operationId)?.auth).toMatchObject({ public: true });
     }

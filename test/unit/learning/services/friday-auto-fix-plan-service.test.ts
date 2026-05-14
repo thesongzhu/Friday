@@ -214,4 +214,85 @@ describe("FridayAutoFixPlanService", () => {
     expect(plans).toHaveLength(1);
     expect(plans[0]!.title).toBe("Auto-fix: retry workflow");
   });
+
+  it("appends regenerate_skill plan when recurrence >= threshold for skill failures", () => {
+    const skillIncident = {
+      ...baseIncident,
+      category: "workflow" as const,
+      context: {
+        source: "skills_lifecycle",
+        skillId: "broken-skill-001",
+        stage: "verify",
+        errorMessage: "Skill execution timed out",
+      },
+    };
+
+    const plans = service.buildPlans({
+      incident: skillIncident,
+      diagnosis: baseDiagnosis,
+      matchedLessons: [],
+      recurrenceCount: 3,
+    });
+
+    expect(plans.length).toBeGreaterThanOrEqual(2);
+    const regenPlan = plans.find((p) => p.steps.some((s) => s.kind === "regenerate_skill"));
+    expect(regenPlan).toBeDefined();
+    expect(regenPlan!.steps[0]!.kind).toBe("regenerate_skill");
+    expect(regenPlan!.steps[0]!.target).toBe("broken-skill-001");
+    expect(regenPlan!.steps[0]!.verify?.method).toBe("skill_registry_available");
+    expect(regenPlan!.rollbackPlan).toBeDefined();
+    expect(regenPlan!.rollbackPlan!.steps[0]!.kind).toBe("regenerate_skill");
+    const payload = regenPlan!.steps[0]!.payload as Record<string, unknown>;
+    expect(payload.skillId).toBe("broken-skill-001");
+    expect(payload.recurrenceCount).toBe(3);
+  });
+
+  it("does not append regenerate_skill when recurrence < threshold", () => {
+    const skillIncident = {
+      ...baseIncident,
+      category: "workflow" as const,
+      context: {
+        source: "skills_lifecycle",
+        skillId: "broken-skill-001",
+        stage: "verify",
+      },
+    };
+
+    const plans = service.buildPlans({
+      incident: skillIncident,
+      diagnosis: baseDiagnosis,
+      matchedLessons: [],
+      recurrenceCount: 2,
+    });
+
+    const regenPlan = plans.find((p) => p.steps.some((s) => s.kind === "regenerate_skill"));
+    expect(regenPlan).toBeUndefined();
+  });
+
+  it("allows configurable regenerate_skill recurrence threshold", () => {
+    const customService = createFridayAutoFixPlanService({
+      idGenerator: idGen,
+      regenerateSkillRecurrenceThreshold: 1,
+    });
+
+    const skillIncident = {
+      ...baseIncident,
+      category: "workflow" as const,
+      context: {
+        source: "skills_lifecycle",
+        skillId: "fragile-skill",
+        stage: "verify",
+      },
+    };
+
+    const plans = customService.buildPlans({
+      incident: skillIncident,
+      diagnosis: baseDiagnosis,
+      matchedLessons: [],
+      recurrenceCount: 1,
+    });
+
+    const regenPlan = plans.find((p) => p.steps.some((s) => s.kind === "regenerate_skill"));
+    expect(regenPlan).toBeDefined();
+  });
 });

@@ -35,6 +35,7 @@ export interface FridayUixRoutesDeps {
   /** Optional: expose learned preference facts to users for transparency. */
   listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
   deleteLearnedFact?: (input: { userId: string; key: string }) => boolean;
+  updateLearnedFact?: (input: { userId: string; key: string; value?: unknown; confidence?: number }) => { key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string } | null;
   clearLearnedFacts?: (input: { userId: string }) => number;
   /** Optional: emit learning events when preferences are written via the API,
    *  so the preference-extraction pipeline can produce learned facts. */
@@ -501,6 +502,37 @@ export function createFridayUixRoutes(
       async handler(ctx): Promise<{ deletedCount: number }> {
         const userId = requireUserId(ctx.principal);
         return { deletedCount: deps.clearLearnedFacts ? deps.clearLearnedFacts({ userId }) : 0 };
+      },
+    },
+    {
+      operationId: "uix.learnedfacts.update",
+      method: "PATCH",
+      path: "/v1/uix/learned-facts/:factKey",
+      auth: { public: true },
+      async handler(ctx) {
+        const userId = requireUserId(ctx.principal);
+        const { factKey } = ctx.params as { factKey: string };
+        const key = typeof factKey === "string" ? decodeURIComponent(factKey).trim() : "";
+        if (key.length === 0) {
+          throw new FridayDomainError("VALIDATION_ERROR", "factKey is required", { httpStatus: 400 });
+        }
+        if (!deps.updateLearnedFact) {
+          throw new FridayDomainError("UIX_NOT_AVAILABLE", "Learned fact update is not available", { httpStatus: 501 });
+        }
+        const body = ctx.body as Record<string, unknown> | undefined;
+        const value = body?.value;
+        const confidence = typeof body?.confidence === "number" ? body.confidence : undefined;
+        if (confidence !== undefined && (confidence < 0 || confidence > 1)) {
+          throw new FridayDomainError("VALIDATION_ERROR", "confidence must be between 0.0 and 1.0", { httpStatus: 400 });
+        }
+        if (value === undefined && confidence === undefined) {
+          throw new FridayDomainError("VALIDATION_ERROR", "At least one of value or confidence is required", { httpStatus: 400 });
+        }
+        const updated = deps.updateLearnedFact({ userId, key, value, confidence });
+        if (!updated) {
+          throw new FridayDomainError("UIX_PREFERENCE_NOT_FOUND", `Learned fact '${key}' was not found`, { httpStatus: 404 });
+        }
+        return enrichLearnedFactBoundary(updated);
       },
     },
     {

@@ -46,6 +46,7 @@ describe("FridayAutoFixExecutionService", () => {
     grant_permission: "_permissionGranted",
     disable_skill: "_skillDisabled",
     pause_workflow: "_workflowPaused",
+    regenerate_skill: "_skillRegenerated",
   };
 
   const timestampMarkerByKind: Partial<Record<FridayAutoFixStepKind, string>> = {
@@ -55,6 +56,7 @@ describe("FridayAutoFixExecutionService", () => {
     grant_permission: "_grantedAt",
     disable_skill: "_disabledAt",
     pause_workflow: "_pausedAt",
+    regenerate_skill: "_regeneratedAt",
   };
 
   function markerExecutor(kind: FridayAutoFixStepKind): StepExecutor {

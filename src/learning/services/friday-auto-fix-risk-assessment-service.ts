@@ -47,6 +47,7 @@ const TIER_1_STEPS: Set<FridayAutoFixStepKind> = new Set([
 const TIER_2_STEPS: Set<FridayAutoFixStepKind> = new Set([
   "disable_skill",
   "pause_workflow",
+  "regenerate_skill",
 ]);
 
 export function createFridayAutoFixRiskAssessmentService(

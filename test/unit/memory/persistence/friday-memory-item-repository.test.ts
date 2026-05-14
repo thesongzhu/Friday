@@ -50,6 +50,31 @@ describe("FridayMemoryItemRepository", () => {
     expect(found!.metadata).toEqual({ foo: "bar" });
   });
 
+  it("persists and retrieves memoryType, confidence, accessCount, lastAccessedAt", () => {
+    const item = makeItem({
+      memoryType: "fact",
+      confidence: 0.85,
+      accessCount: 3,
+      lastAccessedAt: "2026-02-17T12:00:00.000Z",
+    });
+    db.writer.transaction(() => repo.insert(db.writer, item))();
+    const found = repo.getById(db.writer, "item-1");
+    expect(found).not.toBeNull();
+    expect(found!.memoryType).toBe("fact");
+    expect(found!.confidence).toBe(0.85);
+    expect(found!.accessCount).toBe(3);
+    expect(found!.lastAccessedAt).toBe("2026-02-17T12:00:00.000Z");
+  });
+
+  it("returns undefined for memoryType/confidence when not set", () => {
+    const item = makeItem();
+    db.writer.transaction(() => repo.insert(db.writer, item))();
+    const found = repo.getById(db.writer, "item-1");
+    expect(found).not.toBeNull();
+    expect(found!.memoryType).toBeUndefined();
+    expect(found!.confidence).toBeUndefined();
+  });
+
   it("returns null for non-existent item", () => {
     const found = repo.getById(db.writer, "nonexistent");
     expect(found).toBeNull();

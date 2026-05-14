@@ -27,7 +27,8 @@ export type FridayAutoFixStepKind =
   | "apply_config_patch"
   | "grant_permission"
   | "disable_skill"
-  | "pause_workflow";
+  | "pause_workflow"
+  | "regenerate_skill";
 
 export interface FridayAutoFixPlanStep {
   stepId: string;
@@ -35,7 +36,7 @@ export interface FridayAutoFixPlanStep {
   target: string;
   payload: JsonValue;
   verify?: {
-    method: "node_retry_success" | "config_reload_valid" | "error_absent";
+    method: "node_retry_success" | "config_reload_valid" | "error_absent" | "skill_registry_available";
     timeoutMs: number;
   };
 }

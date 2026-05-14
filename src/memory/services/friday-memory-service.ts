@@ -115,6 +115,8 @@ export function createFridayMemoryService(
         expiresAt,
         createdAt: now,
         updatedAt: now,
+        memoryType: metadata?.memoryType,
+        confidence: metadata?.confidence,
       };
 
       // Persist the item

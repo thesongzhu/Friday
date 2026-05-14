@@ -61,6 +61,7 @@ export const AUTO_FIX_STEP_KINDS_REQUIRING_ROLLBACK_PLAN: ReadonlySet<FridayAuto
   "apply_config_patch",
   "grant_permission",
   "switch_model_fallback",
+  "regenerate_skill",
 ]);
 
 /**
@@ -123,6 +124,11 @@ export const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
     if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
     return payload != null && payload._workflowPaused === true;
+  },
+  regenerate_skill: (step) => {
+    if (!hasVerifySpec(step)) return true;
+    const payload = step.payload as Record<string, unknown> | null;
+    return payload != null && payload._skillRegenerated === true;
   },
 };
 
