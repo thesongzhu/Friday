@@ -100,6 +100,7 @@ import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js
 import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
+import { createFridayAssetInventoryRoutes } from "../http/routes/friday-asset-inventory-routes.js";
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
 import { createFridayDiscoveryDisabledRoutes, createFridayDiscoveryRoutes } from "../http/routes/friday-discovery-routes.js";
 import { createFridayMcpServerRoutes } from "../http/routes/friday-mcp-server-routes.js";
@@ -3233,6 +3234,20 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     })) {
       routes.register(route);
     }
+  }
+
+  // Register unified asset inventory routes (composed from runtime-local services)
+  for (const route of createFridayAssetInventoryRoutes({
+    subjectInventory: autonomyInventory,
+    listLearnedFacts: deps.uix?.listLearnedFacts
+      ? (input) => deps.uix!.listLearnedFacts!({ userId: input.userId })
+      : undefined,
+    deleteLearnedFact: deps.uix?.deleteLearnedFact,
+    listAutomations: agentAutomationService
+      ? () => agentAutomationService!.list({})
+      : undefined,
+  })) {
+    routes.register(route);
   }
 
   return {

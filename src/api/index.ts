@@ -105,6 +105,10 @@ export {
 } from "./http/friday-http-client-ip.js";
 export type { FridayHttpTrustProxyMode } from "./http/friday-http-client-ip.js";
 
+// Asset inventory routes (unified cross-category inventory)
+export { createFridayAssetInventoryRoutes } from "./http/routes/friday-asset-inventory-routes.js";
+export type { FridayAssetInventoryRoutesDeps } from "./http/routes/friday-asset-inventory-routes.js";
+
 // Memory routes (guard-based)
 export { createFridayMemoryRoutes } from "./http/routes/friday-memory-routes.js";
 export type { FridayMemoryRoutesDeps } from "./http/routes/friday-memory-routes.js";
