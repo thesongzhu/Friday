@@ -41,6 +41,7 @@ const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) =
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
+const AssetsPage = lazy(async () => import("@/routes/assets-page").then((module) => ({ default: module.AssetsPage })));
 const StudioPage = lazy(async () => import("@/routes/studio-page").then((module) => ({ default: module.StudioPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
@@ -579,6 +580,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载记忆", "Loading memory")} detail={localizedText("Friday 正在准备记忆存储视图。", "Friday is preparing the memory store view.")}>
                 <MemoryPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "assets",
+            element: (
+              <RouteSuspense title={localizedText("加载资产库", "Loading assets")} detail={localizedText("Friday 正在准备统一资产库存视图。", "Friday is preparing the unified asset inventory view.")}>
+                <AssetsPage />
               </RouteSuspense>
             ),
           },

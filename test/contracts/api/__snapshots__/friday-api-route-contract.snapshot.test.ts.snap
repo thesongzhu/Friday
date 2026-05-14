@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `370`;
+exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `371`;
 
 exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route surface as a stable contract 1`] = `
 [
@@ -3700,6 +3700,16 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "method": "GET",
     "operationId": "agent.runs.subagents.list",
     "path": "/v1/agent/runs/:runId/subagents",
+    "rateLimitPolicyId": null,
+    "roles": [],
+    "scopes": [],
+  },
+  {
+    "authKind": "public",
+    "index": 370,
+    "method": "GET",
+    "operationId": "assets.inventory.list",
+    "path": "/v1/assets/inventory",
     "rateLimitPolicyId": null,
     "roles": [],
     "scopes": [],
