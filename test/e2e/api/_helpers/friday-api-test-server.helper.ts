@@ -38,6 +38,7 @@ import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillRegistry } from "#skills";
 import type { FridayPluginManifestLoader, FridayPluginService } from "#plugins";
+import type { FridayChannelRoutesDeps } from "#api";
 import { createFridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ export interface CreateFridayApiTestEnvOptions {
   memoryService?: FridayMemoryService;
   enableDefaultMemoryService?: boolean;
   enableSelfHealing?: boolean;
+  channels?: FridayChannelRoutesDeps;
 }
 
 /**
@@ -215,6 +217,7 @@ export async function createFridayApiTestEnv(
     uix: uixService ? { service: uixService } : undefined,
     pluginService: options.pluginService,
     pluginManifestLoader: options.pluginManifestLoader,
+    channels: options.channels,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
     resolveSkill: (_skillId: string) => ({ id: _skillId }),

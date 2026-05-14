@@ -539,6 +539,21 @@ export const REAL_WORLD_SCENARIOS = [
     suites: ["daily", "nightly", "weekly"],
   }),
   httpScenario({
+    id: "l2-workflow-webhook-contract",
+    layer: "L2",
+    productArea: "workflows",
+    entrySurface: "/v1/workflow-webhooks/:pathToken",
+    routeFamily: "contract",
+    execution: {
+      method: "POST",
+      path: "/v1/workflow-webhooks/nonexistent-token",
+      body: { event: "rgg-probe" },
+      expectStatus: 404,
+      expectOkEnvelope: false,
+    },
+    suites: ["daily", "nightly", "weekly"],
+  }),
+  httpScenario({
     id: "l2-channels-contract",
     layer: "L2",
     productArea: "channels",
