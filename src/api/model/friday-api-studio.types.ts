@@ -142,3 +142,35 @@ export interface FridayStudioImportResponse {
   pack: FridayStudioImportedPack;
   checks: FridayStudioRun["checks"];
 }
+
+export interface FridayStudioArtifactCandidateValidation {
+  valid: boolean;
+  candidateLabel: string;
+  candidateDescription: string;
+  inferredCapabilities: string[];
+  permissions: string[];
+  operationCount: number;
+  risks: string[];
+  trustTier: "generated";
+  sourceType: "studio_artifact";
+  checks: FridayStudioRun["checks"];
+}
+
+export interface FridayStudioArtifactCandidateResponse {
+  validation: FridayStudioArtifactCandidateValidation;
+  run: FridayStudioRun;
+  candidates: FridayStudioCapabilityCandidate[];
+}
+
+export interface FridayStudioCapabilityCandidate {
+  id: string;
+  capability: string;
+  sourceType: "studio_artifact";
+  trustTier: "generated";
+  label: string;
+  description: string;
+  risks: string[];
+  requiresApproval: true;
+  requiresHuman: boolean;
+  rank: number;
+}

@@ -48,6 +48,7 @@ import type {
   FridayWorkflowUpgradeActionResponse,
 } from "../../model/friday-api-autonomy.types.js";
 import type { FridayAutonomySubjectKind } from "../../../autonomy/model/friday-autonomy-subject.types.js";
+import type { FridayCapabilityCandidate } from "../../../autonomy/model/friday-controlled-autonomy.types.js";
 import type {
   FridayAutonomyPolicyService,
   FridayCapabilityAcquisitionService,
@@ -604,6 +605,36 @@ function readBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
+function readOptionalStudioArtifactCandidates(value: unknown): FridayCapabilityCandidate[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return [];
+    }
+    const c = item as Record<string, unknown>;
+    if (typeof c.id !== "string" || typeof c.capability !== "string" || typeof c.sourceType !== "string") {
+      return [];
+    }
+    if (c.sourceType !== "studio_artifact") {
+      return [];
+    }
+    return [{
+      id: c.id,
+      capability: c.capability as FridayCapabilityCandidate["capability"],
+      sourceType: "studio_artifact" as const,
+      trustTier: (typeof c.trustTier === "string" ? c.trustTier : "generated") as FridayCapabilityCandidate["trustTier"],
+      label: typeof c.label === "string" ? c.label : "",
+      description: typeof c.description === "string" ? c.description : "",
+      risks: Array.isArray(c.risks) ? c.risks.filter((r): r is string => typeof r === "string") as FridayCapabilityCandidate["risks"] : [],
+      requiresApproval: true,
+      requiresHuman: typeof c.requiresHuman === "boolean" ? c.requiresHuman : c.risks !== undefined && Array.isArray(c.risks) && (c.risks as string[]).length > 0,
+      rank: typeof c.rank === "number" ? c.rank : 35,
+    }];
+  });
+}
+
 function readLimit(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -671,6 +702,7 @@ export function createFridayAutonomyRoutes(
           goal,
           requiredCapabilities: readOptionalCapabilities(body.requiredCapabilities),
           readOnly: readBoolean(body.readOnly),
+          studioArtifactCandidates: readOptionalStudioArtifactCandidates(body.studioArtifactCandidates),
         });
         return { run };
       },

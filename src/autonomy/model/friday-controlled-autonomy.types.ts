@@ -31,6 +31,7 @@ export type FridayCapabilityCandidateSourceType =
   | "repair_option"
   | "skill_generator"
   | "workflow_generator"
+  | "studio_artifact"
   | "mcp_registry"
   | "github"
   | "npm"
@@ -177,7 +178,9 @@ export interface FridayPlanCapabilityAcquisitionInput {
   readOnly?: boolean;
 }
 
-export interface FridayStartCapabilityAcquisitionInput extends FridayPlanCapabilityAcquisitionInput {}
+export interface FridayStartCapabilityAcquisitionInput extends FridayPlanCapabilityAcquisitionInput {
+  studioArtifactCandidates?: FridayCapabilityCandidate[];
+}
 
 export type FridayStandingGoalStatus = "active" | "paused" | "archived";
 

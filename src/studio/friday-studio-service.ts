@@ -8,6 +8,7 @@ import { FridayDomainError } from "#errors";
 import { extractReadableContent, stripHtmlToText } from "../link-understanding/friday-link-summarize.js";
 import type {
   FridayStudioArtifact,
+  FridayStudioArtifactCandidateResponse,
   FridayStudioArtifactResponse,
   FridayStudioExportResponse,
   FridayStudioImportedPack,
@@ -20,6 +21,7 @@ import type {
   FridayStudioRun,
   FridayStudioRunRequest,
 } from "../api/model/friday-api-studio.types.js";
+import { buildStudioArtifactCapabilityCandidate, validateStudioArtifactAsCandidate } from "./friday-studio-artifact-candidate-bridge.js";
 
 type StudioDocument = {
   querySelector(selector: string): ElementLike | null;
@@ -40,6 +42,7 @@ export interface FridayStudioService {
   getArtifact(runId: string, artifactId: string): FridayStudioArtifactResponse;
   exportRun(runId: string): FridayStudioExportResponse;
   importLocalPack(request: FridayStudioImportRequest): FridayStudioImportResponse;
+  validateArtifactCandidate(runId: string): FridayStudioArtifactCandidateResponse;
 }
 
 export interface CreateFridayStudioServiceDeps {
@@ -276,6 +279,25 @@ export function createFridayStudioService(
         importRoot: path.join(studioRoot, "imports"),
         nowIso,
       });
+    },
+
+    validateArtifactCandidate(runId) {
+      const run = readRun(runId);
+      const validation = validateStudioArtifactAsCandidate({ run });
+      const rawCandidates = buildStudioArtifactCapabilityCandidate(validation, run.id);
+      const candidates = rawCandidates.map((c) => ({
+        id: c.id,
+        capability: c.capability,
+        sourceType: "studio_artifact" as const,
+        trustTier: "generated" as const,
+        label: c.label,
+        description: c.description,
+        risks: c.risks as string[],
+        requiresApproval: true as const,
+        requiresHuman: c.requiresHuman,
+        rank: c.rank,
+      }));
+      return { validation, run, candidates };
     },
   };
 }

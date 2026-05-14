@@ -19,6 +19,7 @@ import type {
   FridayCrossBorderRecommendation,
   FridayCrossBorderRecommendationTone,
   FridayCrossBorderRegionFocus,
+  FridayCrossBorderRunEvidence,
   FridayCrossBorderSnapshot,
   FridayCrossBorderSourcePlatform,
   FridayCrossBorderStoreStage,
@@ -34,7 +35,9 @@ import { getFridayCrossBorderWorkflowCatalogEntry } from "./friday-cross-border-
 const PROFILE_KEY = "packs.cross_border.profile";
 const IMPORTS_KEY = "packs.cross_border.imports";
 const WORKFLOW_AUTOMATIONS_KEY = "packs.cross_border.workflow_automations";
+const RUN_EVIDENCE_KEY = "packs.cross_border.run_evidence";
 const MAX_IMPORT_BATCHES = 40;
+const MAX_RUN_EVIDENCE_ENTRIES = 50;
 const MAX_LINKS_PER_IMPORT = 20;
 const MAX_FILE_NAMES_PER_IMPORT = 12;
 
@@ -96,6 +99,13 @@ export interface FridayCrossBorderWorkflowPresetToggleInput {
   timezone?: string;
 }
 
+export interface FridayCrossBorderRunEvidenceCaptureInput {
+  workflowId: FridayCrossBorderWorkflowId;
+  managedWorkflowId: string;
+  status: FridayCrossBorderRunEvidence["status"];
+  summary: string;
+}
+
 export interface FridayCrossBorderPackService {
   getProfile(input: { userId: string }): FridayCrossBorderOperatingProfile | null;
   upsertProfile(input: { userId: string; profile: FridayCrossBorderOperatingProfileInput }): FridayCrossBorderOperatingProfile;
@@ -104,6 +114,9 @@ export interface FridayCrossBorderPackService {
   applyWorkflowPreset(input: { userId: string; preset: FridayCrossBorderWorkflowPresetApplyInput }): Promise<FridayCrossBorderSnapshot>;
   setWorkflowPresetEnabled(input: { userId: string; preset: FridayCrossBorderWorkflowPresetToggleInput }): Promise<FridayCrossBorderSnapshot>;
   buildWorkflowInputContext(input: { userId: string; managedWorkflowId: string }): JsonObject | null;
+  captureRunEvidence(input: { userId: string; evidence: FridayCrossBorderRunEvidenceCaptureInput }): FridayCrossBorderRunEvidence;
+  markImportStale(input: { userId: string; importBatchId: string }): FridayCrossBorderSnapshot;
+  disableAllWorkflows(input: { userId: string }): Promise<FridayCrossBorderSnapshot>;
 }
 
 export interface CreateFridayCrossBorderPackServiceDeps {
@@ -227,6 +240,10 @@ function normalizeProfile(value: unknown): FridayCrossBorderOperatingProfile | n
     return null;
   }
 
+  const learningNotes = Array.isArray(adaptationStateValue.learningNotes)
+    ? (adaptationStateValue.learningNotes as unknown[]).filter((n): n is string => typeof n === "string" && n.trim().length > 0)
+    : undefined;
+
   return {
     packId: FRIDAY_CROSS_BORDER_PACK_ID,
     regionFocus: regionFocus as FridayCrossBorderRegionFocus,
@@ -249,6 +266,12 @@ function normalizeProfile(value: unknown): FridayCrossBorderOperatingProfile | n
       stableReviewDueAt,
       ...(asString(adaptationStateValue.lastRecommendedAt)
         ? { lastRecommendedAt: asString(adaptationStateValue.lastRecommendedAt)! }
+        : {}),
+      ...(asString(adaptationStateValue.lastLearningAt)
+        ? { lastLearningAt: asString(adaptationStateValue.lastLearningAt)! }
+        : {}),
+      ...(learningNotes && learningNotes.length > 0
+        ? { learningNotes }
         : {}),
     },
     createdAt,
@@ -280,6 +303,7 @@ function normalizeImportBatches(value: unknown): FridayCrossBorderImportBatch[] 
       ...(asString(item.rawText) ? { rawText: asString(item.rawText)! } : {}),
       publicLinks: normalizeStringList(item.publicLinks, MAX_LINKS_PER_IMPORT),
       fileNames: normalizeStringList(item.fileNames, MAX_FILE_NAMES_PER_IMPORT),
+      ...(item.stale === true ? { stale: true } : {}),
       createdAt,
     }];
   });
@@ -349,6 +373,38 @@ function normalizeWorkflowAutomationRecords(value: unknown): FridayCrossBorderWo
       ...(asString(item.nextRunAt) ? { nextRunAt: asString(item.nextRunAt)! } : {}),
       lastPublishedAt,
       lastSyncedAt,
+    }];
+  });
+}
+
+function normalizeRunEvidenceLog(value: unknown): FridayCrossBorderRunEvidence[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (!isObject(item)) {
+      return [];
+    }
+    const id = asString(item.id);
+    const workflowId = asString(item.workflowId);
+    const managedWorkflowId = asString(item.managedWorkflowId);
+    const status = asString(item.status);
+    const summary = asString(item.summary);
+    const capturedAt = asString(item.capturedAt);
+    if (!id || !workflowId || !managedWorkflowId || !status || !summary || !capturedAt) {
+      return [];
+    }
+    if (!["completed", "failed", "skipped"].includes(status)) {
+      return [];
+    }
+    return [{
+      id,
+      workflowId: workflowId as FridayCrossBorderWorkflowId,
+      managedWorkflowId,
+      status: status as FridayCrossBorderRunEvidence["status"],
+      summary,
+      capturedAt,
+      ...(asString(item.inputSnapshotAt) ? { inputSnapshotAt: asString(item.inputSnapshotAt)! } : {}),
     }];
   });
 }
@@ -1069,6 +1125,7 @@ function buildSnapshot(
   profile: FridayCrossBorderOperatingProfile | null,
   imports: FridayCrossBorderImportBatch[],
   automationRecords: FridayCrossBorderWorkflowAutomationRecord[],
+  runEvidenceLog: FridayCrossBorderRunEvidence[],
 ): FridayCrossBorderSnapshot {
   if (!profile) {
     return {
@@ -1095,24 +1152,27 @@ function buildSnapshot(
         totalImports: 0,
         sourceTypes: [],
       },
+      runEvidenceLog: [],
     };
   }
 
-  const boards = keywordBoards(profile, imports);
-  const riskClusters = buildRiskClusters(profile, imports, nowIso);
+  const activeImports = imports.filter((item) => !item.stale);
+  const boards = keywordBoards(profile, activeImports);
+  const riskClusters = buildRiskClusters(profile, activeImports, nowIso);
   const nextActions = buildNextActions(profile, riskClusters, nowIso);
   return {
     generatedAt: nowIso,
     profile,
     ...boards,
-    workflowRecommendations: buildWorkflowRecommendations(profile, imports, nowIso, automationRecords),
+    workflowRecommendations: buildWorkflowRecommendations(profile, activeImports, nowIso, automationRecords),
     riskClusters,
     nextActions,
     importSummary: {
-      lastImportedAt: imports[0]?.createdAt ?? null,
+      lastImportedAt: activeImports[0]?.createdAt ?? null,
       totalImports: imports.length,
       sourceTypes: Array.from(new Set(imports.map((item) => item.source))),
     },
+    runEvidenceLog,
   };
 }
 
@@ -1177,6 +1237,10 @@ export function createFridayCrossBorderPackService(
 
   function readWorkflowAutomations(userId: string): FridayCrossBorderWorkflowAutomationRecord[] {
     return readPreference(userId, WORKFLOW_AUTOMATIONS_KEY, (value) => normalizeWorkflowAutomationRecords(value)) ?? [];
+  }
+
+  function readRunEvidence(userId: string): FridayCrossBorderRunEvidence[] {
+    return readPreference(userId, RUN_EVIDENCE_KEY, (value) => normalizeRunEvidenceLog(value)) ?? [];
   }
 
   function writeWorkflowAutomations(userId: string, value: FridayCrossBorderWorkflowAutomationRecord[]): void {
@@ -1468,7 +1532,8 @@ export function createFridayCrossBorderPackService(
       const imports = readImports(input.userId)
         .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
       const automationRecords = resolveWorkflowAutomationRecords(input.userId);
-      return buildSnapshot(deps.nowIso(), profile, imports, automationRecords);
+      const evidence = readRunEvidence(input.userId);
+      return buildSnapshot(deps.nowIso(), profile, imports, automationRecords, evidence);
     },
 
     async applyWorkflowPreset(input) {
@@ -1543,12 +1608,86 @@ export function createFridayCrossBorderPackService(
       }
       const imports = readImports(input.userId)
         .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-      const snapshot = buildSnapshot(deps.nowIso(), profile, imports, automationRecords);
+      const evidence = readRunEvidence(input.userId);
+      const snapshot = buildSnapshot(deps.nowIso(), profile, imports, automationRecords, evidence);
       return buildWorkflowInputPayload({
         workflowId: managedRecord.workflowId,
         profile,
         snapshot,
       });
+    },
+
+    captureRunEvidence(input) {
+      const { userId, evidence: ev } = input;
+      if (!ev.summary.trim()) {
+        throw new FridayDomainError("VALIDATION_ERROR", "summary is required", { httpStatus: 400 });
+      }
+      const automationRecords = resolveWorkflowAutomationRecords(userId);
+      const matchedRecord = automationRecords.find((r) => r.managedWorkflowId === ev.managedWorkflowId);
+      if (!matchedRecord) {
+        throw new FridayDomainError("NOT_FOUND", "managedWorkflowId does not match a known managed workflow for this user", { httpStatus: 404 });
+      }
+      const now = deps.nowIso();
+      const record: FridayCrossBorderRunEvidence = {
+        id: deps.idGenerator(),
+        workflowId: ev.workflowId,
+        managedWorkflowId: ev.managedWorkflowId,
+        status: ev.status,
+        summary: ev.summary.trim(),
+        capturedAt: now,
+        inputSnapshotAt: now,
+      };
+      const existing = readRunEvidence(userId);
+      writePreference(userId, RUN_EVIDENCE_KEY, [record, ...existing].slice(0, MAX_RUN_EVIDENCE_ENTRIES));
+
+      const profile = readProfile(userId);
+      if (profile && ev.status === "completed") {
+        const updated = {
+          ...profile,
+          adaptationState: {
+            ...profile.adaptationState,
+            lastLearningAt: now,
+            learningNotes: [
+              ...(profile.adaptationState.learningNotes ?? []),
+              `${ev.workflowId}: ${ev.summary.trim().slice(0, 200)}`,
+            ].slice(-10),
+            status: profile.adaptationState.status === "tracking"
+              && new Date(profile.adaptationState.firstReviewDueAt).getTime() <= new Date(now).getTime()
+              ? "tuning" as const
+              : profile.adaptationState.status,
+          },
+          updatedAt: now,
+        };
+        writePreference(userId, PROFILE_KEY, updated);
+      }
+      return record;
+    },
+
+    markImportStale(input) {
+      const imports = readImports(input.userId);
+      const updated = imports.map((batch) =>
+        batch.id === input.importBatchId ? { ...batch, stale: true } : batch,
+      );
+      if (!imports.some((batch) => batch.id === input.importBatchId)) {
+        throw new FridayDomainError("NOT_FOUND", "Import batch not found", { httpStatus: 404 });
+      }
+      writePreference(input.userId, IMPORTS_KEY, updated);
+      return this.getSnapshot({ userId: input.userId });
+    },
+
+    async disableAllWorkflows(input) {
+      const automationRecords = resolveWorkflowAutomationRecords(input.userId);
+      for (const record of automationRecords) {
+        const registrations = deps.workflowRuntime.triggers.listRegistrations(record.managedWorkflowId);
+        for (const registration of registrations) {
+          if (registration.triggerType === "cron" && registration.enabled) {
+            await deps.workflowRuntime.triggers.setRegistrationEnabled(registration.id, false);
+          }
+        }
+      }
+      const refreshed = resolveWorkflowAutomationRecords(input.userId);
+      writeWorkflowAutomations(input.userId, refreshed);
+      return this.getSnapshot({ userId: input.userId });
     },
   };
 }

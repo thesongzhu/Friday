@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type {
+  FridayStudioArtifactCandidateResponse,
   FridayStudioArtifactResponse,
   FridayStudioExportResponse,
   FridayStudioImportRequest,
@@ -115,6 +116,17 @@ export function createFridayStudioRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayStudioImportResponse> {
         return deps.service.importLocalPack(readImportRequest(ctx.body));
+      },
+    },
+    {
+      operationId: "studio.artifacts.validate.candidate",
+      method: "POST",
+      path: "/v1/studio/runs/:runId/validate-candidate",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayStudioArtifactCandidateResponse> {
+        return deps.service.validateArtifactCandidate(
+          requireStringParam(ctx.params, "runId"),
+        );
       },
     },
   ];
