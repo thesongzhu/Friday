@@ -160,7 +160,7 @@ describe("friday-asset-inventory-routes", () => {
           source: "manual",
           origin: "user",
           entrypoint: "main.ts",
-          secretField: "should-not-appear",
+          hiddenField: "should-not-appear",
         },
       });
       const result = await callHandler(
@@ -173,7 +173,7 @@ describe("friday-asset-inventory-routes", () => {
         origin: "user",
         entrypoint: "main.ts",
       });
-      expect(result.items[0].details).not.toHaveProperty("secretField");
+      expect(result.items[0].details).not.toHaveProperty("hiddenField");
     });
 
     it("projects only allowed fields for provider_profile kind", async () => {
@@ -208,7 +208,7 @@ describe("friday-asset-inventory-routes", () => {
     it("returns empty details for unknown kind", async () => {
       const subject = makeSubject({
         kind: "unknown_thing",
-        details: { foo: "bar", secret: "oops" },
+        details: { foo: "bar", redactedField: "oops" },
       });
       const result = await callHandler(
         { subjectInventory: { list: () => [subject] } },
