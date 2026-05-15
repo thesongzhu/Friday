@@ -71,8 +71,8 @@ describe("FridaySatelliteRuntime offline -> resume integration", () => {
 
     const runtime = createFridaySatelliteRuntime({
       db,
-      cursorSecret: "cursor-secret-x",
-      tokenSecret: "token-secret-x",
+      cursorSecret: "cursor-secret-x", // pragma: allowlist secret
+      tokenSecret: "token-secret-x", // pragma: allowlist secret
       idGenerator: createTestIdGenerator(),
       nowIso: () => nowIso,
       onStatusTransition,
@@ -104,8 +104,8 @@ describe("FridaySatelliteRuntime offline -> resume integration", () => {
 
     const runtime = createFridaySatelliteRuntime({
       db,
-      cursorSecret: "cursor-secret-y",
-      tokenSecret: "token-secret-y",
+      cursorSecret: "cursor-secret-y", // pragma: allowlist secret
+      tokenSecret: "token-secret-y", // pragma: allowlist secret
       idGenerator: createTestIdGenerator(),
       nowIso: () => nowIso,
       onSatelliteResumeEligible: (signal) => resumeSignals.push(signal),
