@@ -667,6 +667,92 @@ export const REAL_WORLD_SCENARIOS = [
     },
     suites: ["daily", "nightly", "weekly"],
   }),
+  // Phase 12 Module 20 — alert destinations list route honesty (no live send)
+  httpScenario({
+    id: "l2-observability-alert-destinations-list-contract",
+    layer: "L2",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alert-destinations",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/observability/alert-destinations",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "alert destinations list route returns ok envelope",
+      "items array shape is present without sending external alerts",
+      "no Slack/SMTP traffic is initiated by listing destinations",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-12", "module-20"],
+  }),
+  // Phase 12 Module 20 — alert destination create with invalid Slack URL must fail closed
+  httpScenario({
+    id: "l2-observability-alert-destination-create-invalid-fails-closed",
+    layer: "L2",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alert-destinations",
+    routeFamily: "contract",
+    execution: {
+      method: "POST",
+      path: "/v1/observability/alert-destinations",
+      body: { type: "slack", name: "rgg invalid probe", webhookUrl: "" },
+      expectStatus: 400,
+      expectOkEnvelope: false,
+    },
+    expectedEvidence: [
+      "creating a Slack destination without webhook fails validation",
+      "fail-closed error envelope is returned without sending external traffic",
+      "no destination is persisted by the invalid request",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-12", "module-20", "fail-closed"],
+  }),
+  // Phase 12 Module 20 — test-dispatch against a non-existent alert must 404 fail-closed
+  httpScenario({
+    id: "l2-observability-alert-test-dispatch-fails-closed",
+    layer: "L2",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alerts/:alertId/test-dispatch",
+    routeFamily: "contract",
+    execution: {
+      method: "POST",
+      path: "/v1/observability/alerts/__rgg_nonexistent_alert__/test-dispatch",
+      body: {},
+      expectStatus: 404,
+      expectOkEnvelope: false,
+    },
+    expectedEvidence: [
+      "test-dispatch route returns 404 when the alert id does not exist",
+      "no Slack/SMTP outbound traffic is attempted for a missing alert",
+      "fail-closed error envelope is honest about the missing resource",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-12", "module-20", "fail-closed"],
+  }),
+  // Phase 12 Module 20 — audit search route honesty (no fake dispatch record contamination)
+  httpScenario({
+    id: "l2-observability-audit-search-contract",
+    layer: "L2",
+    productArea: "observability",
+    entrySurface: "/v1/observability/audit",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/observability/audit?action=observability.alert.dispatch",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "audit search route is reachable in read-only mode",
+      "dispatch audit query shape returns an items array (possibly empty)",
+      "no mock dispatch records are auto-injected by listing",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-12", "module-20"],
+  }),
   httpScenario({
     id: "l2-automations-contract",
     layer: "L2",
@@ -1261,6 +1347,51 @@ export const REAL_WORLD_SCENARIOS = [
       "pair a real satellite node",
       "force offline/resume once",
       "capture sync and command queue evidence",
+    ],
+  }),
+  // Phase 12 Module 20 — manual external Slack alert dispatch
+  manualExternalScenario({
+    id: "l6-observability-slack-alert-dispatch-manual",
+    layer: "L6",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alert-destinations",
+    routeFamily: "external alerts",
+    preconditions: ["external_alerts.ready"],
+    tags: ["external-alerts", "slack"],
+    manualChecklist: [
+      "create a Slack alert destination using FRIDAY_REAL_WORLD_ALERT_SLACK_WEBHOOK_URL",
+      "trigger a real alert dispatch and verify the message arrives in Slack",
+      "capture observability audit entry for outcome=success or outcome=failure honestly",
+    ],
+  }),
+  // Phase 12 Module 20 — manual external SMTP alert dispatch
+  manualExternalScenario({
+    id: "l6-observability-smtp-alert-dispatch-manual",
+    layer: "L6",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alert-destinations",
+    routeFamily: "external alerts",
+    preconditions: ["external_alerts.ready"],
+    tags: ["external-alerts", "smtp"],
+    manualChecklist: [
+      "create an SMTP alert destination using FRIDAY_REAL_WORLD_ALERT_SMTP_* env",
+      "trigger a real alert dispatch and verify delivery to the configured recipient",
+      "capture observability audit entry and SMTP server delivery log honestly",
+    ],
+  }),
+  // Phase 12 Module 20 — disabling an alert destination must stop further dispatch
+  manualExternalScenario({
+    id: "l6-observability-alert-disable-rollback-manual",
+    layer: "L6",
+    productArea: "observability",
+    entrySurface: "/v1/observability/alert-destinations/:destinationId",
+    routeFamily: "external alerts",
+    preconditions: ["external_alerts.ready"],
+    tags: ["external-alerts", "rollback"],
+    manualChecklist: [
+      "disable a previously working Slack or SMTP destination via PATCH enabled=false",
+      "trigger another alert and verify dispatch is skipped (status=skipped) without external send",
+      "verify audit search returns the disabled-skip record without overclaiming success",
     ],
   }),
   baseScenario({

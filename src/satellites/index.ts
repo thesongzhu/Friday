@@ -77,3 +77,9 @@ export type {
   FridaySatelliteRuntime,
 } from "./runtime/friday-satellite-runtime.types.js";
 export { createFridaySatelliteRuntime } from "./runtime/friday-satellite-runtime.js";
+export { createFridaySatelliteResumeCoordinator } from "./runtime/friday-satellite-resume-coordinator.js";
+export type {
+  FridaySatelliteResumeCoordinator,
+  FridaySatelliteResumeCoordinatorDeps,
+  FridaySatelliteResumeSignal,
+} from "./runtime/friday-satellite-resume-coordinator.js";
