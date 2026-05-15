@@ -3818,6 +3818,7 @@ export async function createFridayHub(
     configManager,
     providerService,
     workflowRuntime,
+    skillGenerator,
     nowIso,
   });
 
