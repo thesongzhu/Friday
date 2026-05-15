@@ -237,3 +237,54 @@ export function getMasterKey(): Buffer {
 export function resetMasterKeyCache(): void {
   cachedMasterKey = null;
 }
+
+/**
+ * Fail-closed master key resolver for multi-tenant security paths.
+ *
+ * Unlike {@link getMasterKey}, this resolver MUST NOT auto-generate or
+ * persist a random key.  It requires `FRIDAY_MASTER_KEY` (hex) or
+ * `FRIDAY_MASTER_KEY_SOURCE=keychain` on macOS.  When neither source is
+ * configured it throws — the multi-tenant security runtime stays disabled
+ * rather than silently generating a key and printing it.
+ */
+export function getStrictMasterKey(): Buffer {
+  if (cachedMasterKey && Date.now() < cachedMasterKeyExpiresAt) {
+    return cachedMasterKey;
+  }
+  cachedMasterKey = null;
+
+  const envKey = process.env.FRIDAY_MASTER_KEY;
+  if (envKey) {
+    const buf = Buffer.from(envKey, "hex");
+    if (buf.length !== KEY_BYTES) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `FRIDAY_MASTER_KEY must be ${KEY_BYTES} bytes (${KEY_BYTES * 2} hex chars), got ${String(buf.length)} bytes`,
+        { httpStatus: 400 },
+      );
+    }
+    cachedMasterKey = buf;
+    cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
+    return cachedMasterKey;
+  }
+
+  if (process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
+    const keychainKey = readKeychainMasterKey();
+    if (keychainKey) {
+      cachedMasterKey = keychainKey;
+      cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
+      return cachedMasterKey;
+    }
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY_SOURCE=keychain requires a pre-provisioned macOS keychain item",
+      { httpStatus: 400 },
+    );
+  }
+
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "FRIDAY_MASTER_KEY is not configured. Set FRIDAY_MASTER_KEY (hex) or FRIDAY_MASTER_KEY_SOURCE=keychain. Multi-tenant security will not auto-generate a key.",
+    { httpStatus: 503 },
+  );
+}

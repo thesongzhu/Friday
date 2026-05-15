@@ -91,6 +91,18 @@ function makeDeps(): FridayMultiTenantSecurityRoutesDeps {
       list: vi.fn().mockReturnValue({ items: [], total: 0 }),
       resolve: vi.fn().mockReturnValue({ violation: { id: "v-1" } }),
     },
+    scopedResources: {
+      register: vi.fn().mockReturnValue({ record: { id: "sr-1" } }),
+      list: vi.fn().mockReturnValue({ items: [] }),
+      get: vi.fn().mockReturnValue({ record: { id: "sr-1" } }),
+      unregister: vi.fn().mockReturnValue({ record: { id: "sr-1" } }),
+      status: vi.fn().mockReturnValue({
+        tenantId: "t-1",
+        totals: { session: 0, skill: 0, workflow: 0, provider: 0, memory: 0, rule: 0 },
+        activeTotal: 0,
+        supportedKinds: ["session", "skill", "workflow", "provider", "memory", "rule"],
+      }),
+    },
   };
 }
 
@@ -98,9 +110,9 @@ function makeDeps(): FridayMultiTenantSecurityRoutesDeps {
 
 describe("B-002 FridayMultiTenantSecurityRoutes", () => {
   describe("route registration", () => {
-    it("registers all 37 routes", () => {
+    it("registers all 42 routes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(makeDeps());
-      expect(routes.length).toBe(37);
+      expect(routes.length).toBe(42);
     });
 
     it("has unique operationIds", () => {
@@ -650,6 +662,102 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
     });
   });
 
+  describe("scoped-resources routes (Phase 11 Module 18)", () => {
+    it("POST register validates resourceKind+resourceId+idempotencyKey", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.register");
+
+      expect(route.method).toBe("POST");
+      await expect(route.handler(makeCtx({
+        params: { tenantId: "t-1" },
+        body: { resourceId: "r-1", idempotencyKey: "k" },
+      }))).rejects.toThrow("resourceKind is required");
+      await expect(route.handler(makeCtx({
+        params: { tenantId: "t-1" },
+        body: { resourceKind: "skill", idempotencyKey: "k" },
+      }))).rejects.toThrow("resourceId is required");
+      await expect(route.handler(makeCtx({
+        params: { tenantId: "t-1" },
+        body: { resourceKind: "skill", resourceId: "r-1" },
+      }))).rejects.toThrow("idempotencyKey is required");
+    });
+
+    it("POST register delegates with a valid body", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.register");
+
+      await route.handler(makeCtx({
+        params: { tenantId: "t-1" },
+        body: {
+          resourceKind: "skill",
+          resourceId: "sk-1",
+          resourceLabel: "label",
+          idempotencyKey: "k-1",
+        },
+      }));
+      expect(deps.scopedResources.register).toHaveBeenCalledWith("t-1", expect.objectContaining({
+        resourceKind: "skill",
+        resourceId: "sk-1",
+        resourceLabel: "label",
+      }));
+    });
+
+    it("GET list delegates with optional resourceKind filter", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.list");
+
+      expect(route.method).toBe("GET");
+      await route.handler(makeCtx({ params: { tenantId: "t-2" }, query: { resourceKind: "workflow" } }));
+      expect(deps.scopedResources.list).toHaveBeenCalledWith("t-2", { resourceKind: "workflow" });
+    });
+
+    it("GET status returns the totals envelope", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.status");
+
+      expect(route.method).toBe("GET");
+      const result = await route.handler(makeCtx({ params: { tenantId: "t-3" } }));
+      expect(deps.scopedResources.status).toHaveBeenCalledWith("t-3");
+      expect((result as { supportedKinds: string[] }).supportedKinds).toEqual([
+        "session", "skill", "workflow", "provider", "memory", "rule",
+      ]);
+    });
+
+    it("GET resourceKind/resourceId delegates to get", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.get");
+
+      expect(route.method).toBe("GET");
+      await route.handler(makeCtx({
+        params: { tenantId: "t-4", resourceKind: "memory", resourceId: "mem-1" },
+      }));
+      expect(deps.scopedResources.get).toHaveBeenCalledWith("t-4", "memory", "mem-1");
+    });
+
+    it("DELETE requires idempotencyKey and delegates to unregister", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const route = findRoute(routes, "security.scopedresources.unregister");
+
+      expect(route.method).toBe("DELETE");
+      await expect(route.handler(makeCtx({
+        params: { tenantId: "t-5", resourceKind: "rule", resourceId: "rule-1" },
+        body: null,
+      }))).rejects.toThrow("idempotencyKey is required");
+
+      await route.handler(makeCtx({
+        params: { tenantId: "t-5", resourceKind: "rule", resourceId: "rule-1" },
+        body: { idempotencyKey: "k" },
+      }));
+      expect(deps.scopedResources.unregister).toHaveBeenCalledWith("t-5", "rule", "rule-1");
+    });
+  });
+
   describe("route count snapshot (post auth-boundary)", () => {
     const routes = createFridayMultiTenantSecurityRoutes(makeDeps());
 
@@ -665,11 +773,11 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
     });
 
     it("expected route counts by HTTP method", () => {
-      expect(routes.filter((r) => r.method === "GET").length).toBe(15);
-      expect(routes.filter((r) => r.method === "POST").length).toBe(10);
+      expect(routes.filter((r) => r.method === "GET").length).toBe(18);
+      expect(routes.filter((r) => r.method === "POST").length).toBe(11);
       expect(routes.filter((r) => r.method === "PATCH").length).toBe(5);
-      expect(routes.filter((r) => r.method === "DELETE").length).toBe(7);
-      expect(routes.length).toBe(37);
+      expect(routes.filter((r) => r.method === "DELETE").length).toBe(8);
+      expect(routes.length).toBe(42);
     });
   });
 });
