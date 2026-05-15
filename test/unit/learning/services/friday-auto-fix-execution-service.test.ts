@@ -46,6 +46,7 @@ describe("FridayAutoFixExecutionService", () => {
     grant_permission: "_permissionGranted",
     disable_skill: "_skillDisabled",
     pause_workflow: "_workflowPaused",
+    regenerate_skill: "_skillRegenerated",
   };
 
   const timestampMarkerByKind: Partial<Record<FridayAutoFixStepKind, string>> = {
@@ -55,6 +56,7 @@ describe("FridayAutoFixExecutionService", () => {
     grant_permission: "_grantedAt",
     disable_skill: "_disabledAt",
     pause_workflow: "_pausedAt",
+    regenerate_skill: "_regeneratedAt",
   };
 
   function markerExecutor(kind: FridayAutoFixStepKind): StepExecutor {
@@ -1000,6 +1002,367 @@ describe("FridayAutoFixExecutionService", () => {
       expect(result.action.status).toBe("applied");
       expect(result.action.outcome).toBe("failed");
       expect(result.errorMessage).toContain("failed verification");
+    });
+  });
+
+  describe("hub-wired regenerate_skill executor", () => {
+    it("executes regenerate_skill via injected hub executor with full lifecycle markers", async () => {
+      const actionRepo = createFridayAutoFixActionRepository();
+      const incidentRepo = createFridayErrorIncidentRepository();
+      const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+      incidentRepo.insert(db.writer, {
+        incidentId: "inc-regen",
+        userId: "test-user",
+        ts: NOW,
+        category: "workflow",
+        severity: "medium",
+        signature: "sig-regen",
+        context: { source: "skills_lifecycle", skillId: "broken-skill" },
+        autoFixEligible: true,
+        status: "open",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      diagnosisRepo.insert(db.writer, {
+        id: "diag-regen",
+        incidentId: "inc-regen",
+        errorFingerprint: "sig-regen",
+        confidence: 0.8,
+        diagnosis: { summary: "skill failure" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      actionRepo.insert(db.writer, {
+        actionId: "action-regen",
+        incidentId: "inc-regen",
+        userId: "test-user",
+        riskTier: 1,
+        plan: {
+          title: "Auto-fix: Regenerate skill broken-skill",
+          summary: "Regenerate failing skill",
+          steps: [
+            {
+              stepId: "step-regen",
+              kind: "regenerate_skill",
+              target: "broken-skill",
+              payload: {
+                skillId: "broken-skill",
+                recurrenceCount: 3,
+                errorContext: "Skill execution timed out",
+                userId: "test-user",
+              },
+              verify: { method: "skill_registry_available", timeoutMs: 30000 },
+            },
+          ],
+          rollbackPlan: {
+            summary: "Restore previous version of skill",
+            steps: [
+              {
+                stepId: "rb-regen",
+                kind: "regenerate_skill",
+                target: "broken-skill",
+                payload: { revert: true, skillId: "broken-skill" },
+              },
+            ],
+          },
+          evidence: {
+            fingerprint: "sig-regen",
+            matchedLessonIds: [],
+            diagnosisId: "diag-regen",
+            recurrenceCount: 3,
+          },
+        },
+        rollbackPlan: {
+          summary: "Restore previous version of skill",
+          steps: [
+            {
+              stepId: "rb-regen",
+              kind: "regenerate_skill",
+              target: "broken-skill",
+              payload: { revert: true, skillId: "broken-skill" },
+            },
+          ],
+        },
+        status: "planned",
+        outcome: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const regenExecutor: StepExecutor = async (step) => {
+        const payload = step.payload as Record<string, unknown>;
+        payload._skillRegenerated = true;
+        payload._regeneratedAt = NOW;
+        payload._regenerateSessionId = "session-001";
+        payload._regenerateCandidateId = "candidate-001";
+        payload._regenerateDraftName = "broken-skill-v2";
+        return true;
+      };
+
+      const regenVerifier = async (step: { payload: unknown }) => {
+        const payload = step.payload as Record<string, unknown>;
+        return payload._skillRegenerated === true;
+      };
+
+      const executionService = createFridayAutoFixExecutionService({
+        db,
+        actionRepo,
+        incidentRepo,
+        diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+          stepExecutors: { regenerate_skill: regenExecutor },
+        }),
+        nowIso: () => NOW,
+        stepExecutors: { regenerate_skill: regenExecutor },
+        stepVerifiers: { regenerate_skill: regenVerifier },
+      });
+
+      const result = await executionService.execute("action-regen");
+
+      expect(result.success).toBe(true);
+      expect(result.verificationPassed).toBe(true);
+      expect(result.action.status).toBe("applied");
+      expect(result.action.outcome).toBe("success");
+
+      const updated = actionRepo.getById(db.writer, "action-regen");
+      const payload = updated?.plan.steps[0]?.payload as Record<string, unknown>;
+      expect(payload._skillRegenerated).toBe(true);
+      expect(payload._regenerateSessionId).toBe("session-001");
+      expect(payload._regenerateCandidateId).toBe("candidate-001");
+    });
+
+    it("triggers rollback when regenerate_skill verification fails", async () => {
+      const actionRepo = createFridayAutoFixActionRepository();
+      const incidentRepo = createFridayErrorIncidentRepository();
+      const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+      incidentRepo.insert(db.writer, {
+        incidentId: "inc-regen-fail",
+        userId: "test-user",
+        ts: NOW,
+        category: "workflow",
+        severity: "medium",
+        signature: "sig-regen-fail",
+        context: { source: "skills_lifecycle", skillId: "broken-skill-2" },
+        autoFixEligible: true,
+        status: "open",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      diagnosisRepo.insert(db.writer, {
+        id: "diag-regen-fail",
+        incidentId: "inc-regen-fail",
+        errorFingerprint: "sig-regen-fail",
+        confidence: 0.8,
+        diagnosis: { summary: "skill failure" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      actionRepo.insert(db.writer, {
+        actionId: "action-regen-fail",
+        incidentId: "inc-regen-fail",
+        userId: "test-user",
+        riskTier: 1,
+        plan: {
+          title: "Auto-fix: Regenerate skill",
+          summary: "Regenerate",
+          steps: [
+            {
+              stepId: "step-regen-fail",
+              kind: "regenerate_skill",
+              target: "broken-skill-2",
+              payload: {
+                skillId: "broken-skill-2",
+                recurrenceCount: 3,
+                errorContext: "Timed out",
+                userId: "test-user",
+              },
+              verify: { method: "skill_registry_available", timeoutMs: 30000 },
+            },
+          ],
+          rollbackPlan: {
+            summary: "Rollback regenerated skill",
+            steps: [
+              {
+                stepId: "rb-regen-fail",
+                kind: "regenerate_skill",
+                target: "broken-skill-2",
+                payload: { revert: true, skillId: "broken-skill-2" },
+              },
+            ],
+          },
+          evidence: {
+            fingerprint: "sig-regen-fail",
+            matchedLessonIds: [],
+            diagnosisId: "diag-regen-fail",
+            recurrenceCount: 3,
+          },
+        },
+        rollbackPlan: {
+          summary: "Rollback regenerated skill",
+          steps: [
+            {
+              stepId: "rb-regen-fail",
+              kind: "regenerate_skill",
+              target: "broken-skill-2",
+              payload: { revert: true, skillId: "broken-skill-2" },
+            },
+          ],
+        },
+        status: "planned",
+        outcome: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const rollbackExecuted: string[] = [];
+      const regenExecutor: StepExecutor = async (step) => {
+        const payload = step.payload as Record<string, unknown>;
+        if (payload.revert === true) {
+          rollbackExecuted.push(step.stepId);
+          payload._skillRegenerated = true;
+          payload._regenerateRolledBack = true;
+          return true;
+        }
+        payload._skillRegenerated = true;
+        return true;
+      };
+
+      const executionService = createFridayAutoFixExecutionService({
+        db,
+        actionRepo,
+        incidentRepo,
+        diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+          stepExecutors: { regenerate_skill: regenExecutor },
+        }),
+        nowIso: () => NOW,
+        stepExecutors: { regenerate_skill: regenExecutor },
+        stepVerifiers: {
+          regenerate_skill: async () => false,
+        },
+      });
+
+      const result = await executionService.execute("action-regen-fail");
+
+      expect(result.success).toBe(false);
+      expect(result.verificationPassed).toBe(false);
+      expect(result.rollbackAttempted).toBe(true);
+      expect(result.rollbackSucceeded).toBe(true);
+      expect(result.action.status).toBe("rolled_back");
+      expect(rollbackExecuted).toContain("rb-regen-fail");
+    });
+
+    it("fails closed when regenerate_skill has no injected executor", async () => {
+      const actionRepo = createFridayAutoFixActionRepository();
+      const incidentRepo = createFridayErrorIncidentRepository();
+      const diagnosisRepo = createFridayDiagnosisRecordRepository();
+
+      incidentRepo.insert(db.writer, {
+        incidentId: "inc-regen-noexec",
+        userId: "test-user",
+        ts: NOW,
+        category: "workflow",
+        severity: "medium",
+        signature: "sig-regen-noexec",
+        context: { source: "skills_lifecycle", skillId: "broken-skill-3" },
+        autoFixEligible: true,
+        status: "open",
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      diagnosisRepo.insert(db.writer, {
+        id: "diag-regen-noexec",
+        incidentId: "inc-regen-noexec",
+        errorFingerprint: "sig-regen-noexec",
+        confidence: 0.8,
+        diagnosis: { summary: "skill failure" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      actionRepo.insert(db.writer, {
+        actionId: "action-regen-noexec",
+        incidentId: "inc-regen-noexec",
+        userId: "test-user",
+        riskTier: 1,
+        plan: {
+          title: "Auto-fix: Regenerate skill",
+          summary: "Regenerate",
+          steps: [
+            {
+              stepId: "step-regen-noexec",
+              kind: "regenerate_skill",
+              target: "broken-skill-3",
+              payload: { skillId: "broken-skill-3", recurrenceCount: 3 },
+              verify: { method: "skill_registry_available", timeoutMs: 30000 },
+            },
+          ],
+          rollbackPlan: {
+            summary: "Rollback",
+            steps: [
+              {
+                stepId: "rb-regen-noexec",
+                kind: "regenerate_skill",
+                target: "broken-skill-3",
+                payload: { revert: true, skillId: "broken-skill-3" },
+              },
+            ],
+          },
+          evidence: {
+            fingerprint: "sig-regen-noexec",
+            matchedLessonIds: [],
+            diagnosisId: "diag-regen-noexec",
+            recurrenceCount: 3,
+          },
+        },
+        rollbackPlan: {
+          summary: "Rollback",
+          steps: [
+            {
+              stepId: "rb-regen-noexec",
+              kind: "regenerate_skill",
+              target: "broken-skill-3",
+              payload: { revert: true, skillId: "broken-skill-3" },
+            },
+          ],
+        },
+        status: "planned",
+        outcome: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+
+      const executionService = createFridayAutoFixExecutionService({
+        db,
+        actionRepo,
+        incidentRepo,
+        diagnosisRepo,
+        rollbackService: createFridayAutoFixRollbackService({
+          db,
+          actionRepo,
+          nowIso: () => NOW,
+        }),
+        nowIso: () => NOW,
+      });
+
+      const result = await executionService.execute("action-regen-noexec");
+
+      expect(result.success).toBe(false);
+      expect(result.errorMessage).toContain("No executor");
+      expect(result.errorMessage).toContain("regenerate_skill");
     });
   });
 });

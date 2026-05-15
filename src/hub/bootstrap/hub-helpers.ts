@@ -1105,6 +1105,7 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   configManager?: FridayHubConfigManagerService;
   providerService?: FridayProviderService;
   workflowRuntime?: FridayWorkflowRuntime;
+  skillGenerator?: FridaySkillGeneratorService;
   nowIso: () => string;
 }): FridayHubAutoFixExecutionSupport {
   // P2-07: External-state remediation must be backed by hub-level services.
@@ -1543,6 +1544,77 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     return trimmedFields.length > 0 &&
       trimmedFields.every((field) => typeof payload[field] === "string" && (payload[field] as string).length <= maxChars);
   };
+
+  const skillGenerator = deps.skillGenerator;
+  if (skillGenerator) {
+    stepExecutors.regenerate_skill = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const skillId = readString(payload, "skillId") ?? step.target;
+      if (!skillId) {
+        return false;
+      }
+
+      const revert = isRevertPayload(step.payload);
+      if (revert) {
+        await deps.memoryState.updateSkillStatus(
+          skillId,
+          "disabled",
+          `auto-fix rollback regenerate_skill @ ${deps.nowIso()}`,
+        );
+        if (payload) {
+          payload._skillRegenerated = true;
+          payload._regenerateRolledBack = true;
+          payload._regeneratedAt = deps.nowIso();
+        }
+        return true;
+      }
+
+      const errorContext = readString(payload, "errorContext") ?? "Unknown failure";
+      const recurrenceCount = readNumber(payload, "recurrenceCount") ?? 0;
+      const goal = `Regenerate skill "${skillId}" that has failed ${String(recurrenceCount)} time(s). Original error: ${errorContext}. Generate an improved replacement that fixes the failure.`;
+
+      const userId = readString(payload, "userId") ?? "system";
+
+      const turnResponse = await skillGenerator.startSession({
+        goal,
+        userId,
+        channel: "auto-fix",
+      });
+
+      const sessionId = turnResponse.session.sessionId;
+      const draft = await skillGenerator.generateDraft(sessionId);
+      const saved = await skillGenerator.approveAndSave(sessionId);
+
+      await deps.memoryState.updateSkillStatus(
+        skillId,
+        "installed",
+        `auto-fix regenerate_skill @ ${deps.nowIso()}`,
+      );
+
+      if (payload) {
+        payload._skillRegenerated = true;
+        payload._regeneratedAt = deps.nowIso();
+        payload._regenerateSessionId = sessionId;
+        payload._regenerateCandidateId = saved.candidateId;
+        payload._regenerateDraftName = draft.manifest.name;
+      }
+      return true;
+    };
+
+    stepVerifiers.regenerate_skill = async (step) => {
+      const payload = readPayloadRecord(step.payload);
+      const skillId = readString(payload, "skillId") ?? step.target;
+      if (!skillId) {
+        return false;
+      }
+      if (isRevertPayload(step.payload)) {
+        const statuses = await deps.memoryState.listSkillStatuses();
+        return statuses[skillId] === "disabled";
+      }
+      const statuses = await deps.memoryState.listSkillStatuses();
+      return payload?._skillRegenerated === true && statuses[skillId] === "installed";
+    };
+  }
 
   return {
     stepExecutors,

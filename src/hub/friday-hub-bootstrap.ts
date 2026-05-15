@@ -3818,6 +3818,7 @@ export async function createFridayHub(
     configManager,
     providerService,
     workflowRuntime,
+    skillGenerator,
     nowIso,
   });
 
@@ -6208,6 +6209,16 @@ export async function createFridayHub(
           .map((f) => ({ key: f.key, value: f.value, confidence: f.confidence, evidenceCount: f.evidenceCount, lastConfirmedAt: f.lastConfirmedAt })),
       deleteLearnedFact: (input: { userId: string; key: string }) =>
         selfLearningRuntime.facts.deleteFact({ userId: input.userId, key: input.key }),
+      updateLearnedFact: (input: { userId: string; key: string; value?: unknown; confidence?: number }) => {
+        const updated = selfLearningRuntime.facts.updateFact({
+          userId: input.userId,
+          key: input.key,
+          value: input.value as JsonValue | undefined,
+          confidence: input.confidence,
+        });
+        if (!updated) return null;
+        return { key: updated.key, value: updated.value, confidence: updated.confidence, evidenceCount: updated.evidenceCount, lastConfirmedAt: updated.lastConfirmedAt };
+      },
       clearLearnedFacts: (input: { userId: string }) => {
         const facts = selfLearningRuntime.facts.listActiveFacts({
           userId: input.userId,

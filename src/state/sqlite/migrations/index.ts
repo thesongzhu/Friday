@@ -76,6 +76,7 @@ import { V074_CONTROLLED_AUTONOMY_CLOSED_LOOPS_MIGRATION } from "./v074-controll
 import { V075_REFLEX_LOOP_ONBOARDING_MIGRATION } from "./v075-reflex-loop-onboarding.js";
 import { V076_PROVIDER_OAUTH_USER_SCOPE_MIGRATION } from "./v076-provider-oauth-user-scope.js";
 import { V077_AGENT_CONTEXT_REPLAY_MIGRATION } from "./v077-agent-context-replay.js";
+import { V078_MEMORY_TYPE_CONFIDENCE_MIGRATION } from "./v078-memory-type-confidence.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -158,6 +159,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V075_REFLEX_LOOP_ONBOARDING_MIGRATION,
   V076_PROVIDER_OAUTH_USER_SCOPE_MIGRATION,
   V077_AGENT_CONTEXT_REPLAY_MIGRATION,
+  V078_MEMORY_TYPE_CONFIDENCE_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

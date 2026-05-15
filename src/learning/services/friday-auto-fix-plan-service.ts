@@ -18,6 +18,7 @@ export interface FridayAutoFixPlanService {
 
 export interface CreateAutoFixPlanServiceDeps {
   idGenerator: () => string;
+  regenerateSkillRecurrenceThreshold?: number;
 }
 
 const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAutoFixStepKind | undefined> = {
@@ -58,9 +59,14 @@ function deriveAutoFixTarget(
   return incident.runId ?? incident.nodeId ?? incident.category;
 }
 
+const DEFAULT_REGENERATE_SKILL_RECURRENCE_THRESHOLD = 3;
+
 export function createFridayAutoFixPlanService(
   deps: CreateAutoFixPlanServiceDeps,
 ): FridayAutoFixPlanService {
+  const regenThreshold = deps.regenerateSkillRecurrenceThreshold
+    ?? DEFAULT_REGENERATE_SKILL_RECURRENCE_THRESHOLD;
+
   return {
     buildPlans(input) {
       const { incident, diagnosis, matchedLessons, recurrenceCount } = input;
@@ -175,8 +181,7 @@ export function createFridayAutoFixPlanService(
         }
 
         plans.push(plan);
-        return plans;
-      }
+      } else {
 
       for (const lesson of matchedLessons) {
         const lessonTitleBase = normalizeAutoFixTitleBase(lesson.title);
@@ -259,6 +264,64 @@ export function createFridayAutoFixPlanService(
         }
 
         plans.push(plan);
+      }
+      }
+
+      if (
+        stepKind === "disable_skill" &&
+        recurrenceCount >= regenThreshold
+      ) {
+        const skillId = typeof incident.context.skillId === "string"
+          ? incident.context.skillId.trim()
+          : "";
+        if (skillId.length > 0) {
+          const regenPlan: FridayAutoFixPlan = {
+            title: buildAutoFixPlanTitle(`Regenerate skill ${skillId}`),
+            summary: `Recurrent failure (${recurrenceCount}x) for skill '${skillId}'. Generate improved replacement via skill generator, self-test, and supervised install.`,
+            steps: [
+              {
+                stepId: deps.idGenerator(),
+                kind: "regenerate_skill",
+                target: skillId,
+                payload: {
+                  ...basePayload,
+                  skillId,
+                  recurrenceCount,
+                  errorContext: typeof incident.context.errorMessage === "string"
+                    ? incident.context.errorMessage
+                    : incident.signature,
+                  matchedLessonIds: matchedLessons.map((l) => l.id),
+                },
+                verify: {
+                  method: "skill_registry_available",
+                  timeoutMs: 30000,
+                },
+              },
+            ],
+            rollbackPlan: {
+              summary: `Restore previous version of skill '${skillId}'`,
+              steps: [
+                {
+                  stepId: deps.idGenerator(),
+                  kind: "regenerate_skill",
+                  target: skillId,
+                  payload: {
+                    revert: true,
+                    skillId,
+                    ...basePayload,
+                  },
+                },
+              ],
+            },
+            evidence: {
+              fingerprint: incident.signature,
+              matchedLessonIds: matchedLessons.map((l) => l.id),
+              diagnosisId: diagnosis.id,
+              recurrenceCount,
+            },
+          };
+          plans.push(regenPlan);
+        }
       }
 
       return plans;
