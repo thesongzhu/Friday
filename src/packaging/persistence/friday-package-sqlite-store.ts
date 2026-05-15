@@ -44,22 +44,22 @@ import type {
 
 import { compareSemverStr, maxSatisfying } from "../engine/semver.js";
 import {
-  RegistryVersionConflictError,
   type DuplicateCheckResult,
   type PublishOptions,
   type RegistryManager,
   type RegistryPage,
   type RegistryPagination,
   type RegistrySearchCriteria,
+  RegistryVersionConflictError,
 } from "../engine/registry-manager.js";
 import type {
   InstallOptions,
   InstallResult,
+  LifecycleEventQuery,
   PackageInstaller,
   PackageVerifier,
   RollbackOptions,
   RollbackResult,
-  LifecycleEventQuery,
   UninstallOptions,
   UninstallResult,
   UpgradeOptions,
