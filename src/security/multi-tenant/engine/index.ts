@@ -89,6 +89,18 @@ export type {
   FridayTenantIsolationMiddleware,
 } from "./friday-tenant-isolation-middleware.js";
 
+// ─── Tenant-Scoped Resource Registry ───
+export {
+  TenantScopedResourceRegistry,
+  FRIDAY_TENANT_SCOPED_RESOURCE_KINDS,
+} from "./tenant-scoped-resource-registry.js";
+export type {
+  FridayTenantScopedResourceKind,
+  FridayTenantScopedResourceRecord,
+  RegisterScopedResourceInput,
+  TenantScopedResourceRegistryPersistence,
+} from "./tenant-scoped-resource-registry.js";
+
 // ─── Migration Manager ───
 export { MigrationManager } from "./migration-manager.js";
 export type {

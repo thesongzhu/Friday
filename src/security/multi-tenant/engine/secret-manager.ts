@@ -96,12 +96,60 @@ export interface RedactedSecret {
 
 // ─── Secret Manager ───
 
-export class SecretManager {
-  private readonly secrets = new Map<UUID, FridaySecretEntry>();
-  private readonly rotations = new Map<UUID, FridaySecretRotation>();
-  private readonly accessLogs: FridaySecretAccessLog[] = [];
+/**
+ * Optional persistence hook for secret/rotation/access-log writes.  The
+ * hub bootstrap supplies a SQLite-backed implementation; in-memory tests
+ * leave this undefined.
+ */
+export interface SecretManagerPersistence {
+  hydrateSecrets(): Map<UUID, FridaySecretEntry>;
+  hydrateRotations(): Map<UUID, FridaySecretRotation>;
+  hydrateAccessLogs(): FridaySecretAccessLog[];
+  saveSecret(secret: FridaySecretEntry): void;
+  saveRotation(rotation: FridaySecretRotation): void;
+  appendAccessLog(log: FridaySecretAccessLog): void;
+}
 
-  constructor(private readonly auditLogger: AuditLogger) {}
+/**
+ * Optional master-key resolver override for the SecretManager.  Defaults
+ * to {@link getMasterKey} which is fail-open (auto-generates and persists).
+ * Bootstrap can pass `getStrictMasterKey` to fail closed when the env var
+ * is not configured.
+ */
+export type MasterKeyResolver = () => Buffer;
+
+export class SecretManager {
+  private readonly secrets: Map<UUID, FridaySecretEntry>;
+  private readonly rotations: Map<UUID, FridaySecretRotation>;
+  private readonly accessLogs: FridaySecretAccessLog[];
+  private readonly persistence?: SecretManagerPersistence;
+  private readonly masterKeyResolver: MasterKeyResolver;
+
+  constructor(
+    private readonly auditLogger: AuditLogger,
+    options?: { persistence?: SecretManagerPersistence; masterKeyResolver?: MasterKeyResolver },
+  ) {
+    this.persistence = options?.persistence;
+    this.masterKeyResolver = options?.masterKeyResolver ?? getMasterKey;
+    this.secrets = this.persistence?.hydrateSecrets() ?? new Map();
+    this.rotations = this.persistence?.hydrateRotations() ?? new Map();
+    this.accessLogs = this.persistence?.hydrateAccessLogs() ?? [];
+  }
+
+  private persistSecret(secret: FridaySecretEntry): void {
+    this.secrets.set(secret.id, secret);
+    this.persistence?.saveSecret(secret);
+  }
+
+  private persistRotation(rotation: FridaySecretRotation): void {
+    this.rotations.set(rotation.id, rotation);
+    this.persistence?.saveRotation(rotation);
+  }
+
+  private persistAccessLog(log: FridaySecretAccessLog): void {
+    this.accessLogs.push(log);
+    this.persistence?.appendAccessLog(log);
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // SECRET CRUD
@@ -139,7 +187,7 @@ export class SecretManager {
 
     const timestamp = now();
     // Phase 2: real AES-256-GCM encryption via master key
-    const masterKey = getMasterKey();
+    const masterKey = this.masterKeyResolver();
     const envelope = encryptSecret(input.value, masterKey);
     const encryptedValue = JSON.stringify(envelope);
 
@@ -158,7 +206,7 @@ export class SecretManager {
       updatedAt: timestamp,
     };
 
-    this.secrets.set(secret.id, secret);
+    this.persistSecret(secret);
 
     this.auditLogger.log({
       tenantId,
@@ -255,7 +303,7 @@ export class SecretManager {
     }
 
     const encryptedValue = input.value
-      ? JSON.stringify(encryptSecret(input.value, getMasterKey()))
+      ? JSON.stringify(encryptSecret(input.value, this.masterKeyResolver()))
       : existing.encryptedValue;
 
     const version = input.value ? existing.version + 1 : existing.version;
@@ -270,7 +318,7 @@ export class SecretManager {
       updatedAt: now(),
     };
 
-    this.secrets.set(secretId, updated);
+    this.persistSecret(updated);
 
     this.auditLogger.log({
       tenantId,
@@ -303,7 +351,7 @@ export class SecretManager {
       deletedAt: now(),
     };
 
-    this.secrets.set(secretId, deleted);
+    this.persistSecret(deleted);
 
     this.auditLogger.log({
       tenantId,
@@ -379,7 +427,7 @@ export class SecretManager {
             errorMessage: reason,
             completedAt: now(),
           };
-          this.rotations.set(rotation.id, rotation);
+          this.persistRotation(rotation);
           this.auditLogger.log({
             tenantId,
             principalId: input.initiatedBy,
@@ -406,10 +454,10 @@ export class SecretManager {
         ...rotation,
         state: "rotating",
       };
-      this.rotations.set(rotation.id, rotation);
+      this.persistRotation(rotation);
 
       const newVersion = current.version + 1;
-      const encryptedValue = JSON.stringify(encryptSecret(input.newValue, getMasterKey()));
+      const encryptedValue = JSON.stringify(encryptSecret(input.newValue, this.masterKeyResolver()));
       const updatingSecret: FridaySecretEntry = {
         ...current,
         encryptedValue,
@@ -417,7 +465,7 @@ export class SecretManager {
         etag: generateEtag(),
         updatedAt: now(),
       };
-      this.secrets.set(secretId, updatingSecret);
+      this.persistSecret(updatingSecret);
       current = updatingSecret;
 
       const rotatedSecret = this.transitionSecretState(
@@ -432,7 +480,7 @@ export class SecretManager {
         state: "rotated",
         completedAt: now(),
       };
-      this.rotations.set(rotation.id, rotation);
+      this.persistRotation(rotation);
 
       this.auditLogger.log({
         tenantId,
@@ -446,7 +494,7 @@ export class SecretManager {
 
       return cloneAndFreeze({ secret: this.redact(rotatedSecret), rotation });
     } catch (error) {
-      this.secrets.set(secretId, beforeRotation);
+      this.persistSecret(beforeRotation);
 
       if (!rotation.completedAt) {
         const message = error instanceof Error ? error.message : "Unknown rotation failure.";
@@ -456,7 +504,7 @@ export class SecretManager {
           errorMessage: message,
           completedAt: now(),
         };
-        this.rotations.set(failedRotation.id, failedRotation);
+        this.persistRotation(failedRotation);
       }
 
       throw error;
@@ -503,7 +551,7 @@ export class SecretManager {
       policyEvaluationId,
       accessedAt: now(),
     };
-    this.accessLogs.push(entry);
+    this.persistAccessLog(entry);
 
     this.auditLogger.log({
       tenantId,
@@ -709,7 +757,7 @@ export class SecretManager {
       etag: generateEtag(),
       updatedAt: now(),
     };
-    this.secrets.set(secret.id, transitionedSecret);
+    this.persistSecret(transitionedSecret);
     this.auditLogger.log({
       tenantId: secret.scope.tenantId,
       principalId,

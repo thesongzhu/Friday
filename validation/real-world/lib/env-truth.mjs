@@ -307,6 +307,8 @@ export function resolveScenarioBlockers(scenario, envTruth) {
     "cloud.ready": envTruth.prerequisites.cloud,
     "satellite.ready": envTruth.prerequisites.satellite,
     "mcp.ready": envTruth.prerequisites.mcp,
+    "packaging.ready": envTruth.prerequisites.packaging,
+    "multi_tenant_security.ready": envTruth.prerequisites.multiTenantSecurity,
   };
 
   for (const key of preconditions) {
@@ -434,6 +436,8 @@ export async function collectEnvironmentTruth({
       cloud: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_CLOUD_READY"),
       satellite: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_SATELLITE_READY"),
       mcp: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_MCP_READY"),
+      packaging: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_PACKAGING_READY"),
+      multiTenantSecurity: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_MULTI_TENANT_READY"),
     },
   };
 }

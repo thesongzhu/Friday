@@ -86,12 +86,51 @@ export const MIGRATION_ACTOR: TenantCrudActorContext = Object.freeze({
 
 // ─── Tenant Manager ───
 
-export class TenantManager {
-  private readonly tenants = new Map<UUID, FridayTenant>();
-  private readonly workspaces = new Map<UUID, FridayWorkspace>();
-  private readonly memberships = new Map<UUID, FridayWorkspaceMembership>();
+/**
+ * Optional persistence hook for tenant/workspace/membership writes.  The
+ * hub bootstrap supplies a SQLite-backed implementation; in-memory tests
+ * leave this undefined.
+ */
+export interface TenantManagerPersistence {
+  hydrateTenants(): Map<UUID, FridayTenant>;
+  hydrateWorkspaces(): Map<UUID, FridayWorkspace>;
+  hydrateMemberships(): Map<UUID, FridayWorkspaceMembership>;
+  saveTenant(tenant: FridayTenant): void;
+  saveWorkspace(workspace: FridayWorkspace): void;
+  saveMembership(membership: FridayWorkspaceMembership): void;
+  deleteWorkspacesForTenant(tenantId: UUID): void;
+}
 
-  constructor(private readonly auditLogger: AuditLogger) {}
+export class TenantManager {
+  private readonly tenants: Map<UUID, FridayTenant>;
+  private readonly workspaces: Map<UUID, FridayWorkspace>;
+  private readonly memberships: Map<UUID, FridayWorkspaceMembership>;
+  private readonly persistence?: TenantManagerPersistence;
+
+  constructor(
+    private readonly auditLogger: AuditLogger,
+    options?: { persistence?: TenantManagerPersistence },
+  ) {
+    this.persistence = options?.persistence;
+    this.tenants = this.persistence?.hydrateTenants() ?? new Map();
+    this.workspaces = this.persistence?.hydrateWorkspaces() ?? new Map();
+    this.memberships = this.persistence?.hydrateMemberships() ?? new Map();
+  }
+
+  private persistTenant(tenant: FridayTenant): void {
+    this.tenants.set(tenant.id, tenant);
+    this.persistence?.saveTenant(tenant);
+  }
+
+  private persistWorkspace(workspace: FridayWorkspace): void {
+    this.workspaces.set(workspace.id, workspace);
+    this.persistence?.saveWorkspace(workspace);
+  }
+
+  private persistMembership(membership: FridayWorkspaceMembership): void {
+    this.memberships.set(membership.id, membership);
+    this.persistence?.saveMembership(membership);
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // TENANT CRUD
@@ -136,7 +175,7 @@ export class TenantManager {
       updatedAt: timestamp,
     };
 
-    this.tenants.set(tenant.id, tenant);
+    this.persistTenant(tenant);
 
     this.auditLogger.log({
       tenantId: tenant.id,
@@ -208,7 +247,7 @@ export class TenantManager {
       updatedAt: now(),
     };
 
-    this.tenants.set(tenantId, updated);
+    this.persistTenant(updated);
 
     this.auditLogger.log({
       tenantId,
@@ -249,7 +288,8 @@ export class TenantManager {
       deletedAt: now(),
     };
 
-    this.tenants.set(tenantId, deleted);
+    this.persistTenant(deleted);
+    this.persistence?.deleteWorkspacesForTenant(tenantId);
 
     this.auditLogger.log({
       tenantId,
@@ -325,7 +365,7 @@ export class TenantManager {
       updatedAt: timestamp,
     };
 
-    this.workspaces.set(workspace.id, workspace);
+    this.persistWorkspace(workspace);
 
     this.auditLogger.log({
       tenantId,
@@ -427,7 +467,7 @@ export class TenantManager {
       updatedAt: now(),
     };
 
-    this.workspaces.set(workspaceId, updated);
+    this.persistWorkspace(updated);
 
     this.auditLogger.log({
       tenantId,
@@ -467,20 +507,18 @@ export class TenantManager {
       deletedAt: now(),
     };
 
-    this.workspaces.set(workspaceId, deleted);
+    this.persistWorkspace(deleted);
 
     const revokedAt = now();
     let revokedMemberships = 0;
-    for (const [membershipId, membership] of this.memberships.entries()) {
+    for (const [, membership] of this.memberships.entries()) {
       if (
         membership.tenantId === tenantId &&
         membership.workspaceId === workspaceId &&
         !membership.revokedAt
       ) {
-        this.memberships.set(membershipId, {
-          ...membership,
-          revokedAt,
-        });
+        const revokedMembership = { ...membership, revokedAt };
+        this.persistMembership(revokedMembership);
         revokedMemberships += 1;
       }
     }
@@ -545,7 +583,7 @@ export class TenantManager {
       expiresAt: input.expiresAt,
     };
 
-    this.memberships.set(membership.id, membership);
+    this.persistMembership(membership);
 
     this.auditLogger.log({
       tenantId,
@@ -588,7 +626,7 @@ export class TenantManager {
       revokedAt: now(),
     };
 
-    this.memberships.set(membershipId, revoked);
+    this.persistMembership(revoked);
 
     this.auditLogger.log({
       tenantId,

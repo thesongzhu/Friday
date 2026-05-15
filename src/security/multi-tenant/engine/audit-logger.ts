@@ -75,9 +75,28 @@ export interface ViolationQuery {
 
 // ─── Audit Logger ───
 
+/**
+ * Optional persistence hook for audit entries and violations.  The hub
+ * bootstrap supplies a SQLite-backed implementation; in-memory tests
+ * leave this undefined.
+ */
+export interface AuditLoggerPersistence {
+  hydrateAuditEntries(): Map<UUID, FridaySecurityAuditEntry>;
+  hydrateViolations(): Map<UUID, FridaySecurityViolation>;
+  saveAuditEntry(entry: FridaySecurityAuditEntry): void;
+  saveViolation(violation: FridaySecurityViolation): void;
+}
+
 export class AuditLogger {
-  private readonly auditEntries: Map<UUID, FridaySecurityAuditEntry> = new Map();
-  private readonly violations: Map<UUID, FridaySecurityViolation> = new Map();
+  private readonly auditEntries: Map<UUID, FridaySecurityAuditEntry>;
+  private readonly violations: Map<UUID, FridaySecurityViolation>;
+  private readonly persistence?: AuditLoggerPersistence;
+
+  constructor(options?: { persistence?: AuditLoggerPersistence }) {
+    this.persistence = options?.persistence;
+    this.auditEntries = this.persistence?.hydrateAuditEntries() ?? new Map();
+    this.violations = this.persistence?.hydrateViolations() ?? new Map();
+  }
 
   /** Record a structured audit entry. */
   log(input: CreateAuditEntryInput): FridaySecurityAuditEntry {
@@ -97,6 +116,7 @@ export class AuditLogger {
       createdAt: now(),
     };
     this.auditEntries.set(entry.id, entry);
+    this.persistence?.saveAuditEntry(entry);
     return cloneAndFreeze(entry);
   }
 
@@ -118,6 +138,7 @@ export class AuditLogger {
       createdAt: now(),
     };
     this.violations.set(violation.id, violation);
+    this.persistence?.saveViolation(violation);
     return cloneAndFreeze(violation);
   }
 
@@ -141,6 +162,7 @@ export class AuditLogger {
       resolvedAt: now(),
     };
     this.violations.set(violationId, resolved);
+    this.persistence?.saveViolation(resolved);
     return cloneAndFreeze(resolved);
   }
 

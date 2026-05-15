@@ -703,6 +703,186 @@ export const REAL_WORLD_SCENARIOS = [
     },
     suites: ["daily", "nightly", "weekly"],
   }),
+  // Phase 11 Module 16 — packaging route honesty: default-off envelope
+  httpScenario({
+    id: "l2-packaging-capability-disabled-contract",
+    layer: "L2",
+    productArea: "packaging",
+    entrySurface: "/v1/packages",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/packages",
+      expectStatus: 501,
+      expectOkEnvelope: false,
+      jsonPathsPresent: ["error.code", "error.details.capability"],
+    },
+    expectedEvidence: [
+      "packaging route surface is honest about env-gating default-off",
+      "error envelope reports CAPABILITY_DISABLED with capability=packaging",
+      "surface metadata identifies /v1/packages",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
+  // Phase 11 Module 17 — plugin lifecycle bounded surface, distinct from skills/commerce
+  httpScenario({
+    id: "l2-plugins-lifecycle-bounded-contract",
+    layer: "L2",
+    productArea: "plugins",
+    entrySurface: "/v1/plugins",
+    routeFamily: "contract",
+    execution: {
+      path: "/v1/plugins?source=bundled",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "plugin distribution surface stays bounded and does not blur into skills lifecycle",
+      "list response uses ok envelope and items array shape",
+      "source filter is recognised (bounded, not a marketplace listing)",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
+  // Phase 11 Module 18 — multi-tenant security route honesty: default-off
+  // surface is not exposed (route family is not registered without env gate).
+  httpScenario({
+    id: "l2-multi-tenant-security-default-off-not-exposed",
+    layer: "L2",
+    productArea: "multi-tenant security",
+    entrySurface: "/v1/security/tenants",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/security/tenants",
+      expectStatus: 404,
+      expectOkEnvelope: false,
+    },
+    expectedEvidence: [
+      "multi-tenant security surface is not registered by default",
+      "no auto-generated master key warnings appear in default-off response",
+      "404 confirms env-gate honesty without exposing the family on misconfigured runtimes",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+  }),
+  // Phase 11 Module 16 — packaging default-on list reachability.
+  //
+  // Honesty note: this scenario only proves that the packaging route
+  // family answers when FRIDAY_PACKAGING_ENABLED is true (an http_probe
+  // GET against the list endpoint).  It does NOT execute the full
+  // publish -> install -> verify -> restart-survive -> rollback ->
+  // remove roundtrip required by Phase 11 Module 16's release-complete
+  // claim.  That full roundtrip remains Phase 14 debt (debt key:
+  // module_16_packaging_release_proof_roundtrip) until the RGG executor
+  // grows publish/install/restart/rollback step support; the executor
+  // change is out of scope for Phase 11 and the FRIDAY_PACKAGING_ENABLED
+  // default-on flip is an explicit stop point that is not flipped here.
+  // Local real proof of the full roundtrip lives in the packaging
+  // SQLite persistence integration test.
+  httpScenario({
+    id: "l2-packaging-default-on-list-reachable",
+    layer: "L2",
+    productArea: "packaging",
+    entrySurface: "/v1/packages",
+    routeFamily: "contract",
+    preconditions: ["packaging.ready"],
+    execution: {
+      path: "/v1/packages?limit=1",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "packaging list route returns ok envelope when FRIDAY_PACKAGING_ENABLED is on",
+      "items array shape is present (registry list reachability only)",
+      "this scenario does not prove publish/install/restart/rollback (Phase 14 debt: module_16_packaging_release_proof_roundtrip)",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-11", "module-16", "behind-env-gate", "phase-14-debt-roundtrip"],
+  }),
+  httpScenario({
+    id: "l2-packaging-default-on-trusted-keys-list",
+    layer: "L2",
+    productArea: "packaging",
+    entrySurface: "/v1/packages/keys",
+    routeFamily: "contract",
+    preconditions: ["packaging.ready"],
+    execution: {
+      path: "/v1/packages/keys?limit=1",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "trusted-key surface returns ok envelope when packaging is enabled",
+      "list result shape is bounded and not a marketplace listing",
+      "persistent trusted-key store is the source of truth (SQLite v079)",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-11", "module-16", "behind-env-gate"],
+  }),
+  // Phase 11 Module 18 — multi-tenant default-on tenant CRUD/persistence
+  // and tenant-scoped domain record access with cross-tenant denial.
+  // Stays blocked_by_env until FRIDAY_REAL_WORLD_MULTI_TENANT_READY=true
+  // and the operator has provisioned FRIDAY_MASTER_KEY for the hub.
+  // FRIDAY_MULTI_TENANT_ENABLED default-on flip remains an explicit stop
+  // point.
+  httpScenario({
+    id: "l2-multi-tenant-default-on-tenants-list",
+    layer: "L2",
+    productArea: "multi-tenant security",
+    entrySurface: "/v1/security/tenants",
+    routeFamily: "contract",
+    preconditions: ["multi_tenant_security.ready"],
+    execution: {
+      path: "/v1/security/tenants?limit=1",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "tenant list route is reachable when FRIDAY_MULTI_TENANT_ENABLED is on",
+      "FRIDAY_MASTER_KEY is operator-provisioned (no auto-generated key warning)",
+      "tenant state is SQLite-backed (v080) and survives restart",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-11", "module-18", "behind-env-gate"],
+  }),
+  // Phase 11 Module 18 — multi-tenant security default-on route presence.
+  //
+  // Honesty note: this scenario only probes that the secret-by-id route
+  // path returns 404 for a synthetic non-existent secret when the
+  // multi-tenant runtime is enabled.  A generic 404 cannot, on its own,
+  // prove cross-tenant denial or audit emission; a synthetic probe and a
+  // real cross-tenant deny look identical from the http_probe oracle's
+  // perspective.  True cross-tenant denial with audit-trail assertion is
+  // proven by the multi-tenant SQLite persistence integration test and
+  // by the tenant-scoped resource registry route integration test
+  // locally.  The end-to-end RGG-driven assertion (two tenants + secret
+  // create + cross-tenant GET + audit row inspection) remains Phase 14
+  // debt (debt key: module_18_cross_tenant_denial_rgg_assertion) until
+  // the RGG executor grows multi-step tenant-setup scenario support.
+  // The FRIDAY_MULTI_TENANT_ENABLED default-on flip remains an explicit
+  // stop point and is not flipped here.
+  httpScenario({
+    id: "l2-multi-tenant-default-on-secrets-route-404",
+    layer: "L2",
+    productArea: "multi-tenant security",
+    entrySurface: "/v1/security/tenants/:tenantId/secrets/:secretId",
+    routeFamily: "contract",
+    preconditions: ["multi_tenant_security.ready"],
+    execution: {
+      path: "/v1/security/tenants/__cross_tenant_probe__/secrets/__probe__",
+      expectStatus: 404,
+      expectOkEnvelope: false,
+    },
+    expectedEvidence: [
+      "secret-by-id route returns 404 for a synthetic non-existent path when FRIDAY_MULTI_TENANT_ENABLED is on",
+      "route family is registered without exposing tenant existence (route presence + 404 envelope only)",
+      "this scenario does not prove cross-tenant denial end-to-end (Phase 14 debt: module_18_cross_tenant_denial_rgg_assertion)",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-11", "module-18", "behind-env-gate", "phase-14-debt-cross-tenant"],
+  }),
   httpScenario({
     id: "l2-memory-items-create-contract",
     layer: "L2",

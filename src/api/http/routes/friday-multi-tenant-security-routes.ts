@@ -81,8 +81,40 @@ import type {
   FridayUpdateWorkspaceResponse,
 } from "../../../security/multi-tenant/api/friday-multi-tenant-security-api.types.js";
 import type { UUID } from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import type {
+  FridayTenantScopedResourceKind,
+  FridayTenantScopedResourceRecord,
+} from "../../../security/multi-tenant/engine/tenant-scoped-resource-registry.js";
 
 // ─── Service Dependencies ───
+
+/** Register/list/get/unregister payload shapes for scoped-resource routes. */
+export interface FridayRegisterScopedResourceRequest {
+  readonly resourceKind: FridayTenantScopedResourceKind;
+  readonly resourceId: string;
+  readonly workspaceId?: UUID;
+  readonly resourceLabel?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface FridayScopedResourceResponse {
+  readonly record: FridayTenantScopedResourceRecord;
+}
+
+export interface FridayListScopedResourcesQuery {
+  readonly resourceKind?: FridayTenantScopedResourceKind;
+}
+
+export interface FridayListScopedResourcesResponse {
+  readonly items: readonly FridayTenantScopedResourceRecord[];
+}
+
+export interface FridayScopedResourcesStatusResponse {
+  readonly tenantId: UUID;
+  readonly totals: Record<FridayTenantScopedResourceKind, number>;
+  readonly activeTotal: number;
+  readonly supportedKinds: readonly FridayTenantScopedResourceKind[];
+}
 
 export interface FridayMultiTenantSecurityRoutesDeps {
   tenants: {
@@ -139,6 +171,29 @@ export interface FridayMultiTenantSecurityRoutesDeps {
   violations: {
     list(tenantId: UUID, query: FridayListViolationsQuery): FridayListViolationsResponse;
     resolve(tenantId: UUID, violationId: UUID, req: FridayResolveViolationRequest): FridayResolveViolationResponse;
+  };
+  /**
+   * Tenant-scoped resource registry surface (Phase 11 Module 18).  The route
+   * family is bounded to register/list/get/unregister/status for the six
+   * legacy domains (session/skill/workflow/provider/memory/rule).  Cross-tenant
+   * access is denied by the engine: looking up a record under the wrong
+   * tenant returns null (404 here) so the route family does not leak the
+   * existence of records owned by other tenants.
+   */
+  scopedResources: {
+    register(tenantId: UUID, req: FridayRegisterScopedResourceRequest): FridayScopedResourceResponse;
+    list(tenantId: UUID, query: FridayListScopedResourcesQuery): FridayListScopedResourcesResponse;
+    get(
+      tenantId: UUID,
+      resourceKind: FridayTenantScopedResourceKind,
+      resourceId: string,
+    ): FridayScopedResourceResponse;
+    unregister(
+      tenantId: UUID,
+      resourceKind: FridayTenantScopedResourceKind,
+      resourceId: string,
+    ): FridayScopedResourceResponse;
+    status(tenantId: UUID): FridayScopedResourcesStatusResponse;
   };
 }
 
@@ -653,6 +708,80 @@ export function createFridayMultiTenantSecurityRoutes(
         const body = ctx.body as FridayResolveViolationRequest;
         requireIdempotencyKey(body);
         return deps.violations.resolve(tenantId, violationId, body);
+      },
+    },
+
+    // ═══════════════════════════════════════════════════════════════
+    // TENANT-SCOPED RESOURCE REGISTRY (Phase 11 Module 18)
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // Bounded register/list/get/unregister/status surface for legacy
+    // domain ownership claims (session/skill/workflow/provider/memory/
+    // rule).  Cross-tenant reads/unregisters return 404 rather than
+    // leaking the existence of records owned by other tenants.
+
+    {
+      operationId: "security.scopedresources.register",
+      method: "POST",
+      path: "/v1/security/tenants/:tenantId/scoped-resources",
+      auth: { public: true },
+      async handler(ctx) {
+        const { tenantId } = ctx.params as { tenantId: UUID };
+        const body = ctx.body as FridayRegisterScopedResourceRequest;
+        requireString(body, "resourceKind");
+        requireString(body, "resourceId");
+        requireIdempotencyKey(body);
+        return deps.scopedResources.register(tenantId, body);
+      },
+    },
+    {
+      operationId: "security.scopedresources.list",
+      method: "GET",
+      path: "/v1/security/tenants/:tenantId/scoped-resources",
+      auth: { public: true },
+      async handler(ctx) {
+        const { tenantId } = ctx.params as { tenantId: UUID };
+        return deps.scopedResources.list(tenantId, ctx.query as FridayListScopedResourcesQuery);
+      },
+    },
+    {
+      operationId: "security.scopedresources.status",
+      method: "GET",
+      path: "/v1/security/tenants/:tenantId/scoped-resources/status",
+      auth: { public: true },
+      async handler(ctx) {
+        const { tenantId } = ctx.params as { tenantId: UUID };
+        return deps.scopedResources.status(tenantId);
+      },
+    },
+    {
+      operationId: "security.scopedresources.get",
+      method: "GET",
+      path: "/v1/security/tenants/:tenantId/scoped-resources/:resourceKind/:resourceId",
+      auth: { public: true },
+      async handler(ctx) {
+        const { tenantId, resourceKind, resourceId } = ctx.params as {
+          tenantId: UUID;
+          resourceKind: FridayTenantScopedResourceKind;
+          resourceId: string;
+        };
+        return deps.scopedResources.get(tenantId, resourceKind, resourceId);
+      },
+    },
+    {
+      operationId: "security.scopedresources.unregister",
+      method: "DELETE",
+      path: "/v1/security/tenants/:tenantId/scoped-resources/:resourceKind/:resourceId",
+      auth: { public: true },
+      async handler(ctx) {
+        const { tenantId, resourceKind, resourceId } = ctx.params as {
+          tenantId: UUID;
+          resourceKind: FridayTenantScopedResourceKind;
+          resourceId: string;
+        };
+        const body = ctx.body as { idempotencyKey?: string } | null;
+        requireIdempotencyKey(body);
+        return deps.scopedResources.unregister(tenantId, resourceKind, resourceId);
       },
     },
   ];

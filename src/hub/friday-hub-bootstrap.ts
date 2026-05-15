@@ -120,12 +120,19 @@ import { parseFridaySecretInput, resolveFridaySecretInput } from "../security/fr
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
-  createPackageInstaller,
-  createRegistryManager,
-} from "../packaging/engine/index.js";
+  createSqlitePackageInstaller,
+  createSqliteRegistryManager,
+  createSqliteTrustedKeyStore,
+} from "../packaging/persistence/friday-package-sqlite-store.js";
 import {
   createFridayPackagingApiHandlers,
 } from "../packaging/api/index.js";
+import { parseManifestJson } from "../packaging/engine/manifest-parser.js";
+import { verifySignatureLogical } from "../packaging/engine/package-validator.js";
+import type {
+  FridayPackageManifest,
+  FridayPackageSignature,
+} from "../packaging/model/friday-packaging.types.js";
 import {
   createFridayRulesRepository,
   FridayRuleEngine,
@@ -5735,13 +5742,28 @@ export async function createFridayHub(
   // ── Packaging system (opt-in) ──
   let packagingDeps: FridayPackagingRoutesDeps | undefined;
   if (process.env.FRIDAY_PACKAGING_ENABLED === "true") {
-    const packagingRegistry = createRegistryManager({
+    const packagingRegistry = createSqliteRegistryManager({
+      sqlite: stateRuntime.sqlite,
       generateId: idGenerator,
       nowIso,
     });
-    const packagingInstaller = createPackageInstaller(packagingRegistry, {
+    const trustedKeyStore = createSqliteTrustedKeyStore({
+      sqlite: stateRuntime.sqlite,
       generateId: idGenerator,
       nowIso,
+    });
+    const packagingInstaller = createSqlitePackageInstaller({
+      sqlite: stateRuntime.sqlite,
+      registry: packagingRegistry,
+      generateId: idGenerator,
+      nowIso,
+      verifyPackage: (ctx) => verifySignatureLogical(
+        ctx.entry.signature,
+        ctx.entry.manifestDigest,
+        ctx.entry.archiveDigest,
+        trustedKeyStore.listAll(),
+        ctx.verifiedAt,
+      ),
     });
     const packagingHandlers = createFridayPackagingApiHandlers({
       registry: packagingRegistry,
@@ -5750,56 +5772,67 @@ export async function createFridayHub(
       platformVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     });
 
-    // In-memory trusted key store for the packaging key management surface
-    const trustedKeys = new Map<string, {
-      id: string; keyId: string; publicKey: string; algorithm: "Ed25519";
-      owner: string; tenantId?: string; trustedAt: string; expiresAt?: string;
-      revokedAt?: string; createdAt: string; updatedAt: string;
-    }>();
+    interface FridayPackageArchiveEnvelope {
+      readonly manifest: FridayPackageManifest;
+      readonly signature: FridayPackageSignature;
+      readonly files?: Record<string, string>;
+    }
+
+    function decodePackageArchive(archive: string): FridayPackageArchiveEnvelope {
+      let text: string;
+      try {
+        text = Buffer.from(archive, "base64").toString("utf8");
+      } catch (e) {
+        throw new FridayDomainError("VALIDATION_ERROR", `Archive is not valid base64: ${(e as Error).message}`);
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        throw new FridayDomainError("VALIDATION_ERROR", `Archive must contain JSON envelope with manifest and signature: ${(e as Error).message}`);
+      }
+      const envelope = parsed as Partial<FridayPackageArchiveEnvelope>;
+      if (!envelope || typeof envelope !== "object" || !envelope.manifest || !envelope.signature) {
+        throw new FridayDomainError("VALIDATION_ERROR", "Archive envelope must include manifest and signature");
+      }
+      return envelope as FridayPackageArchiveEnvelope;
+    }
 
     packagingDeps = {
       packages: {
         publish(req) {
           const archiveBuffer = Buffer.from(req.archive, "base64");
+          const envelope = decodePackageArchive(req.archive);
+          const parseResult = parseManifestJson(JSON.stringify(envelope.manifest));
+          if (!parseResult.success || !parseResult.manifest) {
+            throw new FridayDomainError("VALIDATION_ERROR", `Invalid manifest: ${parseResult.errors.map((e) => `${e.path}: ${e.message}`).join("; ")}`);
+          }
+          const manifest = parseResult.manifest;
+          const manifestDigest = "sha256:" + crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+          const archiveDigest = "sha256:" + crypto.createHash("sha256").update(archiveBuffer).digest("hex");
+          const signature: FridayPackageSignature = envelope.signature;
+          const verification = verifySignatureLogical(
+            signature,
+            manifestDigest,
+            archiveDigest,
+            trustedKeyStore.listAll(),
+            nowIso(),
+          );
+          if (!verification.valid) {
+            throw new FridayDomainError(`PACKAGING_${verification.outcome.toUpperCase()}`, verification.message, { httpStatus: 400 });
+          }
           const entry = packagingRegistry.publish({
-            manifest: {
-              name: `pkg-${idGenerator().slice(0, 8)}`,
-              version: "0.0.0",
-              description: "",
-              author: { name: "unknown" },
-              capabilities: [],
-              dependencies: {},
-              peerDependencies: {},
-              fridayVersionRange: ">=0.0.0",
-              assets: {},
-              hooks: {},
-              metadata: {},
-            },
-            signature: {
-              algorithm: "Ed25519",
-              publicKey: "",
-              signature: "",
-              digest: "",
-              manifestDigest: "",
-              timestamp: nowIso(),
-              expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-              keyId: "stub",
-            },
-            archiveDigest: computeChecksum(req.archive),
-            manifestDigest: computeChecksum(req.archive),
+            manifest,
+            signature,
+            archiveDigest,
+            manifestDigest,
             sizeBytes: archiveBuffer.length,
             publishedBy: "system",
             tenantId: req.tenantId,
           });
           return {
             package: entry as any,
-            verification: {
-              valid: true,
-              outcome: "valid" as const,
-              message: "Stub verification passed",
-              verifiedAt: nowIso(),
-              durationMs: 0,
-            },
+            verification,
           };
         },
         list(query) {
@@ -5854,12 +5887,15 @@ export async function createFridayHub(
         verify(packageId, _req) {
           const entry = packagingRegistry.getById(packageId);
           if (!entry) { throw new FridayDomainError("NOT_FOUND", `Package "${packageId}" not found`); }
+          const verification = verifySignatureLogical(
+            entry.signature,
+            entry.manifestDigest,
+            entry.archiveDigest,
+            trustedKeyStore.listAll(),
+            nowIso(),
+          );
           return {
-            verification: {
-              valid: true, outcome: "valid" as const,
-              message: "Stub verification passed",
-              verifiedAt: nowIso(), durationMs: 0,
-            },
+            verification,
             package: entry as any,
           };
         },
@@ -5880,58 +5916,47 @@ export async function createFridayHub(
       },
       keys: {
         list(query) {
-          let keys = [...trustedKeys.values()];
-          if (query.tenantId) { keys = keys.filter((k) => k.tenantId === query.tenantId); }
-          if (!query.includeRevoked) { keys = keys.filter((k) => !k.revokedAt); }
-          const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
-          let startIndex = 0;
-          if (query.cursor) {
-            const idx = keys.findIndex((k) => k.id === query.cursor);
-            if (idx >= 0) startIndex = idx + 1;
-          }
-          const paged = keys.slice(startIndex, startIndex + limit);
-          return {
-            items: paged,
-            nextCursor: startIndex + limit < keys.length ? paged[paged.length - 1]?.id : undefined,
-          };
+          const page = trustedKeyStore.list({
+            tenantId: query.tenantId,
+            includeRevoked: query.includeRevoked,
+            cursor: query.cursor,
+            limit: query.limit,
+          });
+          return { items: page.items as never, nextCursor: page.nextCursor };
         },
         add(req) {
-          const existing = [...trustedKeys.values()].find((k) => k.keyId === req.keyId);
-          if (existing) { throw new FridayDomainError("CONFLICT", `Key "${req.keyId}" already exists`); }
-          const now = nowIso();
-          const key = {
-            id: idGenerator(), keyId: req.keyId, publicKey: req.publicKey,
-            algorithm: req.algorithm ?? ("Ed25519" as const), owner: req.owner,
-            tenantId: req.tenantId, trustedAt: now,
-            expiresAt: req.expiresAt, createdAt: now, updatedAt: now,
-          };
-          trustedKeys.set(key.id, key);
-          return { key };
+          try {
+            const key = trustedKeyStore.add({
+              keyId: req.keyId,
+              publicKey: req.publicKey,
+              algorithm: req.algorithm,
+              owner: req.owner,
+              tenantId: req.tenantId,
+              expiresAt: req.expiresAt,
+            });
+            return { key: key as never };
+          } catch (e) {
+            throw new FridayDomainError("CONFLICT", (e as Error).message);
+          }
         },
         revoke(keyId, req) {
-          const key = [...trustedKeys.values()].find((k) => k.keyId === keyId);
-          if (!key) { throw new FridayDomainError("NOT_FOUND", `Key "${keyId}" not found`); }
-          if (key.revokedAt) { throw new FridayDomainError("CONFLICT", `Key "${keyId}" already revoked`); }
-          const now = nowIso();
-          const updated = { ...key, revokedAt: now, updatedAt: now };
-          trustedKeys.set(key.id, updated);
-          return { key: updated, affectedInstalls: 0 };
+          const updated = trustedKeyStore.revoke(keyId, req.reason);
+          if (!updated) { throw new FridayDomainError("NOT_FOUND", `Key "${keyId}" not found`); }
+          return { key: updated as never, affectedInstalls: 0 };
         },
         rotate(keyId, req) {
-          const oldKey = [...trustedKeys.values()].find((k) => k.keyId === keyId);
-          if (!oldKey) { throw new FridayDomainError("NOT_FOUND", `Key "${keyId}" not found`); }
-          const now = nowIso();
-          const gracePeriodEndsAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-          const newKey = {
-            id: idGenerator(), keyId: req.newKeyId, publicKey: req.newPublicKey,
-            algorithm: "Ed25519" as const, owner: req.owner,
-            tenantId: oldKey.tenantId, trustedAt: now,
-            expiresAt: req.expiresAt, createdAt: now, updatedAt: now,
+          const result = trustedKeyStore.rotate({
+            oldKeyId: keyId,
+            newKeyId: req.newKeyId,
+            newPublicKey: req.newPublicKey,
+            owner: req.owner,
+            expiresAt: req.expiresAt,
+          });
+          return {
+            newKey: result.newKey as never,
+            oldKey: result.oldKey as never,
+            gracePeriodEndsAt: result.gracePeriodEndsAt,
           };
-          trustedKeys.set(newKey.id, newKey);
-          const updatedOld = { ...oldKey, updatedAt: now };
-          trustedKeys.set(oldKey.id, updatedOld);
-          return { newKey, oldKey: updatedOld, gracePeriodEndsAt };
         },
       },
     };
@@ -5946,14 +5971,40 @@ export async function createFridayHub(
       PolicyEngine,
       SecretManager,
       AuditLogger,
+      TenantScopedResourceRegistry,
     } = await import("../security/multi-tenant/engine/index.js");
     const { MIGRATION_ACTOR } = await import("../security/multi-tenant/engine/tenant-manager.js");
+    const {
+      createSqliteTenantPersistence,
+      createSqliteSecretPersistence,
+      createSqliteAuditPersistence,
+      createSqliteTenantScopedResourcePersistence,
+    } = await import("../security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js");
+    const { getStrictMasterKey } = await import("../providers/security/friday-secret-crypto.js");
 
-    const mtAuditLogger = new AuditLogger();
-    const mtTenantManager = new TenantManager(mtAuditLogger);
+    // Fail-closed master key check: refuses to boot without explicit key.
+    // Multi-tenant security must NOT auto-generate or print a master key.
+    getStrictMasterKey();
+
+    const tenantPersistence = createSqliteTenantPersistence(stateRuntime.sqlite);
+    const secretPersistence = createSqliteSecretPersistence(stateRuntime.sqlite);
+    const auditPersistence = createSqliteAuditPersistence(stateRuntime.sqlite);
+    const scopedResourcePersistence = createSqliteTenantScopedResourcePersistence(stateRuntime.sqlite);
+
+    const mtAuditLogger = new AuditLogger({ persistence: auditPersistence });
+    const mtTenantManager = new TenantManager(mtAuditLogger, { persistence: tenantPersistence });
     const mtRbacEngine = new RbacEngine(mtAuditLogger);
     const mtPolicyEngine = new PolicyEngine(mtAuditLogger);
-    const mtSecretManager = new SecretManager(mtAuditLogger);
+    const mtSecretManager = new SecretManager(mtAuditLogger, {
+      persistence: secretPersistence,
+      masterKeyResolver: getStrictMasterKey,
+    });
+    // Tenant-scoped resource registry (sessions/skills/workflows/providers/memory/rules).
+    // Phase 11 Module 18 cross-tenant denial + restart proof for legacy domains.
+    const mtScopedResources = new TenantScopedResourceRegistry(mtAuditLogger, {
+      persistence: scopedResourcePersistence,
+    });
+    const { FRIDAY_TENANT_SCOPED_RESOURCE_KINDS } = await import("../security/multi-tenant/engine/tenant-scoped-resource-registry.js");
 
     // System-level actor for API-initiated operations (routes enforce their own auth scopes)
     const sysActor = MIGRATION_ACTOR;
@@ -6013,6 +6064,49 @@ export async function createFridayHub(
       violations: {
         list: (tenantId, query) => ({ items: mtAuditLogger.queryViolations({ tenantId, ...(query as unknown as Record<string, unknown>) } as never) }) as never,
         resolve: (tenantId, violationId, req) => ({ violation: mtAuditLogger.resolveViolation(tenantId, violationId, (req as unknown as Record<string, unknown>)?.resolvedBy as string ?? "system") }) as never,
+      },
+      scopedResources: {
+        register: (tenantId, req) => ({
+          record: mtScopedResources.register({
+            tenantId,
+            resourceKind: req.resourceKind,
+            resourceId: req.resourceId,
+            workspaceId: req.workspaceId,
+            resourceLabel: req.resourceLabel,
+          }),
+        }) as never,
+        list: (tenantId, query) => ({
+          items: mtScopedResources.listForTenant(tenantId, query?.resourceKind),
+        }) as never,
+        get: (tenantId, resourceKind, resourceId) => {
+          const record = mtScopedResources.getForTenant(tenantId, resourceKind, resourceId);
+          if (!record) {
+            throw new FridayDomainError("NOT_FOUND", "scoped resource not found");
+          }
+          return { record } as never;
+        },
+        unregister: (tenantId, resourceKind, resourceId) => {
+          const record = mtScopedResources.unregister(tenantId, resourceKind, resourceId);
+          if (!record) {
+            throw new FridayDomainError("NOT_FOUND", "scoped resource not found");
+          }
+          return { record } as never;
+        },
+        status: (tenantId) => {
+          const items = mtScopedResources.listForTenant(tenantId);
+          const totals = Object.fromEntries(
+            FRIDAY_TENANT_SCOPED_RESOURCE_KINDS.map((kind) => [kind, 0]),
+          ) as Record<string, number>;
+          for (const item of items) {
+            totals[item.resourceKind] = (totals[item.resourceKind] ?? 0) + 1;
+          }
+          return {
+            tenantId,
+            totals,
+            activeTotal: items.length,
+            supportedKinds: FRIDAY_TENANT_SCOPED_RESOURCE_KINDS,
+          } as never;
+        },
       },
     };
     console.log("[friday] Multi-tenant security runtime enabled.");
