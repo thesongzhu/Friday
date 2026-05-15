@@ -22,10 +22,28 @@ interface SatellitePlacementPolicy {
   minTrustLevel?: string;
 }
 
+export interface FridayWorkflowSatellitePlacementAuditEvent {
+  at: string;
+  runId: string;
+  workflowId: string;
+  workflowVersionId: string;
+  nodeId: string;
+  attemptId: string;
+  attempt: number;
+  executionTarget: string;
+  requiredCapabilities: string[];
+  decisionKind: "hub" | "satellite_dispatched" | "blocked";
+  satelliteId?: string;
+  blockedCode?: string;
+  blockedMessage?: string;
+  blockedRetryable?: boolean;
+}
+
 export interface CreateFridayWorkflowSatelliteDispatchServiceDeps {
   db: FridaySqliteLayer;
   outbox: FridayOutboxQueueService;
   nowIso: () => string;
+  onPlacementDecision?: (event: FridayWorkflowSatellitePlacementAuditEvent) => void;
 }
 
 const DEFAULT_REMOTE_LEASE_MS = 300_000;
@@ -204,88 +222,136 @@ export function createFridayWorkflowSatelliteDispatchService(
     });
   }
 
+  function emitPlacementAudit(
+    input: FridayWorkflowDistributedDispatchRequest,
+    executionTarget: string,
+    requiredCapabilities: string[],
+    result: FridayWorkflowDistributedDispatchResult,
+  ): void {
+    if (!deps.onPlacementDecision) return;
+    const blocked = result.kind === "blocked" ? result : undefined;
+    const dispatched = result.kind === "satellite_dispatched" ? result : undefined;
+    try {
+      deps.onPlacementDecision({
+        at: deps.nowIso(),
+        runId: input.runId,
+        workflowId: input.workflowId,
+        workflowVersionId: input.workflowVersionId,
+        nodeId: input.nodeId,
+        attemptId: input.attemptId,
+        attempt: input.attempt,
+        executionTarget,
+        requiredCapabilities,
+        decisionKind: result.kind,
+        satelliteId: dispatched?.satelliteId ?? blocked?.satelliteId,
+        blockedCode: blocked?.code,
+        blockedMessage: blocked?.message,
+        blockedRetryable: blocked?.retryable,
+      });
+    } catch {
+      // Audit callback must never alter placement semantics or block dispatch.
+    }
+  }
+
   return {
     async dispatchNode(input: FridayWorkflowDistributedDispatchRequest): Promise<FridayWorkflowDistributedDispatchResult> {
       const config = asRecord(input.node.config);
       const executionTarget = readExecutionTarget(config);
+      const requiredCapabilities = readCapabilityRequirements(config);
       if (executionTarget === "hub") {
-        return { kind: "hub" };
+        const hubResult: FridayWorkflowDistributedDispatchResult = { kind: "hub" };
+        emitPlacementAudit(input, executionTarget, requiredCapabilities, hubResult);
+        return hubResult;
       }
 
-      const requiredCapabilities = readCapabilityRequirements(config);
       const placementPolicy = readPlacementPolicy(config);
       let satelliteId: string | undefined;
+      let earlyBlocked: FridayWorkflowDistributedDispatchResult | null = null;
 
       if (executionTarget.startsWith("satellite:")) {
         satelliteId = executionTarget.slice("satellite:".length).trim();
         if (!satelliteId) {
-          return {
+          earlyBlocked = {
             kind: "blocked",
             code: "SATELLITE_TARGET_INVALID",
             message: "executionTarget satellite id is invalid",
             retryable: false,
           };
-        }
-
-        const satellite = deps.db.withReadConnection((db) =>
-          db.prepare(
-            "SELECT id, pairing_status FROM satellites WHERE id = ? AND deleted_at IS NULL LIMIT 1",
-          ).get(satelliteId) as { id: string; pairing_status: string } | undefined,
-        );
-        if (!satellite) {
-          return {
-            kind: "blocked",
-            satelliteId,
-            code: "SATELLITE_TARGET_NOT_FOUND",
-            message: "Specified execution target was not found",
-            retryable: false,
-          };
-        }
-        if (!isPlacementStatusEligible(satellite.pairing_status, placementPolicy)) {
-          return failureForSatelliteState(satelliteId, satellite.pairing_status);
-        }
-        if (placementPolicy.excludedSatelliteIds.has(satelliteId)) {
-          return {
-            kind: "blocked",
-            satelliteId,
-            code: "SATELLITE_PLACEMENT_EXCLUDED",
-            message: "Specified satellite is excluded by placement policy",
-            retryable: false,
-          };
-        }
-        if (requiredCapabilities.length > 0) {
-          const candidates = listPlacementCandidates(requiredCapabilities, placementPolicy);
-          if (!candidates.some((candidate) => candidate.satelliteId === satelliteId)) {
-            return {
+        } else {
+          const satellite = deps.db.withReadConnection((db) =>
+            db.prepare(
+              "SELECT id, pairing_status FROM satellites WHERE id = ? AND deleted_at IS NULL LIMIT 1",
+            ).get(satelliteId) as { id: string; pairing_status: string } | undefined,
+          );
+          if (!satellite) {
+            earlyBlocked = {
               kind: "blocked",
               satelliteId,
-              code: "SATELLITE_CAPABILITY_UNAVAILABLE",
-              message: "Specified satellite does not satisfy required capabilities",
-              retryable: true,
-              details: { requiredCapabilities },
+              code: "SATELLITE_TARGET_NOT_FOUND",
+              message: "Specified execution target was not found",
+              retryable: false,
             };
+          } else if (!isPlacementStatusEligible(satellite.pairing_status, placementPolicy)) {
+            earlyBlocked = failureForSatelliteState(satelliteId, satellite.pairing_status);
+          } else if (placementPolicy.excludedSatelliteIds.has(satelliteId)) {
+            earlyBlocked = {
+              kind: "blocked",
+              satelliteId,
+              code: "SATELLITE_PLACEMENT_EXCLUDED",
+              message: "Specified satellite is excluded by placement policy",
+              retryable: false,
+            };
+          } else if (requiredCapabilities.length > 0) {
+            const candidates = listPlacementCandidates(requiredCapabilities, placementPolicy);
+            if (!candidates.some((candidate) => candidate.satelliteId === satelliteId)) {
+              earlyBlocked = {
+                kind: "blocked",
+                satelliteId,
+                code: "SATELLITE_CAPABILITY_UNAVAILABLE",
+                message: "Specified satellite does not satisfy required capabilities",
+                retryable: true,
+                details: { requiredCapabilities },
+              };
+            }
           }
         }
       } else if (executionTarget === "capability-match") {
         const candidates = listPlacementCandidates(requiredCapabilities, placementPolicy);
         const candidate = candidates[0];
         if (!candidate) {
-          return {
+          earlyBlocked = {
             kind: "blocked",
             code: "SATELLITE_CAPABILITY_UNAVAILABLE",
             message: "No online satellite satisfies the requested execution capabilities",
             retryable: true,
             details: { requiredCapabilities },
           };
+        } else {
+          satelliteId = candidate.satelliteId;
         }
-        satelliteId = candidate.satelliteId;
       } else {
-        return {
+        earlyBlocked = {
           kind: "blocked",
           code: "SATELLITE_TARGET_UNSUPPORTED",
           message: `Unsupported executionTarget '${executionTarget}'`,
           retryable: false,
         };
+      }
+
+      if (earlyBlocked) {
+        emitPlacementAudit(input, executionTarget, requiredCapabilities, earlyBlocked);
+        return earlyBlocked;
+      }
+
+      if (!satelliteId) {
+        const fallbackBlocked: FridayWorkflowDistributedDispatchResult = {
+          kind: "blocked",
+          code: "SATELLITE_PLACEMENT_FAILED",
+          message: "Satellite placement did not resolve a target id",
+          retryable: false,
+        };
+        emitPlacementAudit(input, executionTarget, requiredCapabilities, fallbackBlocked);
+        return fallbackBlocked;
       }
 
       const nowIso = deps.nowIso();
@@ -319,12 +385,14 @@ export function createFridayWorkflowSatelliteDispatchService(
         expiresAt,
       });
 
-      return {
+      const dispatchedResult: FridayWorkflowDistributedDispatchResult = {
         kind: "satellite_dispatched",
         satelliteId,
         leaseOwner: `satellite:${satelliteId}`,
         leaseExpiresAt,
       };
+      emitPlacementAudit(input, executionTarget, requiredCapabilities, dispatchedResult);
+      return dispatchedResult;
     },
   };
 }

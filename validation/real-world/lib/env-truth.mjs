@@ -57,6 +57,36 @@ function readExternalChannelsStatus(processEnv) {
   };
 }
 
+function readExternalAlertsStatus(processEnv) {
+  const declared = readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_ALERTS_READY");
+  if (declared.status !== "ready") {
+    return declared;
+  }
+  const slackEnv = ["FRIDAY_REAL_WORLD_ALERT_SLACK_WEBHOOK_URL"];
+  const smtpEnv = [
+    "FRIDAY_REAL_WORLD_ALERT_SMTP_HOST",
+    "FRIDAY_REAL_WORLD_ALERT_SMTP_PORT",
+    "FRIDAY_REAL_WORLD_ALERT_SMTP_FROM",
+    "FRIDAY_REAL_WORLD_ALERT_SMTP_RECIPIENT",
+  ];
+  const slackPresent = slackEnv.every((key) => String(processEnv[key] ?? "").trim());
+  const smtpPresent = smtpEnv.every((key) => String(processEnv[key] ?? "").trim());
+  if (!slackPresent && !smtpPresent) {
+    return {
+      status: "missing",
+      source: declared.source,
+      missingEnv: [...slackEnv, ...smtpEnv],
+      note: "External alerts were declared ready, but neither Slack webhook nor SMTP proof env is complete.",
+    };
+  }
+  return {
+    ...declared,
+    requiredEnv: [...slackEnv, ...smtpEnv],
+    slackReady: slackPresent,
+    smtpReady: smtpPresent,
+  };
+}
+
 function resolveProviderModel(provider, preferredModel) {
   if (!provider) return undefined;
   const supportedModels = asArray(provider.config?.supportedModels).filter((value) => typeof value === "string");
@@ -304,6 +334,7 @@ export function resolveScenarioBlockers(scenario, envTruth) {
     },
     "desktop.ready": envTruth.prerequisites.desktop,
     "external_channels.ready": envTruth.prerequisites.externalChannels,
+    "external_alerts.ready": envTruth.prerequisites.externalAlerts,
     "cloud.ready": envTruth.prerequisites.cloud,
     "satellite.ready": envTruth.prerequisites.satellite,
     "mcp.ready": envTruth.prerequisites.mcp,
@@ -314,7 +345,10 @@ export function resolveScenarioBlockers(scenario, envTruth) {
   for (const key of preconditions) {
     const state = mapping[key];
     if (state && state.status !== "ready") {
-      blockers.push(`${key}=${state.status}${state.note ? ` (${state.note})` : ""}`);
+      const missingEnv = Array.isArray(state.missingEnv) && state.missingEnv.length > 0
+        ? ` [missing env: ${state.missingEnv.join(", ")}]`
+        : "";
+      blockers.push(`${key}=${state.status}${state.note ? ` (${state.note})` : ""}${missingEnv}`);
     }
   }
 
@@ -433,6 +467,7 @@ export async function collectEnvironmentTruth({
     prerequisites: {
       desktop: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_DESKTOP_READY"),
       externalChannels: readExternalChannelsStatus(processEnv),
+      externalAlerts: readExternalAlertsStatus(processEnv),
       cloud: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_CLOUD_READY"),
       satellite: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_SATELLITE_READY"),
       mcp: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_MCP_READY"),

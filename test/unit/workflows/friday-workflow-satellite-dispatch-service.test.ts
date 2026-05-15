@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFridayOutboxMessageRepository, createFridayOutboxQueueService } from "#satellites";
 import { createFridayWorkflowSatelliteDispatchService } from "#workflows";
 import type { FridaySqliteLayer } from "#state";
@@ -258,6 +258,124 @@ describe("FridayWorkflowSatelliteDispatchService", () => {
       kind: "satellite_dispatched",
       satelliteId: "sat-trusted",
     });
+  });
+
+  it("emits per-placement audit evidence for hub, satellite dispatched, and blocked decisions", async () => {
+    insertSatellite("sat-online", "online", "trusted");
+    insertHeartbeat("sat-online", 0, 0);
+    insertSatellite("sat-offline", "offline", "trusted");
+
+    const audit = vi.fn();
+    const outbox = createFridayOutboxQueueService({
+      db,
+      outboxRepo: createFridayOutboxMessageRepository(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-05-15T12:00:00.000Z",
+    });
+    const service = createFridayWorkflowSatelliteDispatchService({
+      db,
+      outbox,
+      nowIso: () => "2026-05-15T12:00:00.000Z",
+      onPlacementDecision: audit,
+    });
+
+    const hubResult = await service.dispatchNode({
+      runId: "run-hub",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-1",
+      attemptId: "attempt-hub",
+      attempt: 1,
+      node: buildNode({ executionTarget: "hub" }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-hub",
+    });
+    expect(hubResult).toEqual({ kind: "hub" });
+
+    const dispatchedResult = await service.dispatchNode({
+      runId: "run-sat",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-2",
+      attemptId: "attempt-sat",
+      attempt: 1,
+      node: buildNode({ executionTarget: "satellite:sat-online" }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-sat",
+    });
+    expect(dispatchedResult.kind).toBe("satellite_dispatched");
+
+    const blockedResult = await service.dispatchNode({
+      runId: "run-blocked",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-3",
+      attemptId: "attempt-blocked",
+      attempt: 1,
+      node: buildNode({ executionTarget: "satellite:sat-offline" }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-blocked",
+    });
+    expect(blockedResult).toMatchObject({ kind: "blocked", code: "SATELLITE_OFFLINE" });
+
+    expect(audit).toHaveBeenCalledTimes(3);
+    const calls = audit.mock.calls.map((call) => call[0]);
+    expect(calls[0]).toMatchObject({
+      decisionKind: "hub",
+      executionTarget: "hub",
+      runId: "run-hub",
+    });
+    expect(calls[1]).toMatchObject({
+      decisionKind: "satellite_dispatched",
+      satelliteId: "sat-online",
+      executionTarget: "satellite:sat-online",
+      runId: "run-sat",
+    });
+    expect(calls[2]).toMatchObject({
+      decisionKind: "blocked",
+      satelliteId: "sat-offline",
+      executionTarget: "satellite:sat-offline",
+      blockedCode: "SATELLITE_OFFLINE",
+      blockedRetryable: true,
+      runId: "run-blocked",
+    });
+  });
+
+  it("preserves fail-closed placement when the placement audit callback throws", async () => {
+    insertSatellite("sat-offline", "offline", "trusted");
+    const audit = vi.fn(() => {
+      throw new Error("audit sink down");
+    });
+    const service = createFridayWorkflowSatelliteDispatchService({
+      db,
+      outbox: createFridayOutboxQueueService({
+        db,
+        outboxRepo: createFridayOutboxMessageRepository(),
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2026-05-15T12:00:00.000Z",
+      }),
+      nowIso: () => "2026-05-15T12:00:00.000Z",
+      onPlacementDecision: audit,
+    });
+
+    const result = await service.dispatchNode({
+      runId: "run-1",
+      workflowId: "wf-1",
+      workflowVersionId: "wv-1",
+      nodeId: "node-1",
+      attemptId: "attempt-1",
+      attempt: 1,
+      node: buildNode({ executionTarget: "satellite:sat-offline" }),
+      inputData: {},
+      expressionContext: { inputs: {}, steps: {} },
+      idempotencyKey: "idem-fail-closed",
+    });
+
+    expect(result).toMatchObject({ kind: "blocked", code: "SATELLITE_OFFLINE" });
+    expect(audit).toHaveBeenCalledTimes(1);
   });
 
   it("applies satellite placement policy when scheduling capability-match commands", async () => {

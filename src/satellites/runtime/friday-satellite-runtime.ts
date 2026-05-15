@@ -22,6 +22,8 @@ import { createFridaySatelliteOfflineSweeper } from "../services/friday-satellit
 import { createFridayOutboxQueueService } from "../services/friday-outbox-queue-service.js";
 import { createFridaySatelliteSyncService } from "../services/friday-satellite-sync-service.js";
 import { createFridaySatelliteLocalRunnerService } from "../services/friday-satellite-local-runner-service.js";
+import { createFridaySatelliteResumeCoordinator } from "./friday-satellite-resume-coordinator.js";
+import type { FridaySatelliteResumeSignal } from "./friday-satellite-resume-coordinator.js";
 import { createFridayLearningEventLedger, createFridaySkillRunCheckpointWriter, createFridaySkillRunStore } from "#ledger";
 
 export interface CreateFridaySatelliteRuntimeOptions {
@@ -43,6 +45,7 @@ export interface CreateFridaySatelliteRuntimeOptions {
     failureRate1m?: number;
     explicitDisconnect?: boolean;
   }) => void;
+  onSatelliteResumeEligible?: (signal: FridaySatelliteResumeSignal) => void;
 }
 
 /**
@@ -64,6 +67,7 @@ export function createFridaySatelliteRuntime(
     learningEventWriter,
     remoteNodeResultWriter,
     onStatusTransition,
+    onSatelliteResumeEligible,
   } = options;
 
   // Repositories
@@ -88,6 +92,21 @@ export function createFridaySatelliteRuntime(
   const learningLedger = createFridayLearningEventLedger({ db });
   const skillRunStore = createFridaySkillRunStore({ db });
   const checkpointWriter = createFridaySkillRunCheckpointWriter({ db });
+
+  const resumeCoordinator = createFridaySatelliteResumeCoordinator({
+    db,
+    onResumeEligible: onSatelliteResumeEligible,
+  });
+
+  const chainedStatusTransition: CreateFridaySatelliteRuntimeOptions["onStatusTransition"] = (input) => {
+    resumeCoordinator.handleStatusTransition({
+      satelliteId: input.satelliteId,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      at: input.at,
+    });
+    onStatusTransition?.(input);
+  };
 
   // Services
   const registration = createFridaySatelliteRegistrationService({
@@ -127,14 +146,14 @@ export function createFridaySatelliteRuntime(
     idGenerator,
     nowIso,
     expectedIntervalMs: expectedHeartbeatIntervalMs,
-    onStatusTransition,
+    onStatusTransition: chainedStatusTransition,
   });
 
   const offlineSweeper = createFridaySatelliteOfflineSweeper({
     db,
     satelliteRepo,
     nowIso,
-    onStatusTransition,
+    onStatusTransition: chainedStatusTransition,
   });
 
   const outbox = createFridayOutboxQueueService({
@@ -181,6 +200,7 @@ export function createFridaySatelliteRuntime(
     outbox,
     sync,
     localRunner,
+    resumeCoordinator,
     learningLedger,
     skillRunStore,
     checkpointWriter,

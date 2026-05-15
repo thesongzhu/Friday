@@ -646,4 +646,242 @@ describe("createFridayObservabilityApiService", () => {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
+
+  it("fails closed when the Slack webhook returns a non-2xx response and writes failure audit entries", async () => {
+    const server = http.createServer((req, res) => {
+      req.on("data", () => {});
+      req.on("end", () => {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "internal" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a bound HTTP server address");
+    }
+
+    try {
+      const service = createService();
+      const destination = await service.routes.alertDestinations.create({
+        type: "slack",
+        name: "Slack failing webhook",
+        webhookUrl: `http://127.0.0.1:${address.port}/slack-webhook`,
+      });
+
+      service.recordSelfHealingProcessResults({
+        results: [
+          {
+            incidentsCreated: [
+              {
+                incidentId: "incident-slack-failclosed-a",
+                userId: "user-1",
+                category: "workflow",
+                severity: "high",
+                signature: "failure-slack-failclosed-a",
+                status: "open",
+                createdAt: NOW,
+              },
+              {
+                incidentId: "incident-slack-failclosed-b",
+                userId: "user-1",
+                category: "workflow",
+                severity: "high",
+                signature: "failure-slack-failclosed-b",
+                status: "open",
+                createdAt: NOW,
+              },
+              {
+                incidentId: "incident-slack-failclosed-c",
+                userId: "user-1",
+                category: "workflow",
+                severity: "high",
+                signature: "failure-slack-failclosed-c",
+                status: "open",
+                createdAt: NOW,
+              },
+            ],
+            diagnosisCreated: [],
+          },
+        ],
+      });
+      await service.drainAuditWrites();
+      const alert = service.routes.alerts.list({}).items[0];
+      expect(alert).toBeDefined();
+
+      const response = await service.routes.alerts.testDispatch(alert!.id, {
+        destinationId: destination.destination.id,
+      });
+
+      expect(response.attempts.length).toBeGreaterThan(0);
+      expect(response.attempts.some((attempt) => attempt.status === "sent")).toBe(false);
+      expect(response.attempts.every((attempt) => attempt.status === "failed")).toBe(true);
+      expect(response.attempts[0]?.errorMessage ?? "").toMatch(/Slack webhook responded with 500/i);
+
+      await service.drainAuditWrites();
+      const auditPage = service.routes.audit.search({
+        action: "observability.alert.dispatch",
+        outcome: "failure",
+      });
+      expect(auditPage.items.length).toBeGreaterThan(0);
+      expect(auditPage.items[0]).toMatchObject({
+        action: "observability.alert.dispatch",
+        outcome: "failure",
+        module: "observability",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("fails closed when the SMTP password secret is missing for a username-authenticated destination", async () => {
+    const service = createService();
+    const destination = await service.routes.alertDestinations.create({
+      type: "email",
+      name: "Ops Email no password",
+      recipients: ["ops@example.com"],
+      fromAddress: "alerts@example.com",
+      smtpHost: "127.0.0.1",
+      smtpPort: 2525,
+      username: "ops-user",
+      password: "", // pragma: allowlist secret
+    });
+
+    service.recordSelfHealingProcessResults({
+      results: [
+        {
+          incidentsCreated: [
+            {
+              incidentId: "incident-smtp-missing-a",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-smtp-missing-a",
+              status: "open",
+              createdAt: NOW,
+            },
+            {
+              incidentId: "incident-smtp-missing-b",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-smtp-missing-b",
+              status: "open",
+              createdAt: NOW,
+            },
+            {
+              incidentId: "incident-smtp-missing-c",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-smtp-missing-c",
+              status: "open",
+              createdAt: NOW,
+            },
+          ],
+          diagnosisCreated: [],
+        },
+      ],
+    });
+    await service.drainAuditWrites();
+    const alert = service.routes.alerts.list({}).items[0];
+    expect(alert).toBeDefined();
+
+    const response = await service.routes.alerts.testDispatch(alert!.id, {
+      destinationId: destination.destination.id,
+    });
+
+    expect(response.attempts.length).toBeGreaterThan(0);
+    expect(response.attempts.some((attempt) => attempt.status === "sent")).toBe(false);
+    expect(response.attempts.every((attempt) => attempt.status === "failed")).toBe(true);
+    expect(response.attempts[0]?.errorMessage ?? "").toMatch(/Missing SMTP password|smtp/i);
+
+    await service.drainAuditWrites();
+    const auditPage = service.routes.audit.search({
+      action: "observability.alert.dispatch",
+      outcome: "failure",
+    });
+    expect(auditPage.items.length).toBeGreaterThan(0);
+    expect(auditPage.items[0]).toMatchObject({
+      action: "observability.alert.dispatch",
+      outcome: "failure",
+      module: "observability",
+    });
+  });
+
+  it("skips dispatch to a disabled destination and records the skip in audit metadata", async () => {
+    const service = createService();
+    const destination = await service.routes.alertDestinations.create({
+      type: "email",
+      name: "Ops Email Disabled",
+      recipients: ["ops@example.com"],
+      fromAddress: "alerts@example.com",
+      smtpHost: "127.0.0.1",
+      smtpPort: 2525,
+      password: "smtp-password", // pragma: allowlist secret
+    });
+    const disabled = await service.routes.alertDestinations.update(destination.destination.id, {
+      type: "email",
+      enabled: false,
+    });
+    expect(disabled.destination.enabled).toBe(false);
+
+    service.recordSelfHealingProcessResults({
+      results: [
+        {
+          incidentsCreated: [
+            {
+              incidentId: "incident-disabled-a",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-disabled-a",
+              status: "open",
+              createdAt: NOW,
+            },
+            {
+              incidentId: "incident-disabled-b",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-disabled-b",
+              status: "open",
+              createdAt: NOW,
+            },
+            {
+              incidentId: "incident-disabled-c",
+              userId: "user-1",
+              category: "workflow",
+              severity: "high",
+              signature: "failure-disabled-c",
+              status: "open",
+              createdAt: NOW,
+            },
+          ],
+          diagnosisCreated: [],
+        },
+      ],
+    });
+    await service.drainAuditWrites();
+    const alert = service.routes.alerts.list({}).items[0];
+    expect(alert).toBeDefined();
+
+    const response = await service.routes.alerts.testDispatch(alert!.id, {
+      destinationId: destination.destination.id,
+    });
+
+    expect(response.attempts).toHaveLength(1);
+    expect(response.attempts[0]).toMatchObject({
+      destinationId: destination.destination.id,
+      status: "skipped",
+      errorMessage: "Destination disabled",
+    });
+    // Skipped dispatches must not write a success audit entry.
+    await service.drainAuditWrites();
+    const dispatchEntries = service.routes.audit.search({
+      action: "observability.alert.dispatch",
+    });
+    expect(dispatchEntries.items.every((entry) => entry.outcome !== "success"
+      || entry.resourceDisplayName !== destination.destination.name)).toBe(true);
+  });
 });
