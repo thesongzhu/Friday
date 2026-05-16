@@ -135,6 +135,12 @@ export interface FridayTaskWorkflowClaimRecord {
   readonly status: FridayTaskWorkflowClaimStatus;
   readonly reason: string | null;
   readonly verifierVerdict: string | null;
+  /**
+   * Verifier lane that produced the verdict (Phase 13.5B). Null when the
+   * claim was verified through the backward-compatible single-lane path
+   * (allowed only for low/medium-risk workflows) or never verified.
+   */
+  readonly verifierLaneId: string | null;
   readonly evidenceRefCount: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -236,8 +242,126 @@ export interface FridayTaskWorkflowVerifyClaimInput {
   /** Verdict text written by an independent verifier after fresh-reading
    *  evidence refs. Cannot satisfy verified for non-evidence-bearing kinds. */
   readonly verifierVerdict: string;
+  /**
+   * Phase 13.5B: verifier lane that produced this verdict via Friday's
+   * fresh-read path. REQUIRED for `high` risk workflows; optional for
+   * `low`/`medium` risk (omit to allow single-lane self-verification).
+   * Refused when the lane does not belong to this workflow, is not a
+   * verifier lane, or is closed/blocked.
+   */
+  readonly verifierLaneId?: string;
 }
 
 export interface FridayTaskWorkflowBlockClaimInput {
   readonly reason: string;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Phase 13.5B: Executor / Verifier Lanes
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * Lane records track who executed task work (executor lanes) and who
+ * verified the resulting claims (verifier lanes). Each lane carries a
+ * deterministic context snapshot hash bound to the workflow's spec hash
+ * at lane open so closeout can block honestly when the lane context is
+ * missing or out of sync. Provider fallback availability is recorded as
+ * a label only — fallback success never substitutes for a verifier
+ * verdict.
+ */
+
+export type FridayTaskWorkflowLaneKind = "executor" | "verifier";
+
+/**
+ * Lane role identifies the execution surface. `native` lanes are Friday
+ * agent-runtime executions; `provider` lanes are direct provider-routed
+ * runs. CLI text lanes are Phase 13.5C scope and not represented here.
+ */
+export type FridayTaskWorkflowLaneRole = "native" | "provider";
+
+export type FridayTaskWorkflowLaneStatus =
+  | "open"
+  | "in_progress"
+  | "completed"
+  | "blocked";
+
+/**
+ * Honest independence label between a verifier lane and the executor
+ * lane it audits.
+ *  - `independent`: distinct lane role/provider from the executor lane.
+ *  - `degraded_same_provider`: verifier shares provider with executor
+ *    (e.g. same provider id); cannot satisfy the high-risk independence
+ *    requirement.
+ *  - `degraded_unavailable`: no separate verifier surface was available;
+ *    recorded honestly so closeout can block, not silently pass.
+ *  - `not_applicable`: used for executor lanes (no audit relationship).
+ */
+export type FridayTaskWorkflowLaneIndependence =
+  | "independent"
+  | "degraded_unavailable"
+  | "degraded_same_provider"
+  | "not_applicable";
+
+/**
+ * Fallback availability label recorded on executor lanes. Records whether
+ * the provider service had to fall back to an alternate route; this is
+ * availability information only and never counts as verifier proof.
+ */
+export type FridayTaskWorkflowFallbackAvailability =
+  | "not_used"
+  | "used_same_provider"
+  | "used_alternate_provider";
+
+export interface FridayTaskWorkflowLaneRecord {
+  readonly id: string;
+  readonly workflowId: string;
+  readonly laneKind: FridayTaskWorkflowLaneKind;
+  readonly laneRole: FridayTaskWorkflowLaneRole;
+  /** Parent executor lane id for verifier lanes; null for executor lanes. */
+  readonly parentLaneId: string | null;
+  readonly status: FridayTaskWorkflowLaneStatus;
+  readonly independence: FridayTaskWorkflowLaneIndependence;
+  /** FridayAgentRuntimeResult.runId reference; not a payload copy. */
+  readonly executorRunRef: string | null;
+  readonly providerId: string | null;
+  /** Provider route trace id reference; not a payload copy. */
+  readonly routeTraceRef: string | null;
+  /** SHA-256 over the lane's frozen context package + boundary refs. */
+  readonly contextSnapshotHash: string;
+  /** Workflow spec_hash captured at lane open for cross-check at closeout. */
+  readonly contextSnapshotSpecHash: string;
+  readonly fallbackAvailability: FridayTaskWorkflowFallbackAvailability | null;
+  readonly blocker: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface FridayTaskWorkflowOpenExecutorLaneInput {
+  readonly laneRole: FridayTaskWorkflowLaneRole;
+  readonly providerId?: string;
+}
+
+export interface FridayTaskWorkflowOpenVerifierLaneInput {
+  readonly parentLaneId: string;
+  readonly laneRole: FridayTaskWorkflowLaneRole;
+  readonly providerId?: string;
+  /**
+   * Honest independence claim from the caller. The service downgrades
+   * to `degraded_same_provider` when the verifier shares lane role +
+   * provider with the executor lane it audits, and refuses high-risk
+   * workflows when the resulting independence is not `independent`.
+   */
+  readonly independenceClaim: FridayTaskWorkflowLaneIndependence;
+}
+
+export interface FridayTaskWorkflowCompleteLaneInput {
+  readonly status: "completed" | "blocked";
+  readonly executorRunRef?: string | null;
+  readonly routeTraceRef?: string | null;
+  readonly fallbackAvailability?: FridayTaskWorkflowFallbackAvailability;
+  readonly blocker?: string | null;
+}
+
+export interface FridayTaskWorkflowSubmitVerifierVerdictInput {
+  readonly claimId: string;
+  readonly verifierVerdict: string;
 }

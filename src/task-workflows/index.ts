@@ -35,6 +35,14 @@ export {
 } from "./friday-task-workflow-closeout-gates.js";
 export type { FridayTaskWorkflowCloseoutGateInput } from "./friday-task-workflow-closeout-gates.js";
 export {
+  computeFridayTaskWorkflowLaneContextSnapshotHash,
+  resolveFridayTaskWorkflowVerifierIndependence,
+} from "./friday-task-workflow-lanes.js";
+export type {
+  FridayTaskWorkflowLaneContextSnapshotInput,
+  FridayTaskWorkflowLaneIndependenceInput,
+} from "./friday-task-workflow-lanes.js";
+export {
   createFridayTaskWorkflowRepository,
 } from "./friday-task-workflow-repository.js";
 export type { FridayTaskWorkflowRepository } from "./friday-task-workflow-repository.js";
@@ -54,19 +62,29 @@ export type {
   FridayTaskWorkflowClaimStatus,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
+  FridayTaskWorkflowCompleteLaneInput,
   FridayTaskWorkflowContextPackage,
   FridayTaskWorkflowCreateInput,
   FridayTaskWorkflowDraftClaimInput,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowEvidenceSource,
+  FridayTaskWorkflowFallbackAvailability,
   FridayTaskWorkflowGate,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowLaneIndependence,
+  FridayTaskWorkflowLaneKind,
+  FridayTaskWorkflowLaneRecord,
+  FridayTaskWorkflowLaneRole,
+  FridayTaskWorkflowLaneStatus,
+  FridayTaskWorkflowOpenExecutorLaneInput,
+  FridayTaskWorkflowOpenVerifierLaneInput,
   FridayTaskWorkflowPreview,
   FridayTaskWorkflowRecord,
   FridayTaskWorkflowReviseInput,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
   FridayTaskWorkflowStage,
+  FridayTaskWorkflowSubmitVerifierVerdictInput,
   FridayTaskWorkflowSupervisorCursorRecord,
   FridayTaskWorkflowSupervisorMode,
   FridayTaskWorkflowVerifyClaimInput,

@@ -30,10 +30,15 @@ import {
 import { evaluateFridayTaskWorkflowCloseoutGates } from "./friday-task-workflow-closeout-gates.js";
 import {
   defaultFridayTaskWorkflowBudget,
+  FRIDAY_TASK_WORKFLOW_BUILTIN_GATES,
   isFridayKnownGate,
   isFridayRequiredGate,
   planFridayTaskWorkflowGates,
 } from "./friday-task-workflow-gates.js";
+import {
+  computeFridayTaskWorkflowLaneContextSnapshotHash,
+  resolveFridayTaskWorkflowVerifierIndependence,
+} from "./friday-task-workflow-lanes.js";
 import { computeFridayTaskWorkflowSpecHash } from "./friday-task-workflow-spec-hash.js";
 import type { FridayTaskWorkflowRepository } from "./friday-task-workflow-repository.js";
 import type {
@@ -43,17 +48,22 @@ import type {
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
+  FridayTaskWorkflowCompleteLaneInput,
   FridayTaskWorkflowContextPackage,
   FridayTaskWorkflowCreateInput,
   FridayTaskWorkflowDraftClaimInput,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowLaneRecord,
+  FridayTaskWorkflowOpenExecutorLaneInput,
+  FridayTaskWorkflowOpenVerifierLaneInput,
   FridayTaskWorkflowPreview,
   FridayTaskWorkflowRecord,
   FridayTaskWorkflowReviseInput,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
   FridayTaskWorkflowStage,
+  FridayTaskWorkflowSubmitVerifierVerdictInput,
   FridayTaskWorkflowSupervisorMode,
   FridayTaskWorkflowVerifyClaimInput,
 } from "./friday-task-workflow.types.js";
@@ -129,6 +139,26 @@ export interface FridayTaskWorkflowService {
     input: FridayTaskWorkflowBlockClaimInput,
   ): FridayTaskWorkflowClaimRecord;
   closeout(workflowId: string): FridayTaskWorkflowCloseoutReceipt;
+  openExecutorLane(
+    workflowId: string,
+    input: FridayTaskWorkflowOpenExecutorLaneInput,
+  ): FridayTaskWorkflowLaneRecord;
+  openVerifierLane(
+    workflowId: string,
+    input: FridayTaskWorkflowOpenVerifierLaneInput,
+  ): FridayTaskWorkflowLaneRecord;
+  completeLane(
+    workflowId: string,
+    laneId: string,
+    input: FridayTaskWorkflowCompleteLaneInput,
+  ): FridayTaskWorkflowLaneRecord;
+  submitVerifierVerdict(
+    workflowId: string,
+    verifierLaneId: string,
+    input: FridayTaskWorkflowSubmitVerifierVerdictInput,
+  ): FridayTaskWorkflowClaimRecord;
+  listLanes(workflowId: string): readonly FridayTaskWorkflowLaneRecord[];
+  getLane(workflowId: string, laneId: string): FridayTaskWorkflowLaneRecord;
 }
 
 export function createFridayTaskWorkflowService(
@@ -394,6 +424,7 @@ export function createFridayTaskWorkflowService(
       status: "draft",
       reason: null,
       verifierVerdict: null,
+      verifierLaneId: null,
       evidenceRefCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -523,6 +554,7 @@ export function createFridayTaskWorkflowService(
     claimId: string,
     input: FridayTaskWorkflowVerifyClaimInput,
   ): FridayTaskWorkflowClaimRecord {
+    const workflow = get(workflowId);
     const claim = getClaim(workflowId, claimId);
     if (
       typeof input.verifierVerdict !== "string" ||
@@ -580,12 +612,71 @@ export function createFridayTaskWorkflowService(
         },
       );
     }
+    let resolvedVerifierLaneId: string | null = null;
+    if (input.verifierLaneId !== undefined) {
+      if (
+        typeof input.verifierLaneId !== "string" ||
+        input.verifierLaneId.trim().length === 0
+      ) {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_INVALID",
+          "verifierLaneId must be a non-empty string when provided.",
+          { httpStatus: 400 },
+        );
+      }
+      const lane = deps.db.withReadConnection((db) =>
+        deps.repository.getLane(db, input.verifierLaneId as string),
+      );
+      if (!lane || lane.workflowId !== workflowId) {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_LANE_NOT_FOUND",
+          `verifierLaneId "${input.verifierLaneId}" not found for workflow "${workflowId}".`,
+          { httpStatus: 404 },
+        );
+      }
+      if (lane.laneKind !== "verifier") {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_LANE_KIND_INVALID",
+          `lane "${lane.id}" is a ${lane.laneKind} lane; verifierLaneId must point at a verifier lane.`,
+          { httpStatus: 400, details: { laneKind: lane.laneKind } },
+        );
+      }
+      if (lane.status === "blocked") {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_LANE_BLOCKED",
+          `verifier lane "${lane.id}" is blocked; submit a new verifier lane before verifying.`,
+          { httpStatus: 409 },
+        );
+      }
+      if (workflow.risk === "high" && lane.independence !== "independent") {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_HIGH_RISK_VERIFIER_INDEPENDENCE_REQUIRED",
+          `high-risk workflow refuses verifier lane "${lane.id}" with independence="${lane.independence}"; an independent verifier surface is required.`,
+          {
+            httpStatus: 400,
+            details: {
+              resolvedIndependence: lane.independence,
+              workflowRisk: workflow.risk,
+              verifierLaneId: lane.id,
+            },
+          },
+        );
+      }
+      resolvedVerifierLaneId = lane.id;
+    } else if (workflow.risk === "high") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_HIGH_RISK_VERIFIER_LANE_REQUIRED",
+        "high-risk workflows require a verifierLaneId pointing at an independent verifier lane.",
+        { httpStatus: 400, details: { workflowRisk: workflow.risk } },
+      );
+    }
     const now = deps.nowIso();
     const updated: FridayTaskWorkflowClaimRecord = {
       ...claim,
       status: "verified",
       reason: null,
       verifierVerdict: input.verifierVerdict.trim(),
+      verifierLaneId: resolvedVerifierLaneId,
       updatedAt: now,
     };
     deps.db.withWriteTransaction((db) => {
@@ -622,14 +713,21 @@ export function createFridayTaskWorkflowService(
 
   function closeout(workflowId: string): FridayTaskWorkflowCloseoutReceipt {
     const workflow = get(workflowId);
-    const { claims, evidenceRefsByClaim } = deps.db.withReadConnection((db) => {
-      const claimList = deps.repository.listClaims(db, workflowId);
-      const refMap = new Map<string, readonly FridayTaskWorkflowEvidenceRefRecord[]>();
-      for (const claim of claimList) {
-        refMap.set(claim.id, deps.repository.listEvidenceRefs(db, claim.id));
-      }
-      return { claims: claimList, evidenceRefsByClaim: refMap };
-    });
+    const { claims, evidenceRefsByClaim, lanes } = deps.db.withReadConnection(
+      (db) => {
+        const claimList = deps.repository.listClaims(db, workflowId);
+        const refMap = new Map<string, readonly FridayTaskWorkflowEvidenceRefRecord[]>();
+        for (const claim of claimList) {
+          refMap.set(claim.id, deps.repository.listEvidenceRefs(db, claim.id));
+        }
+        const laneList = deps.repository.listLanes(db, workflowId);
+        return {
+          claims: claimList,
+          evidenceRefsByClaim: refMap,
+          lanes: laneList,
+        };
+      },
+    );
     const summary = {
       draft: claims.filter((c) => c.status === "draft").length,
       unverified: claims.filter((c) => c.status === "unverified").length,
@@ -642,6 +740,9 @@ export function createFridayTaskWorkflowService(
         claims,
         evidenceRefsByClaim,
         contextPackage: workflow.contextPackage,
+        lanes,
+        risk: workflow.risk,
+        workflowSpecHash: workflow.specHash,
       });
     const blockers: string[] = [];
     if (summary.blocked > 0) {
@@ -652,12 +753,13 @@ export function createFridayTaskWorkflowService(
         `${summary.draft + summary.unverified} claim(s) not verified`,
       );
     }
-    const blockingGates = gateOutcomes.filter(
-      (g) => g.required && g.status === "block",
+    const blockingGates = gateOutcomes.filter((g) =>
+      isFridayBlockingGateOutcomeForRisk(g, workflow.risk),
     );
     for (const gate of blockingGates) {
+      const label = gate.required ? "required gate" : "risk-mandatory gate";
       blockers.push(
-        `required gate "${gate.gateId}" blocked: ${gate.reason ?? "no reason recorded"}`,
+        `${label} "${gate.gateId}" blocked: ${gate.reason ?? "no reason recorded"}`,
       );
     }
     const status: "complete" | "partial" | "blocked" =
@@ -690,6 +792,266 @@ export function createFridayTaskWorkflowService(
     return receipt;
   }
 
+  function openExecutorLane(
+    workflowId: string,
+    input: FridayTaskWorkflowOpenExecutorLaneInput,
+  ): FridayTaskWorkflowLaneRecord {
+    const workflow = get(workflowId);
+    validateLaneRole(input.laneRole);
+    const providerId = normalizeProviderId(input.providerId);
+    const now = deps.nowIso();
+    const record: FridayTaskWorkflowLaneRecord = {
+      id: deps.idGenerator(),
+      workflowId,
+      laneKind: "executor",
+      laneRole: input.laneRole,
+      parentLaneId: null,
+      status: "open",
+      independence: "not_applicable",
+      executorRunRef: null,
+      providerId,
+      routeTraceRef: null,
+      contextSnapshotHash: computeFridayTaskWorkflowLaneContextSnapshotHash({
+        contextPackage: workflow.contextPackage,
+        boundaryRefs: workflow.boundaryRefs,
+      }),
+      contextSnapshotSpecHash: workflow.specHash,
+      fallbackAvailability: null,
+      blocker: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.insertLane(db, record);
+    });
+    return record;
+  }
+
+  function openVerifierLane(
+    workflowId: string,
+    input: FridayTaskWorkflowOpenVerifierLaneInput,
+  ): FridayTaskWorkflowLaneRecord {
+    const workflow = get(workflowId);
+    validateLaneRole(input.laneRole);
+    if (
+      typeof input.parentLaneId !== "string" ||
+      input.parentLaneId.trim().length === 0
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "parentLaneId is required when opening a verifier lane.",
+        { httpStatus: 400 },
+      );
+    }
+    const parentLane = deps.db.withReadConnection((db) =>
+      deps.repository.getLane(db, input.parentLaneId),
+    );
+    if (!parentLane || parentLane.workflowId !== workflowId) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_NOT_FOUND",
+        `parentLaneId "${input.parentLaneId}" not found for workflow "${workflowId}".`,
+        { httpStatus: 404 },
+      );
+    }
+    if (parentLane.laneKind !== "executor") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_KIND_INVALID",
+        `parentLaneId "${parentLane.id}" must be an executor lane; got "${parentLane.laneKind}".`,
+        { httpStatus: 400, details: { laneKind: parentLane.laneKind } },
+      );
+    }
+    if (
+      input.independenceClaim !== "independent" &&
+      input.independenceClaim !== "degraded_unavailable" &&
+      input.independenceClaim !== "degraded_same_provider"
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "independenceClaim must be one of 'independent', 'degraded_unavailable', 'degraded_same_provider' for verifier lanes.",
+        { httpStatus: 400 },
+      );
+    }
+    const providerId = normalizeProviderId(input.providerId);
+    const resolvedIndependence = resolveFridayTaskWorkflowVerifierIndependence({
+      verifierLaneRole: input.laneRole,
+      verifierProviderId: providerId,
+      parentLaneRole: parentLane.laneRole,
+      parentProviderId: parentLane.providerId,
+      independenceClaim: input.independenceClaim,
+    });
+    if (workflow.risk === "high" && resolvedIndependence !== "independent") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_HIGH_RISK_VERIFIER_INDEPENDENCE_REQUIRED",
+        `high-risk workflow refuses verifier lane with independence="${resolvedIndependence}"; an independent verifier surface is required.`,
+        {
+          httpStatus: 400,
+          details: { resolvedIndependence, workflowRisk: workflow.risk },
+        },
+      );
+    }
+    const now = deps.nowIso();
+    const record: FridayTaskWorkflowLaneRecord = {
+      id: deps.idGenerator(),
+      workflowId,
+      laneKind: "verifier",
+      laneRole: input.laneRole,
+      parentLaneId: parentLane.id,
+      status: "open",
+      independence: resolvedIndependence,
+      executorRunRef: null,
+      providerId,
+      routeTraceRef: null,
+      contextSnapshotHash: computeFridayTaskWorkflowLaneContextSnapshotHash({
+        contextPackage: workflow.contextPackage,
+        boundaryRefs: workflow.boundaryRefs,
+      }),
+      contextSnapshotSpecHash: workflow.specHash,
+      fallbackAvailability: null,
+      blocker: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.insertLane(db, record);
+    });
+    return record;
+  }
+
+  function completeLane(
+    workflowId: string,
+    laneId: string,
+    input: FridayTaskWorkflowCompleteLaneInput,
+  ): FridayTaskWorkflowLaneRecord {
+    get(workflowId);
+    const lane = deps.db.withReadConnection((db) =>
+      deps.repository.getLane(db, laneId),
+    );
+    if (!lane || lane.workflowId !== workflowId) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_NOT_FOUND",
+        `lane "${laneId}" not found for workflow "${workflowId}".`,
+        { httpStatus: 404 },
+      );
+    }
+    if (lane.status === "completed" || lane.status === "blocked") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_CLOSED",
+        `lane "${lane.id}" is already ${lane.status}; reopen by creating a new lane.`,
+        { httpStatus: 409, details: { status: lane.status } },
+      );
+    }
+    if (input.status !== "completed" && input.status !== "blocked") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "completeLane status must be 'completed' or 'blocked'.",
+        { httpStatus: 400 },
+      );
+    }
+    if (input.status === "blocked") {
+      if (typeof input.blocker !== "string" || input.blocker.trim().length === 0) {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_INVALID",
+          "blocker reason is required when transitioning a lane to 'blocked'.",
+          { httpStatus: 400 },
+        );
+      }
+    }
+    if (
+      input.fallbackAvailability !== undefined &&
+      input.fallbackAvailability !== "not_used" &&
+      input.fallbackAvailability !== "used_same_provider" &&
+      input.fallbackAvailability !== "used_alternate_provider"
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "fallbackAvailability must be 'not_used', 'used_same_provider', or 'used_alternate_provider' when provided.",
+        { httpStatus: 400 },
+      );
+    }
+    const now = deps.nowIso();
+    const updated: FridayTaskWorkflowLaneRecord = {
+      ...lane,
+      status: input.status,
+      executorRunRef:
+        input.executorRunRef === undefined
+          ? lane.executorRunRef
+          : input.executorRunRef === null
+            ? null
+            : String(input.executorRunRef).trim() || null,
+      routeTraceRef:
+        input.routeTraceRef === undefined
+          ? lane.routeTraceRef
+          : input.routeTraceRef === null
+            ? null
+            : String(input.routeTraceRef).trim() || null,
+      fallbackAvailability:
+        input.fallbackAvailability === undefined
+          ? lane.fallbackAvailability
+          : input.fallbackAvailability,
+      blocker:
+        input.status === "blocked"
+          ? (input.blocker as string).trim()
+          : input.blocker === undefined
+            ? lane.blocker
+            : input.blocker === null
+              ? null
+              : String(input.blocker).trim() || null,
+      updatedAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.updateLane(db, updated);
+    });
+    return updated;
+  }
+
+  function submitVerifierVerdict(
+    workflowId: string,
+    verifierLaneId: string,
+    input: FridayTaskWorkflowSubmitVerifierVerdictInput,
+  ): FridayTaskWorkflowClaimRecord {
+    if (
+      typeof input.claimId !== "string" ||
+      input.claimId.trim().length === 0
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "claimId is required.",
+        { httpStatus: 400 },
+      );
+    }
+    return verifyClaim(workflowId, input.claimId, {
+      verifierVerdict: input.verifierVerdict,
+      verifierLaneId,
+    });
+  }
+
+  function listLanes(
+    workflowId: string,
+  ): readonly FridayTaskWorkflowLaneRecord[] {
+    get(workflowId);
+    return deps.db.withReadConnection((db) =>
+      deps.repository.listLanes(db, workflowId),
+    );
+  }
+
+  function getLane(
+    workflowId: string,
+    laneId: string,
+  ): FridayTaskWorkflowLaneRecord {
+    get(workflowId);
+    const lane = deps.db.withReadConnection((db) =>
+      deps.repository.getLane(db, laneId),
+    );
+    if (!lane || lane.workflowId !== workflowId) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_NOT_FOUND",
+        `lane "${laneId}" not found for workflow "${workflowId}".`,
+        { httpStatus: 404 },
+      );
+    }
+    return lane;
+  }
+
   return {
     preview,
     create,
@@ -705,7 +1067,57 @@ export function createFridayTaskWorkflowService(
     verifyClaim,
     blockClaim,
     closeout,
+    openExecutorLane,
+    openVerifierLane,
+    completeLane,
+    submitVerifierVerdict,
+    listLanes,
+    getLane,
   };
+}
+
+function validateLaneRole(role: unknown): asserts role is "native" | "provider" {
+  if (role !== "native" && role !== "provider") {
+    throw new FridayDomainError(
+      "TASK_WORKFLOW_INVALID",
+      "laneRole must be 'native' or 'provider'.",
+      { httpStatus: 400 },
+    );
+  }
+}
+
+/**
+ * A gate outcome blocks closeout when its evaluator emitted `block` AND
+ * either the outcome is required by the workflow's gate plan, or the
+ * built-in gate metadata marks the gate as mandatoryForRisk for the
+ * current workflow risk. This keeps optional-by-default gates (e.g.
+ * `independent_verifier_required`) from silently sliding past closeout
+ * for the risk levels the registry says they must block at, without
+ * relabelling the receipt's per-outcome `required` flag.
+ */
+function isFridayBlockingGateOutcomeForRisk(
+  outcome: FridayTaskWorkflowCloseoutGateOutcome,
+  risk: FridayTaskWorkflowRisk,
+): boolean {
+  if (outcome.status !== "block") return false;
+  if (outcome.required) return true;
+  const meta = FRIDAY_TASK_WORKFLOW_BUILTIN_GATES.find(
+    (gate) => gate.gateId === outcome.gateId,
+  );
+  return meta?.mandatoryForRisk.includes(risk) === true;
+}
+
+function normalizeProviderId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new FridayDomainError(
+      "TASK_WORKFLOW_INVALID",
+      "providerId must be a string when provided.",
+      { httpStatus: 400 },
+    );
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 /**

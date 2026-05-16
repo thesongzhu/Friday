@@ -84,11 +84,27 @@ function makeStubService(): FridayTaskWorkflowService {
     closeout: () => {
       throw new Error("not used in this test");
     },
+    openExecutorLane: () => {
+      throw new Error("not used in this test");
+    },
+    openVerifierLane: () => {
+      throw new Error("not used in this test");
+    },
+    completeLane: () => {
+      throw new Error("not used in this test");
+    },
+    submitVerifierVerdict: () => {
+      throw new Error("not used in this test");
+    },
+    listLanes: () => [],
+    getLane: () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
 describe("Phase 13.5A task workflow route registration", () => {
-  it("registers preview, create, read, list, revise, claim, evidence, verify, block, closeout, boundaries, gates", () => {
+  it("registers preview, create, read, list, revise, claim, evidence, verify, block, closeout, boundaries, gates, and Phase 13.5B lanes", () => {
     const routes = makeDisabledRoutes();
     const expected = [
       "task.workflows.preview",
@@ -107,6 +123,12 @@ describe("Phase 13.5A task workflow route registration", () => {
       "task.workflows.closeout",
       "task.workflows.boundaries.list",
       "task.workflows.gates.list",
+      "task.workflows.lanes.executor.open",
+      "task.workflows.lanes.verifier.open",
+      "task.workflows.lanes.complete",
+      "task.workflows.lanes.verdict",
+      "task.workflows.lanes.list",
+      "task.workflows.lanes.get",
     ];
     for (const operationId of expected) {
       expect(routes.find((r) => r.operationId === operationId)).toBeDefined();

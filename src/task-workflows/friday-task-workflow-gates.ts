@@ -80,6 +80,14 @@ export const FRIDAY_TASK_WORKFLOW_REQUIRED_GATES: readonly FridayTaskWorkflowGat
     required: true,
     mandatoryForRisk: ["low", "medium", "high"],
   },
+  {
+    gateId: "executor_lane_context_bound",
+    label: "Executor lanes are bound to a frozen context snapshot",
+    description:
+      "Every executor lane recorded on the workflow must carry a deterministic context snapshot hash and a captured workflow spec_hash that still matches the workflow at closeout. Lanes whose context binding is missing or mismatched block closeout instead of silently passing.",
+    required: true,
+    mandatoryForRisk: ["low", "medium", "high"],
+  },
 ];
 
 /** Built-in optional gates that can be layered on top of required gates. */

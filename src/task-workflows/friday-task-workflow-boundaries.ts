@@ -135,6 +135,36 @@ export const FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES: readonly FridayTaskWorkflo
     evidenceRefSources: ["docs_intent_reference"],
     requiredGateIds: ["docs_intent_not_proof"],
   },
+  {
+    boundaryId: "api.task_workflows.lanes",
+    label: "Task workflow executor/verifier lane surface",
+    description:
+      "Open and complete executor and verifier lanes, submit verifier verdicts, and read lane state. Executor lanes are bound to a frozen context snapshot hash. Verifier lanes are read-only with respect to task state: verdicts are promoted only through the service-mediated submitVerifierVerdict path. Provider fallback availability is recorded as a label and never counts as a verifier verdict. High-risk workflows refuse non-independent verifier lanes.",
+    allowedOperations: [
+      "open_executor_lane",
+      "complete_executor_lane",
+      "open_verifier_lane",
+      "complete_verifier_lane",
+      "submit_verifier_verdict",
+      "list_lanes",
+      "read_lane",
+    ],
+    hardBoundaries: [
+      "no_verifier_lane_mutation_of_task_state",
+      "no_provider_fallback_as_verifier_proof",
+      "no_executor_lane_without_context_snapshot",
+      "no_verifier_lane_without_executor_parent",
+      "no_high_risk_self_verification",
+      "no_lane_context_drift_after_revision",
+    ],
+    evidenceRefSources: [],
+    requiredGateIds: [
+      "claim_evidence_required",
+      "verifier_fresh_read",
+      "executor_lane_context_bound",
+      "provider_fallback_not_audit",
+    ],
+  },
 ];
 
 const BOUNDARY_IDS: ReadonlySet<string> = new Set(
