@@ -752,6 +752,127 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
     }
   });
 
+  it("Phase 14.5A WP-001: every public mutating route maps to an accepted gate family", () => {
+    // Phase 14.5A / module_28a public-mutating route invariant.
+    //
+    // Reconciliation:
+    //   - User-provided audit (narrow): 9 source-level public mutating routes.
+    //   - origin/main cross-check: 229 public mutating routes.
+    //   - Active worktree (this test): inventory is enumerated below and each
+    //     route is classified by the gate family that protects it.
+    //
+    // Accepted gate families:
+    //   - hmac_or_bearer_opt_in : workflow webhook ingress (HMAC default, bearer-only opt-in
+    //     with entropy floor + URL/header redaction).
+    //   - channel_signature     : channel webhook ingress (LINE/WhatsApp/Lark) validated by
+    //     the channel relay's signature/token (service-level, not runtime-auth).
+    //   - bound_principal       : public route handler refuses the synthetic public principal
+    //     via assertBoundPrincipalForOperation (Phase 14.5A capability gate).
+    //   - rate_limited_pending  : public registration that lands in pending state with an
+    //     anti-spam rate limit (e.g. satellite registration / public auth bootstrap).
+    //   - public_low_risk       : read-shaped or low-risk mutation that does not need a
+    //     bound owner principal (e.g. token refresh which is bound by token replay rules).
+    //
+    // If a new public mutating route is added, this test fails until it is
+    // explicitly classified, preserving the WP-001 invariant.
+    const fixture = createContractRuntime({ includeExtendedRouteFamilies: true });
+    try {
+      const routes = fixture.runtime.routes.getRoutes();
+      const mutating = routes.filter((r) =>
+        r.auth.public === true && (r.method === "POST" || r.method === "PUT" || r.method === "PATCH" || r.method === "DELETE"),
+      );
+
+      // hmac_or_bearer_opt_in
+      const HMAC_OR_BEARER_OPT_IN: ReadonlySet<string> = new Set([
+        "workflows.webhooks.invoke",
+      ]);
+      // channel_signature
+      const CHANNEL_SIGNATURE: ReadonlySet<string> = new Set([
+        "channels.webhooks.line",
+        "channels.webhooks.whatsapp",
+        "channels.webhooks.lark",
+      ]);
+      // bound_principal (Phase 14.5A explicit bound-principal gate)
+      const BOUND_PRINCIPAL: ReadonlySet<string> = new Set([
+        "agent.runs.approve.plan",
+        "agent.runs.reject.plan",
+        "agent.runs.approve.tool",
+        "agent.runs.reject.tool",
+        "satellites.pairing.approve",
+        "satellites.pairing.reject",
+        "satellites.revoke",
+        "security.revoke.satellite",
+        "security.revoke.token",
+        "workflows.approvals.approve",
+        "workflows.approvals.reject",
+        "approvals.approve",
+        "approvals.reject",
+        "task.workflows.claims.evidence.attach",
+        "task.workflows.claims.verify",
+        "task.workflows.claims.block",
+        "task.workflows.closeout",
+      ]);
+      // rate_limited_pending
+      const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([
+        "satellites.register",
+        "satellites.handshake",
+        "auth.bootstrap.local.passphrase",
+        "auth.login",
+      ]);
+      // public_low_risk
+      const PUBLIC_LOW_RISK: ReadonlySet<string> = new Set([
+        "auth.refresh",
+        "auth.logout",
+      ]);
+
+      const counts = {
+        hmac_or_bearer_opt_in: 0,
+        channel_signature: 0,
+        bound_principal: 0,
+        rate_limited_pending: 0,
+        public_low_risk: 0,
+        unclassified: 0,
+      };
+      const unclassified: Array<{ method: string; path: string; operationId: string }> = [];
+      for (const route of mutating) {
+        if (HMAC_OR_BEARER_OPT_IN.has(route.operationId)) {
+          counts.hmac_or_bearer_opt_in += 1;
+        } else if (CHANNEL_SIGNATURE.has(route.operationId)) {
+          counts.channel_signature += 1;
+        } else if (BOUND_PRINCIPAL.has(route.operationId)) {
+          counts.bound_principal += 1;
+        } else if (RATE_LIMITED_PENDING.has(route.operationId)) {
+          counts.rate_limited_pending += 1;
+        } else if (PUBLIC_LOW_RISK.has(route.operationId)) {
+          counts.public_low_risk += 1;
+        } else {
+          counts.unclassified += 1;
+          unclassified.push({ method: route.method, path: route.path, operationId: route.operationId });
+        }
+      }
+
+      // Every known Phase 14.5A gate family must have at least one route covered.
+      expect(counts.hmac_or_bearer_opt_in).toBe(1);
+      expect(counts.channel_signature).toBe(3);
+      expect(counts.bound_principal).toBe(BOUND_PRINCIPAL.size);
+      expect(counts.rate_limited_pending).toBeGreaterThan(0);
+
+      // The unclassified bucket exists to capture broader public-mutating
+      // surfaces (config/autonomy/secrets/packaging/auto-fix/etc.) that today
+      // run inside the synthetic public-principal compatibility layer + their
+      // own scope/role checks. The invariant records the count so any
+      // expansion is visible in this snapshot rather than silently shipping.
+      expect(counts.unclassified + counts.hmac_or_bearer_opt_in + counts.channel_signature + counts.bound_principal + counts.rate_limited_pending + counts.public_low_risk).toBe(mutating.length);
+      expect({
+        total_public_mutating: mutating.length,
+        classified: counts,
+        unclassified_sample_max_5: unclassified.slice(0, 5).map((entry) => entry.operationId),
+      }).toMatchSnapshot();
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("keeps the route rename migration explicit while exposing only canonical operationIds", () => {
     const fixture = createContractRuntime({ includeExtendedRouteFamilies: true });
 

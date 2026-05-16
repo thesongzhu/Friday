@@ -168,7 +168,7 @@ describe("FridayAgentRoutes", () => {
     );
   });
 
-  it("POST /v1/agent/runs/:runId/approve-tool requires an approver principal", async () => {
+  it("POST /v1/agent/runs/:runId/approve-tool requires a bound owner/session/channel principal (Phase 14.5A)", async () => {
     const routes = createFridayAgentRoutes(stubDeps);
     const route = routes.find((r) => r.operationId === "agent.runs.approve.tool")!;
 
@@ -181,9 +181,81 @@ describe("FridayAgentRoutes", () => {
       requestId: "req-1",
       receivedAt: "2026-01-01T00:00:00.000Z",
     })).rejects.toMatchObject({
-      code: "AGENT_APPROVER_PRINCIPAL_REQUIRED",
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
     });
     expect(stubDeps.resolveToolApproval).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/agent/runs/:runId/approve-tool rejects the synthetic default-public principal (Phase 14.5A)", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.approve.tool")!;
+    const syntheticPublic = createStubPrincipal({
+      principalId: "public:default",
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin",
+    });
+
+    await expect(route.handler({
+      body: { toolCallId: "tool-call-1" },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: syntheticPublic,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(stubDeps.resolveToolApproval).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/agent/runs/:runId/approve-plan rejects the synthetic default-public principal (Phase 14.5A)", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.approve.plan")!;
+    const syntheticPublic = createStubPrincipal({
+      principalId: "public:default",
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin",
+    });
+
+    await expect(route.handler({
+      body: {},
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: syntheticPublic,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(stubDeps.approvePlan).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/agent/runs/:runId/reject-plan rejects the synthetic default-public principal (Phase 14.5A)", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.reject.plan")!;
+    const syntheticPublic = createStubPrincipal({
+      principalId: "public:default",
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin",
+    });
+
+    await expect(route.handler({
+      body: {},
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: syntheticPublic,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(stubDeps.rejectPlan).not.toHaveBeenCalled();
   });
 
   it("POST /v1/agent/runs/:runId/reject-tool keeps autonomous internal runs hidden", async () => {
@@ -1594,7 +1666,7 @@ describe("FridayAgentRoutes", () => {
   });
 
   describe("plan approval handlers", () => {
-    it("approves a pending plan by run id", async () => {
+    it("approves a pending plan by run id (Phase 14.5A: requires bound principal)", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.approve.plan")!;
       const ctx = {
@@ -1602,7 +1674,7 @@ describe("FridayAgentRoutes", () => {
         params: { runId: "run-1" },
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
@@ -1612,11 +1684,13 @@ describe("FridayAgentRoutes", () => {
       expect(stubDeps.approvePlan).toHaveBeenCalledWith({
         runId: "run-1",
         executionContext: { surface: "api", interactive: true },
+        principalId: "user-approver-1",
+        scopes: ["agent.write"],
       });
       expect(result).toEqual(createStubResult());
     });
 
-    it("rejects a pending plan by run id", async () => {
+    it("rejects a pending plan by run id (Phase 14.5A: requires bound principal)", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.reject.plan")!;
       const ctx = {
@@ -1624,7 +1698,7 @@ describe("FridayAgentRoutes", () => {
         params: { runId: "run-1" },
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
@@ -1634,6 +1708,8 @@ describe("FridayAgentRoutes", () => {
       expect(stubDeps.rejectPlan).toHaveBeenCalledWith({
         runId: "run-1",
         executionContext: { surface: "api", interactive: true },
+        principalId: "user-approver-1",
+        scopes: ["agent.write"],
       });
       expect(result).toEqual(createStubResult({ status: "cancelled" }));
     });

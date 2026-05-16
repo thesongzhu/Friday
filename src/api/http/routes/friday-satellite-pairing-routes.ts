@@ -6,6 +6,7 @@
 
 import { FridayDomainError } from "#errors";
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 
 type Ctx = FridayHttpContext<unknown, Record<string, string>, unknown>;
 type Route = FridayRouteDefinition<unknown, Record<string, string>, unknown, unknown>;
@@ -185,6 +186,11 @@ export function createFridaySatellitePairingRoutes(
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;
+        const resolver = assertBoundPrincipalForOperation(
+          ctx.principal,
+          "satellite.pairing.approve",
+          "api",
+        );
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
           throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
@@ -193,7 +199,7 @@ export function createFridaySatellitePairingRoutes(
         const result = await deps.approvePairing({
           satelliteId: params.satelliteId,
           requestId: pairingReq.requestId,
-          resolverUserId: ctx.principal?.principalId ?? "system",
+          resolverUserId: resolver.principalId,
           scopes: body.scopes as string[] | undefined,
           tokenTtlMs: body.tokenTtlMs as number | undefined,
         });
@@ -211,6 +217,11 @@ export function createFridaySatellitePairingRoutes(
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;
+        const resolver = assertBoundPrincipalForOperation(
+          ctx.principal,
+          "satellite.pairing.reject",
+          "api",
+        );
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
           throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
@@ -219,7 +230,7 @@ export function createFridaySatellitePairingRoutes(
         const result = await deps.rejectPairing({
           satelliteId: params.satelliteId,
           requestId: pairingReq.requestId,
-          resolverUserId: ctx.principal?.principalId ?? "system",
+          resolverUserId: resolver.principalId,
           reason: body.reason as string | undefined,
         });
 
@@ -270,10 +281,15 @@ export function createFridaySatellitePairingRoutes(
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
         const body = ctx.body as Record<string, unknown>;
+        const resolver = assertBoundPrincipalForOperation(
+          ctx.principal,
+          "satellite.revoke",
+          "api",
+        );
 
         const result = await deps.revokeSatellite({
           satelliteId: params.satelliteId,
-          resolverUserId: ctx.principal?.principalId ?? "system",
+          resolverUserId: resolver.principalId,
           reason: body.reason as string | undefined,
         });
 

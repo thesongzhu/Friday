@@ -498,3 +498,72 @@ describe("Phase 13.5D supervisor + channel + evidence-explorer routes", () => {
     }
   });
 });
+
+describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound principal", () => {
+  function syntheticPublic() {
+    return {
+      principalType: "user" as const,
+      principalId: "public:default",
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin" as const,
+      scopes: [],
+      tokenKind: "access" as const,
+      issuedAt: "2026-05-16T00:00:00Z",
+    };
+  }
+
+  const BOUND_OPS: ReadonlyArray<{ operationId: string; params: Record<string, string>; body?: Record<string, unknown> }> = [
+    {
+      operationId: "task.workflows.claims.evidence.attach",
+      params: { workflowId: "w-1", claimId: "c-1" },
+      body: { refKind: "agent_run_event", refId: "ev-1", refSource: "agent_run_event" },
+    },
+    { operationId: "task.workflows.claims.verify", params: { workflowId: "w-1", claimId: "c-1" }, body: { verifierVerdict: "x", evidenceRefIds: ["ev-1"] } },
+    { operationId: "task.workflows.claims.block", params: { workflowId: "w-1", claimId: "c-1" }, body: { reason: "x" } },
+    { operationId: "task.workflows.closeout", params: { workflowId: "w-1" } },
+  ];
+
+  for (const { operationId, params, body } of BOUND_OPS) {
+    it(`${operationId} refuses the synthetic public principal`, async () => {
+      const routes = createFridayTaskWorkflowRoutes({
+        service: makeStubService(),
+        disabledReason: null,
+      });
+      const route = findRoute(routes, operationId);
+      let thrown: unknown;
+      try {
+        await route.handler(makeCtx({
+          params,
+          body: body ?? {},
+          principal: syntheticPublic(),
+        }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+      expect((thrown as FridayDomainError).httpStatus).toBe(401);
+    });
+
+    it(`${operationId} refuses a null principal`, async () => {
+      const routes = createFridayTaskWorkflowRoutes({
+        service: makeStubService(),
+        disabledReason: null,
+      });
+      const route = findRoute(routes, operationId);
+      let thrown: unknown;
+      try {
+        await route.handler(makeCtx({
+          params,
+          body: body ?? {},
+          principal: null,
+        }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    });
+  }
+});

@@ -289,4 +289,102 @@ describe("createFridayChannelWebhookRoutes", () => {
       httpStatus: 403,
     });
   });
+
+  // ── Phase 14.5A WP-001 channel signature posture negative tests ──────────
+
+  it("Phase 14.5A: rejects WhatsApp POST when app-secret is configured but signature header is missing", async () => {
+    const relay = createWhatsappWebhookService();
+    relay.setAppSecret?.("wa-secret");
+    await relay.startWebhook("verify-token", () => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      whatsappWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.whatsapp");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({ object: "whatsapp_business_account", entry: [] }),
+          headers: {},
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "WHATSAPP_SIGNATURE_MISSING",
+      httpStatus: 401,
+    });
+  });
+
+  it("Phase 14.5A: rejects WhatsApp POST when app-secret is configured and signature is wrong", async () => {
+    const relay = createWhatsappWebhookService();
+    relay.setAppSecret?.("wa-secret");
+    await relay.startWebhook("verify-token", () => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      whatsappWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.whatsapp");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({ object: "whatsapp_business_account", entry: [] }),
+          headers: { "x-hub-signature-256": "sha256=deadbeef" },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "WHATSAPP_SIGNATURE_INVALID",
+      httpStatus: 403,
+    });
+  });
+
+  it("Phase 14.5A: rejects Lark POST when encrypt-key is configured but signature headers are missing", async () => {
+    const relay = createLarkWebhookRelayService();
+    relay.setVerificationToken("lark-verify-token");
+    relay.setEncryptKey("lark-encrypt-key");
+    await relay.start(() => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      larkWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.lark");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({
+            header: { event_type: "im.message.receive_v1", token: "lark-verify-token" },
+            event: {},
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "LARK_SIGNATURE_MISSING",
+      httpStatus: 401,
+    });
+  });
+
+  it("Phase 14.5A: refuses Lark when verification token is not configured even with matching token", async () => {
+    const relay = createLarkWebhookRelayService();
+    await relay.start(() => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      larkWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.lark");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({
+            header: { event_type: "im.message.receive_v1", token: "anything" },
+            event: {},
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "LARK_TOKEN_UNCONFIGURED",
+      httpStatus: 503,
+    });
+  });
 });

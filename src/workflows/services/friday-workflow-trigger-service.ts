@@ -16,6 +16,11 @@ import type { FridayWorkflowRepository } from "../persistence/friday-workflow-re
 import type { FridayWorkflowTriggerRepository } from "../persistence/friday-workflow-trigger-repository.js";
 import { type FridayCompiledWorkflowGraphV2, parseGraphJson } from "../model/friday-workflow-graph.types.js";
 import { parseFridaySecretInput, resolveFridaySecretInput } from "../../security/friday-secret-ref.js";
+import {
+  evaluateWorkflowWebhookGate,
+  readWorkflowWebhookBearerOnlyAllowlistFromEnv,
+  redactSensitiveWebhookHeaders,
+} from "../../security/friday-owner-session-channel-capability.js";
 // F12: Use shared cron utils — no local matcher
 import { computeNextCronFire, matchesCron } from "./friday-workflow-cron-utils.js";
 
@@ -97,6 +102,12 @@ export interface CreateWorkflowTriggerServiceDeps {
   resolveWebhookSecretRef?: (refKey: string) => string | null | Promise<string | null>;
   idGenerator: () => string;
   nowIso: () => string;
+  /**
+   * Phase 14.5A owner/session/channel capability gate (module_28a).
+   * When omitted, the allowlist defaults to FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS.
+   * The gate cannot be disabled; only specific tokens can be explicitly opted in.
+   */
+  readWebhookBearerOnlyAllowlist?: () => ReadonlySet<string>;
 }
 
 async function resolveWebhookSigningSecret(
@@ -456,6 +467,27 @@ export function createFridayWorkflowTriggerService(
         return { accepted: false };
       }
 
+      // ─── Phase 14.5A owner/session/channel capability gate (module_28a) ───
+      // Require HMAC (webhookSecretRef) by default. Bearer path-token-only mode
+      // is opt-in per token via FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+      // even then, the token must meet the minimum-entropy length. The gate is
+      // non-disableable and not affected by Light/Standard/Strict profiles.
+      const bearerAllowlist = deps.readWebhookBearerOnlyAllowlist
+        ? deps.readWebhookBearerOnlyAllowlist()
+        : readWorkflowWebhookBearerOnlyAllowlistFromEnv();
+      const gateRejection = evaluateWorkflowWebhookGate({
+        pathToken: input.pathToken,
+        hasSecretRef: Boolean(reg.webhookSecretRef),
+        explicitBearerOnlyAllowlist: bearerAllowlist,
+      });
+      if (gateRejection) {
+        return {
+          accepted: false,
+          statusCode: gateRejection.statusCode,
+          errorCode: gateRejection.errorCode,
+        };
+      }
+
       // ─── HMAC signature verification (M4) ───
       if (reg.webhookSecretRef) {
         const secret = await resolveWebhookSigningSecret(reg.webhookSecretRef, deps.resolveWebhookSecretRef);
@@ -496,13 +528,14 @@ export function createFridayWorkflowTriggerService(
       }
 
       try {
+        const redactedHeaders = redactSensitiveWebhookHeaders(input.headers) as JsonObject;
         const run = await deps.executionService.startRun({
           workflowId: reg.workflowId,
           workflowVersionId: reg.workflowVersionId,
           triggerType: "webhook",
           triggerPayload: {
             ...input.body,
-            _webhookHeaders: (input.headers ?? {}) satisfies JsonObject,
+            _webhookHeaders: redactedHeaders,
           },
         });
 

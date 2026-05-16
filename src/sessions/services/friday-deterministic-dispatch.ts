@@ -17,6 +17,8 @@ import type { FridayWorkflowApprovalService } from "../../workflows/services/fri
 import type { FridayWorkflowExecutionService, FridayWorkflowRunEntity } from "#workflows";
 import type { FridayExecutionClassification } from "./friday-execution-classifier.js";
 import type { FridaySessionMessageRecord } from "../model/friday-session.types.js";
+import { assertBoundActorForSessionOperation } from "../../security/friday-owner-session-channel-capability.js";
+import { FridayDomainError } from "#errors";
 
 // ─── Types ───
 
@@ -742,7 +744,29 @@ async function handleApprovalDecision(
   }
 
   const isChinese = containsChinese(input.task ?? "");
-  const actorId = input.actorId ?? "system";
+  // Phase 14.5A WP-001 decision 8: conversational approve/reject must carry
+  // the same principal evidence as HTTP approve/reject. The deterministic
+  // dispatcher only carries a string actorId; fail closed if it is missing or
+  // is the synthetic public principal id. This refuses session-text-driven
+  // workflow approval from an unauthenticated public caller even when the
+  // upstream session route admitted the message under the public principal.
+  let actorId: string;
+  try {
+    actorId = assertBoundActorForSessionOperation(
+      input.actorId,
+      decision === "approve" ? "workflow.approval.approve" : "workflow.approval.reject",
+    );
+  } catch (err) {
+    if (err instanceof FridayDomainError) {
+      return {
+        handled: true,
+        response: isChinese
+          ? "需要登录的所有者/会话凭据才能批准或拒绝该审批。"
+          : "Conversational workflow approval requires a bound owner/session/channel actor.",
+      };
+    }
+    throw err;
+  }
   const explicitApprovalId = input.classification.extractedParams?.approvalId;
 
   if (explicitApprovalId) {

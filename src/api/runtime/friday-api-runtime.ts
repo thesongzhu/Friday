@@ -125,6 +125,7 @@ import {
   type FridayMutatingActionTicket,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
+import { assertBoundPrincipalForOperation } from "../../security/friday-owner-session-channel-capability.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -2064,34 +2065,39 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const approveWorkflowApproval = async (ctx: {
     params: unknown;
     body: unknown;
-    principal?: { userId?: string } | null;
+    principal?: FridayAuthPrincipal | null;
   }) => {
     const { approvalId } = ctx.params as { approvalId: string };
     const body = ctx.body as { comment?: string };
-    const userId = ctx.principal?.userId;
-    if (!userId) {
-      throw new FridayDomainError("AUTH_REQUIRED", "Authenticated user required for approval", { httpStatus: 401 });
-    }
+    // Phase 14.5A module_28a: refuse the synthetic public principal even though
+    // it carries a deterministic userId. Workflow approval is high-risk and
+    // must be a bound owner/session/channel principal.
+    const bound = assertBoundPrincipalForOperation(
+      ctx.principal ?? null,
+      "workflow.approval.approve",
+      "api",
+    );
     return approvalService.approve({
       approvalId,
-      decidedByUserId: userId,
+      decidedByUserId: bound.userId ?? bound.principalId,
       comment: body.comment,
     });
   };
   const rejectWorkflowApproval = async (ctx: {
     params: unknown;
     body: unknown;
-    principal?: { userId?: string } | null;
+    principal?: FridayAuthPrincipal | null;
   }) => {
     const { approvalId } = ctx.params as { approvalId: string };
     const body = ctx.body as { comment?: string };
-    const userId = ctx.principal?.userId;
-    if (!userId) {
-      throw new FridayDomainError("AUTH_REQUIRED", "Authenticated user required for rejection", { httpStatus: 401 });
-    }
+    const bound = assertBoundPrincipalForOperation(
+      ctx.principal ?? null,
+      "workflow.approval.reject",
+      "api",
+    );
     return approvalService.reject({
       approvalId,
-      decidedByUserId: userId,
+      decidedByUserId: bound.userId ?? bound.principalId,
       comment: body.comment,
     });
   };
@@ -2223,11 +2229,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
       if (!result.accepted) {
         if (result.statusCode === 401) {
-          throw new FridayDomainError(
-            result.errorCode ?? "WEBHOOK_SIGNATURE_MISSING",
-            "Webhook signature header is missing",
-            { httpStatus: 401 },
-          );
+          const code = result.errorCode ?? "WEBHOOK_SIGNATURE_MISSING";
+          const message =
+            code === "WORKFLOW_WEBHOOK_HMAC_REQUIRED"
+              ? "Workflow webhook requires HMAC verification by default; bearer path-token-only mode requires explicit opt-in."
+              : code === "WORKFLOW_WEBHOOK_PATH_TOKEN_WEAK"
+                ? "Bearer path-token mode requires a high-entropy path token."
+                : "Webhook signature header is missing";
+          throw new FridayDomainError(code, message, { httpStatus: 401 });
         }
         if (result.statusCode === 403) {
           throw new FridayDomainError(

@@ -875,6 +875,17 @@ describe("API — Workflow routes", () => {
   // ── workflow_trigger_webhook_happy_path ─────────────────────────────────
 
   it("workflow_trigger_webhook_happy_path", async () => {
+    // Phase 14.5A owner/session/channel capability gate (module_28a):
+    // workflow webhooks now require HMAC by default. Bearer path-token-only
+    // mode is allowed only when the path token is opted in via the
+    // FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS env allowlist and meets
+    // the 32-character entropy floor. This test exercises the opt-in path with
+    // a deterministic high-entropy path token and clears the env afterwards.
+    const optInPathToken = "phase145a-bearer-opt-in-token-1234567890abcdef".replace(/[^a-z0-9]/gi, "").slice(0, 40);
+    const previousAllowlist = process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+    process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS = optInPathToken;
+    try {
+
     // 1. Create a workflow with a webhook trigger node in the graph
     const webhookGraph = makeValidGraph();
     // Set the trigger node's config to triggerType=webhook so resync creates a webhook registration
@@ -882,7 +893,7 @@ describe("API — Workflow routes", () => {
       id: "trigger",
       type: "trigger",
       label: "Webhook Trigger",
-      config: { triggerType: "webhook" },
+      config: { triggerType: "webhook", pathToken: optInPathToken },
     };
 
     const createRes = await fetch(`${env.baseUrl}/v1/workflows`, {
@@ -949,6 +960,7 @@ describe("API — Workflow routes", () => {
     );
     expect(webhookReg).toBeDefined();
     expect(webhookReg!.webhookPathToken).toBeTruthy();
+    expect(webhookReg!.webhookPathToken).toBe(optInPathToken);
 
     const pathToken = webhookReg!.webhookPathToken!;
 
@@ -996,6 +1008,98 @@ describe("API — Workflow routes", () => {
       await new Promise((r) => setTimeout(r, 100));
     }
     expect(terminalStatus).toBeDefined();
+    } finally {
+      // Restore env to avoid leaking the opt-in across other tests.
+      if (previousAllowlist === undefined) {
+        delete process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+      } else {
+        process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS = previousAllowlist;
+      }
+    }
+  });
+
+  // ── workflow_trigger_webhook_default_requires_hmac (Phase 14.5A) ────────
+
+  it("workflow_trigger_webhook_default_rejects_unsigned_invocation", async () => {
+    // Phase 14.5A owner/session/channel capability gate (module_28a):
+    // a workflow webhook without webhookSecretRef AND without opt-in must
+    // fail closed with WORKFLOW_WEBHOOK_HMAC_REQUIRED.
+    const webhookGraph = makeValidGraph();
+    const defaultPathToken = "phase145a-default-hmac-required-12345678".replace(/[^a-z0-9]/gi, "");
+    webhookGraph.graph.nodes[0] = {
+      id: "trigger",
+      type: "trigger",
+      label: "Webhook Trigger Default Reject",
+      config: { triggerType: "webhook", pathToken: defaultPathToken },
+    };
+
+    const createRes = await fetch(`${env.baseUrl}/v1/workflows`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        slug: "test-wf-webhook-default-reject",
+        name: "Webhook Default Reject Workflow",
+        graph: webhookGraph,
+      }),
+    });
+    const createJson = (await createRes.json()) as {
+      ok: boolean;
+      data: {
+        workflow: { id: string };
+        version: { id: string; versionNumber: number };
+      };
+    };
+    expect(createJson.ok).toBe(true);
+    const workflowId = createJson.data.workflow.id;
+    const versionNumber = createJson.data.version.versionNumber;
+
+    const publishRes = await fetch(
+      `${env.baseUrl}/v1/workflows/${workflowId}/publish`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ versionNumber }),
+      },
+    );
+    expect(publishRes.status).toBe(200);
+
+    const resyncRes = await fetch(
+      `${env.baseUrl}/v1/workflows/${workflowId}/triggers/resync`,
+      {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({}),
+      },
+    );
+    expect(resyncRes.status).toBe(200);
+
+    // Ensure the env opt-in does not include this path token.
+    const previousAllowlist = process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+    delete process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+
+    try {
+      const webhookRes = await fetch(
+        `${env.baseUrl}/v1/workflow-webhooks/${defaultPathToken}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event: "test", data: { foo: "bar" } }),
+        },
+      );
+      expect(webhookRes.status).toBe(401);
+      const webhookJson = (await webhookRes.json()) as {
+        ok: boolean;
+        error: { code: string; message: string };
+      };
+      expect(webhookJson.ok).toBe(false);
+      expect(webhookJson.error.code).toBe("WORKFLOW_WEBHOOK_HMAC_REQUIRED");
+    } finally {
+      if (previousAllowlist === undefined) {
+        delete process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS;
+      } else {
+        process.env.FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS = previousAllowlist;
+      }
+    }
   });
 
   // ── workflow_error_shapes ──────────────────────────────────────────────

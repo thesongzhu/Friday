@@ -93,7 +93,12 @@ export interface FridayEnginePlanningGate {
     taskProfile?: FridayEngineRunInput["taskProfile"];
   }): Promise<FridayAgentRuntimeResult>;
 
-  rejectPlan(input: { runId: string }): FridayAgentRuntimeResult;
+  rejectPlan(input: {
+    runId: string;
+    principalId?: string;
+    scopes?: string[];
+    executionContext?: FridayEngineRunInput["executionContext"];
+  }): FridayAgentRuntimeResult;
 }
 
 export type FridayEnginePlanningDecision =
@@ -436,7 +441,12 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       }
 
       if (decision.action === "reject") {
-        const rejected = planningGate.rejectPlan({ runId: decision.runId });
+        const rejected = planningGate.rejectPlan({
+          runId: decision.runId,
+          principalId: input.principalId,
+          scopes: input.scopes,
+          executionContext: input.executionContext,
+        });
         if (input.sessionKey && sessionDeps) {
           await sessionDeps
             .addMessage(input.sessionKey, {
