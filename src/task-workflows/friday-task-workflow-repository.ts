@@ -21,7 +21,13 @@ import type {
   FridayTaskWorkflowContextPackage,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowEvidenceSource,
+  FridayTaskWorkflowFallbackAvailability,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowLaneIndependence,
+  FridayTaskWorkflowLaneKind,
+  FridayTaskWorkflowLaneRecord,
+  FridayTaskWorkflowLaneRole,
+  FridayTaskWorkflowLaneStatus,
   FridayTaskWorkflowRecord,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
@@ -97,6 +103,22 @@ export interface FridayTaskWorkflowRepository {
     db: Database.Database,
     workflowId: string,
   ): FridayTaskWorkflowCloseoutReceipt | null;
+  insertLane(
+    db: Database.Database,
+    record: FridayTaskWorkflowLaneRecord,
+  ): void;
+  updateLane(
+    db: Database.Database,
+    record: FridayTaskWorkflowLaneRecord,
+  ): void;
+  getLane(
+    db: Database.Database,
+    laneId: string,
+  ): FridayTaskWorkflowLaneRecord | null;
+  listLanes(
+    db: Database.Database,
+    workflowId: string,
+  ): readonly FridayTaskWorkflowLaneRecord[];
 }
 
 export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowRepository {
@@ -220,10 +242,12 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
       db.prepare(
         `INSERT INTO task_workflow_claims (
            id, workflow_id, spec_hash, claim_text, claim_kind, status,
-           reason, verifier_verdict, evidence_ref_count, created_at, updated_at
+           reason, verifier_verdict, verifier_lane_id,
+           evidence_ref_count, created_at, updated_at
          ) VALUES (
            @id, @workflowId, @specHash, @claimText, @claimKind, @status,
-           @reason, @verifierVerdict, @evidenceRefCount, @createdAt, @updatedAt
+           @reason, @verifierVerdict, @verifierLaneId,
+           @evidenceRefCount, @createdAt, @updatedAt
          )`,
       ).run({
         id: record.id,
@@ -234,6 +258,7 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         status: record.status,
         reason: record.reason,
         verifierVerdict: record.verifierVerdict,
+        verifierLaneId: record.verifierLaneId,
         evidenceRefCount: record.evidenceRefCount,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
@@ -265,6 +290,7 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
            status = @status,
            reason = @reason,
            verifier_verdict = @verifierVerdict,
+           verifier_lane_id = @verifierLaneId,
            evidence_ref_count = @evidenceRefCount,
            updated_at = @updatedAt
          WHERE id = @id`,
@@ -273,6 +299,7 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         status: record.status,
         reason: record.reason,
         verifierVerdict: record.verifierVerdict,
+        verifierLaneId: record.verifierLaneId,
         evidenceRefCount: record.evidenceRefCount,
         updatedAt: record.updatedAt,
       });
@@ -409,6 +436,83 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         createdAt: String(row.created_at),
       };
     },
+
+    insertLane(db, record) {
+      db.prepare(
+        `INSERT INTO task_workflow_lanes (
+           id, workflow_id, lane_kind, lane_role, parent_lane_id,
+           status, independence, executor_run_ref, provider_id,
+           route_trace_ref, context_snapshot_hash, context_snapshot_spec_hash,
+           fallback_availability, blocker, created_at, updated_at
+         ) VALUES (
+           @id, @workflowId, @laneKind, @laneRole, @parentLaneId,
+           @status, @independence, @executorRunRef, @providerId,
+           @routeTraceRef, @contextSnapshotHash, @contextSnapshotSpecHash,
+           @fallbackAvailability, @blocker, @createdAt, @updatedAt
+         )`,
+      ).run({
+        id: record.id,
+        workflowId: record.workflowId,
+        laneKind: record.laneKind,
+        laneRole: record.laneRole,
+        parentLaneId: record.parentLaneId,
+        status: record.status,
+        independence: record.independence,
+        executorRunRef: record.executorRunRef,
+        providerId: record.providerId,
+        routeTraceRef: record.routeTraceRef,
+        contextSnapshotHash: record.contextSnapshotHash,
+        contextSnapshotSpecHash: record.contextSnapshotSpecHash,
+        fallbackAvailability: record.fallbackAvailability,
+        blocker: record.blocker,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      });
+    },
+
+    updateLane(db, record) {
+      db.prepare(
+        `UPDATE task_workflow_lanes SET
+           status = @status,
+           independence = @independence,
+           executor_run_ref = @executorRunRef,
+           provider_id = @providerId,
+           route_trace_ref = @routeTraceRef,
+           fallback_availability = @fallbackAvailability,
+           blocker = @blocker,
+           updated_at = @updatedAt
+         WHERE id = @id`,
+      ).run({
+        id: record.id,
+        status: record.status,
+        independence: record.independence,
+        executorRunRef: record.executorRunRef,
+        providerId: record.providerId,
+        routeTraceRef: record.routeTraceRef,
+        fallbackAvailability: record.fallbackAvailability,
+        blocker: record.blocker,
+        updatedAt: record.updatedAt,
+      });
+    },
+
+    getLane(db, laneId) {
+      const row = db
+        .prepare(`SELECT * FROM task_workflow_lanes WHERE id = ?`)
+        .get(laneId) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return rowToLane(row);
+    },
+
+    listLanes(db, workflowId) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM task_workflow_lanes
+           WHERE workflow_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all(workflowId) as Record<string, unknown>[];
+      return rows.map(rowToLane);
+    },
   };
 }
 
@@ -446,7 +550,50 @@ function rowToClaim(row: Record<string, unknown>): FridayTaskWorkflowClaimRecord
     reason: row.reason === null ? null : String(row.reason),
     verifierVerdict:
       row.verifier_verdict === null ? null : String(row.verifier_verdict),
+    verifierLaneId:
+      row.verifier_lane_id === null || row.verifier_lane_id === undefined
+        ? null
+        : String(row.verifier_lane_id),
     evidenceRefCount: Number(row.evidence_ref_count),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function rowToLane(row: Record<string, unknown>): FridayTaskWorkflowLaneRecord {
+  return {
+    id: String(row.id),
+    workflowId: String(row.workflow_id),
+    laneKind: row.lane_kind as FridayTaskWorkflowLaneKind,
+    laneRole: row.lane_role as FridayTaskWorkflowLaneRole,
+    parentLaneId:
+      row.parent_lane_id === null || row.parent_lane_id === undefined
+        ? null
+        : String(row.parent_lane_id),
+    status: row.status as FridayTaskWorkflowLaneStatus,
+    independence: row.independence as FridayTaskWorkflowLaneIndependence,
+    executorRunRef:
+      row.executor_run_ref === null || row.executor_run_ref === undefined
+        ? null
+        : String(row.executor_run_ref),
+    providerId:
+      row.provider_id === null || row.provider_id === undefined
+        ? null
+        : String(row.provider_id),
+    routeTraceRef:
+      row.route_trace_ref === null || row.route_trace_ref === undefined
+        ? null
+        : String(row.route_trace_ref),
+    contextSnapshotHash: String(row.context_snapshot_hash),
+    contextSnapshotSpecHash: String(row.context_snapshot_spec_hash),
+    fallbackAvailability:
+      row.fallback_availability === null || row.fallback_availability === undefined
+        ? null
+        : (row.fallback_availability as FridayTaskWorkflowFallbackAvailability),
+    blocker:
+      row.blocker === null || row.blocker === undefined
+        ? null
+        : String(row.blocker),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };

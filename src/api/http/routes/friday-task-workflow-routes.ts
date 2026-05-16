@@ -19,13 +19,20 @@ import {
   type FridayTaskWorkflowAttachEvidenceRefInput,
   type FridayTaskWorkflowBlockClaimInput,
   type FridayTaskWorkflowClaimKind,
+  type FridayTaskWorkflowCompleteLaneInput,
   type FridayTaskWorkflowContextPackage,
   type FridayTaskWorkflowCreateInput,
   type FridayTaskWorkflowDraftClaimInput,
   type FridayTaskWorkflowEvidenceSource,
+  type FridayTaskWorkflowFallbackAvailability,
+  type FridayTaskWorkflowLaneIndependence,
+  type FridayTaskWorkflowLaneRole,
+  type FridayTaskWorkflowOpenExecutorLaneInput,
+  type FridayTaskWorkflowOpenVerifierLaneInput,
   type FridayTaskWorkflowReviseInput,
   type FridayTaskWorkflowRisk,
   type FridayTaskWorkflowService,
+  type FridayTaskWorkflowSubmitVerifierVerdictInput,
   type FridayTaskWorkflowSupervisorMode,
   type FridayTaskWorkflowVerifyClaimInput,
 } from "../../../task-workflows/index.js";
@@ -76,6 +83,28 @@ const VALID_EVIDENCE_SOURCES: ReadonlySet<FridayTaskWorkflowEvidenceSource> = ne
   "observability_audit",
   "manual_external",
   "docs_intent_reference",
+]);
+
+const VALID_LANE_ROLES: ReadonlySet<FridayTaskWorkflowLaneRole> = new Set([
+  "native",
+  "provider",
+]);
+
+const VALID_INDEPENDENCE_CLAIMS: ReadonlySet<FridayTaskWorkflowLaneIndependence> = new Set([
+  "independent",
+  "degraded_unavailable",
+  "degraded_same_provider",
+]);
+
+const VALID_LANE_COMPLETION_STATUSES: ReadonlySet<"completed" | "blocked"> = new Set([
+  "completed",
+  "blocked",
+]);
+
+const VALID_FALLBACK_AVAILABILITY: ReadonlySet<FridayTaskWorkflowFallbackAvailability> = new Set([
+  "not_used",
+  "used_same_provider",
+  "used_alternate_provider",
 ]);
 
 function disabledMessage(deps: FridayTaskWorkflowRoutesDeps): string {
@@ -289,7 +318,170 @@ function parseVerifyClaimBody(raw: unknown): FridayTaskWorkflowVerifyClaimInput 
       { httpStatus: 400 },
     );
   }
-  return { verifierVerdict: body.verifierVerdict };
+  let verifierLaneId: string | undefined;
+  if (body.verifierLaneId !== undefined) {
+    if (typeof body.verifierLaneId !== "string") {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "verifierLaneId must be a string when provided.",
+        { httpStatus: 400 },
+      );
+    }
+    verifierLaneId = body.verifierLaneId;
+  }
+  return { verifierVerdict: body.verifierVerdict, verifierLaneId };
+}
+
+function parseLaneRole(value: unknown): FridayTaskWorkflowLaneRole {
+  if (
+    typeof value !== "string" ||
+    !VALID_LANE_ROLES.has(value as FridayTaskWorkflowLaneRole)
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `laneRole must be one of ${[...VALID_LANE_ROLES].join(", ")}.`,
+      { httpStatus: 400 },
+    );
+  }
+  return value as FridayTaskWorkflowLaneRole;
+}
+
+function parseIndependenceClaim(value: unknown): FridayTaskWorkflowLaneIndependence {
+  if (
+    typeof value !== "string" ||
+    !VALID_INDEPENDENCE_CLAIMS.has(value as FridayTaskWorkflowLaneIndependence)
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `independenceClaim must be one of ${[...VALID_INDEPENDENCE_CLAIMS].join(", ")}.`,
+      { httpStatus: 400 },
+    );
+  }
+  return value as FridayTaskWorkflowLaneIndependence;
+}
+
+function parseOptionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} must be a string when provided.`,
+      { httpStatus: 400 },
+    );
+  }
+  return value;
+}
+
+function parseOpenExecutorLaneBody(raw: unknown): FridayTaskWorkflowOpenExecutorLaneInput {
+  const body = asJsonObject(raw);
+  return {
+    laneRole: parseLaneRole(body.laneRole),
+    providerId: parseOptionalString(body.providerId, "providerId"),
+  };
+}
+
+function parseOpenVerifierLaneBody(raw: unknown): FridayTaskWorkflowOpenVerifierLaneInput {
+  const body = asJsonObject(raw);
+  if (typeof body.parentLaneId !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "parentLaneId is required.",
+      { httpStatus: 400 },
+    );
+  }
+  return {
+    parentLaneId: body.parentLaneId,
+    laneRole: parseLaneRole(body.laneRole),
+    providerId: parseOptionalString(body.providerId, "providerId"),
+    independenceClaim: parseIndependenceClaim(body.independenceClaim),
+  };
+}
+
+function parseCompleteLaneBody(raw: unknown): FridayTaskWorkflowCompleteLaneInput {
+  const body = asJsonObject(raw);
+  if (
+    typeof body.status !== "string" ||
+    !VALID_LANE_COMPLETION_STATUSES.has(body.status as "completed" | "blocked")
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `status must be one of ${[...VALID_LANE_COMPLETION_STATUSES].join(", ")}.`,
+      { httpStatus: 400 },
+    );
+  }
+  let fallbackAvailability: FridayTaskWorkflowFallbackAvailability | undefined;
+  if (body.fallbackAvailability !== undefined) {
+    if (
+      typeof body.fallbackAvailability !== "string" ||
+      !VALID_FALLBACK_AVAILABILITY.has(
+        body.fallbackAvailability as FridayTaskWorkflowFallbackAvailability,
+      )
+    ) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        `fallbackAvailability must be one of ${[...VALID_FALLBACK_AVAILABILITY].join(", ")} when provided.`,
+        { httpStatus: 400 },
+      );
+    }
+    fallbackAvailability = body.fallbackAvailability as FridayTaskWorkflowFallbackAvailability;
+  }
+  return {
+    status: body.status as "completed" | "blocked",
+    executorRunRef:
+      body.executorRunRef === undefined
+        ? undefined
+        : body.executorRunRef === null
+          ? null
+          : typeof body.executorRunRef === "string"
+            ? body.executorRunRef
+            : (() => {
+                throw new FridayDomainError(
+                  "VALIDATION_ERROR",
+                  "executorRunRef must be a string or null when provided.",
+                  { httpStatus: 400 },
+                );
+              })(),
+    routeTraceRef:
+      body.routeTraceRef === undefined
+        ? undefined
+        : body.routeTraceRef === null
+          ? null
+          : typeof body.routeTraceRef === "string"
+            ? body.routeTraceRef
+            : (() => {
+                throw new FridayDomainError(
+                  "VALIDATION_ERROR",
+                  "routeTraceRef must be a string or null when provided.",
+                  { httpStatus: 400 },
+                );
+              })(),
+    fallbackAvailability,
+    blocker: parseOptionalString(body.blocker, "blocker"),
+  };
+}
+
+function parseSubmitVerifierVerdictBody(
+  raw: unknown,
+): FridayTaskWorkflowSubmitVerifierVerdictInput {
+  const body = asJsonObject(raw);
+  if (typeof body.claimId !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "claimId is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.verifierVerdict !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "verifierVerdict is required.",
+      { httpStatus: 400 },
+    );
+  }
+  return {
+    claimId: body.claimId,
+    verifierVerdict: body.verifierVerdict,
+  };
 }
 
 function parseBlockClaimBody(raw: unknown): FridayTaskWorkflowBlockClaimInput {
@@ -502,6 +694,85 @@ export function createFridayTaskWorkflowRoutes(
         const service = requireService(deps);
         const { workflowId } = ctx.params as { workflowId: string };
         return { receipt: service.closeout(workflowId) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.executor.open",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/lanes/executor",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        const input = parseOpenExecutorLaneBody(ctx.body);
+        return { lane: service.openExecutorLane(workflowId, input) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.verifier.open",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/lanes/verifier",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        const input = parseOpenVerifierLaneBody(ctx.body);
+        return { lane: service.openVerifierLane(workflowId, input) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.complete",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/lanes/:laneId/complete",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId, laneId } = ctx.params as {
+          workflowId: string;
+          laneId: string;
+        };
+        const input = parseCompleteLaneBody(ctx.body);
+        return { lane: service.completeLane(workflowId, laneId, input) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.verdict",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/lanes/:laneId/verdict",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId, laneId } = ctx.params as {
+          workflowId: string;
+          laneId: string;
+        };
+        const input = parseSubmitVerifierVerdictBody(ctx.body);
+        return { claim: service.submitVerifierVerdict(workflowId, laneId, input) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.list",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/lanes",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        return { items: service.listLanes(workflowId) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.get",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/lanes/:laneId",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId, laneId } = ctx.params as {
+          workflowId: string;
+          laneId: string;
+        };
+        return { lane: service.getLane(workflowId, laneId) };
       },
     },
   ];

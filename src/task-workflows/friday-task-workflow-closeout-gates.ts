@@ -22,6 +22,8 @@ import type {
   FridayTaskWorkflowContextPackage,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowLaneRecord,
+  FridayTaskWorkflowRisk,
 } from "./friday-task-workflow.types.js";
 
 export interface FridayTaskWorkflowCloseoutGateInput {
@@ -32,6 +34,12 @@ export interface FridayTaskWorkflowCloseoutGateInput {
     readonly FridayTaskWorkflowEvidenceRefRecord[]
   >;
   readonly contextPackage: FridayTaskWorkflowContextPackage;
+  /** Phase 13.5B: lanes opened on the workflow. */
+  readonly lanes: readonly FridayTaskWorkflowLaneRecord[];
+  /** Phase 13.5B: workflow risk classification (drives independent_verifier_required). */
+  readonly risk: FridayTaskWorkflowRisk;
+  /** Phase 13.5B: current workflow spec_hash for lane-binding drift detection. */
+  readonly workflowSpecHash: string;
 }
 
 type GateEvaluator = (
@@ -142,6 +150,70 @@ const REQUIRED_GATE_EVALUATORS: Readonly<Record<string, GateEvaluator>> = {
     }
     return { status: "pass", reason: null };
   },
+
+  executor_lane_context_bound: (input) => {
+    const executorLanes = input.lanes.filter(
+      (lane) => lane.laneKind === "executor",
+    );
+    const offending: string[] = [];
+    for (const lane of executorLanes) {
+      if (!lane.contextSnapshotHash || lane.contextSnapshotHash.length === 0) {
+        offending.push(`${lane.id} (missing context_snapshot_hash)`);
+        continue;
+      }
+      if (lane.contextSnapshotSpecHash !== input.workflowSpecHash) {
+        offending.push(
+          `${lane.id} (context_snapshot_spec_hash drift: lane=${lane.contextSnapshotSpecHash.slice(0, 12)}… workflow=${input.workflowSpecHash.slice(0, 12)}…)`,
+        );
+      }
+    }
+    if (offending.length > 0) {
+      return {
+        status: "block",
+        reason: `executor lane(s) lack a current context binding: ${offending.join(", ")}`,
+      };
+    }
+    return { status: "pass", reason: null };
+  },
+
+  independent_verifier_required: (input) => {
+    if (input.risk !== "high") {
+      return { status: "pass", reason: null };
+    }
+    const verified = input.claims.filter((c) => c.status === "verified");
+    if (verified.length === 0) {
+      return { status: "pass", reason: null };
+    }
+    const lanesById = new Map(input.lanes.map((lane) => [lane.id, lane]));
+    const offending: string[] = [];
+    for (const claim of verified) {
+      if (!claim.verifierLaneId) {
+        offending.push(`${claim.id} (no verifierLaneId)`);
+        continue;
+      }
+      const lane = lanesById.get(claim.verifierLaneId);
+      if (!lane) {
+        offending.push(`${claim.id} (verifierLaneId references unknown lane)`);
+        continue;
+      }
+      if (lane.laneKind !== "verifier") {
+        offending.push(`${claim.id} (verifierLaneId is not a verifier lane)`);
+        continue;
+      }
+      if (lane.independence !== "independent") {
+        offending.push(
+          `${claim.id} (verifier lane independence=${lane.independence})`,
+        );
+      }
+    }
+    if (offending.length > 0) {
+      return {
+        status: "block",
+        reason: `high-risk verified claim(s) lack an independent verifier lane: ${offending.join(", ")}`,
+      };
+    }
+    return { status: "pass", reason: null };
+  },
 };
 
 const REQUIRED_GATE_FALLBACK_REASON: Readonly<Record<string, string>> = {
@@ -159,6 +231,8 @@ const REQUIRED_GATE_FALLBACK_REASON: Readonly<Record<string, string>> = {
     "no required-gate evaluator data; treating as block per Phase 13.5A required-gate-never-silent rule.",
   context_package_scope_limit:
     "no required-gate evaluator data; treating as block per Phase 13.5A required-gate-never-silent rule.",
+  executor_lane_context_bound:
+    "no required-gate evaluator data; treating as block per Phase 13.5B executor-lane-context-bound rule.",
 };
 
 /**
