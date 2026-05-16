@@ -3377,6 +3377,28 @@ export async function createFridayHub(
     );
   }
 
+  // ── Phase 13.5A Task Workflow Policy ──
+  //
+  // Construct the additive task-workflow service. The service is always
+  // available when the database layer is present; it only writes additive
+  // task workflow tables and never mutates /v1/agent/runs state. Routes
+  // are always registered; when the service slot is null the handlers
+  // return `503 TASK_WORKFLOWS_DISABLED` (never 404).
+  const taskWorkflowDeps: NonNullable<
+    Parameters<typeof createFridayApiRuntime>[0]["taskWorkflows"]
+  > = await (async () => {
+    const { createFridayTaskWorkflowRepository, createFridayTaskWorkflowService } =
+      await import("../task-workflows/index.js");
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db: stateRuntime!.sqlite,
+      repository,
+      idGenerator,
+      nowIso,
+    });
+    return { service, disabledReason: null };
+  })();
+
   // ── Link Understanding pipeline ──
   // Wire the full auto-detect-links service for session message enrichment.
   {
@@ -6457,6 +6479,7 @@ export async function createFridayHub(
     desktop: desktopRouteDeps,
     mediaUnderstanding: mediaUnderstandingDeps,
     socialImport: socialImportDeps,
+    taskWorkflows: taskWorkflowDeps,
   });
 
   if (reflexService) {

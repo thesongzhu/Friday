@@ -994,6 +994,60 @@ export const REAL_WORLD_SCENARIOS = [
     },
     suites: ["daily", "nightly", "weekly"],
   }),
+  // Phase 13.5A Module 26a/26d — task-workflows read-only boundary catalog.
+  //
+  // Honesty note: this scenario only probes that the read-only boundary
+  // catalog route (/v1/task-workflows/boundaries) returns the built-in
+  // BoundaryContract list when the task-workflow service is wired into
+  // the runtime. It does NOT exercise create/revise/claim/evidence/verify/
+  // closeout transitions, gate enforcement, claim-kind/evidence compatibility,
+  // verifier verdict semantics, or revised-spec lineage; those are covered
+  // by the local unit tests (test/unit/task-workflows/) and the route
+  // unit tests (test/unit/api/routes/friday-task-workflow-routes.test.ts).
+  // Phase 13.5A release-complete claim still requires a same-SHA RGG
+  // artifact at PR head, which is Stage 7 evidence and not provided by
+  // this catalog-only scenario on its own.
+  httpScenario({
+    id: "l2-task-workflows-boundaries-contract",
+    layer: "L2",
+    productArea: "task workflows",
+    entrySurface: "/v1/task-workflows/boundaries",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/task-workflows/boundaries",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "task-workflows boundary catalog route returns ok envelope when the service is wired",
+      "items array shape is present (read-only catalog reachability only)",
+      "this scenario does not prove gate enforcement, claim verification, or closeout receipt semantics",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-13-5", "module-26a", "module-26d", "read-only-catalog"],
+  }),
+  // Phase 13.5A Module 26a/26d — task-workflows read-only gate catalog.
+  httpScenario({
+    id: "l2-task-workflows-gates-contract",
+    layer: "L2",
+    productArea: "task workflows",
+    entrySurface: "/v1/task-workflows/gates",
+    routeFamily: "contract",
+    execution: {
+      public: true,
+      path: "/v1/task-workflows/gates",
+      jsonPathsPresent: ["data.items"],
+    },
+    expectedEvidence: [
+      "task-workflows gate catalog route returns ok envelope when the service is wired",
+      "items array shape is present (read-only catalog reachability only)",
+      "this scenario does not prove required-gate-undisable enforcement; that is covered by local unit tests",
+    ],
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-13-5", "module-26a", "module-26d", "read-only-catalog"],
+  }),
   agentScenario({
     id: "l3-chat-direct-answer",
     layer: "L3",
