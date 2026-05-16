@@ -63,10 +63,30 @@ export type {
   CreateFridayTaskWorkflowServiceDeps,
   FridayTaskWorkflowService,
 } from "./friday-task-workflow-service.js";
+export {
+  buildFridayTaskWorkflowSupervisorOverview,
+} from "./friday-task-workflow-supervisor-view.js";
+export type { BuildFridayTaskWorkflowSupervisorOverviewInput } from "./friday-task-workflow-supervisor-view.js";
+export {
+  composeFridayTaskWorkflowChannelDispatchedDisclosure,
+  composeFridayTaskWorkflowChannelIssuedDisclosure,
+  FRIDAY_TASK_WORKFLOW_CHANNEL_COMMAND_DEFAULT_TTL_MS,
+  getFridayTaskWorkflowChannelDispatchedAction,
+  hashFridayChannelIdentifier,
+  issueFridayChannelCommandConfirmationToken,
+} from "./friday-task-workflow-channel-commands.js";
+export {
+  projectFridayEvidenceExplorerEntry,
+  redactFridayEvidenceRefForDrilldown,
+} from "./friday-task-workflow-evidence-explorer.js";
 export type {
   FridayTaskWorkflowAttachEvidenceRefInput,
   FridayTaskWorkflowBlockClaimInput,
   FridayTaskWorkflowBoundaryContract,
+  FridayTaskWorkflowChannelCommandRecord,
+  FridayTaskWorkflowChannelCommandStatus,
+  FridayTaskWorkflowChannelCommandSummary,
+  FridayTaskWorkflowChannelIntentKind,
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowClaimStatus,
@@ -79,19 +99,28 @@ export type {
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowCompleteLaneInput,
+  FridayTaskWorkflowConfirmChannelCommandInput,
+  FridayTaskWorkflowConfirmChannelCommandResult,
   FridayTaskWorkflowContextPackage,
+  FridayTaskWorkflowContextPackageSummary,
   FridayTaskWorkflowCreateInput,
   FridayTaskWorkflowDraftClaimInput,
+  FridayTaskWorkflowEvidenceExplorerEntry,
+  FridayTaskWorkflowEvidenceExplorerQuery,
+  FridayTaskWorkflowEvidenceRawDrilldown,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowEvidenceSource,
   FridayTaskWorkflowFallbackAvailability,
   FridayTaskWorkflowGate,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowIssueChannelCommandInput,
+  FridayTaskWorkflowIssueChannelCommandResult,
   FridayTaskWorkflowLaneIndependence,
   FridayTaskWorkflowLaneKind,
   FridayTaskWorkflowLaneRecord,
   FridayTaskWorkflowLaneRole,
   FridayTaskWorkflowLaneStatus,
+  FridayTaskWorkflowLaneSummary,
   FridayTaskWorkflowOpenExecutorLaneInput,
   FridayTaskWorkflowOpenVerifierLaneInput,
   FridayTaskWorkflowPreview,
@@ -104,5 +133,6 @@ export type {
   FridayTaskWorkflowSubmitVerifierVerdictInput,
   FridayTaskWorkflowSupervisorCursorRecord,
   FridayTaskWorkflowSupervisorMode,
+  FridayTaskWorkflowSupervisorOverview,
   FridayTaskWorkflowVerifyClaimInput,
 } from "./friday-task-workflow.types.js";

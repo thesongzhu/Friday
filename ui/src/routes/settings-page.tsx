@@ -28,6 +28,7 @@ import { securityApi } from "@/lib/api/security";
 import { systemApi } from "@/lib/api/system";
 import { apiClient } from "@/lib/api/client";
 import { ShellCard, StatusPill, ActionButton, ConfirmDialog } from "@/components/core/primitives";
+import { useUixPreferences } from "@/hooks/use-uix-preferences";
 import { systemKeys } from "@/lib/system/query-keys";
 import { summarizeHealthReasons } from "@/lib/system/view-models";
 import {
@@ -1940,10 +1941,115 @@ export function SettingsPage() {
             </div>
           ) : null}
         </ShellCard>
+
+        <SupervisorModeDefaultCard locale={locale} />
       </div>
 
     </div>
     </div>
+  );
+}
+
+type SupervisorModeDefault = "off" | "light" | "standard" | "strict";
+
+const SUPERVISOR_MODE_DEFAULTS: readonly SupervisorModeDefault[] = [
+  "off",
+  "light",
+  "standard",
+  "strict",
+];
+
+function isSupervisorModeDefault(value: unknown): value is SupervisorModeDefault {
+  return (
+    typeof value === "string" &&
+    (SUPERVISOR_MODE_DEFAULTS as readonly string[]).includes(value)
+  );
+}
+
+function SupervisorModeDefaultCard(props: { locale: AppLocale }) {
+  const { locale } = props;
+  const { values, setPreference, isLoading } = useUixPreferences();
+  const stored = values["task_workflow_supervisor_mode_default"];
+  const current: SupervisorModeDefault = isSupervisorModeDefault(stored)
+    ? stored
+    : "standard";
+  const [pending, setPending] = useState<SupervisorModeDefault | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const handleSelect = (next: SupervisorModeDefault) => {
+    if (next === current) return;
+    setPending(next);
+    setConfirmOpen(true);
+  };
+
+  const handleConfirm = () => {
+    if (pending) {
+      setPreference("task_workflow_supervisor_mode_default", pending);
+      toast.success(
+        localize(
+          locale,
+          `已将任务工作流默认监督员模式设为 ${pending}`,
+          `Task workflow supervisor default set to ${pending}`,
+        ),
+      );
+    }
+    setConfirmOpen(false);
+    setPending(null);
+  };
+
+  const handleCancel = () => {
+    setConfirmOpen(false);
+    setPending(null);
+  };
+
+  return (
+    <ShellCard
+      eyebrow={localize(locale, "任务工作流", "Task Workflows")}
+      title={localize(locale, "默认监督员模式", "Default supervisor mode")}
+    >
+      <p className="mb-3 text-xs text-[color:var(--color-text-tertiary)]">
+        {localize(
+          locale,
+          "选择新任务工作流的默认监督员模式。必选确定性门禁永远不可被模式或用户配置关闭。",
+          "Default supervisor mode for new task workflows. Required deterministic gates cannot be disabled by mode or user configuration.",
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {SUPERVISOR_MODE_DEFAULTS.map((mode) => (
+          <ActionButton
+            key={mode}
+            tone={mode === current ? "primary" : "secondary"}
+            disabled={isLoading}
+            onClick={() => handleSelect(mode)}
+          >
+            {mode}
+          </ActionButton>
+        ))}
+        <span className="ml-2 text-xs text-[color:var(--color-text-tertiary)]">
+          {localize(locale, "当前", "Current")}: <code>{current}</code>
+        </span>
+      </div>
+      <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
+        {localize(
+          locale,
+          "保存后存入 UIX 偏好,不写入记忆系统。",
+          "Saved to UIX preferences only; never written to the memory system.",
+        )}
+      </p>
+      <ConfirmDialog
+        open={confirmOpen}
+        title={localize(locale, "确认更改默认监督员模式", "Confirm supervisor default change")}
+        description={localize(
+          locale,
+          `从 ${current} 切换到 ${pending ?? ""}。这是 UIX 偏好,不会影响必选门禁。`,
+          `Switching from ${current} to ${pending ?? ""}. This is a UIX preference and does not change required gates.`,
+        )}
+        confirmLabel={localize(locale, "保存", "Save")}
+        cancelLabel={localize(locale, "取消", "Cancel")}
+        onConfirm={handleConfirm}
+        onCancel={handleCancel}
+      />
+    </ShellCard>
   );
 }
 

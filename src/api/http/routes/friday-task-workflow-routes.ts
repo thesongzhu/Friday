@@ -18,14 +18,18 @@ import {
   FRIDAY_TASK_WORKFLOW_BUILTIN_GATES,
   type FridayTaskWorkflowAttachEvidenceRefInput,
   type FridayTaskWorkflowBlockClaimInput,
+  type FridayTaskWorkflowChannelIntentKind,
   type FridayTaskWorkflowClaimKind,
   type FridayTaskWorkflowCliBackendId,
   type FridayTaskWorkflowCompleteLaneInput,
+  type FridayTaskWorkflowConfirmChannelCommandInput,
   type FridayTaskWorkflowContextPackage,
   type FridayTaskWorkflowCreateInput,
   type FridayTaskWorkflowDraftClaimInput,
+  type FridayTaskWorkflowEvidenceExplorerQuery,
   type FridayTaskWorkflowEvidenceSource,
   type FridayTaskWorkflowFallbackAvailability,
+  type FridayTaskWorkflowIssueChannelCommandInput,
   type FridayTaskWorkflowLaneIndependence,
   type FridayTaskWorkflowLaneRole,
   type FridayTaskWorkflowOpenExecutorLaneInput,
@@ -38,6 +42,13 @@ import {
   type FridayTaskWorkflowSupervisorMode,
   type FridayTaskWorkflowVerifyClaimInput,
 } from "../../../task-workflows/index.js";
+
+const VALID_CHANNEL_INTENT_KINDS: ReadonlySet<FridayTaskWorkflowChannelIntentKind> = new Set([
+  "progress_query",
+  "closeout_request",
+  "supervisor_mode_preview",
+  "confirm_token",
+]);
 
 export interface FridayTaskWorkflowRoutesDeps {
   /** Active task workflow service when enabled; null when disabled. */
@@ -557,6 +568,115 @@ function parseRecordCliHandoffBody(
   };
 }
 
+function parseIssueChannelCommandBody(
+  raw: unknown,
+): FridayTaskWorkflowIssueChannelCommandInput {
+  const body = asJsonObject(raw);
+  if (typeof body.channelKind !== "string" || body.channelKind.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "channelKind is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.channelChatId !== "string" || body.channelChatId.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "channelChatId is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.channelMessageId !== "string" || body.channelMessageId.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "channelMessageId is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.senderId !== "string" || body.senderId.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "senderId is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (
+    typeof body.intentKind !== "string" ||
+    !VALID_CHANNEL_INTENT_KINDS.has(body.intentKind as FridayTaskWorkflowChannelIntentKind)
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `intentKind must be one of ${[...VALID_CHANNEL_INTENT_KINDS].join(", ")}.`,
+      { httpStatus: 400 },
+    );
+  }
+  return {
+    channelKind: body.channelKind,
+    channelChatId: body.channelChatId,
+    channelMessageId: body.channelMessageId,
+    senderId: body.senderId,
+    intentKind: body.intentKind as FridayTaskWorkflowChannelIntentKind,
+    ttlMs: parsePositiveIntOptional(body.ttlMs, "ttlMs"),
+  };
+}
+
+function parseConfirmChannelCommandBody(
+  raw: unknown,
+): FridayTaskWorkflowConfirmChannelCommandInput {
+  const body = asJsonObject(raw);
+  if (typeof body.confirmationToken !== "string" || body.confirmationToken.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "confirmationToken is required.",
+      { httpStatus: 400 },
+    );
+  }
+  return { confirmationToken: body.confirmationToken };
+}
+
+function parseEvidenceExplorerQuery(
+  raw: unknown,
+): FridayTaskWorkflowEvidenceExplorerQuery {
+  const query = (raw ?? {}) as Record<string, unknown>;
+  const limitRaw = query.limit;
+  let limit: number | undefined;
+  if (typeof limitRaw === "string" && limitRaw.length > 0) {
+    const parsed = Number(limitRaw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "limit must be a positive integer when provided.",
+        { httpStatus: 400 },
+      );
+    }
+    limit = Math.floor(parsed);
+  }
+  const refSourceRaw = typeof query.refSource === "string" ? query.refSource : undefined;
+  if (refSourceRaw && !VALID_EVIDENCE_SOURCES.has(refSourceRaw as FridayTaskWorkflowEvidenceSource)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `refSource must be one of ${[...VALID_EVIDENCE_SOURCES].join(", ")} when provided.`,
+      { httpStatus: 400 },
+    );
+  }
+  const claimKindRaw = typeof query.claimKind === "string" ? query.claimKind : undefined;
+  if (claimKindRaw && !VALID_CLAIM_KINDS.has(claimKindRaw as FridayTaskWorkflowClaimKind)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `claimKind must be one of ${[...VALID_CLAIM_KINDS].join(", ")} when provided.`,
+      { httpStatus: 400 },
+    );
+  }
+  return {
+    workflowId: typeof query.workflowId === "string" ? query.workflowId : undefined,
+    claimId: typeof query.claimId === "string" ? query.claimId : undefined,
+    refSource: refSourceRaw as FridayTaskWorkflowEvidenceSource | undefined,
+    refKind: typeof query.refKind === "string" ? query.refKind : undefined,
+    claimKind: claimKindRaw as FridayTaskWorkflowClaimKind | undefined,
+    limit,
+  };
+}
+
 export function createFridayTaskWorkflowRoutes(
   deps: FridayTaskWorkflowRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -875,6 +995,80 @@ export function createFridayTaskWorkflowRoutes(
         const service = requireService(deps);
         const { workflowId } = ctx.params as { workflowId: string };
         return { items: service.listCliHandoffsByWorkflow(workflowId) };
+      },
+    },
+    {
+      operationId: "task.workflows.supervisor.read",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/supervisor",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        return { overview: service.getSupervisorOverview(workflowId) };
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.issue",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/channel-commands",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        const input = parseIssueChannelCommandBody(ctx.body);
+        return service.issueChannelCommand(workflowId, input);
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.list",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/channel-commands",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        return { items: service.listChannelCommands(workflowId) };
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.confirm",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/channel-commands/confirm",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        const input = parseConfirmChannelCommandBody(ctx.body);
+        return service.confirmChannelCommand(workflowId, input);
+      },
+    },
+    {
+      operationId: "task.workflows.evidence.explorer.query",
+      method: "GET",
+      path: "/v1/task-workflows/evidence",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const query = parseEvidenceExplorerQuery(ctx.query);
+        return { items: service.queryEvidenceExplorer(query) };
+      },
+    },
+    {
+      operationId: "task.workflows.evidence.explorer.raw",
+      method: "GET",
+      path: "/v1/task-workflows/evidence/:evidenceRefId/raw",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { evidenceRefId } = ctx.params as { evidenceRefId: string };
+        const queryRecord = (ctx.query ?? {}) as Record<string, unknown>;
+        const rawGate = queryRecord.gateConfirmed;
+        const gateConfirmed =
+          rawGate === true || rawGate === "true" || rawGate === "1";
+        return {
+          drilldown: service.getEvidenceRefRawDrilldown(evidenceRefId, gateConfirmed),
+        };
       },
     },
   ];

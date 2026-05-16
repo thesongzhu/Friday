@@ -105,6 +105,20 @@ function makeStubService(): FridayTaskWorkflowService {
     },
     listCliHandoffsByLane: () => [],
     listCliHandoffsByWorkflow: () => [],
+    getSupervisorOverview: () => {
+      throw new Error("not used in this test");
+    },
+    issueChannelCommand: () => {
+      throw new Error("not used in this test");
+    },
+    confirmChannelCommand: () => {
+      throw new Error("not used in this test");
+    },
+    listChannelCommands: () => [],
+    queryEvidenceExplorer: () => [],
+    getEvidenceRefRawDrilldown: () => {
+      throw new Error("not used in this test");
+    },
   };
 }
 
@@ -134,6 +148,12 @@ describe("Phase 13.5A task workflow route registration", () => {
       "task.workflows.lanes.verdict",
       "task.workflows.lanes.list",
       "task.workflows.lanes.get",
+      "task.workflows.supervisor.read",
+      "task.workflows.channel.command.issue",
+      "task.workflows.channel.command.list",
+      "task.workflows.channel.command.confirm",
+      "task.workflows.evidence.explorer.query",
+      "task.workflows.evidence.explorer.raw",
     ];
     for (const operationId of expected) {
       expect(routes.find((r) => r.operationId === operationId)).toBeDefined();
@@ -304,6 +324,177 @@ describe("Phase 13.5A B.2.1 route surface — refSource incompatibility error sh
       expect(domain.httpStatus).toBe(400);
       expect(domain.details.claimKind).toBe("runtime_evidence");
       expect(domain.details.refSource).toBe("docs_intent_reference");
+    }
+  });
+});
+
+describe("Phase 13.5D supervisor + channel + evidence-explorer routes", () => {
+  it("supervisor read route is GET-only and returns the assembled overview", async () => {
+    const stub = makeStubService();
+    let invokedWorkflow: string | undefined;
+    const routes = createFridayTaskWorkflowRoutes({
+      service: {
+        ...stub,
+        getSupervisorOverview: (workflowId) => {
+          invokedWorkflow = workflowId;
+          return {
+            workflow: {
+              id: workflowId,
+              charter: "c",
+              specHash: "sh",
+              parentSpecHash: null,
+              taskKind: "general",
+              risk: "medium",
+              supervisorMode: "standard",
+              budget: 4,
+              stage: "charter",
+              contextPackage: {
+                allowedFiles: ["a"],
+                allowedTools: [],
+                allowedApis: [],
+                boundaryIds: [],
+              },
+              gatePlan: [],
+              boundaryRefs: [],
+              metadata: {},
+              createdAt: "2026-05-16T00:00:00Z",
+              updatedAt: "2026-05-16T00:00:00Z",
+            },
+            supervisorCursor: null,
+            boundaryRefs: [],
+            contextPackageSummary: {
+              boundaryIds: [],
+              allowedFilesCount: 1,
+              allowedToolsCount: 0,
+              allowedApisCount: 0,
+            },
+            gatePlan: [],
+            immutableRequiredGateIds: [],
+            claimMatrix: {
+              counts: { draft: 0, unverified: 0, verified: 0, blocked: 0 },
+              unverifiedClaims: [],
+              blockedClaims: [],
+            },
+            laneSummary: {
+              executor: { count: 0, open: 0, completed: 0, blocked: 0 },
+              verifier: {
+                count: 0,
+                open: 0,
+                completed: 0,
+                blocked: 0,
+                independent: 0,
+                degraded: 0,
+              },
+            },
+            channelCommandSummary: {
+              total: 0,
+              issued: 0,
+              confirmed: 0,
+              dispatched: 0,
+              declined: 0,
+              expired: 0,
+            },
+            blockers: [],
+            closeoutReceipt: null,
+          };
+        },
+      },
+      disabledReason: null,
+    });
+    const route = findRoute(routes, "task.workflows.supervisor.read");
+    expect(route.method).toBe("GET");
+    const response = (await route.handler(
+      makeCtx({ params: { workflowId: "wf-x" } }) as never,
+    )) as { overview: { workflow: { id: string } } };
+    expect(invokedWorkflow).toBe("wf-x");
+    expect(response.overview.workflow.id).toBe("wf-x");
+  });
+
+  it("evidence explorer raw drilldown requires gateConfirmed=true and surfaces 403 otherwise", async () => {
+    const stub = makeStubService();
+    const routes = createFridayTaskWorkflowRoutes({
+      service: {
+        ...stub,
+        getEvidenceRefRawDrilldown: (evidenceRefId, gateConfirmed) => {
+          if (gateConfirmed !== true) {
+            throw new FridayDomainError(
+              "TASK_WORKFLOW_EVIDENCE_RAW_GATE_REQUIRED",
+              "raw evidence drilldown requires an explicit gate confirmation.",
+              { httpStatus: 403 },
+            );
+          }
+          return {
+            evidenceRefId,
+            workflowId: "wf-1",
+            claimId: "claim-1",
+            refKind: "agent.run",
+            refSource: "agent_run_event",
+            refIdRedacted: "raw",
+            refHash: null,
+            redactionApplied: false,
+            createdAt: "2026-05-16T00:00:00Z",
+          };
+        },
+      },
+      disabledReason: null,
+    });
+    const route = findRoute(routes, "task.workflows.evidence.explorer.raw");
+    expect(route.method).toBe("GET");
+    // Without gateConfirmed=true the route must refuse with 403.
+    try {
+      await route.handler(
+        makeCtx({
+          params: { evidenceRefId: "ref-1" },
+          query: {},
+        }) as never,
+      );
+      throw new Error("expected gate refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      const domain = error as FridayDomainError;
+      expect(domain.code).toBe("TASK_WORKFLOW_EVIDENCE_RAW_GATE_REQUIRED");
+      expect(domain.httpStatus).toBe(403);
+    }
+    // With gateConfirmed=true the route returns the redacted payload.
+    const success = (await route.handler(
+      makeCtx({
+        params: { evidenceRefId: "ref-1" },
+        query: { gateConfirmed: "true" },
+      }) as never,
+    )) as { drilldown: Record<string, unknown> };
+    expect(success.drilldown.redactionApplied).toBe(false);
+    // The route-level response must not carry the unredacted raw refId
+    // alongside the redacted form (module_26d Global Evidence Explorer v1
+    // gated raw drilldown remains server-redacted only).
+    expect(success.drilldown.refId).toBeUndefined();
+    expect("refId" in success.drilldown).toBe(false);
+  });
+
+  it("channel command issue route refuses unknown intentKind values", async () => {
+    const routes = createFridayTaskWorkflowRoutes({
+      service: makeStubService(),
+      disabledReason: null,
+    });
+    const route = findRoute(routes, "task.workflows.channel.command.issue");
+    try {
+      await route.handler(
+        makeCtx({
+          params: { workflowId: "wf-1" },
+          body: {
+            channelKind: "discord",
+            channelChatId: "chat",
+            channelMessageId: "msg",
+            senderId: "sender",
+            intentKind: "not_an_intent",
+          },
+        }) as never,
+      );
+      throw new Error("expected validation refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      const domain = error as FridayDomainError;
+      expect(domain.code).toBe("VALIDATION_ERROR");
+      expect(domain.httpStatus).toBe(400);
     }
   });
 });

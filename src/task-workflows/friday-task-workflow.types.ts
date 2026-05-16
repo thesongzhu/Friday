@@ -501,3 +501,241 @@ export interface FridayTaskWorkflowRecordCliHandoffInput {
   readonly timeoutMs?: number;
   readonly minSummaryChars?: number;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Phase 13.5D: Supervisor surfaces / configured-channel commands /
+ *              Global Evidence Explorer v1
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * Phase 13.5D productizes the read-side supervisor surfaces, the
+ * configured-channel task workflow command flow, and a global evidence
+ * metadata index over the existing evidence ref store. These types
+ * intentionally do NOT define a parallel raw evidence store: the
+ * supervisor view assembles existing primitives, the channel command
+ * surface stores hashed identifiers only, and the evidence explorer
+ * indexes the same task_workflow_evidence_refs rows that Phase 13.5A
+ * already persists.
+ */
+
+/** Compact summary of a workflow's context package surface. Whole-repo
+ *  inclusion is refused at create/revise time, so this summary is only a
+ *  cardinality + boundary identity view — it never echoes file lists. */
+export interface FridayTaskWorkflowContextPackageSummary {
+  readonly boundaryIds: readonly string[];
+  readonly allowedFilesCount: number;
+  readonly allowedToolsCount: number;
+  readonly allowedApisCount: number;
+}
+
+/** Lane counts grouped by kind / status / independence. */
+export interface FridayTaskWorkflowLaneSummary {
+  readonly executor: {
+    readonly count: number;
+    readonly open: number;
+    readonly completed: number;
+    readonly blocked: number;
+  };
+  readonly verifier: {
+    readonly count: number;
+    readonly open: number;
+    readonly completed: number;
+    readonly blocked: number;
+    readonly independent: number;
+    readonly degraded: number;
+  };
+}
+
+/** Aggregate counts of channel command records for a workflow. */
+export interface FridayTaskWorkflowChannelCommandSummary {
+  readonly total: number;
+  readonly issued: number;
+  readonly confirmed: number;
+  readonly dispatched: number;
+  readonly declined: number;
+  readonly expired: number;
+}
+
+/**
+ * Unified read-only supervisor view assembled by
+ * `friday-task-workflow-supervisor-view.ts`. The view is read-only by
+ * construction: it touches only task workflow tables (additive Phase
+ * 13.5A/B/C/D), never `/v1/agent/runs` and never the channel registry's
+ * raw inbound buffers.
+ */
+export interface FridayTaskWorkflowSupervisorOverview {
+  readonly workflow: FridayTaskWorkflowRecord;
+  readonly supervisorCursor: FridayTaskWorkflowSupervisorCursorRecord | null;
+  readonly boundaryRefs: readonly string[];
+  readonly contextPackageSummary: FridayTaskWorkflowContextPackageSummary;
+  readonly gatePlan: readonly FridayTaskWorkflowGatePlanEntry[];
+  /** Subset of gatePlan gate ids that are required; mirrors the gate
+   *  registry truth. Required gates remain immutable in the UI; surfaces
+   *  must render them as non-disableable, regardless of supervisor mode. */
+  readonly immutableRequiredGateIds: readonly string[];
+  readonly claimMatrix: {
+    readonly counts: Readonly<{
+      draft: number;
+      unverified: number;
+      verified: number;
+      blocked: number;
+    }>;
+    readonly unverifiedClaims: readonly FridayTaskWorkflowClaimRecord[];
+    readonly blockedClaims: readonly FridayTaskWorkflowClaimRecord[];
+  };
+  readonly laneSummary: FridayTaskWorkflowLaneSummary;
+  readonly channelCommandSummary: FridayTaskWorkflowChannelCommandSummary;
+  readonly blockers: readonly string[];
+  readonly closeoutReceipt: FridayTaskWorkflowCloseoutReceipt | null;
+}
+
+/** Canonical task-workflow intents reachable through configured channels. */
+export type FridayTaskWorkflowChannelIntentKind =
+  | "progress_query"
+  | "closeout_request"
+  | "supervisor_mode_preview"
+  | "confirm_token";
+
+export type FridayTaskWorkflowChannelCommandStatus =
+  | "issued"
+  | "confirmed"
+  | "dispatched"
+  | "declined"
+  | "expired";
+
+/**
+ * Typed channel command record. Stored fields are intentionally
+ * privacy-preserving:
+ *
+ *   * `channelChatHash`, `channelMessageHash`, `senderHash` are SHA-256
+ *     hex digests over the channel's canonical chat / message / sender
+ *     identifiers — never the raw message text or body.
+ *   * `confirmationToken` is a Friday-issued opaque token used to gate
+ *     dispatch. It never embeds raw user content.
+ *   * `dispatchedAction` records the canonical task-workflow service
+ *     method invoked on dispatch (e.g. "task.workflows.get"), not the
+ *     raw user message that triggered the action.
+ */
+export interface FridayTaskWorkflowChannelCommandRecord {
+  readonly id: string;
+  readonly workflowId: string;
+  readonly channelKind: string;
+  readonly channelChatHash: string;
+  readonly channelMessageHash: string;
+  readonly senderHash: string;
+  readonly intentKind: FridayTaskWorkflowChannelIntentKind;
+  readonly confirmationToken: string;
+  readonly status: FridayTaskWorkflowChannelCommandStatus;
+  readonly dispatchedAction: string | null;
+  readonly declinedReason: string | null;
+  readonly issuedAt: string;
+  readonly confirmedAt: string | null;
+  readonly dispatchedAt: string | null;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Issued channel command + canonical outbound disclosure text. The
+ * outbound text is composed by the service so callers do not paste raw
+ * user content back into the channel notifier. The disclosure makes the
+ * confirmation token, intent, and expiry visible to the user via the
+ * existing channel send path.
+ */
+export interface FridayTaskWorkflowIssueChannelCommandResult {
+  readonly command: FridayTaskWorkflowChannelCommandRecord;
+  /** Friday-composed outbound text the caller can pass to the channel
+   *  registry's send adapter. Never echoes raw inbound text. */
+  readonly outboundDisclosure: string;
+}
+
+export interface FridayTaskWorkflowIssueChannelCommandInput {
+  readonly channelKind: string;
+  /** Canonical chat identifier from the channel adapter. Will be hashed
+   *  before persistence; never stored raw. */
+  readonly channelChatId: string;
+  /** Canonical message identifier from the channel adapter. Will be
+   *  hashed before persistence; never stored raw. */
+  readonly channelMessageId: string;
+  /** Canonical sender identifier from the channel adapter. Will be
+   *  hashed before persistence; never stored raw. */
+  readonly senderId: string;
+  readonly intentKind: FridayTaskWorkflowChannelIntentKind;
+  /** Bounded lifetime for the issued confirmation token. Defaults to
+   *  10 minutes when omitted. */
+  readonly ttlMs?: number;
+}
+
+/**
+ * Result of `confirmChannelCommand`. The command is moved to
+ * `dispatched` after the canonical task-workflow action runs; the
+ * returned `disclosure` is the Friday-composed outbound notification
+ * text the caller can pipe back to the channel adapter.
+ */
+export interface FridayTaskWorkflowConfirmChannelCommandResult {
+  readonly command: FridayTaskWorkflowChannelCommandRecord;
+  readonly dispatchedAction: string;
+  /** Friday-composed outbound text. Never echoes raw inbound text. */
+  readonly outboundDisclosure: string;
+}
+
+export interface FridayTaskWorkflowConfirmChannelCommandInput {
+  readonly confirmationToken: string;
+}
+
+/**
+ * Compact metadata entry surfaced by the Global Evidence Explorer.
+ * The explorer indexes the existing `task_workflow_evidence_refs` rows
+ * — it does NOT duplicate raw payloads. Raw drilldown is a separate
+ * gated route that returns server-redacted ref fields only.
+ */
+export interface FridayTaskWorkflowEvidenceExplorerEntry {
+  readonly evidenceRefId: string;
+  readonly workflowId: string;
+  readonly claimId: string;
+  readonly refKind: string;
+  readonly refSource: FridayTaskWorkflowEvidenceSource;
+  readonly refHash: string | null;
+  /** Cardinality / source verdict context: the claim's current status
+   *  at index time. Verdict drilldown still requires the gated raw
+   *  route. */
+  readonly claimStatus: FridayTaskWorkflowClaimStatus;
+  readonly claimKind: FridayTaskWorkflowClaimKind;
+  readonly createdAt: string;
+}
+
+/**
+ * Server-redacted raw evidence drilldown payload. The route that emits
+ * this record requires an explicit `gateConfirmed=true` query parameter
+ * and always applies secret-pattern redaction to text fields before
+ * returning. Per module_26d the unredacted raw ref id is never surfaced
+ * over the API — only `refIdRedacted` is exposed, even after the gate
+ * confirmation. Tests must fail if the gate, the redaction, or the
+ * no-raw-refId boundary is bypassed.
+ */
+export interface FridayTaskWorkflowEvidenceRawDrilldown {
+  readonly evidenceRefId: string;
+  readonly workflowId: string;
+  readonly claimId: string;
+  readonly refKind: string;
+  readonly refSource: FridayTaskWorkflowEvidenceSource;
+  readonly refIdRedacted: string;
+  readonly refHash: string | null;
+  readonly redactionApplied: boolean;
+  readonly createdAt: string;
+}
+
+/**
+ * Input filter for the Global Evidence Explorer index.
+ *
+ * The explorer is intentionally lightweight: filter by workflow id,
+ * claim id, ref source, ref kind, or claim kind; bounded result limit.
+ * Raw payload fields are never exposed by this surface.
+ */
+export interface FridayTaskWorkflowEvidenceExplorerQuery {
+  readonly workflowId?: string;
+  readonly claimId?: string;
+  readonly refSource?: FridayTaskWorkflowEvidenceSource;
+  readonly refKind?: string;
+  readonly claimKind?: FridayTaskWorkflowClaimKind;
+  readonly limit?: number;
+}

@@ -13,6 +13,9 @@
 import type Database from "better-sqlite3";
 
 import type {
+  FridayTaskWorkflowChannelCommandRecord,
+  FridayTaskWorkflowChannelCommandStatus,
+  FridayTaskWorkflowChannelIntentKind,
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowClaimStatus,
@@ -23,6 +26,7 @@ import type {
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowContextPackage,
+  FridayTaskWorkflowEvidenceExplorerQuery,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowEvidenceSource,
   FridayTaskWorkflowFallbackAvailability,
@@ -139,6 +143,41 @@ export interface FridayTaskWorkflowRepository {
     db: Database.Database,
     workflowId: string,
   ): readonly FridayTaskWorkflowCliHandoffRecord[];
+  insertChannelCommand(
+    db: Database.Database,
+    record: FridayTaskWorkflowChannelCommandRecord,
+  ): void;
+  updateChannelCommand(
+    db: Database.Database,
+    record: FridayTaskWorkflowChannelCommandRecord,
+  ): void;
+  getChannelCommand(
+    db: Database.Database,
+    commandId: string,
+  ): FridayTaskWorkflowChannelCommandRecord | null;
+  getChannelCommandByToken(
+    db: Database.Database,
+    confirmationToken: string,
+  ): FridayTaskWorkflowChannelCommandRecord | null;
+  listChannelCommandsByWorkflow(
+    db: Database.Database,
+    workflowId: string,
+  ): readonly FridayTaskWorkflowChannelCommandRecord[];
+  /**
+   * Cross-workflow evidence ref index used by the Global Evidence
+   * Explorer. The repository performs only metadata projection; the
+   * service layer is responsible for joining claim status / kind.
+   */
+  queryEvidenceRefs(
+    db: Database.Database,
+    query: FridayTaskWorkflowEvidenceExplorerQuery,
+  ): readonly FridayTaskWorkflowEvidenceRefRecord[];
+  /** Fetch evidence ref by id when the gated drilldown route needs the
+   *  raw row to feed the redactor. */
+  getEvidenceRefById(
+    db: Database.Database,
+    evidenceRefId: string,
+  ): FridayTaskWorkflowEvidenceRefRecord | null;
 }
 
 export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowRepository {
@@ -590,6 +629,153 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         .all(workflowId) as Record<string, unknown>[];
       return rows.map(rowToCliHandoff);
     },
+
+    insertChannelCommand(db, record) {
+      db.prepare(
+        `INSERT INTO task_workflow_channel_commands (
+           id, workflow_id, channel_kind, channel_chat_hash,
+           channel_message_hash, sender_hash, intent_kind,
+           confirmation_token, status, dispatched_action,
+           declined_reason, issued_at, confirmed_at, dispatched_at,
+           expires_at, created_at
+         ) VALUES (
+           @id, @workflowId, @channelKind, @channelChatHash,
+           @channelMessageHash, @senderHash, @intentKind,
+           @confirmationToken, @status, @dispatchedAction,
+           @declinedReason, @issuedAt, @confirmedAt, @dispatchedAt,
+           @expiresAt, @createdAt
+         )`,
+      ).run({
+        id: record.id,
+        workflowId: record.workflowId,
+        channelKind: record.channelKind,
+        channelChatHash: record.channelChatHash,
+        channelMessageHash: record.channelMessageHash,
+        senderHash: record.senderHash,
+        intentKind: record.intentKind,
+        confirmationToken: record.confirmationToken,
+        status: record.status,
+        dispatchedAction: record.dispatchedAction,
+        declinedReason: record.declinedReason,
+        issuedAt: record.issuedAt,
+        confirmedAt: record.confirmedAt,
+        dispatchedAt: record.dispatchedAt,
+        expiresAt: record.expiresAt,
+        createdAt: record.createdAt,
+      });
+    },
+
+    updateChannelCommand(db, record) {
+      db.prepare(
+        `UPDATE task_workflow_channel_commands SET
+           status = @status,
+           dispatched_action = @dispatchedAction,
+           declined_reason = @declinedReason,
+           confirmed_at = @confirmedAt,
+           dispatched_at = @dispatchedAt
+         WHERE id = @id`,
+      ).run({
+        id: record.id,
+        status: record.status,
+        dispatchedAction: record.dispatchedAction,
+        declinedReason: record.declinedReason,
+        confirmedAt: record.confirmedAt,
+        dispatchedAt: record.dispatchedAt,
+      });
+    },
+
+    getChannelCommand(db, commandId) {
+      const row = db
+        .prepare(`SELECT * FROM task_workflow_channel_commands WHERE id = ?`)
+        .get(commandId) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return rowToChannelCommand(row);
+    },
+
+    getChannelCommandByToken(db, confirmationToken) {
+      const row = db
+        .prepare(
+          `SELECT * FROM task_workflow_channel_commands WHERE confirmation_token = ?`,
+        )
+        .get(confirmationToken) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return rowToChannelCommand(row);
+    },
+
+    listChannelCommandsByWorkflow(db, workflowId) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM task_workflow_channel_commands
+           WHERE workflow_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all(workflowId) as Record<string, unknown>[];
+      return rows.map(rowToChannelCommand);
+    },
+
+    queryEvidenceRefs(db, query) {
+      const limit = Math.min(Math.max(query.limit ?? 100, 1), 500);
+      const filters: string[] = [];
+      const params: Record<string, unknown> = {};
+      if (query.workflowId) {
+        filters.push("e.workflow_id = @workflowId");
+        params.workflowId = query.workflowId;
+      }
+      if (query.claimId) {
+        filters.push("e.claim_id = @claimId");
+        params.claimId = query.claimId;
+      }
+      if (query.refSource) {
+        filters.push("e.ref_source = @refSource");
+        params.refSource = query.refSource;
+      }
+      if (query.refKind) {
+        filters.push("e.ref_kind = @refKind");
+        params.refKind = query.refKind;
+      }
+      if (query.claimKind) {
+        filters.push("c.claim_kind = @claimKind");
+        params.claimKind = query.claimKind;
+      }
+      const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      const rows = db
+        .prepare(
+          `SELECT e.*
+             FROM task_workflow_evidence_refs e
+             INNER JOIN task_workflow_claims c ON c.id = e.claim_id
+             ${where}
+             ORDER BY e.created_at DESC
+             LIMIT @limit`,
+        )
+        .all({ ...params, limit }) as Record<string, unknown>[];
+      return rows.map((row) => ({
+        id: String(row.id),
+        workflowId: String(row.workflow_id),
+        claimId: String(row.claim_id),
+        refKind: String(row.ref_kind),
+        refId: String(row.ref_id),
+        refHash: row.ref_hash === null ? null : String(row.ref_hash),
+        refSource: row.ref_source as FridayTaskWorkflowEvidenceSource,
+        createdAt: String(row.created_at),
+      }));
+    },
+
+    getEvidenceRefById(db, evidenceRefId) {
+      const row = db
+        .prepare(`SELECT * FROM task_workflow_evidence_refs WHERE id = ?`)
+        .get(evidenceRefId) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return {
+        id: String(row.id),
+        workflowId: String(row.workflow_id),
+        claimId: String(row.claim_id),
+        refKind: String(row.ref_kind),
+        refId: String(row.ref_id),
+        refHash: row.ref_hash === null ? null : String(row.ref_hash),
+        refSource: row.ref_source as FridayTaskWorkflowEvidenceSource,
+        createdAt: String(row.created_at),
+      };
+    },
   };
 }
 
@@ -673,6 +859,41 @@ function rowToLane(row: Record<string, unknown>): FridayTaskWorkflowLaneRecord {
         : String(row.blocker),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function rowToChannelCommand(
+  row: Record<string, unknown>,
+): FridayTaskWorkflowChannelCommandRecord {
+  return {
+    id: String(row.id),
+    workflowId: String(row.workflow_id),
+    channelKind: String(row.channel_kind),
+    channelChatHash: String(row.channel_chat_hash),
+    channelMessageHash: String(row.channel_message_hash),
+    senderHash: String(row.sender_hash),
+    intentKind: row.intent_kind as FridayTaskWorkflowChannelIntentKind,
+    confirmationToken: String(row.confirmation_token),
+    status: row.status as FridayTaskWorkflowChannelCommandStatus,
+    dispatchedAction:
+      row.dispatched_action === null || row.dispatched_action === undefined
+        ? null
+        : String(row.dispatched_action),
+    declinedReason:
+      row.declined_reason === null || row.declined_reason === undefined
+        ? null
+        : String(row.declined_reason),
+    issuedAt: String(row.issued_at),
+    confirmedAt:
+      row.confirmed_at === null || row.confirmed_at === undefined
+        ? null
+        : String(row.confirmed_at),
+    dispatchedAt:
+      row.dispatched_at === null || row.dispatched_at === undefined
+        ? null
+        : String(row.dispatched_at),
+    expiresAt: String(row.expires_at),
+    createdAt: String(row.created_at),
   };
 }
 

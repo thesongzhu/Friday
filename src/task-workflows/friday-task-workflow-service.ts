@@ -24,11 +24,23 @@ import {
   defaultFridayTaskWorkflowBoundaryRefs,
 } from "./friday-task-workflow-boundaries.js";
 import {
+  composeFridayTaskWorkflowChannelDispatchedDisclosure,
+  composeFridayTaskWorkflowChannelIssuedDisclosure,
+  FRIDAY_TASK_WORKFLOW_CHANNEL_COMMAND_DEFAULT_TTL_MS,
+  getFridayTaskWorkflowChannelDispatchedAction,
+  hashFridayChannelIdentifier,
+  issueFridayChannelCommandConfirmationToken,
+} from "./friday-task-workflow-channel-commands.js";
+import {
   getFridayTaskWorkflowAllowedRefSources,
   isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
 import { evaluateFridayTaskWorkflowCloseoutGates } from "./friday-task-workflow-closeout-gates.js";
+import {
+  projectFridayEvidenceExplorerEntry,
+  redactFridayEvidenceRefForDrilldown,
+} from "./friday-task-workflow-evidence-explorer.js";
 import {
   defaultFridayTaskWorkflowBudget,
   FRIDAY_TASK_WORKFLOW_BUILTIN_GATES,
@@ -41,22 +53,32 @@ import {
   resolveFridayTaskWorkflowVerifierIndependence,
 } from "./friday-task-workflow-lanes.js";
 import { computeFridayTaskWorkflowSpecHash } from "./friday-task-workflow-spec-hash.js";
+import { buildFridayTaskWorkflowSupervisorOverview } from "./friday-task-workflow-supervisor-view.js";
 import type { FridayTaskWorkflowCliAdapter } from "./friday-task-workflow-cli-adapter.js";
 import type { FridayTaskWorkflowRepository } from "./friday-task-workflow-repository.js";
 import type {
   FridayTaskWorkflowAttachEvidenceRefInput,
   FridayTaskWorkflowBlockClaimInput,
+  FridayTaskWorkflowChannelCommandRecord,
+  FridayTaskWorkflowChannelIntentKind,
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowCliHandoffRecord,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowCompleteLaneInput,
+  FridayTaskWorkflowConfirmChannelCommandInput,
+  FridayTaskWorkflowConfirmChannelCommandResult,
   FridayTaskWorkflowContextPackage,
   FridayTaskWorkflowCreateInput,
   FridayTaskWorkflowDraftClaimInput,
+  FridayTaskWorkflowEvidenceExplorerEntry,
+  FridayTaskWorkflowEvidenceExplorerQuery,
+  FridayTaskWorkflowEvidenceRawDrilldown,
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowGatePlanEntry,
+  FridayTaskWorkflowIssueChannelCommandInput,
+  FridayTaskWorkflowIssueChannelCommandResult,
   FridayTaskWorkflowLaneRecord,
   FridayTaskWorkflowOpenExecutorLaneInput,
   FridayTaskWorkflowOpenVerifierLaneInput,
@@ -69,6 +91,7 @@ import type {
   FridayTaskWorkflowStage,
   FridayTaskWorkflowSubmitVerifierVerdictInput,
   FridayTaskWorkflowSupervisorMode,
+  FridayTaskWorkflowSupervisorOverview,
   FridayTaskWorkflowVerifyClaimInput,
 } from "./friday-task-workflow.types.js";
 
@@ -193,6 +216,58 @@ export interface FridayTaskWorkflowService {
   listCliHandoffsByWorkflow(
     workflowId: string,
   ): readonly FridayTaskWorkflowCliHandoffRecord[];
+  /**
+   * Phase 13.5D supervisor view — read-only assembled overview that
+   * mirrors what the UI supervisor panel renders. Touches only task
+   * workflow tables and never `/v1/agent/runs`.
+   */
+  getSupervisorOverview(workflowId: string): FridayTaskWorkflowSupervisorOverview;
+  /**
+   * Phase 13.5D configured-channel command flow — issue a confirmation
+   * token for a canonical task workflow intent. The service hashes the
+   * channel chat / message / sender identifiers before persistence;
+   * raw channel text never reaches the task workflow tables. Callers
+   * pipe the returned `outboundDisclosure` text through the existing
+   * channel registry send adapter.
+   */
+  issueChannelCommand(
+    workflowId: string,
+    input: FridayTaskWorkflowIssueChannelCommandInput,
+  ): FridayTaskWorkflowIssueChannelCommandResult;
+  /**
+   * Confirm a previously issued channel command via its opaque
+   * confirmation token. On success the command is moved to
+   * `dispatched` and the canonical dispatched-action label is recorded.
+   * The service does not actually run the dispatched action here — it
+   * marks the dispatch boundary so callers route through the existing
+   * task workflow service APIs (e.g. `getSupervisorOverview`,
+   * `closeout`) afterwards.
+   */
+  confirmChannelCommand(
+    workflowId: string,
+    input: FridayTaskWorkflowConfirmChannelCommandInput,
+  ): FridayTaskWorkflowConfirmChannelCommandResult;
+  listChannelCommands(
+    workflowId: string,
+  ): readonly FridayTaskWorkflowChannelCommandRecord[];
+  /**
+   * Global Evidence Explorer v1 — metadata-only index over existing
+   * evidence refs. Raw payload fields are never exposed by this
+   * surface; use `getEvidenceRefRawDrilldown` for the gated drilldown
+   * route.
+   */
+  queryEvidenceExplorer(
+    query: FridayTaskWorkflowEvidenceExplorerQuery,
+  ): readonly FridayTaskWorkflowEvidenceExplorerEntry[];
+  /**
+   * Gated raw drilldown. The caller MUST supply an explicit
+   * `gateConfirmed=true` flag; the service refuses bypass attempts
+   * with HTTP 403. The returned payload is always server-redacted.
+   */
+  getEvidenceRefRawDrilldown(
+    evidenceRefId: string,
+    gateConfirmed: boolean,
+  ): FridayTaskWorkflowEvidenceRawDrilldown;
 }
 
 export function createFridayTaskWorkflowService(
@@ -1241,6 +1316,248 @@ export function createFridayTaskWorkflowService(
     );
   }
 
+  function getSupervisorOverview(
+    workflowId: string,
+  ): FridayTaskWorkflowSupervisorOverview {
+    const workflow = get(workflowId);
+    const { cursor, claims, lanes, commands, receipt } = deps.db.withReadConnection(
+      (db) => ({
+        cursor: deps.repository.getSupervisorCursor(db, workflowId),
+        claims: deps.repository.listClaims(db, workflowId),
+        lanes: deps.repository.listLanes(db, workflowId),
+        commands: deps.repository.listChannelCommandsByWorkflow(db, workflowId),
+        receipt: deps.repository.getLatestCloseoutReceipt(db, workflowId),
+      }),
+    );
+    return buildFridayTaskWorkflowSupervisorOverview({
+      workflow,
+      supervisorCursor: cursor,
+      claims,
+      lanes,
+      channelCommands: commands,
+      closeoutReceipt: receipt,
+    });
+  }
+
+  function issueChannelCommand(
+    workflowId: string,
+    input: FridayTaskWorkflowIssueChannelCommandInput,
+  ): FridayTaskWorkflowIssueChannelCommandResult {
+    get(workflowId);
+    if (typeof input.channelKind !== "string" || input.channelKind.trim().length === 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "channelKind is required.",
+        { httpStatus: 400 },
+      );
+    }
+    if (typeof input.channelChatId !== "string" || input.channelChatId.trim().length === 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "channelChatId is required.",
+        { httpStatus: 400 },
+      );
+    }
+    if (typeof input.channelMessageId !== "string" || input.channelMessageId.trim().length === 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "channelMessageId is required.",
+        { httpStatus: 400 },
+      );
+    }
+    if (typeof input.senderId !== "string" || input.senderId.trim().length === 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "senderId is required.",
+        { httpStatus: 400 },
+      );
+    }
+    if (!isFridayChannelIntent(input.intentKind)) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "intentKind must be one of 'progress_query','closeout_request','supervisor_mode_preview','confirm_token'.",
+        { httpStatus: 400 },
+      );
+    }
+    const ttlMs =
+      typeof input.ttlMs === "number" && Number.isFinite(input.ttlMs) && input.ttlMs > 0
+        ? Math.floor(input.ttlMs)
+        : FRIDAY_TASK_WORKFLOW_CHANNEL_COMMAND_DEFAULT_TTL_MS;
+    const now = deps.nowIso();
+    const issuedAtMs = Date.parse(now);
+    const expiresAtMs = Number.isFinite(issuedAtMs)
+      ? issuedAtMs + ttlMs
+      : Date.now() + ttlMs;
+    const expiresAt = new Date(expiresAtMs).toISOString();
+    const confirmationToken = issueFridayChannelCommandConfirmationToken();
+    const channelKey = `${input.channelKind}:${input.channelChatId}`;
+    const messageKey = `${input.channelKind}:${input.channelMessageId}`;
+    const senderKey = `${input.channelKind}:${input.senderId}`;
+    const record: FridayTaskWorkflowChannelCommandRecord = {
+      id: deps.idGenerator(),
+      workflowId,
+      channelKind: input.channelKind.trim(),
+      channelChatHash: hashFridayChannelIdentifier(channelKey),
+      channelMessageHash: hashFridayChannelIdentifier(messageKey),
+      senderHash: hashFridayChannelIdentifier(senderKey),
+      intentKind: input.intentKind,
+      confirmationToken,
+      status: "issued",
+      dispatchedAction: null,
+      declinedReason: null,
+      issuedAt: now,
+      confirmedAt: null,
+      dispatchedAt: null,
+      expiresAt,
+      createdAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.insertChannelCommand(db, record);
+    });
+    const outboundDisclosure = composeFridayTaskWorkflowChannelIssuedDisclosure({
+      workflowId,
+      intentKind: record.intentKind,
+      confirmationToken: record.confirmationToken,
+      expiresAt: record.expiresAt,
+    });
+    return { command: record, outboundDisclosure };
+  }
+
+  function confirmChannelCommand(
+    workflowId: string,
+    input: FridayTaskWorkflowConfirmChannelCommandInput,
+  ): FridayTaskWorkflowConfirmChannelCommandResult {
+    get(workflowId);
+    if (
+      typeof input.confirmationToken !== "string" ||
+      input.confirmationToken.trim().length === 0
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "confirmationToken is required.",
+        { httpStatus: 400 },
+      );
+    }
+    const token = input.confirmationToken.trim();
+    const existing = deps.db.withReadConnection((db) =>
+      deps.repository.getChannelCommandByToken(db, token),
+    );
+    if (!existing || existing.workflowId !== workflowId) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CHANNEL_COMMAND_NOT_FOUND",
+        `channel command for token not found for workflow "${workflowId}".`,
+        { httpStatus: 404 },
+      );
+    }
+    if (existing.status !== "issued") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CHANNEL_COMMAND_CLOSED",
+        `channel command is already ${existing.status}; issue a new token to retry.`,
+        { httpStatus: 409, details: { status: existing.status } },
+      );
+    }
+    const now = deps.nowIso();
+    const nowMs = Date.parse(now);
+    const expiresMs = Date.parse(existing.expiresAt);
+    if (Number.isFinite(nowMs) && Number.isFinite(expiresMs) && nowMs > expiresMs) {
+      const expired: FridayTaskWorkflowChannelCommandRecord = {
+        ...existing,
+        status: "expired",
+        declinedReason: "token_expired",
+      };
+      deps.db.withWriteTransaction((db) => {
+        deps.repository.updateChannelCommand(db, expired);
+      });
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CHANNEL_COMMAND_EXPIRED",
+        "channel command confirmation token has expired; issue a new token.",
+        { httpStatus: 409 },
+      );
+    }
+    const dispatchedAction = getFridayTaskWorkflowChannelDispatchedAction(
+      existing.intentKind,
+    );
+    const updated: FridayTaskWorkflowChannelCommandRecord = {
+      ...existing,
+      status: "dispatched",
+      dispatchedAction,
+      confirmedAt: now,
+      dispatchedAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.updateChannelCommand(db, updated);
+    });
+    const outboundDisclosure = composeFridayTaskWorkflowChannelDispatchedDisclosure({
+      workflowId,
+      intentKind: updated.intentKind,
+      dispatchedAction,
+    });
+    return { command: updated, dispatchedAction, outboundDisclosure };
+  }
+
+  function listChannelCommands(
+    workflowId: string,
+  ): readonly FridayTaskWorkflowChannelCommandRecord[] {
+    get(workflowId);
+    return deps.db.withReadConnection((db) =>
+      deps.repository.listChannelCommandsByWorkflow(db, workflowId),
+    );
+  }
+
+  function queryEvidenceExplorer(
+    query: FridayTaskWorkflowEvidenceExplorerQuery,
+  ): readonly FridayTaskWorkflowEvidenceExplorerEntry[] {
+    return deps.db.withReadConnection((db) => {
+      const refs = deps.repository.queryEvidenceRefs(db, query);
+      const entries: FridayTaskWorkflowEvidenceExplorerEntry[] = [];
+      const claimCache = new Map<string, FridayTaskWorkflowClaimRecord>();
+      for (const ref of refs) {
+        let claim = claimCache.get(ref.claimId);
+        if (!claim) {
+          const fresh = deps.repository.getClaim(db, ref.claimId);
+          if (!fresh) continue;
+          claim = fresh;
+          claimCache.set(claim.id, claim);
+        }
+        entries.push(
+          projectFridayEvidenceExplorerEntry({ evidenceRef: ref, claim }),
+        );
+      }
+      return entries;
+    });
+  }
+
+  function getEvidenceRefRawDrilldown(
+    evidenceRefId: string,
+    gateConfirmed: boolean,
+  ): FridayTaskWorkflowEvidenceRawDrilldown {
+    if (gateConfirmed !== true) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_EVIDENCE_RAW_GATE_REQUIRED",
+        "raw evidence drilldown requires an explicit gate confirmation.",
+        { httpStatus: 403 },
+      );
+    }
+    if (typeof evidenceRefId !== "string" || evidenceRefId.trim().length === 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "evidenceRefId is required.",
+        { httpStatus: 400 },
+      );
+    }
+    const evidenceRef = deps.db.withReadConnection((db) =>
+      deps.repository.getEvidenceRefById(db, evidenceRefId),
+    );
+    if (!evidenceRef) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_EVIDENCE_REF_NOT_FOUND",
+        `evidence ref "${evidenceRefId}" not found.`,
+        { httpStatus: 404 },
+      );
+    }
+    return redactFridayEvidenceRefForDrilldown(evidenceRef);
+  }
+
   return {
     preview,
     create,
@@ -1265,7 +1582,24 @@ export function createFridayTaskWorkflowService(
     recordCliHandoff,
     listCliHandoffsByLane,
     listCliHandoffsByWorkflow,
+    getSupervisorOverview,
+    issueChannelCommand,
+    confirmChannelCommand,
+    listChannelCommands,
+    queryEvidenceExplorer,
+    getEvidenceRefRawDrilldown,
   };
+}
+
+function isFridayChannelIntent(
+  value: unknown,
+): value is FridayTaskWorkflowChannelIntentKind {
+  return (
+    value === "progress_query" ||
+    value === "closeout_request" ||
+    value === "supervisor_mode_preview" ||
+    value === "confirm_token"
+  );
 }
 
 function validateLaneRole(
