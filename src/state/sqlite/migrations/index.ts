@@ -83,6 +83,7 @@ import { V081_TASK_WORKFLOW_POLICY_MIGRATION } from "./v081-task-workflow-policy
 import { V082_TASK_WORKFLOW_LANES_MIGRATION } from "./v082-task-workflow-lanes.js";
 import { V083_TASK_WORKFLOW_LANE_CLI_ROLE_MIGRATION } from "./v083-task-workflow-lane-cli-role.js";
 import { V084_TASK_WORKFLOW_CLI_HANDOFFS_MIGRATION } from "./v084-task-workflow-cli-handoffs.js";
+import { V085_TASK_WORKFLOW_CHANNEL_COMMANDS_MIGRATION } from "./v085-task-workflow-channel-commands.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -172,6 +173,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V082_TASK_WORKFLOW_LANES_MIGRATION,
   V083_TASK_WORKFLOW_LANE_CLI_ROLE_MIGRATION,
   V084_TASK_WORKFLOW_CLI_HANDOFFS_MIGRATION,
+  V085_TASK_WORKFLOW_CHANNEL_COMMANDS_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -256,3 +258,4 @@ export { V081_TASK_WORKFLOW_POLICY_MIGRATION };
 export { V082_TASK_WORKFLOW_LANES_MIGRATION };
 export { V083_TASK_WORKFLOW_LANE_CLI_ROLE_MIGRATION };
 export { V084_TASK_WORKFLOW_CLI_HANDOFFS_MIGRATION };
+export { V085_TASK_WORKFLOW_CHANNEL_COMMANDS_MIGRATION };

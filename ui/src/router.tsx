@@ -45,6 +45,7 @@ const AssetsPage = lazy(async () => import("@/routes/assets-page").then((module)
 const StudioPage = lazy(async () => import("@/routes/studio-page").then((module) => ({ default: module.StudioPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
+const TaskWorkflowsPage = lazy(async () => import("@/routes/task-workflows-page").then((module) => ({ default: module.TaskWorkflowsPage })));
 
 /**
  * Router-level loading splash. Resolves `LocalizedText` into the active locale
@@ -521,6 +522,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载工作流", "Loading workflows")} detail={localizedText("Friday 正在准备工作流部署和可视化面板。", "Friday is preparing workflow deploy and visualization surfaces.")}>
                 <WorkflowsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "task-workflows",
+            element: (
+              <RouteSuspense title={localizedText("加载任务工作流", "Loading task workflows")} detail={localizedText("Friday 正在准备监督员视图和证据浏览器。", "Friday is preparing the supervisor view and evidence explorer.")}>
+                <TaskWorkflowsPage />
               </RouteSuspense>
             ),
           },

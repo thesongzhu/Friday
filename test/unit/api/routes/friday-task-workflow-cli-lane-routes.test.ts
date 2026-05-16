@@ -85,6 +85,20 @@ function makeStubServiceWithLanes(
     },
     listCliHandoffsByLane: () => [],
     listCliHandoffsByWorkflow: () => [],
+    getSupervisorOverview: () => {
+      throw new Error("not used");
+    },
+    issueChannelCommand: () => {
+      throw new Error("not used");
+    },
+    confirmChannelCommand: () => {
+      throw new Error("not used");
+    },
+    listChannelCommands: () => [],
+    queryEvidenceExplorer: () => [],
+    getEvidenceRefRawDrilldown: () => {
+      throw new Error("not used");
+    },
   };
   return { ...base, ...overrides };
 }
