@@ -3384,17 +3384,43 @@ export async function createFridayHub(
   // task workflow tables and never mutates /v1/agent/runs state. Routes
   // are always registered; when the service slot is null the handlers
   // return `503 TASK_WORKFLOWS_DISABLED` (never 404).
+  //
+  // Phase 13.5C live binding: the service receives a bounded CLI backend
+  // adapter whose text completion shim resolves the backendId to a
+  // minimal FridayProviderCliConfig and delegates to the existing
+  // `runFridayCliBackendTextCompletion` primitive. The adapter never
+  // copies repo source into prompts, never satisfies a verified claim,
+  // and fails closed on CLI unavailability / auth missing / timeout /
+  // repair exhaustion; persisted handoffs always carry verified=false.
   const taskWorkflowDeps: NonNullable<
     Parameters<typeof createFridayApiRuntime>[0]["taskWorkflows"]
   > = await (async () => {
-    const { createFridayTaskWorkflowRepository, createFridayTaskWorkflowService } =
-      await import("../task-workflows/index.js");
+    const {
+      createFridayTaskWorkflowCliAdapter,
+      createFridayTaskWorkflowRepository,
+      createFridayTaskWorkflowService,
+    } = await import("../task-workflows/index.js");
+    const { runFridayCliBackendTextCompletion } = await import(
+      "../providers/cli/friday-provider-cli-backend.js"
+    );
     const repository = createFridayTaskWorkflowRepository();
+    const cliAdapter = createFridayTaskWorkflowCliAdapter({
+      cliTextCompletion: async (input) => {
+        return runFridayCliBackendTextCompletion({
+          cliConfig: { backendId: input.backendId },
+          systemPrompt: input.systemPrompt,
+          conversation: input.conversation,
+          model: input.model,
+        });
+      },
+      nowIso,
+    });
     const service = createFridayTaskWorkflowService({
       db: stateRuntime!.sqlite,
       repository,
       idGenerator,
       nowIso,
+      cliAdapter,
     });
     return { service, disabledReason: null };
   })();

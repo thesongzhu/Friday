@@ -25,6 +25,7 @@ import {
 } from "./friday-task-workflow-boundaries.js";
 import {
   getFridayTaskWorkflowAllowedRefSources,
+  isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
 import { evaluateFridayTaskWorkflowCloseoutGates } from "./friday-task-workflow-closeout-gates.js";
@@ -40,12 +41,14 @@ import {
   resolveFridayTaskWorkflowVerifierIndependence,
 } from "./friday-task-workflow-lanes.js";
 import { computeFridayTaskWorkflowSpecHash } from "./friday-task-workflow-spec-hash.js";
+import type { FridayTaskWorkflowCliAdapter } from "./friday-task-workflow-cli-adapter.js";
 import type { FridayTaskWorkflowRepository } from "./friday-task-workflow-repository.js";
 import type {
   FridayTaskWorkflowAttachEvidenceRefInput,
   FridayTaskWorkflowBlockClaimInput,
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
+  FridayTaskWorkflowCliHandoffRecord,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowCompleteLaneInput,
@@ -59,6 +62,7 @@ import type {
   FridayTaskWorkflowOpenVerifierLaneInput,
   FridayTaskWorkflowPreview,
   FridayTaskWorkflowRecord,
+  FridayTaskWorkflowRecordCliHandoffInput,
   FridayTaskWorkflowReviseInput,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
@@ -95,6 +99,15 @@ export interface CreateFridayTaskWorkflowServiceDeps {
   readonly repository: FridayTaskWorkflowRepository;
   readonly idGenerator: () => string;
   readonly nowIso: () => string;
+  /**
+   * Phase 13.5C CLI backend adapter. Optional: when omitted, the service
+   * still accepts laneRole='cli' lanes, but `recordCliHandoff` returns
+   * HTTP 503 TASK_WORKFLOW_CLI_ADAPTER_DISABLED so the route surface
+   * never silently succeeds. The hub bootstrap wires a live adapter
+   * backed by `runFridayCliBackendTextCompletion`; tests can inject a
+   * deterministic fake.
+   */
+  readonly cliAdapter?: FridayTaskWorkflowCliAdapter;
 }
 
 export interface FridayTaskWorkflowService {
@@ -159,6 +172,27 @@ export interface FridayTaskWorkflowService {
   ): FridayTaskWorkflowClaimRecord;
   listLanes(workflowId: string): readonly FridayTaskWorkflowLaneRecord[];
   getLane(workflowId: string, laneId: string): FridayTaskWorkflowLaneRecord;
+  /**
+   * Phase 13.5C live binding: invoke the CLI backend adapter for a
+   * laneRole='cli' lane and persist the normalized handoff. The
+   * persisted record always carries `verified=false` and the
+   * machine-readable capability label produced by the adapter. CLI
+   * verifier verdict promotion remains refused at all risk levels, and
+   * the `cli_self_report_unconfirmed` closeout gate continues to block
+   * any verified CLI claim regardless of how it was drafted.
+   */
+  recordCliHandoff(
+    workflowId: string,
+    laneId: string,
+    input: FridayTaskWorkflowRecordCliHandoffInput,
+  ): Promise<FridayTaskWorkflowCliHandoffRecord>;
+  listCliHandoffsByLane(
+    workflowId: string,
+    laneId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[];
+  listCliHandoffsByWorkflow(
+    workflowId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[];
 }
 
 export function createFridayTaskWorkflowService(
@@ -507,6 +541,22 @@ export function createFridayTaskWorkflowService(
         },
       );
     }
+    if (
+      !NON_EVIDENCE_CLAIM_KINDS.has(claim.claimKind) &&
+      isFridayTaskWorkflowCliShapedRefKind(input.refKind)
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+        `evidence ref refKind "${input.refKind}" is a CLI-shaped reference; CLI handoff / self-report is bounded text only (nativeToolProof=false) and cannot satisfy a verified ${claim.claimKind} claim. Attach a non-CLI evidence ref backed by Friday verifier fresh-reading runtime / code / api / artifact evidence instead.`,
+        {
+          httpStatus: 400,
+          details: {
+            claimKind: claim.claimKind,
+            refKind: input.refKind,
+          },
+        },
+      );
+    }
     const now = deps.nowIso();
     const evidenceRef: FridayTaskWorkflowEvidenceRefRecord = {
       id: deps.idGenerator(),
@@ -612,6 +662,23 @@ export function createFridayTaskWorkflowService(
         },
       );
     }
+    const cliShapedRefs = attachedRefs.filter((ref) =>
+      isFridayTaskWorkflowCliShapedRefKind(ref.refKind),
+    );
+    if (cliShapedRefs.length > 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+        `claim "${claim.id}" of kind "${claim.claimKind}" has CLI-shaped evidence ref(s); CLI handoff / self-report cannot satisfy verified status. Attach evidence refs backed by Friday verifier fresh-reading runtime / code / api / artifact evidence instead.`,
+        {
+          httpStatus: 400,
+          details: {
+            claimKind: claim.claimKind,
+            offendingRefIds: cliShapedRefs.map((r) => r.id),
+            offendingRefKinds: cliShapedRefs.map((r) => r.refKind),
+          },
+        },
+      );
+    }
     let resolvedVerifierLaneId: string | null = null;
     if (input.verifierLaneId !== undefined) {
       if (
@@ -639,6 +706,20 @@ export function createFridayTaskWorkflowService(
           "TASK_WORKFLOW_LANE_KIND_INVALID",
           `lane "${lane.id}" is a ${lane.laneKind} lane; verifierLaneId must point at a verifier lane.`,
           { httpStatus: 400, details: { laneKind: lane.laneKind } },
+        );
+      }
+      if (lane.laneRole === "cli") {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_CLI_VERIFIER_LANE_REFUSED",
+          `CLI verifier lane "${lane.id}" cannot promote a claim to verified. CLI output remains draft / unverified; verdict promotion requires a Friday native or provider verifier lane that fresh-reads referenced evidence.`,
+          {
+            httpStatus: 400,
+            details: {
+              laneId: lane.id,
+              laneRole: lane.laneRole,
+              workflowRisk: workflow.risk,
+            },
+          },
         );
       }
       if (lane.status === "blocked") {
@@ -1052,6 +1133,114 @@ export function createFridayTaskWorkflowService(
     return lane;
   }
 
+  async function recordCliHandoff(
+    workflowId: string,
+    laneId: string,
+    input: FridayTaskWorkflowRecordCliHandoffInput,
+  ): Promise<FridayTaskWorkflowCliHandoffRecord> {
+    if (!deps.cliAdapter) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_ADAPTER_DISABLED",
+        "CLI backend adapter is not wired in this runtime; recordCliHandoff cannot be invoked.",
+        { httpStatus: 503 },
+      );
+    }
+    const workflow = get(workflowId);
+    const lane = getLane(workflowId, laneId);
+    if (lane.laneRole !== "cli") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_LANE_REQUIRED",
+        `lane "${lane.id}" has laneRole='${lane.laneRole}'; recordCliHandoff requires a laneRole='cli' lane.`,
+        {
+          httpStatus: 400,
+          details: { laneRole: lane.laneRole },
+        },
+      );
+    }
+    if (lane.status === "completed" || lane.status === "blocked") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_LANE_CLOSED",
+        `lane "${lane.id}" is already ${lane.status}; reopen by creating a new CLI lane before invoking the adapter.`,
+        { httpStatus: 409, details: { status: lane.status } },
+      );
+    }
+    if (
+      typeof input.systemPrompt !== "string" ||
+      input.systemPrompt.trim().length === 0
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "systemPrompt is required and must be a non-empty string.",
+        { httpStatus: 400 },
+      );
+    }
+    if (
+      typeof input.conversation !== "string" ||
+      input.conversation.trim().length === 0
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "conversation is required and must be a non-empty string.",
+        { httpStatus: 400 },
+      );
+    }
+    if (input.backendId !== "codex-cli" && input.backendId !== "claude-cli") {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_INVALID",
+        "backendId must be one of 'codex-cli', 'claude-cli'.",
+        { httpStatus: 400 },
+      );
+    }
+    const handoff = await deps.cliAdapter.produceHandoff({
+      backendId: input.backendId,
+      systemPrompt: input.systemPrompt,
+      conversation: input.conversation,
+      contextPackage: workflow.contextPackage,
+      boundaryRefs: workflow.boundaryRefs,
+      model: input.model,
+      timeoutMs: input.timeoutMs,
+      minSummaryChars: input.minSummaryChars,
+    });
+    const now = deps.nowIso();
+    const record: FridayTaskWorkflowCliHandoffRecord = {
+      id: deps.idGenerator(),
+      workflowId,
+      laneId: lane.id,
+      backendId: handoff.backendId,
+      status: handoff.status,
+      summaryDraft: handoff.summaryDraft,
+      capabilityLabel: handoff.capabilityLabel,
+      repairAttempts: handoff.repairAttempts,
+      elapsedMs: handoff.elapsedMs,
+      failureReason: handoff.failureReason,
+      producedAt: handoff.producedAt,
+      createdAt: now,
+    };
+    deps.db.withWriteTransaction((db) => {
+      deps.repository.insertCliHandoff(db, record);
+    });
+    return record;
+  }
+
+  function listCliHandoffsByLane(
+    workflowId: string,
+    laneId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[] {
+    getLane(workflowId, laneId);
+    return deps.db.withReadConnection((db) =>
+      deps.repository.listCliHandoffsByLane(db, laneId),
+    );
+  }
+
+  function listCliHandoffsByWorkflow(
+    workflowId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[] {
+    get(workflowId);
+    return deps.db.withReadConnection((db) =>
+      deps.repository.listCliHandoffsByWorkflow(db, workflowId),
+    );
+  }
+
   return {
     preview,
     create,
@@ -1073,14 +1262,19 @@ export function createFridayTaskWorkflowService(
     submitVerifierVerdict,
     listLanes,
     getLane,
+    recordCliHandoff,
+    listCliHandoffsByLane,
+    listCliHandoffsByWorkflow,
   };
 }
 
-function validateLaneRole(role: unknown): asserts role is "native" | "provider" {
-  if (role !== "native" && role !== "provider") {
+function validateLaneRole(
+  role: unknown,
+): asserts role is "native" | "provider" | "cli" {
+  if (role !== "native" && role !== "provider" && role !== "cli") {
     throw new FridayDomainError(
       "TASK_WORKFLOW_INVALID",
-      "laneRole must be 'native' or 'provider'.",
+      "laneRole must be 'native', 'provider', or 'cli'.",
       { httpStatus: 400 },
     );
   }

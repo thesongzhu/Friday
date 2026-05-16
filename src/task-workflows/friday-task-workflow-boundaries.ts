@@ -139,7 +139,7 @@ export const FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES: readonly FridayTaskWorkflo
     boundaryId: "api.task_workflows.lanes",
     label: "Task workflow executor/verifier lane surface",
     description:
-      "Open and complete executor and verifier lanes, submit verifier verdicts, and read lane state. Executor lanes are bound to a frozen context snapshot hash. Verifier lanes are read-only with respect to task state: verdicts are promoted only through the service-mediated submitVerifierVerdict path. Provider fallback availability is recorded as a label and never counts as a verifier verdict. High-risk workflows refuse non-independent verifier lanes.",
+      "Open and complete executor and verifier lanes, submit verifier verdicts, and read lane state. Executor lanes are bound to a frozen context snapshot hash. Verifier lanes are read-only with respect to task state: verdicts are promoted only through the service-mediated submitVerifierVerdict path. Provider fallback availability is recorded as a label and never counts as a verifier verdict. High-risk workflows refuse non-independent verifier lanes. CLI lanes (laneRole='cli') are bounded text executor/reviewer surfaces only — they are never accepted as verifier verdict producers for any risk level.",
     allowedOperations: [
       "open_executor_lane",
       "complete_executor_lane",
@@ -156,6 +156,7 @@ export const FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES: readonly FridayTaskWorkflo
       "no_verifier_lane_without_executor_parent",
       "no_high_risk_self_verification",
       "no_lane_context_drift_after_revision",
+      "no_cli_verifier_promotion",
     ],
     evidenceRefSources: [],
     requiredGateIds: [
@@ -163,6 +164,31 @@ export const FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES: readonly FridayTaskWorkflo
       "verifier_fresh_read",
       "executor_lane_context_bound",
       "provider_fallback_not_audit",
+    ],
+  },
+  {
+    boundaryId: "api.task_workflows.cli_adapter",
+    label: "Task workflow CLI backend adapter surface",
+    description:
+      "Bounded text executor / reviewer adapter that wraps Friday's existing CLI completion primitive (runFridayCliBackendTextCompletion) and emits a normalized draft / unverified handoff with a machine-readable capability label. The adapter never copies whole-repo source into CLI prompts, never depends on local Codex/Claude conveyor bridge implementation details, and never satisfies a verified claim on its own. CLI summaries remain `unverified` until Friday's native or provider verifier lanes fresh-read the referenced evidence. The adapter applies bounded timeout, one bounded malformed-output repair attempt, and fail-closed handoff for CLI unavailability / auth missing.",
+    allowedOperations: [
+      "produce_cli_handoff",
+      "compute_capability_label",
+    ],
+    hardBoundaries: [
+      "no_cli_native_tool_proof",
+      "no_cli_verifier_promotion",
+      "no_whole_repo_context_for_cli",
+      "no_local_conveyor_dependency",
+      "no_unbounded_cli_repair_loop",
+      "cli_summary_unconfirmed_until_fresh_read",
+    ],
+    evidenceRefSources: ["manual_external"],
+    requiredGateIds: [
+      "cli_self_report_unconfirmed",
+      "claim_evidence_required",
+      "verifier_fresh_read",
+      "context_package_scope_limit",
     ],
   },
 ];

@@ -122,3 +122,19 @@ export function getFridayTaskWorkflowAllowedRefSources(
   const allowed = CLAIM_KIND_ALLOWED_REF_SOURCES[claimKind];
   return allowed ? [...allowed] : [];
 }
+
+/**
+ * Returns true when `refKind` identifies a CLI-namespaced evidence ref
+ * (e.g. `cli.handoff`, `cli.codex`, bare `cli`). Per module_26c the CLI
+ * surface is bounded text only with `nativeToolProof=false`; a CLI
+ * handoff / self-report ref therefore cannot itself satisfy a verified
+ * evidence-bearing claim (`runtime_evidence`, `code_evidence`,
+ * `api_evidence`, `artifact_evidence`) — only the natural pairing with
+ * the non-verifiable `cli_self_report` claim kind is allowed. Trimming
+ * and case-folding catch the trivially-shaped variants (`CLI.Handoff`,
+ * ` cli.handoff `).
+ */
+export function isFridayTaskWorkflowCliShapedRefKind(refKind: string): boolean {
+  const normalized = refKind.trim().toLowerCase();
+  return normalized === "cli" || normalized.startsWith("cli.");
+}

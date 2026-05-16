@@ -87,6 +87,11 @@ function makeStubServiceWithLanes(
     getLane: () => {
       throw new Error("not used");
     },
+    recordCliHandoff: async () => {
+      throw new Error("not used");
+    },
+    listCliHandoffsByLane: () => [],
+    listCliHandoffsByWorkflow: () => [],
   };
   return { ...base, ...overrides };
 }

@@ -16,6 +16,10 @@ import type {
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowClaimStatus,
+  FridayTaskWorkflowCliBackendId,
+  FridayTaskWorkflowCliCapabilityLabel,
+  FridayTaskWorkflowCliHandoffRecord,
+  FridayTaskWorkflowCliHandoffStatus,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowContextPackage,
@@ -119,6 +123,22 @@ export interface FridayTaskWorkflowRepository {
     db: Database.Database,
     workflowId: string,
   ): readonly FridayTaskWorkflowLaneRecord[];
+  insertCliHandoff(
+    db: Database.Database,
+    record: FridayTaskWorkflowCliHandoffRecord,
+  ): void;
+  getCliHandoff(
+    db: Database.Database,
+    handoffId: string,
+  ): FridayTaskWorkflowCliHandoffRecord | null;
+  listCliHandoffsByLane(
+    db: Database.Database,
+    laneId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[];
+  listCliHandoffsByWorkflow(
+    db: Database.Database,
+    workflowId: string,
+  ): readonly FridayTaskWorkflowCliHandoffRecord[];
 }
 
 export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowRepository {
@@ -513,6 +533,63 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         .all(workflowId) as Record<string, unknown>[];
       return rows.map(rowToLane);
     },
+
+    insertCliHandoff(db, record) {
+      db.prepare(
+        `INSERT INTO task_workflow_cli_handoffs (
+           id, workflow_id, lane_id, backend_id, status, summary_draft,
+           capability_label_json, repair_attempts, elapsed_ms,
+           failure_reason, produced_at, created_at
+         ) VALUES (
+           @id, @workflowId, @laneId, @backendId, @status, @summaryDraft,
+           @capabilityLabelJson, @repairAttempts, @elapsedMs,
+           @failureReason, @producedAt, @createdAt
+         )`,
+      ).run({
+        id: record.id,
+        workflowId: record.workflowId,
+        laneId: record.laneId,
+        backendId: record.backendId,
+        status: record.status,
+        summaryDraft: record.summaryDraft,
+        capabilityLabelJson: JSON.stringify(record.capabilityLabel),
+        repairAttempts: record.repairAttempts,
+        elapsedMs: record.elapsedMs,
+        failureReason: record.failureReason,
+        producedAt: record.producedAt,
+        createdAt: record.createdAt,
+      });
+    },
+
+    getCliHandoff(db, handoffId) {
+      const row = db
+        .prepare(`SELECT * FROM task_workflow_cli_handoffs WHERE id = ?`)
+        .get(handoffId) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return rowToCliHandoff(row);
+    },
+
+    listCliHandoffsByLane(db, laneId) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM task_workflow_cli_handoffs
+           WHERE lane_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all(laneId) as Record<string, unknown>[];
+      return rows.map(rowToCliHandoff);
+    },
+
+    listCliHandoffsByWorkflow(db, workflowId) {
+      const rows = db
+        .prepare(
+          `SELECT * FROM task_workflow_cli_handoffs
+           WHERE workflow_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all(workflowId) as Record<string, unknown>[];
+      return rows.map(rowToCliHandoff);
+    },
   };
 }
 
@@ -596,5 +673,29 @@ function rowToLane(row: Record<string, unknown>): FridayTaskWorkflowLaneRecord {
         : String(row.blocker),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function rowToCliHandoff(
+  row: Record<string, unknown>,
+): FridayTaskWorkflowCliHandoffRecord {
+  return {
+    id: String(row.id),
+    workflowId: String(row.workflow_id),
+    laneId: String(row.lane_id),
+    backendId: row.backend_id as FridayTaskWorkflowCliBackendId,
+    status: row.status as FridayTaskWorkflowCliHandoffStatus,
+    summaryDraft: String(row.summary_draft),
+    capabilityLabel: JSON.parse(
+      String(row.capability_label_json),
+    ) as FridayTaskWorkflowCliCapabilityLabel,
+    repairAttempts: Number(row.repair_attempts),
+    elapsedMs: Number(row.elapsed_ms),
+    failureReason:
+      row.failure_reason === null || row.failure_reason === undefined
+        ? null
+        : String(row.failure_reason),
+    producedAt: String(row.produced_at),
+    createdAt: String(row.created_at),
   };
 }

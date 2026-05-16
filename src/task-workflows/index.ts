@@ -27,6 +27,7 @@ export {
 } from "./friday-task-workflow-context-package.js";
 export {
   getFridayTaskWorkflowAllowedRefSources,
+  isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowNonEvidenceClaimKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
@@ -42,6 +43,15 @@ export type {
   FridayTaskWorkflowLaneContextSnapshotInput,
   FridayTaskWorkflowLaneIndependenceInput,
 } from "./friday-task-workflow-lanes.js";
+export {
+  buildFridayTaskWorkflowCliCapabilityLabel,
+  createFridayTaskWorkflowCliAdapter,
+} from "./friday-task-workflow-cli-adapter.js";
+export type {
+  CreateFridayTaskWorkflowCliAdapterDeps,
+  FridayTaskWorkflowCliAdapter,
+  FridayTaskWorkflowCliTextCompletion,
+} from "./friday-task-workflow-cli-adapter.js";
 export {
   createFridayTaskWorkflowRepository,
 } from "./friday-task-workflow-repository.js";
@@ -60,6 +70,12 @@ export type {
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowClaimStatus,
+  FridayTaskWorkflowCliBackendId,
+  FridayTaskWorkflowCliCapabilityLabel,
+  FridayTaskWorkflowCliHandoff,
+  FridayTaskWorkflowCliHandoffRecord,
+  FridayTaskWorkflowCliHandoffStatus,
+  FridayTaskWorkflowCliInvokeInput,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowCompleteLaneInput,
@@ -80,6 +96,7 @@ export type {
   FridayTaskWorkflowOpenVerifierLaneInput,
   FridayTaskWorkflowPreview,
   FridayTaskWorkflowRecord,
+  FridayTaskWorkflowRecordCliHandoffInput,
   FridayTaskWorkflowReviseInput,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
