@@ -50,6 +50,7 @@ export const REAL_WORLD_EXECUTION_KINDS = Object.freeze([
   "workflow_generator_loop",
   "persona_learning",
   "discord_roundtrip",
+  "skill_upgrade_lifecycle",
   "manual_external",
   "ui_authoring",
 ]);

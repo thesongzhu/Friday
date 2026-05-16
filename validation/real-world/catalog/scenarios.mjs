@@ -1448,6 +1448,46 @@ export const REAL_WORLD_SCENARIOS = [
       "verify audit search returns the disabled-skip record without overclaiming success",
     ],
   }),
+  // Phase 14 Module 26 — Phase 06 skill upgrade lifecycle live HTTP proof.
+  //
+  // Closes the Phase 06 release-proof debts: full HTTP proof of
+  //   stage v1 → shadow → canary → promote →
+  //   stage v2 → shadow → analyze → decide(replace) → canary → promote →
+  //   rollback
+  // with the rollback evidence asserting result=restored_previous (via
+  // evidence.stage="rolled_back") and the skill restored to installed v1.
+  //
+  // The RGG executor self-stages deterministic v1/v2 candidates inside the
+  // run by writing a temp skill manifest pair and POSTing them through the
+  // production `/v1/skills/import` route with canonical approvals signed by
+  // the runtime token secret. No operator pre-staging is required. Local
+  // proof of the full lifecycle is also covered by
+  // `test/e2e/api/friday-api-skill-upgrade-lifecycle-live.test.ts`.
+  baseScenario({
+    id: "l5-phase-06-skill-upgrade-lifecycle",
+    layer: "L5",
+    productArea: "skills lifecycle",
+    entrySurface: "/v1/autonomy/skills/:skillId",
+    routeFamily: "skill upgrade lifecycle",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "v1 candidate self-staged via /v1/skills/import",
+      "v1 autonomy shadow→canary→promote succeeded under canonical approvals",
+      "v2 candidate self-staged via /v1/skills/import",
+      "upgrade analyze + decide(replace) accepted the canonical approval",
+      "v2 autonomy shadow→canary→promote succeeded",
+      "rollback v2 evidence reported stage=rolled_back (result=restored_previous)",
+    ],
+    execution: {
+      kind: "skill_upgrade_lifecycle",
+      runtimeVersion: "rgg-phase14",
+      planDigest: "rgg-phase14-plan-digest",
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: ["phase-14", "module-26", "phase-06-debt", "skill-upgrade-lifecycle"],
+  }),
   baseScenario({
     id: "l8-agent-core-soak",
     layer: "L8",
