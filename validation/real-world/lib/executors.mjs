@@ -1,9 +1,16 @@
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
 import { ensureDir } from "./io.mjs";
 import { resolveJsonPath, safeJsonParse, slugify, stripMarkdownFences } from "./defs.mjs";
+import {
+  buildSkillImportStageApprovalRequest,
+  buildSkillLifecycleApprovalRequest,
+  buildSkillUpgradeDecideApprovalRequest,
+  signCanonicalApprovalForRequest,
+} from "./skill-upgrade-approval.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1736,6 +1743,320 @@ async function executeDiscordRoundtrip({ artifact, scenario, client }) {
   }
 }
 
+function buildRggSkillManifest({ skillId, version, withFormatInput }) {
+  return {
+    schemaVersion: "2.0",
+    id: skillId,
+    name: `RGG Phase 14 Skill v${version}`,
+    description: "RGG Phase 14 release-proof self-staged skill",
+    version,
+    kind: "conversation",
+    category: "utility",
+    author: { name: "rgg-phase14" },
+    tags: ["phase-14", "release-proof", "rgg-self-staged"],
+    runtime: {
+      kind: "shell",
+      entrypoint: "run.sh",
+      minHubVersion: "1.0.0",
+      apiVersion: "1",
+      timeoutMsDefault: 5_000,
+    },
+    triggers: { intents: [], phrases: [], channels: ["*"] },
+    invocation: {
+      userInvocable: true,
+      modelInvocable: true,
+      priority: 50,
+      modes: ["intent", "workflow"],
+    },
+    requirements: { bins: [], env: [], config: [], os: ["darwin", "linux", "win32"] },
+    inputs: withFormatInput
+      ? [
+        { key: "query", type: "string", required: false, label: "Query input" },
+        { key: "format", type: "string", required: false, label: "Output format" },
+      ]
+      : [
+        { key: "query", type: "string", required: false, label: "Query input" },
+      ],
+    outputs: [{ key: "result", type: "string", description: "Run result" }],
+    permissions: withFormatInput
+      ? {
+        grants: [
+          {
+            id: "rgg-phase14-network-read",
+            resource: "network",
+            action: "read",
+            required: true,
+            reason: "RGG Phase 14 lifecycle proof skill reads remote feed",
+          },
+        ],
+        promptOn: [],
+      }
+      : { grants: [], promptOn: [] },
+    schemas: { input: null, state: null, output: null },
+    flow: null,
+    executionTargets: {
+      allowedSatelliteTypes: ["phone", "desktop", "rpi", "cloud-vm"],
+      requiredCapabilities: [],
+    },
+    telemetry: { events: [] },
+  };
+}
+
+function buildRggSkillUiSchema(manifest) {
+  return {
+    schemaVersion: "1.0",
+    title: manifest.name,
+    sections: [],
+    fields: [],
+    outputs: [],
+    actions: [],
+  };
+}
+
+async function writeRggSkillCandidateDir({ skillId, version, dir, withFormatInput }) {
+  await fs.mkdir(dir, { recursive: true });
+  const manifest = buildRggSkillManifest({ skillId, version, withFormatInput });
+  await fs.writeFile(
+    path.join(dir, "skill.manifest.json"),
+    JSON.stringify(manifest, null, 2),
+    "utf8",
+  );
+  await fs.writeFile(path.join(dir, "SKILL.md"), `# ${manifest.name}\n`, "utf8");
+  await fs.writeFile(
+    path.join(dir, "skill.ui.json"),
+    JSON.stringify(buildRggSkillUiSchema(manifest), null, 2),
+    "utf8",
+  );
+  const entryPath = path.join(dir, manifest.runtime.entrypoint);
+  await fs.writeFile(
+    entryPath,
+    `#!/usr/bin/env bash\necho '{"result":"rgg-phase14-${manifest.version}"}'\n`,
+    "utf8",
+  );
+  await fs.chmod(entryPath, 0o755);
+  return manifest;
+}
+
+async function stageRggSkillCandidate({
+  client,
+  skillId,
+  version,
+  dir,
+  withFormatInput,
+  actor,
+  tokenSecret,
+  expiresAt,
+  approvalIdSuffix,
+}) {
+  await writeRggSkillCandidateDir({ skillId, version, dir, withFormatInput });
+  const source = { uri: dir, formatHint: "friday-package" };
+  const target = "managed";
+  const stageRequest = buildSkillImportStageApprovalRequest({
+    source,
+    formatHint: "friday-package",
+    target,
+    actor,
+    surface: "api:/v1/skills/import",
+  });
+  const canonicalApproval = signCanonicalApprovalForRequest({
+    request: stageRequest,
+    tokenSecret,
+    approvalId: `rgg-phase14-stage-${approvalIdSuffix}`,
+    decidedByPrincipalId: actor.principalId,
+    expiresAt,
+  });
+  const response = await client.api(
+    "POST",
+    "/v1/skills/import",
+    {
+      source,
+      formatHint: "friday-package",
+      target,
+      canonicalApproval,
+    },
+  );
+  const candidates = Array.isArray(response?.data?.candidates) ? response.data.candidates : [];
+  const candidate = candidates.find((entry) => entry?.skillId === skillId) ?? candidates[0];
+  const candidateId = candidate?.candidateId;
+  if (typeof candidateId !== "string" || candidateId.trim().length === 0) {
+    throw new Error(
+      `POST /v1/skills/import for ${skillId} v${version} returned no candidateId; response: ${JSON.stringify(response?.data).slice(0, 600)}`,
+    );
+  }
+  return { candidateId };
+}
+
+async function executeSkillUpgradeLifecycle({ artifact, client, scenario, runId }) {
+  const runtimeVersion = String(scenario.execution?.runtimeVersion ?? "rgg-runtime");
+  const providerModel = scenario.execution?.providerModel;
+  const planDigest = String(scenario.execution?.planDigest ?? "rgg-phase14-plan-digest");
+  const tokenSecret = process.env.FRIDAY_TOKEN_SECRET
+    ?? process.env.FRIDAY_REAL_WORLD_MINT_TOKEN_SECRET;
+  if (!tokenSecret) {
+    artifact.result = "blocked";
+    artifact.failureClass = "environment";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      "skill_upgrade_lifecycle scenario requires FRIDAY_TOKEN_SECRET to sign canonical approvals (auto-generated in standard self-hosted / mint-local-admin RGG runs)",
+    ];
+    return artifact;
+  }
+  const runSuffix = (typeof runId === "string" && runId.length > 0
+    ? runId
+    : crypto.randomBytes(6).toString("hex")
+  ).replace(/[^a-z0-9-]/giu, "").slice(0, 24).toLowerCase() || "rgg";
+  const skillId = `rgg-phase14-skill-${runSuffix}`;
+  const actor = {
+    kind: typeof client.user?.role === "string" ? "user" : "api",
+    id: client.user?.id ?? "rgg-skill-upgrade-actor",
+    principalId: client.user?.id ?? "rgg-skill-upgrade-actor",
+  };
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const candidateRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "rgg-phase14-skill-candidates-"),
+  );
+  const v1Dir = path.join(candidateRoot, "v1");
+  const v2Dir = path.join(candidateRoot, "v2");
+
+  function signLifecycle(action, candidateId, opts) {
+    const request = buildSkillLifecycleApprovalRequest({
+      action,
+      skillId,
+      candidateId,
+      runtimeVersion,
+      providerModel,
+      actor,
+      planDigest: action === "shadow" || action === "canary" ? undefined : planDigest,
+      canaryInput: opts?.canaryInput,
+    });
+    return signCanonicalApprovalForRequest({
+      request,
+      tokenSecret,
+      approvalId: `rgg-phase14-${action}-${candidateId}`,
+      decidedByPrincipalId: actor.principalId,
+      expiresAt,
+    });
+  }
+
+  async function postAutonomy(action, candidateId, body) {
+    const response = await client.api(
+      "POST",
+      `/v1/autonomy/skills/${encodeURIComponent(skillId)}/${action}`,
+      {
+        ...body,
+        candidateId,
+        runtimeVersion,
+        providerModel,
+        canonicalApproval: signLifecycle(action, candidateId, body),
+      },
+    );
+    return response.data;
+  }
+
+  let v1CandidateId = "";
+  let v2CandidateId = "";
+  try {
+    const v1Stage = await stageRggSkillCandidate({
+      client,
+      skillId,
+      version: "1.0.0",
+      dir: v1Dir,
+      withFormatInput: false,
+      actor,
+      tokenSecret,
+      expiresAt,
+      approvalIdSuffix: `${skillId}-v1`,
+    });
+    v1CandidateId = v1Stage.candidateId;
+
+    await postAutonomy("shadow", v1CandidateId, { shadowVersionId: v1CandidateId });
+    await postAutonomy("canary", v1CandidateId, {});
+    await postAutonomy("promote", v1CandidateId, { planDigest });
+
+    const v2Stage = await stageRggSkillCandidate({
+      client,
+      skillId,
+      version: "2.0.0",
+      dir: v2Dir,
+      withFormatInput: true,
+      actor,
+      tokenSecret,
+      expiresAt,
+      approvalIdSuffix: `${skillId}-v2`,
+    });
+    v2CandidateId = v2Stage.candidateId;
+
+    await postAutonomy("shadow", v2CandidateId, { shadowVersionId: v2CandidateId });
+    const analyzeResponse = await client.api(
+      "POST",
+      `/v1/skills/${encodeURIComponent(skillId)}/upgrade/analyze`,
+      { candidateId: v2CandidateId },
+    );
+    const analysis = analyzeResponse.data.analysis;
+    const decideRequest = buildSkillUpgradeDecideApprovalRequest({
+      skillId,
+      candidateId: v2CandidateId,
+      decision: "replace",
+      analysisDigest: analysis.analysisDigest,
+      recommendation: analysis.recommendation,
+      regressionVerdict: analysis.regressionProof?.overallVerdict ?? "no_affected_workflows",
+      actor,
+    });
+    const decideApproval = signCanonicalApprovalForRequest({
+      request: decideRequest,
+      tokenSecret,
+      approvalId: `rgg-phase14-decide-${v2CandidateId}`,
+      decidedByPrincipalId: actor.principalId,
+      expiresAt,
+    });
+    await client.api(
+      "POST",
+      `/v1/skills/${encodeURIComponent(skillId)}/upgrade/decide`,
+      {
+        candidateId: v2CandidateId,
+        decision: "replace",
+        canonicalApproval: decideApproval,
+      },
+    );
+    await postAutonomy("canary", v2CandidateId, {});
+    await postAutonomy("promote", v2CandidateId, { planDigest });
+    const rollbackResponse = await postAutonomy("rollback", v2CandidateId, { planDigest });
+    if (rollbackResponse?.evidence?.stage !== "rolled_back") {
+      throw new Error(`rollback evidence stage was ${String(rollbackResponse?.evidence?.stage)}; expected rolled_back`);
+    }
+    artifact.result = "passed";
+    artifact.observedEvidence.push(
+      `v1 candidate self-staged via /v1/skills/import (candidateId=${v1CandidateId})`,
+      "v1 autonomy shadow→canary→promote completed",
+      `v2 candidate self-staged via /v1/skills/import (candidateId=${v2CandidateId})`,
+      "upgrade analyze + decide(replace) executed",
+      "v2 autonomy shadow→canary→promote completed",
+      `rollback evidence.stage=${rollbackResponse.evidence.stage}`,
+    );
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      skillId,
+      v1CandidateId,
+      v2CandidateId,
+      rollback: rollbackResponse?.evidence,
+    };
+  } catch (error) {
+    artifact.result = "failed";
+    artifact.failureClass = artifact.failureClass ?? "lifecycle_runtime";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      error instanceof Error ? error.message : String(error),
+    ];
+  } finally {
+    try {
+      await fs.rm(candidateRoot, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; do not mask the lifecycle outcome.
+    }
+  }
+  return artifact;
+}
+
 async function executeManualExternal({ artifact, scenario, blockers }) {
   const manualEvidenceTemplate = [
     `surface=${scenario.entrySurface}`,
@@ -1820,6 +2141,9 @@ export async function executeScenario({
         break;
       case "discord_roundtrip":
         await executeDiscordRoundtrip({ artifact, scenario, client });
+        break;
+      case "skill_upgrade_lifecycle":
+        await executeSkillUpgradeLifecycle({ artifact, client, scenario, runId });
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });
