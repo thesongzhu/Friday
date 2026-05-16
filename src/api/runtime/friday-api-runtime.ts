@@ -70,6 +70,10 @@ import {
   type FridayMediaUnderstandingRoutesDeps,
 } from "../http/routes/friday-media-understanding-routes.js";
 import {
+  createFridayTaskWorkflowRoutes,
+  type FridayTaskWorkflowRoutesDeps,
+} from "../http/routes/friday-task-workflow-routes.js";
+import {
   createFridaySocialImportRoutes,
   type FridaySocialImportRoutesDeps,
 } from "../http/routes/friday-social-import-routes.js";
@@ -2524,6 +2528,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     disabledReason: mediaUnderstandingDeps.disabledReason,
     nowIso: deps.nowIso,
   })) {
+    routes.register(route);
+  }
+
+  // Register Phase 13.5A task workflow routes (separate from /v1/agent/runs).
+  //
+  // Routes are always registered; when deps.taskWorkflows is missing or its
+  // service slot is null, the handlers return `503 TASK_WORKFLOWS_DISABLED`
+  // with a structured disabledReason so disabled deployments never return
+  // 404. The task workflow surface only writes additive task workflow
+  // tables and never mutates agent run state.
+  const taskWorkflowDeps: FridayTaskWorkflowRoutesDeps =
+    deps.taskWorkflows ?? {
+      service: null,
+      disabledReason: "task workflow deps not provided",
+    };
+  for (const route of createFridayTaskWorkflowRoutes(taskWorkflowDeps)) {
     routes.register(route);
   }
 

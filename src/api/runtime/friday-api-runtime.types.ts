@@ -29,6 +29,7 @@ import type {
 import type { FridayProviderService } from "#providers";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
+import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridaySessionMemoryExtractionService, FridaySessionService } from "#sessions";
 import type {
@@ -348,4 +349,17 @@ export interface CreateFridayApiRuntimeDeps {
   outboxQueueService?: FridayOutboxQueueService;
   /** Optional: packaging system route surface (publish, install, upgrade, rollback, keys). */
   packaging?: FridayPackagingRoutesDeps;
+  /**
+   * Phase 13.5A task workflow policy route surface.
+   *
+   * Optional. The routes are always registered regardless of whether this
+   * slot is supplied — `createFridayApiRuntime` coalesces a missing/undefined
+   * value to an honest-disabled deps shape so disabled deployments return
+   * `503 TASK_WORKFLOWS_DISABLED`, never 404.
+   *
+   * The surface is intentionally separate from `/v1/agent/runs`; the task
+   * workflow service only writes additive task workflow tables and never
+   * mutates agent run records.
+   */
+  taskWorkflows?: FridayTaskWorkflowRoutesDeps;
 }
