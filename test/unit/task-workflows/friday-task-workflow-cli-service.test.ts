@@ -267,6 +267,225 @@ describe("Phase 13.5C CLI verifier verdict promotion refusal", () => {
   });
 });
 
+describe("Phase 13.5C CLI-shaped evidence ref refusal on evidence-bearing claims", () => {
+  function setupDraftEvidenceClaim(
+    claimKind:
+      | "runtime_evidence"
+      | "code_evidence"
+      | "api_evidence"
+      | "artifact_evidence",
+  ) {
+    const service = makeService();
+    const workflow = service.create(makeCreateInput({ risk: "medium" }));
+    const claim = service.draftClaim(workflow.id, {
+      claimText: `claim of kind ${claimKind}`,
+      claimKind,
+    });
+    return { service, workflow, claim };
+  }
+
+  it("attachEvidenceRef refuses cli.handoff refKind on a runtime_evidence claim (fail-closed)", () => {
+    const { service, workflow, claim } = setupDraftEvidenceClaim("runtime_evidence");
+    try {
+      service.attachEvidenceRef(workflow.id, claim.id, {
+        refKind: "cli.handoff",
+        refId: "handoff-bypass-001",
+        refSource: "manual_external",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+    // The claim must remain in `draft` with no evidence refs persisted —
+    // no partial mutation when the guard fires.
+    const stillDraft = service.getClaim(workflow.id, claim.id);
+    expect(stillDraft.status).toBe("draft");
+    expect(stillDraft.evidenceRefCount).toBe(0);
+  });
+
+  it("attachEvidenceRef refuses cli.codex refKind on a code_evidence claim", () => {
+    const { service, workflow, claim } = setupDraftEvidenceClaim("code_evidence");
+    try {
+      service.attachEvidenceRef(workflow.id, claim.id, {
+        refKind: "cli.codex",
+        refId: "handoff-bypass-002",
+        refSource: "manual_external",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+  });
+
+  it("attachEvidenceRef refuses bare cli refKind on an api_evidence claim (case-insensitive)", () => {
+    const { service, workflow, claim } = setupDraftEvidenceClaim("api_evidence");
+    try {
+      service.attachEvidenceRef(workflow.id, claim.id, {
+        refKind: "CLI",
+        refId: "handoff-bypass-003",
+        refSource: "manual_external",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+  });
+
+  it("attachEvidenceRef refuses cli.handoff refKind on an artifact_evidence claim", () => {
+    const { service, workflow, claim } = setupDraftEvidenceClaim("artifact_evidence");
+    try {
+      service.attachEvidenceRef(workflow.id, claim.id, {
+        refKind: "cli.handoff",
+        refId: "handoff-bypass-004",
+        refSource: "manual_external",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+  });
+
+  it("verifyClaim refuses a runtime_evidence claim whose persisted ref is CLI-shaped (defense in depth)", () => {
+    // Mirror the existing refSource defense-in-depth pattern: bypass the
+    // attachEvidenceRef guard by writing a CLI-shaped evidence ref
+    // directly through the repository, then prove verifyClaim still
+    // refuses it.
+    const { service, workflow, claim } = setupDraftEvidenceClaim("runtime_evidence");
+    const repository = createFridayTaskWorkflowRepository();
+    db.withWriteTransaction((conn) => {
+      repository.insertEvidenceRef(conn, {
+        id: "ref-cli-bypass-001",
+        workflowId: workflow.id,
+        claimId: claim.id,
+        refKind: "cli.handoff",
+        refId: "handoff-bypass-005",
+        refHash: null,
+        refSource: "manual_external",
+        createdAt: frozenNow,
+      });
+      const stored = repository.getClaim(conn, claim.id);
+      if (!stored) throw new Error("claim missing");
+      repository.updateClaim(conn, {
+        ...stored,
+        status: "unverified",
+        evidenceRefCount: stored.evidenceRefCount + 1,
+        updatedAt: frozenNow,
+      });
+    });
+    try {
+      service.verifyClaim(workflow.id, claim.id, {
+        verifierVerdict: "cli says runtime evidence is fine",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+    const stillUnverified = service.getClaim(workflow.id, claim.id);
+    expect(stillUnverified.status).not.toBe("verified");
+  });
+
+  it("submitVerifierVerdict refuses a CLI-shaped persisted ref via the verdict path", () => {
+    // The Phase 13.5B verifier-verdict path also routes through
+    // verifyClaim; the defense-in-depth guard must fire there too.
+    const service = makeService();
+    const workflow = service.create(makeCreateInput({ risk: "medium" }));
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "runtime evidence claim with smuggled cli ref",
+      claimKind: "runtime_evidence",
+    });
+    const executorLane = service.openExecutorLane(workflow.id, {
+      laneRole: "provider",
+      providerId: "openai",
+    });
+    const providerVerifier = service.openVerifierLane(workflow.id, {
+      parentLaneId: executorLane.id,
+      laneRole: "provider",
+      providerId: "anthropic",
+      independenceClaim: "independent",
+    });
+    const repository = createFridayTaskWorkflowRepository();
+    db.withWriteTransaction((conn) => {
+      repository.insertEvidenceRef(conn, {
+        id: "ref-cli-bypass-002",
+        workflowId: workflow.id,
+        claimId: claim.id,
+        refKind: "cli.handoff",
+        refId: "handoff-bypass-006",
+        refHash: null,
+        refSource: "manual_external",
+        createdAt: frozenNow,
+      });
+      const stored = repository.getClaim(conn, claim.id);
+      if (!stored) throw new Error("claim missing");
+      repository.updateClaim(conn, {
+        ...stored,
+        status: "unverified",
+        evidenceRefCount: stored.evidenceRefCount + 1,
+        updatedAt: frozenNow,
+      });
+    });
+    try {
+      service.submitVerifierVerdict(workflow.id, providerVerifier.id, {
+        claimId: claim.id,
+        verifierVerdict: "anthropic fresh-read",
+      });
+      throw new Error("expected CLI-shaped refKind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+      );
+    }
+  });
+
+  it("preserves the natural cli_self_report ↔ cli.handoff pairing (still attaches; still non-verifiable by claim kind)", () => {
+    // Sanity check that the new guard does NOT regress the legitimate
+    // pairing where a CLI handoff trail is attached to a cli_self_report
+    // claim. The claim continues to refuse verified via the existing
+    // CLAIM_KIND_NOT_VERIFIABLE path, not the new refKind guard.
+    const service = makeService();
+    const workflow = service.create(makeCreateInput({ risk: "medium" }));
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "cli observed test pass",
+      claimKind: "cli_self_report",
+    });
+    const { evidenceRef } = service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "cli.handoff",
+      refId: "handoff-natural-001",
+      refSource: "manual_external",
+    });
+    expect(evidenceRef.refKind).toBe("cli.handoff");
+    const afterAttach = service.getClaim(workflow.id, claim.id);
+    expect(afterAttach.status).toBe("unverified");
+    try {
+      service.verifyClaim(workflow.id, claim.id, {
+        verifierVerdict: "cli says ok",
+      });
+      throw new Error("expected non-verifiable claim kind refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect((error as FridayDomainError).code).toBe(
+        "TASK_WORKFLOW_CLAIM_KIND_NOT_VERIFIABLE",
+      );
+    }
+  });
+});
+
 describe("Phase 13.5C closeout still blocks when a CLI self-report sneaks in", () => {
   it("cli_self_report_unconfirmed gate blocks closeout if a CLI summary is somehow marked verified", () => {
     // The service refuses to promote a CLI claim to verified through the

@@ -25,6 +25,7 @@ import {
 } from "./friday-task-workflow-boundaries.js";
 import {
   getFridayTaskWorkflowAllowedRefSources,
+  isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
 import { evaluateFridayTaskWorkflowCloseoutGates } from "./friday-task-workflow-closeout-gates.js";
@@ -540,6 +541,22 @@ export function createFridayTaskWorkflowService(
         },
       );
     }
+    if (
+      !NON_EVIDENCE_CLAIM_KINDS.has(claim.claimKind) &&
+      isFridayTaskWorkflowCliShapedRefKind(input.refKind)
+    ) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+        `evidence ref refKind "${input.refKind}" is a CLI-shaped reference; CLI handoff / self-report is bounded text only (nativeToolProof=false) and cannot satisfy a verified ${claim.claimKind} claim. Attach a non-CLI evidence ref backed by Friday verifier fresh-reading runtime / code / api / artifact evidence instead.`,
+        {
+          httpStatus: 400,
+          details: {
+            claimKind: claim.claimKind,
+            refKind: input.refKind,
+          },
+        },
+      );
+    }
     const now = deps.nowIso();
     const evidenceRef: FridayTaskWorkflowEvidenceRefRecord = {
       id: deps.idGenerator(),
@@ -641,6 +658,23 @@ export function createFridayTaskWorkflowService(
             offendingRefIds: incompatibleRefs.map((r) => r.id),
             offendingRefSources: incompatibleRefs.map((r) => r.refSource),
             allowedRefSources: getFridayTaskWorkflowAllowedRefSources(claim.claimKind),
+          },
+        },
+      );
+    }
+    const cliShapedRefs = attachedRefs.filter((ref) =>
+      isFridayTaskWorkflowCliShapedRefKind(ref.refKind),
+    );
+    if (cliShapedRefs.length > 0) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLI_EVIDENCE_REF_REFUSED",
+        `claim "${claim.id}" of kind "${claim.claimKind}" has CLI-shaped evidence ref(s); CLI handoff / self-report cannot satisfy verified status. Attach evidence refs backed by Friday verifier fresh-reading runtime / code / api / artifact evidence instead.`,
+        {
+          httpStatus: 400,
+          details: {
+            claimKind: claim.claimKind,
+            offendingRefIds: cliShapedRefs.map((r) => r.id),
+            offendingRefKinds: cliShapedRefs.map((r) => r.refKind),
           },
         },
       );

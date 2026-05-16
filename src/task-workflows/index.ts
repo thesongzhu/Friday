@@ -27,6 +27,7 @@ export {
 } from "./friday-task-workflow-context-package.js";
 export {
   getFridayTaskWorkflowAllowedRefSources,
+  isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowNonEvidenceClaimKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
