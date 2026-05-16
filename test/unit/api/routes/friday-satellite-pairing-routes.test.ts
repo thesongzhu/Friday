@@ -154,6 +154,34 @@ describe("createFridaySatellitePairingRoutes", () => {
         transport: "mixed",
       }));
     });
+
+    it("Phase 14.5A trust boundary: registration is public + rate-limited and never auto-approves a satellite", async () => {
+      // WP-001 P0 / Phase 14.5A decision #6: public satellite registration is
+      // acceptable beyond localhost/LAN only with anti-spam rate limit + a
+      // pending status that requires owner approval before any token is issued.
+      const routes = createFridaySatellitePairingRoutes(deps);
+      const registerRoute = findRoute(routes, "satellites.register");
+      expect(registerRoute.auth).toEqual({ public: true });
+      expect(registerRoute.rateLimitPolicyId).toBe("satellite.register");
+
+      const result = await registerRoute.handler(makeCtx({
+        body: { type: "edge", displayName: "Test", publicKey: "pk-abc" },
+        principal: undefined,
+      }) as any) as { pairingStatus: string; pairingRequired: boolean };
+      // Pending status + pairingRequired=true means even an unauthenticated
+      // caller cannot turn a registration into an approved satellite without
+      // a separate owner-bound approval call.
+      expect(result.pairingStatus).toBe("pending_approval");
+      expect(result.pairingRequired).toBe(true);
+
+      // The approve/reject/revoke routes that complete the trust transition
+      // refuse the synthetic public principal (covered in dedicated tests
+      // below), so the chain is closed.
+      const approveRoute = findRoute(routes, "satellites.pairing.approve");
+      expect(approveRoute.auth).toEqual({ public: true });
+      const revokeRoute = findRoute(routes, "satellites.revoke");
+      expect(revokeRoute.auth).toEqual({ public: true });
+    });
   });
 
   // ─── List Pending ───
@@ -229,19 +257,30 @@ describe("createFridaySatellitePairingRoutes", () => {
       await expect(route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any)).rejects.toThrow("No pending pairing request");
     });
 
-    it("falls back to 'system' when no principal is present", async () => {
+    it("Phase 14.5A: refuses approval from the synthetic public principal (no owner binding)", async () => {
       const routes = createFridaySatellitePairingRoutes(deps);
       const route = findRoute(routes, "satellites.pairing.approve");
 
-      await route.handler(makeCtx({
+      await expect(route.handler(makeCtx({
         params: { satelliteId: "sat-001" },
         body: {},
         principal: undefined,
-      }) as any);
+      }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
 
-      expect(deps.approvePairing).toHaveBeenCalledWith(expect.objectContaining({
-        resolverUserId: "system",
-      }));
+      expect(deps.approvePairing).not.toHaveBeenCalled();
+    });
+
+    it("Phase 14.5A: refuses approval from the synthetic default-public admin principal", async () => {
+      const routes = createFridaySatellitePairingRoutes(deps);
+      const route = findRoute(routes, "satellites.pairing.approve");
+
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {},
+        principal: { principalId: "public:default" },
+      }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
+
+      expect(deps.approvePairing).not.toHaveBeenCalled();
     });
   });
 
@@ -272,6 +311,19 @@ describe("createFridaySatellitePairingRoutes", () => {
       const route = findRoute(routes, "satellites.pairing.reject");
 
       await expect(route.handler(makeCtx({ params: { satelliteId: "sat-001" }, body: {} }) as any)).rejects.toThrow("No pending pairing request");
+    });
+
+    it("Phase 14.5A: refuses rejection from the synthetic default-public principal", async () => {
+      const routes = createFridaySatellitePairingRoutes(deps);
+      const route = findRoute(routes, "satellites.pairing.reject");
+
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {},
+        principal: { principalId: "public:default" },
+      }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
+
+      expect(deps.rejectPairing).not.toHaveBeenCalled();
     });
   });
 
@@ -336,6 +388,19 @@ describe("createFridaySatellitePairingRoutes", () => {
         resolverUserId: "user-001",
         reason: "compromised",
       }));
+    });
+
+    it("Phase 14.5A: refuses revocation from the synthetic default-public principal", async () => {
+      const routes = createFridaySatellitePairingRoutes(deps);
+      const route = findRoute(routes, "satellites.revoke");
+
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: { reason: "drift" },
+        principal: { principalId: "public:default" },
+      }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
+
+      expect(deps.revokeSatellite).not.toHaveBeenCalled();
     });
   });
 });

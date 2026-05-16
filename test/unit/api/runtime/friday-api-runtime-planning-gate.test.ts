@@ -315,6 +315,15 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const approved = await approveRoute!.handler({
       params: { runId: initial.runId },
+      // Phase 14.5A: plan approval requires a bound owner/session/channel principal.
+      principal: {
+        principalType: "user",
+        principalId: "approver-direct-1",
+        tokenId: "11111111-1111-1111-1111-111111111111",
+        tokenKind: "access",
+        scopes: ["agent.write"],
+        issuedAt: NOW,
+      },
     } as never);
     expect(approved.status).toBe("awaiting_clarification");
     expect(approved.runId).toBe(initial.runId);

@@ -504,4 +504,116 @@ describe("FridayWorkflowTriggerService", () => {
       expect(executionService.startRun).not.toHaveBeenCalled();
     });
   });
+
+  describe("Phase 14.5A owner/session/channel capability gate (module_28a)", () => {
+    function createGateService(input: {
+      pathToken: string;
+      bearerOnlyAllowlist?: ReadonlySet<string>;
+    }) {
+      const wfRepo = createFridayWorkflowRepository({ db });
+      const triggerRepo = createFridayWorkflowTriggerRepository({ db });
+      const executionService = createMockExecutionService();
+      const idGen = createTestIdGenerator();
+
+      db.withWriteTransaction((conn) => {
+        wfRepo.insertWorkflow(conn, "wf-gate-1", { slug: "gate-wf", name: "Gate WF" }, "etag-gate", NOW);
+        wfRepo.insertVersion(conn, "wv-gate-1", "wf-gate-1", 1, "cs-gate", "{}", undefined, undefined, NOW);
+      });
+
+      triggerRepo.upsertManyForVersion([{
+        id: "tr-gate-1",
+        workflowId: "wf-gate-1",
+        workflowVersionId: "wv-gate-1",
+        triggerNodeId: "trigger-gate-1",
+        triggerType: "webhook",
+        enabled: true,
+        webhookPathToken: input.pathToken,
+        dedupeWindowSec: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }]);
+
+      const service = createFridayWorkflowTriggerService({
+        db,
+        executionService,
+        workflowRepo: wfRepo,
+        triggerRepo,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        readWebhookBearerOnlyAllowlist: () => input.bearerOnlyAllowlist ?? new Set(),
+      });
+
+      return { service, executionService };
+    }
+
+    it("rejects unsigned webhook by default with WORKFLOW_WEBHOOK_HMAC_REQUIRED", async () => {
+      const { service, executionService } = createGateService({ pathToken: "no-hmac-token" });
+      const result = await service.handleWebhook({
+        pathToken: "no-hmac-token",
+        body: { ok: true },
+      });
+      expect(result).toMatchObject({
+        accepted: false,
+        statusCode: 401,
+        errorCode: "WORKFLOW_WEBHOOK_HMAC_REQUIRED",
+      });
+      expect(executionService.startRun).not.toHaveBeenCalled();
+    });
+
+    it("rejects opt-in bearer-only webhook when path token is below entropy floor", async () => {
+      const shortToken = "weak-bearer";
+      const { service, executionService } = createGateService({
+        pathToken: shortToken,
+        bearerOnlyAllowlist: new Set([shortToken]),
+      });
+      const result = await service.handleWebhook({
+        pathToken: shortToken,
+        body: { ok: true },
+      });
+      expect(result).toMatchObject({
+        accepted: false,
+        statusCode: 401,
+        errorCode: "WORKFLOW_WEBHOOK_PATH_TOKEN_WEAK",
+      });
+      expect(executionService.startRun).not.toHaveBeenCalled();
+    });
+
+    it("accepts opt-in bearer-only webhook when path token is allowlisted and entropy-safe", async () => {
+      const strongToken = "b".repeat(64);
+      const { service, executionService } = createGateService({
+        pathToken: strongToken,
+        bearerOnlyAllowlist: new Set([strongToken]),
+      });
+      const result = await service.handleWebhook({
+        pathToken: strongToken,
+        body: { ok: true },
+      });
+      expect(result.accepted).toBe(true);
+      expect(executionService.startRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("redacts sensitive headers from persisted webhook input metadata", async () => {
+      const strongToken = "c".repeat(64);
+      const { service, executionService } = createGateService({
+        pathToken: strongToken,
+        bearerOnlyAllowlist: new Set([strongToken]),
+      });
+      await service.handleWebhook({
+        pathToken: strongToken,
+        body: { ok: true },
+        headers: {
+          Authorization: "Bearer leaked-bearer-token",
+          cookie: "session=leak-me",
+          "x-trace-id": "trace-abc",
+        },
+      });
+      expect(executionService.startRun).toHaveBeenCalledTimes(1);
+      const call = (executionService.startRun as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        triggerPayload: { _webhookHeaders: Record<string, string> };
+      };
+      expect(call.triggerPayload._webhookHeaders.Authorization).toBe("[REDACTED]");
+      expect(call.triggerPayload._webhookHeaders.cookie).toBe("[REDACTED]");
+      expect(call.triggerPayload._webhookHeaders["x-trace-id"]).toBe("trace-abc");
+    });
+  });
 });

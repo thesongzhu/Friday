@@ -30,6 +30,7 @@ import {
   hashIdempotencyPayload,
   readIdempotencyKeyHeader,
 } from "./friday-route-idempotency.js";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 
 // ─── Constants ───
 
@@ -101,22 +102,18 @@ function isUserVisibleAgentRun(run: FridayAgentRunRecord): boolean {
   return !isInternalAutonomousRun(run) && !isSubagentChildRun(run);
 }
 
-function requireToolApprovalPrincipal(principal: FridayAuthPrincipal | null): {
+function requireToolApprovalPrincipal(
+  principal: FridayAuthPrincipal | null,
+  operation: "agent.tool.approve" | "agent.tool.reject",
+): {
   approverPrincipalId: string;
   approverPrincipalType?: string;
   approvalSurface: string;
 } {
-  if (!principal?.principalId) {
-    throw new FridayDomainError(
-      "AGENT_APPROVER_PRINCIPAL_REQUIRED",
-      "Tool approval requires an authenticated approver principal.",
-      { httpStatus: 401 },
-    );
-  }
-
+  const bound = assertBoundPrincipalForOperation(principal, operation, "api");
   return {
-    approverPrincipalId: principal.principalId,
-    approverPrincipalType: principal.principalType,
+    approverPrincipalId: bound.principalId,
+    approverPrincipalType: bound.principalType,
     approvalSurface: "api",
   };
 }
@@ -1232,6 +1229,7 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
+        assertBoundPrincipalForOperation(ctx.principal, "agent.plan.approve", "api");
         return await deps.approvePlan(buildPlanControlInput(runId, ctx.principal));
       },
     },
@@ -1245,6 +1243,7 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         getVisibleRunOrThrow(runId);
+        assertBoundPrincipalForOperation(ctx.principal, "agent.plan.reject", "api");
         return await deps.rejectPlan(buildPlanControlInput(runId, ctx.principal));
       },
     },
@@ -1267,7 +1266,7 @@ export function createFridayAgentRoutes(
           );
         }
         getToolApprovalTargetRunOrThrow(runId);
-        return deps.resolveToolApproval(runId, toolCallId, true, requireToolApprovalPrincipal(ctx.principal));
+        return deps.resolveToolApproval(runId, toolCallId, true, requireToolApprovalPrincipal(ctx.principal, "agent.tool.approve"));
       },
     },
 
@@ -1290,7 +1289,7 @@ export function createFridayAgentRoutes(
         }
         getToolApprovalTargetRunOrThrow(runId);
         return deps.resolveToolApproval(runId, toolCallId, false, {
-          ...requireToolApprovalPrincipal(ctx.principal),
+          ...requireToolApprovalPrincipal(ctx.principal, "agent.tool.reject"),
           reason: body?.reason,
         });
       },

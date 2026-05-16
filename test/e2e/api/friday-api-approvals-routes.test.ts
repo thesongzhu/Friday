@@ -404,4 +404,60 @@ describe("API — Approval routes", () => {
     expect(typeof json.error.message).toBe("string");
     expect(typeof json.requestId).toBe("string");
   });
+
+  // ── Phase 14.5A WP-001: workflow approval refuses synthetic public ─────
+
+  it("phase_14_5a_workflow_approval_approve_refuses_unauthenticated_synthetic_public", async () => {
+    const { runId } = await createApprovalRun(env.baseUrl, token);
+
+    // Find the pending approval id (uses authenticated list).
+    const listRes = await fetch(`${env.baseUrl}/v1/workflow-approvals`, {
+      headers: authHeaders(token),
+    });
+    const listJson = (await listRes.json()) as {
+      ok: boolean;
+      data: { items: Array<{ id: string; status: string; runId: string }> };
+    };
+    const approval = listJson.data.items.find(
+      (item) => item.runId === runId && item.status === "pending",
+    );
+    expect(approval).toBeDefined();
+    const approvalId = approval!.id;
+
+    // Drop Authorization header on the approve call. The auth middleware
+    // injects the synthetic FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL, and Phase
+    // 14.5A's bound-principal gate must refuse it with 401.
+    const approveRes = await fetch(
+      `${env.baseUrl}/v1/workflow-approvals/${approvalId}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: "synthetic public attempt" }),
+      },
+    );
+    expect(approveRes.status).toBe(401);
+    const approveJson = (await approveRes.json()) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(approveJson.ok).toBe(false);
+    expect(approveJson.error.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+
+    // Reject is gated the same way; also check the /v1/approvals alias.
+    const rejectRes = await fetch(
+      `${env.baseUrl}/v1/approvals/${approvalId}/reject`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: "synthetic public reject attempt" }),
+      },
+    );
+    expect(rejectRes.status).toBe(401);
+    const rejectJson = (await rejectRes.json()) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(rejectJson.ok).toBe(false);
+    expect(rejectJson.error.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+  });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createFridaySecurityRoutes } from "#api";
 import type { FridaySecurityRoutesDeps } from "#api";
 
@@ -22,8 +22,8 @@ describe("FridaySecurityRoutes", () => {
         findings: [],
       }),
     },
-    revokeToken: (tokenId: string) => ({ revoked: true as const, tokenId }),
-    revokeSatellite: (satelliteId: string) => ({ revoked: true as const, satelliteId }),
+    revokeToken: vi.fn((tokenId: string) => ({ revoked: true as const, tokenId })) as unknown as FridaySecurityRoutesDeps["revokeToken"],
+    revokeSatellite: vi.fn((satelliteId: string) => ({ revoked: true as const, satelliteId })) as unknown as FridaySecurityRoutesDeps["revokeSatellite"],
   };
 
   const routes = createFridaySecurityRoutes(stubDeps);
@@ -51,5 +51,67 @@ describe("FridaySecurityRoutes", () => {
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
     expect(route!.auth).toEqual({ public: true });
+  });
+
+  // ── Phase 14.5A WP-001: parallel security-routes revocation surfaces ──────
+
+  it("Phase 14.5A: POST /v1/security/tokens/revoke refuses the synthetic public principal", async () => {
+    const route = routes.find((r) => r.operationId === "security.revoke.token")!;
+    let thrown: unknown;
+    try {
+      await route.handler({
+        body: { tokenId: "tok-1" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: { principalId: "public:default" },
+        requestId: "req-1",
+        receivedAt: "2026-05-16T00:00:00.000Z",
+      } as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(stubDeps.revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("Phase 14.5A: POST /v1/security/tokens/revoke refuses a null principal", async () => {
+    const route = routes.find((r) => r.operationId === "security.revoke.token")!;
+    let thrown: unknown;
+    try {
+      await route.handler({
+        body: { tokenId: "tok-1" },
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-1",
+        receivedAt: "2026-05-16T00:00:00.000Z",
+      } as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(stubDeps.revokeToken).not.toHaveBeenCalled();
+  });
+
+  it("Phase 14.5A: POST /v1/security/satellites/:satelliteId/revoke refuses the synthetic public principal", async () => {
+    const route = routes.find((r) => r.operationId === "security.revoke.satellite")!;
+    let thrown: unknown;
+    try {
+      await route.handler({
+        body: { reason: "compromised" },
+        params: { satelliteId: "sat-1" },
+        query: {},
+        headers: {},
+        principal: { principalId: "public:default" },
+        requestId: "req-1",
+        receivedAt: "2026-05-16T00:00:00.000Z",
+      } as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(stubDeps.revokeSatellite).not.toHaveBeenCalled();
   });
 });

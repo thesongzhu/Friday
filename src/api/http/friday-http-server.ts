@@ -26,6 +26,7 @@ import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
 import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
+import { redactWebhookPathTokenInPath } from "../../security/friday-owner-session-channel-capability.js";
 
 // ─── Types ───
 
@@ -488,13 +489,17 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const receivedAt = new Date().toISOString();
     const startNs = process.hrtime.bigint();
 
-    // Request logging on response finish
+    // Request logging on response finish.
+    // Phase 14.5A module_28a: redact workflow webhook path tokens before they
+    // hit the access log. Path tokens may be the only credential for bearer-
+    // only-opt-in webhooks; leaking them into local stdout/file logs would
+    // defeat the receipt-trust label.
     if (logRequests) {
       res.on("finish", () => {
         const elapsedNs = process.hrtime.bigint() - startNs;
         const elapsedMs = Number(elapsedNs / 1_000_000n);
         const method = req.method ?? "GET";
-        const url = req.url ?? "/";
+        const url = redactWebhookPathTokenInPath(req.url ?? "/");
         logger(`[FRIDAY] ${method} ${url} ${res.statusCode} ${elapsedMs}ms`);
       });
     }

@@ -12,6 +12,7 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "#errors";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 
 import {
   FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES,
@@ -814,6 +815,13 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        // Phase 14.5A module_28a: refuse synthetic public principal for
+        // evidence attach. Evidence attach is the verifier-lane fresh-read
+        // boundary that WP-001 P1 calls out, so it must be bound to a real
+        // owner/session/channel principal even though the route stays public
+        // (no-login product posture is preserved by the synthetic principal
+        // compatibility layer for read-only surfaces).
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.evidence.attach", "api");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -843,6 +851,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.claim.verify", "api");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -858,6 +867,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.claim.block", "api");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -873,6 +883,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.closeout", "api");
         const { workflowId } = ctx.params as { workflowId: string };
         return { receipt: service.closeout(workflowId) };
       },

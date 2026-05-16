@@ -725,6 +725,71 @@ describe("dispatchDeterministic", () => {
       });
       expect(result.response).toContain("Rejected approval approval-99");
     });
+
+    // ── Phase 14.5A WP-001 decision 8: conversational approve/reject parity ─
+
+    it("Phase 14.5A: refuses session-text approval from the synthetic public principal", async () => {
+      const deps = createMockDeps({
+        approvalService: {
+          requestForNode: vi.fn(),
+          listPending: vi.fn(() => [makeApproval({ id: "approval-7", runId: "wf-run-7" })]),
+          getById: vi.fn(() => makeApproval({ id: "approval-7", runId: "wf-run-7" })),
+          approve: vi.fn(async () => ({
+            approval: makeApproval({ id: "approval-7", runId: "wf-run-7", status: "approved" }),
+            resumed: true,
+          })),
+          reject: vi.fn(async () => ({ approval: makeApproval({ status: "rejected" }), resumed: false })),
+          expirePending: vi.fn(async () => 0),
+        } satisfies FridayWorkflowApprovalService,
+      });
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "approval_decision",
+            extractedParams: { decision: "approve" },
+          },
+          actorId: "public:default",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toMatch(/bound owner\/session\/channel actor/i);
+      expect(deps.approvalService!.approve).not.toHaveBeenCalled();
+      expect(deps.approvalService!.reject).not.toHaveBeenCalled();
+    });
+
+    it("Phase 14.5A: refuses session-text approval when actorId is missing", async () => {
+      const deps = createMockDeps({
+        approvalService: {
+          requestForNode: vi.fn(),
+          listPending: vi.fn(() => [makeApproval({ id: "approval-7", runId: "wf-run-7" })]),
+          getById: vi.fn(() => makeApproval({ id: "approval-7", runId: "wf-run-7" })),
+          approve: vi.fn(async () => ({
+            approval: makeApproval({ id: "approval-7", runId: "wf-run-7", status: "approved" }),
+            resumed: true,
+          })),
+          reject: vi.fn(async () => ({ approval: makeApproval({ status: "rejected" }), resumed: false })),
+          expirePending: vi.fn(async () => 0),
+        } satisfies FridayWorkflowApprovalService,
+      });
+      const result = await dispatchDeterministic(
+        {
+          classification: {
+            category: "sync_immediate",
+            handler: "approval_decision",
+            extractedParams: { decision: "reject" },
+          },
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toMatch(/bound owner\/session\/channel actor/i);
+      expect(deps.approvalService!.approve).not.toHaveBeenCalled();
+      expect(deps.approvalService!.reject).not.toHaveBeenCalled();
+    });
   });
 
   describe("workflow_query handler", () => {
