@@ -43,6 +43,15 @@ export type {
   FridayTaskWorkflowLaneIndependenceInput,
 } from "./friday-task-workflow-lanes.js";
 export {
+  buildFridayTaskWorkflowCliCapabilityLabel,
+  createFridayTaskWorkflowCliAdapter,
+} from "./friday-task-workflow-cli-adapter.js";
+export type {
+  CreateFridayTaskWorkflowCliAdapterDeps,
+  FridayTaskWorkflowCliAdapter,
+  FridayTaskWorkflowCliTextCompletion,
+} from "./friday-task-workflow-cli-adapter.js";
+export {
   createFridayTaskWorkflowRepository,
 } from "./friday-task-workflow-repository.js";
 export type { FridayTaskWorkflowRepository } from "./friday-task-workflow-repository.js";
@@ -60,6 +69,11 @@ export type {
   FridayTaskWorkflowClaimKind,
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowClaimStatus,
+  FridayTaskWorkflowCliBackendId,
+  FridayTaskWorkflowCliCapabilityLabel,
+  FridayTaskWorkflowCliHandoff,
+  FridayTaskWorkflowCliHandoffStatus,
+  FridayTaskWorkflowCliInvokeInput,
   FridayTaskWorkflowCloseoutGateOutcome,
   FridayTaskWorkflowCloseoutReceipt,
   FridayTaskWorkflowCompleteLaneInput,

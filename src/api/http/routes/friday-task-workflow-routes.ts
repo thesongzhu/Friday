@@ -88,6 +88,7 @@ const VALID_EVIDENCE_SOURCES: ReadonlySet<FridayTaskWorkflowEvidenceSource> = ne
 const VALID_LANE_ROLES: ReadonlySet<FridayTaskWorkflowLaneRole> = new Set([
   "native",
   "provider",
+  "cli",
 ]);
 
 const VALID_INDEPENDENCE_CLAIMS: ReadonlySet<FridayTaskWorkflowLaneIndependence> = new Set([

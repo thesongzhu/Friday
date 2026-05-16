@@ -641,6 +641,20 @@ export function createFridayTaskWorkflowService(
           { httpStatus: 400, details: { laneKind: lane.laneKind } },
         );
       }
+      if (lane.laneRole === "cli") {
+        throw new FridayDomainError(
+          "TASK_WORKFLOW_CLI_VERIFIER_LANE_REFUSED",
+          `CLI verifier lane "${lane.id}" cannot promote a claim to verified. CLI output remains draft / unverified; verdict promotion requires a Friday native or provider verifier lane that fresh-reads referenced evidence.`,
+          {
+            httpStatus: 400,
+            details: {
+              laneId: lane.id,
+              laneRole: lane.laneRole,
+              workflowRisk: workflow.risk,
+            },
+          },
+        );
+      }
       if (lane.status === "blocked") {
         throw new FridayDomainError(
           "TASK_WORKFLOW_LANE_BLOCKED",
@@ -1076,11 +1090,13 @@ export function createFridayTaskWorkflowService(
   };
 }
 
-function validateLaneRole(role: unknown): asserts role is "native" | "provider" {
-  if (role !== "native" && role !== "provider") {
+function validateLaneRole(
+  role: unknown,
+): asserts role is "native" | "provider" | "cli" {
+  if (role !== "native" && role !== "provider" && role !== "cli") {
     throw new FridayDomainError(
       "TASK_WORKFLOW_INVALID",
-      "laneRole must be 'native' or 'provider'.",
+      "laneRole must be 'native', 'provider', or 'cli'.",
       { httpStatus: 400 },
     );
   }

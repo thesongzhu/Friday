@@ -274,9 +274,12 @@ export type FridayTaskWorkflowLaneKind = "executor" | "verifier";
 /**
  * Lane role identifies the execution surface. `native` lanes are Friday
  * agent-runtime executions; `provider` lanes are direct provider-routed
- * runs. CLI text lanes are Phase 13.5C scope and not represented here.
+ * runs. `cli` lanes are Phase 13.5C bounded text executor / reviewer
+ * lanes — CLI self-report can never satisfy a verified claim, so service
+ * verifier-promotion paths refuse `cli` verifier lanes for all risk
+ * levels with a clear fail-closed error.
  */
-export type FridayTaskWorkflowLaneRole = "native" | "provider";
+export type FridayTaskWorkflowLaneRole = "native" | "provider" | "cli";
 
 export type FridayTaskWorkflowLaneStatus =
   | "open"
@@ -364,4 +367,96 @@ export interface FridayTaskWorkflowCompleteLaneInput {
 export interface FridayTaskWorkflowSubmitVerifierVerdictInput {
   readonly claimId: string;
   readonly verifierVerdict: string;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Phase 13.5C: CLI Backend Adapter
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * CLI lanes are bounded text executor / reviewer surfaces. The adapter
+ * normalizes CLI output into a draft / unverified handoff and never
+ * promotes a claim to `verified` on its own. Friday verifier lanes
+ * (native or provider) must fresh-read the referenced evidence before
+ * a claim becomes verified. High-risk verifier independence remains
+ * non-CLI per Phase 13.5B.
+ */
+
+/** Backend identifier the adapter speaks to. Matches provider CLI IDs. */
+export type FridayTaskWorkflowCliBackendId = "codex-cli" | "claude-cli";
+
+/** Normalized terminal state of a single CLI invocation. */
+export type FridayTaskWorkflowCliHandoffStatus =
+  | "handoff_ready"
+  | "repair_failed"
+  | "timeout"
+  | "unavailable"
+  | "auth_missing";
+
+/**
+ * Machine-readable capability label emitted with every CLI handoff. The
+ * label is the contract Phase 13.5C exposes to consumers: CLI is bounded
+ * text only, never native-tool proof, summary remains unverified until a
+ * Friday verifier fresh-reads referenced evidence, and the CLI lane can
+ * never directly promote a claim to `verified`.
+ */
+export interface FridayTaskWorkflowCliCapabilityLabel {
+  /** CLI is never native-tool proof. Always `false`. */
+  readonly nativeToolProof: false;
+  /** CLI summary is always draft / unverified until Friday verifier fresh-read. */
+  readonly summaryStatus: "draft_unverified";
+  /** CLI lanes can never directly promote a claim to verified. Always `false`. */
+  readonly verifierPromotionAllowed: false;
+  /** Verified claims require non-CLI evidence refs after fresh-read. Always `true`. */
+  readonly evidenceRefFreshReadRequired: true;
+  /** ContextPackage scope binding is mandatory. Always `true`. */
+  readonly contextPackageBound: true;
+  /** Lane role this label is bound to. Always `"cli"` for adapter output. */
+  readonly laneRole: "cli";
+  /** Boundary contract refs scoped to the CLI handoff. */
+  readonly boundaryRefs: readonly string[];
+  /** Required gate IDs that must still pass to close out a workflow that referenced CLI output. */
+  readonly requiredGateIds: readonly string[];
+  /** Stable human-readable wording for surfaces that show the label. */
+  readonly disclosure: string;
+}
+
+/**
+ * Normalized result of a single CLI adapter invocation. The handoff is
+ * persistence-shaped (no service-managed claims/refs are mutated by the
+ * adapter itself); callers store or render it as needed and may draft a
+ * `cli_self_report` claim with `unverified` status against it. The
+ * adapter never throws on CLI failure; it returns a handoff with a
+ * `status` that is not `handoff_ready` and a non-null `failureReason`.
+ */
+export interface FridayTaskWorkflowCliHandoff {
+  readonly status: FridayTaskWorkflowCliHandoffStatus;
+  readonly backendId: FridayTaskWorkflowCliBackendId;
+  /** Draft summary text returned by CLI (or "" if not produced). */
+  readonly summaryDraft: string;
+  /** Always `false` — the adapter cannot self-attest verified. */
+  readonly verified: false;
+  readonly capabilityLabel: FridayTaskWorkflowCliCapabilityLabel;
+  /** Number of bounded repair attempts performed (0 or 1). */
+  readonly repairAttempts: number;
+  /** Total milliseconds the adapter waited for CLI output. */
+  readonly elapsedMs: number;
+  /** Non-null when `status !== "handoff_ready"`. */
+  readonly failureReason: string | null;
+  readonly producedAt: string;
+}
+
+/** Input for `produceFridayTaskWorkflowCliHandoff`. */
+export interface FridayTaskWorkflowCliInvokeInput {
+  readonly backendId: FridayTaskWorkflowCliBackendId;
+  readonly systemPrompt: string;
+  readonly conversation: string;
+  readonly contextPackage: FridayTaskWorkflowContextPackage;
+  readonly boundaryRefs: readonly string[];
+  /** Optional CLI model identifier passed to the underlying CLI binary. */
+  readonly model?: string;
+  /** Bounded adapter-level timeout in milliseconds (defaults to 60_000ms). */
+  readonly timeoutMs?: number;
+  /** Minimum non-whitespace summary length before the adapter accepts the
+   *  raw CLI text. Below this triggers exactly one bounded repair attempt. */
+  readonly minSummaryChars?: number;
 }
