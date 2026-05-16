@@ -91,7 +91,7 @@ import {
   signCanonicalApproval,
 } from "./_helpers/friday-skill-upgrade-canonical-approval.helper.js";
 
-const TOKEN_SECRET = "phase14-skill-upgrade-lifecycle-secret";
+const HMAC_TEST_MATERIAL = "phase14-skill-upgrade-lifecycle-material";
 const ACCESS_TTL = 900;
 const SKILL_ID = "phase14-skill-upgrade-proof";
 const RUNTIME_VERSION = "runtime-phase14";
@@ -374,7 +374,7 @@ function tokenWithScopes(scopes: FridayScope[]): string {
     iat: nowSec,
     exp: nowSec + ACCESS_TTL,
   };
-  return encodeToken(claims, TOKEN_SECRET);
+  return encodeToken(claims, HMAC_TEST_MATERIAL);
 }
 
 function actorForTestUser(): {
@@ -489,7 +489,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
     const executorCanonicalGate = createFridayMutatingActionGate({
       nowIso,
       ticketIdGenerator: () => idGenerator(),
-      approvalSignatureSecret: TOKEN_SECRET,
+      approvalSignatureSecret: HMAC_TEST_MATERIAL,
       requireApprovalSignature: true,
     });
     const skillExecutor = createFridaySkillExecutor({
@@ -509,7 +509,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
       converterService,
       skillRegistry: registry,
       skillExecutor,
-      tokenSecret: TOKEN_SECRET,
+      tokenSecret: HMAC_TEST_MATERIAL,
       accessTokenTtlSec: ACCESS_TTL,
       managedSkillsDir,
       stateDir: workspaceDir,
@@ -597,7 +597,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
         });
         return signCanonicalApproval({
           request,
-          tokenSecret: TOKEN_SECRET,
+          tokenSecret: HMAC_TEST_MATERIAL,
           approvalId: `phase14-${action}-${candidateId}`,
           decidedByPrincipalId: "phase14-user",
           expiresAt: expiresIn(15),
@@ -741,7 +741,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
       });
       const decideApproval = signCanonicalApproval({
         request: decideRequest,
-        tokenSecret: TOKEN_SECRET,
+        tokenSecret: HMAC_TEST_MATERIAL,
         approvalId: `phase14-decide-${v2Candidate.candidateId}`,
         decidedByPrincipalId: "phase14-user",
         expiresAt: expiresIn(15),
