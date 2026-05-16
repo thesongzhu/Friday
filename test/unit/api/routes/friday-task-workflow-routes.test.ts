@@ -100,6 +100,11 @@ function makeStubService(): FridayTaskWorkflowService {
     getLane: () => {
       throw new Error("not used in this test");
     },
+    recordCliHandoff: async () => {
+      throw new Error("not used in this test");
+    },
+    listCliHandoffsByLane: () => [],
+    listCliHandoffsByWorkflow: () => [],
   };
 }
 

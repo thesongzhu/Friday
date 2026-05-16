@@ -460,3 +460,44 @@ export interface FridayTaskWorkflowCliInvokeInput {
    *  raw CLI text. Below this triggers exactly one bounded repair attempt. */
   readonly minSummaryChars?: number;
 }
+
+/**
+ * Persistent CLI handoff record. Stored alongside the originating CLI
+ * lane (laneRole='cli') by the task workflow service whenever the live
+ * adapter is invoked. Persistence here is the "stored unconfirmed" step
+ * required by module_26c CSV: the handoff is durable evidence of the
+ * CLI invocation outcome, but is always `verified: false`. Promotion to
+ * a verified claim still requires a Friday native or provider verifier
+ * lane to fresh-read referenced evidence; CLI verifier verdict
+ * promotion remains refused.
+ */
+export interface FridayTaskWorkflowCliHandoffRecord {
+  readonly id: string;
+  readonly workflowId: string;
+  readonly laneId: string;
+  readonly backendId: FridayTaskWorkflowCliBackendId;
+  readonly status: FridayTaskWorkflowCliHandoffStatus;
+  readonly summaryDraft: string;
+  readonly capabilityLabel: FridayTaskWorkflowCliCapabilityLabel;
+  readonly repairAttempts: number;
+  readonly elapsedMs: number;
+  readonly failureReason: string | null;
+  readonly producedAt: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Service-level input for `recordCliHandoff`. The service derives the
+ * boundary refs and context package from the workflow itself; callers
+ * only supply the prompt + conversation and optional overrides. The
+ * service refuses lanes that are not `laneRole='cli'`, not open, or do
+ * not belong to the named workflow.
+ */
+export interface FridayTaskWorkflowRecordCliHandoffInput {
+  readonly backendId: FridayTaskWorkflowCliBackendId;
+  readonly systemPrompt: string;
+  readonly conversation: string;
+  readonly model?: string;
+  readonly timeoutMs?: number;
+  readonly minSummaryChars?: number;
+}

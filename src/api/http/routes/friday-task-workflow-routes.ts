@@ -19,6 +19,7 @@ import {
   type FridayTaskWorkflowAttachEvidenceRefInput,
   type FridayTaskWorkflowBlockClaimInput,
   type FridayTaskWorkflowClaimKind,
+  type FridayTaskWorkflowCliBackendId,
   type FridayTaskWorkflowCompleteLaneInput,
   type FridayTaskWorkflowContextPackage,
   type FridayTaskWorkflowCreateInput,
@@ -29,6 +30,7 @@ import {
   type FridayTaskWorkflowLaneRole,
   type FridayTaskWorkflowOpenExecutorLaneInput,
   type FridayTaskWorkflowOpenVerifierLaneInput,
+  type FridayTaskWorkflowRecordCliHandoffInput,
   type FridayTaskWorkflowReviseInput,
   type FridayTaskWorkflowRisk,
   type FridayTaskWorkflowService,
@@ -89,6 +91,11 @@ const VALID_LANE_ROLES: ReadonlySet<FridayTaskWorkflowLaneRole> = new Set([
   "native",
   "provider",
   "cli",
+]);
+
+const VALID_CLI_BACKEND_IDS: ReadonlySet<FridayTaskWorkflowCliBackendId> = new Set([
+  "codex-cli",
+  "claude-cli",
 ]);
 
 const VALID_INDEPENDENCE_CLAIMS: ReadonlySet<FridayTaskWorkflowLaneIndependence> = new Set([
@@ -497,6 +504,59 @@ function parseBlockClaimBody(raw: unknown): FridayTaskWorkflowBlockClaimInput {
   return { reason: body.reason };
 }
 
+function parsePositiveIntOptional(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} must be a positive number when provided.`,
+      { httpStatus: 400 },
+    );
+  }
+  return Math.floor(value);
+}
+
+function parseRecordCliHandoffBody(
+  raw: unknown,
+): FridayTaskWorkflowRecordCliHandoffInput {
+  const body = asJsonObject(raw);
+  if (
+    typeof body.backendId !== "string" ||
+    !VALID_CLI_BACKEND_IDS.has(body.backendId as FridayTaskWorkflowCliBackendId)
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `backendId must be one of ${[...VALID_CLI_BACKEND_IDS].join(", ")}.`,
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.systemPrompt !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "systemPrompt is required.",
+      { httpStatus: 400 },
+    );
+  }
+  if (typeof body.conversation !== "string") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "conversation is required.",
+      { httpStatus: 400 },
+    );
+  }
+  return {
+    backendId: body.backendId as FridayTaskWorkflowCliBackendId,
+    systemPrompt: body.systemPrompt,
+    conversation: body.conversation,
+    model: parseOptionalString(body.model, "model"),
+    timeoutMs: parsePositiveIntOptional(body.timeoutMs, "timeoutMs"),
+    minSummaryChars: parsePositiveIntOptional(
+      body.minSummaryChars,
+      "minSummaryChars",
+    ),
+  };
+}
+
 export function createFridayTaskWorkflowRoutes(
   deps: FridayTaskWorkflowRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -774,6 +834,47 @@ export function createFridayTaskWorkflowRoutes(
           laneId: string;
         };
         return { lane: service.getLane(workflowId, laneId) };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.cli.handoff.record",
+      method: "POST",
+      path: "/v1/task-workflows/:workflowId/lanes/:laneId/cli-handoffs",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId, laneId } = ctx.params as {
+          workflowId: string;
+          laneId: string;
+        };
+        const input = parseRecordCliHandoffBody(ctx.body);
+        const handoff = await service.recordCliHandoff(workflowId, laneId, input);
+        return { handoff };
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.cli.handoffs.list",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/lanes/:laneId/cli-handoffs",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId, laneId } = ctx.params as {
+          workflowId: string;
+          laneId: string;
+        };
+        return { items: service.listCliHandoffsByLane(workflowId, laneId) };
+      },
+    },
+    {
+      operationId: "task.workflows.cli.handoffs.list",
+      method: "GET",
+      path: "/v1/task-workflows/:workflowId/cli-handoffs",
+      auth: { public: true },
+      async handler(ctx) {
+        const service = requireService(deps);
+        const { workflowId } = ctx.params as { workflowId: string };
+        return { items: service.listCliHandoffsByWorkflow(workflowId) };
       },
     },
   ];
