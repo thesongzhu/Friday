@@ -1,0 +1,204 @@
+/**
+ * Phase 17A — User-owned cloud worker setup UX routes.
+ *
+ * The routes below productize a user-owned cloud worker setup flow without
+ * Friday-hosted user data, without ordinary user secret custody, and without
+ * accepting HTTP-only worker proof. Reuses existing cloud-vm satellite
+ * pairing and doctor primitives — does not introduce a new principal type.
+ *
+ * 17B live cloud certification (Alibaba ECS, Tencent CVM, Volcengine ECS)
+ * is `blocked_by_env` here; live workflow_dispatch is intentionally out of
+ * scope and the catalog surfaces that status directly.
+ */
+
+import { FridayDomainError } from "#errors";
+import type {
+  FridayHttpContext,
+  FridayRouteDefinition,
+} from "../../model/friday-api-common.types.js";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
+import type {
+  FridayCloudWorkerDnsProviderId,
+  FridayCloudWorkerPackageInput,
+  FridayCloudWorkerProviderId,
+  FridayCloudWorkerSetupService,
+} from "#cloud-workers";
+import { isFridayCloudWorkerProviderId } from "#cloud-workers";
+
+type Ctx = FridayHttpContext<unknown, Record<string, string>, unknown>;
+type Route = FridayRouteDefinition<unknown, Record<string, string>, unknown, unknown>;
+
+export interface FridayCloudWorkerSetupRoutesDeps {
+  readonly setupService: FridayCloudWorkerSetupService;
+}
+
+function asString(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "Expected non-empty string",
+      { httpStatus: 400 },
+    );
+  }
+  return value.trim();
+}
+
+function asBool(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  return fallback;
+}
+
+function asDnsProviderId(value: unknown): FridayCloudWorkerDnsProviderId {
+  if (value === "dnspod" || value === "cloudflare") return value;
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "dnsProviderId must be 'dnspod' or 'cloudflare'",
+    { httpStatus: 400 },
+  );
+}
+
+function asProviderId(value: unknown): FridayCloudWorkerProviderId {
+  if (isFridayCloudWorkerProviderId(value)) return value;
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "providerId must be one of aliyun-ecs, tencent-cvm, volcengine-ecs",
+    { httpStatus: 400 },
+  );
+}
+
+export function createFridayCloudWorkerSetupRoutes(
+  deps: FridayCloudWorkerSetupRoutesDeps,
+): Route[] {
+  return [
+    {
+      operationId: "cloud.workers.catalog.list",
+      method: "GET",
+      path: "/v1/cloud-workers/catalog",
+      auth: { public: true },
+      async handler() {
+        return deps.setupService.catalog.listCatalog();
+      },
+    },
+    {
+      operationId: "cloud.workers.preview.get",
+      method: "GET",
+      path: "/v1/cloud-workers/preview/:providerId",
+      auth: { public: true },
+      async handler(ctx: Ctx) {
+        const params = ctx.params as Record<string, string>;
+        const preview = deps.setupService.catalog.getDeploymentPreview(params.providerId);
+        if (!preview) {
+          throw new FridayDomainError(
+            "NOT_FOUND",
+            `No deployment preview for provider '${params.providerId}'`,
+            { httpStatus: 404 },
+          );
+        }
+        return preview;
+      },
+    },
+    {
+      operationId: "cloud.workers.doctor.run",
+      method: "GET",
+      path: "/v1/cloud-workers/doctor",
+      auth: { public: true },
+      async handler(ctx: Ctx) {
+        const query = ctx.query as Record<string, string | undefined>;
+        const providerId = asProviderId(query.providerId);
+        const httpsHost = asString(query.httpsHost);
+        const dnsName = asString(query.dnsName);
+        const dnsProviderId = asDnsProviderId(query.dnsProviderId);
+        const satellitePaired = (query.satellitePaired ?? "false") === "true";
+        const liveCertificationConfigured =
+          (query.liveCertificationConfigured ?? "false") === "true";
+        return deps.setupService.doctor.runDoctor({
+          providerId,
+          httpsHost,
+          dnsName,
+          dnsProviderId,
+          satellitePaired,
+          liveCertificationConfigured,
+        });
+      },
+    },
+    {
+      operationId: "cloud.workers.dns.validate",
+      method: "POST",
+      path: "/v1/cloud-workers/dns/validate",
+      auth: { public: true },
+      async handler(ctx: Ctx) {
+        assertBoundPrincipalForOperation(
+          ctx.principal,
+          "cloud.worker.dns.validate",
+          "api",
+        );
+        const body = ctx.body as Record<string, unknown>;
+        const dnsProviderId = asString(body.dnsProviderId);
+        const dnsName = asString(body.dnsName);
+        const rootDomain = asString(body.rootDomain);
+        return deps.setupService.dnsValidator.validate({
+          dnsProviderId,
+          dnsName,
+          rootDomain,
+        });
+      },
+    },
+    {
+      operationId: "cloud.workers.package.generate",
+      method: "POST",
+      path: "/v1/cloud-workers/package",
+      auth: { public: true },
+      async handler(ctx: Ctx) {
+        assertBoundPrincipalForOperation(
+          ctx.principal,
+          "cloud.worker.package.generate",
+          "api",
+        );
+        const body = ctx.body as Record<string, unknown>;
+        const input: FridayCloudWorkerPackageInput = {
+          providerId: asProviderId(body.providerId),
+          httpsHost: asString(body.httpsHost),
+          dnsName: asString(body.dnsName),
+          dnsProviderId: asDnsProviderId(body.dnsProviderId),
+          ownerRunId: asString(body.ownerRunId),
+        };
+        try {
+          return deps.setupService.packageService.generate(input);
+        } catch (error) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            error instanceof Error ? error.message : String(error),
+            { httpStatus: 400 },
+          );
+        }
+      },
+    },
+    {
+      operationId: "cloud.workers.teardown.receipt",
+      method: "POST",
+      path: "/v1/cloud-workers/teardown-receipt",
+      auth: { public: true },
+      async handler(ctx: Ctx) {
+        assertBoundPrincipalForOperation(
+          ctx.principal,
+          "cloud.worker.teardown.receipt",
+          "api",
+        );
+        const body = ctx.body as Record<string, unknown>;
+        const providerId = asProviderId(body.providerId);
+        const ownerRunId = asString(body.ownerRunId);
+        const resourceTag = asString(body.resourceTag);
+        const satelliteId =
+          typeof body.satelliteId === "string" && body.satelliteId.trim().length > 0
+            ? body.satelliteId.trim()
+            : undefined;
+        return deps.setupService.teardown.issueReceipt({
+          providerId,
+          ownerRunId,
+          resourceTag,
+          satelliteId,
+        });
+      },
+    },
+  ];
+}

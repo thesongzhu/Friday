@@ -252,6 +252,7 @@
     "#browser": "./dist/browser/index.js",
     "#channels": "./dist/channels/index.js",
     "#cli": "./dist/cli/index.js",
+    "#cloud-workers": "./dist/cloud-workers/index.js",
     "#xhs": "./dist/xhs/index.js",
     "#rules": "./dist/rules/index.js",
     "#node-runner": "./dist/node-runner/index.js",

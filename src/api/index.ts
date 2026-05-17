@@ -256,6 +256,10 @@ export type { FridaySatellitePairingRoutesDeps } from "./http/routes/friday-sate
 export { createFridaySatelliteRuntimeRoutes } from "./http/routes/friday-satellite-runtime-routes.js";
 export type { FridaySatelliteRuntimeRoutesDeps } from "./http/routes/friday-satellite-runtime-routes.js";
 
+// Phase 17A — user-owned cloud worker setup UX routes.
+export { createFridayCloudWorkerSetupRoutes } from "./http/routes/friday-cloud-worker-setup-routes.js";
+export type { FridayCloudWorkerSetupRoutesDeps } from "./http/routes/friday-cloud-worker-setup-routes.js";
+
 // Runtime
 export { createFridayApiRuntime } from "./runtime/friday-api-runtime.js";
 export type { FridayApiRuntime, CreateFridayApiRuntimeDeps } from "./runtime/friday-api-runtime.types.js";

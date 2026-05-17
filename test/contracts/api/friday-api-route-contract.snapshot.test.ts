@@ -817,6 +817,10 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "autofix.actions.deny",
         "autofix.actions.execute",
         "autofix.actions.rollback",
+        // Phase 17A: user-owned cloud worker setup UX bound-principal mutating ops.
+        "cloud.workers.dns.validate",
+        "cloud.workers.package.generate",
+        "cloud.workers.teardown.receipt",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([
