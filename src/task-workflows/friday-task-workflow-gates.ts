@@ -96,6 +96,14 @@ export const FRIDAY_TASK_WORKFLOW_REQUIRED_GATES: readonly FridayTaskWorkflowGat
     required: true,
     mandatoryForRisk: ["low", "medium", "high"],
   },
+  {
+    gateId: "rollback_class_disclosure_required",
+    label: "Closeout receipt must disclose operation rollback class",
+    description:
+      "Phase 14.5D module_28d: the closeout receipt must carry a deterministic rollbackClass derived from verified/blocked claim evidence refs. compensating_action_required and non_reversible_external rollback classes must include their respective disclosure summaries; reversible_local cannot be claimed when any verified/blocked claim references a non-local evidence source. Rollback disclosure is honest user-trust reporting, not release proof.",
+    required: true,
+    mandatoryForRisk: ["low", "medium", "high"],
+  },
 ];
 
 /** Built-in optional gates that can be layered on top of required gates. */

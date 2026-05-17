@@ -190,6 +190,77 @@ export type FridayTaskWorkflowWorkflowRunEvidenceStatus =
   | "degraded"
   | "unavailable";
 
+/**
+ * Phase 14.5D module_28d: deterministic per-operation rollback class
+ * surfaced on the task-workflow closeout receipt.
+ *
+ *  - `reversible_local`: every referenced evidence ref maps to an
+ *    operation that Friday can undo locally (agent run event,
+ *    self-heal event, session event).
+ *  - `compensating_action_required`: the workflow references at least
+ *    one operation whose reversal requires a compensating action
+ *    (workflow_run_evidence — checkpoint/plugin/skill upgrade lifecycle
+ *    where the rollback path is a separate compensating step).
+ *  - `non_reversible_external`: the workflow touched at least one
+ *    external system (channel send, provider call, manual external
+ *    action). Those operations cannot be truly undone, so closeout
+ *    must disclose the non-reversible reason instead of claiming
+ *    reversibility.
+ *  - `not_applicable`: only read-only / docs / replay / observability
+ *    audit refs are present. Nothing to roll back.
+ *
+ * The union is `Readonly` by construction. The worst-case order used by
+ * the closeout receipt is
+ * `non_reversible_external` > `compensating_action_required` >
+ * `reversible_local` > `not_applicable`.
+ */
+export type FridayTaskWorkflowOperationRollbackClass =
+  | "reversible_local"
+  | "compensating_action_required"
+  | "non_reversible_external"
+  | "not_applicable";
+
+/**
+ * Phase 14.5D module_28d: exhaustive read-only registry mapping each
+ * `FridayTaskWorkflowEvidenceSource` to its rollback class. Adding a
+ * new evidence ref source forces the compiler to assign a class here
+ * via the `Record<Enum, Class>` constraint, so module_28d's universal
+ * audit closure ("file/config/db/plugin/channel/external/GitHub/
+ * provider classes have current status") cannot regress silently.
+ *
+ * The mapping covers:
+ *  - file/config/db/session local operations:
+ *      `agent_run_event`, `self_heal_event`, `session_event` →
+ *      `reversible_local`.
+ *  - workflow run / plugin / skill upgrade lifecycle:
+ *      `workflow_run_evidence` → `compensating_action_required`.
+ *  - external/channel/provider/manual external (incl. GitHub-style
+ *    third-party side effects):
+ *      `provider_route_trace`, `channel_event`, `manual_external` →
+ *      `non_reversible_external`.
+ *  - read-only docs / replay / audit references that perform no
+ *    mutation themselves:
+ *      `context_replay`, `observability_audit`,
+ *      `docs_intent_reference` → `not_applicable`.
+ */
+export const FRIDAY_TASK_WORKFLOW_ROLLBACK_CLASS_BY_REF_SOURCE: Readonly<
+  Record<
+    FridayTaskWorkflowEvidenceSource,
+    FridayTaskWorkflowOperationRollbackClass
+  >
+> = Object.freeze({
+  agent_run_event: "reversible_local",
+  workflow_run_evidence: "compensating_action_required",
+  provider_route_trace: "non_reversible_external",
+  context_replay: "not_applicable",
+  self_heal_event: "reversible_local",
+  channel_event: "non_reversible_external",
+  session_event: "reversible_local",
+  observability_audit: "not_applicable",
+  manual_external: "non_reversible_external",
+  docs_intent_reference: "not_applicable",
+});
+
 export interface FridayTaskWorkflowCloseoutReceipt {
   readonly id: string;
   readonly workflowId: string;
@@ -219,6 +290,29 @@ export interface FridayTaskWorkflowCloseoutReceipt {
    * "release-proof eligible" wording for this workflow.
    */
   readonly proofClaimable: boolean;
+  /**
+   * Phase 14.5D module_28d: deterministic worst-case rollback class
+   * across every evidence ref attached to a verified or blocked claim
+   * in this workflow. Legacy rows (closeout receipts written before
+   * v087-rollback-matrix-closeout-receipt) rehydrate as
+   * `not_applicable`. Rollback proof itself is not release proof; this
+   * field is honest disclosure for users and reviewers.
+   */
+  readonly rollbackClass: FridayTaskWorkflowOperationRollbackClass;
+  /**
+   * Phase 14.5D module_28d: required non-empty summary when
+   * `rollbackClass === "compensating_action_required"`. Lists the
+   * evidence ref sources whose reversal needs a compensating action.
+   * `null` for every other class.
+   */
+  readonly compensatingAction: string | null;
+  /**
+   * Phase 14.5D module_28d: required non-empty summary when
+   * `rollbackClass === "non_reversible_external"`. Names the
+   * external/channel/provider sources that cannot be truly undone.
+   * `null` for every other class.
+   */
+  readonly nonReversibleReason: string | null;
 }
 
 /** Input for creating or previewing a workflow. */

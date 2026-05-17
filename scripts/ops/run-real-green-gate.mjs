@@ -95,6 +95,20 @@ const PUBLIC_SURFACE_SCENARIOS = [
   // Live external-channel transcript proof remains forwarded to Phase
   // 14.5E for configured Discord/Lark/Telegram test spaces.
   "l6-phase-14-5c-workflow-evidence-fail-closed",
+  // Phase 14.5D Module 28d — rollback matrix and closeout receipt.
+  // Same-SHA RGG vehicle for the rollback class disclosure contract.
+  // The executor stages an isolated in-memory SQLite database (canonical
+  // Friday migration stack including v087-rollback-matrix-closeout-receipt)
+  // and drives the real workflow runtime and the real task-workflow
+  // service in-process (no mocks) to assert each of the four rollback
+  // class outcomes — not_applicable, reversible_local,
+  // compensating_action_required, non_reversible_external — plus the
+  // no-overclaim invariant carried by the new required gate
+  // `rollback_class_disclosure_required`. Rollback proof itself is not
+  // release proof; release-proof eligibility remains gated by Phase
+  // 14.5C `proofClaimable`. Live external-channel transcript proof
+  // remains forwarded to Phase 14.5E for configured channels.
+  "l6-phase-14-5d-rollback-matrix-closeout-receipt",
 ];
 
 const EXTERNAL_CHANNEL_SCENARIOS = [

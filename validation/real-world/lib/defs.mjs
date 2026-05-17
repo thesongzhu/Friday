@@ -53,6 +53,7 @@ export const REAL_WORLD_EXECUTION_KINDS = Object.freeze([
   "skill_upgrade_lifecycle",
   "auto_fix_doctor_roundtrip",
   "workflow_evidence_fail_closed",
+  "task_workflow_rollback_matrix",
   "manual_external",
   "ui_authoring",
 ]);

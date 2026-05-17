@@ -36,6 +36,7 @@ import type {
   FridayTaskWorkflowLaneRecord,
   FridayTaskWorkflowLaneRole,
   FridayTaskWorkflowLaneStatus,
+  FridayTaskWorkflowOperationRollbackClass,
   FridayTaskWorkflowRecord,
   FridayTaskWorkflowRevisionRecord,
   FridayTaskWorkflowRisk,
@@ -451,11 +452,13 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         `INSERT INTO task_workflow_closeout_receipts (
            id, workflow_id, spec_hash, status,
            claim_summary_json, blockers_json, gate_outcomes_json, created_at,
-           evidence_durability, proof_claimable
+           evidence_durability, proof_claimable,
+           rollback_class, compensating_action, non_reversible_reason
          ) VALUES (
            @id, @workflowId, @specHash, @status,
            @claimSummaryJson, @blockersJson, @gateOutcomesJson, @createdAt,
-           @evidenceDurability, @proofClaimable
+           @evidenceDurability, @proofClaimable,
+           @rollbackClass, @compensatingAction, @nonReversibleReason
          )`,
       ).run({
         id: record.id,
@@ -468,6 +471,9 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         createdAt: record.createdAt,
         evidenceDurability: record.evidenceDurability,
         proofClaimable: record.proofClaimable ? 1 : 0,
+        rollbackClass: record.rollbackClass,
+        compensatingAction: record.compensatingAction,
+        nonReversibleReason: record.nonReversibleReason,
       });
     },
 
@@ -487,6 +493,18 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
           : "available";
       const proofClaimable =
         row.proof_claimable === 1 || row.proof_claimable === "1";
+      const rollbackClass =
+        typeof row.rollback_class === "string" && row.rollback_class.length > 0
+          ? (row.rollback_class as FridayTaskWorkflowOperationRollbackClass)
+          : "not_applicable";
+      const compensatingAction =
+        typeof row.compensating_action === "string" && row.compensating_action.length > 0
+          ? row.compensating_action
+          : null;
+      const nonReversibleReason =
+        typeof row.non_reversible_reason === "string" && row.non_reversible_reason.length > 0
+          ? row.non_reversible_reason
+          : null;
       return {
         id: String(row.id),
         workflowId: String(row.workflow_id),
@@ -505,6 +523,9 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         createdAt: String(row.created_at),
         evidenceDurability,
         proofClaimable,
+        rollbackClass,
+        compensatingAction,
+        nonReversibleReason,
       };
     },
 

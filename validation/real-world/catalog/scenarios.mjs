@@ -1394,6 +1394,61 @@ export const REAL_WORLD_SCENARIOS = [
     severityOnFailure: "P0",
     tags: ["phase-14-5c", "module-28c", "workflow-evidence-fail-closed", "proof-required"],
   }),
+  // Phase 14.5D module_28d — rollback matrix and closeout receipt RGG slice.
+  //
+  // Same-SHA RGG vehicle for the rollback matrix disclosure contract. The
+  // executor stages an isolated in-memory SQLite database (canonical Friday
+  // migration stack including v087-rollback-matrix-closeout-receipt) and
+  // drives the real workflow runtime and the real task-workflow service
+  // in-process (no mocks) to assert each of the four rollback class
+  // outcomes plus the no-overclaim invariant carried by the new required
+  // gate `rollback_class_disclosure_required`.
+  //
+  // Honesty notes:
+  //   * Rollback proof is part of user trust but is NOT release proof on
+  //     its own (module_28d row 3); release-proof eligibility remains
+  //     gated by Phase 14.5C `proofClaimable` (workflow_run_evidence_durable
+  //     + evidenceDurability="available"). This scenario validates
+  //     honest disclosure, not release proof of every Friday subsystem.
+  //   * Universal rollback for every Friday operation is explicitly NOT
+  //     claimed — the receipt classifies per-workflow rollback class
+  //     based on evidence ref sources actually attached to verified or
+  //     blocked claims.
+  //   * Live external-channel transcript proof remains forwarded to
+  //     Phase 14.5E for configured Discord/Lark/Telegram test spaces.
+  //   * Phase 14 release-proof debt and Phase 15 docs-truth reconciliation
+  //     are out of scope.
+  baseScenario({
+    id: "l6-phase-14-5d-rollback-matrix-closeout-receipt",
+    layer: "L6",
+    productArea: "task workflows",
+    entrySurface: "task-workflow closeout receipt",
+    routeFamily: "task-workflow-rollback-matrix",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "isolated in-memory SQLite database is bootstrapped with the canonical Friday migration stack including v087-rollback-matrix-closeout-receipt (additive nullable rollback_class, compensating_action, non_reversible_reason columns on task_workflow_closeout_receipts)",
+      "task-workflow closeout receipt reports rollbackClass='not_applicable' with null disclosure summaries when no verified or blocked claim exists",
+      "task-workflow closeout receipt reports rollbackClass='reversible_local' with null disclosure summaries when verified claim is backed by an agent_run_event ref (local-only operation)",
+      "task-workflow closeout receipt reports rollbackClass='compensating_action_required' with a non-empty compensatingAction string when verified claim is backed by a workflow_run_evidence ref to a healthy upstream workflow run",
+      "task-workflow closeout receipt reports rollbackClass='non_reversible_external' with a non-empty nonReversibleReason string when verified claim references manual_external evidence (closeout-time disclosure surface; verify-time evidence-bearing invariant preserved)",
+      "rollback_class_disclosure_required required closeout gate passes on each of the four valid outcomes and blocks an overclaim of reversible_local when a non-local ref is observed",
+      "rollback fields persist via the repository and rehydrate identically through getLatestCloseoutReceipt",
+      "rollback proof itself is not release proof; release-proof eligibility remains gated by Phase 14.5C proofClaimable",
+      "live external-channel transcript proof remains forwarded to Phase 14.5E for configured channels",
+    ],
+    execution: {
+      kind: "task_workflow_rollback_matrix",
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    tags: [
+      "phase-14-5d",
+      "module-28d",
+      "rollback-matrix",
+      "closeout-receipt",
+    ],
+  }),
   baseScenario({
     id: "l6-phase-14-5b-one-click-repair-doctor",
     layer: "L6",

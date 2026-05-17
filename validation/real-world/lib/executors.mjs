@@ -1111,6 +1111,339 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
   return artifact;
 }
 
+const TASK_WORKFLOW_ROLLBACK_MATRIX_NOW = "2026-05-17T05:30:00.000Z";
+const TASK_WORKFLOW_ROLLBACK_MATRIX_WAIT_MS = 120;
+
+async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
+  void scenario;
+  const observationLog = [];
+  function record(event) {
+    observationLog.push(event);
+    artifact.observedEvidence.push(event);
+  }
+
+  let modules;
+  try {
+    modules = await loadWorkflowEvidenceFailClosedModules();
+  } catch (importError) {
+    artifact.result = "blocked";
+    artifact.failureClass = "environment";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `task_workflow_rollback_matrix requires the compiled Friday dist/ tree (npm run build) for in-process bootstrap. Lazy import failed: ${importError instanceof Error ? importError.message : String(importError)}`,
+    ];
+    return artifact;
+  }
+
+  const {
+    Database,
+    createFridayWorkflowRuntime,
+    runFridayMigrations,
+    FRIDAY_SQLITE_MIGRATIONS,
+    createFridayTaskWorkflowRepository,
+    createFridayTaskWorkflowService,
+  } = modules;
+
+  const originalPipelineEnable = process.env.FRIDAY_PIPELINE_ENABLE;
+  const originalPipelineMode = process.env.FRIDAY_PIPELINE_MODE;
+  process.env.FRIDAY_PIPELINE_ENABLE = "true";
+  process.env.FRIDAY_PIPELINE_MODE = "enforce";
+
+  const db = createWorkflowEvidenceFailClosedDb({
+    Database,
+    runFridayMigrations,
+    FRIDAY_SQLITE_MIGRATIONS,
+  });
+  let idCounter = 0;
+  const idGenerator = () => `rgg-rollback-matrix-${String(++idCounter).padStart(6, "0")}`;
+  const runtime = createFridayWorkflowRuntime({
+    db,
+    idGenerator,
+    nowIso: () => TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
+    computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
+    resolveSkill: () => ({ id: "rgg-rollback-matrix-skill" }),
+    invokeSkill: async () => ({ ok: true }),
+  });
+  const taskWorkflowRepository = createFridayTaskWorkflowRepository();
+  let taskWorkflowIdCounter = 0;
+  const taskWorkflowService = createFridayTaskWorkflowService({
+    db,
+    repository: taskWorkflowRepository,
+    idGenerator: () => `rgg-tw-rb-${String(++taskWorkflowIdCounter).padStart(6, "0")}`,
+    nowIso: () => TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
+    getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
+  });
+
+  const failures = [];
+  const subSummary = { total: 0, passed: 0 };
+  function assert(label, condition, detail) {
+    subSummary.total += 1;
+    if (condition) {
+      subSummary.passed += 1;
+      record(`PASS ${label}: ${detail}`);
+    } else {
+      failures.push(`${label}: ${detail}`);
+      record(`FAIL ${label}: ${detail}`);
+    }
+  }
+
+  function makeContextPackage() {
+    return {
+      allowedFiles: ["src/x.ts"],
+      allowedTools: [],
+      allowedApis: [],
+      boundaryIds: ["api.task_workflows.core"],
+    };
+  }
+
+  try {
+    // (a) not_applicable — workflow with no verified/blocked claims.
+    const naTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5D rollback matrix not_applicable",
+      taskKind: "general",
+      contextPackage: makeContextPackage(),
+    });
+    const naReceipt = taskWorkflowService.closeout(naTw.id);
+    assert(
+      "(a) closeout reports rollbackClass=not_applicable when no verified/blocked claims",
+      naReceipt.rollbackClass === "not_applicable",
+      `rollbackClass=${naReceipt.rollbackClass}`,
+    );
+    assert(
+      "(a) compensatingAction is null on not_applicable",
+      naReceipt.compensatingAction === null,
+      `compensatingAction=${String(naReceipt.compensatingAction)}`,
+    );
+    assert(
+      "(a) nonReversibleReason is null on not_applicable",
+      naReceipt.nonReversibleReason === null,
+      `nonReversibleReason=${String(naReceipt.nonReversibleReason)}`,
+    );
+    const naGate = naReceipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    assert(
+      "(a) rollback_class_disclosure_required gate passes on not_applicable",
+      naGate?.status === "pass",
+      `gate=${naGate ? `${naGate.gateId}:${naGate.status}` : "missing"}`,
+    );
+
+    // (b) reversible_local — verified claim backed by agent_run_event ref.
+    const localTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5D rollback matrix reversible_local",
+      taskKind: "general",
+      contextPackage: makeContextPackage(),
+    });
+    const localClaim = taskWorkflowService.draftClaim(localTw.id, {
+      claimText: "verified by local agent run event",
+      claimKind: "runtime_evidence",
+    });
+    taskWorkflowService.attachEvidenceRef(localTw.id, localClaim.id, {
+      refKind: "agent_run.event",
+      refId: "agent-evt-rgg-rb-1",
+      refSource: "agent_run_event",
+    });
+    taskWorkflowService.verifyClaim(localTw.id, localClaim.id, {
+      verifierVerdict: "fresh-read local agent_run_event",
+    });
+    const localReceipt = taskWorkflowService.closeout(localTw.id);
+    assert(
+      "(b) closeout reports rollbackClass=reversible_local with agent_run_event-backed verified claim",
+      localReceipt.rollbackClass === "reversible_local",
+      `rollbackClass=${localReceipt.rollbackClass}`,
+    );
+    const localGate = localReceipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    assert(
+      "(b) rollback_class_disclosure_required gate passes on reversible_local",
+      localGate?.status === "pass",
+      `gate=${localGate ? `${localGate.gateId}:${localGate.status}` : "missing"}`,
+    );
+
+    // (c) compensating_action_required — workflow_run_evidence ref to a healthy run.
+    const compWorkflow = runtime.crud.createWorkflow({
+      slug: "rgg-rollback-matrix-comp",
+      name: "RGG rollback matrix compensating",
+    });
+    const compVersion = runtime.crud.createVersion(
+      compWorkflow.id,
+      makeWorkflowEvidenceFailClosedGraph(compWorkflow.id, "placeholder"),
+    );
+    runtime.crud.publishVersion(compWorkflow.id, compVersion.versionNumber);
+    const healthyRun = await runtime.execution.startRun({
+      workflowId: compWorkflow.id,
+      workflowVersionId: compVersion.id,
+      triggerType: "manual",
+      proofRequired: false,
+    });
+    await sleep(TASK_WORKFLOW_ROLLBACK_MATRIX_WAIT_MS);
+    const compTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5D rollback matrix compensating",
+      taskKind: "general",
+      contextPackage: makeContextPackage(),
+    });
+    const compClaim = taskWorkflowService.draftClaim(compTw.id, {
+      claimText: "verified by workflow_run_evidence",
+      claimKind: "runtime_evidence",
+    });
+    taskWorkflowService.attachEvidenceRef(compTw.id, compClaim.id, {
+      refKind: "workflow_run_evidence",
+      refId: healthyRun.id,
+      refSource: "workflow_run_evidence",
+    });
+    taskWorkflowService.verifyClaim(compTw.id, compClaim.id, {
+      verifierVerdict: "fresh-read healthy workflow_run",
+    });
+    const compReceipt = taskWorkflowService.closeout(compTw.id);
+    assert(
+      "(c) closeout reports rollbackClass=compensating_action_required with workflow_run_evidence-backed verified claim",
+      compReceipt.rollbackClass === "compensating_action_required",
+      `rollbackClass=${compReceipt.rollbackClass}`,
+    );
+    assert(
+      "(c) compensatingAction is a non-empty string naming workflow_run_evidence",
+      typeof compReceipt.compensatingAction === "string"
+        && compReceipt.compensatingAction.length > 0
+        && /workflow_run_evidence/.test(compReceipt.compensatingAction),
+      `compensatingAction=${String(compReceipt.compensatingAction)}`,
+    );
+    const compGate = compReceipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    assert(
+      "(c) rollback_class_disclosure_required gate passes on compensating_action_required with action populated",
+      compGate?.status === "pass",
+      `gate=${compGate ? `${compGate.gateId}:${compGate.status}` : "missing"}`,
+    );
+
+    // (d) non_reversible_external — verified claim with manual_external ref
+    // planted through the repository. This models the closeout disclosure
+    // surface; the verify path keeps the evidence-bearing-claim invariant.
+    const extTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5D rollback matrix non_reversible_external",
+      taskKind: "general",
+      contextPackage: makeContextPackage(),
+    });
+    const extClaim = taskWorkflowService.draftClaim(extTw.id, {
+      claimText: "verified by local pre-external, with external side effect",
+      claimKind: "runtime_evidence",
+    });
+    taskWorkflowService.attachEvidenceRef(extTw.id, extClaim.id, {
+      refKind: "agent_run.event",
+      refId: "agent-evt-rgg-rb-pre-ext",
+      refSource: "agent_run_event",
+    });
+    taskWorkflowService.verifyClaim(extTw.id, extClaim.id, {
+      verifierVerdict: "fresh-read pre-external evidence",
+    });
+    db.withWriteTransaction((conn) => {
+      taskWorkflowRepository.insertEvidenceRef(conn, {
+        id: "rgg-plant-ext-1",
+        workflowId: extTw.id,
+        claimId: extClaim.id,
+        refKind: "external.message",
+        refId: "rgg-ext-msg-1",
+        refHash: null,
+        refSource: "manual_external",
+        createdAt: TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
+      });
+      taskWorkflowRepository.incrementEvidenceRefCount(
+        conn,
+        extClaim.id,
+        TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
+      );
+    });
+    const extReceipt = taskWorkflowService.closeout(extTw.id);
+    assert(
+      "(d) closeout reports rollbackClass=non_reversible_external when manual_external ref is present",
+      extReceipt.rollbackClass === "non_reversible_external",
+      `rollbackClass=${extReceipt.rollbackClass}`,
+    );
+    assert(
+      "(d) nonReversibleReason is a non-empty string naming manual_external",
+      typeof extReceipt.nonReversibleReason === "string"
+        && extReceipt.nonReversibleReason.length > 0
+        && /manual_external/.test(extReceipt.nonReversibleReason),
+      `nonReversibleReason=${String(extReceipt.nonReversibleReason)}`,
+    );
+    const extGate = extReceipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    assert(
+      "(d) rollback_class_disclosure_required gate passes on non_reversible_external with reason populated",
+      extGate?.status === "pass",
+      `gate=${extGate ? `${extGate.gateId}:${extGate.status}` : "missing"}`,
+    );
+
+    // (e) Persistence round-trip — read back via repository.
+    const reloaded = db.withReadConnection((conn) =>
+      taskWorkflowRepository.getLatestCloseoutReceipt(conn, extTw.id),
+    );
+    assert(
+      "(e) persisted rollbackClass round-trips through repository",
+      reloaded !== null && reloaded.rollbackClass === extReceipt.rollbackClass,
+      `reloaded.rollbackClass=${reloaded ? reloaded.rollbackClass : "missing"}`,
+    );
+    assert(
+      "(e) persisted nonReversibleReason round-trips through repository",
+      reloaded !== null && reloaded.nonReversibleReason === extReceipt.nonReversibleReason,
+      `reloaded.nonReversibleReason=${reloaded ? String(reloaded.nonReversibleReason) : "missing"}`,
+    );
+
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      assertionsTotal: subSummary.total,
+      assertionsPassed: subSummary.passed,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      observations: observationLog,
+      receipts: {
+        not_applicable: { id: naReceipt.id, rollbackClass: naReceipt.rollbackClass },
+        reversible_local: { id: localReceipt.id, rollbackClass: localReceipt.rollbackClass },
+        compensating_action_required: { id: compReceipt.id, rollbackClass: compReceipt.rollbackClass },
+        non_reversible_external: { id: extReceipt.id, rollbackClass: extReceipt.rollbackClass },
+      },
+    };
+
+    if (failures.length === 0) {
+      artifact.result = "passed";
+    } else {
+      artifact.result = "failed";
+      artifact.failureClass = "task_workflow_runtime";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        ...failures,
+      ];
+    }
+  } catch (executionError) {
+    artifact.result = "failed";
+    artifact.failureClass = artifact.failureClass ?? "task_workflow_runtime";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      executionError instanceof Error ? executionError.message : String(executionError),
+    ];
+  } finally {
+    try {
+      db.close();
+    } catch {
+      // best-effort
+    }
+    if (originalPipelineEnable === undefined) {
+      delete process.env.FRIDAY_PIPELINE_ENABLE;
+    } else {
+      process.env.FRIDAY_PIPELINE_ENABLE = originalPipelineEnable;
+    }
+    if (originalPipelineMode === undefined) {
+      delete process.env.FRIDAY_PIPELINE_MODE;
+    } else {
+      process.env.FRIDAY_PIPELINE_MODE = originalPipelineMode;
+    }
+  }
+  return artifact;
+}
+
 async function executeAutoFixDoctorRoundtrip({ artifact, client, scenario }) {
   const checks = [];
   let allRefused = true;
@@ -2750,6 +3083,9 @@ export async function executeScenario({
         break;
       case "workflow_evidence_fail_closed":
         await executeWorkflowEvidenceFailClosed({ artifact, client, scenario });
+        break;
+      case "task_workflow_rollback_matrix":
+        await executeTaskWorkflowRollbackMatrix({ artifact, client, scenario });
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });
