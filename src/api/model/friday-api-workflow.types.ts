@@ -466,6 +466,13 @@ export interface FridayStartRunRequest {
   triggerType: string;
   triggerPayload?: JsonObject;
   dryRun?: boolean;
+  /**
+   * Phase 14.5C: proof-required workflow flag. Opt-in. When `true`, the
+   * workflow runtime fails closed if durable evidence persistence is
+   * unavailable; ordinary workflows (default `false`) may degrade so long
+   * as the run receipt honestly says proof is unavailable.
+   */
+  proofRequired?: boolean;
 }
 export interface FridayStartRunResponse {
   run: FridayWorkflowRunEntity;

@@ -1289,6 +1289,7 @@ export function createFridayWorkflowExecutionService(
         context: runContext,
         createdAt: nowIso,
         updatedAt: nowIso,
+        proofRequired: input.proofRequired === true,
       };
 
       deps.db.withWriteTransaction((db) => {

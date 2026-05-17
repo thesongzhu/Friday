@@ -1337,6 +1337,63 @@ export const REAL_WORLD_SCENARIOS = [
   // `test/unit/sessions/friday-deterministic-dispatch.test.ts`. Live
   // external-channel transcript proof remains forwarded to Phase 14.5E
   // for configured Discord/Lark/Telegram test spaces only.
+  // Phase 14.5C module_28c — workflow evidence fail-closed RGG slice.
+  //
+  // Same-SHA RGG vehicle for the full evidence-fail-closed contract. The
+  // executor stages an isolated in-memory SQLite database (loaded with the
+  // canonical Friday migration stack, including v086) and drops the
+  // `workflow_run_pipeline_events` table to simulate live evidence-store
+  // unreach. It then drives the real workflow runtime and the real
+  // task-workflow service in-process — no mocks of the workflow runtime,
+  // workflow evidence repository, task-workflow repository, or
+  // task-workflow service — and asserts the four behaviors named by the
+  // Stage 2 scope reconciliation matrix:
+  //   * proof-required run fails closed — terminal run.status === "failed"
+  //     and run.failure.code === "WORKFLOW_EVIDENCE_UNAVAILABLE";
+  //   * ordinary run continues to terminal completed — no terminal failure
+  //     for evidence reasons — while the run's evidenceStatus honestly
+  //     resolves to degraded/unavailable so the receipt cannot claim
+  //     proof;
+  //   * verifyClaim refuses a `workflow_run_evidence` ref pointing at a
+  //     non-available run with HTTP 409
+  //     TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE;
+  //   * healthy-path closeout receipt populates `evidenceDurability` and
+  //     `proofClaimable`, and the new `workflow_run_evidence_durable`
+  //     required gate passes.
+  //
+  // Honesty notes:
+  //   * Live external-channel transcript proof remains forwarded to
+  //     Phase 14.5E for configured Discord/Lark/Telegram test spaces.
+  //   * Universal rollback class taxonomy is Phase 14.5D scope and is not
+  //     introduced or claimed here.
+  //   * Phase 14 release-proof debt and Phase 15 docs-truth reconciliation
+  //     are out of scope.
+  baseScenario({
+    id: "l6-phase-14-5c-workflow-evidence-fail-closed",
+    layer: "L6",
+    productArea: "workflow evidence",
+    entrySurface: "/v1/workflow-runs",
+    routeFamily: "workflow-evidence-fail-closed",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "isolated in-memory SQLite database is bootstrapped with the canonical Friday migration stack including v086 (proof_required + evidenceDurability + proofClaimable)",
+      "workflow_run_pipeline_events table is dropped post-migration to simulate live evidence-store unreach (no mocks of the evidence repository or runtime)",
+      "healthy ordinary run before the table drop reports evidenceStatus available via runtime.evidence.getRunEvidenceStatus and runtime.evidence.getRunEvidence",
+      "proof-required run after the table drop reaches terminal status=failed with failure.code=WORKFLOW_EVIDENCE_UNAVAILABLE and a failure.message naming durable evidence persistence loss; evidenceStatus is off available",
+      "ordinary run after the table drop reaches terminal status=completed (not failed for evidence reasons) while evidenceStatus resolves to degraded/unavailable so no proof claim can be made",
+      "task-workflow verifyClaim against a workflow_run_evidence ref from a degraded run throws TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE with HTTP 409",
+      "closeout receipt on the degraded path reports status=partial and carries an evidenceDurability field",
+      "healthy-path closeout receipt reports status=complete with evidenceDurability=available, proofClaimable=true, and the workflow_run_evidence_durable required gate=pass",
+      "live external-channel transcript proof remains forwarded to Phase 14.5E for configured channels",
+    ],
+    execution: {
+      kind: "workflow_evidence_fail_closed",
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P0",
+    tags: ["phase-14-5c", "module-28c", "workflow-evidence-fail-closed", "proof-required"],
+  }),
   baseScenario({
     id: "l6-phase-14-5b-one-click-repair-doctor",
     layer: "L6",

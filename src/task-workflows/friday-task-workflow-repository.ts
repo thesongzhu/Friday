@@ -450,10 +450,12 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
       db.prepare(
         `INSERT INTO task_workflow_closeout_receipts (
            id, workflow_id, spec_hash, status,
-           claim_summary_json, blockers_json, gate_outcomes_json, created_at
+           claim_summary_json, blockers_json, gate_outcomes_json, created_at,
+           evidence_durability, proof_claimable
          ) VALUES (
            @id, @workflowId, @specHash, @status,
-           @claimSummaryJson, @blockersJson, @gateOutcomesJson, @createdAt
+           @claimSummaryJson, @blockersJson, @gateOutcomesJson, @createdAt,
+           @evidenceDurability, @proofClaimable
          )`,
       ).run({
         id: record.id,
@@ -464,6 +466,8 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         blockersJson: JSON.stringify(record.blockers),
         gateOutcomesJson: JSON.stringify(record.gateOutcomes),
         createdAt: record.createdAt,
+        evidenceDurability: record.evidenceDurability,
+        proofClaimable: record.proofClaimable ? 1 : 0,
       });
     },
 
@@ -477,6 +481,12 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
         )
         .get(workflowId) as Record<string, unknown> | undefined;
       if (!row) return null;
+      const evidenceDurability =
+        typeof row.evidence_durability === "string"
+          ? (row.evidence_durability as "available" | "degraded" | "unavailable")
+          : "available";
+      const proofClaimable =
+        row.proof_claimable === 1 || row.proof_claimable === "1";
       return {
         id: String(row.id),
         workflowId: String(row.workflow_id),
@@ -493,6 +503,8 @@ export function createFridayTaskWorkflowRepository(): FridayTaskWorkflowReposito
           String(row.gate_outcomes_json ?? "[]"),
         ) as FridayTaskWorkflowCloseoutGateOutcome[],
         createdAt: String(row.created_at),
+        evidenceDurability,
+        proofClaimable,
       };
     },
 

@@ -90,6 +90,7 @@ function mapRunRow(row: FridayWorkflowRunRow): FridayWorkflowRunEntity {
         : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    proofRequired: row.proof_required === 1,
   };
 }
 
@@ -102,8 +103,9 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
         `INSERT INTO workflow_runs (id, workflow_id, workflow_version_id, status, trigger_type,
          trigger_payload_json, started_by_user_id, started_by_satellite_id, started_at,
          deadline_at, paused_at, resumed_at, finished_at, correlation_id, context_json,
-         failure_code, failure_message, failure_details_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         failure_code, failure_message, failure_details_json, created_at, updated_at,
+         proof_required)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         entity.id,
         entity.workflowId,
@@ -127,6 +129,7 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
           : null,
         entity.createdAt,
         entity.updatedAt,
+        entity.proofRequired ? 1 : 0,
       );
     },
 
@@ -189,9 +192,16 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
     },
 
     finalizeRun(db, id, status, nowIso, failure) {
+      // Phase 14.5C: first-writer-wins for terminal status. A run that has
+      // already been finalized must not be overwritten by a later cascading
+      // handler (e.g., fail_fast policy clobbering a more specific
+      // WORKFLOW_EVIDENCE_UNAVAILABLE failure code recorded synchronously by
+      // proof-required fail-closed evidence persistence). The SQL guard keeps
+      // the previously recorded status, finished_at, and failure fields.
       db.prepare(
         `UPDATE workflow_runs SET status = ?, finished_at = ?, failure_code = ?,
-         failure_message = ?, failure_details_json = ?, updated_at = ? WHERE id = ?`,
+         failure_message = ?, failure_details_json = ?, updated_at = ?
+         WHERE id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`,
       ).run(
         status,
         nowIso,

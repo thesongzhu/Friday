@@ -4,6 +4,7 @@ import type { FridayWorkflowTriggerService } from "../services/friday-workflow-t
 import type { FridayWorkflowApprovalService } from "../services/friday-workflow-approval-service.types.js";
 import type {
   FridayWorkflowRunEntity,
+  FridayWorkflowRunEvidenceStatus,
   ISODateTime,
   UUID,
 } from "../model/friday-workflow.types.js";
@@ -119,6 +120,12 @@ export interface FridayWorkflowRunEvidenceResponse {
   correlation: {
     items: FridayWorkflowRunEvidenceCorrelationRow[];
   };
+  /**
+   * Phase 14.5C: honest evidence persistence status for this run. Mirrors
+   * the runtime-tracked status so consumers can render an accurate proof
+   * receipt — `degraded` and `unavailable` block any proof claim.
+   */
+  evidenceStatus: FridayWorkflowRunEvidenceStatus;
 }
 
 export interface FridayWorkflowRunEvidenceExport {
@@ -171,6 +178,15 @@ export interface FridayWorkflowEvidenceService {
     runId: UUID,
     exportId: UUID,
   ): FridayWorkflowRunEvidenceExportDownload | null;
+  /**
+   * Phase 14.5C: deterministic per-run evidence persistence status. Returns
+   * `available` when the run has never observed an evidence-store degrade,
+   * `degraded` when at least one write or read swallowed a "no such table"
+   * style error, and `unavailable` while persistence is paused for the run.
+   * Reads are honest across the runtime, the task workflow service, and any
+   * downstream verifier — there is no fallback that masks degraded state.
+   */
+  getRunEvidenceStatus(runId: UUID): FridayWorkflowRunEvidenceStatus;
 }
 
 /**

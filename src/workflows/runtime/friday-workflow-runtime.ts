@@ -67,6 +67,7 @@ import type {
   FridayWorkflowRunEvidenceSummary,
   FridayWorkflowRuntime,
 } from "./friday-workflow-runtime.types.js";
+import type { FridayWorkflowRunEvidenceStatus } from "../model/friday-workflow.types.js";
 import type { FridayWorkflowTriggerRepository } from "../persistence/friday-workflow-trigger-repository.js";
 
 import { createFridayWorkflowRepository } from "../persistence/friday-workflow-repository.js";
@@ -470,37 +471,175 @@ export function createFridayWorkflowRuntime(
     ? path.join(path.dirname(resolvedDbPath), "artifacts", "workflow-evidence")
     : path.join(process.cwd(), ".friday", "artifacts", "workflow-evidence");
 
-  let evidencePersistenceAvailable = true;
-  let evidenceDisabledAt = 0;
-  const EVIDENCE_RETRY_INTERVAL_MS = 60_000; // Re-check after 60 seconds
+  // Phase 14.5C: per-run evidence-status tracking. The legacy global
+  // `evidencePersistenceAvailable` flag silently masked degraded persistence
+  // across every run. We now track one status per run id so the workflow run
+  // receipt and downstream task-workflow closeout can honestly reflect what
+  // happened for that specific run; proof-required runs additionally fail
+  // closed via `persistEvidenceOrFailClosed`.
+  const EVIDENCE_RETRY_INTERVAL_MS = 60_000; // Re-check after 60 seconds.
+  const evidenceStatusByRunId = new Map<string, FridayWorkflowRunEvidenceStatus>();
+  const evidenceDisabledAtByRunId = new Map<string, number>();
+  const proofRequiredByRunId = new Map<string, boolean>();
+
   const shouldDisableEvidencePersistence = (error: unknown): boolean =>
     error instanceof Error && error.message.toLowerCase().includes("no such table");
-  const isEvidenceAvailable = (): boolean => {
-    if (evidencePersistenceAvailable) return true;
-    // Periodically re-check: if enough time has passed since disabling
-    // (e.g. a migration may have created the table), allow a retry.
-    if (Date.now() - evidenceDisabledAt >= EVIDENCE_RETRY_INTERVAL_MS) {
-      evidencePersistenceAvailable = true;
-      return true;
+
+  const getRunEvidenceStatus = (runId: string): FridayWorkflowRunEvidenceStatus => {
+    const status = evidenceStatusByRunId.get(runId) ?? "available";
+    if (status === "unavailable") {
+      const disabledAt = evidenceDisabledAtByRunId.get(runId) ?? 0;
+      if (Date.now() - disabledAt >= EVIDENCE_RETRY_INTERVAL_MS) {
+        // Auto-recover to `degraded` so subsequent writes/reads retry, but
+        // never silently revert to `available`. A clean run never observed
+        // a degrade; a previously-failed run is allowed to recover writes
+        // but its receipt still tells the truth that proof was unavailable.
+        evidenceStatusByRunId.set(runId, "degraded");
+        return "degraded";
+      }
     }
-    return false;
+    return status;
   };
-  const markEvidenceUnavailable = (): void => {
-    evidencePersistenceAvailable = false;
-    evidenceDisabledAt = Date.now();
-  };
-  const persistEvidenceSafely = (write: () => void): void => {
-    if (!isEvidenceAvailable()) {
+
+  const transitionRunEvidenceStatus = (
+    runId: string,
+    target: FridayWorkflowRunEvidenceStatus,
+  ): void => {
+    if (target === "available") {
+      return; // Never silently downgrade existing degraded/unavailable state.
+    }
+    const previous = evidenceStatusByRunId.get(runId) ?? "available";
+    if (target === "unavailable") {
+      evidenceStatusByRunId.set(runId, "unavailable");
+      evidenceDisabledAtByRunId.set(runId, Date.now());
       return;
+    }
+    // `degraded` only overwrites `available`; do not weaken `unavailable`.
+    if (previous === "available") {
+      evidenceStatusByRunId.set(runId, "degraded");
+    }
+  };
+
+  const isRunProofRequired = (runId: string): boolean => {
+    const cached = proofRequiredByRunId.get(runId);
+    if (cached !== undefined) return cached;
+    try {
+      const run = deps.db.withReadConnection((db) => runRepo.getRunById(db, runId));
+      if (!run) {
+        // The run row has not been persisted yet (e.g., the very first
+        // pipeline-event emit fires inside `onRunIntake` before `insertRun`).
+        // Returning `false` lets the ordinary degrade path swallow the
+        // missing-table error, but we must NOT cache that reading or
+        // subsequent emits during execution would never see the actual
+        // proof-required flag.
+        return false;
+      }
+      const value = run.proofRequired === true;
+      proofRequiredByRunId.set(runId, value);
+      return value;
+    } catch {
+      // Conservative default: legacy installations without the proof_required
+      // column (pre-v086) cannot opt into fail-closed semantics, so behave
+      // like an ordinary run rather than blowing up unrelated workflows.
+      return false;
+    }
+  };
+
+  const buildWorkflowEvidenceUnavailableError = (
+    runId: string,
+    cause: "no such table" | "persistence-disabled",
+  ): FridayDomainError =>
+    new FridayDomainError(
+      "WORKFLOW_EVIDENCE_UNAVAILABLE",
+      `proof-required workflow run "${runId}" cannot continue without durable evidence persistence (${cause}).`,
+      {
+        httpStatus: 503,
+        details: { runId, cause, proofRequired: true },
+      },
+    );
+
+  // Phase 14.5C: a proof-required run that observes an evidence-persistence
+  // failure must be terminally marked failed with WORKFLOW_EVIDENCE_UNAVAILABLE
+  // BEFORE the throw propagates. The downstream fail_fast policy will still
+  // attempt to finalize the run with WORKFLOW_FAILED, but the repository's
+  // first-writer-wins guard preserves our more specific failure code. We swallow
+  // any error from this best-effort finalize (e.g., entire DB unreachable) so
+  // the original WORKFLOW_EVIDENCE_UNAVAILABLE still propagates honestly.
+  const failRunWithEvidenceUnavailable = (
+    runId: string,
+    cause: "no such table" | "persistence-disabled",
+  ): void => {
+    try {
+      const nowIso = deps.nowIso();
+      deps.db.withWriteTransaction((db) => {
+        const existing = runRepo.getRunById(db, runId);
+        if (!existing) {
+          // Run row has not been persisted yet (the throw originated in
+          // `onRunIntake`, before `insertRun`). The next emit during
+          // execution will hit this path again with a persisted row.
+          return;
+        }
+        if (
+          existing.status === "completed"
+          || existing.status === "failed"
+          || existing.status === "cancelled"
+        ) {
+          return; // Already terminal; do not overwrite.
+        }
+        runRepo.finalizeRun(db, runId, "failed", nowIso, {
+          code: "WORKFLOW_EVIDENCE_UNAVAILABLE",
+          message:
+            `proof-required workflow run "${runId}" cannot continue without durable evidence persistence (${cause}).`,
+          details: { runId, cause, proofRequired: true },
+        });
+      });
+    } catch {
+      // Best-effort. The thrown WORKFLOW_EVIDENCE_UNAVAILABLE error will still
+      // propagate; a generic finalize will record the run as failed via the
+      // fail_fast policy path, but without the specific code. That degradation
+      // is bounded: it only happens if the workflow_runs table itself is
+      // unreachable, which is a far broader infrastructure failure.
+    }
+  };
+
+  const persistEvidenceOrDegrade = (runId: string, write: () => void): void => {
+    if (getRunEvidenceStatus(runId) === "unavailable") {
+      return; // Persistence paused for this run; do not retry until recovery window.
     }
     try {
       write();
     } catch (error) {
       // Legacy DBs without v033 evidence tables should continue to run.
       if (shouldDisableEvidencePersistence(error)) {
-        markEvidenceUnavailable();
+        transitionRunEvidenceStatus(runId, "unavailable");
       }
     }
+  };
+
+  const persistEvidenceOrFailClosed = (runId: string, write: () => void): void => {
+    const currentStatus = getRunEvidenceStatus(runId);
+    if (currentStatus === "unavailable") {
+      failRunWithEvidenceUnavailable(runId, "persistence-disabled");
+      throw buildWorkflowEvidenceUnavailableError(runId, "persistence-disabled");
+    }
+    try {
+      write();
+    } catch (error) {
+      if (shouldDisableEvidencePersistence(error)) {
+        transitionRunEvidenceStatus(runId, "unavailable");
+        failRunWithEvidenceUnavailable(runId, "no such table");
+        throw buildWorkflowEvidenceUnavailableError(runId, "no such table");
+      }
+      throw error;
+    }
+  };
+
+  const persistEvidenceForRun = (runId: string, write: () => void): void => {
+    if (isRunProofRequired(runId)) {
+      persistEvidenceOrFailClosed(runId, write);
+      return;
+    }
+    persistEvidenceOrDegrade(runId, write);
   };
   let publicRetryPersistenceAvailable = true;
   let publicRetryDisabledAt = 0;
@@ -594,15 +733,26 @@ export function createFridayWorkflowRuntime(
       updated_at: input.updatedAt,
     });
   };
-  const readEvidenceSafely = <T>(read: () => T, fallback: T): T => {
-    if (!isEvidenceAvailable()) {
+  // Phase 14.5C: read-side degrade is no longer silent. The helper still
+  // returns the caller-supplied fallback (the call sites need a concrete
+  // value), but the per-run evidence status transitions to `degraded` (or
+  // `unavailable` for a "no such table" error) so the run receipt and the
+  // task-workflow closeout gate can refuse the proof claim honestly.
+  const readEvidenceSafely = <T>(
+    runId: string,
+    read: () => T,
+    fallback: T,
+  ): T => {
+    if (getRunEvidenceStatus(runId) === "unavailable") {
       return fallback;
     }
     try {
       return read();
     } catch (error) {
       if (shouldDisableEvidencePersistence(error)) {
-        markEvidenceUnavailable();
+        transitionRunEvidenceStatus(runId, "unavailable");
+      } else {
+        transitionRunEvidenceStatus(runId, "degraded");
       }
       return fallback;
     }
@@ -625,7 +775,7 @@ export function createFridayWorkflowRuntime(
   });
 
   const persistPipelineEvent = (event: PipelineEvent): void => {
-    persistEvidenceSafely(() => {
+    persistEvidenceForRun(event.correlation.runId, () => {
       deps.db.withWriteTransaction((db) => {
         evidenceRepo.insertPipelineEvent(db, {
           event_id: event.eventId,
@@ -890,7 +1040,7 @@ export function createFridayWorkflowRuntime(
     promotionEngine,
     enabled: process.env.FRIDAY_PLAYBOOK_AUTO_LEARN !== "false",
     onTrace: (trace) => {
-      persistEvidenceSafely(() => {
+      persistEvidenceForRun(trace.runId, () => {
         deps.db.withWriteTransaction((db) => {
           evidenceRepo.insertPlaybookTrace(db, {
             id: deps.idGenerator(),
@@ -913,7 +1063,7 @@ export function createFridayWorkflowRuntime(
     retryBudgetMax: pipelineRetryConfig.retryBudgetMax,
     circuitBreakerThreshold: pipelineRetryConfig.circuitBreakerThreshold,
     onRetryTrace: (trace) => {
-      persistEvidenceSafely(() => {
+      persistEvidenceForRun(trace.runId, () => {
         deps.db.withWriteTransaction((db) => {
           evidenceRepo.insertRetryTrace(db, {
             id: deps.idGenerator(),
@@ -1521,6 +1671,7 @@ export function createFridayWorkflowRuntime(
 
   const listPersistedEvents = (runId: string): FridayWorkflowEvidenceEvent[] =>
     readEvidenceSafely(
+      runId,
       () =>
         deps.db.withReadConnection((db) =>
           evidenceRepo.listPipelineEventsByRun(db, runId).flatMap((row) => {
@@ -1572,6 +1723,7 @@ export function createFridayWorkflowRuntime(
 
   const listPersistedRetryTraces = (runId: string): FridayWorkflowRetryEvidenceTrace[] =>
     readEvidenceSafely(
+      runId,
       () =>
         deps.db.withReadConnection((db) =>
           evidenceRepo.listRetryTracesByRun(db, runId).map((row) => {
@@ -1624,6 +1776,7 @@ export function createFridayWorkflowRuntime(
 
   const listPersistedPlaybookTraces = (runId: string): FridayWorkflowPlaybookEvidenceTrace[] =>
     readEvidenceSafely(
+      runId,
       () =>
         deps.db.withReadConnection((db) =>
           evidenceRepo.listPlaybookTracesByRun(db, runId).map((row) => {
@@ -1872,8 +2025,13 @@ export function createFridayWorkflowRuntime(
         return a.attempt - b.attempt;
       });
 
+    const evidenceStatus = getRunEvidenceStatus(runId);
+    const rawRun = execution.getRun(runId);
+    const run = rawRun
+      ? { ...rawRun, evidenceStatus }
+      : null;
     return {
-      run: execution.getRun(runId),
+      run,
       exportedAt: deps.nowIso(),
       query: normalizedQuery,
       summary: {
@@ -1897,6 +2055,7 @@ export function createFridayWorkflowRuntime(
       correlation: {
         items: correlationItems,
       },
+      evidenceStatus,
     };
   };
 
@@ -1964,6 +2123,7 @@ export function createFridayWorkflowRuntime(
       const fileWrite = writeEvidenceExportFile(runId, exportId, payloadJson);
 
       let persisted = true;
+      const proofRequired = isRunProofRequired(runId);
       try {
         deps.db.withWriteTransaction((db) => {
           artifactRepo.insertArtifact(db, {
@@ -1997,7 +2157,12 @@ export function createFridayWorkflowRuntime(
       } catch (error) {
         persisted = false;
         if (shouldDisableEvidencePersistence(error)) {
-          evidencePersistenceAvailable = false;
+          transitionRunEvidenceStatus(runId, "unavailable");
+          if (proofRequired) {
+            throw buildWorkflowEvidenceUnavailableError(runId, "no such table");
+          }
+        } else if (proofRequired) {
+          throw error;
         }
       }
 
@@ -2019,6 +2184,7 @@ export function createFridayWorkflowRuntime(
     },
     getRunEvidenceExport(runId: string, exportId: string): FridayWorkflowRunEvidenceExportRecord | null {
       return readEvidenceSafely(
+        runId,
         () =>
           deps.db.withReadConnection((db) => {
             const row = evidenceRepo.getEvidenceExportById(db, runId, exportId);
@@ -2051,6 +2217,7 @@ export function createFridayWorkflowRuntime(
     listRunEvidenceExports(runId: string, limit = 20): FridayWorkflowRunEvidenceExport[] {
       const normalizedLimit = normalizePositiveLimit(limit, 20);
       return readEvidenceSafely(
+        runId,
         () =>
           deps.db.withReadConnection((db) =>
             evidenceRepo
@@ -2106,6 +2273,9 @@ export function createFridayWorkflowRuntime(
         },
         content,
       };
+    },
+    getRunEvidenceStatus(runId: string): FridayWorkflowRunEvidenceStatus {
+      return getRunEvidenceStatus(runId);
     },
   };
 

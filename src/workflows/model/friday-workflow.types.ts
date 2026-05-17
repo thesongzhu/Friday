@@ -169,7 +169,28 @@ export interface FridayWorkflowRunRow {
   failure_details_json: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Phase 14.5C: proof-required workflow runs fail closed when durable
+   * evidence persistence is unavailable. Nullable for legacy rows; 0 = false
+   * (ordinary workflow may degrade), 1 = true (must fail closed).
+   */
+  proof_required: number | null;
 }
+
+// ─── Phase 14.5C: Workflow Run Evidence Status ───
+//
+// Runtime-tracked status of the per-run evidence write/read path. `available`
+// is the default for runs that have not experienced any evidence-store
+// degrade. `degraded` indicates at least one persistence write was swallowed
+// because the evidence tables were unreachable; `unavailable` indicates the
+// runtime has disabled persistence for this run while it waits for the store
+// to recover. The status is honestly surfaced in the run receipt and is the
+// load-bearing input for the new closeout gate `workflow_run_evidence_durable`.
+
+export type FridayWorkflowRunEvidenceStatus =
+  | "available"
+  | "degraded"
+  | "unavailable";
 
 // ─── Workflow Run Entity ───
 
@@ -196,6 +217,21 @@ export interface FridayWorkflowRunEntity {
   };
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * Phase 14.5C: proof-required flag set at run start. Proof-required runs
+   * fail closed when durable evidence persistence is unavailable; ordinary
+   * runs (default) may degrade so long as the receipt honestly says proof
+   * is unavailable. Persisted in `workflow_runs.proof_required`.
+   */
+  proofRequired?: boolean;
+  /**
+   * Phase 14.5C: runtime-tracked evidence persistence status for this run.
+   * Populated by the workflow runtime when the entity is returned from
+   * `getRun` (or any other read path). Not persisted directly on the run
+   * row — runtime state is the source of truth so cross-process callers
+   * always see the current store health.
+   */
+  evidenceStatus?: FridayWorkflowRunEvidenceStatus;
 }
 
 // ─── Workflow Run Node Row ───
@@ -317,6 +353,13 @@ export interface FridayWorkflowStartRunInput {
   correlationId?: string;
   context?: JsonObject;
   dryRun?: boolean;
+  /**
+   * Phase 14.5C: proof-required flag. When true the runtime fails closed if
+   * durable evidence persistence is unavailable. Defaults to false; ordinary
+   * workflows may degrade so long as the receipt clearly says proof is
+   * unavailable.
+   */
+  proofRequired?: boolean;
 }
 
 // ─── Node Outcome (internal) ───

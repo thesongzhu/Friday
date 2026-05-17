@@ -179,6 +179,17 @@ export interface FridayTaskWorkflowCloseoutGateOutcome {
   readonly reason: string | null;
 }
 
+/**
+ * Phase 14.5C: durability label projected from the upstream workflow run
+ * evidence persistence status. `available` is the only value that can back
+ * a proof claim; `degraded` and `unavailable` always force `proofClaimable`
+ * to `false` regardless of the other gate outcomes.
+ */
+export type FridayTaskWorkflowWorkflowRunEvidenceStatus =
+  | "available"
+  | "degraded"
+  | "unavailable";
+
 export interface FridayTaskWorkflowCloseoutReceipt {
   readonly id: string;
   readonly workflowId: string;
@@ -193,6 +204,21 @@ export interface FridayTaskWorkflowCloseoutReceipt {
   readonly blockers: readonly string[];
   readonly gateOutcomes: readonly FridayTaskWorkflowCloseoutGateOutcome[];
   readonly createdAt: string;
+  /**
+   * Phase 14.5C: worst-case evidence persistence status across every
+   * workflow_run_evidence ref attached to a verified claim in this
+   * workflow. `unavailable` > `degraded` > `available`. Defaults to
+   * `available` when no workflow_run_evidence refs are referenced.
+   */
+  readonly evidenceDurability: FridayTaskWorkflowWorkflowRunEvidenceStatus;
+  /**
+   * Phase 14.5C: deterministic proof-claim eligibility. `true` iff
+   * `evidenceDurability === "available"` AND every required gate
+   * (including `workflow_run_evidence_durable`) passed. A `true` value
+   * is the only situation in which a downstream consumer may render
+   * "release-proof eligible" wording for this workflow.
+   */
+  readonly proofClaimable: boolean;
 }
 
 /** Input for creating or previewing a workflow. */

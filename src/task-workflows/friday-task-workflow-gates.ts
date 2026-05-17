@@ -88,6 +88,14 @@ export const FRIDAY_TASK_WORKFLOW_REQUIRED_GATES: readonly FridayTaskWorkflowGat
     required: true,
     mandatoryForRisk: ["low", "medium", "high"],
   },
+  {
+    gateId: "workflow_run_evidence_durable",
+    label: "Workflow run evidence persistence is durable",
+    description:
+      "Phase 14.5C: every verified claim whose evidence refs include a workflow_run_evidence source must point at a workflow run whose evidence persistence is available. Runs that ever observed an evidence-store degrade or unavailable state cannot satisfy a proof claim, even when the rest of the gate plan passes.",
+    required: true,
+    mandatoryForRisk: ["low", "medium", "high"],
+  },
 ];
 
 /** Built-in optional gates that can be layered on top of required gates. */
