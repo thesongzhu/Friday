@@ -32,9 +32,13 @@ export {
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
 export {
+  computeFridayTaskWorkflowCloseoutRollbackDisclosure,
   evaluateFridayTaskWorkflowCloseoutGates,
 } from "./friday-task-workflow-closeout-gates.js";
-export type { FridayTaskWorkflowCloseoutGateInput } from "./friday-task-workflow-closeout-gates.js";
+export type {
+  FridayTaskWorkflowCloseoutGateInput,
+  FridayTaskWorkflowCloseoutRollbackDisclosure,
+} from "./friday-task-workflow-closeout-gates.js";
 export {
   computeFridayTaskWorkflowLaneContextSnapshotHash,
   resolveFridayTaskWorkflowVerifierIndependence,
@@ -79,6 +83,7 @@ export {
   projectFridayEvidenceExplorerEntry,
   redactFridayEvidenceRefForDrilldown,
 } from "./friday-task-workflow-evidence-explorer.js";
+export { FRIDAY_TASK_WORKFLOW_ROLLBACK_CLASS_BY_REF_SOURCE } from "./friday-task-workflow.types.js";
 export type {
   FridayTaskWorkflowAttachEvidenceRefInput,
   FridayTaskWorkflowBlockClaimInput,
@@ -123,6 +128,7 @@ export type {
   FridayTaskWorkflowLaneSummary,
   FridayTaskWorkflowOpenExecutorLaneInput,
   FridayTaskWorkflowOpenVerifierLaneInput,
+  FridayTaskWorkflowOperationRollbackClass,
   FridayTaskWorkflowPreview,
   FridayTaskWorkflowRecord,
   FridayTaskWorkflowRecordCliHandoffInput,
@@ -135,4 +141,5 @@ export type {
   FridayTaskWorkflowSupervisorMode,
   FridayTaskWorkflowSupervisorOverview,
   FridayTaskWorkflowVerifyClaimInput,
+  FridayTaskWorkflowWorkflowRunEvidenceStatus,
 } from "./friday-task-workflow.types.js";

@@ -1332,3 +1332,222 @@ describe("Phase 14.5C module_28c — workflow evidence fail-closed", () => {
     expect(receipt.status).toBe("blocked");
   });
 });
+
+describe("Phase 14.5D module_28d — closeout receipt rollback disclosure", () => {
+  function setupServiceWithRepository(): {
+    repository: ReturnType<typeof createFridayTaskWorkflowRepository>;
+    service: FridayTaskWorkflowService;
+  } {
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+    });
+    return { repository, service };
+  }
+
+  it("populates rollbackClass=reversible_local for an agent_run_event-backed verified claim", () => {
+    const service = makeService();
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "agent run evidence",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "agent_run.event",
+      refId: "evt-local-1",
+      refSource: "agent_run_event",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read",
+    });
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.rollbackClass).toBe("reversible_local");
+    expect(receipt.compensatingAction).toBeNull();
+    expect(receipt.nonReversibleReason).toBeNull();
+    const gate = receipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    expect(gate?.status).toBe("pass");
+  });
+
+  it("rollbackClass not_applicable when only docs_intent_reference refs exist (intent compatibility)", () => {
+    const service = makeService();
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "intent claim only",
+      claimKind: "docs_intent",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "docs.start_here",
+      refId: "START_HERE_PROMPT.md",
+      refSource: "docs_intent_reference",
+    });
+    // docs_intent claims cannot reach verified; ensure closeout still works.
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.rollbackClass).toBe("not_applicable");
+    expect(receipt.compensatingAction).toBeNull();
+    expect(receipt.nonReversibleReason).toBeNull();
+  });
+
+  it("rollbackClass compensating_action_required when a workflow_run_evidence ref is verified", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-comp", "available"],
+    ]);
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+      getWorkflowRunEvidenceStatus: (runId) => statusByRunId.get(runId) ?? null,
+    });
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "workflow run evidence",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-comp",
+      refSource: "workflow_run_evidence",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read available run",
+    });
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.rollbackClass).toBe("compensating_action_required");
+    expect(receipt.compensatingAction).toMatch(/workflow_run_evidence/);
+    expect(receipt.nonReversibleReason).toBeNull();
+    const gate = receipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    expect(gate?.status).toBe("pass");
+  });
+
+  it("rollbackClass non_reversible_external when verified claim references manual_external", () => {
+    const { repository, service } = setupServiceWithRepository();
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "external action claim",
+      claimKind: "runtime_evidence",
+    });
+    // Plant a manual_external ref directly via the repository so we can keep
+    // the verifyClaim path simple (manual_external is not in
+    // getAllowedRefSources for runtime_evidence; the test models the
+    // closeout-time disclosure surface, not the verify-time gate).
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "agent_run.event",
+      refId: "evt-pre",
+      refSource: "agent_run_event",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "verified before plant",
+    });
+    db.withWriteTransaction((conn) => {
+      repository.insertEvidenceRef(conn, {
+        id: "plant-ext-1",
+        workflowId: workflow.id,
+        claimId: claim.id,
+        refKind: "external.message",
+        refId: "ext-msg-1",
+        refHash: null,
+        refSource: "manual_external",
+        createdAt: frozenNow,
+      });
+      repository.incrementEvidenceRefCount(conn, claim.id, frozenNow);
+    });
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.rollbackClass).toBe("non_reversible_external");
+    expect(receipt.nonReversibleReason).toMatch(/manual_external/);
+    expect(receipt.compensatingAction).toBeNull();
+    // The rollback gate must pass because a real reason is recorded; the
+    // receipt status itself may still be "complete" if other gates are fine.
+    const gate = receipt.gateOutcomes.find(
+      (g) => g.gateId === "rollback_class_disclosure_required",
+    );
+    expect(gate?.status).toBe("pass");
+  });
+
+  it("persists rollback fields and rehydrates them via getLatestCloseoutReceipt", () => {
+    const { repository, service } = setupServiceWithRepository();
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "agent run roundtrip",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "agent_run.event",
+      refId: "evt-roundtrip",
+      refSource: "agent_run_event",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read roundtrip",
+    });
+    const written = service.closeout(workflow.id);
+    const reloaded = db.withReadConnection((conn) =>
+      repository.getLatestCloseoutReceipt(conn, workflow.id),
+    );
+    expect(reloaded).not.toBeNull();
+    expect(reloaded!.rollbackClass).toBe(written.rollbackClass);
+    expect(reloaded!.compensatingAction).toBe(written.compensatingAction);
+    expect(reloaded!.nonReversibleReason).toBe(written.nonReversibleReason);
+  });
+
+  it("legacy closeout rows (null columns) rehydrate as not_applicable/null", () => {
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+    });
+    const workflow = service.create(makeCreateInput());
+    // Insert a closeout row directly with the new columns set to NULL to
+    // model a pre-v087 row that survived the additive migration.
+    db.withWriteTransaction((conn) => {
+      conn.prepare(
+        `INSERT INTO task_workflow_closeout_receipts (
+           id, workflow_id, spec_hash, status,
+           claim_summary_json, blockers_json, gate_outcomes_json, created_at,
+           evidence_durability, proof_claimable,
+           rollback_class, compensating_action, non_reversible_reason
+         ) VALUES (
+           @id, @workflowId, @specHash, @status,
+           @claimSummaryJson, @blockersJson, @gateOutcomesJson, @createdAt,
+           @evidenceDurability, @proofClaimable,
+           NULL, NULL, NULL
+         )`,
+      ).run({
+        id: "legacy-receipt-1",
+        workflowId: workflow.id,
+        specHash: workflow.specHash,
+        status: "complete",
+        claimSummaryJson: JSON.stringify({ draft: 0, unverified: 0, verified: 1, blocked: 0 }),
+        blockersJson: JSON.stringify([]),
+        gateOutcomesJson: JSON.stringify([]),
+        createdAt: frozenNow,
+        evidenceDurability: "available",
+        proofClaimable: 1,
+      });
+    });
+    const reloaded = db.withReadConnection((conn) =>
+      repository.getLatestCloseoutReceipt(conn, workflow.id),
+    );
+    expect(reloaded).not.toBeNull();
+    expect(reloaded!.rollbackClass).toBe("not_applicable");
+    expect(reloaded!.compensatingAction).toBeNull();
+    expect(reloaded!.nonReversibleReason).toBeNull();
+  });
+});

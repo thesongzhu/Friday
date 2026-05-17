@@ -36,7 +36,10 @@ import {
   isFridayTaskWorkflowCliShapedRefKind,
   isFridayTaskWorkflowRefSourceCompatible,
 } from "./friday-task-workflow-compatibility.js";
-import { evaluateFridayTaskWorkflowCloseoutGates } from "./friday-task-workflow-closeout-gates.js";
+import {
+  computeFridayTaskWorkflowCloseoutRollbackDisclosure,
+  evaluateFridayTaskWorkflowCloseoutGates,
+} from "./friday-task-workflow-closeout-gates.js";
 import {
   projectFridayEvidenceExplorerEntry,
   redactFridayEvidenceRefForDrilldown,
@@ -931,6 +934,16 @@ export function createFridayTaskWorkflowService(
       verified: claims.filter((c) => c.status === "verified").length,
       blocked: claims.filter((c) => c.status === "blocked").length,
     } as const;
+    // Phase 14.5D module_28d: compute the worst-case rollback disclosure
+    // deterministically from verified/blocked-claim evidence refs before
+    // the closeout gates evaluate. This is the data the new required gate
+    // `rollback_class_disclosure_required` checks; computing it here keeps
+    // the receipt fields and the gate outcome derived from the same
+    // observation set.
+    const rollbackDisclosure = computeFridayTaskWorkflowCloseoutRollbackDisclosure({
+      claims,
+      evidenceRefsByClaim,
+    });
     const gateOutcomes: readonly FridayTaskWorkflowCloseoutGateOutcome[] =
       evaluateFridayTaskWorkflowCloseoutGates({
         gatePlan: workflow.gatePlan,
@@ -941,6 +954,7 @@ export function createFridayTaskWorkflowService(
         risk: workflow.risk,
         workflowSpecHash: workflow.specHash,
         workflowRunEvidenceStatusByRunId,
+        rollbackDisclosure,
       });
     const blockers: string[] = [];
     if (summary.blocked > 0) {
@@ -990,6 +1004,9 @@ export function createFridayTaskWorkflowService(
       createdAt: now,
       evidenceDurability,
       proofClaimable,
+      rollbackClass: rollbackDisclosure.rollbackClass,
+      compensatingAction: rollbackDisclosure.compensatingAction,
+      nonReversibleReason: rollbackDisclosure.nonReversibleReason,
     };
     deps.db.withWriteTransaction((db) => {
       deps.repository.insertCloseoutReceipt(db, receipt);

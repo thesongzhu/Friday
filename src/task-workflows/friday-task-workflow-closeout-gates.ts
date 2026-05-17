@@ -16,6 +16,9 @@
  */
 
 import { isFridayTaskWorkflowRefSourceCompatible } from "./friday-task-workflow-compatibility.js";
+import {
+  FRIDAY_TASK_WORKFLOW_ROLLBACK_CLASS_BY_REF_SOURCE,
+} from "./friday-task-workflow.types.js";
 import type {
   FridayTaskWorkflowClaimRecord,
   FridayTaskWorkflowCloseoutGateOutcome,
@@ -23,6 +26,7 @@ import type {
   FridayTaskWorkflowEvidenceRefRecord,
   FridayTaskWorkflowGatePlanEntry,
   FridayTaskWorkflowLaneRecord,
+  FridayTaskWorkflowOperationRollbackClass,
   FridayTaskWorkflowRisk,
   FridayTaskWorkflowWorkflowRunEvidenceStatus,
 } from "./friday-task-workflow.types.js";
@@ -51,6 +55,37 @@ export interface FridayTaskWorkflowCloseoutGateInput {
   readonly workflowRunEvidenceStatusByRunId: ReadonlyMap<
     string,
     FridayTaskWorkflowWorkflowRunEvidenceStatus
+  >;
+  /**
+   * Phase 14.5D module_28d: deterministic rollback disclosure derived
+   * from verified/blocked claim evidence refs in the service layer
+   * before evaluating the closeout gate plan. Absent (undefined) when
+   * the service has no receipt-under-construction context (legacy
+   * callers); the new required gate `rollback_class_disclosure_required`
+   * then falls back to the required-gate-never-silent block path so
+   * closeout cannot pass silently without rollback disclosure.
+   */
+  readonly rollbackDisclosure?: FridayTaskWorkflowCloseoutRollbackDisclosure;
+}
+
+/**
+ * Phase 14.5D module_28d: deterministic rollback disclosure projection
+ * passed into the closeout gate evaluator. The service produces this
+ * by walking every evidence ref attached to a verified or blocked
+ * claim, mapping each ref's source through
+ * `FRIDAY_TASK_WORKFLOW_ROLLBACK_CLASS_BY_REF_SOURCE`, and resolving
+ * the worst-case class. Honest disclosure: no overclaim by omission
+ * and no overclaim by understatement.
+ */
+export interface FridayTaskWorkflowCloseoutRollbackDisclosure {
+  readonly rollbackClass: FridayTaskWorkflowOperationRollbackClass;
+  readonly compensatingAction: string | null;
+  readonly nonReversibleReason: string | null;
+  /** Ref sources observed across verified/blocked claims. Used by the
+   *  no-overclaim invariant to detect under-disclosure. */
+  readonly observedRefSourceClasses: ReadonlyMap<
+    string,
+    FridayTaskWorkflowOperationRollbackClass
   >;
 }
 
@@ -224,6 +259,68 @@ const REQUIRED_GATE_EVALUATORS: Readonly<Record<string, GateEvaluator>> = {
     return { status: "pass", reason: null };
   },
 
+  rollback_class_disclosure_required: (input) => {
+    // Phase 14.5D module_28d: refuse pass when the receipt-under-construction
+    // disclosure is missing (required-gate-never-silent), when a
+    // non-`reversible_local` rollback class is missing its required
+    // disclosure summary (overclaim by omission), or when the receipt
+    // claims `reversible_local` while verified/blocked claims reference
+    // any non-local source (overclaim by understatement).
+    const disclosure = input.rollbackDisclosure;
+    if (!disclosure) {
+      return {
+        status: "block",
+        reason:
+          "no rollback disclosure projected for the closeout receipt; required-gate-never-silent fallback applies per Phase 14.5D module_28d.",
+      };
+    }
+    const observedClasses = new Set<FridayTaskWorkflowOperationRollbackClass>(
+      disclosure.observedRefSourceClasses.values(),
+    );
+    if (disclosure.rollbackClass === "non_reversible_external") {
+      const reason = disclosure.nonReversibleReason;
+      if (typeof reason !== "string" || reason.trim().length === 0) {
+        return {
+          status: "block",
+          reason:
+            "rollbackClass is 'non_reversible_external' but nonReversibleReason is missing; closeout cannot pass without a disclosed reason per Phase 14.5D module_28d.",
+        };
+      }
+    }
+    if (disclosure.rollbackClass === "compensating_action_required") {
+      const action = disclosure.compensatingAction;
+      if (typeof action !== "string" || action.trim().length === 0) {
+        return {
+          status: "block",
+          reason:
+            "rollbackClass is 'compensating_action_required' but compensatingAction is missing; closeout cannot pass without the compensating action summary per Phase 14.5D module_28d.",
+        };
+      }
+    }
+    if (disclosure.rollbackClass === "reversible_local") {
+      if (
+        observedClasses.has("compensating_action_required") ||
+        observedClasses.has("non_reversible_external")
+      ) {
+        const offending: string[] = [];
+        for (const [refId, klass] of disclosure.observedRefSourceClasses) {
+          if (
+            klass === "compensating_action_required" ||
+            klass === "non_reversible_external"
+          ) {
+            offending.push(`${refId}(${klass})`);
+          }
+        }
+        return {
+          status: "block",
+          reason:
+            `rollbackClass claims 'reversible_local' but verified/blocked claim evidence refs include non-local sources: ${offending.join(", ")}.`,
+        };
+      }
+    }
+    return { status: "pass", reason: null };
+  },
+
   independent_verifier_required: (input) => {
     if (input.risk !== "high") {
       return { status: "pass", reason: null };
@@ -283,7 +380,97 @@ const REQUIRED_GATE_FALLBACK_REASON: Readonly<Record<string, string>> = {
     "no required-gate evaluator data; treating as block per Phase 13.5B executor-lane-context-bound rule.",
   workflow_run_evidence_durable:
     "no required-gate evaluator data; treating as block per Phase 14.5C workflow-run-evidence-fail-closed rule.",
+  rollback_class_disclosure_required:
+    "no required-gate evaluator data; treating as block per Phase 14.5D module_28d rollback-class-disclosure rule.",
 };
+
+/**
+ * Phase 14.5D module_28d: deterministically project the worst-case
+ * rollback class across every verified/blocked-claim evidence ref using
+ * the read-only ref-source → rollback-class registry. The result is
+ * what the closeout receipt persists and what the
+ * `rollback_class_disclosure_required` gate evaluates. The function is
+ * pure; same inputs → same outputs across N invocations.
+ */
+export function computeFridayTaskWorkflowCloseoutRollbackDisclosure(input: {
+  readonly claims: readonly FridayTaskWorkflowClaimRecord[];
+  readonly evidenceRefsByClaim: ReadonlyMap<
+    string,
+    readonly FridayTaskWorkflowEvidenceRefRecord[]
+  >;
+}): FridayTaskWorkflowCloseoutRollbackDisclosure {
+  const consideredClaims = input.claims.filter(
+    (claim) => claim.status === "verified" || claim.status === "blocked",
+  );
+  const observed = new Map<string, FridayTaskWorkflowOperationRollbackClass>();
+  const sourceCountsByClass = new Map<
+    FridayTaskWorkflowOperationRollbackClass,
+    Map<string, number>
+  >();
+  for (const claim of consideredClaims) {
+    const refs = input.evidenceRefsByClaim.get(claim.id) ?? [];
+    for (const ref of refs) {
+      const klass = FRIDAY_TASK_WORKFLOW_ROLLBACK_CLASS_BY_REF_SOURCE[ref.refSource];
+      observed.set(ref.id, klass);
+      const counts =
+        sourceCountsByClass.get(klass) ??
+        (() => {
+          const fresh = new Map<string, number>();
+          sourceCountsByClass.set(klass, fresh);
+          return fresh;
+        })();
+      counts.set(ref.refSource, (counts.get(ref.refSource) ?? 0) + 1);
+    }
+  }
+  const worst = worstCaseRollbackClass([...observed.values()]);
+  let compensatingAction: string | null = null;
+  let nonReversibleReason: string | null = null;
+  if (worst === "compensating_action_required") {
+    const sources = sortedSourcesByCount(
+      sourceCountsByClass.get("compensating_action_required") ?? new Map(),
+    );
+    compensatingAction = `compensating action required for ref source(s): ${sources.join(", ")}.`;
+  } else if (worst === "non_reversible_external") {
+    const sources = sortedSourcesByCount(
+      sourceCountsByClass.get("non_reversible_external") ?? new Map(),
+    );
+    nonReversibleReason = `non-reversible external side effect via ref source(s): ${sources.join(", ")}.`;
+  }
+  return {
+    rollbackClass: worst,
+    compensatingAction,
+    nonReversibleReason,
+    observedRefSourceClasses: observed,
+  };
+}
+
+function worstCaseRollbackClass(
+  classes: readonly FridayTaskWorkflowOperationRollbackClass[],
+): FridayTaskWorkflowOperationRollbackClass {
+  let worst: FridayTaskWorkflowOperationRollbackClass = "not_applicable";
+  for (const klass of classes) {
+    if (klass === "non_reversible_external") return "non_reversible_external";
+    if (klass === "compensating_action_required") {
+      worst = "compensating_action_required";
+      continue;
+    }
+    if (klass === "reversible_local" && worst === "not_applicable") {
+      worst = "reversible_local";
+    }
+  }
+  return worst;
+}
+
+function sortedSourcesByCount(
+  counts: ReadonlyMap<string, number>,
+): readonly string[] {
+  return [...counts.entries()]
+    .sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([source]) => source);
+}
 
 /**
  * Deterministically evaluate every gate in the workflow gate plan.
