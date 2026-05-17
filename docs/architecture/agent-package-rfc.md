@@ -1,16 +1,17 @@
 # RFC: Friday Agent Package and Publishing
 
-**Status:** Draft — Phase 2 not started; current code is Phase 1 in-memory engine only and does not persist package registry, install state, lifecycle events, or trusted keys. The bootstrap publish handler currently uses stub manifest data and real signature verification is not wired through that path.
+**Status:** Draft — SQLite-backed persistence for the package registry, install lifecycle, rollback history, lifecycle audit log, and trusted-key store shipped via Phase 11 (PR #233, merged `a5239ac7` 2026-05-15) and real `verifySignatureLogical` is invoked by the bootstrap publish handler against the trusted-key store. The surface remains gated behind `FRIDAY_PACKAGING_ENABLED=true` (default-off); Phase 11 closed as `partial` and named Phase 14 release-proof debt remains for `module_16_packaging_release_proof_roundtrip` and `module_17_full_upgrade_lifecycle_evidence_harness`. The default-on flip and end-to-end release-proof closure are not done.
 
-**Author:** Friday Platform Team  
-**Created:** 2026-02-23  
+**Author:** Friday Platform Team
+**Created:** 2026-02-23
+**Last reconciled:** 2026-05-17 (Phase 15 docs-truth reconciliation; no code changes in this RFC update)
 **Tickets:** FRI-PLAT-051, FRI-PLAT-052, FRI-PLAT-053
 
 ---
 
 ## 1. Summary
 
-> _Phase 1 (current release) ships only the in-memory engine; the SQLite-backed registry, install-lifecycle persistence, trusted-key store, and end-to-end signature verification described in this RFC apply to Phase 2 once those subsystems are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; the Phase 2 work is unscheduled._
+> _SQLite-backed registry, install-lifecycle persistence, rollback history, lifecycle audit log, trusted-key store, and signature verification shipped under Phase 11 PR #233. Surface remains opt-in via `FRIDAY_PACKAGING_ENABLED=true`, default-off, and the Phase 11 close-out forwarded `module_16` (packaging release-proof roundtrip) and `module_17` (full upgrade lifecycle evidence harness) as named Phase 14 release-proof debt. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; this RFC does not claim release-proof closure from the docs reconciliation pass and does not authorize the default-on flip._
 
 The Agent Package and Publishing system provides a mechanism for packaging agent capabilities as signed, versioned, publishable units. Packages bundle manifests, assets, and metadata into a deterministic archive format with Ed25519 cryptographic signatures. The system manages the full lifecycle: build, publish, discover, install, upgrade, verify, and rollback — with tenant-scoped isolation via the Security (SEC) module.
 
