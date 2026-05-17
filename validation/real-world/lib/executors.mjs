@@ -611,6 +611,506 @@ export const AUTO_FIX_DOCTOR_ROUTES = Object.freeze([
   }),
 ]);
 
+// Phase 14.5C module_28c: same-SHA RGG vehicle for the workflow evidence
+// fail-closed contract. The executor stages an isolated in-memory SQLite
+// database (created fresh per run), applies the canonical Friday migration
+// stack including v086, drops the `workflow_run_pipeline_events` table to
+// simulate live evidence-store unreachability, then drives the real workflow
+// runtime and the real task-workflow service in-process — with no mocks of
+// the workflow runtime, evidence repository, task-workflow repository, or
+// task-workflow service — and asserts the four behaviors named by the Stage
+// 2 scope reconciliation matrix:
+//   * proof-required run fails closed (run-level evidence status flips off
+//     of "available" once the first pipeline-event write would have hit the
+//     missing table);
+//   * ordinary run continues but its evidence status honestly resolves to
+//     "degraded"/"unavailable", so the receipt cannot claim proof;
+//   * verifyClaim refuses any `workflow_run_evidence` ref whose source run
+//     reports non-available status with HTTP 409
+//     TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE;
+//   * closeout receipt populates `evidenceDurability` + `proofClaimable`
+//     and the new `workflow_run_evidence_durable` required gate passes on
+//     the healthy path.
+// The runtime, state, errors, and task-workflows modules are loaded lazily
+// from the compiled dist/ tree so other RGG scenarios are unaffected when
+// this executor is not in play; a missing build is reported as blocked
+// (failureClass=environment) rather than silently degrading the proof.
+const WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE = "workflow_run_pipeline_events";
+const WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW = "2026-05-17T00:00:00.000Z";
+const WORKFLOW_EVIDENCE_FAIL_CLOSED_WAIT_MS = 150;
+const WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS = 20;
+const WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES = 250;
+
+async function waitForWorkflowRunSettled(runtime, runId) {
+  const terminal = new Set(["completed", "failed", "cancelled"]);
+  for (let i = 0; i < WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES; i += 1) {
+    const run = runtime.execution.getRun(runId);
+    if (run && terminal.has(run.status)) {
+      return run;
+    }
+    await sleep(WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS);
+  }
+  return null;
+}
+
+async function loadWorkflowEvidenceFailClosedModules() {
+  // Lazy import so the executors module does not require a built dist/
+  // tree for unrelated scenarios; a missing build surfaces as a single
+  // honest blocker on this scenario instead of breaking the catalog load.
+  const repoRoot = process.cwd();
+  const taskWorkflowsUrl = new URL(
+    `file://${repoRoot}/dist/task-workflows/index.js`,
+  ).href;
+  const [
+    betterSqlite3Module,
+    workflowsModule,
+    stateModule,
+    errorsModule,
+    taskWorkflowsModule,
+  ] = await Promise.all([
+    import("better-sqlite3"),
+    import("#workflows"),
+    import("#state"),
+    import("#errors"),
+    import(taskWorkflowsUrl),
+  ]);
+  return {
+    Database: betterSqlite3Module.default,
+    createFridayWorkflowRuntime: workflowsModule.createFridayWorkflowRuntime,
+    runFridayMigrations: stateModule.runFridayMigrations,
+    FRIDAY_SQLITE_MIGRATIONS: stateModule.FRIDAY_SQLITE_MIGRATIONS,
+    FridayDomainError: errorsModule.FridayDomainError,
+    createFridayTaskWorkflowRepository:
+      taskWorkflowsModule.createFridayTaskWorkflowRepository,
+    createFridayTaskWorkflowService:
+      taskWorkflowsModule.createFridayTaskWorkflowService,
+  };
+}
+
+function createWorkflowEvidenceFailClosedDb({ Database, runFridayMigrations, FRIDAY_SQLITE_MIGRATIONS }) {
+  const writer = new Database(":memory:");
+  runFridayMigrations({ db: writer, migrations: FRIDAY_SQLITE_MIGRATIONS });
+  writer
+    .prepare(
+      `INSERT OR IGNORE INTO users (id, display_name, role, is_local_only, created_at, updated_at)
+       VALUES ('rgg-evidence-fail-closed', 'RGG Evidence Fail Closed', 'admin', 1, ?, ?)`,
+    )
+    .run(WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW, WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW);
+  return {
+    dbPath: ":memory:",
+    writer,
+    reads: {
+      size: 1,
+      withReadConnection(fn) {
+        return fn(writer);
+      },
+      close() {},
+    },
+    withWriteTransaction(fn) {
+      return writer.transaction(() => fn(writer))();
+    },
+    withReadConnection(fn) {
+      return fn(writer);
+    },
+    checkpoint() {},
+    optimize() {},
+    close() {
+      writer.close();
+    },
+  };
+}
+
+function makeWorkflowEvidenceFailClosedGraph(workflowId, versionId) {
+  return {
+    schemaVersion: "2.0",
+    workflowId,
+    workflowVersionId: versionId,
+    sourceSpecSchemaVersion: "1.0",
+    graph: {
+      nodes: [
+        { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+        {
+          id: "action-success",
+          type: "action",
+          label: "Action Success",
+          config: { skillId: "rgg-evidence-fail-closed-skill" },
+        },
+      ],
+      edges: [
+        { id: "edge-1", sourceNodeId: "trigger", targetNodeId: "action-success" },
+      ],
+    },
+    failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+    checksum: "rgg-phase-14-5c-evidence-fail-closed",
+  };
+}
+
+async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
+  const observationLog = [];
+  function record(event) {
+    observationLog.push(event);
+    artifact.observedEvidence.push(event);
+  }
+
+  let modules;
+  try {
+    modules = await loadWorkflowEvidenceFailClosedModules();
+  } catch (importError) {
+    artifact.result = "blocked";
+    artifact.failureClass = "environment";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `workflow_evidence_fail_closed requires the compiled Friday dist/ tree (npm run build) for in-process bootstrap. Lazy import failed: ${importError instanceof Error ? importError.message : String(importError)}`,
+    ];
+    return artifact;
+  }
+
+  const {
+    Database,
+    createFridayWorkflowRuntime,
+    runFridayMigrations,
+    FRIDAY_SQLITE_MIGRATIONS,
+    FridayDomainError,
+    createFridayTaskWorkflowRepository,
+    createFridayTaskWorkflowService,
+  } = modules;
+
+  const originalPipelineEnable = process.env.FRIDAY_PIPELINE_ENABLE;
+  const originalPipelineMode = process.env.FRIDAY_PIPELINE_MODE;
+  process.env.FRIDAY_PIPELINE_ENABLE = "true";
+  process.env.FRIDAY_PIPELINE_MODE = "enforce";
+
+  const db = createWorkflowEvidenceFailClosedDb({
+    Database,
+    runFridayMigrations,
+    FRIDAY_SQLITE_MIGRATIONS,
+  });
+  let idCounter = 0;
+  const idGenerator = () => `rgg-evidence-fail-closed-${String(++idCounter).padStart(6, "0")}`;
+  const runtime = createFridayWorkflowRuntime({
+    db,
+    idGenerator,
+    nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
+    computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
+    resolveSkill: () => ({ id: "rgg-evidence-fail-closed-skill" }),
+    invokeSkill: async () => ({ ok: true }),
+  });
+  const taskWorkflowRepository = createFridayTaskWorkflowRepository();
+  let taskWorkflowIdCounter = 0;
+  const taskWorkflowService = createFridayTaskWorkflowService({
+    db,
+    repository: taskWorkflowRepository,
+    idGenerator: () => `rgg-tw-${String(++taskWorkflowIdCounter).padStart(6, "0")}`,
+    nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
+    getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
+  });
+
+  const failures = [];
+  const subSummary = { total: 0, passed: 0 };
+  function assert(label, condition, detail) {
+    subSummary.total += 1;
+    if (condition) {
+      subSummary.passed += 1;
+      record(`PASS ${label}: ${detail}`);
+    } else {
+      failures.push(`${label}: ${detail}`);
+      record(`FAIL ${label}: ${detail}`);
+    }
+  }
+
+  try {
+    // Publish a baseline workflow used by every run below.
+    const workflow = runtime.crud.createWorkflow({
+      slug: "rgg-phase-14-5c-evidence-fail-closed",
+      name: "RGG phase 14.5C evidence fail closed",
+    });
+    const version = runtime.crud.createVersion(
+      workflow.id,
+      makeWorkflowEvidenceFailClosedGraph(workflow.id, "placeholder"),
+    );
+    runtime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    // (a) Healthy ordinary run while the evidence table is present.
+    const healthyRun = await runtime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      proofRequired: false,
+    });
+    await sleep(WORKFLOW_EVIDENCE_FAIL_CLOSED_WAIT_MS);
+    const healthyStatus = runtime.evidence.getRunEvidenceStatus(healthyRun.id);
+    assert(
+      "(a) healthy ordinary run evidenceStatus",
+      healthyStatus === "available",
+      `runId=${healthyRun.id} status=${healthyStatus}`,
+    );
+    const healthyEvidence = runtime.evidence.getRunEvidence(healthyRun.id);
+    assert(
+      "(a) healthy run getRunEvidence reports available",
+      healthyEvidence.evidenceStatus === "available",
+      `getRunEvidence.evidenceStatus=${healthyEvidence.evidenceStatus}`,
+    );
+
+    // Drop the evidence persistence table — simulates live store unreach.
+    db.withWriteTransaction((conn) => {
+      conn.exec(`DROP TABLE IF EXISTS ${WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE}`);
+    });
+    record(
+      `staged isolated SQLite degrade by DROP TABLE ${WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE}`,
+    );
+
+    // (b) Proof-required run after table drop — fails closed. The
+    // load-bearing assertion is the terminal run record: status === "failed"
+    // and failure.code === "WORKFLOW_EVIDENCE_UNAVAILABLE". A flip in
+    // evidenceStatus alone would not prove the run was refused; it could
+    // remain queued or paused. We wait for terminal state before asserting.
+    const proofRequiredRun = await runtime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      proofRequired: true,
+    });
+    const proofRequiredSettled = await waitForWorkflowRunSettled(
+      runtime,
+      proofRequiredRun.id,
+    );
+    assert(
+      "(b) proof-required run settles in terminal state",
+      proofRequiredSettled !== null,
+      `runId=${proofRequiredRun.id} did not settle within ${WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS * WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES}ms`,
+    );
+    assert(
+      "(b) proof-required run terminal status is failed",
+      proofRequiredSettled?.status === "failed",
+      `runId=${proofRequiredRun.id} status=${proofRequiredSettled?.status ?? "missing"}`,
+    );
+    assert(
+      "(b) proof-required run failure code is WORKFLOW_EVIDENCE_UNAVAILABLE",
+      proofRequiredSettled?.failure?.code === "WORKFLOW_EVIDENCE_UNAVAILABLE",
+      `failure.code=${proofRequiredSettled?.failure?.code ?? "missing"}`,
+    );
+    assert(
+      "(b) proof-required run failure message names durable-evidence-persistence loss",
+      typeof proofRequiredSettled?.failure?.message === "string"
+        && /durable evidence persistence/i.test(proofRequiredSettled.failure.message),
+      `failure.message=${proofRequiredSettled?.failure?.message ?? "missing"}`,
+    );
+    const proofRequiredStatus = runtime.evidence.getRunEvidenceStatus(proofRequiredRun.id);
+    assert(
+      "(b) proof-required run evidenceStatus is non-available",
+      proofRequiredStatus === "unavailable" || proofRequiredStatus === "degraded",
+      `runId=${proofRequiredRun.id} status=${proofRequiredStatus}`,
+    );
+
+    // (c) Ordinary run after table drop — continues. It must NOT be
+    // terminal-failed for evidence reasons; receipts may still call out
+    // degraded persistence so no proof claim can be made.
+    const ordinaryDegradedRun = await runtime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: version.id,
+      triggerType: "manual",
+      proofRequired: false,
+    });
+    const ordinaryDegradedSettled = await waitForWorkflowRunSettled(
+      runtime,
+      ordinaryDegradedRun.id,
+    );
+    assert(
+      "(c) ordinary run settles in terminal state",
+      ordinaryDegradedSettled !== null,
+      `runId=${ordinaryDegradedRun.id} did not settle within ${WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS * WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES}ms`,
+    );
+    assert(
+      "(c) ordinary run terminal status is completed (not failed for evidence)",
+      ordinaryDegradedSettled?.status === "completed",
+      `runId=${ordinaryDegradedRun.id} status=${ordinaryDegradedSettled?.status ?? "missing"}`,
+    );
+    assert(
+      "(c) ordinary run failure code is not WORKFLOW_EVIDENCE_UNAVAILABLE",
+      ordinaryDegradedSettled?.failure?.code !== "WORKFLOW_EVIDENCE_UNAVAILABLE",
+      `failure.code=${ordinaryDegradedSettled?.failure?.code ?? "none"}`,
+    );
+    const ordinaryStatus = runtime.evidence.getRunEvidenceStatus(ordinaryDegradedRun.id);
+    assert(
+      "(c) ordinary run reports degraded/unavailable (no proof claim)",
+      ordinaryStatus === "degraded" || ordinaryStatus === "unavailable",
+      `runId=${ordinaryDegradedRun.id} status=${ordinaryStatus}`,
+    );
+    const ordinaryEvidence = runtime.evidence.getRunEvidence(ordinaryDegradedRun.id);
+    assert(
+      "(c) ordinary run getRunEvidence not-available",
+      ordinaryEvidence.evidenceStatus !== "available",
+      `getRunEvidence.evidenceStatus=${ordinaryEvidence.evidenceStatus}`,
+    );
+
+    // (d) verifyClaim refuses a workflow_run_evidence ref from the degraded run.
+    const degradedTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5C module_28c degraded path",
+      taskKind: "general",
+      contextPackage: {
+        allowedFiles: ["src/x.ts"],
+        allowedTools: [],
+        allowedApis: [],
+        boundaryIds: ["api.task_workflows.core"],
+      },
+    });
+    const degradedClaim = taskWorkflowService.draftClaim(degradedTw.id, {
+      claimText: "claim backed by degraded run",
+      claimKind: "runtime_evidence",
+    });
+    taskWorkflowService.attachEvidenceRef(degradedTw.id, degradedClaim.id, {
+      refKind: "workflow_run_evidence",
+      refId: ordinaryDegradedRun.id,
+      refSource: "workflow_run_evidence",
+    });
+    let verifyError = null;
+    try {
+      taskWorkflowService.verifyClaim(degradedTw.id, degradedClaim.id, {
+        verifierVerdict: "fresh-read",
+      });
+    } catch (caught) {
+      verifyError = caught;
+    }
+    const verifyDomainErrorObserved = verifyError instanceof FridayDomainError;
+    assert(
+      "(d) verifyClaim refuses degraded run ref",
+      verifyDomainErrorObserved
+        && verifyError.code === "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE"
+        && verifyError.httpStatus === 409,
+      verifyDomainErrorObserved
+        ? `code=${verifyError.code} httpStatus=${String(verifyError.httpStatus)}`
+        : `error=${verifyError ? (verifyError.message ?? String(verifyError)) : "no error thrown"}`,
+    );
+
+    // (e) Closeout on the degraded task workflow — claim stays unverified
+    // because (d) refused promotion. Receipt status is "partial"; the
+    // proofClaimable signal is read alongside the partial status surface.
+    const degradedReceipt = taskWorkflowService.closeout(degradedTw.id);
+    assert(
+      "(e) degraded path closeout reports partial",
+      degradedReceipt.status === "partial",
+      `receipt.status=${degradedReceipt.status}`,
+    );
+    assert(
+      "(e) degraded receipt carries evidenceDurability field",
+      typeof degradedReceipt.evidenceDurability === "string",
+      `evidenceDurability=${String(degradedReceipt.evidenceDurability)}`,
+    );
+
+    // (f) Healthy path — new task workflow, ref to the healthy run, verify
+    // succeeds, closeout=complete + proofClaimable=true + gate pass.
+    const happyTw = taskWorkflowService.create({
+      charter: "rgg phase 14.5C module_28c happy path",
+      taskKind: "general",
+      contextPackage: {
+        allowedFiles: ["src/x.ts"],
+        allowedTools: [],
+        allowedApis: [],
+        boundaryIds: ["api.task_workflows.core"],
+      },
+    });
+    const happyClaim = taskWorkflowService.draftClaim(happyTw.id, {
+      claimText: "claim backed by healthy run",
+      claimKind: "runtime_evidence",
+    });
+    taskWorkflowService.attachEvidenceRef(happyTw.id, happyClaim.id, {
+      refKind: "workflow_run_evidence",
+      refId: healthyRun.id,
+      refSource: "workflow_run_evidence",
+    });
+    const verifiedHappyClaim = taskWorkflowService.verifyClaim(
+      happyTw.id,
+      happyClaim.id,
+      { verifierVerdict: "fresh-read" },
+    );
+    assert(
+      "(f) verifyClaim succeeds on healthy ref",
+      verifiedHappyClaim.status === "verified",
+      `claim.status=${verifiedHappyClaim.status}`,
+    );
+    const happyReceipt = taskWorkflowService.closeout(happyTw.id);
+    assert(
+      "(f) healthy closeout is complete",
+      happyReceipt.status === "complete",
+      `receipt.status=${happyReceipt.status}`,
+    );
+    assert(
+      "(f) healthy receipt evidenceDurability is available",
+      happyReceipt.evidenceDurability === "available",
+      `evidenceDurability=${happyReceipt.evidenceDurability}`,
+    );
+    assert(
+      "(f) healthy receipt proofClaimable is true",
+      happyReceipt.proofClaimable === true,
+      `proofClaimable=${String(happyReceipt.proofClaimable)}`,
+    );
+    const durableGate = happyReceipt.gateOutcomes.find(
+      (entry) => entry.gateId === "workflow_run_evidence_durable",
+    );
+    assert(
+      "(f) workflow_run_evidence_durable gate passed on healthy path",
+      durableGate?.status === "pass",
+      `gate=${durableGate ? `${durableGate.gateId}:${durableGate.status}` : "missing"}`,
+    );
+
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      assertionsTotal: subSummary.total,
+      assertionsPassed: subSummary.passed,
+      droppedTable: WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      observations: observationLog,
+      runIds: {
+        healthy: healthyRun.id,
+        proofRequired: proofRequiredRun.id,
+        ordinaryDegraded: ordinaryDegradedRun.id,
+      },
+      taskWorkflowIds: {
+        degraded: degradedTw.id,
+        happy: happyTw.id,
+      },
+    };
+
+    if (failures.length === 0) {
+      artifact.result = "passed";
+    } else {
+      artifact.result = "failed";
+      artifact.failureClass = "workflow_runtime";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        ...failures,
+      ];
+    }
+  } catch (executionError) {
+    artifact.result = "failed";
+    artifact.failureClass = artifact.failureClass ?? "workflow_runtime";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      executionError instanceof Error ? executionError.message : String(executionError),
+    ];
+  } finally {
+    try {
+      db.close();
+    } catch {
+      // best-effort
+    }
+    if (originalPipelineEnable === undefined) {
+      delete process.env.FRIDAY_PIPELINE_ENABLE;
+    } else {
+      process.env.FRIDAY_PIPELINE_ENABLE = originalPipelineEnable;
+    }
+    if (originalPipelineMode === undefined) {
+      delete process.env.FRIDAY_PIPELINE_MODE;
+    } else {
+      process.env.FRIDAY_PIPELINE_MODE = originalPipelineMode;
+    }
+  }
+  return artifact;
+}
+
 async function executeAutoFixDoctorRoundtrip({ artifact, client, scenario }) {
   const checks = [];
   let allRefused = true;
@@ -2247,6 +2747,9 @@ export async function executeScenario({
         break;
       case "auto_fix_doctor_roundtrip":
         await executeAutoFixDoctorRoundtrip({ artifact, client, scenario });
+        break;
+      case "workflow_evidence_fail_closed":
+        await executeWorkflowEvidenceFailClosed({ artifact, client, scenario });
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });

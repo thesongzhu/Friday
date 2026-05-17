@@ -107,6 +107,13 @@ export function createFridayWorkflowRunRoutes(
             { httpStatus: 400 },
           );
         }
+        if (body.proofRequired !== undefined && typeof body.proofRequired !== "boolean") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "proofRequired must be a boolean when provided",
+            { httpStatus: 400 },
+          );
+        }
         return deps.startRun(body as unknown as FridayStartRunRequest, ctx.principal);
       },
     },

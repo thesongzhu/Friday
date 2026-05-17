@@ -3421,6 +3421,14 @@ export async function createFridayHub(
       idGenerator,
       nowIso,
       cliAdapter,
+      // Phase 14.5C: bridge upstream workflow-run evidence persistence health
+      // into the task workflow service. The runtime tracks per-run status;
+      // verifyClaim and the new closeout gate consult this callback so the
+      // task workflow service can refuse a proof claim that references a
+      // degraded or unavailable workflow run, without mocking the evidence
+      // repository or pretending unknown runs were healthy.
+      getWorkflowRunEvidenceStatus: (runId) =>
+        workflowRuntime.evidence.getRunEvidenceStatus(runId),
     });
     return { service, disabledReason: null };
   })();

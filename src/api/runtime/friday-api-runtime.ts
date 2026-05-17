@@ -1927,12 +1927,23 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           : undefined,
         context: runSecurityContext,
         dryRun: input.dryRun,
+        proofRequired: input.proofRequired === true,
       });
-      return { run };
+      return {
+        run: {
+          ...run,
+          evidenceStatus: workflowRuntime.evidence.getRunEvidenceStatus(run.id),
+        },
+      };
     },
     getRun: (runId, principal) => {
       const run = resolveAuthorizedRun(runId, principal);
-      return { run };
+      return {
+        run: {
+          ...run,
+          evidenceStatus: workflowRuntime.evidence.getRunEvidenceStatus(run.id),
+        },
+      };
     },
     listRunNodes: (runId, query, principal) => {
       resolveAuthorizedRun(runId, principal);

@@ -52,6 +52,7 @@ export const REAL_WORLD_EXECUTION_KINDS = Object.freeze([
   "discord_roundtrip",
   "skill_upgrade_lifecycle",
   "auto_fix_doctor_roundtrip",
+  "workflow_evidence_fail_closed",
   "manual_external",
   "ui_authoring",
 ]);

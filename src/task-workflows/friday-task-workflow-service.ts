@@ -93,6 +93,7 @@ import type {
   FridayTaskWorkflowSupervisorMode,
   FridayTaskWorkflowSupervisorOverview,
   FridayTaskWorkflowVerifyClaimInput,
+  FridayTaskWorkflowWorkflowRunEvidenceStatus,
 } from "./friday-task-workflow.types.js";
 
 const DEFAULT_TASK_KIND = "general";
@@ -131,6 +132,20 @@ export interface CreateFridayTaskWorkflowServiceDeps {
    * deterministic fake.
    */
   readonly cliAdapter?: FridayTaskWorkflowCliAdapter;
+  /**
+   * Phase 14.5C: workflow run evidence status lookup. Returns the runtime
+   * evidence persistence status for the given workflow run id (or `null`
+   * when the run id cannot be resolved). The hub wires this to the
+   * workflow runtime's `evidence.getRunEvidenceStatus`; tests inject a
+   * deterministic fake. When omitted, `verifyClaim` refuses every
+   * `workflow_run_evidence` ref and the new closeout gate degrades to the
+   * required-gate-never-silent block fallback — the service must never
+   * silently treat a workflow_run_evidence ref as proven without a real
+   * upstream lookup.
+   */
+  readonly getWorkflowRunEvidenceStatus?: (
+    runId: string,
+  ) => FridayTaskWorkflowWorkflowRunEvidenceStatus | null;
 }
 
 export interface FridayTaskWorkflowService {
@@ -754,6 +769,7 @@ export function createFridayTaskWorkflowService(
         },
       );
     }
+    assertWorkflowRunEvidenceRefsAvailable(claim.id, attachedRefs);
     let resolvedVerifierLaneId: string | null = null;
     if (input.verifierLaneId !== undefined) {
       if (
@@ -884,6 +900,31 @@ export function createFridayTaskWorkflowService(
         };
       },
     );
+    // Phase 14.5C: gather workflow_run_evidence ref source runs for the
+    // verified claims and look up each run's evidence persistence status.
+    // Missing entries (e.g. when no lookup callback was wired) intentionally
+    // stay absent so the new closeout gate falls back to "block" via the
+    // required-gate-never-silent rule, instead of pretending the run was
+    // healthy.
+    const workflowRunEvidenceStatusByRunId = new Map<
+      string,
+      FridayTaskWorkflowWorkflowRunEvidenceStatus
+    >();
+    if (deps.getWorkflowRunEvidenceStatus) {
+      const verifiedClaims = claims.filter((c) => c.status === "verified");
+      for (const claim of verifiedClaims) {
+        const refs = evidenceRefsByClaim.get(claim.id) ?? [];
+        for (const ref of refs) {
+          if (ref.refSource !== "workflow_run_evidence") continue;
+          const runId = ref.refId;
+          if (workflowRunEvidenceStatusByRunId.has(runId)) continue;
+          const status = deps.getWorkflowRunEvidenceStatus(runId);
+          if (status !== null && status !== undefined) {
+            workflowRunEvidenceStatusByRunId.set(runId, status);
+          }
+        }
+      }
+    }
     const summary = {
       draft: claims.filter((c) => c.status === "draft").length,
       unverified: claims.filter((c) => c.status === "unverified").length,
@@ -899,6 +940,7 @@ export function createFridayTaskWorkflowService(
         lanes,
         risk: workflow.risk,
         workflowSpecHash: workflow.specHash,
+        workflowRunEvidenceStatusByRunId,
       });
     const blockers: string[] = [];
     if (summary.blocked > 0) {
@@ -924,6 +966,18 @@ export function createFridayTaskWorkflowService(
         : summary.draft === 0 && summary.unverified === 0
           ? "complete"
           : "partial";
+    // Phase 14.5C: derive the receipt's evidence durability + proofClaimable
+    // deterministically. Worst-case across every referenced workflow run is
+    // what we surface; proofClaimable additionally requires every required
+    // gate (which already includes workflow_run_evidence_durable) to pass.
+    const evidenceDurability = computeEvidenceDurability(
+      workflowRunEvidenceStatusByRunId,
+    );
+    const requiredGatesPassed = gateOutcomes.every(
+      (gate) => !gate.required || gate.status === "pass",
+    );
+    const proofClaimable =
+      evidenceDurability === "available" && requiredGatesPassed && summary.blocked === 0;
     const now = deps.nowIso();
     const receipt: FridayTaskWorkflowCloseoutReceipt = {
       id: deps.idGenerator(),
@@ -934,6 +988,8 @@ export function createFridayTaskWorkflowService(
       blockers,
       gateOutcomes,
       createdAt: now,
+      evidenceDurability,
+      proofClaimable,
     };
     deps.db.withWriteTransaction((db) => {
       deps.repository.insertCloseoutReceipt(db, receipt);
@@ -946,6 +1002,89 @@ export function createFridayTaskWorkflowService(
       });
     });
     return receipt;
+  }
+
+  /**
+   * Phase 14.5C: refuse verified status when any workflow_run_evidence
+   * ref's source run is not currently `available`. Missing lookups (e.g.
+   * no `getWorkflowRunEvidenceStatus` dep wired) are treated the same way
+   * as a degraded run so the verifier path can never silently promote a
+   * claim on top of an unverified store health. Extracted from `verifyClaim`
+   * so the latter stays under the cyclomatic-complexity threshold while
+   * preserving exact-error wording.
+   */
+  function assertWorkflowRunEvidenceRefsAvailable(
+    claimId: string,
+    attachedRefs: readonly FridayTaskWorkflowEvidenceRefRecord[],
+  ): void {
+    const workflowRunEvidenceRefs = attachedRefs.filter(
+      (ref) => ref.refSource === "workflow_run_evidence",
+    );
+    if (workflowRunEvidenceRefs.length === 0) return;
+    if (!deps.getWorkflowRunEvidenceStatus) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE",
+        `claim "${claimId}" cannot reach verified: no workflow_run evidence-status lookup is wired into the task workflow service, so the upstream evidence durability cannot be confirmed.`,
+        {
+          httpStatus: 409,
+          details: {
+            claimId,
+            offendingRefIds: workflowRunEvidenceRefs.map((r) => r.id),
+            missingLookup: true,
+          },
+        },
+      );
+    }
+    const offending: Array<{ refId: string; runId: string; status: string }> = [];
+    for (const ref of workflowRunEvidenceRefs) {
+      const status = deps.getWorkflowRunEvidenceStatus(ref.refId);
+      if (status === null || status === undefined) {
+        offending.push({ refId: ref.id, runId: ref.refId, status: "unknown" });
+        continue;
+      }
+      if (status !== "available") {
+        offending.push({ refId: ref.id, runId: ref.refId, status });
+      }
+    }
+    if (offending.length === 0) return;
+    throw new FridayDomainError(
+      "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE",
+      `claim "${claimId}" cannot reach verified: workflow_run_evidence ref(s) reference run(s) with non-available evidence persistence: ${offending
+        .map((entry) => `${entry.refId}->${entry.runId}(${entry.status})`)
+        .join(", ")}.`,
+      {
+        httpStatus: 409,
+        details: {
+          claimId,
+          offending,
+        },
+      },
+    );
+  }
+
+  /**
+   * Phase 14.5C: project the worst-case evidence durability across every
+   * referenced workflow run. `unavailable` dominates `degraded` which
+   * dominates `available`. An empty map (no workflow_run_evidence refs)
+   * deterministically resolves to `available` so non-workflow_run-backed
+   * workflows continue to behave as today.
+   */
+  function computeEvidenceDurability(
+    statusByRunId: ReadonlyMap<
+      string,
+      FridayTaskWorkflowWorkflowRunEvidenceStatus
+    >,
+  ): FridayTaskWorkflowWorkflowRunEvidenceStatus {
+    let worst: FridayTaskWorkflowWorkflowRunEvidenceStatus = "available";
+    for (const status of statusByRunId.values()) {
+      if (status === "unavailable") {
+        return "unavailable";
+      }
+      if (status === "degraded") {
+        worst = "degraded";
+      }
+    }
+    return worst;
   }
 
   function openExecutorLane(

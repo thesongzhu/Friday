@@ -24,6 +24,7 @@ import type {
   FridayTaskWorkflowGatePlanEntry,
   FridayTaskWorkflowLaneRecord,
   FridayTaskWorkflowRisk,
+  FridayTaskWorkflowWorkflowRunEvidenceStatus,
 } from "./friday-task-workflow.types.js";
 
 export interface FridayTaskWorkflowCloseoutGateInput {
@@ -40,6 +41,17 @@ export interface FridayTaskWorkflowCloseoutGateInput {
   readonly risk: FridayTaskWorkflowRisk;
   /** Phase 13.5B: current workflow spec_hash for lane-binding drift detection. */
   readonly workflowSpecHash: string;
+  /**
+   * Phase 14.5C: per-run evidence persistence status keyed by the workflow
+   * run id of every `workflow_run_evidence`-sourced evidence ref attached to
+   * verified claims in this workflow. Missing entries (lookup data absent)
+   * trigger the required-gate-never-silent fallback so closeout cannot pass
+   * silently on degraded or unknown runs.
+   */
+  readonly workflowRunEvidenceStatusByRunId: ReadonlyMap<
+    string,
+    FridayTaskWorkflowWorkflowRunEvidenceStatus
+  >;
 }
 
 type GateEvaluator = (
@@ -176,6 +188,42 @@ const REQUIRED_GATE_EVALUATORS: Readonly<Record<string, GateEvaluator>> = {
     return { status: "pass", reason: null };
   },
 
+  workflow_run_evidence_durable: (input) => {
+    const offending: string[] = [];
+    const missingLookups: string[] = [];
+    for (const claim of input.claims) {
+      if (claim.status !== "verified") continue;
+      const refs = input.evidenceRefsByClaim.get(claim.id) ?? [];
+      for (const ref of refs) {
+        if (ref.refSource !== "workflow_run_evidence") continue;
+        const runId = ref.refId;
+        const status = input.workflowRunEvidenceStatusByRunId.get(runId);
+        if (status === undefined) {
+          missingLookups.push(`${claim.id}:${ref.id}`);
+          continue;
+        }
+        if (status !== "available") {
+          offending.push(`${claim.id}:${ref.id} (run ${runId} ${status})`);
+        }
+      }
+    }
+    if (missingLookups.length > 0) {
+      return {
+        status: "block",
+        reason:
+          `workflow_run_evidence ref(s) lack a fresh-read run evidence status; required-gate-never-silent fallback applies: ${missingLookups.join(", ")}`,
+      };
+    }
+    if (offending.length > 0) {
+      return {
+        status: "block",
+        reason:
+          `verified claim(s) reference workflow run(s) with non-available evidence persistence: ${offending.join(", ")}`,
+      };
+    }
+    return { status: "pass", reason: null };
+  },
+
   independent_verifier_required: (input) => {
     if (input.risk !== "high") {
       return { status: "pass", reason: null };
@@ -233,6 +281,8 @@ const REQUIRED_GATE_FALLBACK_REASON: Readonly<Record<string, string>> = {
     "no required-gate evaluator data; treating as block per Phase 13.5A required-gate-never-silent rule.",
   executor_lane_context_bound:
     "no required-gate evaluator data; treating as block per Phase 13.5B executor-lane-context-bound rule.",
+  workflow_run_evidence_durable:
+    "no required-gate evaluator data; treating as block per Phase 14.5C workflow-run-evidence-fail-closed rule.",
 };
 
 /**

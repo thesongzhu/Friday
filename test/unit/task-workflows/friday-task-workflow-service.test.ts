@@ -1123,3 +1123,212 @@ describe("Phase 13.5A B.2.2 closeout gate outcomes", () => {
     expect(persistedIds).toEqual(expectedIds);
   });
 });
+
+describe("Phase 14.5C module_28c — workflow evidence fail-closed", () => {
+  function makeServiceWithEvidenceStatus(
+    statusByRunId: Map<string, "available" | "degraded" | "unavailable">,
+  ): FridayTaskWorkflowService {
+    const repository = createFridayTaskWorkflowRepository();
+    return createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+      getWorkflowRunEvidenceStatus: (runId) => statusByRunId.get(runId) ?? null,
+    });
+  }
+
+  it("verifyClaim refuses workflow_run_evidence-sourced ref from degraded run", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-degraded", "degraded"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "workflow run evidence from degraded run",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-degraded",
+      refSource: "workflow_run_evidence",
+    });
+    expect(() =>
+      service.verifyClaim(workflow.id, claim.id, {
+        verifierVerdict: "should refuse",
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE",
+        httpStatus: 409,
+      }) as unknown as Error,
+    );
+  });
+
+  it("verifyClaim refuses workflow_run_evidence-sourced ref from unavailable run", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-unavail", "unavailable"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "workflow run evidence from unavailable run",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-unavail",
+      refSource: "workflow_run_evidence",
+    });
+    expect(() =>
+      service.verifyClaim(workflow.id, claim.id, {
+        verifierVerdict: "should refuse",
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE",
+      }) as unknown as Error,
+    );
+  });
+
+  it("verifyClaim refuses workflow_run_evidence ref when no evidence-status lookup is wired", () => {
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+      // Intentionally omit getWorkflowRunEvidenceStatus.
+    });
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "workflow run evidence ref without lookup",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-anything",
+      refSource: "workflow_run_evidence",
+    });
+    expect(() =>
+      service.verifyClaim(workflow.id, claim.id, {
+        verifierVerdict: "should refuse",
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE",
+      }) as unknown as Error,
+    );
+  });
+
+  it("verifyClaim allows workflow_run_evidence ref when source run reports available", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-ok", "available"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "workflow run evidence from healthy run",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-ok",
+      refSource: "workflow_run_evidence",
+    });
+    const verified = service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read verified",
+    });
+    expect(verified.status).toBe("verified");
+  });
+
+  it("closeout receipt: evidenceDurability=available and proofClaimable=true on a clean run", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-ok", "available"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "happy path",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-ok",
+      refSource: "workflow_run_evidence",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read happy",
+    });
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.evidenceDurability).toBe("available");
+    expect(receipt.proofClaimable).toBe(true);
+    expect(receipt.status).toBe("complete");
+  });
+
+  it("closeout receipt: evidenceDurability degrades and gate blocks when source run degrades after verify", () => {
+    // Models the live-runtime case where a verified workflow_run_evidence
+    // ref's source run later observes an evidence-store degrade. verifyClaim
+    // had access to a healthy run; closeout must honestly fail-closed.
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-late-deg", "available"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "verified runtime claim backed by initially-healthy run",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-late-deg",
+      refSource: "workflow_run_evidence",
+    });
+    const verified = service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read at verify time",
+    });
+    expect(verified.status).toBe("verified");
+
+    // Source run degrades after the verify already passed.
+    statusByRunId.set("run-late-deg", "degraded");
+
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.evidenceDurability).toBe("degraded");
+    expect(receipt.proofClaimable).toBe(false);
+    expect(receipt.status).toBe("blocked");
+    const gate = receipt.gateOutcomes.find((g) => g.gateId === "workflow_run_evidence_durable");
+    expect(gate?.status).toBe("block");
+  });
+
+  it("closeout receipt: evidenceDurability becomes unavailable on the worst-case path", () => {
+    const statusByRunId = new Map<string, "available" | "degraded" | "unavailable">([
+      ["run-late-unav", "available"],
+    ]);
+    const service = makeServiceWithEvidenceStatus(statusByRunId);
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "verified runtime claim backed by run that goes unavailable",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-late-unav",
+      refSource: "workflow_run_evidence",
+    });
+    service.verifyClaim(workflow.id, claim.id, {
+      verifierVerdict: "fresh-read at verify time",
+    });
+    statusByRunId.set("run-late-unav", "unavailable");
+
+    const receipt = service.closeout(workflow.id);
+    expect(receipt.evidenceDurability).toBe("unavailable");
+    expect(receipt.proofClaimable).toBe(false);
+    expect(receipt.status).toBe("blocked");
+  });
+});

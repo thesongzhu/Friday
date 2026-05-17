@@ -81,6 +81,20 @@ const PUBLIC_SURFACE_SCENARIOS = [
   // no proof overclaim. Live external-channel transcript proof
   // remains forwarded to Phase 14.5E for configured channels.
   "l6-phase-14-5b-one-click-repair-doctor",
+  // Phase 14.5C Module 28c — workflow evidence fail-closed.
+  // Same-SHA RGG vehicle for the full evidence-fail-closed contract. The
+  // executor stages an isolated in-memory SQLite database (canonical
+  // Friday migration stack including v086), drops the
+  // `workflow_run_pipeline_events` table to simulate live evidence-store
+  // unreach, and drives the real workflow runtime and the real
+  // task-workflow service in-process (no mocks of the workflow runtime,
+  // evidence repository, task-workflow repository, or task-workflow
+  // service) to assert proof-required fail-closed, ordinary-degraded
+  // receipt, verifyClaim 409 refusal, and the
+  // workflow_run_evidence_durable required gate pass on the healthy path.
+  // Live external-channel transcript proof remains forwarded to Phase
+  // 14.5E for configured Discord/Lark/Telegram test spaces.
+  "l6-phase-14-5c-workflow-evidence-fail-closed",
 ];
 
 const EXTERNAL_CHANNEL_SCENARIOS = [
