@@ -275,6 +275,10 @@ import type {
   FridaySupportedChannelKind,
 } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
+import {
+  buildFridayChannelDispatchReplyText,
+  routeFridayChannelDispatch,
+} from "#channels";
 import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
 import { resolveFridayPublicRunUrl } from "../agent/runtime/friday-public-run-url.js";
 import {
@@ -8394,6 +8398,101 @@ export async function createFridayHub(
               });
               return;
             }
+          }
+
+          // Phase 14.5E module_28e Slice 6.3 — live inbound channel
+          // binding to the canonical command dispatcher. The dispatcher
+          // never approves or executes a high-risk action; it only
+          // returns a preview (low/medium) or the owner-link path
+          // (high). The channel may surface the owner-link, but the
+          // bound-principal contract refuses `source: "channel"` for
+          // the matching `channel.action.high_risk.{approve,execute}`
+          // operations, so the channel cannot drive execution by itself.
+          const canonicalDispatch = text.length > 0
+            ? routeFridayChannelDispatch({
+                channelKind: msg.channelKind,
+                chatId: msg.chatId,
+                chatType: msg.chatType,
+                senderId: msg.senderId,
+                text,
+              })
+            : { kind: "no_match" as const };
+          if (canonicalDispatch.kind !== "no_match") {
+            const dispatchReplyText = buildFridayChannelDispatchReplyText(canonicalDispatch);
+            const dispatchRiskLevel = canonicalDispatch.kind === "risk_preview"
+              ? canonicalDispatch.preview.command.riskLevel
+              : canonicalDispatch.request.riskLevel;
+            const dispatchActionId = canonicalDispatch.kind === "risk_preview"
+              ? canonicalDispatch.preview.actionId
+              : canonicalDispatch.request.actionId;
+            void (async () => {
+              await hubSessionService.addMessage(sessionKey, {
+                role: "user",
+                content: text,
+                contentText: text,
+                idempotencyKey: inboundIdempotencyKey,
+                metadata: {
+                  sourceMessageId: msg.id,
+                  channelKind: msg.channelKind,
+                  canonicalCommand: true,
+                  canonicalRiskLevel: dispatchRiskLevel,
+                  canonicalActionId: dispatchActionId,
+                },
+              }).catch((err) => {
+                logChannelIssue({
+                  level: "warn",
+                  code: "W-CH-SESSION-MIRROR-001",
+                  routeId: "hub.channel.session.mirror.canonical_dispatch_inbound",
+                  error: err,
+                });
+              });
+              if (dispatchReplyText === null) {
+                return;
+              }
+              try {
+                const delivery = await channelRegistry.send(msg.channelKind, {
+                  chatId: msg.chatId,
+                  text: dispatchReplyText,
+                  replyTo: msg.id,
+                });
+                await hubSessionService.addMessage(sessionKey, {
+                  role: "assistant",
+                  content: dispatchReplyText,
+                  contentText: dispatchReplyText,
+                  idempotencyKey: `channel:${msg.channelKind}:${msg.chatId}:${msg.id}:canonical-dispatch-ack`,
+                  metadata: {
+                    sourceMessageId: delivery.messageId,
+                    replyToMessageId: msg.id,
+                    channelKind: msg.channelKind,
+                    canonicalDispatchAck: true,
+                    canonicalRiskLevel: dispatchRiskLevel,
+                    canonicalActionId: dispatchActionId,
+                  },
+                }).catch((err) => {
+                  logChannelIssue({
+                    level: "warn",
+                    code: "W-CH-SESSION-MIRROR-001",
+                    routeId: "hub.channel.session.mirror.canonical_dispatch_ack",
+                    error: err,
+                  });
+                });
+              } catch (err) {
+                logChannelIssue({
+                  level: "error",
+                  code: "E-CH-OUTBOUND-001",
+                  routeId: "hub.channel.delivery.canonical_dispatch",
+                  error: err,
+                });
+              }
+            })().catch((err) => {
+              logChannelIssue({
+                level: "error",
+                code: "E-CH-CANONICAL-DISPATCH-001",
+                routeId: "hub.channel.canonical_dispatch",
+                error: err,
+              });
+            });
+            return;
           }
 
           // Route inbound channel messages to agent runtime

@@ -34,13 +34,31 @@ export type FridayPublicMutationOperation =
   | "autofix.actions.deny"
   | "autofix.actions.execute"
   | "autofix.actions.rollback"
-  | "autofix.actions.preview";
+  | "autofix.actions.preview"
+  // Phase 14.5E module_28e Slice 6.4 — high-risk channel-triggered actions.
+  // `approve` requires a bound `api`/`session` principal AND a valid
+  // owner-signed token; `execute` requires the same plus a prior `approve`
+  // record. `source: "channel"` alone is refused outright. Refer to
+  // `assertBoundPrincipalForOperation` enforcement below.
+  | "channel.action.high_risk.approve"
+  | "channel.action.high_risk.execute";
 
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
 
 const ERROR_CODE_BOUND_PRINCIPAL_REQUIRED = "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED";
 const ERROR_CODE_WEBHOOK_HMAC_REQUIRED = "WORKFLOW_WEBHOOK_HMAC_REQUIRED";
 const ERROR_CODE_WEBHOOK_PATH_TOKEN_WEAK = "WORKFLOW_WEBHOOK_PATH_TOKEN_WEAK";
+const ERROR_CODE_CHANNEL_SOURCE_REFUSED = "CHANNEL_HIGH_RISK_SOURCE_REFUSED";
+
+// Phase 14.5E module_28e Slice 6.4 — operations that refuse `source:
+// "channel"` outright regardless of bound-principal state. A channel
+// message can carry the bound principal, but the high-risk channel-action
+// approve/execute path must require an `api` or `session` lane plus an
+// owner-signed token.
+const CHANNEL_SOURCE_REFUSED_OPERATIONS: ReadonlySet<FridayPublicMutationOperation> = new Set([
+  "channel.action.high_risk.approve",
+  "channel.action.high_risk.execute",
+]);
 
 const BEARER_ONLY_OPT_IN_ENV = "FRIDAY_WORKFLOW_WEBHOOK_BEARER_ONLY_PATH_TOKENS";
 const WEBHOOK_PATH_TOKEN_MIN_LENGTH = 32;
@@ -86,6 +104,18 @@ export function assertBoundPrincipalForOperation(
   operation: FridayPublicMutationOperation,
   source: FridayBoundPrincipalSource = "api",
 ): FridayBoundPrincipalDescriptor {
+  // Phase 14.5E module_28e Slice 6.4 — refuse `source: "channel"` for any
+  // operation listed in CHANNEL_SOURCE_REFUSED_OPERATIONS, even when the
+  // bound principal is valid. The owner-signed approval API runs on the
+  // `api`/`session` lane; a channel message alone must never satisfy the
+  // bound-principal contract for high-risk channel actions.
+  if (source === "channel" && CHANNEL_SOURCE_REFUSED_OPERATIONS.has(operation)) {
+    throw new FridayDomainError(
+      ERROR_CODE_CHANNEL_SOURCE_REFUSED,
+      `${operation} cannot be authorized from source: channel. Use a bound api/session principal with an owner-signed token.`,
+      { httpStatus: 403 },
+    );
+  }
   if (isUnauthenticatedPublicPrincipal(principal)) {
     throw new FridayDomainError(
       ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
@@ -218,4 +248,5 @@ export const FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES = {
   BOUND_PRINCIPAL_REQUIRED: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
   WEBHOOK_HMAC_REQUIRED: ERROR_CODE_WEBHOOK_HMAC_REQUIRED,
   WEBHOOK_PATH_TOKEN_WEAK: ERROR_CODE_WEBHOOK_PATH_TOKEN_WEAK,
+  CHANNEL_HIGH_RISK_SOURCE_REFUSED: ERROR_CODE_CHANNEL_SOURCE_REFUSED,
 } as const;

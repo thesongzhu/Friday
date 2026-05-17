@@ -122,6 +122,58 @@ function discordRoundtripScenario(input) {
   });
 }
 
+// Phase 14.5E module_28e Slice 6.6 — per-channel external roundtrip
+// scenario constructors for Lark/Feishu and Telegram. Each scenario is
+// independently gated by its own env tuple; a passing Discord scenario
+// is never proof for any other channel. Honest non-pass labels for
+// missing-env runs flow through `summarizeRun()` → `deriveScenarioCounts`
+// → `deriveStatus`; this matrix does NOT relax the validator or the
+// gate's pass criteria.
+function larkRoundtripScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "external_channels.ready"])],
+    providerLane: "none",
+    suites: input.suites ?? ["weekly"],
+    expectedEvidence: [
+      "Lark/Feishu app credentials resolve a bot identity",
+      "sandbox tenant and test chat are reachable",
+      "a real outbound Lark/Feishu message can be sent and read back",
+    ],
+    execution: {
+      kind: "lark_roundtrip",
+      appIdEnv: "FRIDAY_LARK_APP_ID",
+      appSecretEnv: "FRIDAY_LARK_APP_SECRET",
+      verificationTokenEnv: "FRIDAY_LARK_VERIFICATION_TOKEN",
+      encryptKeyEnv: "FRIDAY_LARK_ENCRYPT_KEY",
+      testChatIdEnv: "FRIDAY_LARK_TEST_CHAT_ID",
+      ...input.execution,
+    },
+    tags: [...new Set([...(input.tags ?? []), "external-channel", "lark"])],
+  });
+}
+
+function telegramRoundtripScenario(input) {
+  return baseScenario({
+    ...input,
+    preconditions: [...new Set([...(input.preconditions ?? []), "external_channels.ready"])],
+    providerLane: "none",
+    suites: input.suites ?? ["weekly"],
+    expectedEvidence: [
+      "Telegram bot token resolves to a bot identity",
+      "sandbox chat is reachable",
+      "a real outbound Telegram message can be sent and read back",
+    ],
+    execution: {
+      kind: "telegram_roundtrip",
+      botTokenEnv: "FRIDAY_TELEGRAM_BOT_TOKEN",
+      testChatIdEnv: "FRIDAY_TELEGRAM_TEST_CHAT_ID",
+      ...input.execution,
+    },
+    tags: [...new Set([...(input.tags ?? []), "external-channel", "telegram"])],
+  });
+}
+
 export const REAL_WORLD_SCENARIOS = [
   baseScenario({
     id: "l0-runtime-health",
@@ -1513,6 +1565,30 @@ export const REAL_WORLD_SCENARIOS = [
     layer: "L6",
     productArea: "external channels",
     entrySurface: "discord",
+    routeFamily: "distributed channel",
+    severityOnFailure: "P1",
+    suites: ["weekly"],
+  }),
+  // Phase 14.5E module_28e Slice 6.6 — Lark/Feishu live channel roundtrip.
+  // Honest non-pass label when env tuple is incomplete; never substituted
+  // by Discord proof.
+  larkRoundtripScenario({
+    id: "l6-lark-channel-roundtrip",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "lark",
+    routeFamily: "distributed channel",
+    severityOnFailure: "P1",
+    suites: ["weekly"],
+  }),
+  // Phase 14.5E module_28e Slice 6.6 — Telegram live channel roundtrip.
+  // Honest non-pass label when env tuple is incomplete; never substituted
+  // by Discord proof.
+  telegramRoundtripScenario({
+    id: "l6-telegram-channel-roundtrip",
+    layer: "L6",
+    productArea: "external channels",
+    entrySurface: "telegram",
     routeFamily: "distributed channel",
     severityOnFailure: "P1",
     suites: ["weekly"],

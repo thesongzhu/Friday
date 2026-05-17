@@ -817,6 +817,18 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "autofix.actions.deny",
         "autofix.actions.execute",
         "autofix.actions.rollback",
+        // Phase 14.5E module_28e: owner-link mint + owner-signed
+        // approval + execute API for high-risk channel actions. All
+        // three routes enforce `channel.action.high_risk.{approve,
+        // execute}` via assertBoundPrincipalForOperation and refuse
+        // source: "channel" outright. Execute additionally refuses
+        // without a prior approval record. The owner-link route is the
+        // production minter for the one-click owner approval URL form;
+        // its signed token is delivered to the owner via the local
+        // Assistant / API surface, never via channel adapter outbound.
+        "channels.actions.owner.link",
+        "channels.actions.owner.approve",
+        "channels.actions.execute",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([

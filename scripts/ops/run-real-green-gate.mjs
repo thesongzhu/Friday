@@ -109,10 +109,27 @@ const PUBLIC_SURFACE_SCENARIOS = [
   // 14.5C `proofClaimable`. Live external-channel transcript proof
   // remains forwarded to Phase 14.5E for configured channels.
   "l6-phase-14-5d-rollback-matrix-closeout-receipt",
+  // Phase 14.5E module_28e Slice 6.6 — list all three per-channel
+  // roundtrip scenario ids alongside the public-surface inventory so the
+  // planned per-channel RGG mapping is preserved end-to-end. The daily
+  // suite filter excludes them at runtime (each scenario advertises
+  // `suites: ["weekly"]`); the actual external-channel execution path
+  // remains the externalChannels phase below, which runs only when
+  // `external_channels.ready` is true.
+  "l6-discord-channel-roundtrip",
+  "l6-lark-channel-roundtrip",
+  "l6-telegram-channel-roundtrip",
 ];
 
 const EXTERNAL_CHANNEL_SCENARIOS = [
   "l6-discord-channel-roundtrip",
+  // Phase 14.5E module_28e Slice 6.6 — Lark/Feishu and Telegram live
+  // channel roundtrips. Each scenario is independently gated by its env
+  // tuple (Slice 6.7) and records honest non-pass outcomes when env is
+  // incomplete. The validator (`real-green-gate-result.mjs`) and the
+  // gate-reason logic (`deriveGateReasons` above) are unchanged.
+  "l6-lark-channel-roundtrip",
+  "l6-telegram-channel-roundtrip",
 ];
 
 const CLAUDE_SKILL_TESTS = [

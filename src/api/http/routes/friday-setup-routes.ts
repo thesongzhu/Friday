@@ -29,7 +29,11 @@ import {
   parseFridayChannelsConfig,
   parseFridayChannelSecretRef,
 } from "#channels";
-import type { FridaySupportedChannelKind } from "#channels";
+import type { FridayChannelRegistryView, FridaySupportedChannelKind } from "#channels";
+import {
+  buildFridayChannelSetupStatus,
+  type FridayChannelSetupStatusResponse,
+} from "../../../channels/friday-channel-setup-status.js";
 import { FridayDomainError } from "#errors";
 import { validateGatewayUrl } from "../../../agent/tools/friday-agent-gateway-validation.js";
 import { parseFridaySecretInput } from "../../../security/friday-secret-ref.js";
@@ -1858,6 +1862,14 @@ export interface FridaySetupRoutesDeps {
   /** Allow loopback/private network addresses for self-hosted deployments using local providers. */
   allowPrivateNetwork?: boolean;
   getLiveChannelCount?: () => number;
+  /**
+   * Phase 14.5E module_28e Slice 6.2 — optional callback that returns the
+   * current channel registry views (one per registered channel kind). The
+   * `GET /v1/setup/channels/status` endpoint reads from this to project
+   * per-channel `proofLabel` values. Returns an empty array when no
+   * registry is wired or no channels are registered.
+   */
+  listChannelRegistryViews?: () => readonly FridayChannelRegistryView[];
   activateSavedChannels?: () =>
     | Promise<SetupChannelsActivationResponse>
     | SetupChannelsActivationResponse;
@@ -2230,6 +2242,24 @@ export function createFridaySetupRoutes(
           previewUrls: computePreviewUrls(host, port),
           restartRequired,
         };
+      },
+    },
+
+    // ─── GET /v1/setup/channels/status ───
+    // Phase 14.5E module_28e Slice 6.2 — per-channel proof label surface for
+    // the setup wizard. Reads channel registry views (when wired) and the
+    // declared v1 channel env tuples and returns one row per v1 channel
+    // (Discord + Lark/Feishu + Telegram) plus any registered non-v1 channels
+    // labelled `unsupported`. Never collapses Lark/Feishu or Telegram into
+    // Discord.
+    {
+      operationId: "setup.channels.status",
+      method: "GET",
+      path: "/v1/setup/channels/status",
+      auth: { public: true },
+      async handler(): Promise<FridayChannelSetupStatusResponse> {
+        const views = deps.listChannelRegistryViews?.() ?? [];
+        return buildFridayChannelSetupStatus({ views });
       },
     },
 

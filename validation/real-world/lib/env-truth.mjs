@@ -31,29 +31,105 @@ function readCapabilityStatus(processEnv, key) {
   };
 }
 
+// Phase 14.5E module_28e Slice 6.7 — per-channel env tuple readers for the
+// v1 channel set (Discord, Lark/Feishu, Telegram). Each reader returns
+// `{ status, requiredEnv, missingEnv }` so the externalChannels
+// prerequisite, the setup wizard status surface, and downstream
+// reviewers all agree on the same per-channel proof label vocabulary.
+
+const FRIDAY_DISCORD_LIVE_PROOF_ENV = Object.freeze([
+  "FRIDAY_DISCORD_BOT_TOKEN",
+  "FRIDAY_DISCORD_SETUP_USER_ID",
+  "FRIDAY_DISCORD_GUILD_ID",
+  "FRIDAY_DISCORD_CHANNEL_ID",
+]);
+
+const FRIDAY_LARK_LIVE_PROOF_ENV = Object.freeze([
+  "FRIDAY_LARK_APP_ID",
+  "FRIDAY_LARK_APP_SECRET",
+  "FRIDAY_LARK_VERIFICATION_TOKEN",
+  "FRIDAY_LARK_ENCRYPT_KEY",
+  "FRIDAY_LARK_TEST_CHAT_ID",
+]);
+
+const FRIDAY_TELEGRAM_LIVE_PROOF_ENV = Object.freeze([
+  "FRIDAY_TELEGRAM_BOT_TOKEN",
+  "FRIDAY_TELEGRAM_TEST_CHAT_ID",
+]);
+
+function readPerChannelEnvTuple(processEnv, channel, requiredEnv) {
+  const missing = requiredEnv.filter((key) => !String(processEnv[key] ?? "").trim());
+  if (missing.length === requiredEnv.length) {
+    return {
+      channel,
+      status: "not_configured",
+      requiredEnv,
+      missingEnv: missing,
+    };
+  }
+  if (missing.length > 0) {
+    return {
+      channel,
+      status: "blocked_by_env",
+      requiredEnv,
+      missingEnv: missing,
+    };
+  }
+  return {
+    channel,
+    status: "configured",
+    requiredEnv,
+    missingEnv: [],
+  };
+}
+
+export function readDiscordChannelsStatus(processEnv = process.env) {
+  return readPerChannelEnvTuple(processEnv, "discord", FRIDAY_DISCORD_LIVE_PROOF_ENV);
+}
+
+export function readLarkChannelsStatus(processEnv = process.env) {
+  return readPerChannelEnvTuple(processEnv, "lark", FRIDAY_LARK_LIVE_PROOF_ENV);
+}
+
+export function readTelegramChannelsStatus(processEnv = process.env) {
+  return readPerChannelEnvTuple(processEnv, "telegram", FRIDAY_TELEGRAM_LIVE_PROOF_ENV);
+}
+
 function readExternalChannelsStatus(processEnv) {
   const declared = readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY");
   if (declared.status !== "ready") {
     return declared;
   }
-  const requiredEnv = [
-    "FRIDAY_DISCORD_BOT_TOKEN",
-    "FRIDAY_DISCORD_SETUP_USER_ID",
-    "FRIDAY_DISCORD_GUILD_ID",
-    "FRIDAY_DISCORD_CHANNEL_ID",
+  // Phase 14.5E module_28e Slice 6.7 — externalChannels prerequisite is
+  // ready only when every declared v1 channel's env tuple is satisfied
+  // (Discord + Lark/Feishu + Telegram). This is consistent with the
+  // pre-14.5E single-channel completeness check at lines 39-58, broadened
+  // honestly to cover all three v1 channels. The master flag
+  // `FRIDAY_REAL_WORLD_EXTERNAL_CHANNELS_READY` retains its existing
+  // semantic.
+  const perChannelStatuses = [
+    readDiscordChannelsStatus(processEnv),
+    readLarkChannelsStatus(processEnv),
+    readTelegramChannelsStatus(processEnv),
   ];
-  const missing = requiredEnv.filter((key) => !String(processEnv[key] ?? "").trim());
+  const requiredEnv = perChannelStatuses.flatMap((status) => status.requiredEnv);
+  const missing = perChannelStatuses.flatMap((status) => status.missingEnv);
+  const blockedChannels = perChannelStatuses
+    .filter((status) => status.status !== "configured")
+    .map((status) => `${status.channel}=${status.status}`);
   if (missing.length > 0) {
     return {
       status: "missing",
       source: declared.source,
       missingEnv: missing,
-      note: "External channels were declared ready, but Discord proof env is incomplete.",
+      perChannel: perChannelStatuses,
+      note: `External channels were declared ready, but per-channel proof env is incomplete: ${blockedChannels.join(", ")}.`,
     };
   }
   return {
     ...declared,
     requiredEnv,
+    perChannel: perChannelStatuses,
   };
 }
 

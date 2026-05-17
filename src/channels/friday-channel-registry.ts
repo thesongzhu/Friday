@@ -40,12 +40,33 @@ export type FridayChannelCredentialStatus =
   | "missing"
   | "invalid";
 
+// Phase 14.5E module_28e Slice 6.1 — deterministic per-channel proof label
+// surfaced to the setup wizard status endpoint and the RGG executors. The
+// four-member union maps cleanly onto the Stage 2 matrix vocabulary; any
+// non-v1 channel kind is classified as `unsupported` regardless of
+// credentials so the wizard cannot conflate "not in v1 scope" with
+// "missing credentials".
+export type FridayChannelProofLabel =
+  | "configured"
+  | "not_configured"
+  | "blocked_by_env"
+  | "unsupported";
+
 export interface FridayChannelHealthSummary {
   state: FridayChannelStatus;
   restartCount: number;
   lastError?: string;
   blockedReason?: string;
   credentialStatus: FridayChannelCredentialStatus;
+  /**
+   * Phase 14.5E module_28e: deterministic proof label paired with the
+   * existing `credentialStatus` field. `proofLabel` is the user-facing
+   * status word the setup wizard renders; `credentialStatus` is the
+   * internal credential health signal. Both must agree on the underlying
+   * state for v1 channels (Discord/Lark/Feishu/Telegram); non-v1 channels
+   * resolve to `unsupported`.
+   */
+  proofLabel: FridayChannelProofLabel;
 }
 
 export interface FridayChannelRegistryView {
@@ -134,6 +155,73 @@ export interface FridayChannelRegistry {
 // ─── Implementation ───
 
 const HEALTH_CHECK_DEFAULT_INTERVAL_MS = 30_000;
+
+// Phase 14.5E module_28e Slice 6.1 — v1 channel set for per-channel proof
+// labels. Discord + Lark/Feishu + Telegram each carry their own proof label
+// surface; every other registered channel kind is `unsupported` for v1.
+const FRIDAY_CHANNEL_V1_PROOF_KINDS: ReadonlySet<string> = new Set([
+  "discord",
+  "lark",
+  "feishu",
+  "telegram",
+]);
+
+export function isFridayChannelV1ProofKind(kind: string): boolean {
+  return FRIDAY_CHANNEL_V1_PROOF_KINDS.has(kind);
+}
+
+// Phase 14.5E module_28e Slice 6.1 — pure, deterministic mapping from the
+// inputs the setup wizard / status endpoint can observe to the proof label.
+// Exposed for the status route and for unit tests that need to assert the
+// (env-state, registry-state) → proof-label tuple is exhaustive.
+//
+// The rules:
+//   - non-v1 kind                           → "unsupported"
+//   - env tuple fully present:
+//       credentialStatus = "invalid"        → "blocked_by_env"
+//       otherwise                           → "configured"
+//   - env tuple fully missing (no vars set):
+//       credentialStatus = "configured"     → "configured"   (adapter has creds without env)
+//       credentialStatus = "invalid"        → "blocked_by_env"
+//       blockedReason present               → "blocked_by_env"
+//       otherwise                           → "not_configured"
+//   - env tuple partial (some set, some not):
+//       always                              → "blocked_by_env"
+export function deriveFridayChannelProofLabel(input: {
+  kind: string;
+  credentialStatus: FridayChannelCredentialStatus;
+  blockedReason?: string;
+  envMissingVars?: readonly string[];
+  envRequiredVars?: readonly string[];
+}): FridayChannelProofLabel {
+  if (!FRIDAY_CHANNEL_V1_PROOF_KINDS.has(input.kind)) {
+    return "unsupported";
+  }
+  const missingCount = input.envMissingVars?.length ?? 0;
+  const requiredCount = input.envRequiredVars?.length ?? missingCount;
+  const hasAnyEnvDeclared = requiredCount > 0;
+
+  if (hasAnyEnvDeclared && missingCount === 0) {
+    return input.credentialStatus === "invalid" ? "blocked_by_env" : "configured";
+  }
+
+  if (hasAnyEnvDeclared && missingCount > 0 && missingCount < requiredCount) {
+    return "blocked_by_env";
+  }
+
+  // Fully-missing env tuple (or no env tuple declared) — fall back to
+  // credential signals.
+  if (input.credentialStatus === "configured") {
+    return "configured";
+  }
+  if (input.credentialStatus === "invalid") {
+    return "blocked_by_env";
+  }
+  if (typeof input.blockedReason === "string" && input.blockedReason.trim().length > 0) {
+    return "blocked_by_env";
+  }
+  return "not_configured";
+}
 
 export interface FridayChannelRegistryOptions {
   /** Optional grant check called before register/unregister mutations. Throws if denied. */
@@ -290,6 +378,26 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       return "invalid";
     }
     return "unknown";
+  }
+
+  function deriveProofLabel(
+    kind: string,
+    credentialStatus: FridayChannelCredentialStatus,
+    blockedReason: string | undefined,
+  ): FridayChannelProofLabel {
+    if (!FRIDAY_CHANNEL_V1_PROOF_KINDS.has(kind)) {
+      return "unsupported";
+    }
+    if (credentialStatus === "configured") {
+      return "configured";
+    }
+    if (credentialStatus === "invalid") {
+      return "blocked_by_env";
+    }
+    if (typeof blockedReason === "string" && blockedReason.trim().length > 0) {
+      return "blocked_by_env";
+    }
+    return "not_configured";
   }
 
   return {
@@ -474,6 +582,11 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       if (!entry) {
         return undefined;
       }
+      const diagnostics = this.diagnostics(kind);
+      const lastError = healthState.get(kind)?.lastError;
+      const blockedReason = healthState.get(kind)?.blockedReason;
+      const credentialStatus = inferCredentialStatus(diagnostics, lastError);
+      const proofLabel = deriveProofLabel(kind, credentialStatus, blockedReason);
       return {
         kind,
         running: entry.running,
@@ -481,14 +594,12 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
         health: {
           state: this.status(kind),
           restartCount: healthState.get(kind)?.restartCount ?? 0,
-          lastError: healthState.get(kind)?.lastError,
-          blockedReason: healthState.get(kind)?.blockedReason,
-          credentialStatus: inferCredentialStatus(
-            this.diagnostics(kind),
-            healthState.get(kind)?.lastError,
-          ),
+          lastError,
+          blockedReason,
+          credentialStatus,
+          proofLabel,
         },
-        diagnostics: this.diagnostics(kind),
+        diagnostics,
         contract: entry.plugin.contract,
         allowlist: buildAllowlistSummary(entry.allowlist),
       };

@@ -80,6 +80,7 @@ import {
 import { createFridaySkillGeneratorRoutes } from "../http/routes/friday-skill-generator-routes.js";
 import { createFridayDiagnosisRoutes } from "../http/routes/friday-diagnosis-routes.js";
 import { createFridayAutoFixRoutes } from "../http/routes/friday-auto-fix-routes.js";
+import { createFridayChannelActionRoutes } from "../http/routes/friday-channel-action-routes.js";
 import { createFridayAgentLoopRoutes } from "../http/routes/friday-agent-loop-routes.js";
 import { createFridaySkillConverterRoutes } from "../http/routes/friday-skill-converter-routes.js";
 import { createFridayWorkflowGeneratorRoutes } from "../http/routes/friday-workflow-generator-routes.js";
@@ -2423,6 +2424,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     }
   }
 
+  // Phase 14.5E module_28e Slice 6.4 — owner-signed approval API for
+  // high-risk channel-triggered actions. Reuses the existing internal
+  // runtime token secret; no new user-provided secret.
+  if (typeof deps.tokenSecret === "string" && deps.tokenSecret.length > 0) {
+    for (const route of createFridayChannelActionRoutes({
+      signingKey: deps.tokenSecret,
+      nowIso: deps.nowIso,
+    })) {
+      routes.register(route);
+    }
+  }
+
   if (deps.agentLoop) {
     for (const route of createFridayAgentLoopRoutes(deps.agentLoop)) {
       routes.register(route);
@@ -2603,6 +2616,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       runningPort: deps.serverPort ?? 3141,
       allowPrivateNetwork: deps.allowPrivateNetwork,
       getLiveChannelCount: () => deps.channels?.registry.listViews().length ?? 0,
+      listChannelRegistryViews: () => deps.channels?.registry.listViews() ?? [],
       activateSavedChannels: deps.activateSavedChannels,
       onChannelsSaved: deps.onSetupChannelsSaved,
       onSetupCompleted: deps.onSetupCompleted,

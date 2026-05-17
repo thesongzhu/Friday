@@ -32,9 +32,53 @@ export type {
   FridayChannelStartFailure,
   FridayChannelStartSummary,
   FridayChannelMessageHandler,
+  FridayChannelCredentialStatus,
+  FridayChannelHealthSummary,
+  FridayChannelProofLabel,
 } from "./friday-channel-registry.js";
 
-export { createFridayChannelRegistry } from "./friday-channel-registry.js";
+export {
+  createFridayChannelRegistry,
+  deriveFridayChannelProofLabel,
+  isFridayChannelV1ProofKind,
+} from "./friday-channel-registry.js";
+
+// Phase 14.5E module_28e Slice 6.2 — setup wizard status surface.
+export type {
+  FridayChannelSetupStatusResponse,
+  FridayChannelSetupStatusRow,
+} from "./friday-channel-setup-status.js";
+export {
+  FRIDAY_CHANNEL_V1_SETUP_DESCRIPTORS,
+  buildFridayChannelSetupStatus,
+  isFridayChannelV1SetupKind,
+} from "./friday-channel-setup-status.js";
+
+// Phase 14.5E module_28e Slice 6.3 — channel canonical command + risk
+// preview routing for channel-triggered actions.
+export type {
+  FridayChannelCanonicalCommand,
+  FridayChannelCanonicalCommandParseInput,
+  FridayChannelCanonicalVerb,
+  FridayChannelDispatchOutcome,
+  FridayChannelOwnerLinkRequest,
+  FridayChannelRiskLevel,
+  FridayChannelRiskPreview,
+} from "./services/friday-channel-canonical-command.js";
+export {
+  buildFridayChannelDispatchReplyText,
+  buildFridayChannelOwnerLinkPath,
+  parseFridayChannelCanonicalCommand,
+  routeFridayChannelDispatch,
+} from "./services/friday-channel-canonical-command.js";
+
+// Phase 14.5E module_28e Slice 6.5 — channel-triggered closeout receipt
+// helpers; reuses 14.5C/14.5D fields, no new closeout gate.
+export type {
+  FridayChannelOutboundReceiptInput,
+  FridayChannelOutboundReceiptSummary,
+} from "./services/friday-channel-outbound-receipt.js";
+export { buildFridayChannelOutboundReceiptSummary } from "./services/friday-channel-outbound-receipt.js";
 
 // ─── Loader ───
 

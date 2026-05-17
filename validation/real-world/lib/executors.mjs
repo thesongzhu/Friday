@@ -2990,6 +2990,227 @@ async function executeSkillUpgradeLifecycle({ artifact, client, scenario, runId 
   return artifact;
 }
 
+// Phase 14.5E module_28e Slice 6.6 — Lark/Feishu live channel roundtrip
+// executor. Honest non-pass label when any required env var is missing
+// or the Lark API is unreachable; no real network call when env tuple
+// is incomplete. Pass requires every env var present AND a successful
+// outbound send + readback against the configured Lark/Feishu test chat.
+const LARK_TENANT_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal";
+const LARK_FEISHU_TENANT_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
+const LARK_MESSAGES_URL = "https://open.larksuite.com/open-apis/im/v1/messages";
+const LARK_FEISHU_MESSAGES_URL = "https://open.feishu.cn/open-apis/im/v1/messages";
+
+function readOptionalEnv(name) {
+  return process.env[name]?.trim() ?? "";
+}
+
+function collectMissingEnv(names) {
+  return names.filter((name) => !readOptionalEnv(name));
+}
+
+function buildLarkBaseUrls(scenario) {
+  const useFeishu = (readOptionalEnv("FRIDAY_LARK_DOMAIN").toLowerCase() === "feishu")
+    || scenario.execution.useFeishu === true;
+  return useFeishu
+    ? { tokenUrl: LARK_FEISHU_TENANT_TOKEN_URL, messagesUrl: LARK_FEISHU_MESSAGES_URL, domain: "feishu" }
+    : { tokenUrl: LARK_TENANT_TOKEN_URL, messagesUrl: LARK_MESSAGES_URL, domain: "lark" };
+}
+
+async function executeLarkRoundtrip({ artifact, scenario }) {
+  const appIdEnv = scenario.execution.appIdEnv ?? "FRIDAY_LARK_APP_ID";
+  const appSecretEnv = scenario.execution.appSecretEnv ?? "FRIDAY_LARK_APP_SECRET";
+  const verificationTokenEnv = scenario.execution.verificationTokenEnv ?? "FRIDAY_LARK_VERIFICATION_TOKEN";
+  const encryptKeyEnv = scenario.execution.encryptKeyEnv ?? "FRIDAY_LARK_ENCRYPT_KEY";
+  const testChatIdEnv = scenario.execution.testChatIdEnv ?? "FRIDAY_LARK_TEST_CHAT_ID";
+
+  const required = [appIdEnv, appSecretEnv, verificationTokenEnv, encryptKeyEnv, testChatIdEnv];
+  const missing = collectMissingEnv(required);
+  if (missing.length > 0) {
+    artifact.result = "blocked";
+    artifact.failureClass = "environment";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `Lark/Feishu live roundtrip blocked: missing env ${missing.join(", ")}`,
+    ];
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      larkEvidence: {
+        envPresent: false,
+        missingEnv: missing,
+      },
+    };
+    return artifact;
+  }
+
+  const appId = readOptionalEnv(appIdEnv);
+  const appSecret = readOptionalEnv(appSecretEnv);
+  const testChatId = readOptionalEnv(testChatIdEnv);
+  const { tokenUrl, messagesUrl, domain } = buildLarkBaseUrls(scenario);
+  const proofNonce = `${artifact.runId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  const baseMessage = `Friday Phase 14.5E live Lark proof ${proofNonce}`;
+
+  try {
+    const tokenResp = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    });
+    const tokenJson = await tokenResp.json().catch(() => null);
+    if (!tokenResp.ok || !tokenJson || typeof tokenJson.tenant_access_token !== "string") {
+      const code = tokenJson && typeof tokenJson === "object" && "code" in tokenJson ? String(tokenJson.code) : "unknown";
+      throw new Error(`Lark tenant_access_token failed: HTTP ${String(tokenResp.status)} code=${code}`);
+    }
+    const tenantToken = tokenJson.tenant_access_token;
+
+    const sendResp = await fetch(`${messagesUrl}?receive_id_type=chat_id`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${tenantToken}`,
+      },
+      body: JSON.stringify({
+        receive_id: testChatId,
+        msg_type: "text",
+        content: JSON.stringify({ text: baseMessage }),
+      }),
+    });
+    const sendJson = await sendResp.json().catch(() => null);
+    if (!sendResp.ok || !sendJson?.data?.message_id) {
+      const code = sendJson && typeof sendJson === "object" && "code" in sendJson ? String(sendJson.code) : "unknown";
+      throw new Error(`Lark im/v1/messages send failed: HTTP ${String(sendResp.status)} code=${code}`);
+    }
+    const messageId = String(sendJson.data.message_id);
+
+    const readResp = await fetch(`${messagesUrl}/${encodeURIComponent(messageId)}`, {
+      headers: { Authorization: `Bearer ${tenantToken}` },
+    });
+    const readJson = await readResp.json().catch(() => null);
+    if (!readResp.ok || !Array.isArray(readJson?.data?.items) || readJson.data.items.length === 0) {
+      const code = readJson && typeof readJson === "object" && "code" in readJson ? String(readJson.code) : "unknown";
+      throw new Error(`Lark message readback failed: HTTP ${String(readResp.status)} code=${code}`);
+    }
+
+    artifact.result = "passed";
+    artifact.observedEvidence.push(
+      "Lark/Feishu tenant_access_token resolved",
+      `Lark/Feishu domain=${domain}`,
+      "outbound Lark/Feishu message sent",
+      "outbound Lark/Feishu message readback succeeded",
+    );
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      larkMessagesReadBack: 1,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      larkEvidence: {
+        envPresent: true,
+        domain,
+        chatIdTail: idTail(testChatId),
+        messageIdTail: idTail(messageId),
+        outboundMatched: true,
+      },
+    };
+    return artifact;
+  } catch (error) {
+    artifact.result = "failed";
+    artifact.failureClass = "tool_bridge";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `Lark/Feishu roundtrip failed: ${error instanceof Error ? error.message : String(error)}`,
+    ];
+    return artifact;
+  }
+}
+
+// Phase 14.5E module_28e Slice 6.6 — Telegram live channel roundtrip.
+async function executeTelegramRoundtrip({ artifact, scenario }) {
+  const botTokenEnv = scenario.execution.botTokenEnv ?? "FRIDAY_TELEGRAM_BOT_TOKEN";
+  const testChatIdEnv = scenario.execution.testChatIdEnv ?? "FRIDAY_TELEGRAM_TEST_CHAT_ID";
+
+  const required = [botTokenEnv, testChatIdEnv];
+  const missing = collectMissingEnv(required);
+  if (missing.length > 0) {
+    artifact.result = "blocked";
+    artifact.failureClass = "environment";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `Telegram live roundtrip blocked: missing env ${missing.join(", ")}`,
+    ];
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      telegramEvidence: {
+        envPresent: false,
+        missingEnv: missing,
+      },
+    };
+    return artifact;
+  }
+
+  const botToken = readOptionalEnv(botTokenEnv);
+  const testChatId = readOptionalEnv(testChatIdEnv);
+  const proofNonce = `${artifact.runId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  const baseMessage = `Friday Phase 14.5E live Telegram proof ${proofNonce}`;
+
+  try {
+    const meResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+    const meJson = await meResp.json().catch(() => null);
+    if (!meResp.ok || meJson?.ok !== true || !meJson?.result?.is_bot) {
+      const desc = meJson && typeof meJson === "object" && "description" in meJson
+        ? String(meJson.description)
+        : "unknown";
+      throw new Error(`Telegram getMe failed: HTTP ${String(meResp.status)} description=${desc}`);
+    }
+
+    const sendResp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: testChatId, text: baseMessage }),
+    });
+    const sendJson = await sendResp.json().catch(() => null);
+    if (!sendResp.ok || sendJson?.ok !== true || !sendJson?.result?.message_id) {
+      const desc = sendJson && typeof sendJson === "object" && "description" in sendJson
+        ? String(sendJson.description)
+        : "unknown";
+      throw new Error(`Telegram sendMessage failed: HTTP ${String(sendResp.status)} description=${desc}`);
+    }
+    const messageId = sendJson.result.message_id;
+    const text = sendJson.result.text;
+    if (text !== baseMessage) {
+      throw new Error("Telegram outbound text did not match readback.");
+    }
+
+    artifact.result = "passed";
+    artifact.observedEvidence.push(
+      "Telegram bot identity resolved",
+      "outbound Telegram message sent",
+      "outbound Telegram message readback matched content",
+    );
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      telegramMessagesReadBack: 1,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      telegramEvidence: {
+        envPresent: true,
+        chatIdTail: idTail(testChatId),
+        messageId,
+        outboundMatched: true,
+      },
+    };
+    return artifact;
+  } catch (error) {
+    artifact.result = "failed";
+    artifact.failureClass = "tool_bridge";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `Telegram roundtrip failed: ${error instanceof Error ? error.message : String(error)}`,
+    ];
+    return artifact;
+  }
+}
+
 async function executeManualExternal({ artifact, scenario, blockers }) {
   const manualEvidenceTemplate = [
     `surface=${scenario.entrySurface}`,
@@ -3074,6 +3295,12 @@ export async function executeScenario({
         break;
       case "discord_roundtrip":
         await executeDiscordRoundtrip({ artifact, scenario, client });
+        break;
+      case "lark_roundtrip":
+        await executeLarkRoundtrip({ artifact, scenario });
+        break;
+      case "telegram_roundtrip":
+        await executeTelegramRoundtrip({ artifact, scenario });
         break;
       case "skill_upgrade_lifecycle":
         await executeSkillUpgradeLifecycle({ artifact, client, scenario, runId });

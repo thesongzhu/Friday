@@ -50,6 +50,11 @@ export const REAL_WORLD_EXECUTION_KINDS = Object.freeze([
   "workflow_generator_loop",
   "persona_learning",
   "discord_roundtrip",
+  // Phase 14.5E module_28e Slice 6.6 — per-channel external roundtrip
+  // execution kinds for Lark/Feishu and Telegram. Each executor checks
+  // its own env tuple and emits `blocked` honestly when env is missing.
+  "lark_roundtrip",
+  "telegram_roundtrip",
   "skill_upgrade_lifecycle",
   "auto_fix_doctor_roundtrip",
   "workflow_evidence_fail_closed",
