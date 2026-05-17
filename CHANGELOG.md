@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Docs
+
+- Phase 15 docs-truth reconciliation only. Updated `docs/current-source-of-truth.md`, `docs/architecture/agent-package-rfc.md`, and `docs/architecture/multi-tenant-security-rfc.md` to reflect that Phase 11 (PR #233) shipped SQLite-backed persistence for packaging registry, install lifecycle, rollback history, lifecycle audit log, trusted-key store, and the multi-tenant security surface (tenants, workspaces, roles, role assignments, policies, secrets, audit log, violations, tenant-scoped resource registry); both surfaces remain default-off behind `FRIDAY_PACKAGING_ENABLED=true` / `FRIDAY_MULTI_TENANT_ENABLED=true` and Phase 11 closed `partial` with named Phase 14 release-proof debt for `module_16_packaging_release_proof_roundtrip`, `module_17_full_upgrade_lifecycle_evidence_harness`, and `module_18_cross_tenant_denial_rgg_assertion`.
+- Reflected Phase 02a (PR #222) release-complete state for the media-understanding provider loop while preserving the `FRIDAY_MEDIA_UNDERSTANDING_ENABLED=true` plus resolvable `env:OPENAI_API_KEY` runtime enablement boundary; `/v1/media-understanding/*` returns `503 MEDIA_UNDERSTANDING_DISABLED` when either gate is unmet.
+- Added explicit channel-state honesty under `Channel secret and supervisor truth`: live external-channel proof is per-channel and scoped to configured test spaces only; Phase 14.5E closed as a user-approved partial/blocked report-only outcome with Discord as the only configured target and Lark/Feishu/Telegram remaining `not_configured` / `blocked_by_env`.
+- Documented that `FRIDAY_MASTER_KEY` and `FRIDAY_TOKEN_SECRET` are internal runtime secrets generated and stored by the local or user-owned cloud runtime; ordinary user setup must not require pasting them.
+- Added `docs/audit/CAPABILITY_PROOF_MATRIX_2026-05-17_POST_243.md` anchored to `origin/main` `42fac20f` (PR #243). Snapshot built from per-phase completion reports and `REPORTS_INDEX.csv`; honest about `blocked_by_env` not being pass.
+
+This entry is docs-truth reconciliation hygiene only and is not a product release-complete claim. No product code, tests, runtime behavior, API contract snapshots, generated code, branch protection, GitHub state, credentials, release-proof standards, or governance semantics changed in this entry.
+
 ## [1.0.0] — Initial Release — 2026-04-18
 
 ### Added

@@ -1,15 +1,16 @@
 # RFC: Multi-Tenant Security and Permissions
 
-**Status:** Draft — Phase 2 not started; current code is in-memory engine only and does not provide persistence-level tenant isolation.
+**Status:** Draft — SQLite-backed persistence for tenants, workspaces, role assignments, policies, secrets, audit log, violations, and tenant-scoped resource registry shipped via Phase 11 (PR #233, merged `a5239ac7` 2026-05-15). Surface remains gated behind `FRIDAY_MULTI_TENANT_ENABLED=true` (default-off) and a strict `FRIDAY_MASTER_KEY` resolution; Phase 11 closed as `partial` and named Phase 14 release-proof debt remains for `module_18_cross_tenant_denial_rgg_assertion`. The default-on flip and same-SHA RGG cross-tenant denial proof are not done.
 **Author:** Friday Platform Team
 **Created:** 2026-02-23
+**Last reconciled:** 2026-05-17 (Phase 15 docs-truth reconciliation; no code changes in this RFC update)
 **Tickets:** FRI-PLAT-061, FRI-PLAT-062, FRI-PLAT-063
 
 ---
 
 ## 1. Summary
 
-> _Phase 1 (current release) ships only the in-memory engine; the guarantees described in this Summary apply to Phase 2 once SQLite persistence and per-domain repository scoping are implemented. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; the Phase 2 work is unscheduled._
+> _SQLite persistence and per-domain repository scoping for tenants, workspaces, role assignments, policies, secrets, audit log, violations, and tenant-scoped resource registry shipped under Phase 11 PR #233. Surface remains opt-in via `FRIDAY_MULTI_TENANT_ENABLED=true`, default-off, and the Phase 11 close-out forwarded `module_18` (cross-tenant denial RGG assertion) as named Phase 14 release-proof debt. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; this RFC does not claim release-proof closure from the docs reconciliation pass and does not authorize the default-on flip. `FRIDAY_MASTER_KEY` is an internal runtime secret generated and stored by the local or user-owned cloud runtime; ordinary user setup must not be told to paste it._
 
 The Multi-Tenant Security and Permissions workstream introduces tenant isolation, workspace-scoped RBAC, a scoped credential store with encryption at rest, and policy-based permission evaluation to the Friday platform. It guarantees that all data access, secret retrieval, and agent execution respect tenant boundaries with zero cross-tenant leakage, least-privilege defaults, and full audit coverage of every permission-denied decision.
 
