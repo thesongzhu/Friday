@@ -91,6 +91,7 @@
     "setup:hooks": "bash scripts/setup-hooks.sh",
     "ops:converge-runtime": "bash scripts/ops/friday-converge-runtime.sh",
     "ops:doctor:runtime": "node scripts/ops/friday-local-runtime-doctor.mjs",
+    "ops:doctor:runtime:report-json": "node scripts/ops/friday-local-runtime-doctor.mjs --report-json --max-iterations 1",
     "ops:check-branch-conformance": "node scripts/ops/check-branch-conformance.mjs",
     "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs",
     "ops:harden-local-enablement": "bash scripts/ops/harden-local-enablement.sh",

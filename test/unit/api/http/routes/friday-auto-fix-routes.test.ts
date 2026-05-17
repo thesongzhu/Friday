@@ -95,6 +95,7 @@ function makeActionRecord() {
       executionResult: {
         status: "planned" as const,
         outcome: null,
+        repairOutcome: "failed" as const,
       },
       rollbackResult: {
         available: true,
@@ -349,6 +350,107 @@ describe("FridayAutoFixRoutes", () => {
       respondedBy: "user-1",
       reason: "This patch is too risky for prod",
       reasonCode: "too_risky",
+    });
+  });
+
+  // ─── Phase 14.5B module_28b: bound-principal gate on mutating routes ───────
+
+  describe("Phase 14.5B module_28b bound-principal gate", () => {
+    const syntheticPublicPrincipal = {
+      principalId: "public:default",
+      principalType: "user",
+      tenantId: "00000000-0000-0000-0000-000000000001",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin",
+      scopes: [],
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      tokenKind: "access",
+      issuedAt: "2026-05-12T00:00:00.000Z",
+    } as never;
+
+    const mutatingOperationIds = [
+      "autofix.actions.run.ready",
+      "autofix.actions.approve",
+      "autofix.actions.deny",
+      "autofix.actions.execute",
+      "autofix.actions.rollback",
+    ] as const;
+
+    function ctxFor(operationId: string, principal: unknown) {
+      const params = operationId === "autofix.actions.run.ready" ? {} : { actionId: "action-1" };
+      const body = operationId === "autofix.actions.rollback"
+        ? { reason: "test rollback" }
+        : operationId === "autofix.actions.deny"
+          ? { reason: "test deny" }
+          : {};
+      return makeCtx({ params, body, principal: principal as never });
+    }
+
+    it.each(mutatingOperationIds)(
+      "Phase 14.5B module_28b: %s refuses the synthetic public principal",
+      async (operationId) => {
+        const service = makeService();
+        const routes = createFridayAutoFixRoutes({ service });
+        const route = routes.find((entry) => entry.operationId === operationId)!;
+
+        let thrown: unknown;
+        try {
+          await route.handler(ctxFor(operationId, syntheticPublicPrincipal));
+        } catch (err) {
+          thrown = err;
+        }
+        expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+
+        if (operationId === "autofix.actions.run.ready") {
+          expect(service.runReadyActions).not.toHaveBeenCalled();
+        } else if (operationId === "autofix.actions.approve") {
+          expect(service.approveAction).not.toHaveBeenCalled();
+        } else if (operationId === "autofix.actions.deny") {
+          expect(service.denyAction).not.toHaveBeenCalled();
+        } else if (operationId === "autofix.actions.execute") {
+          expect(service.executeAction).not.toHaveBeenCalled();
+        } else {
+          expect(service.rollbackAction).not.toHaveBeenCalled();
+        }
+      },
+    );
+
+    it.each(mutatingOperationIds)(
+      "Phase 14.5B module_28b: %s refuses a null principal",
+      async (operationId) => {
+        const service = makeService();
+        const routes = createFridayAutoFixRoutes({ service });
+        const route = routes.find((entry) => entry.operationId === operationId)!;
+
+        let thrown: unknown;
+        try {
+          await route.handler(ctxFor(operationId, null));
+        } catch (err) {
+          thrown = err;
+        }
+        expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+      },
+    );
+
+    it("Phase 14.5B module_28b: read-shaped routes keep their existing public posture", async () => {
+      const service = makeService();
+      const routes = createFridayAutoFixRoutes({ service });
+
+      // The synthetic public principal still carries a userId, so the read
+      // routes continue to work without the bound-principal upgrade.
+      const listRoute = routes.find((entry) => entry.operationId === "autofix.actions.list")!;
+      const getRoute = routes.find((entry) => entry.operationId === "autofix.actions.get")!;
+      const metricsRoute = routes.find((entry) => entry.operationId === "autofix.metrics.get")!;
+
+      await expect(
+        listRoute.handler(makeCtx({ principal: syntheticPublicPrincipal })),
+      ).resolves.toBeDefined();
+      await expect(
+        getRoute.handler(makeCtx({ principal: syntheticPublicPrincipal, params: { actionId: "action-1" } })),
+      ).resolves.toBeDefined();
+      await expect(
+        metricsRoute.handler(makeCtx({ principal: syntheticPublicPrincipal })),
+      ).resolves.toBeDefined();
     });
   });
 });

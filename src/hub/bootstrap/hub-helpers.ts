@@ -1236,28 +1236,37 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     }
 
     const patch = readRecordField(payload, "patch", "configPatch");
-    if (patch) {
-      if (!deps.configManager) {
-        return false;
-      }
-      const validation = await deps.configManager.validatePatch(patch);
-      if (!validation.valid) {
-        payload._configPatchValidationErrors = validation.errors;
-        return false;
-      }
-      const current = await deps.configManager.getConfig();
-      const expectedRevision = readNumber(payload, "expectedRevision") ?? current.revision;
-      const result = await deps.configManager.applyPatch({
-        expectedRevision,
-        patch,
-        reason: readString(payload, "reason", "fix") ?? `auto-fix apply_config_patch @ ${deps.nowIso()}`,
-      });
-      payload._configPatchPreviousRevision = current.revision;
-      payload._configPatchRevision = result.revision;
-      payload._configPatchChangedKeys = result.changedKeys;
-    } else {
-      payload._configPatchMode = "diagnostic_marker";
+    if (!patch) {
+      // Phase 14.5B module_28b: fail-closed when no real patch payload is
+      // present. The previous "diagnostic_marker" shortcut allowed an
+      // apply_config_patch step to claim success without applying a real
+      // config change, which the execution verifier then accepted as a
+      // verified repair. Self-heal must distinguish diagnostic completion
+      // from verified repair — no patch, no repair claim.
+      payload._configPatchApplied = false;
+      payload._configPatchMode = "diagnostic_only";
+      payload._configPatchTarget = step.target;
+      payload._configPatchAt = deps.nowIso();
+      return false;
     }
+    if (!deps.configManager) {
+      return false;
+    }
+    const validation = await deps.configManager.validatePatch(patch);
+    if (!validation.valid) {
+      payload._configPatchValidationErrors = validation.errors;
+      return false;
+    }
+    const current = await deps.configManager.getConfig();
+    const expectedRevision = readNumber(payload, "expectedRevision") ?? current.revision;
+    const result = await deps.configManager.applyPatch({
+      expectedRevision,
+      patch,
+      reason: readString(payload, "reason", "fix") ?? `auto-fix apply_config_patch @ ${deps.nowIso()}`,
+    });
+    payload._configPatchPreviousRevision = current.revision;
+    payload._configPatchRevision = result.revision;
+    payload._configPatchChangedKeys = result.changedKeys;
 
     payload._configPatchApplied = true;
     payload._configPatchTarget = step.target;
@@ -1273,7 +1282,13 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     if (isRevertPayload(step.payload)) {
       return payload._configPatchRolledBack === true;
     }
+    // Phase 14.5B module_28b: verified repair requires both the executor's
+    // applied flag AND a real config revision returned by configManager.
+    // _configPatchApplied alone is no longer sufficient — diagnostic-only
+    // payloads (no real `patch`) cannot pass verification.
     return payload._configPatchApplied === true &&
+      typeof payload._configPatchRevision === "number" &&
+      Number.isFinite(payload._configPatchRevision) &&
       (typeof payload._configPatchTarget !== "string" || payload._configPatchTarget === step.target);
   };
 

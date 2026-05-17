@@ -564,6 +564,106 @@ async function executeHttpProbe({ artifact, client, scenario }) {
   return artifact;
 }
 
+// Phase 14.5B module_28b: live-HTTP RGG proof that all five /v1/auto-fix
+// mutating routes refuse the synthetic public principal with HTTP 401 and
+// the OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED error code. This executor
+// makes real network calls against the hub HTTP layer without injecting an
+// Authorization header (skipAuth: true), so the server resolves to the
+// synthetic public principal and the bound-principal gate fires inside the
+// real route handlers — no mocks. Service-layer no-patch repair-claim
+// refusal and channel/session-text preview-only behavior are proven by the
+// integration acceptance test and the deterministic-dispatch unit test
+// respectively; that explicit scope split is recorded in the scenario
+// expectedEvidence so reviewers can verify there is no proof overclaim.
+export const AUTO_FIX_DOCTOR_PROBE_ACTION_ID = "rgg-phase-14-5b-doctor-probe-action";
+export const AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE = "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED";
+
+export const AUTO_FIX_DOCTOR_ROUTES = Object.freeze([
+  Object.freeze({
+    operationId: "autofix.actions.run.ready",
+    method: "POST",
+    path: "/v1/auto-fix/actions/run-ready",
+    body: {},
+  }),
+  Object.freeze({
+    operationId: "autofix.actions.approve",
+    method: "POST",
+    path: `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/approve`,
+    body: {},
+  }),
+  Object.freeze({
+    operationId: "autofix.actions.deny",
+    method: "POST",
+    path: `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/deny`,
+    body: {},
+  }),
+  Object.freeze({
+    operationId: "autofix.actions.execute",
+    method: "POST",
+    path: `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/execute`,
+    body: {},
+  }),
+  Object.freeze({
+    operationId: "autofix.actions.rollback",
+    method: "POST",
+    path: `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/rollback`,
+    body: { reason: "rgg-phase-14-5b-doctor-probe" },
+  }),
+]);
+
+async function executeAutoFixDoctorRoundtrip({ artifact, client, scenario }) {
+  const checks = [];
+  let allRefused = true;
+  for (const route of AUTO_FIX_DOCTOR_ROUTES) {
+    const response = await client.request(route.method, route.path, {
+      skipAuth: true,
+      timeoutMs: scenarioTimeout(scenario, 30_000),
+      body: route.body,
+    });
+    const errorCode = response.json?.error?.code;
+    const refused = response.status === 401
+      && errorCode === AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE;
+    checks.push({
+      operationId: route.operationId,
+      method: route.method,
+      path: route.path,
+      status: response.status,
+      errorCode: errorCode ?? null,
+      refused,
+      durationMs: response.durationMs,
+    });
+    artifact.observedEvidence.push(
+      `${route.method} ${route.path} (skipAuth) -> ${String(response.status)} `
+      + `${errorCode ?? "no-error-code"} ${refused ? "refused" : "did-not-refuse"}`,
+    );
+    if (!refused) {
+      allRefused = false;
+    }
+  }
+  artifact.metrics = {
+    ...(artifact.metrics ?? {}),
+    routesProbed: checks.length,
+    routesRefused: checks.filter((check) => check.refused).length,
+  };
+  artifact.raw = {
+    ...(artifact.raw ?? {}),
+    checks,
+  };
+  if (allRefused) {
+    artifact.result = "passed";
+  } else {
+    artifact.result = "failed";
+    artifact.failureClass = "http_contract";
+    const failed = checks.filter((check) => !check.refused);
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `Expected all 5 /v1/auto-fix mutating routes to refuse the synthetic public principal with HTTP 401 ${AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE}.`,
+      ...failed.map((check) => `${check.operationId} (${check.method} ${check.path}): status=${String(check.status)} errorCode=${String(check.errorCode)}`),
+    ];
+  }
+  return artifact;
+}
+
 async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUrl, envTruth }) {
   const execution = scenario.execution;
   const requestUrls = [];
@@ -2144,6 +2244,9 @@ export async function executeScenario({
         break;
       case "skill_upgrade_lifecycle":
         await executeSkillUpgradeLifecycle({ artifact, client, scenario, runId });
+        break;
+      case "auto_fix_doctor_roundtrip":
+        await executeAutoFixDoctorRoundtrip({ artifact, client, scenario });
         break;
       case "manual_external":
         await executeManualExternal({ artifact, scenario, blockers });

@@ -140,6 +140,7 @@ describe("assistant view models", () => {
         executionResult: {
           status: "planned",
           outcome: null,
+          repairOutcome: "failed",
         },
         rollbackResult: {
           available: true,
@@ -420,6 +421,7 @@ describe("assistant view models", () => {
           executionResult: {
             status: "planned",
             outcome: null,
+            repairOutcome: "failed",
           },
           rollbackResult: {
             available: true,

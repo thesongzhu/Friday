@@ -792,7 +792,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "channels.webhooks.whatsapp",
         "channels.webhooks.lark",
       ]);
-      // bound_principal (Phase 14.5A explicit bound-principal gate)
+      // bound_principal (Phase 14.5A + Phase 14.5B module_28b explicit bound-principal gate)
       const BOUND_PRINCIPAL: ReadonlySet<string> = new Set([
         "agent.runs.approve.plan",
         "agent.runs.reject.plan",
@@ -811,6 +811,12 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "task.workflows.claims.verify",
         "task.workflows.claims.block",
         "task.workflows.closeout",
+        // Phase 14.5B module_28b: one-click repair / recovery doctor.
+        "autofix.actions.run.ready",
+        "autofix.actions.approve",
+        "autofix.actions.deny",
+        "autofix.actions.execute",
+        "autofix.actions.rollback",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([
@@ -858,10 +864,13 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       expect(counts.rate_limited_pending).toBeGreaterThan(0);
 
       // The unclassified bucket exists to capture broader public-mutating
-      // surfaces (config/autonomy/secrets/packaging/auto-fix/etc.) that today
-      // run inside the synthetic public-principal compatibility layer + their
-      // own scope/role checks. The invariant records the count so any
-      // expansion is visible in this snapshot rather than silently shipping.
+      // surfaces (config/autonomy/secrets/packaging/etc.) that today run
+      // inside the synthetic public-principal compatibility layer + their
+      // own scope/role checks. Phase 14.5B module_28b moved the five
+      // /v1/auto-fix/* mutating routes from this bucket into BOUND_PRINCIPAL;
+      // read-shaped auto-fix routes remain public. The invariant records
+      // the count so any further expansion is visible in this snapshot
+      // rather than silently shipping.
       expect(counts.unclassified + counts.hmac_or_bearer_opt_in + counts.channel_signature + counts.bound_principal + counts.rate_limited_pending + counts.public_low_risk).toBe(mutating.length);
       expect({
         total_public_mutating: mutating.length,

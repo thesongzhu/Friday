@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { executeScenario } from "../../../validation/real-world/lib/executors.mjs";
+import {
+  AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE,
+  AUTO_FIX_DOCTOR_PROBE_ACTION_ID,
+  AUTO_FIX_DOCTOR_ROUTES,
+  executeScenario,
+} from "../../../validation/real-world/lib/executors.mjs";
 
 describe("real-world executors", () => {
   let tempRoot: string | null = null;
@@ -117,5 +122,116 @@ describe("real-world executors", () => {
         matchesExpectedHeading: true,
       }),
     ]);
+  });
+
+  describe("Phase 14.5B module_28b: auto_fix_doctor_roundtrip", () => {
+    function createDoctorScenario() {
+      return {
+        id: "l6-phase-14-5b-one-click-repair-doctor",
+        layer: "L6",
+        productArea: "self-healing",
+        entrySurface: "/v1/auto-fix/actions/*",
+        routeFamily: "bound-principal gate",
+        providerLane: "none",
+        riskTier: "low",
+        expectedEvidence: [
+          "POST /v1/auto-fix/actions/run-ready refuses the synthetic public principal",
+        ],
+        execution: { kind: "auto_fix_doctor_roundtrip" },
+      };
+    }
+
+    function createDoctorRouteResponder(overrides: Record<string, { status: number; errorCode?: string | null; skipAuthSeen?: boolean }> = {}) {
+      const seenSkipAuth: Record<string, boolean> = {};
+      const client = {
+        accessToken: "real-access-token",
+        request: async (method: string, routePath: string, options: { skipAuth?: boolean } = {}) => {
+          seenSkipAuth[routePath] = options.skipAuth === true;
+          const override = overrides[routePath];
+          const status = override?.status ?? 401;
+          const errorCode = override?.errorCode === undefined
+            ? AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE
+            : override.errorCode;
+          const json = errorCode === null
+            ? { ok: false }
+            : { ok: false, error: { code: errorCode } };
+          return {
+            method,
+            routePath,
+            status,
+            ok: status >= 200 && status < 300,
+            text: JSON.stringify(json),
+            json,
+            durationMs: 1,
+          };
+        },
+        seenSkipAuth,
+      };
+      return client;
+    }
+
+    it("passes when every mutating route refuses with 401 and OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED", async () => {
+      const client = createDoctorRouteResponder();
+      const artifact = await executeScenario({
+        runId: "validation-run-doctor-pass",
+        suite: "smoke",
+        scenario: createDoctorScenario(),
+        lane: { laneKey: "default", providerId: "n/a", model: "n/a" },
+        client,
+        envTruth: {},
+        reportRoot: tmpdir(),
+        uiBaseUrl: "http://127.0.0.1:3141",
+      });
+
+      expect(artifact.result).toBe("passed");
+      expect(artifact.metrics?.routesProbed).toBe(AUTO_FIX_DOCTOR_ROUTES.length);
+      expect(artifact.metrics?.routesRefused).toBe(AUTO_FIX_DOCTOR_ROUTES.length);
+      for (const route of AUTO_FIX_DOCTOR_ROUTES) {
+        expect(client.seenSkipAuth[route.path]).toBe(true);
+      }
+    });
+
+    it("fails when any mutating route returns a non-401 status", async () => {
+      const breakingRoute = `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/execute`;
+      const client = createDoctorRouteResponder({
+        [breakingRoute]: { status: 200 },
+      });
+      const artifact = await executeScenario({
+        runId: "validation-run-doctor-bad-status",
+        suite: "smoke",
+        scenario: createDoctorScenario(),
+        lane: { laneKey: "default", providerId: "n/a", model: "n/a" },
+        client,
+        envTruth: {},
+        reportRoot: tmpdir(),
+        uiBaseUrl: "http://127.0.0.1:3141",
+      });
+
+      expect(artifact.result).toBe("failed");
+      expect(artifact.failureClass).toBe("http_contract");
+      expect(artifact.notes?.some((note: string) => note.includes("autofix.actions.execute"))).toBe(true);
+      expect(artifact.metrics?.routesRefused).toBe(AUTO_FIX_DOCTOR_ROUTES.length - 1);
+    });
+
+    it("fails when a 401 carries a different error code (proof of code-level invariant)", async () => {
+      const breakingRoute = `/v1/auto-fix/actions/${AUTO_FIX_DOCTOR_PROBE_ACTION_ID}/rollback`;
+      const client = createDoctorRouteResponder({
+        [breakingRoute]: { status: 401, errorCode: "UNAUTHORIZED" },
+      });
+      const artifact = await executeScenario({
+        runId: "validation-run-doctor-bad-code",
+        suite: "smoke",
+        scenario: createDoctorScenario(),
+        lane: { laneKey: "default", providerId: "n/a", model: "n/a" },
+        client,
+        envTruth: {},
+        reportRoot: tmpdir(),
+        uiBaseUrl: "http://127.0.0.1:3141",
+      });
+
+      expect(artifact.result).toBe("failed");
+      expect(artifact.failureClass).toBe("http_contract");
+      expect(artifact.notes?.some((note: string) => note.includes("autofix.actions.rollback"))).toBe(true);
+    });
   });
 });

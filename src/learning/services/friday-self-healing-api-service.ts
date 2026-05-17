@@ -7,6 +7,9 @@ import type {
   FridayAutoFixActionEntity,
   FridayAutoFixExecutionResult,
   FridayAutoFixFeedbackReasonCode,
+  FridayAutoFixPlanStep,
+  FridayAutoFixRepairOutcome,
+  FridayAutoFixRollbackStep,
 } from "../model/friday-auto-fix.types.js";
 import type {
   FridayDiagnosisRecordEntity,
@@ -95,6 +98,15 @@ export interface FridaySelfHealingActionDetails {
       status: FridayAutoFixActionEntity["status"];
       outcome: FridayAutoFixActionEntity["outcome"];
       appliedAt?: string;
+      /**
+       * Phase 14.5B module_28b: separates diagnostic completion from verified
+       * repair, rollback, and failure. Never derived from `action.outcome`
+       * string equality alone — only from real payload markers recorded by
+       * the executor (config revision, retry counter delta, skill mutation).
+       */
+      repairOutcome: FridayAutoFixRepairOutcome;
+      /** Phase 14.5B module_28b: config keys actually changed (apply_config_patch). */
+      changedKeys?: string[];
     };
     rollbackResult: {
       available: boolean;
@@ -457,6 +469,83 @@ function readObject(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * Phase 14.5B module_28b: predicate identifying whether a forward plan step
+ * has produced a real changed state. Uses only deterministic payload markers
+ * written by the executor — no inference from `action.outcome`.
+ */
+function autoFixStepProducedRealChange(
+  step: FridayAutoFixPlanStep | FridayAutoFixRollbackStep,
+): boolean {
+  const payload = readObject(step.payload);
+  if (!payload) return false;
+  switch (step.kind) {
+    case "apply_config_patch": {
+      const revision = payload._configPatchRevision;
+      return typeof revision === "number" && Number.isFinite(revision);
+    }
+    case "retry_node": {
+      const before = typeof payload._retryCountBefore === "number" ? payload._retryCountBefore : 0;
+      const after = typeof payload._retryCountAfter === "number" ? payload._retryCountAfter : 0;
+      return after > before;
+    }
+    case "disable_skill":
+      return payload._skillDisabled === true;
+    case "pause_workflow":
+      return payload._workflowPaused === true;
+    case "regenerate_skill":
+      return payload._skillRegenerated === true;
+    case "grant_permission":
+      return payload._permissionGranted === true;
+    case "switch_model_fallback":
+      return payload._modelFallbackRequested === true;
+    case "trim_payload":
+      return payload._trimRequested === true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Phase 14.5B module_28b: classify the repair outcome for an action receipt.
+ * `verified_repair` requires both verification success AND at least one step
+ * recording a real changed state; otherwise success collapses to
+ * `diagnostic_only` so the receipt cannot overclaim repair.
+ */
+function deriveAutoFixRepairOutcome(
+  action: FridayAutoFixActionEntity,
+): FridayAutoFixRepairOutcome {
+  if (action.status === "rolled_back") {
+    return "rolled_back";
+  }
+  if (action.status === "applied" && action.outcome === "success") {
+    const anyRealChange = action.plan.steps.some(autoFixStepProducedRealChange);
+    return anyRealChange ? "verified_repair" : "diagnostic_only";
+  }
+  return "failed";
+}
+
+/** Phase 14.5B module_28b: surface real config-key deltas from apply_config_patch. */
+function deriveAutoFixChangedKeys(
+  action: FridayAutoFixActionEntity,
+): string[] | undefined {
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const step of action.plan.steps) {
+    if (step.kind !== "apply_config_patch") continue;
+    const payload = readObject(step.payload);
+    const raw = payload?._configPatchChangedKeys;
+    if (!Array.isArray(raw)) continue;
+    for (const value of raw) {
+      if (typeof value === "string" && !seen.has(value)) {
+        seen.add(value);
+        keys.push(value);
+      }
+    }
+  }
+  return keys.length > 0 ? keys : undefined;
+}
+
 function normalizeLearningKeySegment(value: string): string {
   return value
     .toLowerCase()
@@ -546,7 +635,14 @@ export function createFridaySelfHealingApiService(
         requiresApproval: action.riskTier >= 2,
         autoApplyAllowed: action.riskTier < 2,
       };
-    const acceptancePassed = action.status === "applied" && action.outcome === "success";
+    // Phase 14.5B module_28b: acceptance requires both action success AND a
+    // real changed-state repair outcome. A `diagnostic_only` action cannot
+    // pass acceptance even when `action.outcome === "success"`.
+    const repairOutcome = deriveAutoFixRepairOutcome(action);
+    const changedKeys = deriveAutoFixChangedKeys(action);
+    const acceptancePassed = action.status === "applied"
+      && action.outcome === "success"
+      && repairOutcome === "verified_repair";
 
     return {
       action,
@@ -582,6 +678,8 @@ export function createFridaySelfHealingApiService(
           status: action.status,
           outcome: action.outcome,
           appliedAt: action.appliedAt,
+          repairOutcome,
+          ...(changedKeys ? { changedKeys } : {}),
         },
         rollbackResult: {
           available: Boolean(action.rollbackPlan ?? action.plan.rollbackPlan),
@@ -597,7 +695,9 @@ export function createFridaySelfHealingApiService(
               ? "Mitigation failed verification and was rolled back"
               : action.status === "rejected"
                 ? "Mitigation was rejected before execution"
-                : "Mitigation has not completed acceptance checks",
+                : repairOutcome === "diagnostic_only"
+                  ? "Diagnostic completed without a verified repair change"
+                  : "Mitigation has not completed acceptance checks",
         },
         extractedLesson: lesson
           ? {

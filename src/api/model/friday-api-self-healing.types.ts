@@ -4,6 +4,7 @@ import type {
   FridayAutoFixActionEntity,
   FridayAutoFixActionStatus,
   FridayAutoFixOutcome,
+  FridayAutoFixRepairOutcome,
   FridayAutoFixRiskTier,
   FridaySelfHealingRunReadySkipReason,
 } from "#learning";
@@ -73,6 +74,10 @@ export interface FridayFixExecutionEvidence {
     status: FridayAutoFixActionStatus;
     outcome: FridayAutoFixOutcome;
     appliedAt?: string;
+    /** Phase 14.5B module_28b: real changed-state classification. */
+    repairOutcome: FridayAutoFixRepairOutcome;
+    /** Phase 14.5B module_28b: config keys actually changed (apply_config_patch). */
+    changedKeys?: string[];
   };
   rollbackResult: {
     available: boolean;

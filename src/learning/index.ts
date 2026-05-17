@@ -30,6 +30,7 @@ export type {
   FridayAutoFixRiskTier,
   FridayAutoFixActionStatus,
   FridayAutoFixOutcome,
+  FridayAutoFixRepairOutcome,
   FridayApprovalRequestStatus,
   FridayAutoFixFeedbackReasonCode,
   FridayAutoFixStepKind,

@@ -413,6 +413,36 @@ describe("classifyFridayExecution", () => {
       expect(result.category).toBe("sync_immediate");
       expect(result.handler).toBe("unsafe_automation_boundary");
     });
+
+    it("Phase 14.5B module_28b: classifies imperative 'repair' as deterministic repair preview", () => {
+      const result = classifyFridayExecution({
+        task: "repair",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("repair_preview");
+    });
+
+    it("Phase 14.5B module_28b: classifies 'repair friday' as deterministic repair preview", () => {
+      const result = classifyFridayExecution({
+        task: "repair friday",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("repair_preview");
+    });
+
+    it("Phase 14.5B module_28b: classifies Chinese 修复 as deterministic repair preview", () => {
+      const result = classifyFridayExecution({
+        task: "修复",
+        turnKind: "new_topic",
+        focusState: null,
+      });
+      expect(result.category).toBe("sync_immediate");
+      expect(result.handler).toBe("repair_preview");
+    });
   });
 
   describe("workflow control commands", () => {

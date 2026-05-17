@@ -28,7 +28,13 @@ export type FridayPublicMutationOperation =
   | "task.workflow.evidence.attach"
   | "task.workflow.claim.verify"
   | "task.workflow.claim.block"
-  | "task.workflow.closeout";
+  | "task.workflow.closeout"
+  | "autofix.actions.run.ready"
+  | "autofix.actions.approve"
+  | "autofix.actions.deny"
+  | "autofix.actions.execute"
+  | "autofix.actions.rollback"
+  | "autofix.actions.preview";
 
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
 

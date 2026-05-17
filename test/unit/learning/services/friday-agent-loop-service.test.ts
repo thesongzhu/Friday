@@ -134,6 +134,7 @@ function buildIncidentDetails(input?: {
         executionResult: {
           status: "planned" as const,
           outcome: null,
+          repairOutcome: "failed" as const,
         },
         rollbackResult: {
           available: includeRollback,

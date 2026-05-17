@@ -115,7 +115,11 @@ export class FridayClient {
     const timeoutMs = options.timeoutMs ?? 120_000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const headers = new Headers(options.headers ?? {});
-    if (this.accessToken) {
+    // Phase 14.5B module_28b: `skipAuth: true` lets a probe deliberately omit
+    // the Authorization header so the server resolves to the synthetic public
+    // principal. The bound-principal gate proof needs this; do not weaken
+    // existing callers (they default to sending the bearer token).
+    if (this.accessToken && options.skipAuth !== true) {
       headers.set("Authorization", `Bearer ${this.accessToken}`);
     }
     if (options.body !== undefined && !headers.has("Content-Type")) {

@@ -248,7 +248,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     expect(statuses["skill-x"]).toBe("installed");
   });
 
-  it("applies and verifies diagnostic config patch markers", async () => {
+  it("Phase 14.5B module_28b: apply_config_patch is fail-closed when no real patch payload is provided", async () => {
     const support = createFridayHubAutoFixExecutionSupport({
       registry: makeRegistry(true),
       memoryState: createStubMemoryState(),
@@ -258,7 +258,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       stepId: "config-step-001",
       kind: "apply_config_patch" as const,
       target: "config",
-      payload: { incidentId: "inc-config" },
+      payload: { incidentId: "inc-config" } as Record<string, unknown>,
       verify: { method: "config_reload_valid" as const, timeoutMs: 5000 },
     };
     const rollbackStep = {
@@ -268,8 +268,17 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       payload: { incidentId: "inc-config", revert: true },
     };
 
-    await expect(support.stepExecutors.apply_config_patch?.(step)).resolves.toBe(true);
-    await expect(support.stepVerifiers.apply_config_patch?.(step)).resolves.toBe(true);
+    // Forward step without a real patch returns false (no diagnostic_marker
+    // shortcut) and the verifier refuses the diagnostic-only payload.
+    await expect(support.stepExecutors.apply_config_patch?.(step)).resolves.toBe(false);
+    expect(step.payload._configPatchApplied).toBe(false);
+    expect(step.payload._configPatchMode).toBe("diagnostic_only");
+    expect(step.payload._configPatchRevision).toBeUndefined();
+    await expect(support.stepVerifiers.apply_config_patch?.(step)).resolves.toBe(false);
+
+    // Revert without configManager still records the rollback marker, since
+    // the original rollback path is unchanged outside the forward fail-closed
+    // boundary.
     await expect(support.stepExecutors.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
     await expect(support.stepVerifiers.apply_config_patch?.(rollbackStep)).resolves.toBe(true);
   });

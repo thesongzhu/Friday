@@ -12,6 +12,7 @@ import type { FridayAgentCapabilitiesSnapshot } from "../../agent/tools/friday-a
 import type { FridayAgentTaskStatusSnapshot } from "../../agent/tools/friday-agent-task-status-tool.js";
 import { formatFridayDaemonStatus } from "../../daemon/friday-daemon-runtime.js";
 import type { FridayDaemonStatus } from "../../daemon/friday-daemon.types.js";
+import type { FridaySelfHealingApiService } from "#learning";
 import type { FridaySetupRecipe, FridaySetupRecipeRegistry } from "../../setup/friday-setup.types.js";
 import type { FridayWorkflowApprovalService } from "../../workflows/services/friday-workflow-approval-service.types.js";
 import type { FridayWorkflowExecutionService, FridayWorkflowRunEntity } from "#workflows";
@@ -49,6 +50,13 @@ export interface FridayDeterministicDispatchDeps {
   readonly approvalService?: FridayWorkflowApprovalService;
   readonly workflowExecutionService?: FridayWorkflowExecutionService;
   readonly setupRecipeRegistry?: Pick<FridaySetupRecipeRegistry, "getByTarget">;
+  /**
+   * Phase 14.5B module_28b: read-only listing of planned auto-fix actions
+   * for the canonical "repair" / "修复" / "recover" channel preview. The
+   * preview path NEVER calls execute/runReady/approve — it only surfaces
+   * what a bound owner principal could execute via /v1/auto-fix/*.
+   */
+  readonly selfHealingService?: Pick<FridaySelfHealingApiService, "listActions">;
 }
 
 export interface DispatchDeterministicInput {
@@ -95,6 +103,9 @@ export async function dispatchDeterministic(
 
     case "unsafe_automation_boundary":
       return handleUnsafeAutomationBoundary(input);
+
+    case "repair_preview":
+      return handleRepairPreview(input, deps);
 
     default:
       return { handled: false };
@@ -289,6 +300,71 @@ async function handleLastUserMessage(
       ? `你上次问的是：${content}`
       : `You last wrote: ${content}`,
   };
+}
+
+function handleRepairPreview(
+  input: DispatchDeterministicInput,
+  deps: FridayDeterministicDispatchDeps,
+): FridayDeterministicDispatchResult {
+  const isChinese = containsChinese(input.task ?? "");
+  if (!deps.selfHealingService) {
+    return { handled: false };
+  }
+
+  // Phase 14.5B module_28b: even the preview must come from a bound session
+  // actor. Surfacing planned-repair details to anonymous public callers
+  // would leak session-specific incident context. Execution itself remains
+  // gated by the bound-principal route gate on /v1/auto-fix/*.
+  let userId: string;
+  try {
+    userId = assertBoundActorForSessionOperation(input.actorId, "autofix.actions.preview");
+  } catch (err) {
+    if (err instanceof FridayDomainError) {
+      return {
+        handled: true,
+        response: isChinese
+          ? "需要登录的所有者/会话凭据才能查看可执行的修复计划。"
+          : "Conversational repair preview requires a bound owner/session/channel actor.",
+      };
+    }
+    throw err;
+  }
+
+  const planned = deps.selfHealingService.listActions({
+    userId,
+    status: "planned",
+    limit: 5,
+  });
+
+  if (planned.length === 0) {
+    return {
+      handled: true,
+      response: isChinese
+        ? "当前没有待执行的修复操作。"
+        : "No planned repair actions are queued for this account.",
+    };
+  }
+
+  const header = isChinese
+    ? `当前有 ${String(planned.length)} 个待执行的修复，仅显示预览，不会自动执行：`
+    : `${String(planned.length)} planned repair action(s). Preview only — execution requires a bound owner/session/channel principal:`;
+  const footer = isChinese
+    ? "如需执行，请在 Assistant 中以已登录所有者身份批准或执行（POST /v1/auto-fix/actions/:id/approve 或 /execute）。"
+    : "To execute, sign in to Assistant and approve via /v1/auto-fix/actions/:id/{approve,execute} with a bound owner principal.";
+
+  const lines: string[] = [header];
+  for (const item of planned) {
+    const tier = String(item.action.riskTier);
+    const title = item.action.plan.title;
+    lines.push(
+      isChinese
+        ? `  - ${item.action.actionId}（tier ${tier}）：${title}`
+        : `  - ${item.action.actionId} (tier ${tier}): ${title}`,
+    );
+  }
+  lines.push(footer);
+
+  return { handled: true, response: lines.join("\n") };
 }
 
 function handleUnsafeAutomationBoundary(

@@ -13,6 +13,17 @@ export type FridayAutoFixRiskTier = 0 | 1 | 2;
 export type FridayAutoFixActionStatus = "planned" | "applied" | "rolled_back" | "rejected";
 export type FridayAutoFixOutcome = "success" | "failed" | null;
 export type FridayApprovalRequestStatus = "pending" | "approved" | "rejected" | "expired";
+/**
+ * Phase 14.5B module_28b: repair-outcome classification carried in receipts
+ * so the action status string cannot overclaim verified repair when only a
+ * diagnostic completed. Derived deterministically from step payload markers
+ * by `FridaySelfHealingApiService.buildActionDetails`.
+ */
+export type FridayAutoFixRepairOutcome =
+  | "diagnostic_only"
+  | "verified_repair"
+  | "rolled_back"
+  | "failed";
 export type FridayAutoFixFeedbackReasonCode =
   | "wrong_root_cause"
   | "too_risky"
