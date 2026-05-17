@@ -24,7 +24,7 @@ export interface CloudWorkerCatalog {
   providers: CloudWorkerProvider[];
   dnsProviders: CloudWorkerDnsProvider[];
   hostedDataPolicy: "user_owned_cloud_only";
-  secretsCustodyPolicy: "no_friday_custody";
+  secretsCustodyPolicy: "no_friday_custody"; // pragma: allowlist secret
   liveCertificationProofTier: "blocked_by_env";
   liveCertificationBlockReason: string;
 }
