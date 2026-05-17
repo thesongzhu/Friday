@@ -46,6 +46,7 @@ const StudioPage = lazy(async () => import("@/routes/studio-page").then((module)
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 const TaskWorkflowsPage = lazy(async () => import("@/routes/task-workflows-page").then((module) => ({ default: module.TaskWorkflowsPage })));
+const CloudWorkersPage = lazy(async () => import("@/routes/cloud-workers-page").then((module) => ({ default: module.CloudWorkersPage })));
 
 /**
  * Router-level loading splash. Resolves `LocalizedText` into the active locale
@@ -474,6 +475,17 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载设备集群", "Loading fleet")} detail={localizedText("Friday 正在准备集群管理面板。", "Friday is preparing the fleet control plane.")}>
                 <FleetPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "cloud-workers",
+            element: (
+              <RouteSuspense
+                title={localizedText("加载云端 Worker", "Loading cloud workers")}
+                detail={localizedText("Friday 正在准备用户自有云 Worker 设置 UX。", "Friday is preparing the user-owned cloud worker setup UX.")}
+              >
+                <CloudWorkersPage />
               </RouteSuspense>
             ),
           },

@@ -23,6 +23,7 @@ describe("agent os navigation", () => {
       "/reflex",
       "/mcp",
       "/fleet",
+      "/cloud-workers",
       "/observability",
       "/command-center",
       "/usage",
@@ -45,6 +46,7 @@ describe("agent os navigation", () => {
     expect(resolvePageTitle("/skills")).toEqual({ zh: "能力包", en: "Skills" });
     expect(resolvePageTitle("/workflows/123")).toEqual({ zh: "自动化", en: "Workflows" });
     expect(resolvePageTitle("/fleet")).toEqual({ zh: "执行节点", en: "Fleet" });
+    expect(resolvePageTitle("/cloud-workers")).toEqual({ zh: "云端 Worker", en: "Cloud Workers" });
     expect(resolvePageTitle("/automations")).toEqual({ zh: "任务队列", en: "Task Queue" });
     expect(resolvePageTitle("/memory")).toEqual({ zh: "记忆", en: "Memory" });
     expect(resolvePageTitle("/reflex")).toEqual({ zh: "成长中心", en: "Reflex" });

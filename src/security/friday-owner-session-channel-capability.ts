@@ -34,7 +34,11 @@ export type FridayPublicMutationOperation =
   | "autofix.actions.deny"
   | "autofix.actions.execute"
   | "autofix.actions.rollback"
-  | "autofix.actions.preview";
+  | "autofix.actions.preview"
+  // Phase 17A — user-owned cloud worker setup UX bound-principal ops.
+  | "cloud.worker.dns.validate"
+  | "cloud.worker.package.generate"
+  | "cloud.worker.teardown.receipt";
 
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
 

@@ -115,6 +115,8 @@ import { createFridaySatellitePairingRoutes } from "../http/routes/friday-satell
 import { createFridaySatelliteRuntimeRoutes } from "../http/routes/friday-satellite-runtime-routes.js";
 import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-webhook-routes.js";
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
+import { createFridayCloudWorkerSetupRoutes } from "../http/routes/friday-cloud-worker-setup-routes.js";
+import { createFridayCloudWorkerSetupService } from "#cloud-workers";
 import { createFridayStudioService } from "../../studio/index.js";
 import {
   createFridayMutatingActionDigest,
@@ -2492,6 +2494,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register packaging routes with stable disabled semantics when packaging is absent.
   for (const route of createFridayPackagingRoutes(deps.packaging)) {
     routes.register(route);
+  }
+
+  // Phase 17A: user-owned cloud worker setup UX routes. Always registered;
+  // 17B live cloud certification stays blocked_by_env and surfaces that
+  // honestly through the catalog rather than being treated as a pass.
+  const cloudWorkerSetupService = createFridayCloudWorkerSetupService({
+    nowIso: deps.nowIso,
+  });
+  for (const route of createFridayCloudWorkerSetupRoutes({
+    setupService: cloudWorkerSetupService,
+  })) {
+    routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
 
   const studioService = createFridayStudioService({

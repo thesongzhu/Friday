@@ -25,6 +25,7 @@ const pathAliases = {
   "#browser": resolve(__dirname, "src/browser/index.ts"),
   "#channels": resolve(__dirname, "src/channels/index.ts"),
   "#cli": resolve(__dirname, "src/cli/index.ts"),
+  "#cloud-workers": resolve(__dirname, "src/cloud-workers/index.ts"),
   "#xhs": resolve(__dirname, "src/xhs/index.ts"),
   "#rules": resolve(__dirname, "src/rules/index.ts"),
   "#node-runner": resolve(__dirname, "src/node-runner/index.ts"),

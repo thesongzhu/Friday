@@ -2867,6 +2867,46 @@ export function SetupPage() {
           className="mt-8 w-full max-w-3xl text-left"
         />
 
+        {/* Phase 17A — optional advanced entrypoint: user-owned cloud worker setup.
+            17A surfaces fixture-only proof. 17B live cloud certification is
+            blocked_by_env until protected GitHub environments, dedicated DNS,
+            and budget/teardown controls are configured. Friday does not host
+            user data; ordinary users never paste FRIDAY_MASTER_KEY or
+            FRIDAY_TOKEN_SECRET; HTTPS is required and only dedicated
+            subdomains are accepted. */}
+        <section
+          data-testid="setup-cloud-worker-advanced"
+          className="mt-8 w-full max-w-3xl rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 text-left"
+        >
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+            {localize(locale, "可选 · 高级", "Optional · Advanced")}
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-[color:var(--color-text-primary)]">
+            {localize(locale, "部署你自己的云端 Worker", "Deploy your own cloud worker")}
+          </h2>
+          <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">
+            {localize(
+              locale,
+              "Friday 不托管用户数据，也不接收长期凭证。云端 Worker 部署在你自己的云上，使用 HTTPS、专用子域、Owner 配对和体检/拆机回执；FRIDAY_MASTER_KEY 与 FRIDAY_TOKEN_SECRET 是内部 runtime 秘钥，普通用户无需手动填写。",
+              "Friday does not host user data and never receives long-lived credentials. The cloud worker runs in your own cloud over HTTPS on a dedicated subdomain, with owner pairing and doctor/teardown receipts. FRIDAY_MASTER_KEY and FRIDAY_TOKEN_SECRET are internal runtime secrets; ordinary users do not paste them.",
+            )}
+          </p>
+          <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
+            {localize(
+              locale,
+              "17A 为 fixture 证明；17B 阿里云 ECS / 腾讯云 CVM / 火山云 ECS 实证目前为 blocked_by_env。",
+              "17A is fixture proof; 17B Alibaba ECS / Tencent CVM / Volcengine ECS live certification is currently blocked_by_env.",
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate("/cloud-workers")}
+            className="mt-4 inline-flex items-center rounded-full border border-[color:var(--color-accent)] px-5 py-2 text-sm font-semibold text-[color:var(--color-accent)] transition hover:bg-[color:var(--color-accent-soft)]"
+          >
+            {localize(locale, "前往云端 Worker 设置", "Open cloud worker setup")}
+          </button>
+        </section>
+
         <button
           type="button"
           onClick={() => completeSetupMutation.mutate()}

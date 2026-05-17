@@ -87,6 +87,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看执行节点、队列影响和恢复动作。", "Inspect execution nodes, queue impact, and recovery actions."),
   },
   {
+    label: localizedText("云端 Worker", "Cloud Workers"),
+    path: "/cloud-workers",
+    description: localizedText("用户自有云 Worker 的设置目录、部署包、DNS 校验、体检和拆机回执（17A fixture，17B blocked_by_env）。", "User-owned cloud worker setup catalog, deployment package, DNS validation, doctor, and teardown receipts (17A fixture, 17B blocked_by_env)."),
+  },
+  {
     label: localizedText("可观测性", "Observability"),
     path: "/observability",
     description: localizedText("查看运行事件、告警、审计和恢复证据。", "Review runtime events, alerts, audit trails, and recovery evidence."),
@@ -145,6 +150,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/fleet")) {
     return localizedText("执行节点", "Fleet");
+  }
+  if (pathname.startsWith("/cloud-workers")) {
+    return localizedText("云端 Worker", "Cloud Workers");
   }
   if (pathname.startsWith("/automations")) {
     return localizedText("任务队列", "Task Queue");
