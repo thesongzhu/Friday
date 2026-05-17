@@ -46,7 +46,7 @@ export interface FridayCloudWorkerCatalog {
   readonly providers: ReadonlyArray<FridayCloudWorkerProvider>;
   readonly dnsProviders: ReadonlyArray<FridayCloudWorkerDnsProvider>;
   readonly hostedDataPolicy: "user_owned_cloud_only";
-  readonly secretsCustodyPolicy: "no_friday_custody";
+  readonly secretsCustodyPolicy: "no_friday_custody"; // pragma: allowlist secret
   readonly liveCertificationProofTier: "blocked_by_env";
   readonly liveCertificationBlockReason: string;
 }
