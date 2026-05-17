@@ -70,6 +70,14 @@ describe("FridayAutoFixExecutionService", () => {
         if (timestampMarker) {
           payload[timestampMarker] = NOW;
         }
+        // Phase 14.5B module_28b: the default verifier for apply_config_patch
+        // now requires a real config revision returned by configManager. The
+        // parameterized marker test simulates a verified repair by recording
+        // a deterministic non-zero revision; the real hub executor sets the
+        // same field from configManager.applyPatch.
+        if (kind === "apply_config_patch") {
+          payload._configPatchRevision = 1;
+        }
       }
       return true;
     };
@@ -419,6 +427,115 @@ describe("FridayAutoFixExecutionService", () => {
     expect(result.success).toBe(false);
     expect(result.errorMessage).toContain("has no executor");
     expect(result.action.status).toBe("applied");
+    expect(result.action.outcome).toBe("failed");
+  });
+
+  it("Phase 14.5B module_28b: default apply_config_patch verifier rejects diagnostic-only payloads without _configPatchRevision", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    incidentRepo.insert(db.writer, {
+      incidentId: "inc-no-revision",
+      userId: "test-user",
+      ts: NOW,
+      category: "config",
+      severity: "medium",
+      signature: "sig-no-revision",
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    diagnosisRepo.insert(db.writer, {
+      id: "diag-no-revision",
+      incidentId: "inc-no-revision",
+      errorFingerprint: "sig-no-revision",
+      confidence: 0.8,
+      diagnosis: { summary: "test" },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const plan: FridayAutoFixPlan = {
+      title: "Auto-fix: config patch",
+      summary: "Patch config",
+      steps: [
+        {
+          stepId: "step-no-revision",
+          kind: "apply_config_patch",
+          target: "runtime-config",
+          payload: { key: "value" },
+          verify: { method: "config_reload_valid", timeoutMs: 5000 },
+        },
+      ],
+      rollbackPlan: {
+        summary: "Rollback config patch",
+        steps: [
+          {
+            stepId: "rollback-no-revision",
+            kind: "apply_config_patch",
+            target: "runtime-config",
+            payload: { revert: true },
+          },
+        ],
+      },
+      evidence: {
+        fingerprint: "sig-no-revision",
+        matchedLessonIds: [],
+        diagnosisId: "diag-no-revision",
+        recurrenceCount: 1,
+      },
+    };
+    actionRepo.insert(db.writer, {
+      actionId: "action-no-revision",
+      incidentId: "inc-no-revision",
+      userId: "test-user",
+      riskTier: 1,
+      plan,
+      rollbackPlan: plan.rollbackPlan,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    // Inject an executor that sets _configPatchApplied=true but NO revision,
+    // mirroring the prior diagnostic_marker shortcut. The default verifier
+    // must refuse this payload so the action cannot finalize as a verified
+    // repair.
+    const executionService = createFridayAutoFixExecutionService({
+      db,
+      actionRepo,
+      incidentRepo,
+      diagnosisRepo,
+      rollbackService: createFridayAutoFixRollbackService({
+        db,
+        actionRepo,
+        nowIso: () => NOW,
+        stepExecutors: {
+          apply_config_patch: async (step) => {
+            const payload = step.payload as Record<string, unknown>;
+            payload._configPatchRolledBack = true;
+            return true;
+          },
+        },
+      }),
+      nowIso: () => NOW,
+      stepExecutors: {
+        apply_config_patch: async (step) => {
+          const payload = step.payload as Record<string, unknown>;
+          payload._configPatchApplied = true;
+          payload._configPatchMode = "diagnostic_only";
+          return true;
+        },
+      },
+    });
+
+    const result = await executionService.execute("action-no-revision");
+
+    expect(result.verificationPassed).toBe(false);
+    expect(result.rollbackAttempted).toBe(true);
+    expect(result.action.status).toBe("rolled_back");
     expect(result.action.outcome).toBe("failed");
   });
 

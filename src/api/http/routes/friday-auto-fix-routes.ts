@@ -10,6 +10,7 @@ import type {
   FridayGetAutoFixActionResponse,
   FridayListAutoFixActionsResponse,
 } from "../../model/friday-api-self-healing.types.js";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import { toFridayFixPlanRecord } from "./friday-self-healing-route-mappers.js";
 
 export interface FridayAutoFixRoutesDeps {
@@ -149,6 +150,10 @@ export function createFridayAutoFixRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixRunReadyResponse> {
+        // Phase 14.5B module_28b: refuse synthetic public principal and null
+        // principal. One-click self-repair cannot fire from a channel/API
+        // message that lacks a bound owner/session/channel principal.
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.run.ready", "api");
         const userId = requireUserId(ctx.principal);
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const run = await deps.service.runReadyActions({
@@ -191,6 +196,9 @@ export function createFridayAutoFixRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixApprovalResponse> {
+        // Phase 14.5B module_28b: approval boundary must carry a bound owner
+        // principal; the synthetic public principal cannot approve a repair.
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.approve", "api");
         const respondedBy = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.approveAction({
@@ -211,6 +219,9 @@ export function createFridayAutoFixRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixApprovalResponse> {
+        // Phase 14.5B module_28b: denial carries learning signals so it must
+        // also be authored by a bound owner/session/channel principal.
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.deny", "api");
         const respondedBy = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.denyAction({
@@ -235,6 +246,10 @@ export function createFridayAutoFixRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixExecutionResponse> {
+        // Phase 14.5B module_28b: execute mutates runtime/config — the
+        // synthetic public principal must be refused even though it carries
+        // hub.admin scope for read-only routes.
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.execute", "api");
         requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.executeAction({ actionId });
@@ -257,6 +272,9 @@ export function createFridayAutoFixRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayAutoFixExecutionResponse> {
+        // Phase 14.5B module_28b: rollback also mutates runtime state, so
+        // the same bound-principal gate applies as execute.
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.rollback", "api");
         requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const reason = readReason(ctx.body);

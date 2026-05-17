@@ -7,6 +7,8 @@ const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3");
 
 const DEFAULT_TIMEOUT_MS = 4_000;
+const DEFAULT_TOTAL_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_ITERATIONS = 1;
 const DEFAULT_TARGETS = [
   "http://127.0.0.1:3141",
   "http://127.0.0.1:5173",
@@ -16,10 +18,51 @@ const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
   ?? process.env.FRIDAY_LOCAL_PASSPHRASE
   ?? "friday-runtime-doctor-passphrase-123";
 
-function parseArgs(argv) {
+// Phase 14.5B module_28b: deny-list for the JSON report. Any field whose
+// key matches one of these patterns is redacted before output so that the
+// doctor never emits secrets even when the user runs `--report-json` and
+// pipes the result to a file. Match is case-insensitive substring against
+// the lowercased key.
+const SECRET_KEY_PATTERNS = [
+  /token.*secret/,
+  /\baccess[_-]?token\b/,
+  /\bbearer\b/,
+  /local[_-]?passphrase/,
+  /\bsessiontoken\b/,
+  /\bauthorization\b/,
+  /\bsecret\b/,
+  /\bpassword\b/,
+  /\bcookie\b/,
+];
+
+export function redactSecretsFromValue(value, seen = new WeakSet()) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  if (seen.has(value)) return Array.isArray(value) ? [] : {};
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSecretsFromValue(entry, seen));
+  }
+  const result = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const lc = key.toLowerCase();
+    if (SECRET_KEY_PATTERNS.some((pattern) => pattern.test(lc))) {
+      result[key] = "[REDACTED]";
+      continue;
+    }
+    result[key] = redactSecretsFromValue(raw, seen);
+  }
+  return result;
+}
+
+export function parseArgs(argv) {
   const ports = [];
   const urls = [];
   let timeoutMs = DEFAULT_TIMEOUT_MS;
+  let totalTimeoutMs = DEFAULT_TOTAL_TIMEOUT_MS;
+  let maxIterations = DEFAULT_MAX_ITERATIONS;
+  let reportJson = false;
+  let applyLowRisk = false;
 
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -39,10 +82,41 @@ function parseArgs(argv) {
         timeoutMs = parsed;
       }
       i += 1;
+      continue;
+    }
+    if (arg === "--total-timeout-ms" && argv[i + 1]) {
+      const parsed = Number.parseInt(String(argv[i + 1]), 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        totalTimeoutMs = parsed;
+      }
+      i += 1;
+      continue;
+    }
+    if (arg === "--max-iterations" && argv[i + 1]) {
+      const parsed = Number.parseInt(String(argv[i + 1]), 10);
+      if (Number.isFinite(parsed)) {
+        if (parsed < 1) {
+          maxIterations = 1;
+        } else if (parsed > 10) {
+          maxIterations = 10;
+        } else {
+          maxIterations = parsed;
+        }
+      }
+      i += 1;
+      continue;
+    }
+    if (arg === "--report-json") {
+      reportJson = true;
+      continue;
+    }
+    if (arg === "--apply-low-risk") {
+      applyLowRisk = true;
+      continue;
     }
   }
 
-  return { ports, urls, timeoutMs };
+  return { ports, urls, timeoutMs, totalTimeoutMs, maxIterations, reportJson, applyLowRisk };
 }
 
 function resolveStateDir() {
@@ -203,7 +277,7 @@ function isFridayHealth(result) {
   return isFridayEnvelope(result) && result.json.ok === true && result.json.data?.status === "ok";
 }
 
-function classifyTarget(report) {
+export function classifyTarget(report) {
   const root = report.root;
   const health = report.health;
   const bootstrap = report.bootstrap;
@@ -311,7 +385,7 @@ function formatResultLine(label, result) {
   return `- ${label}: ${result.status} ${result.kind || "unknown"}${suffix}`;
 }
 
-async function inspectTarget(baseUrl, timeoutMs) {
+export async function inspectTarget(baseUrl, timeoutMs) {
   const root = await request(baseUrl, "/", {}, timeoutMs);
   const health = await request(baseUrl, "/v1/health", {}, timeoutMs);
   const bootstrap = await request(baseUrl, "/v1/auth/bootstrap/status", {}, timeoutMs);
@@ -407,29 +481,152 @@ function printTargetReport(report) {
   console.log("");
 }
 
+function describeLowRiskRecoveryCandidate(report) {
+  if (report.classification === "api_only_or_missing_ui") {
+    return {
+      kind: "set_env_and_restart",
+      setEnv: { FRIDAY_UI_DIST_DIR: "<repository>/dist/ui" },
+      restart: { command: "npm run build && npm start", baseUrl: report.baseUrl },
+    };
+  }
+  if (report.classification === "ui_without_api_mount") {
+    return {
+      kind: "open_canonical_port",
+      openUrl: "http://127.0.0.1:3141/",
+    };
+  }
+  if (report.classification === "integrated_but_auth_requires_credentials") {
+    return {
+      kind: "use_normal_login",
+      hint: "Use Assistant login or set FRIDAY_LOCAL_PASSPHRASE to enable local-mode bypass for development only.",
+    };
+  }
+  if (report.classification === "integrated_ui_and_api") {
+    return { kind: "none" };
+  }
+  return { kind: "manual_review_required" };
+}
+
+function selectPreferredReport(reports) {
+  return (
+    reports.find((report) => report.classification === "integrated_ui_and_api")
+    ?? reports.find((report) => report.classification === "api_auth_boundary_healthy")
+    ?? reports.find((report) => report.classification === "integrated_but_auth_requires_credentials")
+    ?? reports.find((report) => report.classification === "api_only_or_missing_ui")
+    ?? reports.find((report) => report.classification === "ui_without_api_mount")
+    ?? null
+  );
+}
+
+export function buildJsonReport({ reports, args, setupBinding, status, wallClockMs }) {
+  const preferred = selectPreferredReport(reports);
+  // Phase 14.5B module_28b: --apply-low-risk reports candidates only. It
+  // MUST NOT call /v1/auto-fix/* or mutate the filesystem/config. The
+  // returned `wouldApply` describes what an operator could choose to do
+  // outside this script.
+  const wouldApply = args.applyLowRisk && preferred
+    ? describeLowRiskRecoveryCandidate(preferred)
+    : { kind: "none" };
+
+  const payload = {
+    schemaVersion: "1.0",
+    status,
+    wallClockMs,
+    maxIterations: args.maxIterations,
+    totalTimeoutMs: args.totalTimeoutMs,
+    perCallTimeoutMs: args.timeoutMs,
+    autoFixHttpCallsMade: false,
+    setupBinding: setupBinding
+      ? { host: setupBinding.host, port: setupBinding.port, baseUrl: setupBinding.baseUrl }
+      : null,
+    targets: reports.map((report) => ({
+      baseUrl: report.baseUrl,
+      classification: report.classification,
+      facts: report.facts,
+      recommendations: report.recommendations,
+      endpointStatuses: {
+        root: report.root.ok ? { status: report.root.status, kind: report.root.kind } : { error: report.root.error },
+        health: report.health.ok ? { status: report.health.status, kind: report.health.kind } : { error: report.health.error },
+        bootstrap: report.bootstrap.ok ? { status: report.bootstrap.status, kind: report.bootstrap.kind } : { error: report.bootstrap.error },
+        setupNoAuth: report.setupNoAuth.ok ? { status: report.setupNoAuth.status, kind: report.setupNoAuth.kind } : { error: report.setupNoAuth.error },
+        loginAttempted: report.login.ok,
+        setupWithTokenAttempted: report.setupWithToken && report.setupWithToken.ok === true,
+      },
+    })),
+    preferredEntrypoint: preferred?.baseUrl ?? null,
+    wouldApply,
+  };
+  return redactSecretsFromValue(payload);
+}
+
+export async function runDoctor({ args, now = () => Date.now() }) {
+  const { setupBinding, targets } = buildTargets(args);
+  const reports = [];
+  const start = now();
+  let status = "ok";
+
+  for (let iteration = 0; iteration < args.maxIterations; iteration += 1) {
+    for (const target of targets) {
+      const elapsed = now() - start;
+      if (elapsed >= args.totalTimeoutMs) {
+        status = "timeout_exceeded";
+        return { reports, setupBinding, status, wallClockMs: elapsed };
+      }
+      reports.push(await inspectTarget(target, args.timeoutMs));
+    }
+    // Targets are deterministic and reachable state is captured per call.
+    // Re-scanning beyond the first iteration is useful only if the operator
+    // explicitly asked for it via --max-iterations.
+    if (args.maxIterations <= 1) break;
+  }
+
+  return { reports, setupBinding, status, wallClockMs: now() - start };
+}
+
 async function main() {
   const args = parseArgs(process.argv);
-  const { setupBinding, targets } = buildTargets(args);
+  const result = await runDoctor({ args });
+  const { reports, setupBinding, status, wallClockMs } = result;
+
+  if (args.reportJson) {
+    const payload = buildJsonReport({ reports, args, setupBinding, status, wallClockMs });
+    process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+    if (status === "timeout_exceeded") {
+      process.exitCode = 1;
+      return;
+    }
+    if (payload.preferredEntrypoint) {
+      process.exitCode = 0;
+      return;
+    }
+    process.exitCode = 1;
+    return;
+  }
 
   printHeader(setupBinding);
   console.log("Scanning targets:");
-  for (const target of targets) {
+  for (const target of reports.map((report) => report.baseUrl)) {
     console.log(`- ${target}`);
   }
   console.log("");
-
-  const reports = [];
-  for (const target of targets) {
-    reports.push(await inspectTarget(target, args.timeoutMs));
-  }
 
   for (const report of reports) {
     printTargetReport(report);
   }
 
+  if (status === "timeout_exceeded") {
+    console.log(`Wall-clock timeout exceeded after ${String(wallClockMs)}ms (limit ${String(args.totalTimeoutMs)}ms).`);
+    process.exitCode = 1;
+    return;
+  }
+
   const integrated = reports.find((report) => report.classification === "integrated_ui_and_api");
   if (integrated) {
     console.log(`Preferred local entrypoint: ${integrated.baseUrl}/`);
+    if (args.applyLowRisk) {
+      const candidate = describeLowRiskRecoveryCandidate(integrated);
+      console.log(`Low-risk recovery candidate: ${candidate.kind} (auto-fix HTTP routes NOT called by this script)`);
+    }
     process.exitCode = 0;
     return;
   }
@@ -437,6 +634,10 @@ async function main() {
   const apiOnly = reports.find((report) => report.classification === "api_only_or_missing_ui");
   if (apiOnly) {
     console.log(`Most likely repair target: ${apiOnly.baseUrl}`);
+    if (args.applyLowRisk) {
+      const candidate = describeLowRiskRecoveryCandidate(apiOnly);
+      console.log(`Low-risk recovery candidate: ${JSON.stringify(candidate)} (no auto-fix HTTP call; no filesystem write)`);
+    }
     process.exitCode = 1;
     return;
   }
@@ -445,4 +646,20 @@ async function main() {
   process.exitCode = 1;
 }
 
-void main();
+// Phase 14.5B module_28b: the script remains a CLI by default, but its
+// helper functions are exported so tests can exercise the JSON shape, the
+// no-secret redaction, the timeout cap, and the no-HTTP-call-out behavior
+// under --apply-low-risk without spawning a subprocess.
+const isDirectEntry = (() => {
+  try {
+    const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : "";
+    const here = path.resolve(new URL(import.meta.url).pathname);
+    return argv1 === here;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectEntry) {
+  void main();
+}

@@ -108,7 +108,13 @@ export const DEFAULT_VERIFIERS: Record<FridayAutoFixStepKind, StepVerifier> = {
   apply_config_patch: (step) => {
     if (!hasVerifySpec(step)) return true;
     const payload = step.payload as Record<string, unknown> | null;
-    return payload != null && payload._configPatchApplied === true;
+    // Phase 14.5B module_28b: require a real config revision from
+    // configManager.applyPatch — _configPatchApplied alone (the prior
+    // diagnostic_marker path) is not a verified repair.
+    return payload != null &&
+      payload._configPatchApplied === true &&
+      typeof payload._configPatchRevision === "number" &&
+      Number.isFinite(payload._configPatchRevision);
   },
   grant_permission: (step) => {
     if (!hasVerifySpec(step)) return true;

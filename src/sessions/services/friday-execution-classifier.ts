@@ -70,6 +70,11 @@ const LAST_USER_MESSAGE_QUERY =
 const CHINESE_LAST_USER_MESSAGE_QUERY =
   /(?:还记得)?我(?:上次|刚才|上一条|前一条|最后)(?:最后)?(?:写|说|问|发)(?:的)?(?:是|了)?(?:什么|啥)|我上次最后写的是什么/u;
 
+const REPAIR_PREVIEW_REQUEST =
+  /^\s*(?:repair|recover)(?:\s+friday)?\s*[.!?]?\s*$/i;
+const CHINESE_REPAIR_PREVIEW_REQUEST =
+  /^\s*(?:修复|恢复)(?:\s*friday|\s*系统)?\s*[。.!?]*\s*$/u;
+
 const UNSAFE_AUTOMATION_EVASION_REQUEST =
   /\b(?:scrap(?:e|ing)|crawl(?:er|ing)?|bot|automation|skill|tool)\b[\s\S]{0,140}\b(?:avoid detection|undetected|not (?:be )?detected|avoid (?:a )?ban|not (?:get )?banned|bypass(?:ing)? (?:anti[- ]?bot|rate limits?|captcha)|evad(?:e|ing))\b/i;
 const UNSAFE_AUTOMATION_EVASION_REQUEST_REVERSE =
@@ -245,6 +250,16 @@ export function classifyFridayExecution(
     || CHINESE_LAST_USER_MESSAGE_QUERY.test(normalized)
   ) {
     return { category: "sync_immediate", handler: "last_user_message" };
+  }
+
+  // 7.5. Phase 14.5B module_28b: canonical "repair" / "修复" / "recover"
+  // command. Returns a preview only — execution must come from a bound
+  // owner principal via /v1/auto-fix/actions/:id/{approve,execute}.
+  if (
+    REPAIR_PREVIEW_REQUEST.test(normalized)
+    || CHINESE_REPAIR_PREVIEW_REQUEST.test(normalized)
+  ) {
+    return { category: "sync_immediate", handler: "repair_preview" };
   }
 
   // 8. Unsafe automation / anti-detection requests

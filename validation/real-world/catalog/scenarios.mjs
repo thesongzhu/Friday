@@ -1319,6 +1319,50 @@ export const REAL_WORLD_SCENARIOS = [
     suites: ["daily", "nightly", "weekly"],
     repeatProfile: { daily: 10, nightly: 10 },
   }),
+  // Phase 14.5B Module 28b — one-click repair / recovery doctor RGG slice.
+  //
+  // Live-HTTP proof that the bound-principal gate refuses the synthetic
+  // public principal on every /v1/auto-fix mutating route. The executor
+  // sends the five POSTs without an Authorization header (skipAuth: true)
+  // so the server resolves to the synthetic public principal and the
+  // real route handler invokes assertBoundPrincipalForOperation. No mocks.
+  //
+  // Honesty note (no proof overclaim): the no-patch apply_config_patch
+  // repaired-claim refusal is proven by the integration acceptance test
+  // `test/e2e/api/friday-api-auto-fix-doctor.acceptance.test.ts` (which
+  // drives the HTTP route + real self-healing/execution service with a
+  // configManager stub that returns a numeric revision only when a real
+  // patch is supplied). The channel/session-text repair preview-only
+  // behavior is proven by the deterministic-dispatch unit test
+  // `test/unit/sessions/friday-deterministic-dispatch.test.ts`. Live
+  // external-channel transcript proof remains forwarded to Phase 14.5E
+  // for configured Discord/Lark/Telegram test spaces only.
+  baseScenario({
+    id: "l6-phase-14-5b-one-click-repair-doctor",
+    layer: "L6",
+    productArea: "self-healing",
+    entrySurface: "/v1/auto-fix/actions/*",
+    routeFamily: "bound-principal gate",
+    providerLane: "none",
+    preconditions: ["auth.ready"],
+    expectedEvidence: [
+      "POST /v1/auto-fix/actions/run-ready refuses the synthetic public principal with HTTP 401 OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "POST /v1/auto-fix/actions/:id/approve refuses the synthetic public principal with HTTP 401 OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "POST /v1/auto-fix/actions/:id/deny refuses the synthetic public principal with HTTP 401 OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "POST /v1/auto-fix/actions/:id/execute refuses the synthetic public principal with HTTP 401 OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "POST /v1/auto-fix/actions/:id/rollback refuses the synthetic public principal with HTTP 401 OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "probes hit live route handlers without an Authorization header (no mocks)",
+      "no-patch apply_config_patch repaired-claim refusal is proven by the acceptance integration test (forwarded — not RGG-scope)",
+      "channel/session-text repair preview-only behavior is proven by the deterministic-dispatch unit test (forwarded — not RGG-scope)",
+      "live external-channel transcript proof remains forwarded to Phase 14.5E for configured channels",
+    ],
+    execution: {
+      kind: "auto_fix_doctor_roundtrip",
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P0",
+    tags: ["phase-14-5b", "module-28b", "bound-principal-gate", "self-healing"],
+  }),
   httpScenario({
     id: "l5-self-healing-actions-readiness",
     layer: "L5",

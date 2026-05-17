@@ -458,6 +458,132 @@ describe("dispatchDeterministic", () => {
     });
   });
 
+  describe("Phase 14.5B module_28b: repair_preview handler", () => {
+    function makePlannedAction(overrides?: Partial<{ actionId: string; title: string; riskTier: 0 | 1 | 2 }>) {
+      const actionId = overrides?.actionId ?? "action-A1";
+      const title = overrides?.title ?? "Retry timed-out workflow node";
+      const riskTier = overrides?.riskTier ?? 1;
+      return {
+        action: {
+          actionId,
+          incidentId: "inc-1",
+          userId: "user-bound-1",
+          riskTier,
+          plan: {
+            title,
+            summary: title,
+            steps: [],
+            evidence: { fingerprint: "fp", matchedLessonIds: [], diagnosisId: "diag", recurrenceCount: 1 },
+          },
+          status: "planned" as const,
+          outcome: null,
+          createdAt: "2026-05-16T00:00:00.000Z",
+          updatedAt: "2026-05-16T00:00:00.000Z",
+        },
+        incident: null,
+        diagnosis: null,
+        approval: null,
+        lesson: null,
+        risk: { riskTier, reasons: [], requiresApproval: false, autoApplyAllowed: true },
+        evidence: {
+          rootCauseSummary: title,
+          selectedPlan: { title, summary: title, stepCount: 0, rollbackPlanAvailable: false },
+          riskTier,
+          executionResult: { status: "planned" as const, outcome: null, repairOutcome: "failed" as const },
+          rollbackResult: { available: false, rollbackAttempted: false, rollbackSucceeded: false },
+          acceptanceResult: { passed: false, reason: "Mitigation has not completed acceptance checks" },
+        },
+      };
+    }
+
+    it("Phase 14.5B module_28b: channel \"repair\" command emits preview and never auto-executes", async () => {
+      const listActions = vi.fn(() => [
+        makePlannedAction({ actionId: "action-A1", title: "Retry timed-out workflow node", riskTier: 0 }),
+        makePlannedAction({ actionId: "action-A2", title: "Apply config patch", riskTier: 1 }),
+      ]);
+      const deps = createMockDeps({
+        selfHealingService: { listActions } as never,
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "repair_preview" },
+          sessionKey: "test",
+          actorId: "user-bound-1",
+          task: "repair",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("2 planned repair action(s)");
+      expect(result.response).toContain("action-A1");
+      expect(result.response).toContain("action-A2");
+      expect(result.response).toContain("Preview only");
+      expect(result.response).toContain("bound owner principal");
+      // Auto-execution surfaces must NEVER be called from the channel preview.
+      expect(listActions).toHaveBeenCalledWith({ userId: "user-bound-1", status: "planned", limit: 5 });
+    });
+
+    it("Phase 14.5B module_28b: channel \"repair\" command refuses synthetic public actor", async () => {
+      const listActions = vi.fn(() => []);
+      const deps = createMockDeps({
+        selfHealingService: { listActions } as never,
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "repair_preview" },
+          sessionKey: "test",
+          actorId: "public:default",
+          task: "repair",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("bound owner/session/channel actor");
+      // The synthetic public actor must not be able to enumerate planned actions.
+      expect(listActions).not.toHaveBeenCalled();
+    });
+
+    it("Phase 14.5B module_28b: Chinese \"修复\" command emits preview without auto-execution", async () => {
+      const listActions = vi.fn(() => []);
+      const deps = createMockDeps({
+        selfHealingService: { listActions } as never,
+      });
+
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "repair_preview" },
+          sessionKey: "test",
+          actorId: "user-bound-1",
+          task: "修复",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.response).toContain("没有待执行的修复");
+      expect(listActions).toHaveBeenCalledWith({ userId: "user-bound-1", status: "planned", limit: 5 });
+    });
+
+    it("Phase 14.5B module_28b: returns not-handled when self-healing service is unavailable", async () => {
+      const deps = createMockDeps();
+      const result = await dispatchDeterministic(
+        {
+          classification: { category: "sync_immediate", handler: "repair_preview" },
+          sessionKey: "test",
+          actorId: "user-bound-1",
+          task: "repair",
+        },
+        deps,
+      );
+
+      expect(result.handled).toBe(false);
+    });
+  });
+
   describe("daemon_status handler", () => {
     it("returns running status when daemon is available", async () => {
       const deps = createMockDeps();

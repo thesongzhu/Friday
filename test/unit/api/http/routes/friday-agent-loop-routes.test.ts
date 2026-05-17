@@ -119,7 +119,7 @@ function makeLoopRunRecord() {
           rollbackPlanAvailable: true,
         },
         riskTier: 2 as const,
-        executionResult: { status: "planned" as const, outcome: null },
+        executionResult: { status: "planned" as const, outcome: null, repairOutcome: "failed" as const },
         rollbackResult: { available: true, rollbackAttempted: false, rollbackSucceeded: false },
         acceptanceResult: { passed: false, reason: "Pending approval" },
       },
