@@ -63,6 +63,13 @@ describe("Phase 17A — cloud worker package generator", () => {
     expect(readme).toMatch(/cloud-vm` satellite/);
   });
 
+  it("README renders the already-normalized HTTPS host exactly once and never doubles the scheme", () => {
+    const bundle = makeService().generate(VALID_INPUT);
+    const readme = bundle.files.find((f) => f.filename === "README.md")!.body;
+    expect(readme).toContain("https://worker.friday-test.example.com");
+    expect(readme).not.toContain("https://https://");
+  });
+
   it("rejects HTTP-only host", () => {
     expect(() => makeService().generate({ ...VALID_INPUT, httpsHost: "http://worker.friday-test.example.com" })).toThrow(/https/i);
   });

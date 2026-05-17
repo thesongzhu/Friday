@@ -163,7 +163,7 @@ function renderReadme(
     "## Safety boundary",
     "",
     "- Friday official infrastructure does not store your data or your cloud credentials.",
-    `- HTTPS is required (\`https://${input.httpsHost}\`). HTTP-only setup is not acceptable Friday proof.`,
+    `- HTTPS is required (\`${input.httpsHost}\`). HTTP-only setup is not acceptable Friday proof.`,
     `- DNS automation is scoped to the dedicated subdomain \`${input.dnsName}\` via \`${input.dnsProviderId}\`.`,
     "- `FRIDAY_MASTER_KEY` and `FRIDAY_TOKEN_SECRET` are internal runtime secrets that bootstrap.sh generates on first boot. Ordinary users do not paste them.",
     "- A one-time `FRIDAY_SETUP_PASSWORD` is generated locally on the worker; only the SHA-256 hash is persisted.",
