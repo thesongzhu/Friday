@@ -49,6 +49,12 @@ describe("friday-provider-cli-backend", () => {
       });
     });
 
+    it("treats 'Not authenticated' as loggedIn=false", () => {
+      expect(parseCodexStatus("Not authenticated. Run `codex login`.", "")).toEqual({
+        loggedIn: false,
+      });
+    });
+
     it("treats 'Login required' as loggedIn=false", () => {
       expect(parseCodexStatus("Login required", "")).toEqual({ loggedIn: false });
     });
