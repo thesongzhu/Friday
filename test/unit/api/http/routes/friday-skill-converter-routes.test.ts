@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { join } from "node:path";
 import { createFridaySkillConverterRoutes } from "#api";
 import { FridayDomainError } from "#errors";
 import type { FridaySkillConverterService } from "#hub";
@@ -14,6 +15,7 @@ import {
 import type { FridayApiImportRequest } from "../../../../../src/api/model/friday-api-skill-converter.types.js";
 
 const NOW = "2026-02-17T10:00:00.000Z";
+const PACK_OUTPUT_DIR = "/tmp/friday-contained-pack-output";
 const PRINCIPAL = {
   principalType: "user" as const,
   principalId: "user-1",
@@ -122,7 +124,7 @@ describe("FridaySkillConverterRoutes", () => {
       nowIso: () => NOW,
       ticketIdGenerator: () => "ticket-1",
     });
-    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR });
     return { routes, converterService };
   }
 
@@ -133,7 +135,7 @@ describe("FridaySkillConverterRoutes", () => {
       ticketIdGenerator: () => "signed-ticket-1",
       approvalSignatureSecret: secret,
     });
-    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR });
     return { routes, converterService };
   }
 
@@ -810,13 +812,16 @@ describe("FridaySkillConverterRoutes", () => {
       ).rejects.toThrow("skillDir is required");
     });
 
-    it("validates missing outputFile", async () => {
-      const { routes } = createRoutes();
+    it("accepts missing outputFile and writes to the contained pack directory", async () => {
+      const { routes, converterService } = createRoutes();
       const route = routes.find((r) => r.operationId === "skills.pack")!;
 
-      await expect(
-        route.handler(makeCtx({ body: { skillDir: "/skills/test" } })),
-      ).rejects.toThrow("outputFile is required");
+      await route.handler(makeCtx({ body: { skillDir: "/skills/test-skill" } }));
+
+      expect(converterService.pack).toHaveBeenCalledWith({
+        skillDir: "/skills/test-skill",
+        outputFile: join(PACK_OUTPUT_DIR, "test-skill.friday.tgz"),
+      });
     });
 
     it("validates empty skillDir", async () => {
@@ -830,6 +835,18 @@ describe("FridaySkillConverterRoutes", () => {
       ).rejects.toThrow("skillDir is required");
     });
 
+    it("rejects caller-selected filesystem paths for API pack output", async () => {
+      const { routes, converterService } = createRoutes();
+      const route = routes.find((r) => r.operationId === "skills.pack")!;
+
+      await expect(
+        route.handler(
+          makeCtx({ body: { skillDir: "/path/to/skill", outputFile: "/tmp/skill.friday.tgz" } }),
+        ),
+      ).rejects.toThrow("outputFile must be a contained filename");
+      expect(converterService.pack).not.toHaveBeenCalled();
+    });
+
     it("calls pack with valid body", async () => {
       const { routes, converterService } = createRoutes();
       const route = routes.find((r) => r.operationId === "skills.pack")!;
@@ -838,14 +855,14 @@ describe("FridaySkillConverterRoutes", () => {
         makeCtx({
           body: {
             skillDir: "/path/to/skill",
-            outputFile: "/tmp/skill.friday.tgz",
+            outputFile: "skill.friday.tgz",
           },
         }),
       ) as { packageFile: string; checksumSha256: string };
 
       expect(converterService.pack).toHaveBeenCalledWith({
         skillDir: "/path/to/skill",
-        outputFile: "/tmp/skill.friday.tgz",
+        outputFile: join(PACK_OUTPUT_DIR, "skill.friday.tgz"),
       });
       expect(result.packageFile).toBe("/tmp/test-skill-1.0.0.friday.tgz");
       expect(result.checksumSha256).toBe("abc123def456");

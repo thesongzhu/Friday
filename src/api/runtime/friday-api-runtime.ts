@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
@@ -2671,6 +2672,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     for (const route of createFridaySkillConverterRoutes({
       converterService: deps.converterService,
       canonicalMutationGate,
+      packOutputDir: join(stateDir, "artifacts", "skill-packs"),
     })) {
       routes.register(route);
     }
