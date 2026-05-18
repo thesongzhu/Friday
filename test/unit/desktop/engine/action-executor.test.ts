@@ -19,6 +19,7 @@ import type {
   FridayDesktopElement,
   FridayDesktopElementSelector,
   FridayDesktopPermission,
+  FridayDesktopPolicy,
 } from "../../../../src/desktop/model/friday-desktop.types.js";
 
 // ─── Fixtures ───
@@ -139,6 +140,32 @@ function makeGuard(): PermissionGuard {
     permissionPromptTimeoutMs: 5000,
     principalId: "user-1",
   });
+}
+
+function makeCriticalClickPolicy(): FridayDesktopPolicy {
+  return {
+    id: "critical-click-policy",
+    name: "Critical click confirmation",
+    enabled: true,
+    priority: 100,
+    rules: [
+      {
+        id: "critical-click-rule",
+        policyId: "critical-click-policy",
+        actionType: "click",
+        appFilter: "*",
+        riskLevel: "critical",
+        decision: "allow",
+        engineDelegate: false,
+        priority: 0,
+        createdAt: NOW,
+      },
+    ],
+    createdBy: "admin",
+    etag: "etag-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
 }
 
 function makeInspector(): ElementInspector {
@@ -391,6 +418,63 @@ describe("ActionExecutor", () => {
   });
 
   describe("pre-execution failure logging", () => {
+    it("returns the critical permission prompt when execution fails closed without a resolver", async () => {
+      guard.loadPolicies([makeCriticalClickPolicy()]);
+
+      const result = await executor.execute(
+        { type: "click" },
+        adapter,
+        guard,
+        inspector,
+        { actionId: "critical-without-resolver" },
+      );
+
+      expect(result.status).toBe("permission_denied_user");
+      expect(result.errorCode).toBe("DESKTOP_PERMISSION_DENIED_USER");
+      expect(result.permissionPrompt).toMatchObject({
+        id: "id-1",
+        actionType: "click",
+        riskLevel: "critical",
+        policyRuleId: "critical-click-rule",
+      });
+      expect(result.permissionDecisionId).toBeUndefined();
+      expect(result.permissionDecision).toBeUndefined();
+    });
+
+    it("returns the critical permission prompt and decision when resolver denies", async () => {
+      const guardWithDenyResolver = createPermissionGuard({
+        generateId: () => `id-${++idCounter}`,
+        nowIso: () => NOW,
+        permissionPromptTimeoutMs: 5000,
+        principalId: "user-1",
+        promptResolver: async () => ({
+          decision: "denied",
+          rationale: "too risky",
+        }),
+      });
+      guardWithDenyResolver.loadPolicies([makeCriticalClickPolicy()]);
+
+      const result = await executor.execute(
+        { type: "click" },
+        adapter,
+        guardWithDenyResolver,
+        inspector,
+        { actionId: "critical-denied" },
+      );
+
+      expect(result.status).toBe("permission_denied_user");
+      expect(result.permissionPrompt?.id).toBe("id-1");
+      expect(result.permissionDecisionId).toBe("id-2");
+      expect(result.permissionDecision).toMatchObject({
+        id: "id-2",
+        promptId: "id-1",
+        decision: "denied",
+        rationale: "too risky",
+      });
+      expect(executor.getActionLog()[0].permissionPrompt?.id).toBe("id-1");
+      expect(executor.getActionLog()[0].permissionDecision?.id).toBe("id-2");
+    });
+
     it("logs failures when permission check throws", async () => {
       const throwingGuard: PermissionGuard = {
         async check(): Promise<any> {

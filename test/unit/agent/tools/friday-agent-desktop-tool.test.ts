@@ -232,6 +232,61 @@ describe("createFridayAgentDesktopTool", () => {
       const call = (sm.executeAction as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(call.modifiers).toEqual(["shift", "alt"]);
     });
+
+    it("returns permission prompt and decision evidence from the agent execute facade", async () => {
+      const sm = createMockSessionManager({
+        executeAction: vi.fn().mockResolvedValue(
+          mockActionResult({
+            status: "permission_denied_user",
+            errorCode: "DESKTOP_PERMISSION_DENIED_USER",
+            errorMessage: "Action denied by user: too risky",
+            matchedPolicyRuleId: "critical-click-rule",
+            permissionPrompt: {
+              id: "prompt-1",
+              actionType: "click",
+              action: { type: "click" },
+              riskLevel: "critical",
+              policyRuleId: "critical-click-rule",
+              reason: "Action 'click' classified as critical risk",
+              timeoutMs: 5000,
+              createdAt: "2026-02-25T10:00:00Z",
+              expiresAt: "2026-02-25T10:00:05Z",
+            },
+            permissionDecisionId: "decision-1",
+            permissionDecision: {
+              id: "decision-1",
+              promptId: "prompt-1",
+              actionType: "click",
+              riskLevel: "critical",
+              decision: "denied",
+              decidedBy: "user-1",
+              rationale: "too risky",
+              createdAt: "2026-02-25T10:00:00Z",
+            },
+          }),
+        ),
+      });
+      const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+      const result = await tool.execute(
+        { action: "execute", actionType: "click", x: 10, y: 20 },
+        signal(),
+      );
+
+      expect(result.isError).toBeUndefined();
+      const data = JSON.parse(result.content);
+      expect(data.status).toBe("permission_denied_user");
+      expect(data.matchedPolicyRuleId).toBe("critical-click-rule");
+      expect(data.permissionPrompt).toMatchObject({
+        id: "prompt-1",
+        riskLevel: "critical",
+      });
+      expect(data.permissionDecisionId).toBe("decision-1");
+      expect(data.permissionDecision).toMatchObject({
+        id: "decision-1",
+        promptId: "prompt-1",
+        decision: "denied",
+      });
+    });
   });
 
   // ─── execute: type ───

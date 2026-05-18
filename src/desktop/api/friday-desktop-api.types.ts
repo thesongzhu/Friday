@@ -153,7 +153,9 @@ export interface FridayDesktopActionResultDto {
   readonly fileData?: string;
   readonly fileListing?: readonly FridayDesktopFileEntryDto[];
   readonly matchedPolicyRuleId?: UUID;
+  readonly permissionPrompt?: FridayDesktopPermissionPromptDto;
   readonly permissionDecisionId?: UUID;
+  readonly permissionDecision?: FridayDesktopPermissionDecisionDto;
   readonly traceId?: string;
   readonly spanId?: string;
   readonly durationMs: number;

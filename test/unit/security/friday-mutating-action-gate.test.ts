@@ -202,6 +202,44 @@ describe("friday mutating action gate", () => {
     });
   });
 
+  it("treats alternate hex casing of the same approval signature as replay", () => {
+    let ticketSeq = 0;
+    const gate = createFridayMutatingActionGate({
+      nowIso: () => NOW,
+      ticketIdGenerator: () => `ticket-${++ticketSeq}`,
+      approvalSignatureSecret: "server-secret", // pragma: allowlist secret
+    });
+    const request = makeRequest({ idempotencyKey: "idem-1" });
+    const digest = createFridayMutatingActionDigest(request);
+    const canonicalApproval = signFridayCanonicalApproval(
+      {
+        decision: "approved",
+        approvalId: "approval-1",
+        decidedByPrincipalId: "user-1",
+        actionDigest: digest,
+        expiresAt: "2026-05-04T13:00:00.000Z",
+      },
+      "server-secret",
+    );
+
+    expect(gate.evaluate({ ...request, canonicalApproval })).toMatchObject({
+      decision: "allow",
+      ticket: expect.objectContaining({ ticketId: "ticket-1" }),
+    });
+
+    expect(gate.evaluate({
+      ...request,
+      canonicalApproval: {
+        ...canonicalApproval,
+        signature: canonicalApproval.signature!.toUpperCase(),
+      },
+    })).toMatchObject({
+      decision: "deny",
+      reason: "canonical_approval_already_used",
+      ticket: undefined,
+    });
+  });
+
   it("denies canonical approvals whose action digest does not match", () => {
     const result = makeGate().evaluate({
       ...makeRequest(),

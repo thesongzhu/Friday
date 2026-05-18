@@ -16,6 +16,7 @@ import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/
 import type { DesktopSessionManager } from "../../desktop/engine/session-manager.js";
 import type {
   FridayDesktopAction,
+  FridayDesktopActionResult,
   FridayDesktopElementSelector,
   FridayDesktopModifierKey,
   FridayDesktopSelectorStrategy,
@@ -62,6 +63,27 @@ const VALID_MODIFIERS = new Set<FridayDesktopModifierKey>([
   "meta",
   "command",
 ]);
+
+function serializeDesktopActionResult(result: FridayDesktopActionResult): Record<string, unknown> {
+  return {
+    actionId: result.id,
+    actionType: result.action.type,
+    status: result.status,
+    durationMs: result.durationMs,
+    errorMessage: result.errorMessage ?? undefined,
+    errorCode: result.errorCode ?? undefined,
+    targetElement: result.targetElement ?? undefined,
+    screenshotBase64: result.screenshotBase64 ?? undefined,
+    elementData: result.elementData ?? undefined,
+    clipboardContent: result.clipboardContent ?? undefined,
+    fileData: result.fileData ?? undefined,
+    fileListing: result.fileListing ?? undefined,
+    matchedPolicyRuleId: result.matchedPolicyRuleId ?? undefined,
+    permissionPrompt: result.permissionPrompt ?? undefined,
+    permissionDecisionId: result.permissionDecisionId ?? undefined,
+    permissionDecision: result.permissionDecision ?? undefined,
+  };
+}
 
 // ─── Factory ───
 
@@ -231,17 +253,7 @@ export function createFridayAgentDesktopTool(
     }
 
     const result = await desktopSessionManager.executeAction(desktopAction);
-    return jsonResult({
-      actionId: result.id,
-      actionType: result.action.type,
-      status: result.status,
-      durationMs: result.durationMs,
-      errorMessage: result.errorMessage ?? undefined,
-      screenshotBase64: result.screenshotBase64 ?? undefined,
-      elementData: result.elementData ?? undefined,
-      clipboardContent: result.clipboardContent ?? undefined,
-      fileData: result.fileData ?? undefined,
-    });
+    return jsonResult(serializeDesktopActionResult(result));
   }
 
   async function handleScreenshot(
@@ -265,10 +277,8 @@ export function createFridayAgentDesktopTool(
     }
 
     return jsonResult({
-      actionId: result.id,
-      status: result.status,
+      ...serializeDesktopActionResult(result),
       screenshotBase64: result.screenshotBase64 ?? null,
-      durationMs: result.durationMs,
     });
   }
 
