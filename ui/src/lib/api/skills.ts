@@ -68,7 +68,7 @@ interface ImportInput {
 
 interface PackInput {
   skillDir: string;
-  outputFile: string;
+  outputFile?: string;
 }
 
 interface SkillCatalogResponse {

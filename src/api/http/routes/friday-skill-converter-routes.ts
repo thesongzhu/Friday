@@ -9,6 +9,7 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "#errors";
+import { basename, isAbsolute, join } from "node:path";
 import {
   createFridaySkillCandidateSourceProvenance,
   createFridaySkillStageMutatingActionRequest,
@@ -219,7 +220,7 @@ function validateImportBody(
 
 function validatePackBody(
   body: unknown,
-): asserts body is { skillDir: string; outputFile: string } {
+): asserts body is { skillDir: string; outputFile?: string } {
   if (body == null || typeof body !== "object") {
     throw new FridayDomainError(
       "VALIDATION_ERROR",
@@ -234,8 +235,8 @@ function validatePackBody(
     errors.push("skillDir is required and must be a non-empty string");
   }
 
-  if (typeof b.outputFile !== "string" || b.outputFile.trim() === "") {
-    errors.push("outputFile is required and must be a non-empty string");
+  if (b.outputFile !== undefined && (typeof b.outputFile !== "string" || b.outputFile.trim() === "")) {
+    errors.push("outputFile must be a non-empty filename when provided");
   }
 
   if (errors.length > 0) {
@@ -247,11 +248,55 @@ function validatePackBody(
   }
 }
 
+const SAFE_PACK_OUTPUT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function derivePackOutputName(skillDir: string): string {
+  const trimmedDir = skillDir.trim().replace(/[\\/]+$/, "");
+  const rawName = basename(trimmedDir) || "skill-package";
+  const safeStem = rawName
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  return `${safeStem || "skill-package"}.friday.tgz`;
+}
+
+function readContainedPackOutputName(input: { skillDir: string; outputFile?: string }): string {
+  if (input.outputFile === undefined) {
+    return derivePackOutputName(input.skillDir);
+  }
+
+  const outputName = input.outputFile.trim();
+  if (
+    outputName.includes("\0")
+    || outputName.includes("/")
+    || outputName.includes("\\")
+    || outputName.includes("..")
+    || isAbsolute(outputName)
+    || outputName === "."
+    || outputName === ".."
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "outputFile must be a contained filename, not a filesystem path",
+      { httpStatus: 400 },
+    );
+  }
+  if (!SAFE_PACK_OUTPUT_NAME.test(outputName)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "outputFile must use only letters, numbers, dot, underscore, or dash and must not start with punctuation",
+      { httpStatus: 400 },
+    );
+  }
+  return outputName;
+}
+
 // ─── Dependencies ───
 
 export interface FridaySkillConverterRoutesDeps {
   converterService: FridaySkillConverterService;
   canonicalMutationGate?: FridayMutatingActionGate;
+  packOutputDir?: string;
 }
 
 function createActorFromPrincipal(
@@ -415,9 +460,17 @@ export function createFridaySkillConverterRoutes(
       async handler(ctx): Promise<FridayApiPackResponse> {
         validatePackBody(ctx.body);
         const body = ctx.body;
+        if (!deps.packOutputDir) {
+          throw new FridayDomainError(
+            "SKILL_PACK_OUTPUT_UNAVAILABLE",
+            "Skill pack output containment directory is not configured.",
+            { httpStatus: 503 },
+          );
+        }
+        const outputFile = join(deps.packOutputDir, readContainedPackOutputName(body));
         const result = await deps.converterService.pack({
           skillDir: body.skillDir,
-          outputFile: body.outputFile,
+          outputFile,
         });
         return {
           packageFile: result.packageFile,

@@ -42,7 +42,11 @@ export interface FridayApiImportRequest {
 
 export interface FridayApiPackRequest {
   skillDir: string;
-  outputFile: string;
+  /**
+   * Optional contained package filename for API/UI callers.
+   * Filesystem paths are intentionally rejected by the HTTP route.
+   */
+  outputFile?: string;
 }
 
 // ─── Response types ───

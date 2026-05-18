@@ -464,10 +464,9 @@ async function main() {
     report.steps.externalFileSkill = { skillId: fileSkillId, status: fileRun.json.data.status };
 
     const nativeSkillDir = writeNativeSkill(sourceRoot, "external-native-echo");
-    const packPath = path.join(runRoot, "external-native-echo.friday.tgz");
     const pack = await mustOk("native skill pack", api(runtime.baseUrl, runtime.token, "POST", "/v1/skills/pack", {
       skillDir: nativeSkillDir,
-      outputFile: packPath,
+      outputFile: "external-native-echo.friday.tgz",
     }));
     const nativeImport = await mustOk("native package import", api(runtime.baseUrl, runtime.token, "POST", "/v1/skills/import", {
       source: { uri: pack.json.data.packageFile },
