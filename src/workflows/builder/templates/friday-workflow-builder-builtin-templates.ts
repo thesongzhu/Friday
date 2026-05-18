@@ -69,7 +69,7 @@ function createSimpleActionTemplate(): FridayWorkflowTemplateEntity {
       { key: "input_data", type: "string", required: true },
     ],
     steps: [
-      { id: "action-1", type: "skill_call", ref: "example-skill", args: { data: "$inputs.input_data" } },
+      { id: "action-1", type: "transform", args: { data: "$inputs.input_data" } },
     ],
     edges: [],
     outputs: [
