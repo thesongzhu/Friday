@@ -23,6 +23,7 @@ function createRunRepository(store: Map<string, FridayAgentRunRecord>): FridayAg
         attempt: 0,
         maxAttempts: input.maxAttempts,
         constraints: input.constraints,
+        metadata: input.metadata,
         createdAt: input.nowIso,
       };
       store.set(record.id, record);
@@ -46,6 +47,7 @@ function createRunRepository(store: Map<string, FridayAgentRunRecord>): FridayAg
         ...(input.summary !== undefined ? { summary: input.summary } : {}),
         ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
         ...(input.taskProfile !== undefined ? { taskProfile: input.taskProfile } : {}),
+        ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
       };
       store.set(next.id, next);
       return next;
@@ -332,6 +334,7 @@ describe("friday-agent-planning-gate", () => {
 
   it("resumes the approved run with the stored task and approved plan payload", async () => {
     const service = createService();
+    const disabledToolNames = ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"];
 
     service.handleTurn({
       runId: "run-resume",
@@ -342,6 +345,7 @@ describe("friday-agent-planning-gate", () => {
     await service.approvePlan({
       runId: "run-resume",
       sessionKey: "ui:assistant:1",
+      disabledToolNames,
     });
 
     expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
@@ -349,11 +353,50 @@ describe("friday-agent-planning-gate", () => {
       task: "Generate a workflow that exports build evidence, validates the bundle, keeps deployment gated until review approval, runs inside the current workspace, and avoids destructive changes outside the repo.",
       resumeExistingRun: true,
       skipPlanningReview: true,
+      disabledToolNames,
     }));
     const approvedPlan = runs.get("run-resume")?.planReview;
     expect(approvedPlan?.decision?.approved).toBe(true);
     expect(approvedPlan?.gate?.state).toBe("approved");
     expect(runs.get("run-resume")?.status).toBe("planning");
+  });
+
+  it("restores persisted disabled tools when an awaiting public plan is approved later", async () => {
+    const service = createService();
+    const disabledToolNames = ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"];
+
+    service.handleTurn({
+      runId: "run-public-plan",
+      task: "Generate a workflow that reads repository files, exports build evidence, validates the bundle, keeps deployment gated until review approval, and runs inside the current workspace.",
+      sessionKey: "ui:assistant:public",
+      constraints: {
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      },
+      disabledToolNames,
+    });
+
+    expect(runs.get("run-public-plan")?.metadata?.executionBoundary?.disabledToolNames)
+      .toEqual(disabledToolNames);
+
+    await service.approvePlan({
+      runId: "run-public-plan",
+      principalId: "user-approver-1",
+      scopes: ["agent.write"],
+      executionContext: { surface: "api", interactive: true },
+    });
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-public-plan",
+      resumeExistingRun: true,
+      constraints: expect.objectContaining({
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      }),
+      disabledToolNames,
+    }));
   });
 
   it("records approved and rejected plan decisions as durable replay events", async () => {

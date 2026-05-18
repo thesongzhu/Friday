@@ -59,4 +59,122 @@ describe("FridayEngineRunExecutor", () => {
     });
     expect(agentRuntime.executeRun).not.toHaveBeenCalled();
   });
+
+  it("passes disabledToolNames through to the agent runtime", async () => {
+    const agentRuntime = {
+      executeRun: vi.fn(async () => ({
+        runId: "run-disabled-tools",
+        status: "completed",
+        response: "Done",
+        toolCallCount: 0,
+        durationMs: 1,
+        usageInput: 1,
+        usageOutput: 1,
+      })),
+    };
+
+    const executor = createFridayEngineRunExecutor({
+      agentRuntime,
+      nowIso: () => "2026-04-03T18:40:00.000Z",
+      persistImmediateRunResult: vi.fn(),
+      dispatchDeterministic: vi.fn(async () => ({ handled: false })),
+      dispatchManagedAsync: vi.fn(async () => ({ handled: false })),
+      finalizeFocus: vi.fn(() => ({
+        currentTask: "Read the repo",
+        lastAssistantSummary: null,
+        pendingPlanRunId: null,
+        updatedAt: "2026-04-03T18:40:00.000Z",
+      })),
+      deterministicDispatchDeps: {},
+      managedAsyncDispatchDeps: {},
+      resolveIdempotencyKey: ({ runId, kind }) => `${runId}:${kind}`,
+    });
+
+    await executor.execute(
+      {
+        runId: "run-disabled-tools",
+        task: "Read the repo",
+        sessionKey: "agent:run:disabled-tools",
+        disabledToolNames: ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"],
+      },
+      {
+        executionClassification: { category: "full_agent", reason: "requires agent runtime" },
+        conversationContext: { turnKind: "new_topic" } as never,
+        historyMessages: [],
+        focusState: null,
+        currentUserSequence: 1,
+      } as never,
+    );
+
+    expect(agentRuntime.executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      disabledToolNames: ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"],
+    }));
+  });
+
+  it("passes disabledToolNames through approved plan resumes", async () => {
+    const agentRuntime = {
+      executeRun: vi.fn(async () => {
+        throw new Error("approved plan should resume through planning gate");
+      }),
+    };
+    const approvePlan = vi.fn(async () => ({
+      runId: "run-plan-disabled-tools",
+      status: "completed",
+      response: "Approved plan executed",
+      toolCallCount: 0,
+      durationMs: 1,
+      usageInput: 1,
+      usageOutput: 1,
+    }));
+    const handleTurn = vi.fn(() => ({
+      action: "approve" as const,
+      runId: "run-plan-disabled-tools",
+      pendingPlanRunId: null,
+    }));
+    const executor = createFridayEngineRunExecutor({
+      agentRuntime,
+      planningGate: {
+        handleTurn,
+        approvePlan,
+        rejectPlan: vi.fn(),
+      },
+      nowIso: () => "2026-04-03T18:40:00.000Z",
+      persistImmediateRunResult: vi.fn(),
+      dispatchDeterministic: vi.fn(async () => ({ handled: false })),
+      dispatchManagedAsync: vi.fn(async () => ({ handled: false })),
+      finalizeFocus: vi.fn(() => ({
+        currentTask: "approve",
+        lastAssistantSummary: "Approved plan executed",
+        pendingPlanRunId: null,
+        updatedAt: "2026-04-03T18:40:00.000Z",
+      })),
+      deterministicDispatchDeps: {},
+      managedAsyncDispatchDeps: {},
+      resolveIdempotencyKey: ({ runId, kind }) => `${runId}:${kind}`,
+    });
+
+    await executor.execute(
+      {
+        runId: "run-plan-disabled-tools",
+        task: "approve",
+        sessionKey: "agent:run:plan-disabled-tools",
+        disabledToolNames: ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"],
+      },
+      {
+        executionClassification: { category: "full_agent", reason: "requires agent runtime" },
+        conversationContext: { turnKind: "approval" } as never,
+        historyMessages: [],
+        focusState: { pendingPlanRunId: "run-plan-disabled-tools" },
+        currentUserSequence: 2,
+      } as never,
+    );
+
+    expect(handleTurn).toHaveBeenCalledWith(expect.objectContaining({
+      disabledToolNames: ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"],
+    }));
+    expect(approvePlan).toHaveBeenCalledWith(expect.objectContaining({
+      disabledToolNames: ["read", "write", "edit", "exec", "pdf_parse", "image_analysis"],
+    }));
+    expect(agentRuntime.executeRun).not.toHaveBeenCalled();
+  });
 });

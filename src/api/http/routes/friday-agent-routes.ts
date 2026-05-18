@@ -31,6 +31,7 @@ import {
   readIdempotencyKeyHeader,
 } from "./friday-route-idempotency.js";
 import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
+import { buildPublicV1AgentRunIsolation } from "./friday-public-v1-agent-isolation.js";
 
 // ─── Constants ───
 
@@ -513,6 +514,7 @@ export interface FridayAgentRoutesDeps {
     timeoutMs?: number;
     requireReview?: boolean;
     constraints?: FridayAgentRunConstraints;
+    disabledToolNames?: string[];
     taskProfile?: FridayAgentTaskProfileInput;
     executionContext?: {
       surface?: string;
@@ -823,7 +825,8 @@ export function createFridayAgentRoutes(
         assertNoAliasConflict(body.model, body.requestedModel, "model", "requestedModel");
         const providerId = readPreferredString(body.providerId, body.requestedProviderId);
         const model = readPreferredString(body.model, body.requestedModel);
-        const tenantContext = buildTenantContext(ctx.principal);
+        const publicIsolation = buildPublicV1AgentRunIsolation(ctx.principal);
+        const tenantContext = publicIsolation ? undefined : buildTenantContext(ctx.principal);
         if (providerId || model) {
           await deps.validateRequestedRoute?.(providerId, model, tenantContext);
         }
@@ -871,7 +874,7 @@ export function createFridayAgentRoutes(
         const requireReview = typeof body.requireReview === "boolean" ? body.requireReview : undefined;
 
         // IMPL-4: constraints
-        let constraints: { readOnly?: boolean; operationalMode?: "plan" | "execute" | "restricted" } | undefined;
+        let constraints: FridayAgentRunConstraints | undefined;
         if (body.constraints !== undefined && typeof body.constraints === "object" && body.constraints !== null && !Array.isArray(body.constraints)) {
           const c = body.constraints as Record<string, unknown>;
           const validModes = ["plan", "execute", "restricted"] as const;
@@ -881,6 +884,12 @@ export function createFridayAgentRoutes(
           constraints = {
             readOnly: typeof c.readOnly === "boolean" ? c.readOnly : undefined,
             operationalMode: parsedMode,
+          };
+        }
+        if (publicIsolation) {
+          constraints = {
+            ...constraints,
+            ...publicIsolation.constraints,
           };
         }
 
@@ -959,7 +968,7 @@ export function createFridayAgentRoutes(
           };
         }
 
-        const principalInput = ctx.principal
+        const principalInput = ctx.principal && !publicIsolation
           ? {
             principalId: ctx.principal.principalId,
             scopes: ctx.principal.scopes,
@@ -995,6 +1004,7 @@ export function createFridayAgentRoutes(
           timeoutMs,
           requireReview,
           constraints,
+          disabledToolNames: publicIsolation?.disabledToolNames,
           taskProfile,
           executionContext,
           ...(apiIdempotencyKey

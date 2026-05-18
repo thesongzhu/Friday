@@ -110,6 +110,118 @@ describe("FridayAgentRoutes", () => {
     expect(route!.auth).toEqual({ public: true });
   });
 
+  it("POST /v1/agent/runs isolates unauthenticated public v1 runs from server-workspace tools", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+
+    await route.handler({
+      body: {
+        task: "Read AGENTS.md from the server workspace",
+        constraints: { readOnly: false, operationalMode: "execute" },
+      },
+      params: {},
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: expect.objectContaining({
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      }),
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+    }));
+  });
+
+  it("POST /v1/agent/runs treats the synthetic public principal as public v1 isolation", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+    const syntheticPublic = createStubPrincipal({
+      principalId: "public:default",
+      tokenId: "00000000-0000-0000-0000-000000000002",
+      userId: "00000000-0000-0000-0000-000000000001",
+      role: "admin",
+    });
+
+    await route.handler({
+      body: { task: "Inspect repository files" },
+      params: {},
+      query: {},
+      headers: {},
+      principal: syntheticPublic,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: expect.objectContaining({
+        readOnly: true,
+        operationalMode: "restricted",
+      }),
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+    }));
+    const input = vi.mocked(stubDeps.startRun).mock.calls.at(-1)?.[0];
+    expect(input?.principalId).toBeUndefined();
+    expect(input?.scopes).toBeUndefined();
+    expect(input?.tenantContext).toBeUndefined();
+  });
+
+  it("POST /v1/agent/runs preserves bound-principal run constraints", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+
+    await route.handler({
+      body: {
+        task: "Inspect repository files",
+        constraints: { readOnly: false, operationalMode: "execute" },
+      },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: {
+        readOnly: false,
+        operationalMode: "execute",
+      },
+      disabledToolNames: undefined,
+    }));
+  });
+
   it("GET /v1/agent/runs requires agent.read scope with workflow.run compatibility", () => {
     const routes = createFridayAgentRoutes(stubDeps);
     const route = routes.find((r) => r.operationId === "agent.runs.list");
@@ -731,26 +843,35 @@ describe("FridayAgentRoutes", () => {
       await expect(route.handler(ctx)).rejects.toThrow("task is required");
     });
 
-    it("calls startRun with valid input", async () => {
+    it("calls startRun with valid bound-principal input", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const principal = createStubPrincipal();
       const ctx = {
         body: { task: "Build a feature", providerId: "openai", model: "gpt-4", timeoutMs: 60000 },
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal,
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       const result = await route.handler(ctx);
-      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith("openai", "gpt-4", undefined);
-      expect(stubDeps.startRun).toHaveBeenCalledWith({
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith(
+        "openai",
+        "gpt-4",
+        { hubId: "user-approver-1", userId: "user-approver-1" },
+      );
+      expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
         task: "Build a feature",
         providerId: "openai",
         model: "gpt-4",
         timeoutMs: 60000,
-      });
+        principalId: principal.principalId,
+        scopes: principal.scopes,
+        tenantContext: { hubId: "user-approver-1", userId: "user-approver-1" },
+        disabledToolNames: undefined,
+      }));
       expect(result).toEqual({
         ...createStubResult(),
         eventStreamAvailable: true,
@@ -780,9 +901,10 @@ describe("FridayAgentRoutes", () => {
       }));
     });
 
-    it("accepts requestedProviderId/requestedModel aliases", async () => {
+    it("accepts requestedProviderId/requestedModel aliases for bound principals", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const principal = createStubPrincipal();
       const ctx = {
         body: {
           task: "Build a feature",
@@ -793,20 +915,28 @@ describe("FridayAgentRoutes", () => {
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal,
         requestId: "req-alias-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
 
       await route.handler(ctx);
 
-      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith("openai-alias", "gpt-4o", undefined);
-      expect(stubDeps.startRun).toHaveBeenCalledWith({
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith(
+        "openai-alias",
+        "gpt-4o",
+        { hubId: "user-approver-1", userId: "user-approver-1" },
+      );
+      expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
         task: "Build a feature",
         providerId: "openai-alias",
         model: "gpt-4o",
         timeoutMs: 60000,
-      });
+        principalId: principal.principalId,
+        scopes: principal.scopes,
+        tenantContext: { hubId: "user-approver-1", userId: "user-approver-1" },
+        disabledToolNames: undefined,
+      }));
     });
 
     it("rejects conflicting provider/model aliases", async () => {
@@ -823,7 +953,7 @@ describe("FridayAgentRoutes", () => {
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-alias-2",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
@@ -998,17 +1128,17 @@ describe("FridayAgentRoutes", () => {
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       await route.handler(ctx);
       expect(stubDeps.startRun).toHaveBeenCalledWith(
-        expect.objectContaining({ constraints: { readOnly: true } }),
+        expect.objectContaining({ constraints: { readOnly: true, operationalMode: undefined } }),
       );
     });
 
-    it("does not synthesize plan constraints for normal chat requests", async () => {
+    it("does not synthesize plan constraints for normal bound-principal chat requests", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.start")!;
       const ctx = {
@@ -1019,7 +1149,7 @@ describe("FridayAgentRoutes", () => {
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
@@ -1036,7 +1166,7 @@ describe("FridayAgentRoutes", () => {
         params: {},
         query: {},
         headers: {},
-        principal: null,
+        principal: createStubPrincipal(),
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };

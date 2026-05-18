@@ -54,6 +54,7 @@ export interface FridayEngineRunExecutorAgentRuntime {
     constraints?: FridayAgentRunConstraints;
     principalId?: string;
     scopes?: string[];
+    disabledToolNames?: string[];
     executionContext?: FridayEngineRunInput["executionContext"];
     apiRequestIdempotency?: FridayAgentApiRequestMetadata;
     historyMessages?: FridayPreparedEngineContext["historyMessages"];
@@ -71,6 +72,7 @@ export interface FridayEnginePlanningGate {
     model?: string;
     constraints?: FridayAgentRunConstraints;
     reviewRequired?: boolean;
+    disabledToolNames?: string[];
     conversationContext?: FridayPreparedEngineContext["conversationContext"];
     focusState?: { pendingPlanRunId?: string } | null;
   }): FridayEnginePlanningDecision;
@@ -87,6 +89,7 @@ export interface FridayEnginePlanningGate {
     constraints?: FridayAgentRunConstraints;
     principalId?: string;
     scopes?: string[];
+    disabledToolNames?: string[];
     executionContext?: FridayEngineRunInput["executionContext"];
     historyMessages?: FridayPreparedEngineContext["historyMessages"];
     conversationContext?: FridayPreparedEngineContext["conversationContext"];
@@ -355,6 +358,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
         model: input.model,
         constraints: input.constraints,
         reviewRequired: input.reviewRequired,
+        disabledToolNames: input.disabledToolNames,
         conversationContext: prepared.conversationContext,
         focusState: prepared.focusState,
       });
@@ -407,6 +411,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
           constraints: input.constraints,
           principalId: input.principalId,
           scopes: input.scopes,
+          disabledToolNames: input.disabledToolNames,
           executionContext: input.executionContext,
           historyMessages: prepared.historyMessages,
           conversationContext: prepared.conversationContext,
@@ -508,6 +513,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
       constraints: effectiveConstraints,
       principalId: input.principalId,
       scopes: input.scopes,
+      disabledToolNames: input.disabledToolNames,
       executionContext: input.executionContext,
       apiRequestIdempotency: input.apiRequestIdempotency,
       historyMessages: prepared.historyMessages,

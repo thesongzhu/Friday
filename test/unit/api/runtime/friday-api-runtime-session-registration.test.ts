@@ -38,6 +38,20 @@ describe("FridayApiRuntime — Session Registration", () => {
     } as unknown as FridayProviderService;
   }
 
+  function createBoundPrincipal() {
+    return {
+      principalType: "user",
+      principalId: "user:bound-1",
+      tenantId: "00000000-0000-0000-0000-000000000101",
+      userId: "00000000-0000-0000-0000-000000000102",
+      role: "admin",
+      scopes: ["agent.run", "session.read", "session.write"],
+      tokenId: "00000000-0000-0000-0000-000000000103",
+      tokenKind: "access",
+      issuedAt: NOW,
+    };
+  }
+
   beforeEach(() => {
     db = createTestDb();
   });
@@ -194,6 +208,7 @@ describe("FridayApiRuntime — Session Registration", () => {
       agentRuntime: {
         executeRun,
       } as unknown as FridayAgentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
     });
 
     await runtime.sessionService.addMessage("discord:default:user1", {
@@ -210,6 +225,7 @@ describe("FridayApiRuntime — Session Registration", () => {
     await route!.handler({
       params: { sessionKey: "discord:default:user1" },
       body: { useLastUserMessage: true },
+      principal: createBoundPrincipal(),
     } as never);
 
     expect(executeRun).toHaveBeenCalledTimes(1);
@@ -220,6 +236,162 @@ describe("FridayApiRuntime — Session Registration", () => {
         historyMessages: [],
       }),
     );
+  });
+
+  it("does not derive tenant provider context from session metadata for public-isolated runs", async () => {
+    const providerService = createMockProviderService();
+    const executeRun = vi.fn(async () => ({
+      runId: "run-public-isolated",
+      status: "completed" as const,
+      response: "ok",
+      toolCallCount: 0,
+      durationMs: 10,
+      usageInput: 1,
+      usageOutput: 1,
+    }));
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!",
+      computeChecksum: (s: string) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+      agentRuntime: {
+        executeRun,
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
+    });
+
+    await runtime.sessionService.addMessage("discord:private-hub:user1", {
+      role: "user",
+      content: "Read AGENTS.md",
+      contentText: "Read AGENTS.md",
+    });
+    const addMessageSpy = vi.spyOn(runtime.sessionService, "addMessage");
+    const getConversationFocusSpy = vi.spyOn(runtime.sessionService, "getConversationFocus");
+    const setConversationFocusSpy = vi.spyOn(runtime.sessionService, "setConversationFocus");
+
+    const route = runtime.routes
+      .getRoutes()
+      .find((entry) => entry.operationId === "sessions.run");
+    expect(route).toBeDefined();
+
+    await route!.handler({
+      params: { sessionKey: "discord:private-hub:user1" },
+      body: { task: "Read public docs only" },
+      principal: null,
+    } as never);
+
+    expect(executeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: undefined,
+        constraints: {
+          readOnly: true,
+          operationalMode: "restricted",
+          dataSensitivity: "public",
+        },
+        disabledToolNames: [
+          "read",
+          "write",
+          "edit",
+          "exec",
+          "pdf_parse",
+          "image_analysis",
+          "memory_search",
+          "memory_query",
+          "memory_get",
+          "memory_store",
+          "memory_extract",
+          "feedback",
+        ],
+        tenantContext: undefined,
+        principalId: undefined,
+        scopes: undefined,
+        historyMessages: [],
+        conversationContext: expect.objectContaining({
+          selectedBlocks: [],
+          selectionReasons: [],
+        }),
+      }),
+    );
+    expect(JSON.stringify(executeRun.mock.calls[0]?.[0])).not.toContain("Read AGENTS.md");
+    expect(addMessageSpy).not.toHaveBeenCalled();
+    expect(getConversationFocusSpy).not.toHaveBeenCalled();
+    expect(setConversationFocusSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not replay private session history for public agent runs with a supplied sessionKey", async () => {
+    const providerService = createMockProviderService();
+    const executeRun = vi.fn(async () => ({
+      runId: "run-public-agent-session",
+      status: "completed" as const,
+      response: "ok",
+      toolCallCount: 0,
+      durationMs: 10,
+      usageInput: 1,
+      usageOutput: 1,
+    }));
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!",
+      computeChecksum: (s: string) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+      agentRuntime: {
+        executeRun,
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: createFridayAgentEventEmitter(),
+    });
+
+    await runtime.sessionService.addMessage("chat:private-hub:user1", {
+      role: "user",
+      content: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY",
+      contentText: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY",
+    });
+    const addMessageSpy = vi.spyOn(runtime.sessionService, "addMessage");
+    const getConversationFocusSpy = vi.spyOn(runtime.sessionService, "getConversationFocus");
+    const setConversationFocusSpy = vi.spyOn(runtime.sessionService, "setConversationFocus");
+
+    const route = runtime.routes
+      .getRoutes()
+      .find((entry) => entry.operationId === "agent.runs.start");
+    expect(route).toBeDefined();
+
+    await route!.handler({
+      body: {
+        task: "Read public docs only",
+        sessionKey: "chat:private-hub:user1",
+      },
+      principal: null,
+    } as never);
+
+    expect(executeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: undefined,
+        historyMessages: [],
+        conversationContext: expect.objectContaining({
+          selectedBlocks: [],
+          selectionReasons: [],
+        }),
+        constraints: {
+          readOnly: true,
+          operationalMode: "restricted",
+          dataSensitivity: "public",
+        },
+      }),
+    );
+    expect(JSON.stringify(executeRun.mock.calls[0]?.[0]))
+      .not.toContain("PRIVATE_CONTEXT_SHOULD_NOT_REPLAY");
+    expect(addMessageSpy).not.toHaveBeenCalled();
+    expect(getConversationFocusSpy).not.toHaveBeenCalled();
+    expect(setConversationFocusSpy).not.toHaveBeenCalled();
   });
 
   it("persists pack context into session metadata before agent execution", async () => {
@@ -277,6 +449,7 @@ describe("FridayApiRuntime — Session Registration", () => {
           packId: "industry-creator-media",
         },
       },
+      principal: createBoundPrincipal(),
     } as never);
 
     expect(executeRun).toHaveBeenCalledWith(

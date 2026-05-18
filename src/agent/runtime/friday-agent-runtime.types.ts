@@ -108,6 +108,7 @@ export interface FridayAgentDelegationRequest {
   timeoutMs: number;
   signal: AbortSignal;
   constraints?: FridayAgentRunConstraints;
+  disabledToolNames?: string[];
   principalId?: string;
   conversationContext?: FridayAgentConversationContext;
   taskProfile?: FridayAgentTaskProfileInput;
@@ -305,6 +306,7 @@ export interface FridayAgentResumeRunParams {
   constraints?: FridayAgentRunConstraints;
   principalId?: string;
   scopes?: string[];
+  disabledToolNames?: string[];
   executionContext?: FridayAgentExecutionContext;
   historyMessages?: FridayAgentMessage[];
   conversationContext?: FridayAgentConversationContext;
