@@ -661,6 +661,49 @@ describe("runCliSkillCommand", () => {
     expect(logs.some((line) => line.includes("remote ok"))).toBe(true);
   });
 
+  it("sets a nonzero exit code when a remote skill run reports failed", async () => {
+    const parsed = parseArgs(argv("run", "demo-skill"));
+    const logs: string[] = [];
+    let exitCode: number | undefined;
+
+    const fetchFn: typeof fetch = async () => new Response(JSON.stringify({
+      ok: true,
+      data: {
+        runId: "run-remote-failed",
+        status: "failed",
+        durationMs: 13,
+        output: { code: "SKILL_FAILED" },
+        stderr: "remote failed",
+      },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+    await runCliSkillCommand(parsed, {
+      env: {
+        FRIDAY_HUB_URL: "https://hub.example.test",
+        FRIDAY_ACCESS_TOKEN: "secret-token",
+      },
+      createHub: async () => {
+        throw new Error("createHub should not be called for remote execution");
+      },
+      fetchFn,
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(logs.some((line) => line.includes("Run run-remote-failed — failed (13ms)"))).toBe(true);
+    expect(logs.some((line) => line.includes("remote failed"))).toBe(true);
+    expect(logs.some((line) => line.includes("ended with status \"failed\""))).toBe(true);
+  });
+
   it("falls back to an embedded hub when no remote hub env is configured", async () => {
     const parsed = parseArgs(argv("run", "demo-skill"));
     const logs: string[] = [];
@@ -708,6 +751,55 @@ describe("runCliSkillCommand", () => {
     expect(executeCount).toBe(1);
     expect(stopCount).toBe(1);
     expect(logs.some((line) => line.includes("Run run-local-1 — completed (9ms)"))).toBe(true);
+  });
+
+  it("sets a nonzero exit code when an embedded skill run reports failed", async () => {
+    const parsed = parseArgs(argv("run", "demo-skill"));
+    const logs: string[] = [];
+    let exitCode: number | undefined;
+    let stopCount = 0;
+
+    const localHub = {
+      start: async () => {},
+      stop: async () => {
+        stopCount += 1;
+      },
+      executor: {
+        execute() {
+          return {
+            result: Promise.resolve({
+              runId: "run-local-failed",
+              status: "failed",
+              durationMs: 7,
+              output: { code: "SKILL_FAILED" },
+              stdout: "",
+              stderr: "local failed",
+            }),
+          };
+        },
+      },
+    };
+
+    await runCliSkillCommand(parsed, {
+      env: {},
+      createHub: (async () => localHub) as FridayCliRunCommandDeps["createHub"],
+      fetchFn: async () => {
+        throw new Error("fetch should not be called for local execution");
+      },
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stopCount).toBe(1);
+    expect(logs.some((line) => line.includes("Run run-local-failed — failed (7ms)"))).toBe(true);
+    expect(logs.some((line) => line.includes("local failed"))).toBe(true);
+    expect(logs.some((line) => line.includes("ended with status \"failed\""))).toBe(true);
   });
 
   it("fails fast when only one remote-hub env var is configured", async () => {

@@ -1471,6 +1471,23 @@ function printCliSkillRunResult(
   }
 }
 
+function isCliSkillRunSuccessful(result: FridayCliSkillRunResult): boolean {
+  return result.status === "completed";
+}
+
+function markCliSkillRunFailure(
+  logger: Pick<typeof console, "log" | "error">,
+  result: FridayCliSkillRunResult,
+  setExitCode: (code: number) => void,
+): void {
+  if (isCliSkillRunSuccessful(result)) {
+    return;
+  }
+
+  logger.error(`Error: skill run ${result.runId} ended with status "${result.status}".`);
+  setExitCode(1);
+}
+
 async function runCliSkillRemotely(params: {
   parsed: ParsedArgs;
   baseUrl: string;
@@ -1558,6 +1575,7 @@ export async function runCliSkillCommand(
       fetchFn: deps.fetchFn ?? fetch,
     });
     printCliSkillRunResult(logger, result);
+    markCliSkillRunFailure(logger, result, setExitCode);
     return;
   }
 
@@ -1576,6 +1594,7 @@ export async function runCliSkillCommand(
 
   const result = await handle.result;
   printCliSkillRunResult(logger, result);
+  markCliSkillRunFailure(logger, result, setExitCode);
 
   await hub.stop();
 }
