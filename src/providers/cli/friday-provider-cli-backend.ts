@@ -236,17 +236,32 @@ function parseClaudeStatus(stdout: string): Pick<FridayCliSessionStatus, "logged
   }
 }
 
-function parseCodexStatus(stdout: string, stderr: string): Pick<FridayCliSessionStatus, "loggedIn" | "message"> {
+// Exported for focused unit testing of the negative-auth-status parse boundary
+// (Phase 18B CLAW-003). The negative substrings overlap the positive ones
+// ("not logged in" contains "logged in"; "unauthenticated" contains
+// "authenticated"), so the negative branch must be evaluated first.
+export function parseCodexStatus(stdout: string, stderr: string): Pick<FridayCliSessionStatus, "loggedIn" | "message"> {
   const text = `${stdout}\n${stderr}`.trim();
   if (text.length === 0) {
     return { message: "Codex CLI did not emit login status details in this environment" };
   }
   const lowered = text.toLowerCase();
-  if (lowered.includes("logged in") || lowered.includes("authenticated")) {
-    return { loggedIn: true };
-  }
-  if (lowered.includes("not logged in") || lowered.includes("login required")) {
+  if (
+    lowered.includes("not logged in") ||
+    lowered.includes("logged out") ||
+    lowered.includes("unauthenticated") ||
+    lowered.includes("login required") ||
+    lowered.includes("not signed in") ||
+    lowered.includes("signed out")
+  ) {
     return { loggedIn: false };
+  }
+  if (
+    lowered.includes("logged in") ||
+    lowered.includes("signed in") ||
+    lowered.includes("authenticated")
+  ) {
+    return { loggedIn: true };
   }
   return { message: text.slice(0, 240) };
 }

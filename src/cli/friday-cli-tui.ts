@@ -30,6 +30,18 @@ interface FridayCliAuthEnvelope {
   };
 }
 
+export interface FridayCliTuiAuthCoordinatorDeps {
+  readonly apiBaseUrl: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly fetchFn?: typeof fetch;
+}
+
+export interface FridayCliTuiAuthCoordinator {
+  readonly hasConfiguredAccessToken: boolean;
+  readonly isLoopback: boolean;
+  resolveAccessToken(forceRefresh?: boolean): Promise<string | undefined>;
+}
+
 function isLoopbackBaseUrl(baseUrl: string): boolean {
   try {
     const parsed = new URL(baseUrl);
@@ -41,37 +53,39 @@ function isLoopbackBaseUrl(baseUrl: string): boolean {
   }
 }
 
-// ─── Factory ───
-
-export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promise<void> {
-  const config: FridayTuiConfig = {
-    ...DEFAULT_TUI_CONFIG,
-    ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
-    ...(options.refreshIntervalMs ? { refreshIntervalMs: options.refreshIntervalMs } : {}),
-    ...(options.realtimeEnabled !== undefined ? { realtimeEnabled: options.realtimeEnabled } : {}),
-  };
-  const configuredAccessToken = process.env.FRIDAY_TUI_ACCESS_TOKEN?.trim() || undefined;
-  const localPassphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE?.trim()
-    || process.env.FRIDAY_LOCAL_PASSPHRASE?.trim()
-    || "friday-cli-tui-passphrase-123";
-  const loopbackBaseUrl = isLoopbackBaseUrl(config.apiBaseUrl);
+export function createFridayCliTuiAuthCoordinator(
+  deps: FridayCliTuiAuthCoordinatorDeps,
+): FridayCliTuiAuthCoordinator {
+  const configuredAccessToken = deps.env.FRIDAY_TUI_ACCESS_TOKEN?.trim() || undefined;
+  const localPassphrase = deps.env.FRIDAY_TEST_LOCAL_PASSPHRASE?.trim()
+    || deps.env.FRIDAY_LOCAL_PASSPHRASE?.trim()
+    || undefined;
+  const loopback = isLoopbackBaseUrl(deps.apiBaseUrl);
+  const fetchFn = deps.fetchFn ?? fetch;
   let cachedAccessToken = configuredAccessToken;
 
   async function loginLocalPassphrase(): Promise<string> {
-    const bootstrapStatusResponse = await fetch(`${config.apiBaseUrl}/v1/auth/bootstrap/status`);
+    if (!localPassphrase) {
+      throw new FridayDomainError(
+        "TUI_AUTH_NOT_CONFIGURED",
+        "TUI first-run auth is not configured. Set FRIDAY_TUI_ACCESS_TOKEN, or FRIDAY_LOCAL_PASSPHRASE / FRIDAY_TEST_LOCAL_PASSPHRASE, before launching the TUI; no fallback credential is used.",
+        { httpStatus: 401 },
+      );
+    }
+    const bootstrapStatusResponse = await fetchFn(`${deps.apiBaseUrl}/v1/auth/bootstrap/status`);
     const bootstrapStatus = await bootstrapStatusResponse.json().catch(() => null) as {
       ok?: boolean;
       data?: { bootstrapRequired?: boolean };
     } | null;
     if (bootstrapStatusResponse.ok && bootstrapStatus?.ok === true && bootstrapStatus.data?.bootstrapRequired === true) {
-      await fetch(`${config.apiBaseUrl}/v1/auth/bootstrap/local-passphrase`, {
+      await fetchFn(`${deps.apiBaseUrl}/v1/auth/bootstrap/local-passphrase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ localPassphrase }),
       });
     }
 
-    const response = await fetch(`${config.apiBaseUrl}/v1/auth/login`, {
+    const response = await fetchFn(`${deps.apiBaseUrl}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ localPassphrase }),
@@ -97,11 +111,32 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
     if (cachedAccessToken && !forceRefresh) {
       return cachedAccessToken;
     }
-    if (!loopbackBaseUrl) {
+    if (!loopback) {
       return undefined;
     }
     return loginLocalPassphrase();
   }
+
+  return {
+    hasConfiguredAccessToken: configuredAccessToken !== undefined,
+    isLoopback: loopback,
+    resolveAccessToken,
+  };
+}
+
+// ─── Factory ───
+
+export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promise<void> {
+  const config: FridayTuiConfig = {
+    ...DEFAULT_TUI_CONFIG,
+    ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
+    ...(options.refreshIntervalMs ? { refreshIntervalMs: options.refreshIntervalMs } : {}),
+    ...(options.realtimeEnabled !== undefined ? { realtimeEnabled: options.realtimeEnabled } : {}),
+  };
+  const authCoordinator = createFridayCliTuiAuthCoordinator({
+    apiBaseUrl: config.apiBaseUrl,
+    env: process.env,
+  });
 
   const apiClient = createFridayTuiApiClient({
     async fetchJson<T>(url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }): Promise<T> {
@@ -115,11 +150,11 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
           },
         });
 
-      let token = await resolveAccessToken(false);
+      let token = await authCoordinator.resolveAccessToken(false);
       let res = await doFetch(token);
 
-      if (res.status === 401 && !configuredAccessToken && loopbackBaseUrl) {
-        token = await resolveAccessToken(true);
+      if (res.status === 401 && !authCoordinator.hasConfiguredAccessToken && authCoordinator.isLoopback) {
+        token = await authCoordinator.resolveAccessToken(true);
         res = await doFetch(token);
       }
 

@@ -231,6 +231,77 @@ describe("FridayOwnerSessionChannelCapability", () => {
         assertBoundActorForSessionOperation("user-real-1", "workflow.approval.approve"),
       ).toBe("user-real-1");
     });
+
+    // Phase 18B CLAW-044: whitespace-only actor IDs were treated as bound
+    // principals because `!actorId` returns false for strings like "   ".
+    it("throws when actorId is whitespace-only (spaces)", () => {
+      let thrown: unknown;
+      try {
+        assertBoundActorForSessionOperation("   ", "workflow.approval.approve");
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_REQUIRED,
+      );
+    });
+
+    it("throws when actorId is whitespace-only (tabs and newlines)", () => {
+      let thrown: unknown;
+      try {
+        assertBoundActorForSessionOperation("\t\n  \r", "workflow.approval.reject");
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_REQUIRED,
+      );
+    });
+
+    it("throws when actorId is the empty string", () => {
+      let thrown: unknown;
+      try {
+        assertBoundActorForSessionOperation("", "workflow.approval.approve");
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_REQUIRED,
+      );
+    });
+
+    it("throws when actorId is the synthetic public principal id with surrounding whitespace", () => {
+      let thrown: unknown;
+      try {
+        assertBoundActorForSessionOperation(
+          `  ${FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID}  `,
+          "workflow.approval.approve",
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_REQUIRED,
+      );
+    });
+
+    it("throws when actorId is the legacy 'system' fallback with surrounding whitespace", () => {
+      let thrown: unknown;
+      try {
+        assertBoundActorForSessionOperation("  system\n", "workflow.approval.approve");
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_REQUIRED,
+      );
+    });
+
+    it("returns a trimmed actorId when surrounded by whitespace", () => {
+      expect(
+        assertBoundActorForSessionOperation("  user-real-1\t", "workflow.approval.approve"),
+      ).toBe("user-real-1");
+    });
   });
 
   describe("describeWebhookReceiptTrust", () => {
