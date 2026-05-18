@@ -312,11 +312,23 @@ export function verifyFridayCanonicalApprovalSignature(
     return false;
   }
 
+  const normalizedSignature = normalizeCanonicalApprovalSignatureText(approval.signature);
+  if (normalizedSignature === null) {
+    return false;
+  }
+
   const expected = createFridayCanonicalApprovalSignature(approval, secret);
-  const actualBuffer = Buffer.from(approval.signature, "hex");
+  const actualBuffer = Buffer.from(normalizedSignature, "hex");
   const expectedBuffer = Buffer.from(expected, "hex");
   return actualBuffer.length === expectedBuffer.length
     && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function normalizeCanonicalApprovalSignatureText(signature: string | undefined): string | null {
+  if (typeof signature !== "string" || !/^[0-9a-fA-F]{64}$/.test(signature)) {
+    return null;
+  }
+  return signature.toLowerCase();
 }
 
 function createCanonicalApprovalUseKey(approval: FridayCanonicalApprovalResolution): string {
@@ -324,7 +336,7 @@ function createCanonicalApprovalUseKey(approval: FridayCanonicalApprovalResoluti
     approval.approvalId,
     approval.actionDigest,
     approval.issuer ?? "",
-    approval.signature ?? "",
+    normalizeCanonicalApprovalSignatureText(approval.signature) ?? "",
   ].join(":");
 }
 

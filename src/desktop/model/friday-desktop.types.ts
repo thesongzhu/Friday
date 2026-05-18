@@ -805,8 +805,12 @@ export interface FridayDesktopActionResult {
   readonly fileListing?: readonly FridayDesktopFileEntry[];
   /** Policy rule that was matched (if any). */
   readonly matchedPolicyRuleId?: UUID;
+  /** Permission prompt emitted for this action (if human confirmation was needed). */
+  readonly permissionPrompt?: FridayDesktopPermissionPrompt;
   /** Permission decision ID (if human confirmation was required). */
   readonly permissionDecisionId?: UUID;
+  /** Permission decision recorded for this action (if human confirmation resolved). */
+  readonly permissionDecision?: FridayDesktopPermissionDecision;
   /** Trace ID from observability. */
   readonly traceId?: string;
   /** Span ID from observability. */
