@@ -207,7 +207,7 @@ function buildWeeklyHotProductReviewTemplate(
     description: entry.templateDescription,
     tags: entry.tags,
     spec,
-    visual: buildVisual(workflowId, [detectStepId, scoutStepId], [`${detectStepId}:${scoutStepId}:any`]),
+    visual: buildVisual(workflowId, [detectStepId, scoutStepId], [`${detectStepId}:${scoutStepId}:success`]),
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
   };
@@ -316,7 +316,7 @@ function buildWeeklyOperatingProfileTuneTemplate(
     visual: buildVisual(
       workflowId,
       [weeklyReviewStepId, listingAuditStepId],
-      [`${weeklyReviewStepId}:${listingAuditStepId}:any`],
+      [`${weeklyReviewStepId}:${listingAuditStepId}:success`],
     ),
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
