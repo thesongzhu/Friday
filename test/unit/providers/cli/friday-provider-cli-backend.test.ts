@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runFridayCliBackendTextCompletion } from "#providers";
+import { parseCodexStatus } from "../../../../src/providers/cli/friday-provider-cli-backend.js";
 
 describe("friday-provider-cli-backend", () => {
   let testDir: string | undefined;
@@ -33,6 +34,51 @@ describe("friday-provider-cli-backend", () => {
 
     expect(result.length).toBeLessThan(1_100_000);
     expect(result).toContain("stdout truncated");
+  });
+
+  describe("parseCodexStatus (Phase 18B CLAW-003)", () => {
+    it("treats 'Not logged in' as loggedIn=false (does not match the positive substring)", () => {
+      expect(parseCodexStatus("Not logged in.\nRun `codex login` to authenticate.", "")).toEqual({
+        loggedIn: false,
+      });
+    });
+
+    it("treats 'Unauthenticated' as loggedIn=false (does not match the positive 'authenticated' substring)", () => {
+      expect(parseCodexStatus("", "Unauthenticated: please run codex login")).toEqual({
+        loggedIn: false,
+      });
+    });
+
+    it("treats 'Login required' as loggedIn=false", () => {
+      expect(parseCodexStatus("Login required", "")).toEqual({ loggedIn: false });
+    });
+
+    it("treats 'Logged out' as loggedIn=false", () => {
+      expect(parseCodexStatus("Logged out", "")).toEqual({ loggedIn: false });
+    });
+
+    it("treats 'Not signed in' / 'Signed out' as loggedIn=false", () => {
+      expect(parseCodexStatus("Not signed in", "")).toEqual({ loggedIn: false });
+      expect(parseCodexStatus("Signed out", "")).toEqual({ loggedIn: false });
+    });
+
+    it("recognizes 'Logged in as user@example.com' as loggedIn=true", () => {
+      expect(parseCodexStatus("Logged in as user@example.com", "")).toEqual({ loggedIn: true });
+    });
+
+    it("recognizes 'Authenticated' as loggedIn=true", () => {
+      expect(parseCodexStatus("Authenticated.", "")).toEqual({ loggedIn: true });
+    });
+
+    it("returns a message when neither side of the boundary matches", () => {
+      const result = parseCodexStatus("codex-cli 0.1.2", "");
+      expect(result.loggedIn).toBeUndefined();
+      expect(result.message).toContain("codex-cli");
+    });
+
+    it("returns the empty-output message when both streams are empty", () => {
+      expect(parseCodexStatus("", "").message).toContain("did not emit login status");
+    });
   });
 
   function writeMockCli(source: string): string {

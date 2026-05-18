@@ -119,10 +119,14 @@ export function assertBoundActorForSessionOperation(
   actorId: string | null | undefined,
   operation: FridayPublicMutationOperation,
 ): string {
+  // Phase 18B CLAW-044: trim before validating so a whitespace-only actor id
+  // (which is truthy in JavaScript) cannot pass the bound-principal gate or be
+  // propagated downstream as an audit identity.
+  const normalized = typeof actorId === "string" ? actorId.trim() : "";
   if (
-    !actorId ||
-    actorId === FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID ||
-    actorId === "system"
+    normalized.length === 0 ||
+    normalized === FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID ||
+    normalized === "system"
   ) {
     throw new FridayDomainError(
       ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
@@ -130,7 +134,7 @@ export function assertBoundActorForSessionOperation(
       { httpStatus: 401 },
     );
   }
-  return actorId;
+  return normalized;
 }
 
 export interface FridayWorkflowWebhookGateInput {
