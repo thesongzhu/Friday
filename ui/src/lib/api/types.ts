@@ -1959,6 +1959,7 @@ export interface FridayModelRoutingConfig {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  costMode?: "frugal" | "standard" | "strict";
   enforceRequestedModel?: boolean;
 }
 
@@ -2065,6 +2066,7 @@ export interface FridayProviderRoutingExplainReport {
   requestedProviderId?: string;
   requestedModel?: string;
   taskProfileId?: string;
+  costMode: "frugal" | "standard" | "strict";
   requiresNativeTools: boolean;
   selectedBeforeLearning?: FridayProviderRoutingSelection;
   selectedAfterLearning?: FridayProviderRoutingSelection;

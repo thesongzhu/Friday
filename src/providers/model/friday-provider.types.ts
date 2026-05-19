@@ -351,9 +351,19 @@ export interface FridayModelRoutingConfig {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  costMode?: FridayProviderRoutingCostMode;
   /** OC-002: When true, cost-routing cannot override the user's requested model. */
   enforceRequestedModel?: boolean;
 }
+
+export const FRIDAY_PROVIDER_ROUTING_COST_MODES = [
+  "frugal",
+  "standard",
+  "strict",
+] as const;
+
+export type FridayProviderRoutingCostMode =
+  (typeof FRIDAY_PROVIDER_ROUTING_COST_MODES)[number];
 
 function normalizeFridayStringList(input: readonly string[] | null | undefined): string[] {
   if (!Array.isArray(input)) {
@@ -404,6 +414,9 @@ export function normalizeFridayModelRoutingConfig(
     defaultProviderId,
     ...(defaultModel ? { defaultModel } : {}),
     fallbackProviderIds: normalizeFridayStringList(input?.fallbackProviderIds),
+    costMode: FRIDAY_PROVIDER_ROUTING_COST_MODES.includes(input?.costMode as FridayProviderRoutingCostMode)
+      ? (input?.costMode as FridayProviderRoutingCostMode)
+      : "standard",
     ...(input?.enforceRequestedModel !== undefined
       ? { enforceRequestedModel: Boolean(input.enforceRequestedModel) }
       : {}),
@@ -547,6 +560,8 @@ export interface FridayProviderHealthSnapshotItem {
 
 export type FridayProviderRoutingReasonCode =
   | "configured"
+  | "cost_mode_frugal"
+  | "cost_mode_strict"
   | "historical_bias"
   | "operator_override"
   | "operator_penalty"
@@ -598,6 +613,7 @@ export interface FridayProviderRoutingHistoryWindow {
 }
 
 export interface FridayProviderRoutingDecisionTrace {
+  costMode: FridayProviderRoutingCostMode;
   taskProfileId?: string;
   requiresNativeTools: boolean;
   requiredCapabilities?: FridayRuntimeCapabilityId[];
@@ -617,6 +633,7 @@ export interface FridayProviderRoutingExplainReport {
   requestedProviderId?: string;
   requestedModel?: string;
   taskProfileId?: string;
+  costMode: FridayProviderRoutingCostMode;
   requiresNativeTools: boolean;
   selectedBeforeLearning?: FridayProviderRoutingSelection;
   selectedAfterLearning?: FridayProviderRoutingSelection;

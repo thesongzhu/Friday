@@ -209,10 +209,16 @@ describe("createFridayAgentProviderTool", () => {
     const provider = makeProvider({ id: "anthropic-oauth-1" });
     const providerService = createMockProviderService({
       getProvider: vi.fn().mockResolvedValue(provider),
+      getRoutingConfig: vi.fn().mockResolvedValue({
+        defaultProviderId: "openai-primary",
+        fallbackProviderIds: ["anthropic-oauth-1"],
+        costMode: "strict",
+      }),
       setRoutingConfig: vi.fn().mockResolvedValue({
         defaultProviderId: provider.id,
         defaultModel: provider.defaultModel,
         fallbackProviderIds: [],
+        costMode: "strict",
       }),
     });
     const tool = createFridayAgentProviderTool({ providerService });
@@ -229,8 +235,10 @@ describe("createFridayAgentProviderTool", () => {
       defaultProviderId: "anthropic-oauth-1",
       defaultModel: "claude-sonnet-4-20250514",
       fallbackProviderIds: [],
+      costMode: "strict",
     });
     expect(parsed.routing.defaultModel).toBe("claude-sonnet-4-20250514");
+    expect((parsed.routing as Record<string, unknown>).costMode).toBe("strict");
   });
 
   it("set_default returns a clear error when the provider is missing", async () => {

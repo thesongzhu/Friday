@@ -1,6 +1,7 @@
 import type {
   FridayProviderApi,
   FridayProviderKind,
+  FridayProviderRoutingCostMode,
   FridayProviderRoutingDecisionTrace,
   FridayProviderRoutingReasonCode,
   FridayResolvedProviderRoute,
@@ -76,6 +77,7 @@ export interface FridayLlmBudgetStatus {
 
 export interface FridayCostRoutingDecision {
   strategy: FridayProviderRouteStrategy;
+  costMode?: FridayProviderRoutingCostMode;
   complexity: FridayTaskComplexity;
   budgetState: FridayBudgetState;
   estimatedInputTokens: number;

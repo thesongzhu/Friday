@@ -1446,6 +1446,7 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
           defaultProviderId: restoreProviderId,
           defaultModel: restoreModel,
           fallbackProviderIds: restoreFallbackProviderIds,
+          costMode: normalizedRouting.costMode,
           ...(restoreEnforceRequestedModel !== undefined
             ? { enforceRequestedModel: restoreEnforceRequestedModel }
             : normalizedRouting.enforceRequestedModel !== undefined
@@ -1492,6 +1493,7 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         defaultProviderId: nextProviderId,
         defaultModel: nextModel,
         fallbackProviderIds,
+        costMode: normalizedRouting.costMode,
         ...(normalizedRouting.enforceRequestedModel !== undefined
           ? { enforceRequestedModel: normalizedRouting.enforceRequestedModel }
           : {}),
