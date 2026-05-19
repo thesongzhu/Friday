@@ -40,6 +40,20 @@ export function runFridayMigrations(
     const insertApplied = db.prepare(
       "INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
     );
+    const maxKnownVersion = migrations.reduce(
+      (maxVersion, migration) => Math.max(maxVersion, migration.version),
+      0,
+    );
+    const futureApplied = db.prepare(
+      "SELECT version, name FROM schema_migrations WHERE version > ? ORDER BY version ASC LIMIT 1",
+    ).get(maxKnownVersion) as { version: number; name: string } | undefined;
+    if (futureApplied) {
+      throw new FridayDomainError(
+        "MIGRATION_FUTURE_VERSION",
+        `Database schema is newer than this Friday build: migration ${futureApplied.version} (${futureApplied.name}) is already applied, but the newest known migration is ${maxKnownVersion}.`,
+        { httpStatus: 500 },
+      );
+    }
 
     for (const migration of migrations) {
       const existing = getApplied.get(migration.version) as

@@ -126,6 +126,30 @@ describe("friday-migration-runner", () => {
     expect(result.skippedVersions).toEqual([31, 32]);
   });
 
+  it("rejects schema_migrations rows from a newer Friday build", () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      )
+    `);
+    db.prepare(`
+      INSERT INTO schema_migrations (version, name, checksum, applied_at)
+      VALUES (?, ?, ?, ?)
+    `).run(999, "v999-future-build", "future-checksum", "2026-05-18T00:00:00.000Z");
+
+    expect(() =>
+      runFridayMigrations({ db, migrations: [V001_INITIAL_MIGRATION] }),
+    ).toThrow(/newer than this Friday build/i);
+
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+      .all();
+    expect(tables).toHaveLength(0);
+  });
+
   it("failed migration rolls back the entire pending migration batch", () => {
     const badMigration: FridaySqliteMigration = {
       version: 2,
