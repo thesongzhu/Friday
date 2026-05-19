@@ -71,3 +71,27 @@ Phase 4 read-only audit found local Claude JSONL transcript evidence for the two
 - `friday-self-upgrade-channel-adapter-live.e2e.test.ts`: transcript-backed local PASS (`1/1`, single attempt, 334 ms test time), but no clean log under `/tmp/friday-deepseek-queue-20260511/`.
 
 This improves the historical local evidence classification from "unknown outcome" to "transcript-backed local PASS, missing clean log artifact". It is not same-SHA release proof, not RGG proof, and not a substitute for a future rerun with clean per-test artifact capture.
+
+## 2026-05-19 Phase 19 Release-Proof Debt Supplement
+
+Phase 19 rechecked `P1-009` and `P2-007` against the post-Phase-18H public v1
+local track. The public v1 local track remains limited to local UI + operator +
+non-technical independent-use readiness, and release-facing claims must stay
+inside current proof. Phase 18A still carries a live UI/LLM acknowledgement + SSE
+tail as `blocked_by_env` until a safe provider environment is available; that is
+not closed or converted to pass by this supplement. The track does not include
+channel/cloud live proof, external OTEL/Grafana proof, PR #244 closure, or a
+release-complete-all claim.
+
+F-014 remains open for external observability, but it is a future/no-claim item
+for public v1 local. Internal observability routes, traces, audit, metrics,
+health, and alert-routing surfaces remain active. Slack/SMTP dispatch and
+OTEL/Grafana export require configured external environments and same-SHA
+RGG/manual-external proof before any release-complete claim. Missing credentials
+or missing external endpoints remain `blocked_by_env`, not pass.
+
+The current public v1 release-proof ledger is
+[`CAPABILITY_PROOF_MATRIX_2026-05-19_POST_267.md`](CAPABILITY_PROOF_MATRIX_2026-05-19_POST_267.md).
+That snapshot closes Phase 19 release-proof debt only for public v1 local claims;
+it does not resolve external observability, channel, cloud, or release-complete-all
+claims.
