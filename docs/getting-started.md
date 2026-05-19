@@ -2,7 +2,7 @@
 
 This guide gets Friday running locally, completes setup, and explains what to do when a capability is missing.
 
-Friday is local-first and BYOK. You can start it without every provider configured, but real tasks that need models, search, OCR, TTS, channels, or third-party accounts require valid credentials and verification.
+Friday is local-first and BYOK. You can start it without every provider configured, but real tasks that need models, search, OCR, TTS, optional channels, or third-party accounts require valid credentials and verification.
 
 ## Prerequisites
 
@@ -68,8 +68,8 @@ Setup should guide you through:
 
 1. **Local session:** Friday establishes a local browser session for this machine.
 2. **Provider:** choose or auto-detect a model provider, enter credentials, and verify the lane.
-3. **Capabilities:** review text, vision, OCR, embedding, web search, PDF, browser, files, skills, workflows, memory, TTS, and channel support.
-4. **Channels:** connect optional chat/control channels such as Discord, Telegram, Feishu/Lark, Signal, WhatsApp, QQ, or webhooks.
+3. **Capabilities:** review text, vision, OCR, embedding, web search, PDF, browser, files, skills, workflows, memory, TTS, and optional channel support.
+4. **Channels:** connect optional chat/control channels such as Discord, Telegram, Feishu/Lark, Signal, WhatsApp, QQ, or webhooks only when you want that surface and can verify it.
 5. **Home:** after setup completes, opening Friday should go directly to Home.
 
 If setup cannot verify a capability, it should say what is missing, where to configure it, and how to test it after configuration.
@@ -133,6 +133,8 @@ npm run lint
 npm run build
 npm test
 ```
+
+`npm run typecheck` covers source, operator-client, UI, and type-level contracts. It does not replace the normal `.test.ts` Vitest suite; use `npm test` for that.
 
 Useful targeted checks:
 

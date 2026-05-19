@@ -15,7 +15,7 @@
 
 ### Required
 - [ ] Tests added/updated for changed behavior
-- [ ] `npm run typecheck` passes
+- [ ] `npm run typecheck` passes (source/operator/UI plus type-level contracts; normal `.test.ts` coverage is `npm test`)
 - [ ] `npm run lint` passes
 - [ ] `npm test` passes
 - [ ] Release claims in this PR do not treat mock or browser-mock-hub evidence as ship proof

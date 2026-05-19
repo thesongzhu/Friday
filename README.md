@@ -7,7 +7,7 @@
 <p align="center">
   <strong>A personal AI that learns your work, uses skills, and acts with approval.</strong><br>
   Chat with it, give it goals, connect your tools, and let repeated work become auditable workflows.<br>
-  Local-first · BYOK · Approval-first · Human-controlled · AGI-Like
+  Local-first · BYOK · Approval-first · Human-controlled · Evidence-backed
 </p>
 
 <p align="center">
@@ -29,8 +29,8 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 
 ## The Product Loop
 
-1. **You give a goal.** Example: "Read these PDFs, compare them with the latest web results, and send a short summary to Discord."
-2. **Friday checks capabilities.** It looks for text, vision, OCR, web search, PDF, file, browser, channel, model, memory, and workflow support.
+1. **You give a goal.** Example: "Read these PDFs, compare them with the latest web results, and save a short summary with citations."
+2. **Friday checks capabilities.** It looks for text, vision, OCR, web search, PDF, file, browser, optional channel, model, memory, and workflow support.
 3. **Friday reports or drafts gap closure.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills, but install/update paths remain policy-gated and under active hardening.
 4. **Friday asks when humans are required.** API keys, OAuth, paid plans, CAPTCHA, logins, sensitive permissions, and high-risk actions go through a human gate.
 5. **Friday runs and verifies.** It executes through skills, tools, workflows, browser/desktop control, or channel adapters, then checks the result.
@@ -46,7 +46,7 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 | Skills and workflows | Import, validate, install, run, verify, update, and roll back reusable skills/workflows; generated/self-upgraded flows are WIP | Untrusted code must pass review, sandbox checks, and policy gates |
 | Memory and self-improvement | Store preferences, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; no hidden model training |
 | Self-healing | Detect failures, propose fixes, run low-risk repairs, verify, roll back, and pause after repeated failures | High-risk changes require approval |
-| Multi-channel control | Connect channels such as Discord, Telegram, Feishu/Lark, Slack-style webhooks, Signal, WhatsApp, and QQ where configured | Channels can control Friday, but sensitive actions still require confirmation |
+| Optional channel adapters | Connect channels such as Discord, Telegram, Feishu/Lark, Slack-style webhooks, Signal, WhatsApp, and QQ where configured | Channels are configured-only surfaces and are not part of the public v1 local release claim; sensitive actions still require confirmation |
 | Long-running goals | Run user-authorized standing goals, create agenda items, gather evidence, and report outcomes | Friday is goal-driven by the user; it does not invent unrelated long-term agendas |
 
 ## Setup
@@ -88,7 +88,7 @@ docker compose -f docker/docker-compose.yml up --build
 # Open http://localhost:3141
 ```
 
-First-run setup guides you through providers, channels, local permissions, and optional capabilities. After setup, Friday should open directly to Home.
+First-run setup guides you through providers, local permissions, and optional capabilities. Channel setup is optional and must verify the configured channel before it is treated as available. After setup, Friday should open directly to Home.
 
 ## Providers And Keys
 
