@@ -1214,13 +1214,13 @@ describe("loadProcessEnvFromDotEnvFile", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-setup-env-mode-test-"));
     const envPath = path.join(tmpDir, ".env");
-    fs.writeFileSync(envPath, "FRIDAY_TEST_PROVIDER_KEY=old-placeholder\n", { mode: 0o644 });
+    fs.writeFileSync(envPath, "FRIDAY_TEST_PROVIDER_KEY=old\n", { mode: 0o644 });
 
-    writeFridaySetupEnvFile(envPath, ["FRIDAY_TEST_PROVIDER_KEY=new-placeholder"]);
+    writeFridaySetupEnvFile(envPath, ["FRIDAY_TEST_PROVIDER_KEY=new"]);
 
     const mode = fs.statSync(envPath).mode & 0o777;
     expect(mode).toBe(0o600);
-    expect(fs.readFileSync(envPath, "utf8")).toBe("FRIDAY_TEST_PROVIDER_KEY=new-placeholder\n");
+    expect(fs.readFileSync(envPath, "utf8")).toBe("FRIDAY_TEST_PROVIDER_KEY=new\n");
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
