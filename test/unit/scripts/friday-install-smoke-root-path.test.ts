@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -21,5 +22,29 @@ describe("install smoke root path handling", () => {
     expect(source).toContain('import { fileURLToPath } from "node:url";');
     expect(source).toContain('fileURLToPath(new URL("../../", import.meta.url))');
     expect(source).not.toContain(".pathname.replace");
+  });
+
+  it("rejects an occupied localhost port before install smoke can poll health", async () => {
+    const scriptUrl = pathToFileURL(join(process.cwd(), "scripts/ci/install-smoke.mjs")).href;
+    const { assertInstallSmokePortAvailable } = await import(scriptUrl);
+    const blocker = createServer();
+
+    await new Promise<void>((resolve) => {
+      blocker.listen(0, "127.0.0.1", resolve);
+    });
+    const address = blocker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected localhost TCP address for install smoke port test");
+    }
+
+    try {
+      await expect(assertInstallSmokePortAvailable(address.port)).rejects.toMatchObject({
+        code: "EADDRINUSE",
+      });
+    } finally {
+      await new Promise<void>((resolve) => {
+        blocker.close(() => resolve());
+      });
+    }
   });
 });

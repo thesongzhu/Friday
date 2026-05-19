@@ -31,7 +31,7 @@ process.on("uncaughtException", (error) => {
   process.exit(1);
 });
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -2301,6 +2301,28 @@ function padEnd(s: string, len: number): string {
 
 // ─── Setup Wizard ───
 
+const SETUP_ENV_FILE_MODE = 0o600;
+
+export function tightenFridaySetupEnvFilePermissions(
+  envPath: string,
+  options?: { platform?: NodeJS.Platform },
+): void {
+  const platform = options?.platform ?? process.platform;
+  if (platform === "win32" || !existsSync(envPath)) {
+    return;
+  }
+  chmodSync(envPath, SETUP_ENV_FILE_MODE);
+}
+
+export function writeFridaySetupEnvFile(envPath: string, envLines: string[]): void {
+  if (envLines.length === 0) {
+    return;
+  }
+  tightenFridaySetupEnvFilePermissions(envPath);
+  writeFileSync(envPath, envLines.join("\n") + "\n", { mode: SETUP_ENV_FILE_MODE });
+  tightenFridaySetupEnvFilePermissions(envPath);
+}
+
 async function cmdSetup(): Promise<void> {
   const readline = await import("node:readline");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -2374,7 +2396,7 @@ async function cmdSetup(): Promise<void> {
   }
 
   if (envLines.length > 0) {
-    writeFileSync(envPath, envLines.join("\n") + "\n", { mode: 0o600 });
+    writeFridaySetupEnvFile(envPath, envLines);
     console.log(`\nConfiguration saved to ${envPath}`);
   }
 

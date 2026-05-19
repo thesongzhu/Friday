@@ -25,14 +25,17 @@ import {
   rmSync,
   readdirSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
 const TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
+const PORT_MIN = 19_000;
+const PORT_SPAN = 1_000;
 const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
   ?? process.env.FRIDAY_LOCAL_PASSPHRASE
   ?? "friday-install-smoke-passphrase-123";
@@ -64,6 +67,56 @@ function fail(msg) {
   console.error(`\n❌ SMOKE TEST FAILED: ${msg}`);
   cleanup();
   process.exit(1);
+}
+
+export async function assertInstallSmokePortAvailable(port, host = "127.0.0.1") {
+  const probe = createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(port, host, resolve);
+    });
+  } finally {
+    await new Promise((resolve) => {
+      if (!probe.listening) {
+        resolve();
+        return;
+      }
+      probe.close(() => resolve());
+    });
+  }
+}
+
+export async function chooseInstallSmokePort() {
+  const first = PORT_MIN + Math.floor(Math.random() * PORT_SPAN);
+  for (let offset = 0; offset < PORT_SPAN; offset += 1) {
+    const port = PORT_MIN + ((first - PORT_MIN + offset) % PORT_SPAN);
+    try {
+      await assertInstallSmokePortAvailable(port);
+      return port;
+    } catch {
+      // Try the next candidate instead of letting an existing service satisfy smoke health.
+    }
+  }
+  throw new Error("No available localhost port found for install smoke");
+}
+
+function assertServerProcessAlive(context, stdout, stderr) {
+  if (serverProc && serverProc.exitCode !== null) {
+    fail(
+      `Server exited before ${context} (code ${serverProc?.exitCode}).\n` +
+      `stdout: ${stdout}\nstderr: ${stderr}`,
+    );
+  }
+}
+
+function isInstallSmokeEntrypoint() {
+  const entrypoint = process.argv[1];
+  if (!entrypoint) {
+    return false;
+  }
+  const resolvedEntrypoint = isAbsolute(entrypoint) ? entrypoint : resolve(entrypoint);
+  return resolvedEntrypoint === fileURLToPath(import.meta.url);
 }
 
 function cleanup() {
@@ -189,7 +242,7 @@ async function run() {
   const smokeEnvFile = join(tmpDir, ".smoke.env");
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(smokeHomeDir, { recursive: true });
-  const port = 19000 + Math.floor(Math.random() * 1000);
+  const port = await chooseInstallSmokePort();
 
   console.log(`4. Starting server on port ${port}…`);
   const env = {
@@ -254,13 +307,7 @@ async function run() {
       // Server not ready yet
     }
 
-    // Check if process exited unexpectedly
-    if (serverProc.exitCode !== null) {
-      fail(
-        `Server exited prematurely (code ${serverProc.exitCode}).\n` +
-        `stdout: ${serverStdout}\nstderr: ${serverStderr}`,
-      );
-    }
+    assertServerProcessAlive("health readiness", serverStdout, serverStderr);
     await sleep(POLL_INTERVAL_MS);
   }
 
@@ -273,6 +320,7 @@ async function run() {
 
   // ── Step 6: bootstrap + POST /v1/auth/login ──
   console.log("6. Verifying POST /v1/auth/login…");
+  assertServerProcessAlive("login verification", serverStdout, serverStderr);
   try {
     const token = await loginWithLocalPassphrase(`http://127.0.0.1:${port}`);
     console.log(`   → Login succeeded with token length ${token.length}`);
@@ -282,6 +330,7 @@ async function run() {
 
   // ── Step 7: GET / — UI bundle served from install location ──
   console.log("7. Verifying GET / serves the bundled UI…");
+  assertServerProcessAlive("UI bundle verification", serverStdout, serverStderr);
   try {
     const rootRes = await fetch(`http://127.0.0.1:${port}/`);
     if (rootRes.status !== 200) {
@@ -327,4 +376,6 @@ async function run() {
   console.log("\n✅ Install smoke test passed\n");
 }
 
-run().catch((err) => fail(err.message));
+if (isInstallSmokeEntrypoint()) {
+  run().catch((err) => fail(err.message));
+}
