@@ -22,9 +22,21 @@ export function createFridaySqliteReadPool(
   const connections: Database.Database[] = [];
 
   for (let i = 0; i < size; i++) {
-    const conn = new Database(dbPath, { readonly: true });
-    applyFridayReadPragmas(conn, pragmas);
-    connections.push(conn);
+    let conn: Database.Database | undefined;
+    try {
+      conn = new Database(dbPath, { readonly: true });
+      applyFridayReadPragmas(conn, pragmas);
+      connections.push(conn);
+    } catch (error) {
+      if (conn?.open) {
+        conn.close();
+      }
+      for (const openConn of connections) {
+        openConn.close();
+      }
+      connections.length = 0;
+      throw error;
+    }
   }
 
   let index = 0;
