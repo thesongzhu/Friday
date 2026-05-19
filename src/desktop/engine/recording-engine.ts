@@ -178,18 +178,41 @@ function applyParameterSubstitutions(
 ): FridayDesktopAction {
   // Use explicit bindings when present; otherwise fall back to parameter map substitution.
   const hasBindings = Object.keys(bindings).length > 0;
-  const json = JSON.stringify(action);
-  const substituted = json.replace(/\{\{(\w+)\}\}/g, (match, paramName) => {
-    if (hasBindings && !Object.hasOwn(bindings, paramName)) {
+  const readOwnString = (
+    record: Readonly<Record<string, string>>,
+    key: string,
+  ): string | undefined => Object.entries(record)
+    .find(([candidate]) => candidate === key)?.[1];
+  const readParameterDefault = (key: string): string | undefined => Object.entries(parameters)
+    .find(([candidate]) => candidate === key)?.[1].defaultValue;
+  const substituteString = (value: string): string => value.replace(/\{\{(\w+)\}\}/g, (match, paramName) => {
+    const boundValue = readOwnString(bindings, paramName);
+    if (hasBindings && boundValue === undefined) {
       return match;
     }
-    if (Object.hasOwn(values, paramName)) return values[paramName];
-    const paramDef = parameters[paramName];
-    if (paramDef?.defaultValue !== undefined) return paramDef.defaultValue;
-    if (Object.hasOwn(bindings, paramName)) return bindings[paramName];
+    const replayValue = readOwnString(values, paramName);
+    if (replayValue !== undefined) return replayValue;
+    const defaultValue = readParameterDefault(paramName);
+    if (defaultValue !== undefined) return defaultValue;
+    if (boundValue !== undefined) return boundValue;
     return match;
   });
-  return JSON.parse(substituted) as FridayDesktopAction;
+  const substituteValue = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      return substituteString(value);
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry) => substituteValue(entry));
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, substituteValue(nested)]),
+      );
+    }
+    return value;
+  };
+
+  return substituteValue(action) as FridayDesktopAction;
 }
 
 // ─── Factory ───

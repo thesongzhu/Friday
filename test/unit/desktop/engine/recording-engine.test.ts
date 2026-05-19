@@ -452,6 +452,79 @@ describe("RecordingEngine", () => {
       expect((capturedAction as any).text).toBe("{{toString}} and {{constructor}}");
     });
 
+    it("substitutes string values without rewriting serialized JSON", async () => {
+      const rec = engine.start({ name: "R1" });
+      engine.addParameter(rec.id, "message", {
+        type: "string",
+        defaultValue: "default",
+        required: true,
+      });
+      engine.captureStep(
+        rec.id,
+        {
+          type: "type",
+          text: "Message: {{message}}",
+          selector: {
+            strategy: "accessibility_id",
+            value: "composer-{{message}}",
+            appBundleId: "com.example.app",
+          },
+        } as FridayDesktopAction,
+        undefined,
+        undefined,
+        { message: "original" },
+      );
+      engine.stop(rec.id);
+
+      let capturedAction: FridayDesktopAction | null = null;
+      await engine.replay(
+        rec.id,
+        async (action) => {
+          capturedAction = action;
+          return makeActionResult(action);
+        },
+        { parameters: { message: "quote \" slash \\ newline\nvalue" } },
+      );
+
+      expect(capturedAction).not.toBeNull();
+      expect((capturedAction as any).text).toBe("Message: quote \" slash \\ newline\nvalue");
+      expect((capturedAction as any).selector.value).toBe("composer-quote \" slash \\ newline\nvalue");
+      expect((capturedAction as any).selector.appBundleId).toBe("com.example.app");
+    });
+
+    it("does not substitute object keys or non-string fields", async () => {
+      const rec = engine.start({ name: "R1" });
+      engine.addParameter(rec.id, "value", {
+        type: "string",
+        defaultValue: "replacement",
+        required: false,
+      });
+      engine.captureStep(
+        rec.id,
+        {
+          type: "click",
+          selector: {
+            strategy: "accessibility_id",
+            value: "{{value}}",
+            appBundleId: "com.example.app",
+          },
+          coordinates: { x: 10, y: 20, width: 30, height: 40 },
+          metadata: { "{{value}}": 7, nested: true },
+        } as unknown as FridayDesktopAction,
+      );
+      engine.stop(rec.id);
+
+      let capturedAction: any = null;
+      await engine.replay(rec.id, async (action) => {
+        capturedAction = action;
+        return makeActionResult(action);
+      });
+
+      expect(capturedAction.selector.value).toBe("replacement");
+      expect(capturedAction.coordinates).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+      expect(capturedAction.metadata).toEqual({ "{{value}}": 7, nested: true });
+    });
+
     it("throws when recording is not stopped", async () => {
       const rec = engine.start({ name: "R1" });
 

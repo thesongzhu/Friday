@@ -213,7 +213,7 @@ export interface FridayDesktopAdapterRuntime {
   /** Execute a desktop action. */
   execute(
     action: FridayDesktopAction,
-    options?: { readonly signal?: AbortSignal },
+    options?: FridayDesktopAdapterExecuteOptions,
   ): Promise<FridayDesktopActionResult>;
 
   /** Inspect a specific element by selector. */
@@ -232,6 +232,19 @@ export interface FridayDesktopAdapterRuntime {
 
   /** Check OS-level permissions required by this adapter. */
   checkPermissions(): Promise<FridayDesktopPermission[]>;
+}
+
+/** Runtime-only options supplied by the action executor to adapter execution. */
+export interface FridayDesktopAdapterExecuteOptions {
+  /** Abort signal used for timeout/cancellation. */
+  readonly signal?: AbortSignal;
+  /**
+   * True only after ActionExecutor has validated file_operation paths against
+   * the configured sandbox. Platform adapters refuse raw file operations
+   * without this marker so direct adapter calls cannot bypass the sandbox by
+   * accident.
+   */
+  readonly sandboxChecked?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -12,7 +12,10 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "#errors";
-import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
+import {
+  assertBoundPrincipalForOperation,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 
 import {
   FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES,
@@ -147,6 +150,13 @@ function requireService(
     throwDisabled(deps);
   }
   return deps.service;
+}
+
+function assertTaskWorkflowMutationPrincipal(
+  principal: Parameters<typeof assertBoundPrincipalForOperation>[0],
+  operation: FridayPublicMutationOperation,
+): void {
+  assertBoundPrincipalForOperation(principal, operation, "api");
 }
 
 function asJsonObject(raw: unknown): Record<string, unknown> {
@@ -718,6 +728,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.create");
         const input = parseCreateBody(ctx.body);
         return { workflow: service.create(input) };
       },
@@ -755,6 +766,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.revise");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseReviseBody(ctx.body);
         return service.revise(workflowId, input);
@@ -778,6 +790,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.claim.create");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseDraftClaimBody(ctx.body);
         return { claim: service.draftClaim(workflowId, input) };
@@ -821,7 +834,7 @@ export function createFridayTaskWorkflowRoutes(
         // owner/session/channel principal even though the route stays public
         // (no-login product posture is preserved by the synthetic principal
         // compatibility layer for read-only surfaces).
-        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.evidence.attach", "api");
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.evidence.attach");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -851,7 +864,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
-        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.claim.verify", "api");
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.claim.verify");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -867,7 +880,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
-        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.claim.block", "api");
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.claim.block");
         const { workflowId, claimId } = ctx.params as {
           workflowId: string;
           claimId: string;
@@ -883,7 +896,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
-        assertBoundPrincipalForOperation(ctx.principal ?? null, "task.workflow.closeout", "api");
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.closeout");
         const { workflowId } = ctx.params as { workflowId: string };
         return { receipt: service.closeout(workflowId) };
       },
@@ -895,6 +908,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.executor.open");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseOpenExecutorLaneBody(ctx.body);
         return { lane: service.openExecutorLane(workflowId, input) };
@@ -907,6 +921,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.verifier.open");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseOpenVerifierLaneBody(ctx.body);
         return { lane: service.openVerifierLane(workflowId, input) };
@@ -919,6 +934,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.complete");
         const { workflowId, laneId } = ctx.params as {
           workflowId: string;
           laneId: string;
@@ -934,6 +950,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.verdict");
         const { workflowId, laneId } = ctx.params as {
           workflowId: string;
           laneId: string;
@@ -974,6 +991,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.cli.handoff.record");
         const { workflowId, laneId } = ctx.params as {
           workflowId: string;
           laneId: string;
@@ -1026,6 +1044,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.channel.command.issue");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseIssueChannelCommandBody(ctx.body);
         return service.issueChannelCommand(workflowId, input);
@@ -1049,6 +1068,7 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.channel.command.confirm");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseConfirmChannelCommandBody(ctx.body);
         return service.confirmChannelCommand(workflowId, input);

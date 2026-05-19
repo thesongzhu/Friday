@@ -250,9 +250,24 @@ describe("C-001 FridayDesktopAdapters", () => {
       adapter = await createDarwinAdapter(makeConfig(exec));
 
       const action: FridayDesktopAction = { type: "file_operation", operation: "read", path: "/tmp/test.txt" };
-      const result = await adapter.execute(action);
+      const result = await adapter.execute(action, { sandboxChecked: true });
       expect(result.status).toBe("success");
       expect(result.fileData).toBe("file contents");
+    });
+
+    it("refuses raw file_operation execution before ActionExecutor sandbox validation", async () => {
+      const exec = mockExec({ "cat": { stdout: "file contents" } });
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({
+        type: "file_operation",
+        operation: "read",
+        path: "/tmp/test.txt",
+      });
+
+      expect(result.status).toBe("sandbox_violation");
+      expect(result.errorCode).toBe("DESKTOP_SANDBOX_VIOLATION");
+      expect(exec).not.toHaveBeenCalled();
     });
 
     it("reports macOS file write failures instead of false success", async () => {
@@ -266,7 +281,7 @@ describe("C-001 FridayDesktopAdapters", () => {
         operation: "write",
         path: "/tmp/test.txt",
         content: "data",
-      });
+      }, { sandboxChecked: true });
 
       expect(result.status).toBe("failed");
       expect(result.errorMessage).toContain("permission denied");
@@ -405,6 +420,24 @@ describe("C-001 FridayDesktopAdapters", () => {
       const readResult = await adapter.execute(readAction);
       expect(readResult.status).toBe("success");
       expect(readResult.clipboardContent).toBe("win-content");
+    });
+
+    it("refuses raw Windows file operations before ActionExecutor sandbox validation", async () => {
+      const exec = mockExec({ "-EncodedCommand": { stdout: "win-content" } });
+      adapter = await createWin32Adapter(makeConfig(exec));
+
+      const result = await adapter.execute({
+        type: "file_operation",
+        operation: "read",
+        path: "C:\\tmp\\test.txt",
+      });
+
+      expect(result.status).toBe("sandbox_violation");
+      expect(result.errorCode).toBe("DESKTOP_SANDBOX_VIOLATION");
+      expect(exec).not.toHaveBeenCalledWith(
+        expect.stringContaining("Get-Content"),
+        expect.anything(),
+      );
     });
 
     it("handles errors gracefully", async () => {
@@ -581,6 +614,28 @@ describe("C-001 FridayDesktopAdapters", () => {
       const result = await adapter.execute(action);
       expect(result.status).toBe("success");
       expect(result.clipboardContent).toBe("linux-clipboard");
+    });
+
+    it("refuses raw Linux file operations before ActionExecutor sandbox validation", async () => {
+      const exec = mockExec({
+        "XDG_CURRENT_DESKTOP": { stdout: "GNOME" },
+        "which xdotool": { exitCode: 0 },
+        "cat": { stdout: "file contents" },
+      });
+      adapter = await createLinuxAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({
+        type: "file_operation",
+        operation: "read",
+        path: "/tmp/test.txt",
+      });
+
+      expect(result.status).toBe("sandbox_violation");
+      expect(result.errorCode).toBe("DESKTOP_SANDBOX_VIOLATION");
+      expect(exec).not.toHaveBeenCalledWith(
+        expect.stringContaining("cat"),
+        expect.anything(),
+      );
     });
 
     it("handles errors gracefully", async () => {

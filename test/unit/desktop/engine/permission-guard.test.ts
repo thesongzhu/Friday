@@ -11,6 +11,7 @@ import type {
   FridayDesktopPermission,
   FridayDesktopPolicy,
   FridayDesktopPolicyRule,
+  FridayDesktopRuleEvaluationContext,
 } from "../../../../src/desktop/model/friday-desktop.types.js";
 
 // ─── Fixtures ───
@@ -361,6 +362,108 @@ describe("PermissionGuard", () => {
       const result = await guard.check({ type: "scroll", direction: "down" }, adapter);
       expect(result.allowed).toBe(true);
       expect(result.riskLevel).toBe("none");
+    });
+
+    it("honors elementFilter when selecting desktop policy rules", async () => {
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        {
+          actionType: "click",
+          appFilter: "com.example.app",
+          elementFilter: "Save*",
+          decision: "deny",
+          riskLevel: "high",
+        },
+      ]);
+      guard.loadPolicies([policy]);
+
+      const nonMatching = await guard.check(
+        {
+          type: "click",
+          selector: {
+            strategy: "accessibility_id",
+            value: "Cancel button",
+            appBundleId: "com.example.app",
+          },
+        },
+        adapter,
+      );
+      expect(nonMatching.allowed).toBe(true);
+      expect(nonMatching.matchedRule).toBeUndefined();
+
+      const matching = await guard.check(
+        {
+          type: "click",
+          selector: {
+            strategy: "accessibility_id",
+            value: "Save button",
+            appBundleId: "com.example.app",
+          },
+        },
+        adapter,
+      );
+      expect(matching.allowed).toBe(false);
+      expect(matching.denialCode).toBe("DESKTOP_PERMISSION_DENIED_POLICY");
+      expect(matching.matchedRule?.elementFilter).toBe("Save*");
+    });
+
+    it("fails closed when a matched rule requires Rules Engine delegation but no evaluator is configured", async () => {
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        {
+          actionType: "click",
+          appFilter: "*",
+          decision: "allow",
+          engineDelegate: true,
+        },
+      ]);
+      guard.loadPolicies([policy]);
+
+      const result = await guard.check({ type: "click" }, adapter);
+      expect(result.allowed).toBe(false);
+      expect(result.denialCode).toBe("DESKTOP_PERMISSION_DENIED_POLICY");
+      expect(result.policyDecision).toBe("deny");
+      expect(result.denialMessage).toContain("Rules Engine delegation");
+    });
+
+    it("uses Rules Engine delegation result for matched policy rules", async () => {
+      const adapter = makeMockAdapter();
+      let receivedContext: FridayDesktopRuleEvaluationContext | null = null;
+      const guardWithRulesEngine = createPermissionGuard(makeConfig({
+        rulesEngineEvaluator: async (context: FridayDesktopRuleEvaluationContext) => {
+          receivedContext = context;
+          return {
+            decision: "deny" as const,
+            riskLevel: "critical" as const,
+            denialMessage: "Denied by delegated rules engine",
+          };
+        },
+      }));
+      const policy = makePolicy([
+        {
+          actionType: "file_operation",
+          appFilter: "*",
+          decision: "allow",
+          riskLevel: "high",
+          engineDelegate: true,
+        },
+      ]);
+      guardWithRulesEngine.loadPolicies([policy]);
+
+      const result = await guardWithRulesEngine.check(
+        { type: "file_operation", operation: "read", path: "/safe/file.txt" },
+        adapter,
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.policyDecision).toBe("deny");
+      expect(result.riskLevel).toBe("critical");
+      expect(result.denialMessage).toBe("Denied by delegated rules engine");
+      expect(receivedContext?.resource).toBe("desktop");
+      expect(receivedContext?.action).toBe("file_operation");
+      expect(receivedContext?.args.platform).toBe("darwin");
+      expect(receivedContext?.args.filePath).toBe("/safe/file.txt");
+      expect(receivedContext?.args.operationType).toBe("read");
     });
   });
 

@@ -487,14 +487,36 @@ function buildParameterSubstitution(): string {
  * Substitutes {{paramName}} placeholders in action fields with input values.
  */
 function substituteParameters(action, input) {
-  const json = JSON.stringify(action);
-  const substituted = json.replace(/\\{\\{(\\w+)\\}\\}/g, (match, key) => {
-    if (key in input && input[key] !== undefined) {
-      return String(input[key]);
+  return substituteValue(action, input);
+}
+
+function substituteValue(value, input) {
+  if (typeof value === "string") {
+    return value.replace(/\\{\\{(\\w+)\\}\\}/g, (match, key) => {
+      if (
+        input &&
+        Object.prototype.hasOwnProperty.call(input, key) &&
+        input[key] !== undefined
+      ) {
+        return String(input[key]);
+      }
+      return match;
+    });
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => substituteValue(entry, input));
+  }
+
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const [key, nested] of Object.entries(value)) {
+      result[key] = substituteValue(nested, input);
     }
-    return match;
-  });
-  return JSON.parse(substituted);
+    return result;
+  }
+
+  return value;
 }
 `;
 }

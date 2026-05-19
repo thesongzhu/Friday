@@ -13,6 +13,7 @@ import type { PermissionGuard } from "../../../../src/desktop/engine/permission-
 import type {
   FridayDesktopAction,
   FridayDesktopActionResult,
+  FridayDesktopAdapterExecuteOptions,
   FridayDesktopAdapter,
   FridayDesktopAdapterRuntime,
   FridayDesktopCapability,
@@ -54,7 +55,7 @@ interface MockAdapterOptions {
   readonly permissions?: readonly FridayDesktopPermission[];
   readonly execute?: (
     action: FridayDesktopAction,
-    options?: { readonly signal?: AbortSignal },
+    options?: FridayDesktopAdapterExecuteOptions,
   ) => Promise<FridayDesktopActionResult>;
   readonly inspectElement?: (
     selector: FridayDesktopElementSelector,
@@ -102,7 +103,7 @@ function makeMockAdapter(options: MockAdapterOptions = {}): FridayDesktopAdapter
     metadata,
     async execute(
       action: FridayDesktopAction,
-      executeOptions?: { readonly signal?: AbortSignal },
+      executeOptions?: FridayDesktopAdapterExecuteOptions,
     ): Promise<FridayDesktopActionResult> {
       if (options.execute) {
         return options.execute(action, executeOptions);
@@ -295,6 +296,13 @@ describe("ActionExecutor", () => {
     it("allows paths inside configured sandbox roots", async () => {
       const tempRoot = await mkdtemp(path.join(os.tmpdir(), "desktop-sandbox-"));
       try {
+        let adapterOptions: FridayDesktopAdapterExecuteOptions | undefined;
+        const sandboxAwareAdapter = makeMockAdapter({
+          execute: async (action, options) => {
+            adapterOptions = options;
+            return makeSuccessResult(action, "darwin");
+          },
+        });
         const constrainedExecutor = makeExecutor({ sandboxAllowedRoots: [tempRoot] });
         const result = await constrainedExecutor.execute(
           {
@@ -302,13 +310,14 @@ describe("ActionExecutor", () => {
             operation: "read",
             path: path.join(tempRoot, "inside.txt"),
           },
-          adapter,
+          sandboxAwareAdapter,
           guard,
           inspector,
           { actionId: "inside-path" },
         );
 
         expect(result.status).toBe("success");
+        expect(adapterOptions?.sandboxChecked).toBe(true);
       } finally {
         await rm(tempRoot, { recursive: true, force: true });
       }

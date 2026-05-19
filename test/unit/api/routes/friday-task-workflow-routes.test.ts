@@ -515,6 +515,21 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
 
   const BOUND_OPS: ReadonlyArray<{ operationId: string; params: Record<string, string>; body?: Record<string, unknown> }> = [
     {
+      operationId: "task.workflows.create",
+      params: {},
+      body: { charter: "x", taskKind: "general", contextPackage: {} },
+    },
+    {
+      operationId: "task.workflows.revise",
+      params: { workflowId: "w-1" },
+      body: { charter: "x", reason: "update" },
+    },
+    {
+      operationId: "task.workflows.claims.create",
+      params: { workflowId: "w-1" },
+      body: { claimText: "x", claimKind: "runtime_evidence" },
+    },
+    {
       operationId: "task.workflows.claims.evidence.attach",
       params: { workflowId: "w-1", claimId: "c-1" },
       body: { refKind: "agent_run_event", refId: "ev-1", refSource: "agent_run_event" },
@@ -522,6 +537,55 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
     { operationId: "task.workflows.claims.verify", params: { workflowId: "w-1", claimId: "c-1" }, body: { verifierVerdict: "x", evidenceRefIds: ["ev-1"] } },
     { operationId: "task.workflows.claims.block", params: { workflowId: "w-1", claimId: "c-1" }, body: { reason: "x" } },
     { operationId: "task.workflows.closeout", params: { workflowId: "w-1" } },
+    {
+      operationId: "task.workflows.lanes.executor.open",
+      params: { workflowId: "w-1" },
+      body: { laneRole: "native" },
+    },
+    {
+      operationId: "task.workflows.lanes.verifier.open",
+      params: { workflowId: "w-1" },
+      body: {
+        parentLaneId: "lane-1",
+        laneRole: "provider",
+        independenceClaim: "independent",
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.complete",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: { status: "completed" },
+    },
+    {
+      operationId: "task.workflows.lanes.verdict",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: { claimId: "c-1", verifierVerdict: "ok" },
+    },
+    {
+      operationId: "task.workflows.lanes.cli.handoff.record",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: {
+        backendId: "claude-cli",
+        systemPrompt: "system",
+        conversation: "summarize",
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.issue",
+      params: { workflowId: "w-1" },
+      body: {
+        channelKind: "discord",
+        channelChatId: "chat",
+        channelMessageId: "msg",
+        senderId: "sender",
+        intentKind: "progress_query",
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.confirm",
+      params: { workflowId: "w-1" },
+      body: { confirmationToken: "confirm-token" },
+    },
   ];
 
   for (const { operationId, params, body } of BOUND_OPS) {
@@ -566,4 +630,17 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
       expect((thrown as FridayDomainError).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
     });
   }
+
+  it("keeps preview as a non-mutating public route", async () => {
+    const routes = createFridayTaskWorkflowRoutes({
+      service: makeStubService(),
+      disabledReason: null,
+    });
+    const route = findRoute(routes, "task.workflows.preview");
+    const response = (await route.handler(makeCtx({
+      body: { charter: "x", taskKind: "general", contextPackage: {} },
+      principal: syntheticPublic(),
+    }) as never)) as { preview: { specHash: string } };
+    expect(response.preview.specHash).toBe("stub-hash");
+  });
 });

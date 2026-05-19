@@ -28,6 +28,7 @@ import type {
   FridayDesktopActionResult,
   FridayDesktopActionStatus,
   FridayDesktopAdapter,
+  FridayDesktopAdapterExecuteOptions,
   FridayDesktopAdapterRuntime,
   FridayDesktopBounds,
   FridayDesktopCapability,
@@ -65,9 +66,7 @@ export interface ExecResult {
   readonly exitCode: number;
 }
 
-export interface ExecCommandOptions {
-  readonly signal?: AbortSignal;
-}
+export type ExecCommandOptions = FridayDesktopAdapterExecuteOptions;
 
 /** Adapter health check result. */
 export interface AdapterHealthCheck {
@@ -79,6 +78,23 @@ export interface AdapterHealthCheck {
 
 const SAFE_APP_IDENTIFIER_RE = /^[A-Za-z0-9._:/\\\- ]+$/;
 const SAFE_XDOTOOL_KEY_RE = /^[A-Za-z0-9_+\-]+$/;
+
+function makeUncheckedFileOperationResult(
+  config: DesktopAdapterConfig,
+  action: Extract<FridayDesktopAction, { type: "file_operation" }>,
+  platform: FridayDesktopPlatform,
+  startedAt: ISODateTime,
+): FridayDesktopActionResult {
+  return makeFailureResult(
+    config,
+    action,
+    platform,
+    startedAt,
+    "sandbox_violation",
+    "File operations must be executed through ActionExecutor sandbox validation",
+    FRIDAY_DESKTOP_ERROR_CODES.SANDBOX_VIOLATION,
+  );
+}
 
 // ─── Default Shell Executor ───
 
@@ -352,6 +368,9 @@ export async function createDarwinAdapter(
     options: ExecCommandOptions = {},
   ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
+    if (action.type === "file_operation" && options.sandboxChecked !== true) {
+      return makeUncheckedFileOperationResult(config, action, "darwin", startedAt);
+    }
 
     switch (action.type) {
       case "click": {
@@ -694,6 +713,9 @@ export async function createWin32Adapter(
     options: ExecCommandOptions = {},
   ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
+    if (action.type === "file_operation" && options.sandboxChecked !== true) {
+      return makeUncheckedFileOperationResult(config, action, "win32", startedAt);
+    }
 
     switch (action.type) {
       case "click": {
@@ -984,6 +1006,9 @@ export async function createLinuxAdapter(
     options: ExecCommandOptions = {},
   ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
+    if (action.type === "file_operation" && options.sandboxChecked !== true) {
+      return makeUncheckedFileOperationResult(config, action, "linux", startedAt);
+    }
 
     switch (action.type) {
       case "click": {
