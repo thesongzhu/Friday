@@ -211,7 +211,10 @@ export interface FridayDesktopAdapterRuntime {
   readonly metadata: FridayDesktopAdapter;
 
   /** Execute a desktop action. */
-  execute(action: FridayDesktopAction): Promise<FridayDesktopActionResult>;
+  execute(
+    action: FridayDesktopAction,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<FridayDesktopActionResult>;
 
   /** Inspect a specific element by selector. */
   inspectElement(

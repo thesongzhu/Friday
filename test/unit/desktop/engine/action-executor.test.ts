@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createActionExecutor } from "../../../../src/desktop/engine/action-executor.js";
 import type { ActionExecutor } from "../../../../src/desktop/engine/action-executor.js";
@@ -52,7 +52,10 @@ function makeSuccessResult(
 interface MockAdapterOptions {
   readonly capabilities?: readonly FridayDesktopCapability[];
   readonly permissions?: readonly FridayDesktopPermission[];
-  readonly execute?: (action: FridayDesktopAction) => Promise<FridayDesktopActionResult>;
+  readonly execute?: (
+    action: FridayDesktopAction,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<FridayDesktopActionResult>;
   readonly inspectElement?: (
     selector: FridayDesktopElementSelector,
   ) => Promise<FridayDesktopElement | null>;
@@ -97,9 +100,12 @@ function makeMockAdapter(options: MockAdapterOptions = {}): FridayDesktopAdapter
 
   return {
     metadata,
-    async execute(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+    async execute(
+      action: FridayDesktopAction,
+      executeOptions?: { readonly signal?: AbortSignal },
+    ): Promise<FridayDesktopActionResult> {
       if (options.execute) {
-        return options.execute(action);
+        return options.execute(action, executeOptions);
       }
       return makeSuccessResult(action, platform);
     },
@@ -410,6 +416,66 @@ describe("ActionExecutor", () => {
       expect(result.status).toBe("cancelled");
       expect(result.errorCode).toBe("DESKTOP_ACTION_CANCELLED");
       expect(executor.cancel("cancel-me")).toBe(false);
+    });
+
+    it("passes cancellation signal to the adapter action", async () => {
+      let observedSignal: AbortSignal | undefined;
+      const signalAwareAdapter = makeMockAdapter({
+        execute: async (action, options) => {
+          observedSignal = options?.signal;
+          return new Promise<FridayDesktopActionResult>((resolve) => {
+            options?.signal?.addEventListener("abort", () => {
+              resolve({ ...makeSuccessResult(action, "darwin"), status: "cancelled" });
+            }, { once: true });
+          });
+        },
+      });
+
+      const executionPromise = executor.execute(
+        { type: "click" },
+        signalAwareAdapter,
+        guard,
+        inspector,
+        { actionId: "signal-cancel", timeoutMs: 30_000 },
+      );
+
+      await vi.waitFor(() => expect(observedSignal).toBeDefined());
+      expect(observedSignal).toBeDefined();
+      expect(observedSignal?.aborted).toBe(false);
+      expect(executor.cancel("signal-cancel")).toBe(true);
+
+      const result = await executionPromise;
+      expect(observedSignal?.aborted).toBe(true);
+      expect(result.status).toBe("cancelled");
+    });
+
+    it("aborts the adapter signal when action execution times out", async () => {
+      let observedSignal: AbortSignal | undefined;
+      let abortObserved = false;
+      const timeoutAwareAdapter = makeMockAdapter({
+        execute: async (action, options) => {
+          observedSignal = options?.signal;
+          return new Promise<FridayDesktopActionResult>((resolve) => {
+            options?.signal?.addEventListener("abort", () => {
+              abortObserved = true;
+              resolve({ ...makeSuccessResult(action, "darwin"), status: "cancelled" });
+            }, { once: true });
+          });
+        },
+      });
+
+      const result = await executor.execute(
+        { type: "click" },
+        timeoutAwareAdapter,
+        guard,
+        inspector,
+        { actionId: "signal-timeout", timeoutMs: 10 },
+      );
+
+      expect(result.status).toBe("timeout");
+      expect(result.errorCode).toBe("DESKTOP_ACTION_TIMEOUT");
+      await vi.waitFor(() => expect(abortObserved).toBe(true));
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it("returns false for unknown action IDs", () => {
