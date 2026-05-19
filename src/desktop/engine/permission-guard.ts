@@ -31,6 +31,7 @@ import type {
   FridayDesktopPolicyDecision,
   FridayDesktopPolicyRule,
   FridayDesktopRiskLevel,
+  FridayDesktopRuleEvaluationContext,
   ISODateTime,
   UUID,
 } from "../model/friday-desktop.types.js";
@@ -67,6 +68,17 @@ export type PermissionPromptResolver = (
   prompt: FridayDesktopPermissionPrompt,
 ) => Promise<{ decision: FridayDesktopPermissionHumanDecision; rationale?: string } | null>;
 
+export interface DesktopPolicyRulesEngineResult {
+  readonly decision: FridayDesktopPolicyDecision;
+  readonly riskLevel?: FridayDesktopRiskLevel;
+  readonly denialMessage?: string;
+}
+
+export type DesktopPolicyRulesEngineEvaluator = (
+  context: FridayDesktopRuleEvaluationContext,
+  rule: FridayDesktopPolicyRule,
+) => Promise<DesktopPolicyRulesEngineResult>;
+
 /** Configuration for permission guard creation. */
 export interface PermissionGuardConfig {
   readonly generateId: FridayDesktopEngineConfig["generateId"];
@@ -74,6 +86,8 @@ export interface PermissionGuardConfig {
   readonly permissionPromptTimeoutMs: number;
   /** Optional callback to resolve human confirmation prompts. */
   readonly promptResolver?: PermissionPromptResolver;
+  /** Optional Rules Engine bridge for delegated desktop policy rules. */
+  readonly rulesEngineEvaluator?: DesktopPolicyRulesEngineEvaluator;
   /** Principal ID for the current session. */
   readonly principalId: string;
 }
@@ -164,6 +178,46 @@ function getActionAppBundleId(action: FridayDesktopAction): string | undefined {
   }
 }
 
+function getActionElementDescriptors(action: FridayDesktopAction): readonly string[] {
+  const values: string[] = [];
+  const addSelector = (selector: { readonly strategy?: string; readonly value?: string; readonly windowTitle?: string } | undefined) => {
+    if (!selector) return;
+    if (selector.value) {
+      values.push(selector.value);
+      if (selector.strategy) {
+        values.push(`${selector.strategy}:${selector.value}`);
+      }
+    }
+    if (selector.windowTitle) {
+      values.push(`window:${selector.windowTitle}`);
+    }
+  };
+
+  switch (action.type) {
+    case "click":
+    case "type":
+    case "keypress":
+    case "scroll":
+    case "screenshot":
+    case "read_element":
+      addSelector(action.selector);
+      break;
+    case "drag":
+      if ("strategy" in action.from) addSelector(action.from);
+      if ("strategy" in action.to) addSelector(action.to);
+      break;
+    case "launch_app":
+    case "close_app":
+    case "clipboard":
+    case "file_operation":
+      break;
+    default:
+      break;
+  }
+
+  return values;
+}
+
 function matchesGlob(pattern: string, value: string): boolean {
   if (pattern === "*") return true;
   if (!pattern.includes("*")) return pattern === value;
@@ -205,6 +259,7 @@ function findMatchingRule(
   policies: readonly FridayDesktopPolicy[],
   actionType: FridayDesktopActionType,
   appBundleId?: string,
+  elementDescriptors: readonly string[] = [],
 ): FridayDesktopPolicyRule | undefined {
   const sortedPolicies = [...policies]
     .filter((p) => p.enabled)
@@ -216,11 +271,51 @@ function findMatchingRule(
       if (rule.actionType !== actionType) continue;
       if (appBundleId && !matchesGlob(rule.appFilter, appBundleId)) continue;
       if (!appBundleId && rule.appFilter !== "*") continue;
+      if (
+        rule.elementFilter &&
+        rule.elementFilter !== "*" &&
+        !elementDescriptors.some((descriptor) => matchesGlob(rule.elementFilter!, descriptor))
+      ) {
+        continue;
+      }
       return rule;
     }
   }
 
   return undefined;
+}
+
+function getActionFilePath(action: FridayDesktopAction): string | undefined {
+  return action.type === "file_operation" ? action.path : undefined;
+}
+
+function getActionOperationType(action: FridayDesktopAction): string | undefined {
+  if (action.type === "file_operation" || action.type === "clipboard") {
+    return action.operation;
+  }
+  return undefined;
+}
+
+function buildRulesEngineContext(
+  action: FridayDesktopAction,
+  adapter: FridayDesktopAdapterRuntime,
+  appBundleId: string | undefined,
+  riskLevel: FridayDesktopRiskLevel,
+  principalId: string,
+): FridayDesktopRuleEvaluationContext {
+  return {
+    resource: "desktop",
+    action: action.type,
+    args: {
+      platform: adapter.metadata.platform,
+      ...(appBundleId ? { appBundleId } : {}),
+      ...(getActionFilePath(action) ? { filePath: getActionFilePath(action) } : {}),
+      ...(getActionOperationType(action) ? { operationType: getActionOperationType(action) } : {}),
+      riskLevel,
+    },
+    source: "agent",
+    principalId,
+  };
 }
 
 function riskRequiresConfirmation(riskLevel: FridayDesktopRiskLevel): boolean {
@@ -349,16 +444,47 @@ export function createPermissionGuard(config: PermissionGuardConfig): Permission
 
       // Layer 2: Friday policy
       const appBundleId = getActionAppBundleId(action);
-      const matchedRule = findMatchingRule(policies, action.type, appBundleId);
+      const elementDescriptors = getActionElementDescriptors(action);
+      const matchedRule = findMatchingRule(
+        policies,
+        action.type,
+        appBundleId,
+        elementDescriptors,
+      );
 
-      const riskLevel = matchedRule?.riskLevel ?? DEFAULT_RISK_MAP[action.type];
-      const policyDecision = matchedRule?.decision;
+      let riskLevel = matchedRule?.riskLevel ?? DEFAULT_RISK_MAP[action.type];
+      let policyDecision = matchedRule?.decision;
+      let policyDenialMessage: string | undefined;
+
+      if (matchedRule?.engineDelegate) {
+        if (!config.rulesEngineEvaluator) {
+          return {
+            allowed: false,
+            denialCode: FRIDAY_DESKTOP_ERROR_CODES.PERMISSION_DENIED_POLICY,
+            denialMessage: `Policy rule '${matchedRule.id}' requires Rules Engine delegation, but no evaluator is configured`,
+            matchedRule,
+            riskLevel,
+            policyDecision: "deny",
+          };
+        }
+
+        const engineResult = await config.rulesEngineEvaluator(
+          buildRulesEngineContext(action, adapter, appBundleId, riskLevel, config.principalId),
+          matchedRule,
+        );
+        riskLevel = engineResult.riskLevel ?? riskLevel;
+        policyDecision = engineResult.decision;
+        policyDenialMessage = engineResult.denialMessage;
+      }
 
       if (policyDecision === "deny") {
         return {
           allowed: false,
           denialCode: FRIDAY_DESKTOP_ERROR_CODES.PERMISSION_DENIED_POLICY,
-          denialMessage: matchedRule?.description ?? `Action '${action.type}' denied by policy`,
+          denialMessage:
+            policyDenialMessage ??
+            matchedRule?.description ??
+            `Action '${action.type}' denied by policy`,
           matchedRule,
           riskLevel,
           policyDecision,

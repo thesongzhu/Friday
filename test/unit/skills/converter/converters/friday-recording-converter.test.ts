@@ -353,6 +353,10 @@ describe("FridayRecordingConverter", () => {
         (f) => f.path === "entrypoint.js",
       );
       expect(entrypoint!.content).toContain("substituteParameters");
+      expect(entrypoint!.content).toContain("function substituteValue");
+      expect(entrypoint!.content).toContain("Object.entries(value)");
+      expect(entrypoint!.content).not.toContain("JSON.stringify(action)");
+      expect(entrypoint!.content).not.toContain("JSON.parse(substituted)");
     });
 
     it("entrypoint skips parameter substitution when no params", async () => {

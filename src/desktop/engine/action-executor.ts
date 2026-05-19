@@ -22,6 +22,7 @@ import type {
   FridayDesktopAction,
   FridayDesktopActionResult,
   FridayDesktopActionStatus,
+  FridayDesktopAdapterExecuteOptions,
   FridayDesktopAdapterRuntime,
   FridayDesktopElement,
   FridayDesktopEngineConfig,
@@ -410,7 +411,12 @@ async function executeWithTimeoutAndCancellation(
 
     signal.addEventListener("abort", onAbort, { once: true });
 
-    void adapter.execute(action, { signal }).then(
+    const adapterOptions: FridayDesktopAdapterExecuteOptions = {
+      signal,
+      ...(action.type === "file_operation" ? { sandboxChecked: true } : {}),
+    };
+
+    void adapter.execute(action, adapterOptions).then(
       (result) => {
         cleanup();
         resolve(result);
