@@ -78,4 +78,33 @@ describe("friday agent system tool", () => {
       riskLevel: "none",
     }));
   });
+
+  it("exposes and forwards window focus targets from system snapshots", async () => {
+    const systemService = makeSystemService();
+    const tool = createFridayAgentSystemTool({ systemService });
+    const parameters = tool.parameters as {
+      properties: {
+        targetKind: { enum: readonly string[] };
+        windowId?: unknown;
+      };
+    };
+
+    const result = await tool.execute({
+      action: "focus",
+      targetKind: "window",
+      windowId: "window:finder:1",
+      idempotencyKey: "run-1:call-window-focus",
+    }, new AbortController().signal);
+
+    expect(parameters.properties.targetKind.enum).toContain("window");
+    expect(parameters.properties.windowId).toBeDefined();
+    expect(result.isError).toBeUndefined();
+    expect(systemService.executeIntent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "focus",
+      targetKind: "window",
+      windowId: "window:finder:1",
+      actorId: "agent-runtime",
+      actorKind: "agent",
+    }));
+  });
 });

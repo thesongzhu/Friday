@@ -162,11 +162,12 @@ Friday 的原则很简单：重复、低风险、可验证的事情尽量自动�
 
 | 平台 | 方式 | 状态 |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | npm 已发布 `1.0.0` |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | core/source 包已在 npm 发布 `1.0.0`；原生桌面 companion parity 仍按平台能力与证据判断 |
 | 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
 
 官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
+Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。
 
 ## 社区
 

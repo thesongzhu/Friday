@@ -1238,6 +1238,89 @@ describe("createFridaySystemService", () => {
     });
   });
 
+  it("round-trips snapshot window ids into focus actions", async () => {
+    const focusTarget = vi.fn(async (input: { appIdentifier?: string; windowId?: string }) => ({
+      appIdentifier: input.appIdentifier,
+      windowId: input.windowId,
+      focused: true,
+      focusedAt: "2026-03-06T12:00:00.000Z",
+    }));
+    const fixture = await createServiceFixtureWithOptions({
+      companionBridge: {
+        ...createCompanionBridge(),
+        focusTarget,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const snapshotResult = await fixture.service.executeIntent({
+      action: "snapshot",
+      actorId: "agent-1",
+      actorKind: "agent",
+    });
+    const windowId = (snapshotResult.payload?.snapshot as { frontmostWindowId?: string }).frontmostWindowId;
+    const focusResult = await fixture.service.executeIntent({
+      action: "focus",
+      actorId: "agent-1",
+      actorKind: "agent",
+      target: windowId,
+      targetKind: "window",
+    });
+
+    expect(windowId).toBe("window:finder:1");
+    expect(focusTarget).toHaveBeenCalledWith({
+      appIdentifier: undefined,
+      windowId: "window:finder:1",
+    });
+    expect(focusResult.status).toBe("completed");
+    expect(focusResult.payload).toMatchObject({
+      windowId: "window:finder:1",
+      focused: true,
+    });
+  });
+
+  it("does not fallback from failed window focus into app launch", async () => {
+    const baseBridge = createCompanionBridge();
+    const launchApp = vi.fn(baseBridge.launchApp);
+    const fixture = await createServiceFixtureWithOptions({
+      companionBridge: {
+        ...baseBridge,
+        launchApp,
+        async focusTarget() {
+          return null;
+        },
+        async getStatus() {
+          const status = await baseBridge.getStatus();
+          return {
+            ...status,
+            capabilities: {
+              ...status.capabilities,
+              actions: {
+                ...status.capabilities.actions,
+                focus: "fallback" as const,
+                launch_app: "supported" as const,
+              },
+            },
+          };
+        },
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const result = await fixture.service.executeIntent({
+      action: "focus",
+      actorId: "agent-1",
+      actorKind: "agent",
+      targetKind: "window",
+      windowId: "window:finder:1",
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.message).toContain("Focus is unavailable for the requested window");
+    expect(result.payload).toBeUndefined();
+    expect(launchApp).not.toHaveBeenCalled();
+  });
+
   it("rejects multiline focus app identifiers before calling the companion bridge", async () => {
     const focusTarget = vi.fn(async (input: { appIdentifier?: string; windowId?: string }) => ({
       appIdentifier: input.appIdentifier,

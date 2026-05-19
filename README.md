@@ -162,11 +162,12 @@ Friday follows a simple rule: automate the boring parts, keep the user in contro
 
 | Platform | Method | Status |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Published on npm as `1.0.0` |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Core/source package published on npm as `1.0.0`; native desktop companion parity remains platform-specific |
 | Source | `git clone` + `npm install` + `npm run build` | Available |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
 
 The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
+Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim.
 
 ## Community
 

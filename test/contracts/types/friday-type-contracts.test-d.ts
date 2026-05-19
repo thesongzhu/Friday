@@ -36,6 +36,7 @@ import type {
 import type {
   FridayAlertDestinationSummary,
   FridayCreateAlertDestinationRequest,
+  FridayExecuteSystemIntentRequest,
   FridayListAlertDestinationsResponse,
 } from "../../../src/api/index.js";
 
@@ -132,6 +133,11 @@ expectTypeOf<FridayCreateAlertDestinationRequest>().toMatchTypeOf<
   | { type: "slack"; name: string; webhookUrl: string }
   | { type: "email"; name: string; recipients: string[]; fromAddress: string; smtpHost: string; smtpPort: number; password: string }
 >();
+expectTypeOf<FridayExecuteSystemIntentRequest>().toMatchTypeOf<{
+  action: string;
+  targetKind?: "app" | "url" | "project" | "window";
+  windowId?: string;
+}>();
 
 // FridayRole
 expectTypeOf<FridayRole>().toEqualTypeOf<

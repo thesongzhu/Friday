@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
+  createFridaySystemIntentMutatingActionRequest,
   signFridayCanonicalApproval,
 } from "../../../src/security/friday-mutating-action-gate.js";
 import type { FridayMutatingActionRequest } from "../../../src/security/friday-mutating-action-gate.js";
@@ -447,5 +448,31 @@ describe("friday mutating action gate", () => {
     });
 
     expect(createFridayMutatingActionDigest(left)).toBe(createFridayMutatingActionDigest(right));
+  });
+
+  it("binds system intent approvals to explicit window ids", () => {
+    const left = createFridaySystemIntentMutatingActionRequest({
+      action: "focus",
+      actorId: "agent-runtime",
+      actorKind: "agent",
+      targetKind: "window",
+      windowId: "window:finder:1",
+      idempotencyKey: "focus-window",
+    });
+    const right = createFridaySystemIntentMutatingActionRequest({
+      action: "focus",
+      actorId: "agent-runtime",
+      actorKind: "agent",
+      targetKind: "window",
+      windowId: "window:terminal:2",
+      idempotencyKey: "focus-window",
+    });
+
+    expect(left.resource.id).toBe("window:finder:1");
+    expect(left.resource.attributes).toMatchObject({
+      targetKind: "window",
+      windowId: "window:finder:1",
+    });
+    expect(createFridayMutatingActionDigest(left)).not.toBe(createFridayMutatingActionDigest(right));
   });
 });

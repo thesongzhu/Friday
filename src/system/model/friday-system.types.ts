@@ -448,8 +448,9 @@ export interface FridaySystemIntentInput {
   actorId?: string;
   actorKind?: FridaySystemControlLeaseOwnerKind;
   target?: string;
-  targetKind?: "app" | "url" | "project";
+  targetKind?: "app" | "url" | "project" | "window";
   appIdentifier?: string;
+  windowId?: string;
   url?: string;
   projectPath?: string;
   query?: string;
