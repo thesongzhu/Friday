@@ -11,7 +11,7 @@
 7. Fresh and current-config real-world smoke now pass 27/27 with `localPassphrase` auth, DeepSeek primary, and OpenAI fallback.
 8. Multi-turn memory, read-only file tool roundtrip, and current-config v056 checksum startup blockers are fixed.
 9. Unrelated local duplicate/untracked files were quarantined outside the repo; repo-root migration check now passes.
-10. Main branch protection now requires strict status checks, one approval, resolved conversations, and blocks force-push/delete.
+10. Main branch protection now requires strict status checks and resolved conversations, and blocks force-push/delete. As of the 2026-05-19 Phase 18B readback, required approving reviews are `0` and `enforce_admins.enabled=false`; single-maintainer merges still require the repo-tracked PR-side gate record and same-SHA CI/RGG proof.
 11. `staging-e2e` GitHub Environment exists with Cloud Live E2E secrets seeded.
 12. A Fly staging deployment profile now exists in `fly.toml`.
 

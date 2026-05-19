@@ -2,7 +2,7 @@
 
 ## Overall Status
 
-YELLOW: Current local closed-loop readiness is now strong. Marketplace and passwordless local login are retired, Docker/install auth uses real passphrase login, npm audit passes, architecture-boundary check passes, and both Fresh and Current-config real-world smokes passed 27/27 with real DeepSeek primary and OpenAI fallback calls. The GitHub control plane is now stronger after OpenClaw-style follow-up: branch protection is stricter, `staging-e2e` exists, and a Fly staging profile exists. Cloud Live E2E still needs an actor/ref guard once GitHub auth has `workflow` scope. The project is still not fully production-verified because live channel delivery and external deployed CORS/cookie/callback-domain behavior have not been exercised against a real deployed staging target.
+YELLOW: Current local closed-loop readiness is now strong. Marketplace and passwordless local login are retired, Docker/install auth uses real passphrase login, npm audit passes, architecture-boundary check passes, and both Fresh and Current-config real-world smokes passed 27/27 with real DeepSeek primary and OpenAI fallback calls. The GitHub control plane has strict required status checks, required conversation resolution, `staging-e2e` exists, and a Fly staging profile exists; the current single-maintainer branch-protection readback has zero required approving reviews and `enforce_admins.enabled=false`, so merge proof must be captured through the repo-tracked PR-side gate record rather than treated as reviewer proof. Cloud Live E2E still needs an actor/ref guard once GitHub auth has `workflow` scope. The project is still not fully production-verified because live channel delivery and external deployed CORS/cookie/callback-domain behavior have not been exercised against a real deployed staging target.
 
 ## Status Model
 
@@ -80,7 +80,7 @@ YELLOW: Current local closed-loop readiness is now strong. Marketplace and passw
 - Real Discord/channel delivery.
 - Real provider callback domains/OAuth redirects/webhook URLs.
 - External observability/alerting backends.
-- External CI settings are PARTIAL: branch protection and `staging-e2e` are verified, but Cloud Live E2E has not run against a deployed URL and its actor/ref guard needs a workflow-scope GitHub token.
+- External CI settings are PARTIAL: branch protection required status checks, required conversation resolution, and `staging-e2e` are verified; the current review-count posture is zero required approving reviews with `enforce_admins.enabled=false`, so PR-side governance records remain required for single-maintainer merges. Cloud Live E2E has not run against a deployed URL and its actor/ref guard needs a workflow-scope GitHub token.
 
 ## Exact Next 10 Tasks
 
