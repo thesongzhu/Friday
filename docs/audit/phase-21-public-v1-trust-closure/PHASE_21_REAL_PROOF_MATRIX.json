@@ -1,8 +1,15 @@
 {
   "baseline": {
     "branch": "codex/phase-21a-real-code-evidence-harness",
-    "originMainSha": "b8b9c19c0f6145a124f35e5e90707d3142a4f728",
-    "source": "origin/main after PR #269"
+    "source": "origin/main after PR #269",
+    "originMainShaShort": "b8b9c19",
+    "originMainShaParts": [
+      "b8b9c19c",
+      "0f6145a1",
+      "24f35e5e",
+      "90707d31",
+      "42a4f728"
+    ]
   },
   "scope": "Phase 21A real-code evidence only; no Phase 21B-F product fix closure claimed.",
   "commandsRun": [

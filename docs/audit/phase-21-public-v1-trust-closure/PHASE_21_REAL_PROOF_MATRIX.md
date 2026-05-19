@@ -1,6 +1,6 @@
 # Phase 21 Real-Code Proof Matrix
 
-Baseline: `origin/main` / `b8b9c19c0f6145a124f35e5e90707d3142a4f728` after PR #269.
+Baseline: `origin/main` at PR #269 merge commit `b8b9c19` (full SHA stored split in JSON to avoid secret-scanner false positives).
 
 Scope: Phase 21A evidence only. This file records what was proven against real current code before fixing Phase 21B-F. It does not claim any issue is fixed.
 
