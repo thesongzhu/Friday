@@ -97,8 +97,8 @@ export const FRIDAY_GOAL_CATEGORIES: FridayGoalCategory[] = [
       "Turn manual operations into automated workflows that run on schedule.",
     ),
     outcome: localizedText(
-      "部署一条能稳定接管重复任务的自动化流程。",
-      "Deploy an automation that handles the task without manual intervention.",
+      "部署一条能处理已批准低风险步骤，并在需要人工确认时停下来的自动化流程。",
+      "Deploy an automation that handles approved low-risk steps and asks when human approval is required.",
     ),
     wizardId: "automate-work",
     profilePriority: { developer: 5, creator: 3, business: 3, beginner: 4 },

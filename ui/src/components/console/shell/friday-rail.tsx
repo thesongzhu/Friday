@@ -34,8 +34,8 @@ function buildLearningBullets(
     bullets.push(
       localize(
         locale,
-        `${overview.coverage.autoFixActions} 次自动回补修复已经进过真实运行链路`,
-        `${overview.coverage.autoFixActions} auto-fix actions have already run through the live pipeline`,
+        `${overview.coverage.autoFixActions} 次修复动作已记录，完成状态以验证证据为准`,
+        `${overview.coverage.autoFixActions} repair actions recorded; verified outcomes remain the source of truth`,
       ),
     );
   }

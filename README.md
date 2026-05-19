@@ -5,8 +5,8 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>A personal AI that learns your work, uses skills, and acts with approval.</strong><br>
-  Chat with it, give it goals, connect your tools, and let repeated work become auditable workflows.<br>
+  <strong>The trusted application layer for AI agents to do real work.</strong><br>
+  Give Friday a goal, let it use configured tools, and keep approval, memory, evidence, and rollback in the loop.<br>
   Local-first · BYOK · Approval-first · Human-controlled · Evidence-backed
 </p>
 
@@ -21,20 +21,29 @@
 
 ## What Is Friday?
 
-Friday is a self-hosted personal AI and automation runtime.
+Friday is a self-hosted personal AI and automation runtime: a local-first application layer that helps AI agents turn user-approved goals into verified work.
 
 It is meant to feel less like a blank chatbot and more like a private execution partner: you give a goal, Friday checks what it can do, uses configured capabilities, asks for the human-only pieces, executes, verifies the result, and records what it learned. Capability acquisition and self-upgrade flows are active work and should be treated as review-gated WIP rather than a fully autonomous promise.
 
 Friday is not a magic fully autonomous system. It will not create accounts for you, bypass CAPTCHA, pay for services, take production-changing actions, or use credentials you have not provided. Its job is to do the work it can safely do, stop clearly when it needs you, and leave evidence behind.
 
+## Current Release Posture
+
+Friday is a **public v1 local candidate**, not a release-complete claim for every integration in the repository.
+
+- Current public claims focus on the local UI, local runtime, BYOK setup, supervised operator workflows, memory, evidence, and approval-gated tool use.
+- The current proof track does not claim channel control, cloud live certification, external OTEL/Grafana export, or release-complete-all.
+- Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
+- `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
+
 ## The Product Loop
 
 1. **You give a goal.** Example: "Read these PDFs, compare them with the latest web results, and save a short summary with citations."
 2. **Friday checks capabilities.** It looks for text, vision, OCR, web search, PDF, file, browser, optional channel, model, memory, and workflow support.
-3. **Friday reports or drafts gap closure.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills, but install/update paths remain policy-gated and under active hardening.
+3. **Friday reports or drafts gap closure.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills. Generated or imported skills start as candidates, not as immediately runnable capabilities.
 4. **Friday asks when humans are required.** API keys, OAuth, paid plans, CAPTCHA, logins, sensitive permissions, and high-risk actions go through a human gate.
 5. **Friday runs and verifies.** It executes through skills, tools, workflows, browser/desktop control, or channel adapters, then checks the result.
-6. **Friday learns safely.** It can update memory, routing preferences, setup recipes, generated skills, eval cases, and failure lessons. It does not train model weights by default.
+6. **Friday learns safely.** It can store auditable memories, learned facts, routing signals, setup recipes, candidate skills, eval cases, and failure lessons. Learned signals do not automatically become unquestioned truth.
 
 ## What Friday Can Do
 
@@ -43,9 +52,9 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 | Chat and task execution | Answer, plan, execute tool-backed work, show progress, and recover from failures | Depends on configured providers and granted tools |
 | Text, vision, OCR, PDF, files | Route work to configured providers or built-in parsers, then report what is missing when a lane is unavailable | Vision/OCR/TTS depend on provider support and credentials |
 | Web and browser work | Use configured web search providers, local browser control, and workflow steps | Login, payment, CAPTCHA, and sensitive accounts require the user |
-| Skills and workflows | Import, validate, install, run, verify, update, and roll back reusable skills/workflows; generated/self-upgraded flows are WIP | Untrusted code must pass review, sandbox checks, and policy gates |
-| Memory and self-improvement | Store preferences, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; no hidden model training |
-| Self-healing | Detect failures, propose fixes, run low-risk repairs, verify, roll back, and pause after repeated failures | High-risk changes require approval |
+| Skills and workflows | Import, validate, stage, promote, run, verify, update, and roll back reusable skills/workflows where the lifecycle is closed | Generated or imported skills are candidates until review, canary, and promotion gates pass; workflow upgrade proof is not identical to skill lifecycle proof |
+| Memory and self-improvement | Store explicit preferences, learned facts, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; learned signals are not hidden model training, unquestioned truth, or guaranteed prompt behavior |
+| Self-healing | Detect failures, propose fixes, and run low-risk repairs only where the path is wired, configured, and evidence-backed | Dispatcher-style auto-fix is default-off; high-risk or data-changing repairs require approval, receipts, and rollback or an explicit non-reversible record |
 | Optional channel adapters | Connect channels such as Discord, Telegram, Feishu/Lark, Slack-style webhooks, Signal, WhatsApp, and QQ where configured | Channels are configured-only surfaces and are not part of the public v1 local release claim; sensitive actions still require confirmation |
 | Long-running goals | Run user-authorized standing goals, create agenda items, gather evidence, and report outcomes | Friday is goal-driven by the user; it does not invent unrelated long-term agendas |
 
@@ -150,6 +159,9 @@ Friday follows a simple rule: automate the boring parts, keep the user in contro
 
 - [Getting Started](docs/getting-started.md)
 - [Documentation Hub](docs/README.md)
+- [Trust Model](TRUST.md)
+- [Privacy](PRIVACY.md)
+- [Responsible Use](RESPONSIBLE_USE.md)
 - [Roadmap](ROADMAP.md)
 - [Vision](docs/VISION.md)
 - [Capability Matrix](docs/ops/friday-capability-matrix.md)

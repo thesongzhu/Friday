@@ -12,7 +12,7 @@ body:
     attributes:
       label: Friday version
       description: Output of `friday --version` or `node -e "console.log(require('./package.json').version)"`
-      placeholder: "0.3.1"
+      placeholder: "1.0.0"
     validations:
       required: true
 

@@ -12,6 +12,9 @@ Start here when you need the product truth, setup steps, safety boundaries, exte
 - [Roadmap](../ROADMAP.md)
 - [Vision](VISION.md)
 - [Current Source Of Truth](current-source-of-truth.md)
+- [Trust Model](../TRUST.md)
+- [Privacy](../PRIVACY.md)
+- [Responsible Use](../RESPONSIBLE_USE.md)
 
 ## Product Truth
 
@@ -19,9 +22,11 @@ These documents define what Friday should honestly claim today:
 
 1. [Capability Matrix](ops/friday-capability-matrix.md)
 2. [Current Source Of Truth](current-source-of-truth.md)
-3. [Vision](VISION.md)
-4. [Closed-Loop Blueprint](BLUEPRINT-CLOSED-LOOP.md)
-5. [Feature Landscape](friday-feature-landscape.md)
+3. [Public V1 Local Candidate](public-v1-local-candidate.md)
+4. [Trust Model](../TRUST.md)
+5. [Vision](VISION.md)
+6. [Closed-Loop Blueprint](BLUEPRINT-CLOSED-LOOP.md)
+7. [Feature Landscape](friday-feature-landscape.md)
 
 Use these before relying on older design or audit material.
 
@@ -48,6 +53,9 @@ Use these before relying on older design or audit material.
 ## Safety And Release
 
 - [Security Policy](../.github/SECURITY.md)
+- [Privacy](../PRIVACY.md)
+- [Responsible Use](../RESPONSIBLE_USE.md)
+- [Trust Model](../TRUST.md)
 - [Contributing](../.github/CONTRIBUTING.md)
 - [Release Evidence Policy](release-evidence-policy.md)
 - [Releasing](RELEASING.md)
