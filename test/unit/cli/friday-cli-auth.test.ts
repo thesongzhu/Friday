@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { parseArgs } from "#cli";
-import { buildOpenAuthorizationUrlCommand } from "../../../src/cli/friday-cli-auth.js";
+import {
+  buildOpenAuthorizationUrlCommand,
+  runFridayCliAuthAttachCli,
+} from "../../../src/cli/friday-cli-auth.js";
 
 describe("CLI auth argument parsing", () => {
   const argv = (...args: string[]) => ["node", "friday-cli.js", ...args];
@@ -88,5 +91,147 @@ describe("CLI auth argument parsing", () => {
     expect(() =>
       buildOpenAuthorizationUrlCommand("javascript:alert(1)", "linux"),
     ).toThrow("Browser URL must use http or https");
+  });
+});
+
+describe("CLI auth attach-cli", () => {
+  function makeProviderService(overrides: Record<string, unknown> = {}) {
+    return {
+      getProvider: vi.fn(),
+      updateProvider: vi.fn(),
+      createProvider: vi.fn(),
+      doctorProvider: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("requires --provider-id instead of creating an implicit CLI provider", async () => {
+    const providerService = makeProviderService();
+
+    await expect(runFridayCliAuthAttachCli(
+      { authTarget: "codex" },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+      },
+    )).rejects.toThrow("attach-cli requires --provider-id");
+
+    expect(providerService.getProvider).not.toHaveBeenCalled();
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+    expect(providerService.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the explicit CLI provider id does not exist", async () => {
+    const providerService = makeProviderService({
+      getProvider: vi.fn().mockResolvedValue(null),
+    });
+
+    await expect(runFridayCliAuthAttachCli(
+      { authTarget: "codex", providerId: "missing-provider" },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+      },
+    )).rejects.toThrow('Provider "missing-provider" not found');
+
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+    expect(providerService.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("updates only the explicit matching provider", async () => {
+    const provider = {
+      id: "openai-codex-cli",
+      kind: "openai-codex",
+      name: "Codex CLI",
+      config: { backendKind: "cli" },
+    };
+    const providerService = makeProviderService({
+      getProvider: vi.fn().mockResolvedValue(provider),
+      updateProvider: vi.fn().mockResolvedValue(provider),
+      doctorProvider: vi.fn().mockResolvedValue({
+        backendKind: "cli",
+        authMode: "external-session",
+        backendHealth: "ok",
+        authHealth: "ok",
+        reasons: [],
+      }),
+    });
+
+    await runFridayCliAuthAttachCli(
+      {
+        authTarget: "codex",
+        providerId: provider.id,
+        binaryPath: "/usr/local/bin/codex",
+      },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+      },
+    );
+
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+    expect(providerService.updateProvider).toHaveBeenCalledWith(
+      provider.id,
+      expect.objectContaining({
+        backendKind: "cli",
+        authMode: "external-session",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+      }),
+    );
+    expect(providerService.doctorProvider).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("rejects a provider id for the wrong CLI target kind", async () => {
+    const providerService = makeProviderService({
+      getProvider: vi.fn().mockResolvedValue({
+        id: "anthropic-cli",
+        kind: "anthropic",
+        name: "Claude CLI",
+        config: { backendKind: "cli" },
+      }),
+    });
+
+    await expect(runFridayCliAuthAttachCli(
+      { authTarget: "codex", providerId: "anthropic-cli" },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+      },
+    )).rejects.toThrow('Provider "anthropic-cli" is kind "anthropic", not openai-codex');
+
+    expect(providerService.updateProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-kind provider that is not already a CLI backend", async () => {
+    const providerService = makeProviderService({
+      getProvider: vi.fn().mockResolvedValue({
+        id: "anthropic-http",
+        kind: "anthropic",
+        name: "Anthropic HTTP",
+        config: {
+          backendKind: "http",
+          authMode: "api-key",
+        },
+      }),
+    });
+
+    await expect(runFridayCliAuthAttachCli(
+      { authTarget: "claude", providerId: "anthropic-http" },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr: vi.fn(),
+      },
+    )).rejects.toThrow('Provider "anthropic-http" is backend "http", not cli');
+
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+    expect(providerService.updateProvider).not.toHaveBeenCalled();
   });
 });

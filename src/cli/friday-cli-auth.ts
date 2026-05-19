@@ -275,12 +275,36 @@ export async function runFridayCliAuthAttachCli(
     );
   }
 
-  const providers = await providerService.listProviders();
-  const existing = input.providerId
-    ? await providerService.getProvider(input.providerId)
-    : providers.find((provider) =>
-      provider.kind === spec.kind && provider.config.backendKind === "cli",
+  if (!input.providerId?.trim()) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "attach-cli requires --provider-id so Friday can bind the CLI session to an explicit provider.",
+      { httpStatus: 400 },
     );
+  }
+
+  const existing = await providerService.getProvider(input.providerId);
+  if (!existing) {
+    throw new FridayDomainError(
+      "PROVIDER_NOT_FOUND",
+      `Provider "${input.providerId}" not found`,
+      { httpStatus: 404 },
+    );
+  }
+  if (existing.kind !== spec.kind) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `Provider "${existing.id}" is kind "${existing.kind}", not ${spec.kind}`,
+      { httpStatus: 400 },
+    );
+  }
+  if (existing.config.backendKind !== "cli") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `Provider "${existing.id}" is backend "${existing.config.backendKind ?? "http"}", not cli`,
+      { httpStatus: 400 },
+    );
+  }
 
   const payload = {
     name: spec.name,
@@ -301,12 +325,7 @@ export async function runFridayCliAuthAttachCli(
     validateOnSave: true,
   };
 
-  const provider = existing
-    ? await providerService.updateProvider(existing.id, payload)
-    : await providerService.createProvider({
-      kind: spec.kind,
-      ...payload,
-    });
+  const provider = await providerService.updateProvider(existing.id, payload);
 
   const doctor = await providerService.doctorProvider(provider.id);
   stdout(`\nAttached ${spec.name} to provider ${provider.id}`);
