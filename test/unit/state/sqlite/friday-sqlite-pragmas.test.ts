@@ -38,6 +38,24 @@ describe("friday-sqlite-pragmas", () => {
       expect(sync).toBe(1);
     });
 
+    it("throws WAL busy failures before applying later write pragmas", () => {
+      const calls: string[] = [];
+      const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
+      const fakeDb = {
+        pragma(source: string) {
+          calls.push(source);
+          if (source === "journal_mode = WAL") {
+            throw busy;
+          }
+        },
+      } as unknown as Database.Database;
+
+      expect(() =>
+        applyFridayWritePragmas(fakeDb, { busyTimeoutMs: 5000, synchronous: "NORMAL" }),
+      ).toThrow(busy);
+      expect(calls).toEqual(["busy_timeout = 5000", "journal_mode = WAL"]);
+    });
+
     it("sets synchronous to FULL when configured", () => {
       db = new Database(":memory:");
       applyFridayWritePragmas(db, { busyTimeoutMs: 3000, synchronous: "FULL" });
