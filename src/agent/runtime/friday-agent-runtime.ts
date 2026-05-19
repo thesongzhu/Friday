@@ -48,6 +48,7 @@ import type {
   FridayAgentImageBlock,
   FridayAgentMessage,
   FridayAgentPlanReviewPayload,
+  FridayAgentRunConstraints,
   FridayAgentRunMetadata,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
@@ -131,10 +132,12 @@ function buildFridayAgentRunMetadata(params: {
   executionContext?: FridayAgentExecutionContext;
   updatedAt: string;
   apiRequestIdempotency?: FridayAgentApiRequestMetadata;
+  disabledToolNames?: string[];
 }): FridayAgentRunMetadata | undefined {
   const surface = params.executionContext?.surface?.trim();
   const packId = params.executionContext?.packId?.trim();
-  if (!surface && !packId && !params.apiRequestIdempotency) {
+  const disabledToolNames = [...normalizeToolNameSet(params.disabledToolNames)];
+  if (!surface && !packId && !params.apiRequestIdempotency && disabledToolNames.length === 0) {
     return undefined;
   }
 
@@ -153,6 +156,13 @@ function buildFridayAgentRunMetadata(params: {
           packId,
           ...(surface ? { surface } : {}),
           updatedAt: params.updatedAt,
+        },
+      }
+      : {}),
+    ...(disabledToolNames.length > 0
+      ? {
+        executionBoundary: {
+          disabledToolNames,
         },
       }
       : {}),
@@ -218,6 +228,12 @@ function shouldInjectPrivateActiveMemoryContext(
   }
   const chatType = executionContext.channelChatType;
   return chatType === "direct" || chatType === "dm" || chatType === "private";
+}
+
+function isPublicIsolatedRun(constraints?: FridayAgentRunConstraints): boolean {
+  return constraints?.readOnly === true
+    && constraints.operationalMode === "restricted"
+    && constraints.dataSensitivity === "public";
 }
 
 function normalizeCompactionContextBuildResult(
@@ -715,11 +731,14 @@ export function createFridayAgentRuntime(
       const isReadOnly = constraints?.readOnly === true;
       const disabledToolNames = new Set(normalizeToolNameSet(params.disabledToolNames));
       const executionContext = params.executionContext;
-      const privateActiveMemoryContext = shouldInjectPrivateActiveMemoryContext(executionContext);
+      const publicIsolatedRun = isPublicIsolatedRun(constraints);
+      const privateActiveMemoryContext = !publicIsolatedRun
+        && shouldInjectPrivateActiveMemoryContext(executionContext);
       const runMetadata = buildFridayAgentRunMetadata({
         executionContext,
         updatedAt: nowIso(),
         apiRequestIdempotency: params.apiRequestIdempotency,
+        disabledToolNames: params.disabledToolNames,
       });
       const conversationContext = params.conversationContext;
       const hasAnchoredAssistantFact = Boolean(
@@ -981,6 +1000,12 @@ export function createFridayAgentRuntime(
         conversationContext,
         executionContext,
       });
+      const effectiveToolRouting = publicIsolatedRun
+        ? {
+          ...toolRouting,
+          workspaceContextPolicy: "skip" as const,
+        }
+        : toolRouting;
       const requestedToolPacks = new Set<string>();
       const toolPackRequestTool = toolRouting.profile !== "trivial" && toolRouting.deferredToolNames.length > 0
         ? createFridayAgentToolPackRequestTool({
@@ -1481,6 +1506,7 @@ export function createFridayAgentRuntime(
             timeoutMs,
             signal: runAbortController.signal,
             constraints,
+            disabledToolNames: [...disabledToolNames],
             principalId,
             conversationContext,
             taskProfile: resolvedTaskProfile,
@@ -1671,11 +1697,11 @@ export function createFridayAgentRuntime(
             task: params.task,
             executionContext,
             conversationContext,
-            promptProfile: toolRouting.promptProfile,
+            promptProfile: effectiveToolRouting.promptProfile,
             contextPolicy: {
-              workspaceContext: toolRouting.workspaceContextPolicy,
+              workspaceContext: effectiveToolRouting.workspaceContextPolicy,
             },
-            toolRouting,
+            toolRouting: effectiveToolRouting,
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
         const baseSystemPrompt = typeof promptBuildResult === "string"

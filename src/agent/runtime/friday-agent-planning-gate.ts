@@ -7,6 +7,7 @@ import type {
   FridayAgentEventMap,
   FridayAgentPlanReviewPayload,
   FridayAgentRunConstraints,
+  FridayAgentRunMetadata,
   FridayAgentRunStatus,
 } from "../model/friday-agent.types.js";
 import type { FridayAgentRunEventRepository } from "../persistence/friday-agent-run-event-repository.js";
@@ -42,6 +43,7 @@ export interface FridayAgentPlanningGateService {
     model?: string;
     taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: FridayAgentRunConstraints;
+    disabledToolNames?: string[];
     reviewRequired?: boolean;
     conversationContext?: FridayAgentConversationContext;
     focusState?: {
@@ -92,6 +94,45 @@ function summarize(text: string, max = 160): string {
   const normalized = normalizeText(text);
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, max - 1)}…`;
+}
+
+function normalizeDisabledToolNames(toolNames: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(toolNames) || toolNames.length === 0) {
+    return undefined;
+  }
+  const normalized = toolNames
+    .filter((name): name is string => typeof name === "string")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return [...new Set(normalized)];
+}
+
+function readDisabledToolNamesFromMetadata(metadata?: FridayAgentRunMetadata): string[] | undefined {
+  return normalizeDisabledToolNames(metadata?.executionBoundary?.disabledToolNames);
+}
+
+function withDisabledToolBoundaryMetadata(
+  metadata: FridayAgentRunMetadata | undefined,
+  disabledToolNames: string[] | undefined,
+): FridayAgentRunMetadata | undefined {
+  const normalized = normalizeDisabledToolNames(disabledToolNames);
+  if (!metadata && !normalized) {
+    return undefined;
+  }
+  return {
+    ...(metadata ?? {}),
+    ...(normalized
+      ? {
+        executionBoundary: {
+          ...(metadata?.executionBoundary ?? {}),
+          disabledToolNames: normalized,
+        },
+      }
+      : {}),
+  };
 }
 
 const QA_BYPASS_HINTS = /\b(summarize|summarise|explain|describe|what is|tell me about|list|show|how does|overview|translate|recap|compare|analyze|analyse)\b/i;
@@ -330,12 +371,14 @@ export function createFridayAgentPlanningGateService(
     model?: string;
     taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: FridayAgentRunConstraints;
+    disabledToolNames?: string[];
     kind: FridayPlanningKind;
     status: "awaiting_clarification" | "awaiting_plan_approval";
     message: string;
     planReview: FridayAgentPlanReviewPayload;
   }): FridayAgentRuntimeResult {
     const existing = deps.db.withReadConnection((reader) => deps.repo.getById(reader, input.runId));
+    const metadata = withDisabledToolBoundaryMetadata(existing?.metadata, input.disabledToolNames);
     const actualExecution: FridayAgentActualExecution = {
       requestedProviderId: input.providerId,
       requestedModel: input.model,
@@ -359,6 +402,7 @@ export function createFridayAgentPlanningGateService(
           maxAttempts: FRIDAY_AGENT_MAX_ATTEMPTS,
           nowIso: deps.nowIso(),
           constraints: input.constraints,
+          metadata,
         }));
       emitRunEvent("agent.run.started", {
         runId: input.runId,
@@ -386,6 +430,7 @@ export function createFridayAgentPlanningGateService(
         summary: summarize(input.message),
         planReview: input.planReview,
         actualExecution,
+        ...(metadata ? { metadata } : {}),
       }));
 
     emitRunEvent("agent.run.planning", {
@@ -671,6 +716,7 @@ export function createFridayAgentPlanningGateService(
             model: input.model,
             taskProfile: input.taskProfile,
             constraints: input.constraints,
+            disabledToolNames: input.disabledToolNames,
             kind,
             status: "awaiting_plan_approval",
             message: plan.markdown,
@@ -700,6 +746,7 @@ export function createFridayAgentPlanningGateService(
           model: input.model,
           taskProfile: input.taskProfile,
           constraints: input.constraints,
+          disabledToolNames: input.disabledToolNames,
           kind,
           status: "awaiting_clarification",
           message: prompt,
@@ -723,6 +770,8 @@ export function createFridayAgentPlanningGateService(
       }
 
       const reviewedAt = deps.nowIso();
+      const disabledToolNames = normalizeDisabledToolNames(input.disabledToolNames)
+        ?? readDisabledToolNamesFromMetadata(run.metadata);
       const planReview: FridayAgentPlanReviewPayload = {
         ...(run.planReview ?? {
           plan: {
@@ -779,6 +828,7 @@ export function createFridayAgentPlanningGateService(
         constraints: input.constraints ?? run.constraints,
         principalId: input.principalId,
         scopes: input.scopes,
+        disabledToolNames,
         executionContext: input.executionContext,
         historyMessages: input.historyMessages,
         conversationContext: input.conversationContext,

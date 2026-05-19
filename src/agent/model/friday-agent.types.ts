@@ -203,6 +203,9 @@ export interface FridayAgentRunMetadata {
   surface?: string;
   packContext?: FridayAgentPackContextMetadata;
   apiRequest?: FridayAgentApiRequestMetadata;
+  executionBoundary?: {
+    disabledToolNames?: string[];
+  };
 }
 
 // ─── Plan review payload (IMPL-1) ───

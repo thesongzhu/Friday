@@ -1,8 +1,10 @@
 import { FridayDomainError } from "#errors";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 import type {
   FridayAgentLoopRunDetails,
   FridayAgentLoopService,
 } from "../../../learning/services/friday-agent-loop-service.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayAgentLoopRunControlResponse,
@@ -27,8 +29,8 @@ export interface FridayAgentLoopRoutesDeps {
   service: FridayAgentLoopService;
 }
 
-function requireUserId(principal: { userId?: string } | null): string {
-  if (!principal?.userId) {
+function requireUserId(principal: FridayAuthPrincipal | null): string {
+  if (isUnauthenticatedPublicPrincipal(principal) || !principal?.userId) {
     throw new FridayDomainError("UNAUTHORIZED", "A user-scoped agent-loop principal is required", {
       httpStatus: 401,
     });

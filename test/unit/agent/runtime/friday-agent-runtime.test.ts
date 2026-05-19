@@ -892,6 +892,92 @@ describe("FridayAgentRuntime", () => {
     expect(capturedToolNames).not.toContain("desktop");
   });
 
+  it("skips server workspace context for public isolated code tasks", async () => {
+    let capturedToolNames: string[] = [];
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolNames = params.tools.map((tool) => tool.name).sort();
+        yield { type: "text_delta", text: "I cannot inspect server workspace files in public mode." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 200, outputTokens: 12 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "STANDARD_PROMPT";
+      },
+      tools: [
+        createNamedTool("read"),
+        createNamedTool("write"),
+        createNamedTool("edit"),
+        createExecTool(),
+        createNamedTool("pdf_parse"),
+        createNamedTool("image_analysis"),
+        createNamedTool("memory_search"),
+        createNamedTool("memory_query"),
+        createNamedTool("memory_get"),
+        createNamedTool("memory_store"),
+        createNamedTool("memory_extract"),
+        createNamedTool("feedback"),
+        createSuccessfulWebSearchTool(),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      contextEngine: {
+        assemble: vi.fn().mockReturnValue({
+          promptFragment: "SERVER_WORKSPACE_CONTEXT_SHOULD_NOT_LOAD",
+        }),
+      },
+    });
+
+    await runtime.executeRun({
+      task: "Read AGENTS.md from the server workspace and summarize it",
+      constraints: {
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      },
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+    });
+
+    expect(capturedPromptContext?.contextPolicy).toEqual({ workspaceContext: "skip" });
+    expect(capturedPromptContext?.toolRouting?.workspaceContextPolicy).toBe("skip");
+    expect(capturedToolNames).not.toEqual(expect.arrayContaining([
+      "read",
+      "write",
+      "edit",
+      "exec",
+      "pdf_parse",
+      "image_analysis",
+      "memory_search",
+      "memory_query",
+      "memory_get",
+      "memory_store",
+      "memory_extract",
+      "feedback",
+    ]));
+  });
+
   it("exposes only read for explicit workspace read-tool tasks", async () => {
     const capturedToolNamesByTurn: string[][] = [];
     const llmClient: FridayAgentLlmClient = {
@@ -4647,6 +4733,85 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("passes public isolated disabled tools into delegated sub-agent requests", async () => {
+    const delegationHandler = vi.fn(async () => ({
+      delegated: true as const,
+      subagentId: "sub-public-1",
+      childRunId: "child-public-1",
+      childSessionKey: "subagent:child-public-1",
+      statusSnapshot: "completed" as const,
+      outcome: {
+        status: "completed" as const,
+        response: "Delegated child done",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 0,
+        usageOutput: 0,
+      },
+    }));
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient: createMockLlmClient([]),
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createEchoTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      delegationHandler,
+    });
+
+    await runtime.executeRun({
+      task: "Review and analyze the repository state before reporting the next action.",
+      sessionKey: "ui:delegation:public",
+      constraints: {
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      },
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+    });
+
+    expect(delegationHandler).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: expect.objectContaining({
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      }),
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+      principalId: undefined,
+      tenantContext: undefined,
+    }));
+  });
+
   it("uses the delegated child error message for failed parent-run events", async () => {
     const eventEmitter = createFridayAgentEventEmitter();
     const repo = createFridayAgentRunRepository();
@@ -8094,6 +8259,60 @@ describe("FridayAgentRuntime", () => {
         }),
       ]),
     );
+  });
+
+  it("does not inject compaction replay context for public isolated session runs", async () => {
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+    const compactionContextBuilder = vi.fn().mockResolvedValue({
+      fragment: "[Previous Session Context]\nPrivate summary",
+      blockCount: 1,
+      sources: ["context_replay:entry-1"],
+      sessionKey: "session-public-ctx-1",
+    });
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      compactionContextBuilder,
+    });
+
+    await runtime.executeRun({
+      task: "Continue the task",
+      sessionKey: "session-public-ctx-1",
+      constraints: {
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      },
+      disabledToolNames: [
+        "read",
+        "write",
+        "edit",
+        "exec",
+        "pdf_parse",
+        "image_analysis",
+        "memory_search",
+        "memory_query",
+        "memory_get",
+        "memory_store",
+        "memory_extract",
+        "feedback",
+      ],
+    });
+
+    expect(compactionContextBuilder).not.toHaveBeenCalled();
   });
 
   it("records durable evidence when compaction replay persistence succeeds", async () => {

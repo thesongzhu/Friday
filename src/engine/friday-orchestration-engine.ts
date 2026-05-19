@@ -38,6 +38,14 @@ export interface CreateFridayOrchestrationEngineDeps {
 
 // ─── Factory ───
 
+function isPublicIsolatedEngineRun(
+  constraints: FridayEngineRunInput["constraints"],
+): boolean {
+  return constraints?.readOnly === true
+    && constraints.operationalMode === "restricted"
+    && constraints.dataSensitivity === "public";
+}
+
 export function createFridayOrchestrationEngine(
   deps: CreateFridayOrchestrationEngineDeps,
 ): FridayOrchestrationEngine {
@@ -48,19 +56,24 @@ export function createFridayOrchestrationEngine(
     : undefined;
 
   async function executeRun(input: FridayEngineRunInput): Promise<FridayEngineRunResult> {
+    const publicIsolatedRun = isPublicIsolatedEngineRun(input.constraints);
+    const sanitizedInput = publicIsolatedRun
+      ? { ...input, sessionKey: undefined }
+      : input;
     const prepared = await turnPreparer.prepare({
-      task: input.task,
-      taskPrompt: input.taskPrompt,
-      runId: input.runId,
-      sessionKey: input.sessionKey,
-      replyToMessageId: input.replyToMessageId,
-      constraints: input.constraints,
-      persistTaskMessage: !input.taskAlreadyInHistory,
-      taskAlreadyInHistory: input.taskAlreadyInHistory,
-      idempotencyPrefix: input.idempotencyPrefix,
+      task: sanitizedInput.task,
+      taskPrompt: sanitizedInput.taskPrompt,
+      runId: sanitizedInput.runId,
+      sessionKey: sanitizedInput.sessionKey,
+      replyToMessageId: sanitizedInput.replyToMessageId,
+      constraints: sanitizedInput.constraints,
+      persistTaskMessage: !sanitizedInput.taskAlreadyInHistory,
+      taskAlreadyInHistory: sanitizedInput.taskAlreadyInHistory,
+      idempotencyPrefix: sanitizedInput.idempotencyPrefix,
+      skipPrivateSessionContext: publicIsolatedRun,
     });
 
-    return runExecutor.execute(input, prepared);
+    return runExecutor.execute(sanitizedInput, prepared);
   }
 
   async function resumeRun(

@@ -177,6 +177,7 @@ export interface FridayTurnPreparerInput {
   persistTaskMessage?: boolean;
   taskAlreadyInHistory?: boolean;
   idempotencyPrefix?: string;
+  skipPrivateSessionContext?: boolean;
 }
 
 // ─── Factory ───
@@ -316,13 +317,14 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
     const taskPromptOverride = typeof input.taskPrompt === "string" && input.taskPrompt.trim().length > 0
       ? input.taskPrompt.trim()
       : undefined;
-    const shouldPersist = input.sessionKey && input.persistTaskMessage !== false;
+    const skipPrivateSessionContext = input.skipPrivateSessionContext === true;
+    const shouldPersist = input.sessionKey && !skipPrivateSessionContext && input.persistTaskMessage !== false;
     let inboundIdempotencyKey: string | undefined;
     let currentUserSequence: number | undefined;
     let focusState: FridaySessionConversationFocusState | null = null;
 
     // ── Load focus state ──
-    if (input.sessionKey) {
+    if (input.sessionKey && !skipPrivateSessionContext) {
       focusState = await sessionDeps.getConversationFocus(input.sessionKey).catch(() => null);
     }
 
@@ -349,7 +351,16 @@ export function createFridayEngineTurnPreparer(deps: CreateFridayEngineTurnPrepa
     let conversationContext: FridayPreparedEngineContext["conversationContext"];
     let evidenceBlocks: FridayEvidenceBlock[] = [];
 
-    if (input.sessionKey) {
+    if (skipPrivateSessionContext) {
+      historyMessages = [];
+      conversationContext = {
+        turnKind: "new_topic",
+        currentTopicSummary: task,
+        selectedBlocks: [],
+        selectionReasons: [],
+        replyToMessageId: input.replyToMessageId,
+      };
+    } else if (input.sessionKey) {
       const historyRecords = await loadHistory(input.sessionKey);
 
       // Resolve sequence from history when task was already persisted externally

@@ -4592,6 +4592,7 @@ export async function createFridayHub(
         depth: 0,
         rootRunId: input.runId,
         constraints: input.constraints,
+        disabledToolNames: input.disabledToolNames,
         principalId: input.principalId,
         signal: input.signal,
       });

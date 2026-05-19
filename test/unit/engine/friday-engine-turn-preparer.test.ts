@@ -310,6 +310,89 @@ describe("createFridayEngineTurnPreparer", () => {
     expect(prepared.taskPrompt).not.toContain("SampleBoard");
   });
 
+  it("skips private session replay for public-isolated runs with a supplied session key", async () => {
+    const getMessages = vi.fn(async () => [
+      createMessage({
+        id: "private-m-1",
+        sequence: 1,
+        role: "user",
+        contentText: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY",
+      }),
+    ]);
+    const addMessage = vi.fn(async (_key: string, message: {
+      role: "user" | "assistant";
+      contentText: string;
+      idempotencyKey?: string;
+    }) => createMessage({
+      id: "public-m-1",
+      sequence: 2,
+      role: message.role,
+      contentText: message.contentText,
+      idempotencyKey: message.idempotencyKey,
+    }));
+    const getConversationFocus = vi.fn(async () => ({
+      currentTopicSummary: "PRIVATE_FOCUS_SHOULD_NOT_REPLAY",
+      updatedAt: "2026-04-16T00:00:00.000Z",
+    }));
+    const setConversationFocus = vi.fn();
+    const prepareTurn = vi.fn((): FridayPreparedConversationTurn => ({
+      turnKind: "follow_up",
+      historyMessages: [{ role: "user", content: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY" }],
+      taskPrompt: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY",
+      selectedBlocks: [
+        {
+          id: "private-block",
+          source: "topic_block",
+          summary: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY",
+          score: 100,
+          reason: "private history",
+        },
+      ],
+      selectionReasons: ["private history"],
+    }));
+    const persistCompactionEvidence = vi.fn();
+
+    const preparer = createFridayEngineTurnPreparer({
+      sessionDeps: {
+        getMessages,
+        addMessage,
+        getConversationFocus,
+        setConversationFocus,
+      },
+      historyLimit: 24,
+      nowIso: () => "2026-04-16T00:00:05.000Z",
+      prepareTurn,
+      buildEvidenceBlocks: buildFridayEvidenceBlocks,
+      classifyExecution: classifyFridayExecution,
+      persistCompactionEvidence,
+    });
+
+    const prepared = await preparer.prepare({
+      task: "Read public docs only",
+      runId: "run-public-isolated-session",
+      sessionKey: "discord:private-hub:user1",
+      constraints: {
+        readOnly: true,
+        operationalMode: "restricted",
+        dataSensitivity: "public",
+      },
+      skipPrivateSessionContext: true,
+    });
+
+    expect(addMessage).not.toHaveBeenCalled();
+    expect(getMessages).not.toHaveBeenCalled();
+    expect(getConversationFocus).not.toHaveBeenCalled();
+    expect(setConversationFocus).not.toHaveBeenCalled();
+    expect(prepareTurn).not.toHaveBeenCalled();
+    expect(persistCompactionEvidence).not.toHaveBeenCalled();
+    expect(prepared.historyMessages).toEqual([]);
+    expect(prepared.conversationContext?.selectedBlocks).toEqual([]);
+    expect(prepared.conversationContext?.selectionReasons).toEqual([]);
+    expect(prepared.taskPrompt).toBe("Read public docs only");
+    expect(JSON.stringify(prepared)).not.toContain("PRIVATE_CONTEXT_SHOULD_NOT_REPLAY");
+    expect(JSON.stringify(prepared)).not.toContain("PRIVATE_FOCUS_SHOULD_NOT_REPLAY");
+  });
+
   it("persists compaction evidence when the selected context is a compacted topic block", async () => {
     const messages: FridaySessionMessageRecord[] = [
       createMessage({ id: "m-1", sequence: 1, role: "assistant", contentText: "Earlier debugging thread." }),

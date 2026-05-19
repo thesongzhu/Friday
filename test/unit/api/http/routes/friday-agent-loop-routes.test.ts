@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createFridayAgentLoopRoutes } from "#api";
 import type { FridayHttpContext } from "#api";
 import type { FridayAgentLoopService } from "#learning/services/friday-agent-loop-service.js";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 const NOW = "2026-03-07T10:00:00.000Z";
 
@@ -288,5 +289,27 @@ describe("FridayAgentLoopRoutes", () => {
       }),
     );
     expect(putResult.expertMode.probeBudget).toBe(4);
+  });
+
+  it("rejects synthetic public principals from expert mode routes", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({ service });
+    const getRoute = routes.find((entry) => entry.operationId === "agent.loop.expertmode.get")!;
+    const putRoute = routes.find((entry) => entry.operationId === "agent.loop.expertmode.update")!;
+    const publicCtx = makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+      body: { enabled: true },
+    });
+
+    await expect(getRoute.handler(publicCtx)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      httpStatus: 401,
+    });
+    await expect(putRoute.handler(publicCtx)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      httpStatus: 401,
+    });
+    expect(service.getExpertMode).not.toHaveBeenCalled();
+    expect(service.updateExpertMode).not.toHaveBeenCalled();
   });
 });

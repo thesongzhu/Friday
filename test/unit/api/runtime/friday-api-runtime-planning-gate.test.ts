@@ -50,6 +50,18 @@ function makeProviderService(): FridayProviderService {
   } as unknown as FridayProviderService;
 }
 
+function makeBoundPrincipal(principalId: string) {
+  return {
+    principalType: "user",
+    principalId,
+    userId: principalId,
+    tokenId: `${principalId}-token`,
+    tokenKind: "access",
+    scopes: ["agent.write"],
+    issuedAt: NOW,
+  };
+}
+
 describe("FridayApiRuntime — planning gate session loop", () => {
   let db: FridaySqliteLayer;
 
@@ -160,6 +172,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: detailedTask,
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-loop-user"),
     } as never);
     expect(initial.status).toBe("awaiting_plan_approval");
 
@@ -168,6 +181,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "approve",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-loop-user"),
     } as never);
     expect(approved.status).toBe("awaiting_clarification");
 
@@ -176,6 +190,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "Every Friday at 10:00 AM Pacific time.",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-loop-user"),
     } as never);
     expect(answerOne.status).toBe("awaiting_clarification");
 
@@ -184,6 +199,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "#release-status via dry-run webhook slack://release-status",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-loop-user"),
     } as never);
     expect(answerTwo.status).toBe("awaiting_clarification");
 
@@ -192,6 +208,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "/path/to/friday",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-loop-user"),
     } as never);
     expect(answerThree.status).toBe("awaiting_plan_approval");
 
@@ -310,20 +327,14 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "Generate a workflow that runs every Friday, collects workspace release status, posts the summary to Slack, keeps the execution read-only, and reports blockers before deployment.",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-direct-approve-user"),
     } as never);
     expect(initial.status).toBe("awaiting_plan_approval");
 
     const approved = await approveRoute!.handler({
       params: { runId: initial.runId },
       // Phase 14.5A: plan approval requires a bound owner/session/channel principal.
-      principal: {
-        principalType: "user",
-        principalId: "approver-direct-1",
-        tokenId: "11111111-1111-1111-1111-111111111111",
-        tokenKind: "access",
-        scopes: ["agent.write"],
-        issuedAt: NOW,
-      },
+      principal: makeBoundPrincipal("planning-direct-approve-user"),
     } as never);
     expect(approved.status).toBe("awaiting_clarification");
     expect(approved.runId).toBe(initial.runId);
@@ -336,6 +347,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
         task: "Every Friday at 10:00 AM Pacific time.",
         sessionKey,
       },
+      principal: makeBoundPrincipal("planning-direct-approve-user"),
     } as never);
     expect(answerOne.runId).toBe(initial.runId);
     expect(answerOne.status).toBe("awaiting_clarification");

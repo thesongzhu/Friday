@@ -160,6 +160,7 @@ export interface FridaySubagentRegistrySpawnInput {
   depth: number;
   rootRunId: string;
   constraints?: FridayAgentRunConstraints;
+  disabledToolNames?: string[];
   principalId?: string;
   signal: AbortSignal;
 }
@@ -193,6 +194,7 @@ export interface CreateFridaySubagentRegistryDeps {
       tenantContext?: FridayProviderTenantContext;
       signal?: AbortSignal;
       constraints?: FridayAgentRunConstraints;
+      disabledToolNames?: string[];
       principalId?: string;
       taskProfile?: FridayAgentTaskProfileInput;
     }) => Promise<FridayAgentRuntimeResult>;

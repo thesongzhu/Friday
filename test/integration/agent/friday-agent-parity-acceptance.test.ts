@@ -56,6 +56,20 @@ function createMockProviderService(): FridayProviderService {
   } as unknown as FridayProviderService;
 }
 
+function createBoundPrincipal() {
+  return {
+    principalType: "user",
+    principalId: "user:parity-bound",
+    tenantId: "00000000-0000-0000-0000-000000000201",
+    userId: "00000000-0000-0000-0000-000000000202",
+    role: "admin",
+    scopes: ["agent.run", "session.read", "session.write"],
+    tokenId: "00000000-0000-0000-0000-000000000203",
+    tokenKind: "access",
+    issuedAt: NOW,
+  };
+}
+
 describe("Agent parity acceptance (integration)", () => {
   let db: FridaySqliteLayer;
 
@@ -248,6 +262,7 @@ describe("Agent parity acceptance (integration)", () => {
     const response = await route!.handler({
       params: { sessionKey: "discord:default:user-ctx" },
       body: { useLastUserMessage: true },
+      principal: createBoundPrincipal(),
     } as never);
 
     expect(response).toMatchObject({

@@ -48,6 +48,8 @@ import type { FridaySessionMemoryExtractionService } from "#sessions";
 import { isFridaySessionSendAllowed } from "#sessions";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridayChannelRegistry } from "#channels";
+import type { FridayAgentRunConstraints } from "../../../agent/model/friday-agent.types.js";
+import { buildPublicV1AgentRunIsolation } from "./friday-public-v1-agent-isolation.js";
 
 // ─── Dependencies ───
 
@@ -66,6 +68,8 @@ export interface FridaySessionRoutesDeps {
     timeoutMs?: number;
     principalId?: string;
     scopes?: string[];
+    constraints?: FridayAgentRunConstraints;
+    disabledToolNames?: string[];
     tenantContext?: FridayProviderTenantContext;
     persistTaskMessage?: boolean;
     taskAlreadyInHistory?: boolean;
@@ -999,8 +1003,9 @@ export function createFridaySessionRoutes(
 
         const taskFromBody = body.task?.trim();
         const useLastUserMessage = body.useLastUserMessage === true;
+        const publicIsolation = buildPublicV1AgentRunIsolation(ctx.principal);
         let task = taskFromBody;
-        if (!task && useLastUserMessage) {
+        if (!task && useLastUserMessage && !publicIsolation) {
           const history = await deps.sessionService.getMessages(key, 200);
           const lastUserMessage = [...history]
             .reverse()
@@ -1011,16 +1016,23 @@ export function createFridaySessionRoutes(
         if (!task) {
           throw new FridayDomainError(
             FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
-            useLastUserMessage
+            publicIsolation
+              ? "task is required for public session runs; public isolation does not reuse session history"
+              : useLastUserMessage
               ? "useLastUserMessage was true, but no user message was found in session history"
               : "task is required unless useLastUserMessage is explicitly true",
             { httpStatus: 400 },
           );
         }
 
-        const existingSession = await deps.sessionService.getOrCreateSession(key).catch(() => null);
-        const principalTenantContext = ctx.principal ? buildTenantContext(ctx.principal) : undefined;
+        const existingSession = publicIsolation
+          ? null
+          : await deps.sessionService.getOrCreateSession(key).catch(() => null);
+        const principalTenantContext = ctx.principal && !publicIsolation
+          ? buildTenantContext(ctx.principal)
+          : undefined;
         const tenantContext: FridayProviderTenantContext | undefined = existingSession
+          && !publicIsolation
           ? (() => {
             const hubId = existingSession.accountId?.trim() || principalTenantContext?.hubId?.trim();
             if (!hubId) {
@@ -1042,9 +1054,15 @@ export function createFridaySessionRoutes(
           replyToMessageId: body.replyToMessageId,
           timezone: body.timezone?.trim(),
           timeoutMs: body.timeoutMs,
+          ...(publicIsolation
+            ? {
+              constraints: publicIsolation.constraints,
+              disabledToolNames: publicIsolation.disabledToolNames,
+            }
+            : {}),
           persistTaskMessage: Boolean(taskFromBody),
           taskAlreadyInHistory: !taskFromBody,
-          ...(ctx.principal
+          ...(ctx.principal && !publicIsolation
             ? {
               principalId: ctx.principal.principalId,
               scopes: ctx.principal.scopes,
@@ -1053,7 +1071,12 @@ export function createFridaySessionRoutes(
             : {}),
         });
 
-        const messages = await deps.sessionService.getMessages(key, 200);
+        const messages = publicIsolation
+          ? [
+            { role: "user" as const, contentText: task },
+            { role: "assistant" as const, contentText: run.response },
+          ]
+          : await deps.sessionService.getMessages(key, 200);
         return {
           run,
           messages: messages.map((message) => ({

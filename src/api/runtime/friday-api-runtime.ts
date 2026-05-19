@@ -421,7 +421,12 @@ function resolveRunTenantContext(input: {
     userId?: string | null;
   } | null;
   principalId?: string;
+  constraints?: FridayAgentRunConstraints;
 }): FridayProviderTenantContext | undefined {
+  if (isPublicIsolatedRunConstraints(input.constraints)) {
+    return undefined;
+  }
+
   const explicitHubId = input.tenantContext?.hubId?.trim();
   const sessionHubId = input.session?.accountId?.trim();
   const hubId = explicitHubId && explicitHubId.length > 0
@@ -448,6 +453,14 @@ function resolveRunTenantContext(input: {
       ? { userId: sessionUserId ?? explicitUserId ?? principalId }
       : {}),
   };
+}
+
+function isPublicIsolatedRunConstraints(
+  constraints: FridayAgentRunConstraints | undefined,
+): boolean {
+  return constraints?.readOnly === true
+    && constraints.operationalMode === "restricted"
+    && constraints.dataSensitivity === "public";
 }
 
 function assertTenantScopedAccess(
@@ -2914,6 +2927,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       signal?: AbortSignal;
       reviewRequired?: boolean;
       constraints?: FridayAgentRunConstraints;
+      disabledToolNames?: string[];
       principalId?: string;
       scopes?: string[];
       executionContext?: FridayAgentExecutionContext;
@@ -2931,8 +2945,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       };
     }) => {
       const packId = input.executionContext?.packId?.trim();
+      const publicIsolatedRun = isPublicIsolatedRunConstraints(input.constraints);
       let sessionRecord: FridaySessionRecord | null = null;
-      if (input.sessionKey) {
+      if (input.sessionKey && !publicIsolatedRun) {
         sessionRecord = await sessionService.getOrCreateSession(input.sessionKey).catch(() => null);
       }
       if (sessionRecord && input.tenantContext && (input.tenantContext.hubId || input.tenantContext.userId)) {
@@ -2951,7 +2966,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           ...(nextUserId ? { userId: nextUserId } : {}),
         }).catch(() => sessionRecord);
       }
-      if (packId && sessionRecord) {
+      if (packId && sessionRecord && !publicIsolatedRun) {
         sessionRecord = await sessionService.mergeMetadata(sessionRecord.key, {
           packContext: {
             packId,
@@ -2964,12 +2979,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         tenantContext: input.tenantContext,
         session: sessionRecord,
         principalId: input.principalId,
+        constraints: input.constraints,
       });
       const engineResult = await orchestrationEngine.executeRun({
         task: input.task,
         taskPrompt: input.taskPrompt,
         runId: input.runId,
-        sessionKey: input.sessionKey,
+        sessionKey: publicIsolatedRun ? undefined : input.sessionKey,
         providerId: input.providerId,
         tenantContext,
         model: input.model,
@@ -2979,6 +2995,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         signal: input.signal,
         reviewRequired: input.reviewRequired,
         constraints: input.constraints,
+        disabledToolNames: input.disabledToolNames,
         principalId: input.principalId,
         scopes: input.scopes,
         executionContext: input.executionContext,
@@ -3016,6 +3033,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timeoutMs?: number;
       principalId?: string;
       scopes?: string[];
+      constraints?: FridayAgentRunConstraints;
+      disabledToolNames?: string[];
       executionContext?: FridayAgentExecutionContext;
       taskProfile?: FridayAgentTaskProfileInput;
       tenantContext?: FridayProviderTenantContext;
@@ -3047,6 +3066,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         timeoutMs: input.timeoutMs,
         principalId: input.principalId,
         scopes: input.scopes,
+        constraints: input.constraints,
+        disabledToolNames: input.disabledToolNames,
         executionContext: input.executionContext,
         taskProfile: input.taskProfile,
         tenantContext: input.tenantContext,
@@ -3112,6 +3133,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       timeoutMs?: number;
       requireReview?: boolean;
       constraints?: FridayAgentRunConstraints;
+      disabledToolNames?: string[];
       executionContext?: FridayAgentExecutionContext;
       taskProfile?: FridayAgentTaskProfileInput;
       principalId?: string;
@@ -3160,6 +3182,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           signal: abortController.signal,
           reviewRequired: input.requireReview,
           constraints: input.constraints,
+          disabledToolNames: input.disabledToolNames,
           principalId,
           scopes: input.scopes,
           tenantContext: input.tenantContext,

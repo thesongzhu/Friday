@@ -57,6 +57,20 @@ function makeMockCtx(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
+function makeBoundPrincipal(): Record<string, unknown> {
+  return {
+    principalType: "user",
+    principalId: "user:bound-1",
+    tenantId: "00000000-0000-0000-0000-000000000101",
+    userId: "00000000-0000-0000-0000-000000000102",
+    role: "admin",
+    scopes: ["agent.run", "session.read", "session.write"],
+    tokenId: "00000000-0000-0000-0000-000000000103",
+    tokenKind: "access",
+    issuedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 function createMockService(): FridaySessionService {
   return {
     createSession: vi.fn(),
@@ -681,6 +695,7 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           body: { useLastUserMessage: true },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 
@@ -916,10 +931,11 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           body: { useLastUserMessage: true },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 
-      expect(runSession).toHaveBeenCalledWith({
+      expect(runSession).toHaveBeenCalledWith(expect.objectContaining({
         sessionKey: "discord:default:user1",
         task: "Reply exactly FRIDAY_E2E_OK",
         providerId: undefined,
@@ -927,7 +943,7 @@ describe("FridaySessionRoutes", () => {
         timeoutMs: undefined,
         persistTaskMessage: false,
         taskAlreadyInHistory: true,
-      });
+      }));
       expect(result).toEqual({
         run: {
           runId: "run-1",
@@ -961,7 +977,7 @@ describe("FridaySessionRoutes", () => {
             body: {},
           }) as never,
         ),
-      ).rejects.toThrow("task is required unless useLastUserMessage is explicitly true");
+      ).rejects.toThrow("task is required for public session runs");
       expect(svc.getMessages).not.toHaveBeenCalled();
       expect(runSession).not.toHaveBeenCalled();
     });
@@ -995,7 +1011,7 @@ describe("FridaySessionRoutes", () => {
         }) as never,
       );
 
-      expect(runSession).toHaveBeenCalledWith({
+      expect(runSession).toHaveBeenCalledWith(expect.objectContaining({
         sessionKey: "discord:default:user1",
         task: "do this now",
         providerId: undefined,
@@ -1004,7 +1020,179 @@ describe("FridaySessionRoutes", () => {
         timeoutMs: undefined,
         persistTaskMessage: true,
         taskAlreadyInHistory: false,
+      }));
+    });
+
+    it("isolates unauthenticated public session runs from server-workspace tools", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn().mockResolvedValue({
+        runId: "run-public-session",
+        status: "completed",
+        response: "ok",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 1,
+        usageOutput: 1,
       });
+
+      vi.mocked(svc.getMessages).mockResolvedValue([
+        makeMockMessage({ role: "user", contentText: "hello" }),
+      ]);
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: {
+            task: "Read AGENTS.md from the server workspace",
+            providerId: "openai",
+            model: "gpt-4o",
+          },
+          principal: null,
+        }) as never,
+      );
+
+      expect(runSession).toHaveBeenCalledWith(expect.objectContaining({
+        constraints: {
+          readOnly: true,
+          operationalMode: "restricted",
+          dataSensitivity: "public",
+        },
+        disabledToolNames: [
+          "read",
+          "write",
+          "edit",
+          "exec",
+          "pdf_parse",
+          "image_analysis",
+          "memory_search",
+          "memory_query",
+          "memory_get",
+          "memory_store",
+          "memory_extract",
+          "feedback",
+        ],
+      }));
+      const input = vi.mocked(runSession).mock.calls.at(-1)?.[0];
+      expect(input?.principalId).toBeUndefined();
+      expect(input?.scopes).toBeUndefined();
+      expect(input?.tenantContext).toBeUndefined();
+      expect(svc.getOrCreateSession).not.toHaveBeenCalled();
+      expect(svc.getMessages).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        run: {
+          runId: "run-public-session",
+          status: "completed",
+          response: "ok",
+          toolCallCount: 0,
+          durationMs: 50,
+          usageInput: 1,
+          usageOutput: 1,
+        },
+        messages: [
+          { role: "user", content: "Read AGENTS.md from the server workspace" },
+          { role: "assistant", content: "ok" },
+        ],
+      });
+    });
+
+    it("rejects public latest-message reuse without reading private session history", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn();
+
+      vi.mocked(svc.getMessages).mockResolvedValue([
+        makeMockMessage({ role: "user", contentText: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY" }),
+      ]);
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      await expect(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:user1" },
+            body: { useLastUserMessage: true },
+            principal: null,
+          }) as never,
+        ),
+      ).rejects.toThrow("task is required for public session runs");
+      expect(svc.getMessages).not.toHaveBeenCalled();
+      expect(runSession).not.toHaveBeenCalled();
+    });
+
+    it("treats synthetic public session runs as public without tenant/provider context", async () => {
+      const svc = createMockService();
+      const runSession = vi.fn().mockResolvedValue({
+        runId: "run-synthetic-public-session",
+        status: "completed",
+        response: "ok",
+        toolCallCount: 0,
+        durationMs: 50,
+        usageInput: 1,
+        usageOutput: 1,
+      });
+
+      vi.mocked(svc.getMessages).mockResolvedValue([
+        makeMockMessage({ role: "user", contentText: "hello" }),
+      ]);
+
+      const routes = createFridaySessionRoutes({
+        sessionService: svc,
+        runSession,
+      });
+      const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { task: "Inspect repository files" },
+          principal: {
+            principalType: "user",
+            principalId: "public:default",
+            userId: "00000000-0000-0000-0000-000000000001",
+            role: "admin",
+            scopes: ["agent.run"],
+            tokenId: "00000000-0000-0000-0000-000000000002",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T01:00:00.000Z",
+          },
+        }) as never,
+      );
+
+      const input = vi.mocked(runSession).mock.calls.at(-1)?.[0];
+      expect(input).toEqual(expect.objectContaining({
+        constraints: {
+          readOnly: true,
+          operationalMode: "restricted",
+          dataSensitivity: "public",
+        },
+        disabledToolNames: [
+          "read",
+          "write",
+          "edit",
+          "exec",
+          "pdf_parse",
+          "image_analysis",
+          "memory_search",
+          "memory_query",
+          "memory_get",
+          "memory_store",
+          "memory_extract",
+          "feedback",
+        ],
+      }));
+      expect(input?.principalId).toBeUndefined();
+      expect(input?.scopes).toBeUndefined();
+      expect(input?.tenantContext).toBeUndefined();
     });
 
     it("forwards replyToMessageId to runSession", async () => {

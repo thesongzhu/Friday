@@ -282,6 +282,7 @@ export function createFridaySubagentRegistry(
           ...(input.constraints ?? {}),
           ...(resolvedProfile.readOnly ? { readOnly: true } : {}),
         },
+        disabledToolNames: input.disabledToolNames,
         principalId: input.principalId,
         taskProfile: { id: resolvedProfile.taskProfile },
       });
