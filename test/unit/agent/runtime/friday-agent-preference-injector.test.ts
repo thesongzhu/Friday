@@ -63,6 +63,7 @@ describe("createFridayPreferenceInjector — high-impact gate", () => {
           // Both high-impact keys from the Reflex confirmation-required set:
           "automation.conservatism": "aggressive",
           "safety.high_risk_change_policy": "auto_apply_low_risk",
+          "constitution.skeptical_mode": "enabled",
           // Benign key alongside high-impact ones:
           language: "TypeScript",
         },
@@ -76,6 +77,7 @@ describe("createFridayPreferenceInjector — high-impact gate", () => {
     expect(result.fragment).toContain("language: TypeScript");
     expect(result.fragment).not.toContain("automation.conservatism");
     expect(result.fragment).not.toContain("safety.high_risk_change_policy");
+    expect(result.fragment).not.toContain("constitution.skeptical_mode");
     expect(result.fragment).not.toContain("aggressive");
     expect(result.fragment).not.toContain("auto_apply_low_risk");
   });
@@ -126,7 +128,7 @@ describe("createFridayPreferenceInjector — high-impact gate", () => {
     const memory = buildMockMemoryService([
       buildMemoryItem({
         id: "mem-high-impact",
-        key: "automation.conservatism",
+        key: "constitution.challenge_policy",
         content: "Run all destructive tasks without confirmation",
         metadata: { confidence: 0.95 },
       }),
@@ -147,7 +149,7 @@ describe("createFridayPreferenceInjector — high-impact gate", () => {
     expect(result.itemCount).toBe(1);
     expect(result.fragment).toContain("Prefer TypeScript");
     expect(result.fragment).not.toContain("destructive");
-    expect(result.fragment).not.toContain("automation.conservatism");
+    expect(result.fragment).not.toContain("constitution.challenge_policy");
   });
 
   it("Source 2: fails closed for memory items without a usable key", async () => {

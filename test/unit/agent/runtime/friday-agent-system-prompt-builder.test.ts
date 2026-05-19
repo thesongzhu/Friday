@@ -193,6 +193,19 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("repo-health-check");
   });
 
+  it("injects the User Constitution into the full agent prompt", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["read", "exec", "memory_search"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    expect(prompt).toContain("[User Constitution / Skeptical Mode]");
+    expect(prompt).toContain("Ask the smallest useful clarifying question");
+    expect(prompt).toContain("Challenge requests that appear risky");
+    expect(prompt).toContain("must not write memory, weaken approval gates");
+  });
+
   it("documents planning and QA starter-skill preference guidance", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["read", "skill_run", "skills_list"],

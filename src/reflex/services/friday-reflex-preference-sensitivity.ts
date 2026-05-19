@@ -1,6 +1,11 @@
 import type { FridayUserPreferenceCategory } from "../../uix/model/friday-uix.types.js";
+import { FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS } from "./friday-user-constitution.js";
 
 const CONFIRMATION_REQUIRED_REFLEX_KEYS = new Set([
+  FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.skepticalMode,
+  FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.clarificationPolicy,
+  FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.challengePolicy,
+  FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.plainLanguagePolicy,
   "memory.explicit_instruction_policy",
   "memory.inferred_preference_policy",
   "automation.repeated_task_policy",
