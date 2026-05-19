@@ -25,7 +25,7 @@ Supported release baselines for this milestone:
 | `macOS` | GitHub Releases, source install, launchd | `DMG` + `zip` | `Swift/AppKit` | Shipping beta baseline; Sparkle and Homebrew completion in progress |
 | `iOS` | browser fallback today | TestFlight beta planned | mobile remote console planned | Not yet shipped for this milestone |
 | `Android` | browser fallback today | Play internal or closed beta planned | mobile remote console planned | Not yet shipped for this milestone |
-| `Windows` | source install (`npm install -g friday`) | signed installer planned | `.NET` scaffold | Scaffolded, not release-complete |
+| `Windows` | source install (`npm install -g @thesongzhu/friday`) | signed installer planned | `.NET` scaffold | Scaffolded, not release-complete |
 
 ## Release Channels
 

@@ -15,7 +15,7 @@ It should feel capable and proactive, but not uncontrolled. Friday does not prom
 - Provider truth should show the actual live route.
 - Capability status should be explicit: available, missing, human blocker, needs review, or deferred.
 - Generated/imported skills should not become available until verification passes.
-- Channels can control Friday, but high-risk actions still require confirmation.
+- Configured channels must not bypass confirmation, and channel/cloud live proof remains outside the public v1 local claim.
 - Memory and self-improvement should be visible, auditable, and reversible.
 
 ## Near-Term Work

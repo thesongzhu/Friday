@@ -43,6 +43,7 @@ const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
 let tmpDir;
 let serverProc;
 let packSourceBackupDir;
+let packedTarball;
 
 function withPackIsolatedReleaseArtifacts(fn) {
   const releaseSourceDir = join(ROOT, "dist", "releases", "source");
@@ -135,6 +136,12 @@ function cleanup() {
       rmSync(packSourceBackupDir, { recursive: true, force: true });
     } catch {}
   }
+  if (packedTarball) {
+    try {
+      rmSync(packedTarball, { force: true });
+    } catch {}
+    packedTarball = undefined;
+  }
 }
 
 process.on("uncaughtException", (err) => {
@@ -199,6 +206,7 @@ async function run() {
     }).trim(),
   );
   const tarball = join(ROOT, packOutput.split("\n").pop().trim());
+  packedTarball = tarball;
   console.log(`   → ${tarball}`);
 
   // ── Step 2: Install in temp directory ──
@@ -372,6 +380,7 @@ async function run() {
 
   // Clean up tarball
   try { rmSync(tarball); } catch {}
+  packedTarball = undefined;
 
   console.log("\n✅ Install smoke test passed\n");
 }

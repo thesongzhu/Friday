@@ -87,7 +87,7 @@ describe("Friday release manifest generator", () => {
         relativePath: "dist/releases/source/friday-9.9.9.tgz",
         availability: "available",
         sha256: "def456",
-        installSummary: "npm install -g friday-9.9.9.tgz",
+        installSummary: "npm install -g @thesongzhu/friday@9.9.9",
         signingStatus: "npm_registry",
         runtimeKind: "node_hub",
         downloadUrl: "https://example.test/releases/friday-9.9.9.tgz",
@@ -134,7 +134,7 @@ describe("Friday release manifest generator", () => {
     const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
       version: string;
       platforms: Array<{ platform: string; availability: string; artifacts: Array<{ kind: string }> }>;
-      channels: Record<string, { availability: string }>;
+      channels: Record<string, { availability: string; installCommand?: string; tapRepo?: string; appcastUrl?: string }>;
       developerFallbacks: Array<{ fileName: string }>;
       currentMilestone: string;
     };
@@ -149,6 +149,7 @@ describe("Friday release manifest generator", () => {
     expect(manifest.channels.sparkle.appcastUrl).toBe("https://example.test/appcast/appcast.xml");
     expect(manifest.channels.homebrew.availability).toBe("published");
     expect(manifest.channels.homebrew.tapRepo).toBe("mxclip/homebrew-friday");
+    expect(manifest.channels.npm.installCommand).toBe("npm install -g @thesongzhu/friday");
     expect(manifest.channels.testflight.availability).toBe("planned");
     expect(manifest.channels.playInternal.availability).toBe("planned");
     expect(manifest.platforms.find((entry) => entry.platform === "macos")?.availability).toBe("shipping");

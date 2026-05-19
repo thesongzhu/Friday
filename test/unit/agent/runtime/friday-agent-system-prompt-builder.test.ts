@@ -337,7 +337,7 @@ describe("buildFridayAgentSystemPrompt", () => {
 
     expect(prompt).toContain("give evidence first, then the conclusion");
     expect(prompt).toContain("include the failed step, the evidence or error, and the concrete next step");
-    expect(prompt).toContain("describe the AGI-like loop");
+    expect(prompt).toContain("describe the controlled capability-acquisition loop");
     expect(prompt).toContain("search for options, generate or install tools/skills, sandbox-test them, register verified capabilities");
     expect(prompt).toContain("third-party accounts, API keys, OAuth, payment, CAPTCHA");
     expect(prompt).toContain("what changed, what was verified, and what risk or out-of-scope item remains");

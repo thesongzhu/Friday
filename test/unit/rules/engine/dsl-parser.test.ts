@@ -147,8 +147,8 @@ describe("parsePolicyBundleDocument", () => {
 
   it("parses presence operators without value", () => {
     const doc = validBundleObject();
-    doc.rules[0].conditions = {
-      all: [{ field: "args.command", operator: "exists" } as unknown as typeof doc.rules[0].conditions!["all"] extends (infer T)[] | undefined ? T : never],
+    (doc.rules[0] as { conditions: unknown }).conditions = {
+      all: [{ field: "args.command", operator: "exists" }],
     };
     const result = parsePolicyBundleDocument(doc);
     expect(result.rules[0].conditions?.all?.[0].operator).toBe("exists");
@@ -156,8 +156,8 @@ describe("parsePolicyBundleDocument", () => {
 
   it("rejects presence operators when value is provided", () => {
     const doc = validBundleObject();
-    doc.rules[0].conditions = {
-      all: [{ field: "args.command", operator: "exists", value: "unexpected" } as unknown as typeof doc.rules[0].conditions!["all"] extends (infer T)[] | undefined ? T : never],
+    (doc.rules[0] as { conditions: unknown }).conditions = {
+      all: [{ field: "args.command", operator: "exists", value: "unexpected" }],
     };
     expect(() => parsePolicyBundleDocument(doc)).toThrow(RuleDslParseError);
   });
@@ -175,15 +175,15 @@ describe("parsePolicyBundleDocument", () => {
 
   it("rejects unknown condition group keys", () => {
     const doc = validBundleObject();
-    doc.rules[0].conditions = {
+    (doc.rules[0] as { conditions: unknown }).conditions = {
       typo: [{ field: "args.command", operator: "contains", value: "rm" }],
-    } as unknown as typeof doc.rules[0].conditions;
+    };
     expect(() => parsePolicyBundleDocument(doc)).toThrow(RuleDslParseError);
   });
 
   it("rejects provided conditions when no valid group is present", () => {
     const doc = validBundleObject();
-    doc.rules[0].conditions = {} as unknown as typeof doc.rules[0].conditions;
+    (doc.rules[0] as { conditions: unknown }).conditions = {};
     expect(() => parsePolicyBundleDocument(doc)).toThrow(RuleDslParseError);
   });
 

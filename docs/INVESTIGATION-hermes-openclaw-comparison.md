@@ -1,5 +1,10 @@
 # Friday vs Hermes vs OpenClaw 竞品对比调研报告
 
+> Status: historical/internal research note. This document is not current
+> Friday product truth, public release proof, or an external factual benchmark.
+> Use the current README, ROADMAP, and release evidence policy for shipped
+> claims; use this note only as dated research context.
+>
 > 调研日期: 2026-04-14
 > 来源: 抖音 @VA7 视频 + 评论区用户反馈
 > 分支: claude/keen-blackburn

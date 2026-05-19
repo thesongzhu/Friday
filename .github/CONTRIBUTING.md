@@ -42,6 +42,8 @@ npm run build
 npm test
 ```
 
+`npm run typecheck` covers the source tree, operator client, UI, and type-level contract tests. It is not a substitute for the normal `.test.ts` Vitest suite; run `npm test` for that coverage.
+
 For focused work, run targeted Vitest suites first, then run the broader gates before opening a PR.
 
 Useful checks:

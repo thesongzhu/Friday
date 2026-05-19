@@ -117,8 +117,8 @@ function buildChannels({ macosArtifacts, iosArtifacts, androidArtifacts, sourceA
     },
     npm: {
       availability: channelAvailability(channelMetadata, "npm", "available"),
-      installCommand: "npm install -g friday",
-      summary: "Required cross-platform developer fallback while Windows remains on the native-installer track.",
+      installCommand: "npm install -g @thesongzhu/friday",
+      summary: "Scoped npm package fallback while native platform installers remain phased.",
     },
     testflight: {
       availability: channelAvailability(channelMetadata, "testflight", hasIosBeta ? "generated" : "planned"),

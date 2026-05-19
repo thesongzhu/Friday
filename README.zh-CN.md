@@ -29,8 +29,8 @@ Friday 不是万能自动机。它不会替你注册账号、绕过验证码、�
 
 ## 核心闭环
 
-1. **你给目标。** 例如：“读这些 PDF，结合最新网页搜索，整理一份短总结发到 Discord。”
-2. **Friday 检查能力。** 它会看文本、视觉、OCR、网页搜索、PDF、文件、浏览器、渠道、模型、记忆、workflow 是否可用。
+1. **你给目标。** 例如：“读这些 PDF，结合最新网页搜索，保存一份带引用的短总结。”
+2. **Friday 检查能力。** 它会看文本、视觉、OCR、网页搜索、PDF、文件、浏览器、可选渠道、模型、记忆、workflow 是否可用。
 3. **Friday 报告缺口或生成候选方案。** 它可以从已安装 skills、可信 catalog、MCP server、本地文件、包仓库、OpenAPI 文档和网页中找候选，但安装、更新和自升级路径仍受策略门禁控制并在持续加固。
 4. **需要人类时明确停下。** API key、OAuth、付费、验证码、登录、敏感权限、高风险动作都要用户确认。
 5. **Friday 执行并验证。** 通过 skills、tools、workflow、浏览器/桌面控制或渠道适配器执行，然后检查结果。
@@ -46,7 +46,7 @@ Friday 不是万能自动机。它不会替你注册账号、绕过验证码、�
 | Skills 和 workflows | 导入、验证、安装、运行、更新、回滚可复用能力；生成和自升级闭环仍在建设中 | 不可信代码必须经过审查、沙箱验证和策略门禁 |
 | 记忆与自我改进 | 沉淀偏好、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；不做隐藏模型训练 |
 | 自我修复 | 发现失败、诊断、提出修复、低风险自动执行、验证、回滚、重复失败后暂停 | 高风险修复需要审批 |
-| 多渠道控制 | 接入 Discord、Telegram、飞书/Lark、Slack 类 webhook、Signal、WhatsApp、QQ 等可配置渠道 | 渠道可以控制 Friday，但敏感动作仍要确认 |
+| 可选渠道适配器 | 接入 Discord、Telegram、飞书/Lark、Slack 类 webhook、Signal、WhatsApp、QQ 等已配置渠道 | 渠道是配置后才可用的能力，不属于 public v1 local release claim；敏感动作仍要确认 |
 | 长期目标 | 对用户授权的 standing goals 生成 agenda、执行低风险事项、汇报证据 | Friday 接收用户目标，不主动发明无关长期议程 |
 
 ## 安装与启动
@@ -88,7 +88,7 @@ docker compose -f docker/docker-compose.yml up --build
 # 打开 http://localhost:3141
 ```
 
-第一次启动会进入 setup：配置 provider、渠道、本机权限和可选能力。setup 完成后，再打开 Friday 应直接进入 Home。
+第一次启动会进入 setup：配置 provider、本机权限和可选能力。渠道配置是可选项，必须完成对应验证后才算可用。setup 完成后，再打开 Friday 应直接进入 Home。
 
 ## Provider 和 API Key
 

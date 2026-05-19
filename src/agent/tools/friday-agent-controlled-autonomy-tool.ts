@@ -55,7 +55,7 @@ export function createFridayAgentControlledAutonomyTool(
   return {
     name: "controlled_autonomy",
     description:
-      "Controlled AGI-like autonomy control plane. Use it to answer and execute: " +
+      "Controlled capability-acquisition and standing-goal control plane. Use it to answer and execute: " +
       "what capability is missing, how to acquire it, whether human setup is needed, how to approve/register verified candidates, " +
       "and how standing goals create agenda runs with evidence and strategy-only learning. " +
       "It never treats missing API keys, OAuth, login, CAPTCHA, payment, or sensitive permissions as automatically solved.",

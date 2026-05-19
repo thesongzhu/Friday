@@ -42,7 +42,9 @@
     "friday": "./dist/cli/friday-cli.js"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc -p packages/friday-operator-client/tsconfig.json --noEmit && tsc -p ui/tsconfig.json --noEmit",
+    "typecheck": "npm run typecheck:src && npm run typecheck:contracts",
+    "typecheck:src": "tsc --noEmit && tsc -p packages/friday-operator-client/tsconfig.json --noEmit && tsc -p ui/tsconfig.json --noEmit",
+    "typecheck:contracts": "npm run test:contracts:types",
     "build:api": "tsc",
     "build:ui": "vite build --config ui/vite.config.ts",
     "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
