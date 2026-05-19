@@ -119,6 +119,113 @@ describe("createFridayStudioService", () => {
     expect(exported.sizeBytes).toBeGreaterThan(100);
   });
 
+  it("redacts pasted Integration Builder credentials from persisted runs and artifacts", async () => {
+    const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
+    const rawBearer = "sk-test-1234567890abcdef";
+    const rawQueryToken = "query-secret-123456";
+    const rawUsername = "apiuser";
+    const rawPassword = "apipass-123456";
+
+    const run = await service.runProduct({
+      productId: "integration_builder",
+      inputs: {
+        sourceType: "curl",
+        source: `curl -X POST 'https://${rawUsername}:${rawPassword}@api.example.com/items?token=${rawQueryToken}' -H 'Authorization: Bearer ${rawBearer}' -H 'X-API-Key: api-key-1234567890' -d '{"name":"demo"}'`,
+        name: "Secret API",
+      },
+    });
+
+    const runJson = fs.readFileSync(path.join(run.artifactRoot, "run.json"), "utf8");
+    const packJson = fs.readFileSync(path.join(run.artifactRoot, "pack.json"), "utf8");
+    const readme = fs.readFileSync(path.join(run.artifactRoot, "README.md"), "utf8");
+    const request = fs.readFileSync(path.join(run.artifactRoot, "test-request.http"), "utf8");
+    const combined = [JSON.stringify(run), runJson, packJson, readme, request].join("\n");
+
+    expect(combined).not.toContain(rawBearer);
+    expect(combined).not.toContain(rawQueryToken);
+    expect(combined).not.toContain(rawUsername);
+    expect(combined).not.toContain(rawPassword);
+    expect(combined).not.toContain("api-key-1234567890");
+    expect(combined).toContain("[redacted]");
+    expect(JSON.parse(packJson).permissions).toContain("secret.read:api_key");
+  });
+
+  it("keeps query-token-only Integration Builder candidates human-gated", async () => {
+    const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
+    const rawQueryToken = "query-only-secret-123456";
+
+    const run = await service.runProduct({
+      productId: "integration_builder",
+      inputs: {
+        sourceType: "curl",
+        source: `curl -X GET 'https://api.example.com/items?token=${rawQueryToken}'`,
+        name: "Query Token API",
+      },
+    });
+
+    const result = service.validateArtifactCandidate(run.id);
+    const packJson = fs.readFileSync(path.join(run.artifactRoot, "pack.json"), "utf8");
+
+    expect(JSON.stringify(run)).not.toContain(rawQueryToken);
+    expect(packJson).not.toContain(rawQueryToken);
+    expect(JSON.parse(packJson).permissions).toContain("secret.read:api_key");
+    expect(result.validation.risks).toContain("api_key");
+    expect(result.candidates.every((candidate) => candidate.requiresHuman)).toBe(true);
+  });
+
+  it("redacts non-Bearer Authorization headers from Integration Builder artifacts", async () => {
+    const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
+    const rawBasicCredential = "Basic bXktY2xpZW50OmJhc2ljLXBhc3MtMTIzNDU2";
+
+    const run = await service.runProduct({
+      productId: "integration_builder",
+      inputs: {
+        sourceType: "curl",
+        source: `curl -X GET 'https://api.example.com/items' -H 'Authorization: ${rawBasicCredential}'`,
+        name: "Basic Auth API",
+      },
+    });
+
+    const runJson = fs.readFileSync(path.join(run.artifactRoot, "run.json"), "utf8");
+    const packJson = fs.readFileSync(path.join(run.artifactRoot, "pack.json"), "utf8");
+    const readme = fs.readFileSync(path.join(run.artifactRoot, "README.md"), "utf8");
+    const request = fs.readFileSync(path.join(run.artifactRoot, "test-request.http"), "utf8");
+    const combined = [JSON.stringify(run), runJson, packJson, readme, request].join("\n");
+
+    expect(combined).not.toContain(rawBasicCredential);
+    expect(combined).not.toContain("bXktY2xpZW50OmJhc2ljLXBhc3MtMTIzNDU2");
+    expect(combined).toContain("Authorization: [redacted]");
+    expect(JSON.parse(packJson).permissions).toContain("secret.read:api_key");
+  });
+
+  it("redacts Integration Builder OpenAPI fetch errors before persisting failed runs", async () => {
+    const rawUsername = "openapi-user";
+    const rawPassword = "openapi-pass-123456";
+    const service = createFridayStudioService({
+      workspaceRoot: makeTempDir(),
+      fetchFn: async () => {
+        throw new Error(`Request cannot be constructed from a URL that includes credentials: https://${rawUsername}:${rawPassword}@api.example.com/openapi.json`);
+      },
+    });
+
+    const run = await service.runProduct({
+      productId: "integration_builder",
+      inputs: {
+        sourceType: "openapi",
+        source: `https://${rawUsername}:${rawPassword}@api.example.com/openapi.json`,
+        name: "Credentialed OpenAPI",
+      },
+    });
+
+    const runJson = fs.readFileSync(path.join(run.artifactRoot, "run.json"), "utf8");
+    const combined = [JSON.stringify(run), runJson].join("\n");
+
+    expect(run.status).toBe("failed");
+    expect(combined).not.toContain(rawUsername);
+    expect(combined).not.toContain(rawPassword);
+    expect(combined).toContain("redacted:redacted@api.example.com");
+  });
+
   it("imports local packs from a directory file list and a zip export", async () => {
     const service = createFridayStudioService({
       workspaceRoot: makeTempDir(),

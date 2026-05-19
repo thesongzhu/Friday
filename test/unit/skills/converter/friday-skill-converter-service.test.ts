@@ -667,6 +667,79 @@ echo hello
       expect(report).toContain("https://example.com/skill-repo?redacted=1");
     });
 
+    it("does not corrupt draft files when source query values are short", async () => {
+      const sourceUri = "https://example.com/skill-repo?token=x&view=a";
+      const manifest = makeValidManifest({
+        id: "short-query-candidate",
+      });
+      const uiSchema = {
+        schemaVersion: "1.0" as const,
+        title: "Short Query Candidate",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      };
+      const store = createFridaySkillCandidateStore({
+        context: ctx,
+        installer: createFridaySkillImportInstaller(),
+        hubVersion: "1.0.0",
+        supportedApiVersions: ["1"],
+      });
+
+      const candidate = await store.stage({
+        source: { uri: sourceUri, formatHint: "friday-package" },
+        converterId: "native-friday-package",
+        detectedFormat: "friday-package",
+        draft: {
+          manifest,
+          uiSchema,
+          files: [
+            {
+              path: "skill.manifest.json",
+              content: JSON.stringify(manifest, null, 2),
+            },
+            {
+              path: "skill.ui.json",
+              content: JSON.stringify(uiSchema),
+            },
+            {
+              path: "run.sh",
+              content: "#!/usr/bin/env bash\necho alpha beta gamma\n",
+              executable: true,
+            },
+            {
+              path: "conversion.report.json",
+              content: JSON.stringify({
+                sourceFormat: "friday-package",
+                sourceRef: sourceUri,
+                convertedAt: NOW_ISO,
+                converterId: "native-friday-package",
+              }, null, 2),
+            },
+          ],
+          warnings: [],
+          conversionReport: {
+            sourceFormat: "friday-package",
+            sourceRef: sourceUri,
+            convertedAt: NOW_ISO,
+            converterId: "native-friday-package",
+          },
+        },
+        validation: { ok: true, issues: [] },
+        canonicalApprovalTicket: makeCanonicalStageTicket({
+          source: { uri: sourceUri, formatHint: "friday-package" },
+        }),
+      });
+
+      const script = readFileSync(join(candidate.filesDir, "run.sh"), "utf8");
+      const report = readFileSync(join(candidate.filesDir, "conversion.report.json"), "utf8");
+      expect(script).toContain("alpha beta gamma");
+      expect(script).not.toContain("redacted");
+      expect(report).not.toContain(sourceUri);
+      expect(report).toContain("https://example.com/skill-repo?redacted=1");
+    });
+
     it("persists only a digest for contentBase64 staged candidate sources", async () => {
       const rawContent = "secret inline skill payload";
       const contentBase64 = Buffer.from(rawContent, "utf8").toString("base64");

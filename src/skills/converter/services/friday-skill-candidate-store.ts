@@ -168,8 +168,16 @@ function collectSourceRedactionNeedles(source: FridaySkillConversionSource): str
       const parsed = new URL(source.uri);
       if (parsed.username) needles.add(parsed.username);
       if (parsed.password) needles.add(parsed.password);
-      for (const value of parsed.searchParams.values()) {
-        if (value) needles.add(value);
+      for (const [key, value] of parsed.searchParams.entries()) {
+        if (!value) continue;
+        if (isSensitiveSourceParam(key) || value.length >= 12) {
+          const pair = `${key}=${value}`;
+          needles.add(pair);
+          needles.add(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+        }
+        if (value.length >= 12) {
+          needles.add(value);
+        }
       }
     } catch {
       // Non-URL local paths are already covered by the raw source string.
@@ -187,6 +195,10 @@ function collectSourceRedactionNeedles(source: FridaySkillConversionSource): str
     }
   }
   return [...needles].sort((a, b) => b.length - a.length);
+}
+
+function isSensitiveSourceParam(key: string): boolean {
+  return /^(?:access[_-]?token|api[_-]?key|apikey|auth|authorization|bearer|code|credential|key|password|refresh[_-]?token|secret|session|token)$/i.test(key);
 }
 
 export function createFridaySkillCandidateStore(

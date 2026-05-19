@@ -1,3 +1,7 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -154,6 +158,28 @@ describe("validateStudioArtifactAsCandidate", () => {
 
     expect(result.valid).toBe(true);
     expect(result.checks.find((c) => c.id === "credential_safety")?.status).toBe("warning");
+  });
+
+  it("derives api_key risk from Integration Builder pack permissions", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "friday-studio-bridge-"));
+    try {
+      fs.writeFileSync(path.join(root, "pack.json"), JSON.stringify({
+        schemaVersion: "friday.studio.integration_pack.v1",
+        permissions: ["network.request", "secret.read:api_key"],
+      }), "utf8");
+      const result = validateStudioArtifactAsCandidate({
+        run: makeIntegrationRun({ artifactRoot: root }),
+      });
+
+      expect(result.valid).toBe(true);
+      expect(result.permissions).toContain("secret.read:api_key");
+      expect(result.risks).toContain("api_key");
+      const candidates = buildStudioArtifactCapabilityCandidate(result, "run-001");
+      expect(candidates.every((candidate) => candidate.risks.includes("api_key"))).toBe(true);
+      expect(candidates.every((candidate) => candidate.requiresHuman)).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
