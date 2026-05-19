@@ -722,8 +722,8 @@ export function resolveFridayHubConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): FridayResolvedHubConfig {
   const port =
-    input.port ??
-    (env.FRIDAY_PORT ? parseInt(env.FRIDAY_PORT, 10) : undefined) ??
+    normalizeFridayHubPort(input.port) ??
+    parseFridayHubPort(env.FRIDAY_PORT) ??
     3141;
 
   const stateDir = input.stateDir ?? env.FRIDAY_STATE_DIR ?? undefined;
@@ -826,6 +826,20 @@ export function resolveFridayCanonicalMutatingActionGate(
     );
   }
   return protectedProfile;
+}
+
+function normalizeFridayHubPort(value: number | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
+    return undefined;
+  }
+  return value;
+}
+
+function parseFridayHubPort(raw: string | undefined): number | undefined {
+  if (!raw || raw.trim() === "") return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/u.test(trimmed)) return undefined;
+  return normalizeFridayHubPort(Number.parseInt(trimmed, 10));
 }
 
 async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
@@ -1817,7 +1831,7 @@ export async function createFridayHub(
         ? "hybrid"
         : "opt_in";
     const resolvedPort = config.port
-      ?? (process.env.FRIDAY_PORT ? Number.parseInt(process.env.FRIDAY_PORT, 10) : undefined)
+      ?? parseFridayHubPort(process.env.FRIDAY_PORT)
       ?? 3141;
     const systemRemoteAuthRpName = process.env.FRIDAY_SYSTEM_REMOTE_AUTH_RP_NAME ?? "Friday Agent OS";
     const systemRemoteAuthOrigin = process.env.FRIDAY_SYSTEM_REMOTE_AUTH_ORIGIN
@@ -7786,8 +7800,7 @@ export async function createFridayHub(
           if (publicBase) return publicBase;
           const configuredHost = config.host ?? process.env.FRIDAY_HOST ?? "127.0.0.1";
           const host = configuredHost === "0.0.0.0" ? "localhost" : configuredHost;
-          const parsedPort = Number.parseInt(process.env.FRIDAY_PORT ?? "3141", 10);
-          const port = config.port ?? (Number.isFinite(parsedPort) ? parsedPort : 3141);
+          const port = config.port ?? parseFridayHubPort(process.env.FRIDAY_PORT) ?? 3141;
           const hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
           return `http://${hostname}:${String(port)}`;
         };

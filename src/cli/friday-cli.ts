@@ -242,8 +242,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
 
     if (arg === "--port" && i + 1 < args.length) {
-      const parsed = parseInt(args[i + 1]!, 10);
-      if (!Number.isNaN(parsed)) {
+      const parsed = parsePort(args[i + 1]!);
+      if (parsed !== undefined) {
         result.port = parsed;
       }
       i += 2;
@@ -557,7 +557,7 @@ Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
 friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]
 friday auth setup-token anthropic [--provider-id <id>] [--token <token>]
 friday auth paste-token anthropic [--provider-id <id>] [--token <token>]
-friday auth attach-cli codex|claude [--provider-id <id>] [--binary-path <path>]
+friday auth attach-cli codex|claude --provider-id <id> [--binary-path <path>]
 friday auth status [--provider-id <id>]
 
 Authenticate providers through OAuth, setup-token, or CLI-managed external sessions.
@@ -1293,9 +1293,25 @@ export function loadProcessEnvFromDotEnvFile(options?: {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const configured = options?.filePath ?? env.FRIDAY_ENV_FILE;
-  const envPath = configured && configured.trim().length > 0
+  const hasExplicitEnvFile = configured !== undefined && configured.trim().length > 0;
+  const primaryEnvPath = configured && configured.trim().length > 0
     ? configured.trim()
     : resolveSafePath(cwd, ".env");
+
+  const envPaths = [primaryEnvPath];
+  if (!hasExplicitEnvFile && (env === process.env || env.FRIDAY_STATE_DIR)) {
+    const setupEnvPath = join(resolveStateDir({ env }), ".env");
+    if (!envPaths.includes(setupEnvPath)) {
+      envPaths.push(setupEnvPath);
+    }
+  }
+
+  for (const envPath of envPaths) {
+    loadProcessEnvFromSingleDotEnvFile(envPath, env);
+  }
+}
+
+function loadProcessEnvFromSingleDotEnvFile(envPath: string, env: NodeJS.ProcessEnv): void {
   if (!existsSync(envPath)) {
     return;
   }
@@ -1339,7 +1355,9 @@ function normalizePort(value: number | undefined): number | undefined {
 
 function parsePort(raw: string | undefined): number | undefined {
   if (!raw || raw.trim() === "") return undefined;
-  const parsed = parseInt(raw, 10);
+  const trimmed = raw.trim();
+  if (!/^\d+$/u.test(trimmed)) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
   return normalizePort(parsed);
 }
 
@@ -2042,7 +2060,7 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
     console.error("Usage: friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]");
     console.error("   or: friday auth setup-token anthropic [--provider-id <id>] [--token <token>]");
     console.error("   or: friday auth paste-token anthropic [--provider-id <id>] [--token <token>]");
-    console.error("   or: friday auth attach-cli codex|claude [--provider-id <id>] [--binary-path <path>]");
+    console.error("   or: friday auth attach-cli codex|claude --provider-id <id> [--binary-path <path>]");
     console.error("   or: friday auth status [--provider-id <id>]");
     process.exitCode = 1;
     return;
@@ -2397,6 +2415,7 @@ async function cmdSetup(): Promise<void> {
 
   if (envLines.length > 0) {
     writeFridaySetupEnvFile(envPath, envLines);
+    loadProcessEnvFromDotEnvFile({ env: process.env });
     console.log(`\nConfiguration saved to ${envPath}`);
   }
 

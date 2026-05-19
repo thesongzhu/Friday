@@ -49,6 +49,14 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.port).toBe(5555);
   });
 
+  it("rejects malformed FRIDAY_PORT env values instead of truncating numeric prefixes", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig(),
+      { FRIDAY_PORT: "123abc" },
+    );
+    expect(resolved.port).toBe(3141);
+  });
+
   // ─── State dir ───
 
   it("defaults stateDir to undefined", () => {

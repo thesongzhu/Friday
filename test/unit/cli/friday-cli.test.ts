@@ -116,6 +116,11 @@ describe("parseArgs", () => {
       expect(result.port).toBeUndefined();
     });
 
+    it("rejects numeric-prefix --port values instead of truncating them", () => {
+      const result = parseArgs(argv("start", "--port", "123abc"));
+      expect(result.port).toBeUndefined();
+    });
+
     it("defaults to undefined", () => {
       const result = parseArgs(argv("start"));
       expect(result.port).toBeUndefined();
@@ -867,6 +872,20 @@ describe("resolveStartupNetworkBinding", () => {
     expect(binding).toEqual({ host: "10.0.0.10", port: 5566 });
   });
 
+  it("rejects numeric-prefix env ports instead of truncating them", () => {
+    const parsed = parseArgs(argv("start"));
+
+    const binding = resolveStartupNetworkBinding(parsed, {
+      env: {
+        FRIDAY_PORT: "123abc",
+      },
+      dbPath: "/tmp/friday-test.db",
+      readSetupBinding: () => ({ host: "127.0.0.1", port: 4455 }),
+    });
+
+    expect(binding).toEqual({ host: "127.0.0.1", port: 4455 });
+  });
+
   it("uses setup state binding when CLI/env are absent", () => {
     const parsed = parseArgs(argv("start"));
 
@@ -1203,6 +1222,50 @@ describe("loadProcessEnvFromDotEnvFile", () => {
     loadProcessEnvFromDotEnvFile({ cwd: tmpDir, env });
 
     expect(env.FRIDAY_DESKTOP_ENABLED).toBe("true");
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not mix setup state env values into an explicit FRIDAY_ENV_FILE", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-explicit-env-test-"));
+    const stateDir = path.join(tmpDir, "state");
+    const envPath = path.join(tmpDir, "custom.env");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(envPath, "FRIDAY_DESKTOP_ENABLED=true\n", "utf8");
+    fs.writeFileSync(
+      path.join(stateDir, ".env"),
+      "FRIDAY_ANTHROPIC_API_KEY=setup-env-key\n", // pragma: allowlist secret
+      "utf8",
+    );
+
+    const env: NodeJS.ProcessEnv = {
+      FRIDAY_ENV_FILE: envPath,
+      FRIDAY_STATE_DIR: stateDir,
+    };
+    loadProcessEnvFromDotEnvFile({ cwd: tmpDir, env });
+
+    expect(env.FRIDAY_DESKTOP_ENABLED).toBe("true");
+    expect(env.FRIDAY_ANTHROPIC_API_KEY).toBeUndefined();
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("loads setup wizard env values from the Friday state dir", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-cli-state-env-test-"));
+    const stateDir = path.join(tmpDir, "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, ".env"),
+      "FRIDAY_ANTHROPIC_API_KEY=setup-env-key\n", // pragma: allowlist secret
+      "utf8",
+    );
+
+    const env: NodeJS.ProcessEnv = {
+      FRIDAY_STATE_DIR: stateDir,
+    };
+    loadProcessEnvFromDotEnvFile({ cwd: tmpDir, env });
+
+    expect(env.FRIDAY_ANTHROPIC_API_KEY).toBe("setup-env-key");
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
