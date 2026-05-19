@@ -61,6 +61,23 @@ describe("createFridayOperatorClient", () => {
     );
   });
 
+  it("builds system event listing routes in JSON mode by default", async () => {
+    const transport = {
+      get: vi.fn().mockResolvedValue({ items: [] }),
+      post: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      del: vi.fn(),
+    };
+
+    const client = createFridayOperatorClient({ transport });
+    await client.listEvents();
+    await client.listEvents({ afterSeq: 10, limit: 25 });
+
+    expect(transport.get).toHaveBeenCalledWith("/v1/system/events?stream=false");
+    expect(transport.get).toHaveBeenCalledWith("/v1/system/events?stream=false&afterSeq=10&limit=25");
+  });
+
   it("builds diagnosis, auto-fix, and assistant routes with the shared contract", async () => {
     const transport = {
       get: vi
@@ -170,7 +187,8 @@ describe("createFridayOperatorClient", () => {
         .fn()
         .mockResolvedValueOnce({ run: { run: { loopRunId: "loop-run-1" }, incident: null, action: null } })
         .mockResolvedValueOnce({ run: { run: { loopRunId: "loop-run-1" }, incident: null, action: null } }),
-      patch: vi.fn().mockResolvedValueOnce({
+      patch: vi.fn(),
+      put: vi.fn().mockResolvedValueOnce({
         policy: {
           id: "default",
           mode: "tiered_supervised",
@@ -195,10 +213,42 @@ describe("createFridayOperatorClient", () => {
     await client.resumeAgentLoopRun("loop-run-1");
 
     expect(transport.get).toHaveBeenCalledWith("/v1/agent-loop/policy");
-    expect(transport.patch).toHaveBeenCalledWith("/v1/agent-loop/policy", { paused: true });
+    expect(transport.put).toHaveBeenCalledWith("/v1/agent-loop/policy", { paused: true });
     expect(transport.get).toHaveBeenCalledWith("/v1/agent-loop/runs?status=awaiting_approval&limit=5");
     expect(transport.post).toHaveBeenCalledWith("/v1/agent-loop/runs/loop-run-1/pause", {});
     expect(transport.post).toHaveBeenCalledWith("/v1/agent-loop/runs/loop-run-1/resume", {});
+  });
+
+  it("builds agent-loop expert mode updates against the PUT route", async () => {
+    const transport = {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn().mockResolvedValue({
+        expertMode: {
+          enabled: false,
+          allowedUserIds: [],
+          allowedWorkspaceIds: [],
+          allowedEnvironments: [],
+          contextInferenceAllowed: false,
+          multiStepHypothesisSearchAllowed: false,
+          safeProbeExecutionAllowed: false,
+          crossSurfaceOrchestrationAllowed: false,
+          highRiskFinalApprovalRequired: true,
+          productionDestructiveActionApprovalRequired: true,
+          probeBudget: { maxProbesPerRun: 0, maxRuntimeMs: 0 },
+          timeBudgetMinutes: 0,
+          updatedAt: "2026-03-07T00:00:00.000Z",
+        },
+      }),
+      del: vi.fn(),
+    };
+
+    const client = createFridayOperatorClient({ transport });
+    await client.updateAgentLoopExpertMode({ enabled: false });
+
+    expect(transport.put).toHaveBeenCalledWith("/v1/agent-loop/expert-mode", { enabled: false });
+    expect(transport.patch).not.toHaveBeenCalled();
   });
 
   it("builds observability routes with the shared contract", async () => {
@@ -377,5 +427,60 @@ describe("createFridayOperatorClient", () => {
     expect(transport.del).toHaveBeenCalledWith("/v1/uix/preferences/pref-1");
     expect(transport.get).toHaveBeenCalledWith("/v1/uix/persona");
     expect(persona.mbti).toBe("INFJ");
+  });
+
+  it("builds shipped UIX snapshot, diagnostics, profile, and investigation routes", async () => {
+    const transport = {
+      get: vi
+        .fn()
+        .mockResolvedValueOnce({ snapshot: { generatedAt: "2026-03-07T00:00:00.000Z", runs: [], pendingApprovals: [], scheduledAutomations: [] } })
+        .mockResolvedValueOnce({ snapshot: { generatedAt: "2026-03-07T00:00:00.000Z", approvals: [], alerts: [], recentRuns: [] } })
+        .mockResolvedValueOnce({ assistant: { generatedAt: "2026-03-07T00:00:00.000Z", taskProfilePresets: [], recentRuns: [], mcpServerStates: [], supportedPreprocessors: [] } })
+        .mockResolvedValueOnce({ profileType: "beginner", onboardedAt: null }),
+      post: vi.fn().mockResolvedValue({ runId: "ctx-1", wizardId: "guided-assistant" }),
+      patch: vi.fn(),
+      put: vi.fn().mockResolvedValue({ profileType: "developer", onboardedAt: "2026-03-07T00:00:00.000Z" }),
+      del: vi.fn(),
+    };
+
+    const client = createFridayOperatorClient({ transport });
+
+    await client.getUixHomeSnapshot();
+    await client.getUixAssistantInboxSnapshot();
+    await client.getUixDiagnostics();
+    await client.getUserProfile();
+    await client.updateUserProfile({ profileType: "developer", onboardedAt: "2026-03-07T00:00:00.000Z" });
+    await client.investigateUix({ goalCategoryId: "guided-assistant", assistantSessionKey: "ui:assistant" });
+
+    expect(transport.get).toHaveBeenCalledWith("/v1/uix/home-snapshot");
+    expect(transport.get).toHaveBeenCalledWith("/v1/uix/assistant-inbox-snapshot");
+    expect(transport.get).toHaveBeenCalledWith("/v1/uix/diagnostics");
+    expect(transport.get).toHaveBeenCalledWith("/v1/uix/user-profile");
+    expect(transport.put).toHaveBeenCalledWith("/v1/uix/user-profile", {
+      profileType: "developer",
+      onboardedAt: "2026-03-07T00:00:00.000Z",
+    });
+    expect(transport.post).toHaveBeenCalledWith("/v1/uix/investigate", {
+      goalCategoryId: "guided-assistant",
+      assistantSessionKey: "ui:assistant",
+    });
+  });
+
+  it("sends acceptance test delete etags in the DELETE body", async () => {
+    const transport = {
+      get: vi.fn(),
+      post: vi.fn(),
+      patch: vi.fn(),
+      put: vi.fn(),
+      del: vi.fn().mockResolvedValue({ deleted: true, testId: "test-1" }),
+    };
+
+    const client = createFridayOperatorClient({ transport });
+    await client.deleteAcceptanceTest("test-1", "etag-1");
+
+    expect(transport.del).toHaveBeenCalledWith("/v1/acceptance/tests/test-1", {
+      body: JSON.stringify({ etag: "etag-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
   });
 });

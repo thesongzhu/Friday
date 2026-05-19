@@ -33,6 +33,8 @@ import type {
   FridayGetSystemSessionResponse,
   FridayGetSystemStateResponse,
   FridayGuidedWizardState,
+  FridayInvestigateRequest,
+  FridayInvestigateResponse,
   FridayIssueCard,
   FridayGetWorkflowOverviewResponse,
   FridayGetWorkflowVisualizationResponse,
@@ -68,6 +70,12 @@ import type {
   FridayTestObservabilityAlertDispatchResponse,
   FridaySearchObservabilityAuditResponse,
   FridaySearchObservabilityTracesResponse,
+  FridayUixAssistantDiagnostics,
+  FridayUixAssistantInboxSnapshot,
+  FridayUixAssistantInboxSnapshotResponse,
+  FridayUixDiagnosticsResponse,
+  FridayUixHomeSnapshot,
+  FridayUixHomeSnapshotResponse,
   FridayUixTemplateExecutionResponse,
   FridayUixIssuesResponse,
   FridayUixTemplatesResponse,
@@ -120,6 +128,7 @@ import type {
   FridayUpdateObservabilitySloRequest,
   FridayUpdateObservabilitySloResponse,
   FridayDeleteObservabilitySloResponse,
+  FridayUserProfileResponse,
 } from "./system-types";
 
 export interface FridayOperatorTransport {
@@ -207,10 +216,10 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       stream?: false;
     }): Promise<FridaySystemEvent[]> {
       const params = new URLSearchParams();
+      params.set("stream", "false");
       if (query?.afterSeq !== undefined) params.set("afterSeq", String(query.afterSeq));
       if (query?.limit !== undefined) params.set("limit", String(query.limit));
-      if (query?.stream === false) params.set("stream", "false");
-      const path = params.size > 0 ? `/v1/system/events?${params.toString()}` : "/v1/system/events";
+      const path = `/v1/system/events?${params.toString()}`;
       const data = await transport.get<FridayListSystemEventsResponse>(path);
       return data.items;
     },
@@ -434,7 +443,7 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
     async updateAgentLoopPolicy(
       patch: FridayUpdateAgentLoopPolicyRequest,
     ): Promise<FridayAgentLoopPolicy> {
-      const data = await transport.patch<
+      const data = await transport.put<
         FridayUpdateAgentLoopPolicyRequest,
         FridayUpdateAgentLoopPolicyResponse
       >("/v1/agent-loop/policy", patch);
@@ -444,7 +453,7 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
     async updateAgentLoopExpertMode(
       patch: FridayUpdateAgentLoopExpertModeRequest,
     ): Promise<FridayAgentLoopExpertModeSummary> {
-      const data = await transport.patch<
+      const data = await transport.put<
         FridayUpdateAgentLoopExpertModeRequest,
         FridayUpdateAgentLoopExpertModeResponse
       >("/v1/agent-loop/expert-mode", patch);
@@ -524,6 +533,23 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       return transport.get<FridayUixTemplatesResponse>("/v1/uix/templates");
     },
 
+    async getUixHomeSnapshot(): Promise<FridayUixHomeSnapshot> {
+      const data = await transport.get<FridayUixHomeSnapshotResponse>("/v1/uix/home-snapshot");
+      return data.snapshot;
+    },
+
+    async getUixAssistantInboxSnapshot(): Promise<FridayUixAssistantInboxSnapshot> {
+      const data = await transport.get<FridayUixAssistantInboxSnapshotResponse>(
+        "/v1/uix/assistant-inbox-snapshot",
+      );
+      return data.snapshot;
+    },
+
+    async getUixDiagnostics(): Promise<FridayUixAssistantDiagnostics> {
+      const data = await transport.get<FridayUixDiagnosticsResponse>("/v1/uix/diagnostics");
+      return data.assistant;
+    },
+
     async executeAssistantTemplate(
       input: FridayExecuteAssistantTemplateRequest,
     ): Promise<FridayUixTemplateExecutionResponse> {
@@ -598,6 +624,24 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
     async getCommunicationPersona(): Promise<FridayCommunicationPersona> {
       const data = await transport.get<FridayGetCommunicationPersonaResponse>("/v1/uix/persona");
       return data.persona;
+    },
+
+    async getUserProfile(): Promise<FridayUserProfileResponse> {
+      return transport.get<FridayUserProfileResponse>("/v1/uix/user-profile");
+    },
+
+    async updateUserProfile(input: Partial<FridayUserProfileResponse>): Promise<FridayUserProfileResponse> {
+      return transport.put<Partial<FridayUserProfileResponse>, FridayUserProfileResponse>(
+        "/v1/uix/user-profile",
+        input,
+      );
+    },
+
+    async investigateUix(input: FridayInvestigateRequest): Promise<FridayInvestigateResponse> {
+      return transport.post<FridayInvestigateRequest, FridayInvestigateResponse>(
+        "/v1/uix/investigate",
+        input,
+      );
     },
 
     async getWorkflowOverview(
@@ -696,7 +740,11 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       etag: string,
     ): Promise<FridayDeleteAcceptanceTestResponse> {
       return transport.del<FridayDeleteAcceptanceTestResponse>(
-        `/v1/acceptance/tests/${encodeURIComponent(testId)}?etag=${encodeURIComponent(etag)}`,
+        `/v1/acceptance/tests/${encodeURIComponent(testId)}`,
+        {
+          body: JSON.stringify({ etag }),
+          headers: { "Content-Type": "application/json" },
+        },
       );
     },
 

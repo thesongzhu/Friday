@@ -82,4 +82,19 @@ export type {
   // Delete alert rule
   FridayDeleteAlertRuleRequest,
   FridayDeleteAlertRuleResponse,
+
+  // ─── Alert Destination Configuration API ───
+
+  FridayAlertDestinationType,
+  FridayAlertDestinationBaseSummary,
+  FridayAlertDestinationSlackSummary,
+  FridayAlertDestinationEmailSummary,
+  FridayAlertDestinationSummary,
+  FridayListAlertDestinationsResponse,
+  FridayCreateAlertDestinationRequest,
+  FridayCreateAlertDestinationResponse,
+  FridayUpdateAlertDestinationRequest,
+  FridayUpdateAlertDestinationResponse,
+  FridayDeleteAlertDestinationResponse,
+  FridayAlertDispatchAttemptSummary,
 } from "./friday-observability-api.types.js";

@@ -203,6 +203,20 @@ export type { FridayDeterministicPipelineRoutesDeps } from "./http/routes/friday
 // Observability routes (B-005)
 export { createFridayObservabilityRoutes } from "./http/routes/friday-observability-routes.js";
 export type { FridayObservabilityRoutesDeps } from "./http/routes/friday-observability-routes.js";
+export type {
+  FridayAlertDestinationType,
+  FridayAlertDestinationBaseSummary,
+  FridayAlertDestinationSlackSummary,
+  FridayAlertDestinationEmailSummary,
+  FridayAlertDestinationSummary,
+  FridayListAlertDestinationsResponse,
+  FridayCreateAlertDestinationRequest,
+  FridayCreateAlertDestinationResponse,
+  FridayUpdateAlertDestinationRequest,
+  FridayUpdateAlertDestinationResponse,
+  FridayDeleteAlertDestinationResponse,
+  FridayAlertDispatchAttemptSummary,
+} from "../observability/api/friday-observability-api.types.js";
 
 // Desktop routes (C-003)
 export { createFridayDesktopRoutes } from "./http/routes/friday-desktop-routes.js";

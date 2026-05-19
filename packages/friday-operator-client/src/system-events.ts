@@ -23,6 +23,7 @@ export interface FridaySystemEventStreamOptions {
 
 export async function openFridaySystemEventStream(
   options: FridaySystemEventStreamOptions,
+  refreshedSession = false,
 ): Promise<void> {
   const fetchFn = options.fetchFn ?? fetch;
   const headers: Record<string, string> = {
@@ -46,12 +47,12 @@ export async function openFridaySystemEventStream(
     signal: options.signal,
   });
 
-  if (response.status === 401 && token && options.refreshSession) {
+  if (response.status === 401 && token && options.refreshSession && !refreshedSession) {
     await options.refreshSession();
     return openFridaySystemEventStream({
       ...options,
       fetchFn,
-    });
+    }, true);
   }
 
   if (!response.ok || !response.body) {
