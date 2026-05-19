@@ -18,7 +18,7 @@ Reference inspected: `openclaw/openclaw` at `f64b660b243cec831626275900d8c399764
 
 | Item | Status | Evidence |
 | --- | --- | --- |
-| `main` branch protection made stricter | VERIFIED | GitHub API now reports required status checks with `strict=true`, one required approving review, conversation resolution enabled, and force-push/delete disabled. |
+| `main` branch protection made stricter | VERIFIED | GitHub API now reports required status checks with `strict=true`, required conversation resolution enabled, zero required approving reviews, `enforce_admins.enabled=false`, and force-push/delete disabled. The zero-review setting is documented as the current single-maintainer governance posture; it is not reviewer proof or release proof. |
 | `staging-e2e` GitHub Environment created | VERIFIED | Environment exists with deployment branch policy restricted to protected branches. |
 | Environment secrets seeded for cloud E2E | VERIFIED | `OPENAI_API_KEY` and `FRIDAY_E2E_CLOUD_LOCAL_PASSPHRASE` exist in `staging-e2e`; values were not printed. |
 | Fly staging profile added | VERIFIED_BY_CODE | `fly.toml` uses `docker/Dockerfile`, persistent `/data`, HTTPS, `/v1/health`, and production env defaults. |

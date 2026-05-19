@@ -295,11 +295,12 @@ boundaries. It only changes who may coordinate routine stage approvals.
   report and `REPORTS_INDEX.csv` parse clean. If RGG is missing, blocked, failed,
   errored, or zero-scenario, do not merge and do not silently forward the debt
   unless the user explicitly approves that exception.
-- Branch protection review-count changes are separate governance operations. The
-  intended post-governance setup is required approving reviews `1 -> 0` while
-  preserving required status checks, strict up-to-date behavior, and conversation
-  resolution. Do not perform this setting change until the governance PR has
-  merged and the user approves the setting update.
+- Branch protection review-count changes are separate governance operations. As
+  of the 2026-05-19 Phase 18B readback, the live setup is required approving
+  reviews `0`, required status checks with strict up-to-date behavior,
+  required conversation resolution enabled, force-push/delete disabled, and
+  `enforce_admins.enabled=false`. Do not perform future setting changes unless
+  the user approves that governance operation explicitly.
 
 ## Verification Protocol
 
