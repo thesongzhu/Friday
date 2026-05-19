@@ -770,8 +770,9 @@ export interface FridayExecuteSystemIntentRequest {
   actorId?: string;
   actorKind?: "agent" | "api" | "remote" | "system";
   target?: string;
-  targetKind?: "app" | "url" | "project";
+  targetKind?: "app" | "url" | "project" | "window";
   appIdentifier?: string;
+  windowId?: string;
   url?: string;
   projectPath?: string;
   query?: string;

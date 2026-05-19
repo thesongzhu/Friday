@@ -82,6 +82,7 @@ export interface FridaySystemIntentGateInput {
   readonly target?: string;
   readonly targetKind?: string;
   readonly appIdentifier?: string;
+  readonly windowId?: string;
   readonly url?: string;
   readonly projectPath?: string;
   readonly query?: string;
@@ -678,6 +679,7 @@ function createSystemIntentResource(
   const action = input.action?.trim() || "unknown";
   const resourceId =
     input.appIdentifier
+    ?? input.windowId
     ?? input.url
     ?? input.projectPath
     ?? input.notificationId
@@ -692,6 +694,7 @@ function createSystemIntentResource(
     attributes: {
       action,
       targetKind: input.targetKind,
+      windowId: input.windowId,
       notificationAction: input.notificationAction,
       layout: input.layout,
       force: input.force,
@@ -706,6 +709,7 @@ function createSystemIntentDigestParameters(
     target: input.target,
     targetKind: input.targetKind,
     appIdentifier: input.appIdentifier,
+    windowId: input.windowId,
     url: input.url,
     projectPath: input.projectPath,
     query: input.query,

@@ -2059,15 +2059,28 @@ export async function createFridaySystemService(
           }
 
           case "focus": {
-            const appIdentifier = input.appIdentifier ?? input.target;
+            const windowId = input.windowId ?? (input.targetKind === "window" ? input.target : undefined);
+            const appIdentifier = input.appIdentifier ?? (windowId ? undefined : input.target);
             const safeAppIdentifier = appIdentifier
               ? assertSafeAppleScriptIdentifier(appIdentifier, "app identifier")
               : undefined;
             const payload = await focusTargetViaCompanion({
               appIdentifier: safeAppIdentifier,
-              windowId: input.targetKind === "app" ? undefined : input.target,
+              windowId,
             });
             if (!payload) {
+              if (windowId) {
+                return buildUnavailableIntentResult(
+                  input,
+                  "Focus is unavailable for the requested window",
+                  companionSupportsAction(companion, "focus")
+                    ? "companion_window_focus_failed_without_fallback"
+                    : "window_focus_unavailable",
+                  { windowId },
+                  undefined,
+                  controlLease?.id,
+                );
+              }
               if (!companionAllowsFallback(companion, "focus")) {
                 return buildUnavailableIntentResult(
                   input,
@@ -2089,8 +2102,9 @@ export async function createFridaySystemService(
             await emitEvent("system.intent.completed", {
               action: input.action,
               appIdentifier: safeAppIdentifier,
+              windowId,
             });
-            return buildIntentResult(input, "completed", `Focused ${appIdentifier ?? "target"}`, payload, undefined, controlLease?.id);
+            return buildIntentResult(input, "completed", `Focused ${appIdentifier ?? windowId ?? "target"}`, payload, undefined, controlLease?.id);
           }
 
           case "handoff_to_browser": {

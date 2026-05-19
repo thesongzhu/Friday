@@ -477,6 +477,7 @@ function sanitizeCanonicalSystemToolInput(
     "target",
     "targetKind",
     "appIdentifier",
+    "windowId",
     "url",
     "projectPath",
     "query",
