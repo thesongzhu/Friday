@@ -6,6 +6,10 @@ import {
 } from "../../../src/reflex/services/friday-reflex-preference-sensitivity.js";
 
 const KNOWN_HIGH_IMPACT_KEYS: readonly string[] = [
+  "constitution.skeptical_mode",
+  "constitution.clarification_policy",
+  "constitution.challenge_policy",
+  "constitution.plain_language_policy",
   "memory.explicit_instruction_policy",
   "memory.inferred_preference_policy",
   "automation.repeated_task_policy",

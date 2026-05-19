@@ -12,6 +12,7 @@ import {
 } from "./friday-agent-prompt-section.js";
 import { FRIDAY_AGENT_EXECUTION_VOICE_PROMPT } from "./friday-agent-execution-voice.js";
 import type { FridayAgentPromptProfile } from "./friday-agent-tool-routing.js";
+import { buildFridayUserConstitutionPromptFragment } from "../../reflex/services/friday-user-constitution.js";
 
 export interface BuildFridayAgentSystemPromptParams {
   /** Names of all currently registered tools. */
@@ -229,6 +230,8 @@ export function buildFridayAgentSystemPrompt(
     (selfLearningEnabled
       ? "- Record user corrections or stated preferences: use feedback\n"
       : "- Feedback persistence is unavailable in this deployment.\n") +
+    "\n\n" +
+    buildFridayUserConstitutionPromptFragment() +
     "\n\n" +
     "Behavior rules:\n" +
     "- Be direct and action-oriented. Use tools immediately when a task requires them.\n" +

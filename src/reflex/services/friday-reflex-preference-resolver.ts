@@ -1,5 +1,6 @@
 import type { JsonValue } from "../../uix/model/friday-uix.types.js";
 import type { FridayReflexPreferenceWrite } from "../model/friday-reflex.types.js";
+import { FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS } from "./friday-user-constitution.js";
 
 function selectedValue(answer: Record<string, JsonValue>): string | null {
   const value = answer["value"];
@@ -83,6 +84,10 @@ export function resolveFridayReflexOnboardingPreferenceWrites(input: {
 
 export function isFridayReflexPreferenceKey(key: string): boolean {
   return [
+    FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.skepticalMode,
+    FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.clarificationPolicy,
+    FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.challengePolicy,
+    FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.plainLanguagePolicy,
     "user.display_name",
     "communication.language_policy",
     "memory.explicit_instruction_policy",

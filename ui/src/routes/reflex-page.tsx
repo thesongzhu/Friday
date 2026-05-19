@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ClipboardCheck, FlaskConical, RefreshCcw, SkipForward, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, FlaskConical, RefreshCcw, ShieldQuestion, SkipForward, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, EmptyState, ShellCard, SkeletonList, StatusPill } from "@/components/core/primitives";
 import { reflexApi, type ReflexCandidate, type ReflexCandidateKind, type ReflexCandidateStatus } from "@/lib/api/reflex";
@@ -21,6 +21,41 @@ const CANDIDATE_STATUSES: Array<{ value: ReflexCandidateStatus; labelZh: string;
   { value: "dismissed", labelZh: "已忽略", labelEn: "Dismissed" },
   { value: "superseded", labelZh: "已替代", labelEn: "Superseded" },
 ];
+
+const USER_CONSTITUTION_ITEMS = [
+  {
+    key: "constitution.skeptical_mode",
+    value: "enabled",
+    labelZh: "Skeptical Mode",
+    labelEn: "Skeptical Mode",
+    descriptionZh: "不把同意当作默认结果。",
+    descriptionEn: "Do not treat agreement as the default outcome.",
+  },
+  {
+    key: "constitution.clarification_policy",
+    value: "ask_when_uncertain",
+    labelZh: "先问关键问题",
+    labelEn: "Ask Key Questions",
+    descriptionZh: "目标、对象、风险或证据不清时先问。",
+    descriptionEn: "Ask first when intent, target, risk, or evidence is unclear.",
+  },
+  {
+    key: "constitution.challenge_policy",
+    value: "challenge_risky_or_inconsistent",
+    labelZh: "指出风险和冲突",
+    labelEn: "Challenge Risk",
+    descriptionZh: "发现风险、冲突或 false success 时要说明。",
+    descriptionEn: "Name risk, conflicts, or false success instead of glossing over them.",
+  },
+  {
+    key: "constitution.plain_language_policy",
+    value: "plain_language_for_decisions",
+    labelZh: "用白话解释",
+    labelEn: "Plain Language",
+    descriptionZh: "重要取舍、阻塞和审批边界要说人话。",
+    descriptionEn: "Explain important tradeoffs, blockers, and approval boundaries plainly.",
+  },
+] as const;
 
 function candidateTone(status: ReflexCandidateStatus): "neutral" | "success" | "warning" | "danger" {
   if (status === "approved") return "success";
@@ -285,6 +320,11 @@ export function ReflexPage() {
     queryFn: () => reflexApi.listCandidates({ status, limit: 100 }),
   });
 
+  const pendingPreferenceCandidatesQuery = useQuery({
+    queryKey: [...REFLEX_QUERY_KEY, "constitution-candidates"],
+    queryFn: () => reflexApi.listCandidates({ status: "ready_for_review", kind: "preference", limit: 100 }),
+  });
+
   const preferencesQuery = useQuery({
     queryKey: [...REFLEX_QUERY_KEY, "preferences"],
     queryFn: () => reflexApi.listPreferences(),
@@ -356,6 +396,11 @@ export function ReflexPage() {
   const activeQuestion = onboarding?.activeQuestion ?? null;
   const candidates = candidatesQuery.data?.items ?? [];
   const preferences = preferencesQuery.data?.items ?? [];
+  const pendingConstitutionKeys = useMemo(() => new Set(
+    (pendingPreferenceCandidatesQuery.data?.items ?? [])
+      .filter((candidate) => USER_CONSTITUTION_ITEMS.some((item) => item.key === metadataValue(candidate.payload.key)))
+      .map((candidate) => String(candidate.payload.key)),
+  ), [pendingPreferenceCandidatesQuery.data?.items]);
   const readyCount = useMemo(
     () => candidates.filter((candidate) => candidate.status === "ready_for_review").length,
     [candidates],
@@ -533,50 +578,90 @@ export function ReflexPage() {
       ) : null}
 
       {tab === "preferences" ? (
-        <ShellCard
-          eyebrow={localize(locale, "Canonical Preferences", "Canonical Preferences")}
-          title={localize(locale, "跨渠道、prompt 和 UI 使用的偏好", "Preferences shared by channels, prompts, and UI")}
-        >
-          {preferencesQuery.isLoading ? (
-            <SkeletonList rows={4} />
-          ) : preferences.length === 0 ? (
-            <EmptyState
-              title={localize(locale, "还没有 Reflex 偏好", "No Reflex preferences yet")}
-              description={localize(locale, "完成引导或让 Friday 记录普通偏好后，这里会显示可复用设置；需要确认的设置会先进入审核候选。", "Complete onboarding or ask Friday to record ordinary preferences to populate reusable settings; settings that need confirmation appear as review candidates first.")}
-            />
-          ) : (
+        <div className="space-y-5">
+          <ShellCard
+            eyebrow={localize(locale, "User Constitution", "User Constitution")}
+            title={localize(locale, "Skeptical Mode 行为契约", "Skeptical Mode Behavior Contract")}
+          >
             <div className="divide-y divide-[color:var(--color-border-soft)]">
-              {preferences.map((preference) => (
-                <div key={preference.id} className="grid gap-3 py-3 md:grid-cols-[180px_1fr_150px_112px] md:items-center">
-                  <div>
-                    <StatusPill>{preference.category}</StatusPill>
-                    <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{preference.source}</p>
+              {USER_CONSTITUTION_ITEMS.map((item) => {
+                const preference = preferences.find((pref) => pref.category === "reflex" && pref.key === item.key);
+                const pending = pendingConstitutionKeys.has(item.key);
+                return (
+                  <div key={item.key} className="grid gap-3 py-3 md:grid-cols-[42px_1fr_160px] md:items-start">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--color-bg-subtle)] text-[color:var(--color-accent)]">
+                      <ShieldQuestion className="h-4 w-4" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                        {localize(locale, item.labelZh, item.labelEn)}
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+                        {localize(locale, item.descriptionZh, item.descriptionEn)}
+                      </p>
+                      <p className="mt-1 break-words text-xs text-[color:var(--color-text-faint)]">
+                        {item.key}: {preference ? String(preference.value) : item.value}
+                      </p>
+                    </div>
+                    <div className="flex md:justify-end">
+                      <StatusPill tone={preference ? "success" : pending ? "warning" : "neutral"}>
+                        {preference
+                          ? localize(locale, "已确认", "Confirmed")
+                          : pending
+                            ? localize(locale, "待审核", "Needs Review")
+                            : localize(locale, "默认基线", "Baseline")}
+                      </StatusPill>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{preference.key}</p>
-                    <p className="mt-1 break-words text-sm text-[color:var(--color-text-secondary)]">
-                      {typeof preference.value === "string" ? preference.value : JSON.stringify(preference.value)}
-                    </p>
-                  </div>
-                  <p className="text-xs text-[color:var(--color-text-faint)] md:text-right">
-                    {formatTime(preference.updatedAt)}
-                  </p>
-                  <div className="flex md:justify-end">
-                    <ActionButton
-                      tone="secondary"
-                      className="!min-h-[34px] !px-3 !text-xs"
-                      disabled={revokePreferenceMutation.isPending && busyPreferenceId === preference.id}
-                      onClick={() => revokePreferenceMutation.mutate(preference.id)}
-                    >
-                      <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                      {localize(locale, "撤销", "Revoke")}
-                    </ActionButton>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-          )}
-        </ShellCard>
+          </ShellCard>
+          <ShellCard
+            eyebrow={localize(locale, "Canonical Preferences", "Canonical Preferences")}
+            title={localize(locale, "跨渠道、prompt 和 UI 使用的偏好", "Preferences shared by channels, prompts, and UI")}
+          >
+            {preferencesQuery.isLoading ? (
+              <SkeletonList rows={4} />
+            ) : preferences.length === 0 ? (
+              <EmptyState
+                title={localize(locale, "还没有 Reflex 偏好", "No Reflex preferences yet")}
+                description={localize(locale, "完成引导或让 Friday 记录普通偏好后，这里会显示可复用设置；需要确认的设置会先进入审核候选。", "Complete onboarding or ask Friday to record ordinary preferences to populate reusable settings; settings that need confirmation appear as review candidates first.")}
+              />
+            ) : (
+              <div className="divide-y divide-[color:var(--color-border-soft)]">
+                {preferences.map((preference) => (
+                  <div key={preference.id} className="grid gap-3 py-3 md:grid-cols-[180px_1fr_150px_112px] md:items-center">
+                    <div>
+                      <StatusPill>{preference.category}</StatusPill>
+                      <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{preference.source}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{preference.key}</p>
+                      <p className="mt-1 break-words text-sm text-[color:var(--color-text-secondary)]">
+                        {typeof preference.value === "string" ? preference.value : JSON.stringify(preference.value)}
+                      </p>
+                    </div>
+                    <p className="text-xs text-[color:var(--color-text-faint)] md:text-right">
+                      {formatTime(preference.updatedAt)}
+                    </p>
+                    <div className="flex md:justify-end">
+                      <ActionButton
+                        tone="secondary"
+                        className="!min-h-[34px] !px-3 !text-xs"
+                        disabled={revokePreferenceMutation.isPending && busyPreferenceId === preference.id}
+                        onClick={() => revokePreferenceMutation.mutate(preference.id)}
+                      >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                        {localize(locale, "撤销", "Revoke")}
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ShellCard>
+        </div>
       ) : null}
     </div>
   );

@@ -85,6 +85,12 @@ describe("Friday Reflex onboarding registry", () => {
     expect(parseFridayReflexExplicitPreferenceMessage("以后不要主动生成 workflow")).toEqual([
       { category: "reflex", key: "workflows.generation_policy", value: "do_not_suggest" },
     ]);
+    expect(parseFridayReflexExplicitPreferenceMessage("以后不要盲从，先问问题，反驳风险，用白话解释")).toEqual([
+      { category: "reflex", key: "constitution.skeptical_mode", value: "enabled" },
+      { category: "reflex", key: "constitution.clarification_policy", value: "ask_when_uncertain" },
+      { category: "reflex", key: "constitution.challenge_policy", value: "challenge_risky_or_inconsistent" },
+      { category: "reflex", key: "constitution.plain_language_policy", value: "plain_language_for_decisions" },
+    ]);
     expect(parseFridayReflexExplicitPreferenceMessage("不要记住这个")).toEqual([]);
   });
 });
@@ -288,6 +294,44 @@ describe("Friday Reflex service", () => {
       .find((item) => item.category === "reflex" && item.key === "testing.live_llm_policy");
     expect(pref?.source).toBe("explicit");
     expect(pref?.value).toBe("allowed_with_cost_notice");
+  });
+
+  it("requires Review Center confirmation before applying User Constitution preferences", async () => {
+    const service = createService();
+    const result = service.requestPreferenceUpdate({
+      userId: "user-1",
+      category: "reflex",
+      key: "constitution.skeptical_mode",
+      value: "enabled",
+      sourceSurface: "operate",
+    });
+
+    expect(result.requiresConfirmation).toBe(true);
+    if (result.requiresConfirmation) {
+      expect(result.candidate).toMatchObject({
+        kind: "preference",
+        status: "ready_for_review",
+        payload: {
+          category: "reflex",
+          key: "constitution.skeptical_mode",
+          value: "enabled",
+          source: "explicit",
+        },
+        evidence: {
+          requiresExplicitConfirmation: true,
+        },
+      });
+      expect(service.listPreferences("user-1")
+        .find((pref) => pref.key === "constitution.skeptical_mode"))
+        .toBeUndefined();
+
+      await service.approveCandidate({ userId: "user-1", candidateId: result.candidate.id });
+    }
+
+    const pref = service.listPreferences("user-1")
+      .find((item) => item.category === "reflex" && item.key === "constitution.skeptical_mode");
+    expect(pref?.source).toBe("explicit");
+    expect(pref?.value).toBe("enabled");
   });
 
   it("enforces candidate state transitions and principal binding", () => {

@@ -1,4 +1,5 @@
 import type { FridayReflexPreferenceWrite } from "../model/friday-reflex.types.js";
+import { FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS } from "./friday-user-constitution.js";
 
 interface ExplicitPreferenceRule {
   pattern: RegExp;
@@ -6,6 +7,22 @@ interface ExplicitPreferenceRule {
 }
 
 const EXPLICIT_PREFERENCE_RULES: readonly ExplicitPreferenceRule[] = [
+  {
+    pattern: /(以后|以后都|以后请|今后|默认|always|from now on).*(不要|别|不许|禁止).*(盲从|blindly obey|rubber.?stamp|just agree)/iu,
+    write: { category: "reflex", key: FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.skepticalMode, value: "enabled" },
+  },
+  {
+    pattern: /(以后|以后都|以后请|今后|默认|always|from now on).*(先问|问清楚|clarify|ask first|ask question)/iu,
+    write: { category: "reflex", key: FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.clarificationPolicy, value: "ask_when_uncertain" },
+  },
+  {
+    pattern: /(以后|以后都|以后请|今后|默认|always|from now on).*(反驳|质疑|指出风险|挑战|challenge|push back|risk)/iu,
+    write: { category: "reflex", key: FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.challengePolicy, value: "challenge_risky_or_inconsistent" },
+  },
+  {
+    pattern: /(以后|以后都|以后请|今后|默认|always|from now on).*(白话|说人话|plain language|simple words)/iu,
+    write: { category: "reflex", key: FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.plainLanguagePolicy, value: "plain_language_for_decisions" },
+  },
   {
     pattern: /(以后|以后都|以后请|今后|默认|always|from now on).*(回答|回复|response|answer).*(短一点|短些|简短|少一点|concise|brief)/iu,
     write: { category: "communication", key: "persona.verbosity", value: "concise" },

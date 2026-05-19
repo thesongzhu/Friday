@@ -348,6 +348,7 @@ import type { FridaySystemRemoteMode, FridaySystemService } from "../system/inde
 import { createFridayGuideLensHttpParserAdapter, createFridayGuideLensService } from "../guide-lens/index.js";
 import type { FridayGuideLensPreferences } from "../guide-lens/index.js";
 import { buildFridayCommunicationPromptFragment, resolveFridayCommunicationPersona } from "../uix/services/friday-communication-persona.js";
+import { buildFridayUserConstitutionPreferencePromptFragment } from "../reflex/services/friday-user-constitution.js";
 import { createFridayUixGuidedContextRepository } from "../uix/persistence/friday-uix-guided-context-repository.js";
 import { createFridayUixUserPreferenceRepository } from "../uix/persistence/friday-uix-user-preference-repository.js";
 import { createFridayOnboardingSessionRepository } from "../uix/persistence/friday-onboarding-session-repository.js";
@@ -3932,10 +3933,16 @@ export async function createFridayHub(
         category: "reflex",
       }));
     if (preferences.length === 0) return null;
+    const fragments: string[] = [];
+    const constitutionFragment = buildFridayUserConstitutionPreferencePromptFragment(preferences);
+    if (constitutionFragment) {
+      fragments.push(constitutionFragment);
+    }
     const lines = preferences
       .slice(0, 32)
       .map((preference) => `- ${preference.key}: ${JSON.stringify(preference.value)}`);
-    return `Friday Reflex preferences:\n${lines.join("\n")}`;
+    fragments.push(`Friday Reflex preferences:\n${lines.join("\n")}`);
+    return fragments.join("\n\n");
   };
 
   // ─── Tool approval gates (GAP 2) ───
