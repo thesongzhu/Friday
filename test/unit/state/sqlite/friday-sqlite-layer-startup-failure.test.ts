@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const captured = vi.hoisted(() => ({
   instances: [] as Array<{ open: boolean }>,
   failNextPragma: null as string | null,
+  failNextPragmaCode: null as string | null,
   failAfterPragmaMatches: 0,
 }));
 
@@ -22,7 +23,12 @@ vi.mock("better-sqlite3", async (importOriginal) => {
           return originalPragma(source, options as never);
         }
         captured.failNextPragma = null;
-        throw new Error(`forced pragma failure: ${source}`);
+        const error = new Error(`forced pragma failure: ${source}`);
+        if (captured.failNextPragmaCode) {
+          Object.assign(error, { code: captured.failNextPragmaCode });
+          captured.failNextPragmaCode = null;
+        }
+        throw error;
       }
       return originalPragma(source, options as never);
     }) as typeof db.pragma;
@@ -42,6 +48,7 @@ describe("friday-sqlite-layer startup failure", () => {
   afterEach(() => {
     captured.instances.length = 0;
     captured.failNextPragma = null;
+    captured.failNextPragmaCode = null;
     captured.failAfterPragmaMatches = 0;
     if (tmpDir) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -93,6 +100,24 @@ describe("friday-sqlite-layer startup failure", () => {
         pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" },
       }),
     ).toThrow(/forced pragma failure/i);
+
+    expect(captured.instances).toHaveLength(1);
+    expect(captured.instances[0].open).toBe(false);
+  });
+
+  it("fails closed without opening the read pool when WAL setup is busy", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-sqlite-layer-startup-wal-busy-"));
+    captured.failNextPragma = "journal_mode = WAL";
+    captured.failNextPragmaCode = "SQLITE_BUSY";
+    const { createFridaySqliteLayer } = await import("#state");
+
+    expect(() =>
+      createFridaySqliteLayer({
+        dbPath: path.join(tmpDir, "wal-busy.db"),
+        readPoolSize: 2,
+        pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" },
+      }),
+    ).toThrow(/forced pragma failure: journal_mode = WAL/i);
 
     expect(captured.instances).toHaveLength(1);
     expect(captured.instances[0].open).toBe(false);
