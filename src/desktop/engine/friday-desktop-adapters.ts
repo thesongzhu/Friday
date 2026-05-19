@@ -55,7 +55,7 @@ export interface DesktopAdapterConfig {
   /** Optional override for health status (testing). */
   readonly healthOverride?: boolean;
   /** Optional shell executor for OS commands (testing/DI). */
-  readonly execCommand?: (cmd: string) => Promise<ExecResult>;
+  readonly execCommand?: (cmd: string, options?: ExecCommandOptions) => Promise<ExecResult>;
 }
 
 /** Result of executing a shell command. */
@@ -63,6 +63,10 @@ export interface ExecResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number;
+}
+
+export interface ExecCommandOptions {
+  readonly signal?: AbortSignal;
 }
 
 /** Adapter health check result. */
@@ -78,23 +82,70 @@ const SAFE_XDOTOOL_KEY_RE = /^[A-Za-z0-9_+\-]+$/;
 
 // ─── Default Shell Executor ───
 
-async function defaultExecCommand(cmd: string): Promise<ExecResult> {
-  try {
-    const { execSync } = await import("node:child_process");
-    const stdout = execSync(cmd, {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["pipe", "pipe", "pipe"],
+async function defaultExecCommand(cmd: string, options: ExecCommandOptions = {}): Promise<ExecResult> {
+  const { spawn } = await import("node:child_process");
+  return new Promise<ExecResult>((resolve) => {
+    if (options.signal?.aborted) {
+      resolve({ stdout: "", stderr: "Command aborted before start", exitCode: 130 });
+      return;
+    }
+
+    const child = spawn(cmd, {
+      shell: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return { stdout: stdout.trim(), stderr: "", exitCode: 0 };
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; status?: number };
-    return {
-      stdout: (e.stdout ?? "").toString().trim(),
-      stderr: (e.stderr ?? "").toString().trim(),
-      exitCode: e.status ?? 1,
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (result: ExecResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener("abort", abort);
+      resolve({
+        stdout: result.stdout.trim(),
+        stderr: result.stderr.trim(),
+        exitCode: result.exitCode,
+      });
     };
-  }
+
+    const killChild = () => {
+      if (child.killed) return;
+      if (process.platform !== "win32" && child.pid) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+          return;
+        } catch {
+          // Fall back to killing the shell child below.
+        }
+      }
+      child.kill("SIGTERM");
+    };
+
+    const abort = () => {
+      killChild();
+      finish({ stdout, stderr: stderr || "Command aborted", exitCode: 130 });
+    };
+
+    const timeoutHandle = setTimeout(() => {
+      killChild();
+      finish({ stdout, stderr: stderr || "Command timed out", exitCode: 124 });
+    }, 5000);
+
+    options.signal?.addEventListener("abort", abort, { once: true });
+    child.stdout?.on("data", (chunk: Buffer | string) => { stdout += chunk.toString(); });
+    child.stderr?.on("data", (chunk: Buffer | string) => { stderr += chunk.toString(); });
+    child.on("error", (error) => finish({ stdout, stderr: error.message, exitCode: 1 }));
+    child.on("close", (code, signal) => {
+      finish({
+        stdout,
+        stderr: signal ? (stderr || `Command terminated by ${signal}`) : stderr,
+        exitCode: code ?? (signal ? 130 : 1),
+      });
+    });
+  });
 }
 
 // ─── OS Version Detection ───
@@ -215,6 +266,26 @@ function escapePowerShellSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+function toPowerShellEncodedCommand(script: string): string {
+  const failClosedScript = `$ErrorActionPreference = 'Stop'; try { ${script}; if (-not $?) { exit 1 }; exit 0 } catch { Write-Error $_; exit 1 }`;
+  const encoded = Buffer.from(failClosedScript, "utf16le").toString("base64");
+  return `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
+}
+
+function makeCommandFailureMessage(prefix: string, result: ExecResult): string {
+  const detail = result.stderr || result.stdout || `exit code ${result.exitCode}`;
+  return `${prefix}: ${detail}`;
+}
+
+async function runRequiredCommand(
+  exec: (cmd: string, options?: ExecCommandOptions) => Promise<ExecResult>,
+  cmd: string,
+  signal: AbortSignal | undefined,
+): Promise<ExecResult> {
+  const result = await exec(cmd, { signal });
+  return result;
+}
+
 function ensureFiniteInteger(value: number, fieldName: string): number {
   if (!Number.isFinite(value)) {
     throw new FridayDomainError("VALIDATION_ERROR", `Invalid ${fieldName}: must be a finite number`, { httpStatus: 400 });
@@ -276,7 +347,10 @@ export async function createDarwinAdapter(
     initializedAt: initTime,
   };
 
-  async function executeAction(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+  async function executeAction(
+    action: FridayDesktopAction,
+    options: ExecCommandOptions = {},
+  ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
 
     switch (action.type) {
@@ -288,7 +362,11 @@ export async function createDarwinAdapter(
         const clickType = action.clickType ?? "single";
         const clickCount = clickType === "double" ? 2 : clickType === "triple" ? 3 : 1;
         const script = `tell application "System Events" to click at {${x}, ${y}}`;
-        await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
+        const result = await runRequiredCommand(exec, `osascript -e ${quotePosixShellArg(script)} 2>&1`, options.signal);
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("macOS click failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt, {
           targetElement: action.selector ? makeElement(
             config.generateId(), "button", action.selector.value, action.selector.appBundleId ?? "unknown",
@@ -298,7 +376,11 @@ export async function createDarwinAdapter(
       }
       case "type": {
         const script = `tell application "System Events" to keystroke ${toAppleScriptStringLiteral(action.text)}`;
-        await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
+        const result = await runRequiredCommand(exec, `osascript -e ${quotePosixShellArg(script)} 2>&1`, options.signal);
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("macOS type failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "keypress": {
@@ -306,14 +388,22 @@ export async function createDarwinAdapter(
         const script = mods
           ? `tell application "System Events" to keystroke ${toAppleScriptIdentifierLiteral(action.key, "key")} using {${mods}}`
           : `tell application "System Events" to keystroke ${toAppleScriptIdentifierLiteral(action.key, "key")}`;
-        await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
+        const result = await runRequiredCommand(exec, `osascript -e ${quotePosixShellArg(script)} 2>&1`, options.signal);
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("macOS keypress failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "scroll": {
         const amount = ensureFiniteInteger(action.amount ?? 3, "amount");
         const dir = action.direction === "up" || action.direction === "left" ? amount : -amount;
         const script = `tell application "System Events" to scroll ${dir}`;
-        await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
+        const result = await runRequiredCommand(exec, `osascript -e ${quotePosixShellArg(script)} 2>&1`, options.signal);
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("macOS scroll failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "screenshot": {
@@ -321,6 +411,7 @@ export async function createDarwinAdapter(
         const tmpPath = `/tmp/friday-screenshot-${config.generateId()}.${format}`;
         const result = await exec(
           `screencapture -x -t ${quotePosixShellArg(format)} ${quotePosixShellArg(tmpPath)} 2>&1`,
+          { signal: options.signal },
         );
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "darwin", startedAt, "failed",
@@ -328,8 +419,13 @@ export async function createDarwinAdapter(
         }
         // Read as base64
         const b64Result = await exec(
-          `base64 -i ${quotePosixShellArg(tmpPath)} 2>/dev/null; rm -f ${quotePosixShellArg(tmpPath)}`,
+          `base64 -i ${quotePosixShellArg(tmpPath)} 2>/dev/null; status=$?; rm -f ${quotePosixShellArg(tmpPath)}; exit $status`,
+          { signal: options.signal },
         );
+        if (b64Result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("Screenshot encoding failed", b64Result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt, {
           screenshotBase64: b64Result.stdout,
         });
@@ -337,7 +433,7 @@ export async function createDarwinAdapter(
       case "launch_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
         const quotedAppIdentifier = quotePosixShellArg(appIdentifier);
-        const result = await exec(`open -b ${quotedAppIdentifier} 2>&1 || open -a ${quotedAppIdentifier} 2>&1`);
+        const result = await exec(`open -b ${quotedAppIdentifier} 2>&1 || open -a ${quotedAppIdentifier} 2>&1`, { signal: options.signal });
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "darwin", startedAt, "app_not_found",
             `Application "${action.appIdentifier}" not found`, FRIDAY_DESKTOP_ERROR_CODES.APP_NOT_FOUND);
@@ -348,20 +444,36 @@ export async function createDarwinAdapter(
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
         const force = action.force ? "force " : "";
         const script = `tell application ${toAppleScriptIdentifierLiteral(appIdentifier, "app identifier")} to ${force}quit`;
-        await exec(`osascript -e ${quotePosixShellArg(script)} 2>&1 || true`);
+        const result = await runRequiredCommand(exec, `osascript -e ${quotePosixShellArg(script)} 2>&1`, options.signal);
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("macOS close_app failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "clipboard": {
         if (action.operation === "read") {
-          const result = await exec("pbpaste 2>/dev/null");
+          const result = await exec("pbpaste 2>/dev/null", { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "darwin", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard read failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "darwin", startedAt, {
             clipboardContent: result.stdout,
           });
         } else if (action.operation === "write") {
-          await exec(`printf %s ${quotePosixShellArg(action.content)} | pbcopy`);
+          const result = await exec(`printf %s ${quotePosixShellArg(action.content)} | pbcopy`, { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "darwin", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "darwin", startedAt);
         } else {
-          await exec("pbcopy < /dev/null");
+          const result = await exec("pbcopy < /dev/null", { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "darwin", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard clear failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "darwin", startedAt);
         }
       }
@@ -376,7 +488,7 @@ export async function createDarwinAdapter(
           FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "file_operation": {
-        return executeFileOperation(action, startedAt);
+        return executeFileOperation(action, startedAt, options.signal);
       }
     }
   }
@@ -384,10 +496,11 @@ export async function createDarwinAdapter(
   async function executeFileOperation(
     action: Extract<FridayDesktopAction, { type: "file_operation" }>,
     startedAt: ISODateTime,
+    signal?: AbortSignal,
   ): Promise<FridayDesktopActionResult> {
     switch (action.operation) {
       case "read": {
-        const result = await exec(`cat ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`cat ${quotePosixShellArg(action.path)} 2>&1`, { signal });
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "darwin", startedAt, "failed",
             result.stderr, FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
@@ -395,29 +508,54 @@ export async function createDarwinAdapter(
         return makeSuccessResult(config, action, "darwin", startedAt, { fileData: result.stdout });
       }
       case "write": {
-        await exec(
+        const result = await exec(
           `printf %s ${quotePosixShellArg(action.content)} > ${quotePosixShellArg(action.path)}`,
+          { signal },
         );
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "move": {
-        await exec(`mv ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`);
+        const result = await exec(`mv ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File move failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "copy": {
-        await exec(`cp -R ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`);
+        const result = await exec(`cp -R ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File copy failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "delete": {
-        await exec(`rm -f ${quotePosixShellArg(action.path)}`);
+        const result = await exec(`rm -f ${quotePosixShellArg(action.path)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File delete failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt);
       }
       case "list": {
-        const result = await exec(`ls -la ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`ls -la ${quotePosixShellArg(action.path)} 2>&1`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File list failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt, { fileData: result.stdout });
       }
       case "stat": {
-        const result = await exec(`stat -f "%Sm %z %N" ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`stat -f "%Sm %z %N" ${quotePosixShellArg(action.path)} 2>&1`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "darwin", startedAt, "failed",
+            makeCommandFailureMessage("File stat failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "darwin", startedAt, { fileData: result.stdout });
       }
     }
@@ -426,9 +564,9 @@ export async function createDarwinAdapter(
   return {
     metadata,
 
-    async execute(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+    async execute(action: FridayDesktopAction, options?: ExecCommandOptions): Promise<FridayDesktopActionResult> {
       try {
-        return await executeAction(action);
+        return await executeAction(action, options);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return makeFailureResult(config, action, "darwin", config.nowIso(), "failed",
@@ -551,7 +689,10 @@ export async function createWin32Adapter(
     initializedAt: initTime,
   };
 
-  async function executeAction(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+  async function executeAction(
+    action: FridayDesktopAction,
+    options: ExecCommandOptions = {},
+  ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
 
     switch (action.type) {
@@ -559,30 +700,47 @@ export async function createWin32Adapter(
         const coords = action.coordinates ?? { x: 0, y: 0 };
         const x = ensureFiniteInteger(coords.x, "coordinates.x");
         const y = ensureFiniteInteger(coords.y, "coordinates.y");
-        const psCmd = `powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x},${y}); [System.Windows.Forms.SendKeys]::SendWait('{CLICK}')"`;
-        await exec(psCmd);
+        const psCmd = toPowerShellEncodedCommand(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x},${y}); [System.Windows.Forms.SendKeys]::SendWait('{CLICK}')`);
+        const result = await exec(psCmd, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("Windows click failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "type": {
         const escaped = escapePowerShellSingleQuoted(action.text);
-        await exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${escaped}')"`);
+        const result = await exec(toPowerShellEncodedCommand(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${escaped}')`), { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("Windows type failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "keypress": {
         const keyMap: Record<string, string> = { Enter: "{ENTER}", Tab: "{TAB}", Escape: "{ESC}", Backspace: "{BS}", Delete: "{DEL}" };
         const key = escapePowerShellSingleQuoted(keyMap[action.key] ?? action.key);
-        await exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${key}')"`);
+        const result = await exec(toPowerShellEncodedCommand(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${key}')`), { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("Windows keypress failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "scroll": {
-        return makeSuccessResult(config, action, "win32", startedAt);
+        return makeFailureResult(config, action, "win32", startedAt, "failed",
+          "Windows scroll is not implemented by this adapter", FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       }
       case "screenshot": {
         const screenshotId = config.generateId();
         const tmpPath = `$env:TEMP\\friday-screenshot-${screenshotId}.png`;
         const escapedPath = escapePowerShellSingleQuoted(tmpPath);
         const resolvedTmpPath = `${process.env.TEMP ?? process.env.TMP ?? "C:\\Windows\\Temp"}\\friday-screenshot-${screenshotId}.png`;
-        await exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width,[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save('${escapedPath}')"`);
+        const capture = await exec(toPowerShellEncodedCommand(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; $bmp = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width,[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save('${escapedPath}')`), { signal: options.signal });
+        if (capture.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("Windows screenshot failed", capture), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         try {
           const fs = await import("node:fs");
           const base64 = fs.readFileSync(resolvedTmpPath).toString("base64");
@@ -597,7 +755,7 @@ export async function createWin32Adapter(
       case "launch_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
         const escapedApp = escapePowerShellSingleQuoted(appIdentifier);
-        const result = await exec(`powershell -Command "Start-Process '${escapedApp}'" 2>&1`);
+        const result = await exec(toPowerShellEncodedCommand(`Start-Process '${escapedApp}'`), { signal: options.signal });
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "win32", startedAt, "app_not_found",
             `Application "${action.appIdentifier}" not found`, FRIDAY_DESKTOP_ERROR_CODES.APP_NOT_FOUND);
@@ -608,19 +766,35 @@ export async function createWin32Adapter(
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
         const escapedApp = escapePowerShellSingleQuoted(appIdentifier);
         const force = action.force ? "-Force" : "";
-        await exec(`powershell -Command "Stop-Process -Name '${escapedApp}' ${force} -ErrorAction SilentlyContinue"`);
+        const result = await exec(toPowerShellEncodedCommand(`Stop-Process -Name '${escapedApp}' ${force} -ErrorAction Stop`), { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("Windows close_app failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "clipboard": {
         if (action.operation === "read") {
-          const result = await exec("powershell -Command \"Get-Clipboard\"");
+          const result = await exec(toPowerShellEncodedCommand("Get-Clipboard"), { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "win32", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard read failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "win32", startedAt, { clipboardContent: result.stdout });
         } else if (action.operation === "write") {
           const escapedContent = escapePowerShellSingleQuoted(action.content);
-          await exec(`powershell -Command "Set-Clipboard '${escapedContent}'"`);
+          const result = await exec(toPowerShellEncodedCommand(`Set-Clipboard '${escapedContent}'`), { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "win32", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "win32", startedAt);
         } else {
-          await exec("powershell -Command \"Set-Clipboard $null\"");
+          const result = await exec(toPowerShellEncodedCommand("Set-Clipboard $null"), { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "win32", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard clear failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "win32", startedAt);
         }
       }
@@ -634,7 +808,7 @@ export async function createWin32Adapter(
           "drag is not implemented for Windows",
           FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       case "file_operation": {
-        return executeWinFileOperation(action, startedAt);
+        return executeWinFileOperation(action, startedAt, options.signal);
       }
     }
   }
@@ -642,44 +816,73 @@ export async function createWin32Adapter(
   async function executeWinFileOperation(
     action: Extract<FridayDesktopAction, { type: "file_operation" }>,
     startedAt: ISODateTime,
+    signal?: AbortSignal,
   ): Promise<FridayDesktopActionResult> {
     switch (action.operation) {
       case "read": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
-        const result = await exec(`powershell -Command "Get-Content '${escapedPath}' -Raw"`);
+        const result = await exec(toPowerShellEncodedCommand(`Get-Content '${escapedPath}' -Raw`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File read failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt, { fileData: result.stdout });
       }
       case "write": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
         const escapedContent = escapePowerShellSingleQuoted(action.content);
-        await exec(`powershell -Command "Set-Content '${escapedPath}' '${escapedContent}'"`);
+        const result = await exec(toPowerShellEncodedCommand(`Set-Content '${escapedPath}' '${escapedContent}'`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "move": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
         const escapedDestination = escapePowerShellSingleQuoted(action.destinationPath);
-        await exec(`powershell -Command "Move-Item '${escapedPath}' '${escapedDestination}'"`);
+        const result = await exec(toPowerShellEncodedCommand(`Move-Item '${escapedPath}' '${escapedDestination}'`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File move failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "copy": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
         const escapedDestination = escapePowerShellSingleQuoted(action.destinationPath);
-        await exec(`powershell -Command "Copy-Item '${escapedPath}' '${escapedDestination}' -Recurse"`);
+        const result = await exec(toPowerShellEncodedCommand(`Copy-Item '${escapedPath}' '${escapedDestination}' -Recurse`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File copy failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "delete": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
-        await exec(`powershell -Command "Remove-Item '${escapedPath}' -Force"`);
+        const result = await exec(toPowerShellEncodedCommand(`Remove-Item '${escapedPath}' -Force`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File delete failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt);
       }
       case "list": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
-        const result = await exec(`powershell -Command "Get-ChildItem '${escapedPath}' | Format-List"`);
+        const result = await exec(toPowerShellEncodedCommand(`Get-ChildItem '${escapedPath}' | Format-List`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File list failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt, { fileData: result.stdout });
       }
       case "stat": {
         const escapedPath = escapePowerShellSingleQuoted(action.path);
-        const result = await exec(`powershell -Command "Get-Item '${escapedPath}' | Format-List"`);
+        const result = await exec(toPowerShellEncodedCommand(`Get-Item '${escapedPath}' | Format-List`), { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "win32", startedAt, "failed",
+            makeCommandFailureMessage("File stat failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "win32", startedAt, { fileData: result.stdout });
       }
     }
@@ -688,9 +891,9 @@ export async function createWin32Adapter(
   return {
     metadata,
 
-    async execute(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+    async execute(action: FridayDesktopAction, options?: ExecCommandOptions): Promise<FridayDesktopActionResult> {
       try {
-        return await executeAction(action);
+        return await executeAction(action, options);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return makeFailureResult(config, action, "win32", config.nowIso(), "failed",
@@ -776,54 +979,85 @@ export async function createLinuxAdapter(
     initializedAt: initTime,
   };
 
-  async function executeAction(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+  async function executeAction(
+    action: FridayDesktopAction,
+    options: ExecCommandOptions = {},
+  ): Promise<FridayDesktopActionResult> {
     const startedAt = config.nowIso();
 
     switch (action.type) {
       case "click": {
         const coords = action.coordinates ?? { x: 0, y: 0 };
-        if (hasXdotool) {
-          const x = ensureFiniteInteger(coords.x, "coordinates.x");
-          const y = ensureFiniteInteger(coords.y, "coordinates.y");
-          await exec(`xdotool mousemove ${x} ${y} click 1`);
+        if (!hasXdotool) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            "xdotool is required for Linux click actions", FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
+        const x = ensureFiniteInteger(coords.x, "coordinates.x");
+        const y = ensureFiniteInteger(coords.y, "coordinates.y");
+        const result = await exec(`xdotool mousemove ${x} ${y} click 1`, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("Linux click failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
         }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "type": {
-        if (hasXdotool) {
-          await exec(`xdotool type ${quotePosixShellArg(action.text)}`);
+        if (!hasXdotool) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            "xdotool is required for Linux type actions", FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
+        const result = await exec(`xdotool type ${quotePosixShellArg(action.text)}`, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("Linux type failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
         }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "keypress": {
-        if (hasXdotool) {
-          const mods = (action.modifiers ?? []).map((modifier) => {
-            const mapped = modifier === "meta" || modifier === "command" ? "super" : modifier;
-            if (!SAFE_XDOTOOL_KEY_RE.test(mapped)) {
-              throw new FridayDomainError("VALIDATION_ERROR", "Unsafe modifier", { httpStatus: 400 });
-            }
-            return mapped;
-          });
-          const keyToken = ensureSafeXdotoolKeyCombo(action.key);
-          const keyCombo = ensureSafeXdotoolKeyCombo([...mods, keyToken].join("+"));
-          await exec(`xdotool key ${quotePosixShellArg(keyCombo)}`);
+        if (!hasXdotool) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            "xdotool is required for Linux keypress actions", FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
+        const mods = (action.modifiers ?? []).map((modifier) => {
+          const mapped = modifier === "meta" || modifier === "command" ? "super" : modifier;
+          if (!SAFE_XDOTOOL_KEY_RE.test(mapped)) {
+            throw new FridayDomainError("VALIDATION_ERROR", "Unsafe modifier", { httpStatus: 400 });
+          }
+          return mapped;
+        });
+        const keyToken = ensureSafeXdotoolKeyCombo(action.key);
+        const keyCombo = ensureSafeXdotoolKeyCombo([...mods, keyToken].join("+"));
+        const result = await exec(`xdotool key ${quotePosixShellArg(keyCombo)}`, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("Linux keypress failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
         }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "scroll": {
-        if (hasXdotool) {
-          const btn = action.direction === "up" ? "4" : action.direction === "down" ? "5" : "4";
-          const amount = ensureFiniteInteger(action.amount ?? 3, "amount");
-          await exec(`xdotool click --repeat ${amount} ${btn}`);
+        if (!hasXdotool) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            "xdotool is required for Linux scroll actions", FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
+        const btn = action.direction === "up" ? "4" : action.direction === "down" ? "5" : "4";
+        const amount = ensureFiniteInteger(action.amount ?? 3, "amount");
+        const result = await exec(`xdotool click --repeat ${amount} ${btn}`, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("Linux scroll failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
         }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "screenshot": {
         const tmpPath = `/tmp/friday-screenshot-${config.generateId()}.png`;
         const quotedTmpPath = quotePosixShellArg(tmpPath);
-        const result = await exec(`import -window root ${quotedTmpPath} 2>&1 || gnome-screenshot -f ${quotedTmpPath} 2>&1 || scrot ${quotedTmpPath} 2>&1`);
+        const result = await exec(`import -window root ${quotedTmpPath} 2>&1 || gnome-screenshot -f ${quotedTmpPath} 2>&1 || scrot ${quotedTmpPath} 2>&1`, { signal: options.signal });
         if (result.exitCode === 0) {
-          const b64 = await exec(`base64 ${quotedTmpPath} 2>/dev/null; rm -f ${quotedTmpPath}`);
+          const b64 = await exec(`base64 ${quotedTmpPath} 2>/dev/null; status=$?; rm -f ${quotedTmpPath}; exit $status`, { signal: options.signal });
+          if (b64.exitCode !== 0) {
+            return makeFailureResult(config, action, "linux", startedAt, "failed",
+              makeCommandFailureMessage("Screenshot encoding failed", b64), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "linux", startedAt, { screenshotBase64: b64.stdout });
         }
         return makeFailureResult(config, action, "linux", startedAt, "failed",
@@ -831,7 +1065,11 @@ export async function createLinuxAdapter(
       }
       case "launch_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
-        const result = await exec(`nohup ${quotePosixShellArg(appIdentifier)} >/dev/null 2>&1 &`);
+        const quotedAppIdentifier = quotePosixShellArg(appIdentifier);
+        const result = await exec(
+          `if command -v -- ${quotedAppIdentifier} >/dev/null 2>&1 || [ -x ${quotedAppIdentifier} ]; then nohup ${quotedAppIdentifier} >/dev/null 2>&1 & else echo ${quotePosixShellArg(`Application not found: ${appIdentifier}`)} >&2; exit 127; fi`,
+          { signal: options.signal },
+        );
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "linux", startedAt, "app_not_found",
             `Application "${action.appIdentifier}" not found`, FRIDAY_DESKTOP_ERROR_CODES.APP_NOT_FOUND);
@@ -841,23 +1079,37 @@ export async function createLinuxAdapter(
       case "close_app": {
         const appIdentifier = ensureSafeAppIdentifier(action.appIdentifier);
         const quotedAppIdentifier = quotePosixShellArg(appIdentifier);
-        if (action.force) {
-          await exec(`pkill -9 -f ${quotedAppIdentifier} 2>/dev/null || true`);
-        } else {
-          await exec(`pkill -f ${quotedAppIdentifier} 2>/dev/null || true`);
+        const result = action.force
+          ? await exec(`pkill -9 -f ${quotedAppIdentifier} 2>&1`, { signal: options.signal })
+          : await exec(`pkill -f ${quotedAppIdentifier} 2>&1`, { signal: options.signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("Linux close_app failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
         }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "clipboard": {
         if (action.operation === "read") {
-          const result = await exec("xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null");
+          const result = await exec("xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null", { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "linux", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard read failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "linux", startedAt, { clipboardContent: result.stdout });
         } else if (action.operation === "write") {
           const quotedContent = quotePosixShellArg(action.content);
-          await exec(`printf %s ${quotedContent} | xclip -selection clipboard 2>/dev/null || printf %s ${quotedContent} | xsel --clipboard --input 2>/dev/null`);
+          const result = await exec(`printf %s ${quotedContent} | xclip -selection clipboard 2>/dev/null || printf %s ${quotedContent} | xsel --clipboard --input 2>/dev/null`, { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "linux", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "linux", startedAt);
         } else {
-          await exec("echo -n | xclip -selection clipboard 2>/dev/null || true");
+          const result = await exec("echo -n | xclip -selection clipboard 2>/dev/null", { signal: options.signal });
+          if (result.exitCode !== 0) {
+            return makeFailureResult(config, action, "linux", startedAt, "failed",
+              makeCommandFailureMessage("Clipboard clear failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+          }
           return makeSuccessResult(config, action, "linux", startedAt);
         }
       }
@@ -872,7 +1124,7 @@ export async function createLinuxAdapter(
           FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
       case "file_operation": {
         // Linux file operations are the same as macOS (POSIX)
-        return executeLinuxFileOperation(action, startedAt);
+        return executeLinuxFileOperation(action, startedAt, options.signal);
       }
     }
   }
@@ -880,10 +1132,11 @@ export async function createLinuxAdapter(
   async function executeLinuxFileOperation(
     action: Extract<FridayDesktopAction, { type: "file_operation" }>,
     startedAt: ISODateTime,
+    signal?: AbortSignal,
   ): Promise<FridayDesktopActionResult> {
     switch (action.operation) {
       case "read": {
-        const result = await exec(`cat ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`cat ${quotePosixShellArg(action.path)} 2>&1`, { signal });
         if (result.exitCode !== 0) {
           return makeFailureResult(config, action, "linux", startedAt, "failed",
             result.stderr, FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
@@ -891,27 +1144,51 @@ export async function createLinuxAdapter(
         return makeSuccessResult(config, action, "linux", startedAt, { fileData: result.stdout });
       }
       case "write": {
-        await exec(`printf %s ${quotePosixShellArg(action.content)} > ${quotePosixShellArg(action.path)}`);
+        const result = await exec(`printf %s ${quotePosixShellArg(action.content)} > ${quotePosixShellArg(action.path)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File write failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "move": {
-        await exec(`mv ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`);
+        const result = await exec(`mv ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File move failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "copy": {
-        await exec(`cp -R ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`);
+        const result = await exec(`cp -R ${quotePosixShellArg(action.path)} ${quotePosixShellArg(action.destinationPath)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File copy failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "delete": {
-        await exec(`rm -f ${quotePosixShellArg(action.path)}`);
+        const result = await exec(`rm -f ${quotePosixShellArg(action.path)}`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File delete failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt);
       }
       case "list": {
-        const result = await exec(`ls -la ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`ls -la ${quotePosixShellArg(action.path)} 2>&1`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File list failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt, { fileData: result.stdout });
       }
       case "stat": {
-        const result = await exec(`stat ${quotePosixShellArg(action.path)} 2>&1`);
+        const result = await exec(`stat ${quotePosixShellArg(action.path)} 2>&1`, { signal });
+        if (result.exitCode !== 0) {
+          return makeFailureResult(config, action, "linux", startedAt, "failed",
+            makeCommandFailureMessage("File stat failed", result), FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED);
+        }
         return makeSuccessResult(config, action, "linux", startedAt, { fileData: result.stdout });
       }
     }
@@ -920,9 +1197,9 @@ export async function createLinuxAdapter(
   return {
     metadata,
 
-    async execute(action: FridayDesktopAction): Promise<FridayDesktopActionResult> {
+    async execute(action: FridayDesktopAction, options?: ExecCommandOptions): Promise<FridayDesktopActionResult> {
       try {
-        return await executeAction(action);
+        return await executeAction(action, options);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return makeFailureResult(config, action, "linux", config.nowIso(), "failed",

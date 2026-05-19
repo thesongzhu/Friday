@@ -110,6 +110,18 @@ describe("C-001 FridayDesktopAdapters", () => {
       expect(exec).toHaveBeenCalled();
     });
 
+    it("reports macOS command failures instead of false success", async () => {
+      const exec = mockExec({
+        "osascript": { exitCode: 1, stderr: "accessibility denied" },
+      });
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "click" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("accessibility denied");
+    });
+
     it("executes type action", async () => {
       const exec = mockExec();
       adapter = await createDarwinAdapter(makeConfig(exec));
@@ -136,6 +148,19 @@ describe("C-001 FridayDesktopAdapters", () => {
       const result = await adapter.execute(action);
       expect(result.status).toBe("success");
       expect(result.screenshotBase64).toBe("aGVsbG8=");
+    });
+
+    it("reports macOS screenshot encoding failures instead of cleanup success", async () => {
+      const exec = mockExec({
+        "screencapture": { exitCode: 0 },
+        "base64": { exitCode: 1, stderr: "encode failed" },
+      });
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "screenshot" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("encode failed");
     });
 
     it("executes clipboard read", async () => {
@@ -230,6 +255,23 @@ describe("C-001 FridayDesktopAdapters", () => {
       expect(result.fileData).toBe("file contents");
     });
 
+    it("reports macOS file write failures instead of false success", async () => {
+      const exec = mockExec({
+        "printf": { exitCode: 1, stderr: "permission denied" },
+      });
+      adapter = await createDarwinAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({
+        type: "file_operation",
+        operation: "write",
+        path: "/tmp/test.txt",
+        content: "data",
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("permission denied");
+    });
+
     it("executes read_element", async () => {
       const action: FridayDesktopAction = {
         type: "read_element",
@@ -316,8 +358,47 @@ describe("C-001 FridayDesktopAdapters", () => {
       expect(result.status).toBe("success");
     });
 
+    it("uses encoded PowerShell for dynamic text instead of raw shell interpolation", async () => {
+      const exec = mockExec();
+      adapter = await createWin32Adapter(makeConfig(exec));
+
+      const payload = "hello' \\\"; Start-Process calc; #";
+      const result = await adapter.execute({ type: "type", text: payload });
+
+      expect(result.status).toBe("success");
+      const command = (exec as ReturnType<typeof vi.fn>).mock.calls.find(([cmd]) =>
+        String(cmd).includes("-EncodedCommand"),
+      )?.[0] as string | undefined;
+      expect(command).toBeDefined();
+      expect(command).not.toContain(payload);
+      expect(command).not.toContain("Start-Process calc");
+      const encoded = command!.split("-EncodedCommand ")[1];
+      const decoded = Buffer.from(encoded, "base64").toString("utf16le");
+      expect(decoded).toContain("$ErrorActionPreference = 'Stop'");
+      expect(decoded).toContain("catch { Write-Error $_; exit 1 }");
+    });
+
+    it("reports Windows command failures instead of false success", async () => {
+      const exec = mockExec({
+        "-EncodedCommand": { exitCode: 1, stderr: "sendkeys failed" },
+      });
+      adapter = await createWin32Adapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "type", text: "hello" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("sendkeys failed");
+    });
+
+    it("does not report unimplemented Windows scroll as success", async () => {
+      const result = await adapter.execute({ type: "scroll", direction: "down" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("not implemented");
+    });
+
     it("executes clipboard operations", async () => {
-      const exec = mockExec({ "Get-Clipboard": { stdout: "win-content" } });
+      const exec = mockExec({ "-EncodedCommand": { stdout: "win-content" } });
       adapter = await createWin32Adapter(makeConfig(exec));
 
       const readAction: FridayDesktopAction = { type: "clipboard", operation: "read" };
@@ -402,6 +483,65 @@ describe("C-001 FridayDesktopAdapters", () => {
       const result = await adapter.execute(action);
       expect(result.status).toBe("success");
       expect(result.platform).toBe("linux");
+    });
+
+    it("fails Linux input actions when xdotool is unavailable", async () => {
+      const exec = mockExec({
+        "XDG_CURRENT_DESKTOP": { stdout: "GNOME" },
+        "which xdotool": { exitCode: 1, stderr: "not found" },
+      });
+      adapter = await createLinuxAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "click" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("xdotool is required");
+    });
+
+    it("reports Linux xdotool failures instead of false success", async () => {
+      const exec = mockExec({
+        "XDG_CURRENT_DESKTOP": { stdout: "GNOME" },
+        "which xdotool": { exitCode: 0, stdout: "/usr/bin/xdotool" },
+        "xdotool mousemove": { exitCode: 1, stderr: "display unavailable" },
+      });
+      adapter = await createLinuxAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "click" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("display unavailable");
+    });
+
+    it("reports Linux screenshot encoding failures instead of cleanup success", async () => {
+      const exec = mockExec({
+        "XDG_CURRENT_DESKTOP": { stdout: "GNOME" },
+        "which xdotool": { exitCode: 0, stdout: "/usr/bin/xdotool" },
+        "import": { exitCode: 0 },
+        "base64": { exitCode: 1, stderr: "encode failed" },
+      });
+      adapter = await createLinuxAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({ type: "screenshot" });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("encode failed");
+    });
+
+    it("reports missing Linux launch targets instead of background success", async () => {
+      const exec = mockExec({
+        "XDG_CURRENT_DESKTOP": { stdout: "GNOME" },
+        "which xdotool": { exitCode: 0, stdout: "/usr/bin/xdotool" },
+        "definitely-missing-friday-binary": { exitCode: 127, stderr: "Application not found" },
+      });
+      adapter = await createLinuxAdapter(makeConfig(exec));
+
+      const result = await adapter.execute({
+        type: "launch_app",
+        appIdentifier: "definitely-missing-friday-binary",
+      });
+
+      expect(result.status).toBe("app_not_found");
+      expect(result.errorCode).toBe("DESKTOP_APP_NOT_FOUND");
     });
 
     it("executes type with xdotool", async () => {

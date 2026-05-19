@@ -383,8 +383,9 @@ async function executeWithTimeoutAndCancellation(
   adapter: FridayDesktopAdapterRuntime,
   action: FridayDesktopAction,
   timeoutMs: number,
-  signal: AbortSignal,
+  abortController: AbortController,
 ): Promise<FridayDesktopActionResult> {
+  const signal = abortController.signal;
   return new Promise<FridayDesktopActionResult>((resolve, reject) => {
     if (signal.aborted) {
       reject(new Error(ACTION_ABORT_SIGNAL));
@@ -398,6 +399,7 @@ async function executeWithTimeoutAndCancellation(
 
     const timeoutHandle = setTimeout(() => {
       cleanup();
+      abortController.abort(new Error(ACTION_TIMEOUT_SIGNAL));
       reject(new Error(ACTION_TIMEOUT_SIGNAL));
     }, timeoutMs);
 
@@ -408,7 +410,7 @@ async function executeWithTimeoutAndCancellation(
 
     signal.addEventListener("abort", onAbort, { once: true });
 
-    void adapter.execute(action).then(
+    void adapter.execute(action, { signal }).then(
       (result) => {
         cleanup();
         resolve(result);
@@ -654,7 +656,7 @@ export function createActionExecutor(config: ActionExecutorConfig): ActionExecut
           adapter,
           action,
           timeoutMs,
-          abortController.signal,
+          abortController,
         );
 
         return emitResult(
@@ -673,21 +675,21 @@ export function createActionExecutor(config: ActionExecutorConfig): ActionExecut
         );
       } catch (error) {
         const isTimeout = isTimeoutSignalError(error);
-        const isCancelled = isAbortSignalError(error) || abortController.signal.aborted;
-        const status: FridayDesktopActionStatus = isCancelled
-          ? "cancelled"
-          : isTimeout
-            ? "timeout"
+        const isCancelled = !isTimeout && (isAbortSignalError(error) || abortController.signal.aborted);
+        const status: FridayDesktopActionStatus = isTimeout
+          ? "timeout"
+          : isCancelled
+            ? "cancelled"
             : "failed";
-        const errorCode = isCancelled
-          ? FRIDAY_DESKTOP_ERROR_CODES.ACTION_CANCELLED
-          : isTimeout
-            ? FRIDAY_DESKTOP_ERROR_CODES.ACTION_TIMEOUT
+        const errorCode = isTimeout
+          ? FRIDAY_DESKTOP_ERROR_CODES.ACTION_TIMEOUT
+          : isCancelled
+            ? FRIDAY_DESKTOP_ERROR_CODES.ACTION_CANCELLED
             : FRIDAY_DESKTOP_ERROR_CODES.ACTION_FAILED;
-        const errorMessage = isCancelled
-          ? "Action cancelled"
-          : isTimeout
-            ? "Action execution timed out"
+        const errorMessage = isTimeout
+          ? "Action execution timed out"
+          : isCancelled
+            ? "Action cancelled"
             : String(error);
 
         return emitResult(
