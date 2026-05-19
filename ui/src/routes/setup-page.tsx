@@ -23,10 +23,10 @@ import type {
   ProviderKind,
   SetupStepId,
 } from "@/lib/setup/types";
-import type { FridayProviderTemplate, FridayProviderValidationState } from "@/lib/api/types";
+import type { FridayModelRoutingConfig, FridayProviderTemplate, FridayProviderValidationState } from "@/lib/api/types";
 import { classifyFridaySaveProviderValidation } from "@/lib/setup/setup-status-diagnostics";
 import { ActionButton, ConfirmDialog, StatusPill } from "@/components/core/primitives";
-import { localize } from "@/lib/i18n/localized-text";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
@@ -107,6 +107,20 @@ type ProviderSetupFeedback = {
   message?: string;
   warnings: string[];
 };
+
+type RoutingCostMode = NonNullable<FridayModelRoutingConfig["costMode"]>;
+
+const ROUTING_COST_MODE_OPTIONS: readonly RoutingCostMode[] = [
+  "frugal",
+  "standard",
+  "strict",
+];
+
+function routingCostModeLabel(mode: RoutingCostMode, locale: AppLocale): string {
+  if (mode === "frugal") return localize(locale, "省钱", "Frugal");
+  if (mode === "strict") return localize(locale, "严格", "Strict");
+  return localize(locale, "标准", "Standard");
+}
 
 type OpenAICodexDeviceOAuthState = {
   status: "idle" | "starting" | "pending" | "completing" | "connected" | "error";
@@ -357,6 +371,7 @@ export function SetupPage() {
   const [providerApi, setProviderApi] = useState<ProviderApi>("openai-responses");
   const [providerAuthMode, setProviderAuthMode] = useState<AuthMode>("api-key");
   const [providerConnectionMode, setProviderConnectionMode] = useState<ProviderConnectionMode>("api-key");
+  const [providerCostMode, setProviderCostMode] = useState<RoutingCostMode>("standard");
   const [providerValidated, setProviderValidated] = useState(false);
   const [providerFeedback, setProviderFeedback] = useState<ProviderSetupFeedback>({
     status: "idle",
@@ -454,6 +469,12 @@ export function SetupPage() {
     queryFn: () => providersApi.getRouting(),
     retry: 0,
   });
+
+  useEffect(() => {
+    if (routingConfig?.costMode) {
+      setProviderCostMode(routingConfig.costMode);
+    }
+  }, [routingConfig?.costMode]);
 
   // ── Redirects ──
 
@@ -641,6 +662,8 @@ export function SetupPage() {
       defaultProviderId: provider.id,
       defaultModel: draft.defaultModel,
       fallbackProviderIds: [],
+      costMode: providerCostMode,
+      enforceRequestedModel: routingConfig?.enforceRequestedModel,
     });
 
     return { validation: response.validation };
@@ -653,6 +676,7 @@ export function SetupPage() {
         defaultProviderId: providerId,
         defaultModel,
         fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
+        costMode: providerCostMode,
         enforceRequestedModel: routingConfig?.enforceRequestedModel,
       });
       await Promise.all([
@@ -1791,6 +1815,26 @@ export function SetupPage() {
             </div>
           );
         })()}
+
+        <div className="mt-6 flex items-center justify-center gap-1 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-1">
+          {ROUTING_COST_MODE_OPTIONS.map((mode) => {
+            const active = providerCostMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setProviderCostMode(mode)}
+                className={`rounded-full px-5 py-2 text-sm font-medium transition ${
+                  active
+                    ? "bg-[color:var(--color-accent)] text-white"
+                    : "text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+                }`}
+              >
+                {routingCostModeLabel(mode, locale)}
+              </button>
+            );
+          })}
+        </div>
 
         {(useMyPlanAvailable && keyConnectionAvailable) ? (
           <div className="mt-6 flex items-center justify-center gap-1 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-1">

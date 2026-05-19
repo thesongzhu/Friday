@@ -948,6 +948,7 @@ export function createFridayProviderService(
     requestedModel?: string;
     userId?: string;
     tenantContext?: FridayProviderTenantContext;
+    costMode: FridayModelRoutingConfig["costMode"];
     taskProfileId?: string;
     routingContext?: {
       estimatedInputTokens?: number;
@@ -1129,6 +1130,10 @@ export function createFridayProviderService(
       reasonCode = "requested_provider";
     } else if (input.requestedModel) {
       reasonCode = "requested_model";
+    } else if (input.costMode === "frugal") {
+      reasonCode = "cost_mode_frugal";
+    } else if (input.costMode === "strict") {
+      reasonCode = "cost_mode_strict";
     } else if (initialStates.some((state) => state.ineligibilityReasons.length > 0)) {
       reasonCode = "backend_capability_gating";
     }
@@ -1143,6 +1148,10 @@ export function createFridayProviderService(
           return "Operator route penalties influenced candidate scoring.";
         case "historical_bias":
           return "Historical route outcomes influenced candidate scoring.";
+        case "cost_mode_frugal":
+          return "Frugal mode preferred lower-cost eligible routes without bypassing provider, capability, or safety gates.";
+        case "cost_mode_strict":
+          return "Strict mode preferred higher-quality eligible routes without bypassing provider, capability, or safety gates.";
         case "requested_provider":
           return "Routing was constrained to the explicitly requested provider.";
         case "requested_model":
@@ -1205,6 +1214,7 @@ export function createFridayProviderService(
       explain,
       selected,
       trace: {
+        costMode: input.costMode ?? "standard",
         ...(input.taskProfileId ? { taskProfileId: input.taskProfileId } : {}),
         requiresNativeTools: input.routingContext?.requiresNativeTools === true,
         ...(input.routingContext?.requiredCapabilities?.length
@@ -2659,6 +2669,7 @@ export function createFridayProviderService(
         estimatedInputTokens,
         complexity,
         budget,
+        costMode: routing.costMode,
       });
       const enforcePin = routing.enforceRequestedModel === true && !!input.requestedModel;
       const baseCandidates = (!input.requestedModel && !enforcePin && !pinnedProvider)
@@ -2670,6 +2681,7 @@ export function createFridayProviderService(
         requestedModel: input.requestedModel,
         userId: input.tenantContext?.userId,
         tenantContext: input.tenantContext,
+        costMode: routing.costMode,
         taskProfileId: input.routingContext?.taskProfileId,
         routingContext: input.routingContext,
         budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,
@@ -2690,6 +2702,7 @@ export function createFridayProviderService(
         ...(input.requestedProviderId ? { requestedProviderId: input.requestedProviderId } : {}),
         ...(input.requestedModel ? { requestedModel: input.requestedModel } : {}),
         ...(input.routingContext?.taskProfileId ? { taskProfileId: input.routingContext.taskProfileId } : {}),
+        costMode: traceBuilder.trace.costMode,
         requiresNativeTools,
         ...(traceBuilder.trace.selectedBeforeLearning ? { selectedBeforeLearning: traceBuilder.trace.selectedBeforeLearning } : {}),
         ...(traceBuilder.trace.selectedAfterLearning ? { selectedAfterLearning: traceBuilder.trace.selectedAfterLearning } : {}),
@@ -3162,7 +3175,11 @@ export function createFridayProviderService(
     },
 
     async setRoutingConfig(input) {
-      const validated = validateRoutingConfig(input);
+      const existingRouting = loadRoutingConfig();
+      const validated = validateRoutingConfig({
+        ...input,
+        costMode: input.costMode ?? existingRouting?.costMode,
+      });
       saveRoutingConfig(validated);
       return normalizeFridayModelRoutingConfig(validated);
     },
@@ -3345,6 +3362,7 @@ export function createFridayProviderService(
         estimatedInputTokens,
         complexity,
         budget,
+        costMode: routing.costMode,
       });
 
       // OC-002: When enforceRequestedModel is set and a specific model was
@@ -3370,6 +3388,7 @@ export function createFridayProviderService(
         requestedModel: params.requestedModel,
         userId: params.tenantContext?.userId,
         tenantContext: params.tenantContext,
+        costMode: routing.costMode,
         taskProfileId: params.routingContext?.taskProfileId,
         routingContext: params.routingContext,
         budgetLocalOnly: routingDecision.strategy === "budget_local_only" && !enforcePin && !pinnedProvider,
@@ -3408,6 +3427,7 @@ export function createFridayProviderService(
         routingDecision: {
           ...routingDecision,
           orderedCandidates: candidates,
+          costMode: traceBuilder.trace.costMode,
           reason: traceBuilder.trace.reasonText,
           reasonCode: traceBuilder.trace.reasonCode,
           learningAdjusted: traceBuilder.trace.learningAdjusted,

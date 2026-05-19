@@ -17,7 +17,7 @@ import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
-import { type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
+import { type FridayModelRoutingConfig, type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -64,6 +64,20 @@ type PendingDefaultProviderChoice = {
   providerName: string;
   defaultModel?: string;
 };
+
+type RoutingCostMode = NonNullable<FridayModelRoutingConfig["costMode"]>;
+
+const ROUTING_COST_MODE_OPTIONS: readonly RoutingCostMode[] = [
+  "frugal",
+  "standard",
+  "strict",
+];
+
+function routingCostModeLabel(mode: RoutingCostMode, locale: AppLocale): string {
+  if (mode === "frugal") return localize(locale, "省钱", "Frugal");
+  if (mode === "strict") return localize(locale, "严格", "Strict");
+  return localize(locale, "标准", "Standard");
+}
 
 function formatTimestamp(value?: string): string {
   if (!value) return "—";
@@ -456,6 +470,7 @@ export function SettingsPage() {
         defaultProviderId: providerId,
         defaultModel,
         fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
+        costMode: routingConfig?.costMode ?? "standard",
         enforceRequestedModel: routingConfig?.enforceRequestedModel,
       });
       await refreshProviderQueries();
@@ -614,6 +629,29 @@ export function SettingsPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : localize(locale, "无法清除路由惩罚", "Could not clear route penalty"));
+    },
+  });
+
+  const routingCostModeMutation = useMutation({
+    mutationFn: (costMode: RoutingCostMode) => {
+      const defaultProviderId = routingConfig?.defaultProviderId;
+      if (!defaultProviderId) {
+        throw new Error(localize(locale, "请先配置默认模型提供方", "Configure a default model provider first"));
+      }
+      return providersApi.setRouting({
+        defaultProviderId,
+        defaultModel: routingConfig?.defaultModel,
+        fallbackProviderIds: routingConfig?.fallbackProviderIds ?? [],
+        costMode,
+        enforceRequestedModel: routingConfig?.enforceRequestedModel,
+      });
+    },
+    onSuccess: async () => {
+      toast.success(localize(locale, "路由模式已更新", "Routing mode updated"));
+      await refreshProviderQueries();
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法更新路由模式", "Could not update routing mode"));
     },
   });
 
@@ -1222,8 +1260,37 @@ export function SettingsPage() {
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "运维", "Operator")} title={localize(locale, "路由可解释性", "Routing Explainability")}>
-          {routingExplain ? (
-            <div className="space-y-4">
+          <div className="space-y-4">
+            <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium text-[color:var(--color-text-primary)]">{localize(locale, "模型路由模式", "Model routing mode")}</p>
+                  <p className="text-xs text-[color:var(--color-text-tertiary)]">{routingConfig?.costMode ?? routingExplain?.costMode ?? "standard"}</p>
+                </div>
+                <div className="flex items-center gap-1 rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-1">
+                  {ROUTING_COST_MODE_OPTIONS.map((mode) => {
+                    const active = (routingConfig?.costMode ?? "standard") === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={routingCostModeMutation.isPending}
+                        onClick={() => routingCostModeMutation.mutate(mode)}
+                        className={`rounded-full px-4 py-2 text-xs font-medium transition ${
+                          active
+                            ? "bg-[color:var(--color-accent)] text-white"
+                            : "text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+                        }`}
+                      >
+                        {routingCostModeLabel(mode, locale)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            {routingExplain ? (
+              <>
               <div className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -1303,10 +1370,11 @@ export function SettingsPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "路由解释预览不可用。", "Routing explain preview unavailable.")}</p>
-          )}
+              </>
+            ) : (
+              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "路由解释预览不可用。", "Routing explain preview unavailable.")}</p>
+            )}
+          </div>
         </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "沟通", "Communication")} title={localize(locale, "人格", "Persona")}>

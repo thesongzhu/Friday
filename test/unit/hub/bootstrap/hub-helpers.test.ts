@@ -88,6 +88,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       defaultProviderId: "provider-a",
       defaultModel: "gpt-old",
       fallbackProviderIds: ["provider-b"],
+      costMode: "strict" as const,
     };
     const providers = [
       {
@@ -400,6 +401,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     await expect(providerService.getRoutingConfig()).resolves.toMatchObject({
       defaultProviderId: "provider-b",
       defaultModel: "gpt-5.4",
+      costMode: "strict",
     });
   });
 

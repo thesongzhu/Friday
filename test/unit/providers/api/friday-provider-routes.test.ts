@@ -253,6 +253,7 @@ describe("FridayProviderRoutes", () => {
       explainRouting: vi.fn(async () => ({
         requestedProviderId: "prov-001",
         requestedModel: "gpt-4o",
+        costMode: "standard" as const,
         requiresNativeTools: true,
         selectedBeforeLearning: {
           providerId: "prov-001",
@@ -954,11 +955,33 @@ describe("FridayProviderRoutes", () => {
         defaultProviderId: "prov-001",
         defaultModel: "gpt-4o",
         fallbackProviderIds: ["prov-002"],
+        costMode: "frugal" as const,
         enforceRequestedModel: true,
       };
 
       const result = await setRoutingRoute.handler(makeCtx({ body }));
       expect(result).toEqual({ routing: body });
+    });
+
+    it("providers.routing.set rejects invalid costMode", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const setRoutingRoute = routes.find(
+        (r) => r.operationId === "providers.routing.set",
+      )!;
+
+      await expect(
+        setRoutingRoute.handler(makeCtx({
+          body: {
+            defaultProviderId: "prov-001",
+            fallbackProviderIds: [],
+            costMode: "turbo-cheap",
+          },
+        })),
+      ).rejects.toThrow("costMode must be one of: frugal, standard, strict");
+      expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
     });
 
     it("providers.routing.set requires canonical approval in gate-required profile before service mutation", async () => {

@@ -63,6 +63,7 @@ const VALID_BACKEND_KINDS = new Set<string>(FRIDAY_PROVIDER_BACKEND_KINDS);
 const VALID_AUTH_MODES = new Set(["api-key", "bearer-token", "oauth", "token", "external-session", "none"]);
 const VALID_DEPLOYMENT_KINDS = new Set(["hosted", "local", "self-hosted", "consumer-cli"]);
 const VALID_REGION_TAGS = new Set(["global", "us", "china", "local", "custom"]);
+const VALID_ROUTING_COST_MODES = new Set(["frugal", "standard", "strict"]);
 const VALID_RUNTIME_CAPABILITIES = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
 
 function parseCapabilityDoctorProviderIds(body: unknown): string[] | undefined {
@@ -366,6 +367,9 @@ function validateRoutingBody(body: unknown): asserts body is FridaySetRoutingCon
   }
   if (b.defaultModel !== undefined && typeof b.defaultModel !== "string") {
     errors.push("defaultModel must be a string when provided");
+  }
+  if (b.costMode !== undefined && (typeof b.costMode !== "string" || !VALID_ROUTING_COST_MODES.has(b.costMode))) {
+    errors.push("costMode must be one of: frugal, standard, strict");
   }
   if (b.enforceRequestedModel !== undefined && typeof b.enforceRequestedModel !== "boolean") {
     errors.push("enforceRequestedModel must be a boolean when provided");

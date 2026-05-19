@@ -457,11 +457,16 @@ export function createFridayAgentProviderTool(
       return errorResult(`Provider "${providerId}" not found.`);
     }
     const defaultModel = requestedDefaultModel ?? provider.defaultModel;
+    const existingRouting = await providerService.getRoutingConfig();
 
     const routing = await providerService.setRoutingConfig({
       defaultProviderId: providerId,
       defaultModel,
       fallbackProviderIds: [],
+      ...(existingRouting.costMode ? { costMode: existingRouting.costMode } : {}),
+      ...(existingRouting.enforceRequestedModel !== undefined
+        ? { enforceRequestedModel: existingRouting.enforceRequestedModel }
+        : {}),
     });
 
     return jsonResult({

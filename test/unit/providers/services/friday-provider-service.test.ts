@@ -767,6 +767,7 @@ describe("FridayProviderService", () => {
         defaultProviderId: "legacy-provider",
         defaultModel: "gpt-4o",
         fallbackProviderIds: [],
+        costMode: "standard",
       });
     });
 
@@ -806,6 +807,7 @@ describe("FridayProviderService", () => {
         defaultProviderId: "test-id-0001",
         defaultModel: "gpt-4o",
         fallbackProviderIds: ["test-id-0002", "test-id-0003"],
+        costMode: "standard" as const,
       };
 
       const result = await service.setRoutingConfig(input);
@@ -850,6 +852,7 @@ describe("FridayProviderService", () => {
       await service.setRoutingConfig({
         defaultProviderId: "test-id-0001",
         fallbackProviderIds: ["test-id-0002"],
+        costMode: "strict",
       });
 
       await service.setRoutingConfig({
@@ -861,6 +864,7 @@ describe("FridayProviderService", () => {
       const config = await service.getRoutingConfig();
       expect(config.defaultProviderId).toBe("test-id-0003");
       expect(config.defaultModel).toBe("claude-3");
+      expect(config.costMode).toBe("strict");
     });
 
     it("normalizes routing input when fallbackProviderIds is omitted", async () => {
@@ -884,6 +888,7 @@ describe("FridayProviderService", () => {
         defaultProviderId: "test-id-0001",
         defaultModel: "gpt-4o",
         fallbackProviderIds: [],
+        costMode: "standard",
       });
     });
 
@@ -1443,6 +1448,136 @@ describe("FridayProviderService", () => {
         eligible: false,
         ineligibilityReasons: expect.arrayContaining(["satellite_unavailable_for_local_route"]),
       });
+    });
+
+    it("frugal mode prefers lower-cost eligible routes without weakening native-tool gates", async () => {
+      const primary = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Best",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-primary-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4.1"],
+        defaultModel: "gpt-4.1",
+        validateOnSave: false,
+      });
+      const cheapHttp = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Nano",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-cheap-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4.1-nano"],
+        defaultModel: "gpt-4.1-nano",
+        validateOnSave: false,
+      });
+      const cheapCli = await service.createProvider({
+        kind: "openai",
+        name: "Cheap CLI",
+        baseUrl: "",
+        authMode: "external-session",
+        backendKind: "cli",
+        cliConfig: {
+          backendId: "codex-cli",
+          binaryPath: "/usr/local/bin/codex",
+        },
+        api: "openai-responses",
+        supportedModels: ["gpt-4.1-nano"],
+        defaultModel: "gpt-4.1-nano",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: primary.id,
+        fallbackProviderIds: [cheapHttp.id, cheapCli.id],
+        costMode: "frugal",
+      });
+      markProviderValidated(primary.id);
+      markProviderValidated(cheapHttp.id);
+      markProviderValidated(cheapCli.id);
+
+      const explain = await service.explainRouting({
+        routingContext: {
+          estimatedInputTokens: 1200,
+          complexity: "medium",
+        },
+      });
+
+      expect(explain.costMode).toBe("frugal");
+      expect(explain.reasonCode).toBe("cost_mode_frugal");
+      expect(explain.selected.providerId).toBe(cheapHttp.id);
+
+      const nativeToolExplain = await service.explainRouting({
+        routingContext: {
+          estimatedInputTokens: 1200,
+          complexity: "medium",
+          requiresNativeTools: true,
+        },
+      });
+
+      expect(nativeToolExplain.selected.providerId).toBe(cheapHttp.id);
+      expect(
+        nativeToolExplain.candidates.find((candidate) => candidate.providerId === cheapCli.id),
+      ).toMatchObject({
+        eligible: false,
+        ineligibilityReasons: expect.arrayContaining(["requires_native_tools"]),
+      });
+
+      const pinnedExplain = await service.explainRouting({
+        requestedProviderId: primary.id,
+        routingContext: {
+          estimatedInputTokens: 1200,
+          complexity: "medium",
+        },
+      });
+
+      expect(pinnedExplain.selected.providerId).toBe(primary.id);
+      expect(pinnedExplain.reasonCode).toBe("requested_provider");
+      expect(pinnedExplain.reason).toContain("explicitly requested provider");
+    });
+
+    it("strict mode prefers higher-quality eligible routes while preserving configured gates", async () => {
+      const cheap = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Nano",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-cheap-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4.1-nano"],
+        defaultModel: "gpt-4.1-nano",
+        validateOnSave: false,
+      });
+      const best = await service.createProvider({
+        kind: "openai",
+        name: "OpenAI Best",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-best-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4.1"],
+        defaultModel: "gpt-4.1",
+        validateOnSave: false,
+      });
+      await service.setRoutingConfig({
+        defaultProviderId: cheap.id,
+        fallbackProviderIds: [best.id],
+        costMode: "strict",
+      });
+      markProviderValidated(cheap.id);
+      markProviderValidated(best.id);
+
+      const explain = await service.explainRouting({
+        routingContext: {
+          estimatedInputTokens: 1200,
+          complexity: "complex",
+        },
+      });
+
+      expect(explain.costMode).toBe("strict");
+      expect(explain.reasonCode).toBe("cost_mode_strict");
+      expect(explain.selected.providerId).toBe(best.id);
     });
 
     it("honors operator-pinned routes in explainRouting", async () => {
@@ -2027,6 +2162,61 @@ describe("FridayProviderService", () => {
           providerId: "test-id-0001",
           model: "gpt-4o",
         });
+      } finally {
+        delete process.env.OPENAI_KEY;
+      }
+    });
+
+    it("uses frugal routing order on the execution path without creating new candidates", async () => {
+      process.env.OPENAI_KEY = "test-openai-key";
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "Primary OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4.1"],
+          defaultModel: "gpt-4.1",
+          validateOnSave: false,
+        });
+        await service.createProvider({
+          kind: "openai",
+          name: "Cheaper OpenAI fallback",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-responses",
+          apiKey: "$OPENAI_KEY",
+          supportedModels: ["gpt-4.1-nano"],
+          defaultModel: "gpt-4.1-nano",
+          validateOnSave: false,
+        });
+
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: ["test-id-0002"],
+          costMode: "frugal",
+        });
+
+        const { result, route, attempts, routingDecision } = await service.runWithFallback({
+          routingContext: {
+            estimatedInputTokens: 4096,
+            complexity: "medium",
+          },
+          run: async (candidate) => candidate.provider.id,
+        });
+
+        expect(result).toBe("test-id-0002");
+        expect(route.provider.id).toBe("test-id-0002");
+        expect(route.model).toBe("gpt-4.1-nano");
+        expect(attempts).toHaveLength(0);
+        expect(routingDecision.costMode).toBe("frugal");
+        expect(routingDecision.reasonCode).toBe("cost_mode_frugal");
+        expect(routingDecision.orderedCandidates.map((candidate) => candidate.provider.id)).toEqual([
+          "test-id-0002",
+          "test-id-0001",
+        ]);
       } finally {
         delete process.env.OPENAI_KEY;
       }

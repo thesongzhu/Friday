@@ -62,6 +62,7 @@ export interface SetRoutingInput {
   defaultProviderId: string;
   defaultModel?: string;
   fallbackProviderIds: string[];
+  costMode?: FridayModelRoutingConfig["costMode"];
   enforceRequestedModel?: boolean;
 }
 
