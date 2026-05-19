@@ -5,9 +5,9 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>一个跑在你身边、会记住工作方式、会使用技能、但关键动作先问你的个人 AI。</strong><br>
-  你给目标，它检查能力、调用已配置工具、执行任务、验证结果，把重复工作沉淀成可审计 workflow。<br>
-  本地优先 · 自带 Key · 先审批再行动 · 用户掌控
+  <strong>可信的 AI Agent 应用层，用来把真实工作安全做完。</strong><br>
+  你给目标，Friday 调用已配置工具，但把审批、记忆、证据和回滚留在闭环里。<br>
+  本地优先 · 自带 Key · 先审批再行动 · 用户掌控 · 证据闭环
 </p>
 
 <p align="center">
@@ -21,20 +21,29 @@
 
 ## Friday 是什么？
 
-Friday 是一个自部署的个人 AI 和自动化执行系统。
+Friday 是一个自部署的个人 AI 和自动化执行系统：一个本地优先的 AI Agent 应用层，帮助 AI 把用户授权的目标变成可验证的真实工作。
 
 它不应该像一个空白聊天框，而应该像一个私人的执行搭档：你给它目标，它先检查自己有什么能力，使用已配置能力，遇到必须人类处理的地方就明确停下来问你，然后执行、验证、记录经验。能力自获取和自升级闭环仍是审查门控下的在建能力，不应理解为已经完全自动化。
 
 Friday 不是万能自动机。它不会替你注册账号、绕过验证码、付款、偷偷拿权限、或在没有凭证的情况下调用外部服务。它的目标是：能自己做的尽量自己做；必须你介入的地方说清楚；做完留下证据和可回滚路径。
 
+## 当前发布状态
+
+Friday 现在更诚实的状态是：**public v1 local candidate**，不是“所有集成都 release-complete”。
+
+- 当前 public claim 聚焦本地 UI、本地 runtime、BYOK setup、受监督 operator workflow、memory、evidence、approval-gated tool use。
+- 当前证明链不 claim 渠道控制、云端 live certification、外部 OTEL/Grafana export，或 release-complete-all。
+- Real Green Gate 只有在 artifact 属于同一个 SHA、scenarios 非零、全部通过、blockers 为空时才算 release-proof eligible。
+- `blocked_by_env`、mock-only、workflow success alone、stale artifact、wrong-SHA artifact 都不能算通过。
+
 ## 核心闭环
 
 1. **你给目标。** 例如：“读这些 PDF，结合最新网页搜索，保存一份带引用的短总结。”
 2. **Friday 检查能力。** 它会看文本、视觉、OCR、网页搜索、PDF、文件、浏览器、可选渠道、模型、记忆、workflow 是否可用。
-3. **Friday 报告缺口或生成候选方案。** 它可以从已安装 skills、可信 catalog、MCP server、本地文件、包仓库、OpenAPI 文档和网页中找候选，但安装、更新和自升级路径仍受策略门禁控制并在持续加固。
+3. **Friday 报告缺口或生成候选方案。** 它可以从已安装 skills、可信 catalog、MCP server、本地文件、包仓库、OpenAPI 文档和网页中找候选。生成或导入的 skill 先是 candidate，不会立刻变成可运行能力。
 4. **需要人类时明确停下。** API key、OAuth、付费、验证码、登录、敏感权限、高风险动作都要用户确认。
 5. **Friday 执行并验证。** 通过 skills、tools、workflow、浏览器/桌面控制或渠道适配器执行，然后检查结果。
-6. **Friday 安全地成长。** 它可以更新 memory、provider 路由偏好、setup recipe、生成的 skill、eval 用例和失败教训。默认不训练模型权重。
+6. **Friday 安全地成长。** 它可以沉淀可审计 memory、learned facts、provider 路由信号、setup recipe、candidate skill、eval 用例和失败教训。learned signals 不会自动变成不经确认的真理。
 
 ## Friday 现在能做什么
 
@@ -43,9 +52,9 @@ Friday 不是万能自动机。它不会替你注册账号、绕过验证码、�
 | 对话与任务执行 | 回答、规划、调用工具执行、汇报进展、失败恢复 | 取决于已配置 provider 和已授权工具 |
 | 文本、视觉、OCR、PDF、文件 | 按能力路由到 provider 或内置解析器；缺能力时说明缺什么 | 视觉/OCR/TTS 依赖 provider 和凭证 |
 | 网页与浏览器 | 使用配置好的网页搜索 provider、本地浏览器控制和 workflow | 登录、付款、验证码、敏感账号需要用户 |
-| Skills 和 workflows | 导入、验证、安装、运行、更新、回滚可复用能力；生成和自升级闭环仍在建设中 | 不可信代码必须经过审查、沙箱验证和策略门禁 |
-| 记忆与自我改进 | 沉淀偏好、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；不做隐藏模型训练 |
-| 自我修复 | 发现失败、诊断、提出修复、低风险自动执行、验证、回滚、重复失败后暂停 | 高风险修复需要审批 |
+| Skills 和 workflows | 在 lifecycle 闭合的路径上导入、验证、暂存、promote、运行、更新、回滚可复用能力 | 生成或导入的 skill 先是 candidate；必须通过 review、canary、promotion gate 才能变成可用能力；workflow upgrade proof 不等同于 skill lifecycle proof |
+| 记忆与自我改进 | 沉淀显式偏好、learned facts、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；learned signals 不是隐藏模型训练、不经确认的真理，也不保证都会进入 prompt 并改变行为 |
+| 自我修复 | 发现失败、诊断、提出修复，并且只在已接通、已配置、有证据的路径上执行低风险修复 | dispatcher 式 auto-fix 默认关闭；高风险或改数据的修复需要审批、receipt、rollback 或明确不可逆记录 |
 | 可选渠道适配器 | 接入 Discord、Telegram、飞书/Lark、Slack 类 webhook、Signal、WhatsApp、QQ 等已配置渠道 | 渠道是配置后才可用的能力，不属于 public v1 local release claim；敏感动作仍要确认 |
 | 长期目标 | 对用户授权的 standing goals 生成 agenda、执行低风险事项、汇报证据 | Friday 接收用户目标，不主动发明无关长期议程 |
 
@@ -150,6 +159,9 @@ Friday 的原则很简单：重复、低风险、可验证的事情尽量自动�
 
 - [快速开始](docs/getting-started.md)
 - [文档中心](docs/README.md)
+- [信任模型](TRUST.md)
+- [隐私](PRIVACY.md)
+- [负责任使用](RESPONSIBLE_USE.md)
 - [Roadmap](ROADMAP.md)
 - [愿景](docs/VISION.md)
 - [能力矩阵](docs/ops/friday-capability-matrix.md)

@@ -56,7 +56,7 @@ export function LearningInsightCard() {
     {
       icon: Shield,
       value: overview.coverage.autoFixActions,
-      label: localize(locale, "自动修复", "Auto-fixes"),
+      label: localize(locale, "修复动作", "Repair actions"),
       tone: "text-[color:var(--color-warning)]",
       bg: "bg-amber-50",
     },
@@ -93,8 +93,8 @@ export function LearningInsightCard() {
             {overview.coverage.patterns > 0 && overview.coverage.autoFixActions > 0 &&
               localize(
                 locale,
-                `，并自动修复了 ${String(overview.coverage.autoFixActions)} 个问题`,
-                `, and auto-fixed ${String(overview.coverage.autoFixActions)} issues`,
+                `，并记录了 ${String(overview.coverage.autoFixActions)} 个修复动作`,
+                `, and recorded ${String(overview.coverage.autoFixActions)} repair actions`,
               )}
             {overview.coverage.patterns > 0 && overview.coverage.autoFixActions === 0 && overview.coverage.lessons > 0 &&
               localize(
@@ -166,14 +166,14 @@ export function LearningInsightCard() {
                 )
               )}
 
-              {expandedStat === localize(locale, "自动修复", "Auto-fixes") && (
+              {expandedStat === localize(locale, "修复动作", "Repair actions") && (
                 overview.rejectedFixes.length > 0 || overview.coverage.autoFixActions > 0 ? (
                   <div className="space-y-2">
                     <p className="text-xs text-[color:var(--color-text-secondary)]">
                       {localize(
                         locale,
-                        `共 ${String(overview.coverage.autoFixActions)} 次自动修复`,
-                        `${String(overview.coverage.autoFixActions)} auto-fix action(s) total`,
+                        `共 ${String(overview.coverage.autoFixActions)} 次修复动作，完成状态以验证结果为准`,
+                        `${String(overview.coverage.autoFixActions)} repair action(s) total; verified outcomes remain the source of truth`,
                       )}
                     </p>
                     {overview.rejectedFixes.slice(0, 3).map((item) => (
@@ -241,8 +241,8 @@ export function LearningInsightCard() {
               <p className="text-xs text-emerald-700">
                 {localize(
                   locale,
-                  `Friday 已自动修复 ${String(overview.coverage.autoFixActions)} 个问题，无需人工干预。`,
-                  `Friday auto-fixed ${String(overview.coverage.autoFixActions)} issue(s) without manual intervention.`,
+                  `Friday 已记录 ${String(overview.coverage.autoFixActions)} 个修复动作，详情需以验证结果为准。`,
+                  `Friday recorded ${String(overview.coverage.autoFixActions)} repair action(s); verified outcomes remain the source of truth.`,
                 )}
               </p>
             </div>

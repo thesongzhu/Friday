@@ -302,7 +302,9 @@ describe("home self-repair", () => {
     });
 
     expect(mocks.runReadyAutoFixActions).toHaveBeenCalledWith({ maxRiskTier: 1, limit: 50 });
-    expect(getByTestId("home-self-repair-result").textContent).toContain("已完成 2 项自我修复");
+    expect(getByTestId("home-self-repair-result").textContent).toContain(
+      "已运行 2 项修复动作，完成状态以验证证据为准",
+    );
     expect(getByTestId("home-self-repair-result").textContent).toContain("用户已有数据不会被清空或重置");
   });
 });

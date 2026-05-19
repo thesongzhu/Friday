@@ -176,8 +176,8 @@ function buildPulseSummary(
   if (overview.coverage.autoFixActions > 0) {
     return localize(
       locale,
-      `Friday 最近通过真实链路完成了 ${overview.coverage.autoFixActions} 次自动修复。`,
-      `Friday recently completed ${overview.coverage.autoFixActions} auto-fix actions through the live stack.`,
+      `Friday 最近记录了 ${overview.coverage.autoFixActions} 次修复动作，是否完成以验证结果为准。`,
+      `Friday recently recorded ${overview.coverage.autoFixActions} repair action(s); completion depends on verification evidence.`,
     );
   }
   return locale === "zh"
@@ -312,8 +312,8 @@ export function HomePage() {
       } else if (summary.executed > 0) {
         title = localize(
           locale,
-          `已完成 ${summary.executed} 项自我修复`,
-          `Completed ${summary.executed} self-repair action${summary.executed === 1 ? "" : "s"}`,
+          `已运行 ${summary.executed} 项修复动作，完成状态以验证证据为准`,
+          `Ran ${summary.executed} repair action${summary.executed === 1 ? "" : "s"}; completion depends on verification evidence`,
         );
       } else {
         title = localize(locale, "当前没有可自动执行的修复", "No automatic repair is ready right now");
@@ -745,7 +745,7 @@ export function HomePage() {
                 value: learningOverviewQuery.data?.coverage.patterns ?? 0,
               },
               {
-                label: localize(locale, "自动修复", "Auto-fixes"),
+                label: localize(locale, "修复动作", "Repair actions"),
                 value: learningOverviewQuery.data?.coverage.autoFixActions ?? 0,
               },
             ].map((item) => (

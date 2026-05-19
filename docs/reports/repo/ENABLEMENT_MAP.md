@@ -43,7 +43,7 @@ rg -n "FRIDAY_[A-Z0-9_]+" src
 | `FRIDAY_MARKETPLACE_AGENT_ASSET_ENABLED` | env/feature-flag | `true` | `agent` 资产是否允许安装 | marketplace install dispatch | 未设置（启用） | `src/api/http/routes/friday-marketplace-commerce-routes.ts:1035` |
 | `FRIDAY_HEARTBEAT_ENABLED` | env/feature-flag | `false` | 主动 heartbeat job 是否注册 | hub capability gates | 未设置（禁用） | `src/hub/bootstrap/friday-capability-gates.ts:27`, `src/hub/friday-hub-bootstrap.ts:1447` |
 | `FRIDAY_HEARTBEAT_ACTIVE_HOURS_ENABLED` | env/feature-flag | `true` | heartbeat active-hours 限制是否生效 | heartbeat runner config | 未设置（启用） | `src/hub/bootstrap/friday-capability-gates.ts:28`, `src/hub/friday-hub-bootstrap.ts:1480` |
-| `FRIDAY_AUTOFIX_DISPATCHER_ENABLED` | env/feature-flag | `true` | auto-fix dispatcher job 是否注册 | hub capability gates | 未设置（启用） | `src/hub/bootstrap/friday-capability-gates.ts:29`, `src/hub/friday-hub-bootstrap.ts:1659` |
+| `FRIDAY_AUTOFIX_DISPATCHER_ENABLED` | env/feature-flag | `false` | auto-fix dispatcher job 是否注册 | hub capability gates | 未设置（禁用） | `src/hub/bootstrap/friday-capability-gates.ts:29`, `src/hub/friday-hub-bootstrap.ts:6984` |
 | `FRIDAY_RATE_LIMIT_LOOPBACK_EXEMPT` | env/feature-flag | `false` | loopback 是否跳过 auth lockout | rate limit service 默认配置 | 未设置（不豁免） | `src/api/auth/friday-rate-limit-service.ts:82` |
 | `FRIDAY_ENABLE_HSTS` | env/feature-flag | `true` | HTTP 响应是否附加 HSTS | HTTP server security headers | 未设置（启用） | `src/api/http/friday-http-server.ts:70-76` |
 | `FRIDAY_TOKEN_SECRET` | env/config/security-gate | 未设置时自动生成并持久化 | 登录策略（是否允许 dev passwordless）与 JWT 签名 | token secret resolve + auth policy | 已在 env 显式设置 | `src/hub/bootstrap/hub-helpers.ts:489-536`, `src/hub/friday-hub-bootstrap.ts:386-389`, `reports/enablement/runtime-env-snapshot.log` |

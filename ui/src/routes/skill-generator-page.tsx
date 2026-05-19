@@ -160,7 +160,7 @@ export function SkillGeneratorPage() {
         queryClient.invalidateQueries({ queryKey: ["skills", "generator", "session", result.sessionId] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "generator", "evidence", result.sessionId] }),
       ]);
-      toast.success("Skill saved and promoted.");
+      toast.success("Skill candidate saved for lifecycle review.");
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Could not approve and save the skill");
@@ -387,7 +387,7 @@ export function SkillGeneratorPage() {
 
         <ShellCard
           eyebrow="Evidence"
-          title="Test result and promotion evidence"
+          title="Test result and candidate evidence"
           aside={<StatusPill tone={toneForTestResult(testSummary)}>{testSummary ? "tested" : "pending"}</StatusPill>}
         >
           <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
@@ -465,7 +465,7 @@ export function SkillGeneratorPage() {
                 </div>
               </div>
             ) : (
-              <p>No promotion evidence yet. Approve the session to see the final receipt and saved skill identity.</p>
+              <p>No candidate evidence yet. Approve the session to see the final receipt and saved candidate identity.</p>
             )}
           </div>
         </ShellCard>

@@ -1,89 +1,117 @@
 # Open Source Release Review
 
-Last reviewed: 2026-04-22
+Last reviewed: 2026-05-19
 
 ## Verdict
 
-Friday can be open sourced from the tracked source tree after the cleanup commit that removes generated runtime evidence and local QA artifacts.
+Friday can be presented as a **public v1 local candidate** from the tracked source
+tree when public docs, repository metadata, and package metadata stay aligned
+with the current source of truth.
 
-The product code, README positioning, npm install path, source install path, Docker source build path, and GPL-3.0-only license story are aligned. Local runtime state, generated evidence bundles, static QA captures, and user-specific validation outputs should remain untracked.
+This is not a release-complete-all verdict. It does not claim channel live proof,
+cloud live certification, external OTEL/Grafana export, default-on multi-tenant
+or package release proof, or full native desktop parity.
 
-## Fixed In This Pass
+## Current Public Positioning
 
-- The English and Chinese README files now describe Friday as a bounded, supervised Agent OS instead of an unrestricted autonomous system.
-- Download status now distinguishes published npm, source install, Docker source build, packaging scripts, and unpublished native artifacts.
-- The public README no longer includes the placeholder Discord badge or invite link.
-- The README license text now matches the repository `LICENSE` file: GPL-3.0-only.
-- Public CI, npm script, test display, and file naming for the overlap suite now use neutral `agent-parity` language.
-- `.claude/launch.json` no longer contains a personal absolute Node path.
-- Generated evidence, branch reconciliation dumps, static QA captures, and screenshot artifacts are removed from the tracked source tree and covered by ignore rules.
+Friday is the trusted application layer for AI agents to do real work with
+approval, memory, evidence, and rollback.
 
-## Current Public-Release Rule
+The public wording should emphasize:
 
-Do not commit generated evidence, local runtime exports, screenshots, static QA captures, branch/preflight dumps, or local IDE/agent configuration. Keep these in ignored local paths and publish only redacted summaries when a report is needed.
+- local-first runtime
+- BYOK provider setup
+- approval-gated sensitive actions
+- auditable memory and learned facts
+- evidence-backed workflow and repair surfaces
+- explicit blockers for missing credentials, accounts, CAPTCHA, payment, or
+  external environments
 
-The targeted scan did not find a raw production API key in README or GitHub workflow files. Remaining references to GitHub Actions secret names, fixture tokens, and example local paths are source-code examples or tests, not persisted Friday user memory.
+Avoid wording that implies universal automation, AGI, unrestricted autonomy, or
+automatic access to systems the user has not configured.
 
-Several internal benchmark/adoption implementation paths still contain historical OpenClaw naming. They were not renamed in this pass because doing so would require source-level path and import changes beyond the requested public `openclaw-overlap` cleanup.
+## License And Package Truth
 
-## Reverse-Operation Risk
+- Repository license: MIT.
+- npm package: `@thesongzhu/friday`.
+- Current package version: `1.0.0`.
+- The unscoped `friday` npm package is unrelated.
 
-The main risk is not a single leaked password. The risk to avoid is operational reconstruction:
+README, package metadata, GitHub metadata, and release docs should all use the
+MIT license story. Any older GPL wording is stale and must not be reused.
 
-- local usernames and absolute paths reveal development machine layout
-- runtime database and token-secret paths reveal where a local deployment stores security state
-- auth flow names reveal local bypass and token minting behavior
-- generated health and provider evidence reveal enabled lanes, fallback behavior, and validation gaps
-- audit reports can teach an attacker which surfaces were historically weak or recently fixed
+## Public V1 Local Boundary
 
-For a public release, keep high-level proof summaries, but do not ship raw run artifacts unless they are intentionally redacted.
+The public v1 local track covers:
 
-## Recommended Public Snapshot Rule
+- local UI and local runtime
+- provider setup and capability truth
+- supervised operator workflows
+- memory, user constitution, and learned fact surfaces
+- approval-gated tool use
+- evidence and rollback summaries
 
-Keep:
+The public v1 local track does not cover:
 
-- `src/`, `ui/`, `packages/`, `skills/`, `examples/`, `docs/reference/`, stable product docs, packaging scripts, tests, and public templates
-- `README.md`, `README.zh-CN.md`, `LICENSE`, `CHANGELOG.md`, `.github/SECURITY.md`, `.github/CONTRIBUTING.md`
+- Discord/Lark/Telegram/channel control live proof
+- PR #244 channel closure
+- Alibaba/Tencent/Volcengine cloud live certification
+- external OTEL/Grafana export
+- release-complete-all
+- `blocked_by_env` scenarios
 
-Remove or redact:
+## Repository Metadata Recommendation
 
-- generated audit evidence
-- local validation run outputs
-- screenshots with captured local state
-- local IDE/agent configuration
-- raw JSON from authenticated local runs
-- branch/preflight dumps that include private paths or internal remediation trails
+Do not update GitHub metadata until the repo docs pass local checks. When ready,
+the recommended repository description is:
 
-## Final Checks Before Making The Repository Public
-
-Run these checks after pruning or redaction:
-
-```bash
-git ls-files -z | xargs -0 rg -n "(/Users/|tokenSecretSource|stateDbPath|passwordless_local_login|mint_local_admin_token|FRIDAY_ACCESS_TOKEN|FRIDAY_LOCAL_PASSPHRASE|ghp_|sk-[A-Za-z0-9]{20,}|BEGIN (RSA|OPENSSH|PRIVATE) KEY)" -S
-npm run release:verify:repo
-npm run release:verify
+```text
+Trusted local-first AI agent application layer for supervised automation, skills, workflows, memory, and approval-gated tool use.
 ```
 
-If `detect-secrets` is available:
+Recommended topics:
 
-```bash
-detect-secrets scan --exclude-files '(^|/)node_modules(/|$)|(^|/)dist(/|$)|(^|/)coverage(/|$)' > .secrets.baseline
-detect-secrets audit .secrets.baseline
+```text
+ai-agent, automation, local-first, self-hosted, byok, workflow-automation, skills, mcp, llm, typescript, nodejs, privacy, human-in-the-loop
 ```
 
-## Agent Ecosystem Research Input
+Remove `agi` from topics unless the product direction changes and has matching
+evidence.
 
-The public README positioning was updated around recurring themes found in current Chinese and English agent discussions:
+## Public Snapshot Rule
 
-- Memory and context: current agent-memory discussions emphasize durable, human-readable memory, retrieval, session search, and context snapshots.
-- Skills and discoverability: OpenClaw docs describe skill folders, bundled/local skills, watcher refresh, and skill lifecycle concerns.
-- Self-healing and self-improvement: community writeups around agent skills focus on reusable skills, generated workflows, and learning loops, but the claims need clear evidence boundaries.
-- Stability and boundaries: security discussions repeatedly warn that prompt injection, untrusted skills, and tool permissions are not solved by better prompts alone.
-- Approval and blast radius: public incidents around email deletion and context compaction show why long-running agents need durable rules, explicit approvals, and tool-level enforcement.
+Keep public:
 
-Sources checked:
+- `src/`, `ui/`, `packages/`, `skills/`, stable product docs, packaging scripts,
+  tests, and public templates
+- `README.md`, `README.zh-CN.md`, `LICENSE`, `NOTICE`, `CHANGELOG.md`,
+  `PRIVACY.md`, `RESPONSIBLE_USE.md`, `TRUST.md`, `.github/SECURITY.md`, and
+  `.github/CONTRIBUTING.md`
 
-- [OpenClaw skills docs](https://docs.openclaw.ai/skills)
-- [OpenClaw security docs](https://docs.openclaw.ai/security)
-- [TechRadar: OpenClaw security risks](https://www.techradar.com/pro/here-are-the-openclaw-security-risks-you-should-know-about)
-- [Tom's Hardware: OpenClaw inbox deletion incident](https://www.tomshardware.com/tech-industry/artificial-intelligence/openclaw-wipes-inbox-of-meta-ai-alignment-director-executive-finds-out-the-hard-way-how-spectacularly-efficient-ai-tool-is-at-maintaining-her-inbox)
+Avoid committing or publishing as ordinary product docs:
+
+- generated local runtime evidence
+- authenticated local run dumps
+- screenshots with private state
+- local IDE or agent configuration
+- raw branch/preflight dumps
+- stale audit snapshots that conflict with the current source of truth
+
+Historical reports may remain for audit history, but current docs must point
+users to `docs/current-source-of-truth.md`, `docs/release-evidence-policy.md`,
+and `docs/public-v1-local-candidate.md` when facts conflict.
+
+## Final Checks
+
+Before presenting the repository as a public v1 local candidate, run:
+
+```bash
+npm run check:secret-patterns
+npm run audit:release-truth
+npm run release:check
+git diff --check
+```
+
+For a full release decision, use the current release evidence policy. Mock-only
+tests, workflow success alone, stale artifacts, wrong-SHA artifacts, and
+`blocked_by_env` are not release proof.
