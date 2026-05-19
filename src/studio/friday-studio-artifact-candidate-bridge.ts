@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+
 import type {
   FridayStudioArtifactCandidateValidation,
   FridayStudioImportedPack,
@@ -260,9 +263,26 @@ function extractPermissionsFromRun(run: FridayStudioRun): string[] {
   const packArtifact = run.artifacts.find((a) => a.id === "integration_pack" || a.id === "guide_pack");
   if (!packArtifact) return [];
   if (run.productId === "integration_builder") {
-    return ["network.request"];
+    return readPackPermissions(run, packArtifact.relativePath) ?? ["network.request"];
   }
   return [];
+}
+
+function readPackPermissions(run: FridayStudioRun, relativePath: string): string[] | null {
+  try {
+    const root = path.resolve(run.artifactRoot);
+    const fullPath = path.resolve(root, relativePath);
+    if (fullPath !== root && !fullPath.startsWith(`${root}${path.sep}`)) {
+      return null;
+    }
+    const parsed = JSON.parse(fs.readFileSync(fullPath, "utf8")) as { permissions?: unknown };
+    if (!Array.isArray(parsed.permissions)) {
+      return null;
+    }
+    return parsed.permissions.filter((permission): permission is string => typeof permission === "string");
+  } catch {
+    return null;
+  }
 }
 
 function extractOperationCountFromRun(run: FridayStudioRun): number {

@@ -213,6 +213,7 @@ export function createFridayStudioService(
         };
         run = await generateProduct(context);
       } catch (error) {
+        const errorMessage = redactStudioErrorMessage(product.id, error);
         run = {
           id: runId,
           productId: product.id,
@@ -222,16 +223,16 @@ export function createFridayStudioService(
           completedAt: nowIso(),
           artifactRoot: dir,
           summary: text("生成失败。请检查输入后重试。", "Generation failed. Check the inputs and try again."),
-          inputs: request.inputs ?? {},
+          inputs: sanitizeStudioRunInputs(product.id, request.inputs ?? {}),
           artifacts: [],
           checks: [{
             id: "studio_run_failed",
             label: text("运行失败", "Run failed"),
             status: "failed",
-            detail: text(error instanceof Error ? error.message : String(error), error instanceof Error ? error.message : String(error)),
+            detail: text(errorMessage, errorMessage),
           }],
           nextActions: [text("修正输入并重新运行。", "Fix the inputs and run again.")],
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
         };
       }
 
@@ -522,7 +523,7 @@ function baseRun(ctx: GeneratorContext, input: Omit<FridayStudioRun, "id" | "pro
     createdAt: ctx.createdAt,
     completedAt: ctx.nowIso(),
     artifactRoot: ctx.dir,
-    inputs: ctx.inputs,
+    inputs: sanitizeStudioRunInputs(ctx.product.id, ctx.inputs),
     ...input,
   };
 }
@@ -755,7 +756,7 @@ async function buildOpenApiIntegrationPack(name: string, source: string, fetchFn
     schemaVersion: "friday.studio.integration_pack.v1",
     name,
     sourceType: "openapi",
-    source,
+    source: redactIntegrationSourceText(source),
     title: typeof spec.info === "object" && spec.info && "title" in spec.info ? String((spec.info as { title?: unknown }).title ?? name) : name,
     permissions: ["network.request", "secret.read:api_key"],
     operations,
@@ -764,16 +765,19 @@ async function buildOpenApiIntegrationPack(name: string, source: string, fetchFn
 
 function buildCurlIntegrationPack(name: string, source: string) {
   const parsed = parseSimpleCurl(source);
+  const redactedUrl = redactIntegrationUrl(parsed.url);
+  const needsApiKey = parsed.headers.some((header) => /authorization|api-key|token/i.test(header.name))
+    || integrationUrlHasCredentialRisk(parsed.url);
   return {
     schemaVersion: "friday.studio.integration_pack.v1",
     name,
     sourceType: "curl",
-    source,
+    source: redactIntegrationSourceText(source),
     title: name,
-    permissions: ["network.request", ...(parsed.headers.some((header) => /authorization|api-key|token/i.test(header.name)) ? ["secret.read:api_key"] : [])],
+    permissions: ["network.request", ...(needsApiKey ? ["secret.read:api_key"] : [])],
     operations: [{
       method: parsed.method,
-      url: parsed.url,
+      url: redactedUrl,
       headers: parsed.headers.map((header) => header.name),
       body: parsed.body ? "present" : "none",
       source: "curl",
@@ -810,6 +814,81 @@ function parseSimpleCurl(source: string): { method: string; url: string; headers
   }
   parsePublicHttpUrl(url);
   return { method, url, headers, body };
+}
+
+function sanitizeStudioRunInputs(productId: FridayStudioProductId, inputs: Record<string, unknown>): Record<string, unknown> {
+  if (productId !== "integration_builder") {
+    return inputs;
+  }
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    sanitized[key] = sanitizeStudioInputValue(value);
+  }
+  return sanitized;
+}
+
+function sanitizeStudioInputValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactIntegrationSourceText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeStudioInputValue(item));
+  }
+  if (value && typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      sanitized[key] = sanitizeStudioInputValue(item);
+    }
+    return sanitized;
+  }
+  return value;
+}
+
+function redactStudioErrorMessage(productId: FridayStudioProductId, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return productId === "integration_builder" ? redactIntegrationSourceText(message) : message;
+}
+
+function redactIntegrationUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = url.username ? "redacted" : "";
+    url.password = url.password ? "redacted" : "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (isSensitiveIntegrationKey(key)) {
+        url.searchParams.set(key, "[redacted]");
+      }
+    }
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function redactIntegrationSourceText(value: string): string {
+  return redactIntegrationUrlsInText(value)
+    .replace(/\b(Authorization\s*:\s*)[^\r\n'"]+/gi, "$1[redacted]")
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{4,}/gi, "$1[redacted]")
+    .replace(/\b((?:X-)?API-Key\s*:\s*)[^\s'"]+/gi, "$1[redacted]")
+    .replace(/\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|secret|password|credential)\s*[=:]\s*)[^\s'\"&]+/gi, "$1[redacted]")
+    .replace(/([?&](?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|token|secret|password|credential)=)[^&\s'"]+/gi, "$1[redacted]");
+}
+
+function isSensitiveIntegrationKey(key: string): boolean {
+  return /^(?:access[_-]?token|api[_-]?key|apikey|auth|authorization|bearer|credential|key|password|refresh[_-]?token|secret|session|token)$/i.test(key);
+}
+
+function integrationUrlHasCredentialRisk(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return Boolean(url.username || url.password || [...url.searchParams.keys()].some((key) => isSensitiveIntegrationKey(key)));
+  } catch {
+    return false;
+  }
+}
+
+function redactIntegrationUrlsInText(value: string): string {
+  return value.replace(/https?:\/\/[^\s'")<>]+/gi, (url) => redactIntegrationUrl(url));
 }
 
 function renderSeoAuditHtml(data: ReturnType<typeof buildSeoAuditData>): string {
