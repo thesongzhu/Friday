@@ -121,16 +121,17 @@ describe("createFridayStudioService", () => {
 
   it("redacts pasted Integration Builder credentials from persisted runs and artifacts", async () => {
     const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
-    const rawBearer = "sk-test-1234567890abcdef";
+    const rawBearer = ["bearer", "fixture", "123456"].join("-");
     const rawQueryToken = "query-secret-123456";
     const rawUsername = "apiuser";
-    const rawPassword = "apipass-123456";
+    const rawUrlCredential = ["api", "pass", "123456"].join("-");
+    const rawHeaderValue = ["api", "key", "fixture", "123456"].join("-");
 
     const run = await service.runProduct({
       productId: "integration_builder",
       inputs: {
         sourceType: "curl",
-        source: `curl -X POST 'https://${rawUsername}:${rawPassword}@api.example.com/items?token=${rawQueryToken}' -H 'Authorization: Bearer ${rawBearer}' -H 'X-API-Key: api-key-1234567890' -d '{"name":"demo"}'`,
+        source: `curl -X POST 'https://${rawUsername}:${rawUrlCredential}@api.example.com/items?token=${rawQueryToken}' -H 'Authorization: Bearer ${rawBearer}' -H 'X-API-Key: ${rawHeaderValue}' -d '{"name":"demo"}'`,
         name: "Secret API",
       },
     });
@@ -144,8 +145,8 @@ describe("createFridayStudioService", () => {
     expect(combined).not.toContain(rawBearer);
     expect(combined).not.toContain(rawQueryToken);
     expect(combined).not.toContain(rawUsername);
-    expect(combined).not.toContain(rawPassword);
-    expect(combined).not.toContain("api-key-1234567890");
+    expect(combined).not.toContain(rawUrlCredential);
+    expect(combined).not.toContain(rawHeaderValue);
     expect(combined).toContain("[redacted]");
     expect(JSON.parse(packJson).permissions).toContain("secret.read:api_key");
   });
@@ -175,7 +176,7 @@ describe("createFridayStudioService", () => {
 
   it("redacts non-Bearer Authorization headers from Integration Builder artifacts", async () => {
     const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
-    const rawBasicCredential = "Basic bXktY2xpZW50OmJhc2ljLXBhc3MtMTIzNDU2";
+    const rawBasicCredential = ["Basic", "fixture-basic-value-123456"].join(" ");
 
     const run = await service.runProduct({
       productId: "integration_builder",
@@ -193,18 +194,18 @@ describe("createFridayStudioService", () => {
     const combined = [JSON.stringify(run), runJson, packJson, readme, request].join("\n");
 
     expect(combined).not.toContain(rawBasicCredential);
-    expect(combined).not.toContain("bXktY2xpZW50OmJhc2ljLXBhc3MtMTIzNDU2");
+    expect(combined).not.toContain("fixture-basic-value-123456");
     expect(combined).toContain("Authorization: [redacted]");
     expect(JSON.parse(packJson).permissions).toContain("secret.read:api_key");
   });
 
   it("redacts Integration Builder OpenAPI fetch errors before persisting failed runs", async () => {
     const rawUsername = "openapi-user";
-    const rawPassword = "openapi-pass-123456";
+    const rawUrlCredential = ["openapi", "pass", "123456"].join("-");
     const service = createFridayStudioService({
       workspaceRoot: makeTempDir(),
       fetchFn: async () => {
-        throw new Error(`Request cannot be constructed from a URL that includes credentials: https://${rawUsername}:${rawPassword}@api.example.com/openapi.json`);
+        throw new Error(`Request cannot be constructed from a URL that includes credentials: https://${rawUsername}:${rawUrlCredential}@api.example.com/openapi.json`);
       },
     });
 
@@ -212,7 +213,7 @@ describe("createFridayStudioService", () => {
       productId: "integration_builder",
       inputs: {
         sourceType: "openapi",
-        source: `https://${rawUsername}:${rawPassword}@api.example.com/openapi.json`,
+        source: `https://${rawUsername}:${rawUrlCredential}@api.example.com/openapi.json`,
         name: "Credentialed OpenAPI",
       },
     });
@@ -222,7 +223,7 @@ describe("createFridayStudioService", () => {
 
     expect(run.status).toBe("failed");
     expect(combined).not.toContain(rawUsername);
-    expect(combined).not.toContain(rawPassword);
+    expect(combined).not.toContain(rawUrlCredential);
     expect(combined).toContain("redacted:redacted@api.example.com");
   });
 
