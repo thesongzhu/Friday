@@ -5,6 +5,12 @@ import * as path from "node:path";
 import * as zlib from "node:zlib";
 
 import { FridayDomainError } from "#errors";
+import { fetchWithFridayAgentSsrfGuard } from "../agent/security/friday-agent-fetch-guard.js";
+import {
+  createFridayAgentSsrfGuard,
+  type FridayAgentSsrfGuard,
+  FridaySsrfBlockedError,
+} from "../agent/security/friday-agent-ssrf-guard.js";
 import { extractReadableContent, stripHtmlToText } from "../link-understanding/friday-link-summarize.js";
 import type {
   FridayStudioArtifact,
@@ -22,6 +28,8 @@ import type {
   FridayStudioRunRequest,
 } from "../api/model/friday-api-studio.types.js";
 import { buildStudioArtifactCapabilityCandidate, validateStudioArtifactAsCandidate } from "./friday-studio-artifact-candidate-bridge.js";
+
+const STUDIO_PUBLIC_URL_GUARD = createFridayAgentSsrfGuard();
 
 type StudioDocument = {
   querySelector(selector: string): ElementLike | null;
@@ -49,6 +57,7 @@ export interface CreateFridayStudioServiceDeps {
   workspaceRoot?: string;
   nowIso?: () => string;
   fetchFn?: typeof fetch;
+  publicUrlGuard?: FridayAgentSsrfGuard;
 }
 
 const STUDIO_PRODUCTS: FridayStudioProductSummary[] = [
@@ -169,6 +178,7 @@ export function createFridayStudioService(
   const workspaceRoot = deps.workspaceRoot ?? process.cwd();
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   const fetchFn = deps.fetchFn ?? fetch;
+  const publicUrlGuard = deps.publicUrlGuard ?? STUDIO_PUBLIC_URL_GUARD;
   const studioRoot = path.join(workspaceRoot, ".friday", "studio");
 
   function runDir(runId: string): string {
@@ -210,6 +220,7 @@ export function createFridayStudioService(
           createdAt,
           nowIso,
           fetchFn,
+          publicUrlGuard,
         };
         run = await generateProduct(context);
       } catch (error) {
@@ -311,6 +322,7 @@ interface GeneratorContext {
   createdAt: string;
   nowIso: () => string;
   fetchFn: typeof fetch;
+  publicUrlGuard: FridayAgentSsrfGuard;
 }
 
 async function generateProduct(ctx: GeneratorContext): Promise<FridayStudioRun> {
@@ -334,13 +346,13 @@ async function generateSeoAudit(ctx: GeneratorContext): Promise<FridayStudioRun>
   const url = readRequiredString(ctx.inputs, "url");
   const focus = readString(ctx.inputs, "focus");
   const parsedUrl = parsePublicHttpUrl(url);
-  const response = await ctx.fetchFn(parsedUrl.toString(), { signal: AbortSignal.timeout(12_000) });
+  const response = await fetchPublicStudioUrl(ctx, parsedUrl.toString(), { signal: AbortSignal.timeout(12_000) });
   const html = await response.text();
   const { document } = await parseHtml(html);
   const bodyText = normalizeWhitespace(document.body?.textContent ?? stripHtmlToText(html));
   const origin = parsedUrl.origin;
-  const robots = await fetchOptionalText(ctx.fetchFn, `${origin}/robots.txt`);
-  const sitemap = await fetchOptionalText(ctx.fetchFn, `${origin}/sitemap.xml`);
+  const robots = await fetchOptionalText(ctx, `${origin}/robots.txt`);
+  const sitemap = await fetchOptionalText(ctx, `${origin}/sitemap.xml`);
   const data = buildSeoAuditData(parsedUrl, response.status, document, html, bodyText, robots, sitemap, focus);
   const reportHtml = renderSeoAuditHtml(data);
   const evidence = JSON.stringify(data, null, 2) + "\n";
@@ -370,7 +382,7 @@ async function generateResearchReport(ctx: GeneratorContext): Promise<FridayStud
   for (const rawUrl of sourceUrls) {
     try {
       const url = parsePublicHttpUrl(rawUrl);
-      const response = await ctx.fetchFn(url.toString(), { signal: AbortSignal.timeout(12_000) });
+      const response = await fetchPublicStudioUrl(ctx, url.toString(), { signal: AbortSignal.timeout(12_000) });
       const html = await response.text();
       const readable = await extractReadableContent(html, url.toString());
       sources.push({
@@ -497,7 +509,7 @@ async function generateIntegrationBuilder(ctx: GeneratorContext): Promise<Friday
   const name = readString(ctx.inputs, "name") || "Local Integration";
   const pack = sourceType === "curl"
     ? buildCurlIntegrationPack(name, source)
-    : await buildOpenApiIntegrationPack(name, source, ctx.fetchFn);
+    : await buildOpenApiIntegrationPack(name, source, ctx);
   const artifacts = [
     writeArtifact(ctx.dir, "pack.json", JSON.stringify(pack, null, 2) + "\n", "integration_pack", "json", "application/json", text("集成 pack", "Integration pack")),
     writeArtifact(ctx.dir, "README.md", renderIntegrationReadme(pack), "integration_readme", "markdown", "text/markdown", text("集成说明", "Integration README")),
@@ -740,9 +752,9 @@ function buildGuidedPlan(goal: string, site: string, constraints: string) {
   };
 }
 
-async function buildOpenApiIntegrationPack(name: string, source: string, fetchFn: typeof fetch) {
+async function buildOpenApiIntegrationPack(name: string, source: string, ctx: GeneratorContext) {
   const url = parsePublicHttpUrl(source);
-  const response = await fetchFn(url.toString(), { signal: AbortSignal.timeout(12_000) });
+  const response = await fetchPublicStudioUrl(ctx, url.toString(), { signal: AbortSignal.timeout(12_000) });
   const spec = await response.json() as Record<string, unknown>;
   const paths = spec.paths && typeof spec.paths === "object" ? spec.paths as Record<string, unknown> : {};
   const operations = [];
@@ -1016,8 +1028,12 @@ function parsePublicHttpUrl(raw: string): URL {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new FridayDomainError("VALIDATION_ERROR", "Only http(s) URLs are supported", { httpStatus: 400 });
   }
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".local") || host === "127.0.0.1" || host === "0.0.0.0" || host.startsWith("10.") || host.startsWith("192.168.") || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+  try {
+    STUDIO_PUBLIC_URL_GUARD.validate(url.toString());
+  } catch (error) {
+    if (!(error instanceof FridaySsrfBlockedError)) {
+      throw error;
+    }
     throw new FridayDomainError("VALIDATION_ERROR", "Studio only audits public URLs in this product lane", { httpStatus: 400 });
   }
   return url;
@@ -1028,9 +1044,25 @@ async function parseHtml(html: string): Promise<{ document: StudioDocument }> {
   return linkedom.parseHTML(html) as unknown as { document: StudioDocument };
 }
 
-async function fetchOptionalText(fetchFn: typeof fetch, url: string): Promise<string | undefined> {
+async function fetchPublicStudioUrl(ctx: GeneratorContext, url: string, init: RequestInit): Promise<Response> {
   try {
-    const response = await fetchFn(url, { signal: AbortSignal.timeout(5_000) });
+    return await fetchWithFridayAgentSsrfGuard({
+      url,
+      init,
+      guard: ctx.publicUrlGuard,
+      fetchFn: ctx.fetchFn,
+    });
+  } catch (error) {
+    if (!(error instanceof FridaySsrfBlockedError)) {
+      throw error;
+    }
+    throw new FridayDomainError("VALIDATION_ERROR", "Studio only audits public URLs in this product lane", { httpStatus: 400 });
+  }
+}
+
+async function fetchOptionalText(ctx: GeneratorContext, url: string): Promise<string | undefined> {
+  try {
+    const response = await fetchPublicStudioUrl(ctx, url, { signal: AbortSignal.timeout(5_000) });
     if (!response.ok) return undefined;
     return await response.text();
   } catch {

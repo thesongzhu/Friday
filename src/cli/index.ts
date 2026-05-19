@@ -7,6 +7,8 @@ export {
   readSetupNetworkBinding,
   runCliSkillCommand,
   resolveStartupNetworkBinding,
+  tightenFridaySetupEnvFilePermissions,
+  writeFridaySetupEnvFile,
   type ParsedArgs,
   type FridayCliRunCommandDeps,
   type FridayStartupNetworkBinding,

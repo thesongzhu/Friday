@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { FridaySsrfBlockedError } from "../../../src/agent/security/friday-agent-ssrf-guard.js";
 import { createFridayStudioService } from "../../../src/studio/friday-studio-service.js";
 
 let tempDirs: string[] = [];
@@ -34,6 +35,18 @@ function makeFetch(routes: Record<string, { body: string; status?: number; conte
   };
 }
 
+function makePublicUrlGuard(options?: { dnsBlockedHost?: string }) {
+  return {
+    validate: () => {},
+    validateWithDns: async (url: string) => {
+      const host = new URL(url).hostname.toLowerCase();
+      if (options?.dnsBlockedHost && host === options.dnsBlockedHost) {
+        throw new FridaySsrfBlockedError(`SSRF guard: DNS resolved to private IP - ${host}`);
+      }
+    },
+  };
+}
+
 describe("createFridayStudioService", () => {
   it("lists first-party local products that never mutate the user's computer", () => {
     const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
@@ -54,6 +67,7 @@ describe("createFridayStudioService", () => {
     const service = createFridayStudioService({
       workspaceRoot: makeTempDir(),
       nowIso: () => "2026-04-28T00:00:00.000Z",
+      publicUrlGuard: makePublicUrlGuard(),
       fetchFn: makeFetch({
         "https://example.com/product": {
           body: `<!doctype html><html><head>
@@ -204,6 +218,7 @@ describe("createFridayStudioService", () => {
     const rawUrlCredential = ["openapi", "pass", "123456"].join("-");
     const service = createFridayStudioService({
       workspaceRoot: makeTempDir(),
+      publicUrlGuard: makePublicUrlGuard(),
       fetchFn: async () => {
         throw new Error(`Request cannot be constructed from a URL that includes credentials: https://${rawUsername}:${rawUrlCredential}@api.example.com/openapi.json`);
       },
@@ -306,5 +321,42 @@ describe("createFridayStudioService", () => {
 
     expect(audit.status).toBe("failed");
     expect(integration.status).toBe("failed");
+  });
+
+  it("rejects IPv6 and private literal URL aliases before public-lane fetches", async () => {
+    let fetchCalls = 0;
+    const service = createFridayStudioService({
+      workspaceRoot: makeTempDir(),
+      fetchFn: async () => {
+        fetchCalls += 1;
+        return new Response("should not fetch", { status: 200 });
+      },
+      publicUrlGuard: makePublicUrlGuard({ dnsBlockedHost: "private-alias.example.com" }),
+    });
+
+    const urls = [
+      "http://[::1]:3000/admin",
+      "http://[0:0:0:0:0:ffff:7f00:1]/admin",
+      "http://169.254.169.254/latest/meta-data",
+      "http://100.64.0.1/internal",
+      "http://service.internal/api",
+      "https://private-alias.example.com/openapi.json",
+    ];
+
+    for (const url of urls) {
+      const audit = await service.runProduct({
+        productId: "seo_audit",
+        inputs: { url },
+      });
+      const integration = await service.runProduct({
+        productId: "integration_builder",
+        inputs: { sourceType: "openapi", source: url },
+      });
+
+      expect(audit.status).toBe("failed");
+      expect(integration.status).toBe("failed");
+    }
+
+    expect(fetchCalls).toBe(0);
   });
 });
