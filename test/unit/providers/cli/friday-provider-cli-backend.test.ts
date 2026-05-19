@@ -36,6 +36,23 @@ describe("friday-provider-cli-backend", () => {
     expect(result).toContain("stdout truncated");
   });
 
+  it("maps missing CLI binaries to PROVIDER_UNREACHABLE for text completions", async () => {
+    const missingPath = join(tmpdir(), `friday-missing-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+    await expect(runFridayCliBackendTextCompletion({
+      cliConfig: {
+        backendId: "claude-cli",
+        binaryPath: missingPath,
+      },
+      systemPrompt: "system",
+      conversation: "hello",
+    })).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE",
+      httpStatus: 422,
+      message: `CLI binary "${missingPath}" not found`,
+    });
+  });
+
   describe("parseCodexStatus (Phase 18B CLAW-003)", () => {
     it("treats 'Not logged in' as loggedIn=false (does not match the positive substring)", () => {
       expect(parseCodexStatus("Not logged in.\nRun `codex login` to authenticate.", "")).toEqual({

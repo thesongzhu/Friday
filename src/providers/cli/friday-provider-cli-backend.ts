@@ -98,6 +98,22 @@ function createBoundedOutputCollector(streamName: "stdout" | "stderr", maxBytes:
   };
 }
 
+function isMissingCliBinaryError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    typeof (error as Error & { code?: unknown }).code === "string" &&
+    (error as Error & { code?: string }).code === "ENOENT"
+  );
+}
+
+function createMissingCliBinaryError(binary: string): FridayDomainError {
+  return new FridayDomainError(
+    "PROVIDER_UNREACHABLE",
+    `CLI binary "${binary}" not found`,
+    { httpStatus: 422 },
+  );
+}
+
 async function readFileBounded(path: string, streamName: "stdout" | "stderr", maxBytes: number = CLI_OUTPUT_MAX_BYTES): Promise<string> {
   const file = await open(path, "r");
   try {
@@ -135,11 +151,7 @@ async function runExecFile(
       stderr?: string;
     };
     if (err.code === "ENOENT") {
-      throw new FridayDomainError(
-        "PROVIDER_UNREACHABLE",
-        `CLI binary "${binary}" not found`,
-        { httpStatus: 422 },
-      );
+      throw createMissingCliBinaryError(binary);
     }
     return {
       stdout: truncateOutput("stdout", err.stdout ?? ""),
@@ -181,7 +193,7 @@ async function runSpawned(
     });
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(error);
+      reject(isMissingCliBinaryError(error) ? createMissingCliBinaryError(binary) : error);
     });
     child.on("close", (code) => {
       clearTimeout(timer);

@@ -190,6 +190,7 @@ export function useAgentRunEvents(
     terminalRef.current = false;
     const controller = new AbortController();
     abortRef.current = controller;
+    let authRefreshAttempted = false;
 
     async function connect() {
       setConnectionState("connecting");
@@ -209,8 +210,9 @@ export function useAgentRunEvents(
           signal: controller.signal,
         });
 
-        if (res.status === 401 && token) {
+        if (res.status === 401 && token && !authRefreshAttempted) {
           try {
+            authRefreshAttempted = true;
             await apiClient.refreshSession();
             if (!controller.signal.aborted) {
               connect();
@@ -221,6 +223,12 @@ export function useAgentRunEvents(
             setErrorMessage("Session expired");
             return;
           }
+        }
+
+        if (res.status === 401) {
+          setConnectionState("error");
+          setErrorMessage("Session expired");
+          return;
         }
 
         if (!res.ok || !res.body) {

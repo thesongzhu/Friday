@@ -450,9 +450,89 @@ export interface FridayUserProfileResponse {
   onboardedAt: string | null;
 }
 
+export interface FridayInvestigateRequest {
+  goalCategoryId: string;
+  context?: Record<string, unknown>;
+  assistantSessionKey?: string;
+}
+
 export interface FridayInvestigateResponse {
   runId: string;
   wizardId: string;
+}
+
+export interface FridayUixAssistantDiagnosticsRun {
+  runId: string;
+  task: string;
+  status: string;
+  startedAt?: string;
+  completedAt?: string;
+  contextCostSummary?: Record<string, unknown>;
+  taskProfile?: Record<string, unknown>;
+  health?: Record<string, unknown>;
+  contextSummary?: Record<string, unknown>;
+  rollbackAvailable?: boolean;
+}
+
+export interface FridayUixAssistantDiagnostics {
+  generatedAt: string;
+  taskProfilePresets: Array<Record<string, unknown>>;
+  recentRuns: FridayUixAssistantDiagnosticsRun[];
+  mcpServerStates: Array<Record<string, unknown>>;
+  supportedPreprocessors: string[];
+}
+
+export interface FridayUixDiagnosticsResponse {
+  assistant: FridayUixAssistantDiagnostics;
+}
+
+export interface FridayUixApprovalSummary {
+  id: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+  actionId?: string;
+  approvalRequestId?: string;
+  severity?: string;
+}
+
+export interface FridayUixAlertSummary {
+  id: string;
+  title: string;
+  summary: string;
+  severity: string;
+  module: string;
+  detectedAt: string;
+}
+
+export interface FridayUixScheduledAutomationSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule?: Record<string, unknown>;
+  nextRunAt: string | null;
+}
+
+export interface FridayUixHomeSnapshot {
+  generatedAt: string;
+  runs: Array<Record<string, unknown>>;
+  pendingApprovals: FridayUixApprovalSummary[];
+  scheduledAutomations: FridayUixScheduledAutomationSummary[];
+}
+
+export interface FridayUixHomeSnapshotResponse {
+  snapshot: FridayUixHomeSnapshot;
+}
+
+export interface FridayUixAssistantInboxSnapshot {
+  generatedAt: string;
+  approvals: FridayUixApprovalSummary[];
+  alerts: FridayUixAlertSummary[];
+  recentRuns: Array<Record<string, unknown>>;
+}
+
+export interface FridayUixAssistantInboxSnapshotResponse {
+  snapshot: FridayUixAssistantInboxSnapshot;
 }
 
 export type FridayCommunicationMbti =

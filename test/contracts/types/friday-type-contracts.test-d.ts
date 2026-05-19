@@ -33,6 +33,11 @@ import type {
   FridayScope,
   FridayTokenKind,
 } from "../../../src/api/model/friday-api-auth.types.js";
+import type {
+  FridayAlertDestinationSummary,
+  FridayCreateAlertDestinationRequest,
+  FridayListAlertDestinationsResponse,
+} from "../../../src/api/index.js";
 
 // ─── Session types ─────────────────────────────────────────────────────────
 
@@ -120,6 +125,12 @@ expectTypeOf<FridayApiErrorCode>().toEqualTypeOf<
 // FridayHttpMethod
 expectTypeOf<FridayHttpMethod>().toEqualTypeOf<
   "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+>();
+
+expectTypeOf<FridayListAlertDestinationsResponse["items"][number]>().toEqualTypeOf<FridayAlertDestinationSummary>();
+expectTypeOf<FridayCreateAlertDestinationRequest>().toMatchTypeOf<
+  | { type: "slack"; name: string; webhookUrl: string }
+  | { type: "email"; name: string; recipients: string[]; fromAddress: string; smtpHost: string; smtpPort: number; password: string }
 >();
 
 // FridayRole
