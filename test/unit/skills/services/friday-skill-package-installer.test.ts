@@ -38,6 +38,22 @@ describe("createFridaySkillPackageInstaller", () => {
     expect(dir).toBeTruthy();
   });
 
+  it("rejects skill IDs that would alias to another install directory", () => {
+    const installer = makeInstaller();
+    expect(() =>
+      installer.stage("my+skill", "1.0.0", Buffer.from("test")),
+    ).toThrow("Invalid skillId");
+    expect(() =>
+      installer.stage("my--skill", "1.0.0", Buffer.from("test")),
+    ).toThrow("Invalid skillId");
+  });
+
+  it("normalizes validated IDs before deriving package paths", () => {
+    const installer = makeInstaller();
+    const dir = installer.stage("My-Skill", "1.0.0", Buffer.from("test"));
+    expect(dir).toContain(join(".staging", "my-skill", "1.0.0"));
+  });
+
   it("activates by unpacking the archived skill contents into the final directory", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "friday-pkg-activate-"));
     const skillDir = join(baseDir, "source-skill");

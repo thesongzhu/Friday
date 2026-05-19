@@ -51,6 +51,13 @@ const RESERVED_SEGMENTS = new Set([".", "..", "con", "prn", "aux", "nul",
   "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
   "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]);
 
+function hasAllowedInstallIdCharacters(normalized: string): boolean {
+  if (normalized.startsWith("@")) {
+    return /^@[a-z0-9._-]+\/[a-z0-9._-]+$/.test(normalized);
+  }
+  return /^[a-z0-9._-]+$/.test(normalized);
+}
+
 // ─── Normalize ───
 
 /**
@@ -97,6 +104,10 @@ export function validateInstallId(
     return "invalid install ID: disallowed characters (spaces)";
   }
 
+  if (!hasAllowedInstallIdCharacters(normalized)) {
+    return "invalid install ID: disallowed characters";
+  }
+
   // Check for absolute paths
   if (isAbsolute(normalized) || normalized.startsWith("/")) {
     return "invalid install ID: absolute path not allowed";
@@ -136,6 +147,10 @@ export function validateInstallId(
     if (!scopePart || scopePart === "@" || !namePart) {
       return "invalid install ID: scoped package must have format @scope/name";
     }
+  }
+
+  if (safeDirName(normalized) !== normalized) {
+    return "invalid install ID: aliases to a different directory name";
   }
 
   return null;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createFridaySkillConverterService } from "#skills/converter";
@@ -19,6 +19,8 @@ import type {
   FridaySkillConversionSource,
   FridaySkillCandidateEvent,
   FridaySkillConverterContext,
+  FridaySkillConverter,
+  FridaySkillConverterRegistry,
   FridaySkillImportInput,
   FridaySkillImportedEvent,
   FridaySkillSourceFormat,
@@ -344,6 +346,88 @@ echo hello
       expect(result.validation).toHaveLength(1);
       // Validation should have run
       expect(Array.isArray(result.validation[0]!.issues)).toBe(true);
+    });
+
+    it("keeps validation temp roots independent from untrusted manifest IDs", async () => {
+      const outsidePrefix = `friday-validate-outside-${Date.now()}`;
+      const maliciousId = `../../${outsidePrefix}`;
+      const source = { contentBase64: Buffer.from("malicious draft", "utf8").toString("base64") };
+      const manifest = makeValidManifest({ id: maliciousId });
+      const uiSchema = {
+        schemaVersion: "1.0" as const,
+        title: "Malicious Draft",
+        sections: [],
+        fields: [],
+        outputs: [],
+        actions: [],
+      };
+      const fakeConverter: FridaySkillConverter = {
+        id: "malicious-draft-converter",
+        displayName: "Malicious Draft Converter",
+        priority: 100,
+        detect: vi.fn(async () => ({
+          converterId: "malicious-draft-converter",
+          format: "friday-package",
+          confidence: 1,
+          reasons: ["test"],
+        })),
+        convert: vi.fn(async () => ({
+          converterId: "malicious-draft-converter",
+          detectedFormat: "friday-package",
+          drafts: [
+            {
+              manifest,
+              uiSchema,
+              files: [
+                {
+                  path: "skill.manifest.json",
+                  content: JSON.stringify(manifest, null, 2),
+                },
+                {
+                  path: "skill.ui.json",
+                  content: JSON.stringify(uiSchema, null, 2),
+                },
+                {
+                  path: "run.sh",
+                  content: "#!/usr/bin/env bash\necho '{}'\n",
+                  executable: true,
+                },
+              ],
+              warnings: [],
+              conversionReport: {
+                sourceFormat: "friday-package",
+                convertedAt: NOW_ISO,
+                converterId: "malicious-draft-converter",
+              },
+            },
+          ],
+        })),
+      };
+      const registry: FridaySkillConverterRegistry = {
+        register: vi.fn(),
+        list: () => [fakeConverter],
+        detect: vi.fn(async () => ({
+          converterId: fakeConverter.id,
+          format: "friday-package",
+          confidence: 1,
+          reasons: ["test"],
+        })),
+        getConverter: vi.fn(() => fakeConverter),
+      };
+      const service = createFridaySkillConverterService({
+        registry,
+        installer: createFridaySkillImportInstaller(),
+        archiver: createFridaySkillPackageArchiver(),
+        context: ctx,
+      });
+      const before = readdirSync(tmpdir()).filter((entry) => entry.startsWith(outsidePrefix));
+
+      const result = await service.convert({ source });
+
+      const after = readdirSync(tmpdir()).filter((entry) => entry.startsWith(outsidePrefix));
+      expect(result.validation).toHaveLength(1);
+      expect(after).toEqual(before);
+      expect(existsSync(join(workspaceDir, "skill-candidates"))).toBe(false);
     });
 
     it("keeps conversion preview-only even when dryRun is omitted", async () => {

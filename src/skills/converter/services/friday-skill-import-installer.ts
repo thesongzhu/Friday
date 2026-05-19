@@ -9,11 +9,12 @@
  *   5. Return install result
  */
 
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { resolveSafeInstallDir, resolveSafePath, safeDirName } from "#utilities";
+import { FridayDomainError } from "#errors";
+import { normalizeInstallId, resolveSafeInstallDir, resolveSafePath, validateInstallId } from "#utilities";
 import { loadFridaySkillPackage } from "../../manifest/friday-skill-package-loader.js";
 import { validateFridaySkillPackage } from "../../validation/friday-skill-validation-pipeline.js";
 import type { FridaySkillValidationIssue } from "../../validation/friday-skill-validation.types.js";
@@ -61,7 +62,7 @@ export function createFridaySkillImportInstaller(): FridaySkillImportInstaller {
       options: FridaySkillInstallOptions,
     ): FridaySkillInstallResult {
       const skillId = draft.manifest.id;
-      const stagingDir = createStagingDir(skillId);
+      const stagingDir = createStagingDir();
 
       try {
         // Step 1: Stage files to temp dir
@@ -129,13 +130,8 @@ export function createFridaySkillImportInstaller(): FridaySkillImportInstaller {
 
 // ─── Helpers ───
 
-function createStagingDir(skillId: string): string {
-  const dir = join(
-    tmpdir(),
-    `friday-install-${safeDirName(skillId)}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
-  mkdirSync(dir, { recursive: true });
-  return dir;
+function createStagingDir(): string {
+  return mkdtempSync(join(tmpdir(), "friday-install-"));
 }
 
 function stageFiles(stagingDir: string, draft: FridayConvertedSkillDraft): void {
@@ -218,15 +214,24 @@ function resolveTargetDir(
   target: FridaySkillInstallTarget,
   options: FridaySkillInstallOptions,
 ): string {
+  const normalizedSkillId = validateTargetSkillId(skillId);
   if (target === "managed") {
-    return resolveSafeInstallDir(options.managedSkillsDir, skillId);
+    return resolveSafeInstallDir(options.managedSkillsDir, normalizedSkillId);
   }
 
   if (target === "workspace") {
-    return resolveSafeInstallDir(join(options.workspaceDir, "skills"), skillId);
+    return resolveSafeInstallDir(join(options.workspaceDir, "skills"), normalizedSkillId);
   }
 
-  return resolveSafeInstallDir(target.path, skillId);
+  return resolveSafeInstallDir(target.path, normalizedSkillId);
+}
+
+function validateTargetSkillId(skillId: string): string {
+  const error = validateInstallId(skillId);
+  if (error) {
+    throw new FridayDomainError("INSTALL_INVALID_ID", error, { httpStatus: 400 });
+  }
+  return normalizeInstallId(skillId);
 }
 
 function setExecutableBits(

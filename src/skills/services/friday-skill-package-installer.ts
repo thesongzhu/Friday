@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { FridayDomainError } from "#errors";
-import { safeDirName, validateInstallId } from "#utilities";
+import { normalizeInstallId, validateInstallId } from "#utilities";
 import {
   createFridaySkillPackageArchiver,
   type FridaySkillPackageArchiver,
@@ -42,11 +42,12 @@ function assertWithinBase(resolvedPath: string, resolvedBase: string, label: str
 
 // ─── Pre-resolution validation ───
 
-function validateSegment(value: string, label: string, allowScoped = true): void {
+function validateSegment(value: string, label: string, allowScoped = true): string {
   const error = validateInstallId(value, { allowScoped });
   if (error) {
     throw new FridayDomainError("PACKAGE_VALIDATION_ERROR", `Invalid ${label}: ${error}`, { httpStatus: 400 });
   }
+  return normalizeInstallId(value);
 }
 
 // ─── Factory ───
@@ -64,32 +65,32 @@ export function createFridaySkillPackageInstaller(
   }
 
   function stagingDir(skillId: string, version: string): string {
-    const safeId = safeDirName(skillId);
-    const safeVersion = safeDirName(version);
+    const safeId = validateSegment(skillId, "skillId");
+    const safeVersion = validateSegment(version, "version", false);
     const dir = join(baseDir, ".staging", safeId, safeVersion);
     assertWithinBase(resolve(dir), resolvedBase, "staging path");
     return dir;
   }
 
   function finalDir(skillId: string, version: string): string {
-    const safeId = safeDirName(skillId);
-    const safeVersion = safeDirName(version);
+    const safeId = validateSegment(skillId, "skillId");
+    const safeVersion = validateSegment(version, "version", false);
     const dir = join(baseDir, safeId, safeVersion);
     assertWithinBase(resolve(dir), resolvedBase, "final path");
     return dir;
   }
 
   function activatingDir(skillId: string, version: string): string {
-    const safeId = safeDirName(skillId);
-    const safeVersion = safeDirName(version);
+    const safeId = validateSegment(skillId, "skillId");
+    const safeVersion = validateSegment(version, "version", false);
     const dir = join(baseDir, ".activating", safeId, `${safeVersion}-${randomUUID()}`);
     assertWithinBase(resolve(dir), resolvedBase, "activating path");
     return dir;
   }
 
   function backupDir(skillId: string, version: string): string {
-    const safeId = safeDirName(skillId);
-    const safeVersion = safeDirName(version);
+    const safeId = validateSegment(skillId, "skillId");
+    const safeVersion = validateSegment(version, "version", false);
     const dir = join(baseDir, ".backup", safeId, `${safeVersion}-${randomUUID()}`);
     assertWithinBase(resolve(dir), resolvedBase, "backup path");
     return dir;
@@ -115,7 +116,8 @@ export function createFridaySkillPackageInstaller(
       let backupCreated = false;
       let activated = false;
 
-      mkdirSync(join(baseDir, safeDirName(skillId)), { recursive: true });
+      const safeId = validateSegment(skillId, "skillId");
+      mkdirSync(join(baseDir, safeId), { recursive: true });
 
       try {
         archiver.unpackSkill(archivePath, activating);
@@ -129,7 +131,7 @@ export function createFridaySkillPackageInstaller(
         copyFileSync(archivePath, join(activating, "package.tgz"));
 
         if (existsSync(dest)) {
-          mkdirSync(join(baseDir, ".backup", safeDirName(skillId)), { recursive: true });
+          mkdirSync(join(baseDir, ".backup", safeId), { recursive: true });
           renameSync(dest, backup);
           backupCreated = true;
         }

@@ -124,6 +124,20 @@ describe("validateInstallId", () => {
     // Backslashes are normalized to forward slashes, then checked
     expect(validateInstallId("..\\..\\etc")).not.toBeNull();
   });
+
+  it("rejects IDs that would alias to a different sanitized directory name", () => {
+    expect(validateInstallId("my+plugin")).not.toBeNull();
+    expect(validateInstallId("my!plugin")).not.toBeNull();
+    expect(validateInstallId("my--plugin")).not.toBeNull();
+    expect(validateInstallId(".plugin")).not.toBeNull();
+    expect(validateInstallId("plugin-")).not.toBeNull();
+    expect(validateInstallId("plugin.")).not.toBeNull();
+  });
+
+  it("rejects unscoped IDs that embed scope characters", () => {
+    expect(validateInstallId("my@plugin")).not.toBeNull();
+    expect(validateInstallId("scope/@plugin")).not.toBeNull();
+  });
 });
 
 // ─── safeDirName ───

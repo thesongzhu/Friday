@@ -656,6 +656,42 @@ describe("FridaySkillGeneratorRoutes", () => {
       );
     });
 
+    it("rejects draft self-test files that escape the temporary test root", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.test",
+      )!;
+      generatorService.getSession = vi.fn(async (sessionId: string) => {
+        const draft = makeMockDraft();
+        return {
+          session: {
+            ...makeMockSession().session,
+            sessionId,
+            draftSkillId: "test-skill",
+            status: "ready_for_review",
+            goal: 'Build a timer and must output the exact string "OK-MARKER"',
+          },
+          turns: [],
+          draft: {
+            ...draft,
+            files: [
+              ...draft.files,
+              {
+                path: "../escape.txt",
+                language: "text" as const,
+                content: "outside",
+              },
+            ],
+          },
+        };
+      });
+
+      await expect(
+        route.handler(makeCtx({ params: { sessionId: "sess-1" } })),
+      ).rejects.toThrow("Path must not contain");
+      expect(generatorService.recordExplicitTestResult).not.toHaveBeenCalled();
+    });
+
     it("returns CAPABILITY_DISABLED for node-runtime draft self-tests when the gate is off", async () => {
       const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
       delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
