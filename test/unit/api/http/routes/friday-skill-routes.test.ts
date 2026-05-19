@@ -749,4 +749,31 @@ describe("createFridaySkillRoutes", () => {
       rmSync(managedSkillsDir, { recursive: true, force: true });
     }
   });
+
+  it("rejects content update skill IDs that would alias to another managed directory", async () => {
+    const managedSkillsDir = join(tmpdir(), `friday-skill-route-managed-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const skillDir = join(managedSkillsDir, "skill-alpha");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Original\n", "utf8");
+
+    try {
+      const routes = createFridaySkillRoutes({ managedSkillsDir });
+
+      await expect(
+        routes.find((item) => item.operationId === "skills.content.update")!.handler(makeCtx({
+          params: { skillId: "skill+alpha" },
+          body: {
+            description: "Changed description",
+          },
+        })),
+      ).rejects.toMatchObject({
+        code: "SKILL_INVALID_ID",
+        httpStatus: 400,
+      });
+
+      expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe("# Original\n");
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
 });

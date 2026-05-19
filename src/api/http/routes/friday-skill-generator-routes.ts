@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -50,6 +50,7 @@ import type {
   FridaySubmitTurnResponse,
 } from "../../model/friday-api-skill-generator.types.js";
 import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
+import { resolveSafePath } from "#utilities";
 
 function requireUserId(principal: unknown): string {
   const record = principal && typeof principal === "object"
@@ -599,17 +600,14 @@ export function createFridaySkillGeneratorRoutes(
 
     const draft = result.draft;
     const startedAt = Date.now();
-    const root = join(tmpdir(), `friday-skill-test-${sessionId}`);
-
-    rmSync(root, { force: true, recursive: true });
-    mkdirSync(root, { recursive: true });
+    const root = mkdtempSync(join(tmpdir(), "friday-skill-test-"));
 
     try {
-      writeFileSync(join(root, "skill.manifest.json"), JSON.stringify(draft.manifest, null, 2));
-      writeFileSync(join(root, "skill.ui.json"), JSON.stringify(draft.uiSchema, null, 2));
+      writeFileSync(resolveSafePath(root, "skill.manifest.json"), JSON.stringify(draft.manifest, null, 2));
+      writeFileSync(resolveSafePath(root, "skill.ui.json"), JSON.stringify(draft.uiSchema, null, 2));
 
       for (const file of draft.files) {
-        const filePath = join(root, file.path);
+        const filePath = resolveSafePath(root, file.path);
         mkdirSync(dirname(filePath), { recursive: true });
         writeFileSync(filePath, file.content, "utf-8");
         if (file.executable) {

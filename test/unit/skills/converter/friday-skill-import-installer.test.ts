@@ -286,6 +286,28 @@ describe("FridaySkillImportInstaller", () => {
       expect(existsSync(join(result.skillDir, "assets", "icon.svg"))).toBe(true);
     });
 
+    it("rejects manifest IDs that would alias to another install directory", () => {
+      const draft = makeDraft({
+        manifest: makeValidManifest({ id: "test+install-skill" }),
+        files: makeDraft().files.map((file) =>
+          file.path === "skill.manifest.json"
+            ? {
+              ...file,
+              content: JSON.stringify(makeValidManifest({ id: "test+install-skill" }), null, 2),
+            }
+            : file
+        ),
+      });
+
+      expect(() =>
+        installer.installConvertedSkill(draft, "managed", {
+          workspaceDir,
+          managedSkillsDir: managedDir,
+        }),
+      ).toThrow("invalid install ID");
+      expect(existsSync(join(managedDir, "test-install-skill"))).toBe(false);
+    });
+
     it("sanitizes local absolute sourceRef in conversion report", () => {
       const draft = makeDraft({
         files: [

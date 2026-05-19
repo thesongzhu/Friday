@@ -25,7 +25,7 @@ import type {
 } from "#skills";
 import type { FridaySkillUpgradeAnalysisService } from "../../../skills/services/friday-skill-upgrade-analysis-service.js";
 import { FridayDomainError } from "#errors";
-import { resolveSafeInstallDir } from "#utilities";
+import { normalizeInstallId, resolveSafeInstallDir, validateInstallId } from "#utilities";
 import { throwFridayCapabilityDisabled } from "./friday-capability-disabled.js";
 import {
   createFridayMutatingActionDigest,
@@ -94,6 +94,14 @@ function createFridaySkillContentUpdateMutatingActionRequest(input: {
       },
     ],
   };
+}
+
+function normalizeRouteInstallId(skillId: string): string {
+  const error = validateInstallId(skillId);
+  if (error) {
+    throw new FridayDomainError("SKILL_INVALID_ID", error, { httpStatus: 400 });
+  }
+  return normalizeInstallId(skillId);
 }
 
 export function createFridaySkillLifecycleRouteMutatingActionRequest(input: {
@@ -587,7 +595,7 @@ export function createFridaySkillRoutes(
       path: "/v1/skills/:skillId/content",
       auth: { public: true },
       async handler(ctx) {
-        const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
+        const skillId = normalizeRouteInstallId(String((ctx.params as Record<string, unknown>).skillId ?? ""));
         const body = asRecord(ctx.body);
         const description = asOptionalString(body.description, "description");
         const name = asOptionalString(body.name, "name");

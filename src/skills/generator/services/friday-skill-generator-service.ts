@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -919,8 +919,7 @@ export function createFridaySkillGeneratorService(
   ): Promise<{ packageLoaded: boolean; packageValidated: boolean; error?: string }> {
     const settings = await deps.configManager.getSkillRegistrySettings(".");
     const skillsDir = settings.managedSkillsDir;
-    const tempDir = join(tmpdir(), `friday-skill-verify-${sessionId}`);
-    mkdirSync(tempDir, { recursive: true });
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-skill-verify-"));
 
     try {
       const manifestPath = resolveSafePath(tempDir, "skill.manifest.json");

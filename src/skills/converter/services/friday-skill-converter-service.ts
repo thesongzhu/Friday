@@ -6,7 +6,7 @@
  * install/availability and promotion must go through the external lifecycle.
  */
 
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -294,14 +294,10 @@ async function validateDrafts(
   const results: Array<{ skillId: string; ok: boolean; issues: FridaySkillValidationIssue[] }> = [];
 
   for (const draft of drafts) {
-    const stagingDir = join(
-      tmpdir(),
-      `friday-validate-${draft.manifest.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
+    const stagingDir = mkdtempSync(join(tmpdir(), "friday-validate-"));
 
     try {
       // Stage files for validation
-      mkdirSync(stagingDir, { recursive: true });
       for (const file of draft.files) {
         const filePath = resolveSafePath(stagingDir, file.path);
         mkdirSync(dirname(filePath), { recursive: true });

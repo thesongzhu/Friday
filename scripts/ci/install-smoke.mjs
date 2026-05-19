@@ -16,7 +16,7 @@
  *   8. Send SIGINT, verify clean shutdown
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -28,8 +28,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
 const TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 500;
 const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
@@ -138,7 +139,7 @@ async function run() {
   // ── Step 1: npm pack ──
   console.log("1. Packing tarball…");
   const packOutput = withPackIsolatedReleaseArtifacts(() =>
-    execSync("npm pack --ignore-scripts", {
+    execFileSync("npm", ["pack", "--ignore-scripts"], {
       cwd: ROOT,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -151,12 +152,12 @@ async function run() {
   tmpDir = mkdtempSync(join(tmpdir(), "friday-smoke-"));
   console.log(`2. Installing in ${tmpDir}…`);
 
-  execSync("npm init -y", {
+  execFileSync("npm", ["init", "-y"], {
     cwd: tmpDir,
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  execSync(`npm install "${tarball}"`, {
+  execFileSync("npm", ["install", tarball], {
     cwd: tmpDir,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -166,7 +167,7 @@ async function run() {
   const fridayBin = join(tmpDir, "node_modules", ".bin", "friday");
   let helpOutput;
   try {
-    helpOutput = execSync(`"${fridayBin}" --help`, {
+    helpOutput = execFileSync(fridayBin, ["--help"], {
       cwd: tmpDir,
       encoding: "utf-8",
       timeout: 10_000,
