@@ -2350,6 +2350,126 @@ describe("FridayAgentRuntime", () => {
     }
   });
 
+  it("returns an unverified outcome after the requested read tool reports a missing workspace file", async () => {
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "friday-agent-runtime-missing-read-"));
+    const missingPath = "docs/friday-strict-verifier-missing-proof-file.md";
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-missing-proof",
+          name: "read",
+          input: { path: missingPath },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: createFridayAgentFileTools({ workspaceRoot }),
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: workspaceRoot,
+    });
+
+    try {
+      const result = await runtime.executeRun({
+        task: [
+          `Call the \`read\` tool with path \`${missingPath}\` from the current workspace root.`,
+          "If the file is missing or cannot be read, say explicitly that you cannot verify it.",
+          "Do not say the file exists, do not say the marker is verified, and do not call the task completed.",
+        ].join(" "),
+        constraints: { readOnly: true },
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.toolCallCount).toBe(1);
+      expect(result.response).toContain("I cannot verify");
+      expect(result.response).toContain("read tool");
+      expect(result.response).toContain("unverified");
+      expect(result.response).not.toMatch(/\b(file exists|verified successfully|successfully verified|completed|done)\b/i);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not return a missing-file refusal when matching read evidence succeeds", async () => {
+    const readCalls: string[] = [];
+    let shouldFailNextRead = true;
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "read-recovered-failed",
+          name: "read",
+          input: { path: "docs/recovered.md" },
+        },
+        {
+          type: "tool_use",
+          id: "read-recovered-success",
+          name: "read",
+          input: { path: "docs/recovered.md" },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+      [
+        { type: "text_delta", text: "Recovered" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [{
+        name: "read",
+        description: "Mock read tool with one transient failure",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+          required: ["path"],
+        },
+        async execute(args) {
+          const pathArg = typeof args.path === "string" ? args.path : "";
+          readCalls.push(pathArg);
+          if (shouldFailNextRead) {
+            shouldFailNextRead = false;
+            return { content: "ENOENT: file not found", isError: true };
+          }
+          return { content: "# Recovered\n\nLocal fixture.\n" };
+        },
+      }],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: [
+        "Call the `read` tool with path `docs/recovered.md` from the current workspace root.",
+        "If the file is missing or cannot be read, say explicitly that you cannot verify it.",
+        "When it can be read, answer with the top H1 heading only.",
+      ].join(" "),
+      constraints: { readOnly: true },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(2);
+    expect(readCalls).toEqual(["docs/recovered.md", "docs/recovered.md"]);
+    expect(result.response).toBe("Recovered");
+  });
+
   it("does not count capabilities as local workspace file read evidence", async () => {
     const llmClient = createMockLlmClient([
       [

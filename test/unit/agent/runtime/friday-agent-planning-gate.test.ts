@@ -182,6 +182,30 @@ describe("friday-agent-planning-gate", () => {
     expect(runs.get("run-new-workflow")?.actualExecution?.turns).toEqual([]);
   });
 
+  it("returns awaiting_clarification for intentionally vague production-ready workflow plans", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-vague-production-ready",
+      task: [
+        "Turn this intentionally vague request into a workflow plan: make Friday production-ready for ordinary users.",
+        "Ask the missing clarification questions and wait for my answers before doing any implementation or claiming the task is complete.",
+      ].join(" "),
+      sessionKey: "ui:assistant:1",
+      constraints: { readOnly: true },
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_clarification");
+    expect(decision.pendingPlanRunId).toBe("run-vague-production-ready");
+    expect(decision.result.response).toContain("Before I execute this major decision");
+    expect(runs.get("run-vague-production-ready")?.status).toBe("awaiting_clarification");
+    expect(runs.get("run-vague-production-ready")?.actualExecution?.turns).toEqual([]);
+  });
+
   it("does not force safe Q&A through clarification when plan mode is present", () => {
     const service = createService();
 
