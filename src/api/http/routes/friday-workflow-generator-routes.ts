@@ -10,11 +10,19 @@ import type {
   FridayWorkflowGeneratorEvidenceResponse,
   FridayWorkflowGeneratorGenerateResponse,
   FridayWorkflowGeneratorGetSessionResponse,
+  FridayWorkflowGeneratorPublicationBoundary,
   FridayWorkflowGeneratorStartSessionResponse,
   FridayWorkflowGeneratorSubmitMessageResponse,
 } from "../../model/friday-api-workflow.types.js";
 
 // ─── Deps ───
+
+const WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY: FridayWorkflowGeneratorPublicationBoundary = {
+  stage: "published_version",
+  lifecyclePromotion: "not_lifecycle_promoted",
+  proofBoundary: "crud_publish_only",
+  summary: "The generated workflow version is published through Workflow CRUD only; this is not workflow upgrade lifecycle shadow/canary/promote proof.",
+};
 
 export interface FridayWorkflowGeneratorRoutesDeps {
   workflowGenerator: FridayWorkflowGeneratorService;
@@ -162,6 +170,9 @@ export function createFridayWorkflowGeneratorRoutes(
     const qaVerdict = await workflowGenerator.getQaVerdict(sessionId);
     const harness = await workflowGenerator.getHarnessSummary(sessionId);
     const draft = result.draft;
+    const publicationBoundary = result.session.status === "saved" && result.session.workflowVersionId
+      ? WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY
+      : undefined;
     const approvalReadiness = qaVerdict
       ? {
         ready: qaVerdict.verdict === "pass",
@@ -177,6 +188,11 @@ export function createFridayWorkflowGeneratorRoutes(
             ? "Draft passed generator validation and is ready for QA review."
             : "Draft has validation issues that must be fixed before approval.",
         }
+        : publicationBoundary
+          ? {
+            ready: true,
+            reason: "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
+          }
         : {
           ready: false,
           reason: "No draft has been generated yet.",
@@ -185,7 +201,7 @@ export function createFridayWorkflowGeneratorRoutes(
     return {
       sessionId,
       validationSummary: {
-        ok: draft?.validation.ok ?? false,
+        ok: draft?.validation.ok ?? Boolean(publicationBoundary),
         repaired: draft?.validation.repaired ?? false,
         repairAttempts: draft?.validation.repairAttempts ?? 0,
         issueCount: draft?.validation.issues.length ?? 0,
@@ -193,6 +209,7 @@ export function createFridayWorkflowGeneratorRoutes(
       approvalReadiness,
       qaVerdict,
       harness,
+      ...(publicationBoundary ? { publicationBoundary } : {}),
     };
   }
 
@@ -372,16 +389,17 @@ export function createFridayWorkflowGeneratorRoutes(
           sessionId,
           userId: "operator",
           event: "draft_saved",
-          summary: `Saved generated workflow ${result.workflowId}`,
+          summary: `Published generated workflow version ${result.workflowVersionId}; lifecycle promotion is not claimed`,
           ok: true,
           evidence: {
             ...evidence,
             approvalReadiness: {
               ready: true,
-              reason: "Generated workflow saved.",
+              reason: "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
             },
             qaVerdict: result.qaVerdict ?? evidence.qaVerdict ?? null,
             harness: result.harness ?? evidence.harness ?? null,
+            publicationBoundary: result.publicationBoundary ?? WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY,
           },
         });
         return {
@@ -390,10 +408,11 @@ export function createFridayWorkflowGeneratorRoutes(
             ...evidence,
             approvalReadiness: {
               ready: true,
-              reason: "Generated workflow saved.",
+              reason: "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
             },
             qaVerdict: result.qaVerdict ?? evidence.qaVerdict ?? null,
             harness: result.harness ?? evidence.harness ?? null,
+            publicationBoundary: result.publicationBoundary ?? WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY,
           },
         };
       },

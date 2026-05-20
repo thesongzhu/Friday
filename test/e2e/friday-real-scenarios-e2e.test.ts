@@ -1742,13 +1742,14 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
     }, 15_000);
 
     // ──────────────────────────────────────────────────────────────────────
-    // Scenario 1: Skill Gen → Approve → Run (LLM)
+    // Scenario 1: Skill Gen → Approve → Stage Candidate (LLM)
     // ──────────────────────────────────────────────────────────────────────
 
-    describe("Scenario 1: Skill Gen → Approve → Run", () => {
+    describe("Scenario 1: Skill Gen → Approve → Stage Candidate", () => {
       let sessionId: string;
       let generationSucceeded = false;
       let skillId: string;
+      let candidateId: string;
 
       it(
         "1.1: Start skill generation session",
@@ -1865,7 +1866,7 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       );
 
       it(
-        "1.5: Approve and save to disk",
+        "1.5: Approve and stage candidate",
         async () => {
           if (!generationSucceeded) return;
 
@@ -1885,12 +1886,35 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
             expect(json.ok).toBe(true);
             const data = json.data as {
               skillId: string;
+              skillDir: string;
+              candidateId: string;
+              candidateDir: string;
               savedFiles: string[];
               registryRefreshed: boolean;
+              promotionStage: string;
+              evidence?: {
+                stagedCandidateIdentity?: {
+                  skillId?: string;
+                  candidateId?: string;
+                  candidateDir?: string;
+                  filesDir?: string;
+                };
+              };
             };
             expect(data.skillId).toBeTruthy();
+            expect(data.candidateId).toBeTruthy();
+            expect(data.candidateDir).toBeTruthy();
             expect(data.savedFiles).toContain("skill.manifest.json");
+            expect(data.registryRefreshed).toBe(false);
+            expect(data.promotionStage).toBe("candidate_staged");
+            expect(data.evidence?.stagedCandidateIdentity).toMatchObject({
+              skillId: data.skillId,
+              candidateId: data.candidateId,
+              candidateDir: data.candidateDir,
+              filesDir: data.skillDir,
+            });
             skillId = data.skillId;
+            candidateId = data.candidateId;
           } else {
             console.warn("[Scenario 1] Approve returned 422 — validation failed on save");
             generationSucceeded = false; // prevent downstream steps
@@ -1900,28 +1924,52 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
       );
 
       it(
-        "1.6: Verify skill is in registry",
+        "1.6: Verify staged candidate identity",
+        async () => {
+          if (!generationSucceeded || !skillId || !candidateId) return;
+
+          const res = await fetch(
+            `${baseUrl}/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/evidence`,
+            { headers: authHeaders(accessToken) },
+          );
+          expect(res.status).toBe(200);
+          const json = (await res.json()) as {
+            ok: boolean;
+            data: {
+              evidence: {
+                stagedCandidateIdentity?: {
+                  skillId?: string;
+                  candidateId?: string;
+                };
+              };
+            };
+          };
+          expect(json.ok).toBe(true);
+          expect(json.data.evidence.stagedCandidateIdentity).toMatchObject({
+            skillId,
+            candidateId,
+          });
+        },
+        10_000,
+      );
+
+      it(
+        "1.7: Verify direct skill run is blocked until lifecycle promotion",
         async () => {
           if (!generationSucceeded || !skillId) return;
 
-          const res = await fetch(
-            `${baseUrl}/v1/skills/${encodeURIComponent(skillId)}/ui`,
-            { headers: authHeaders(accessToken) },
-          );
-          // Skill may or may not have a UI schema depending on generation
-          if (res.status === 200) {
-            const json = (await res.json()) as {
-              ok: boolean;
-              data: { ui: { schemaVersion: string; fields: unknown[]; outputs: unknown[]; actions: unknown[] } };
-            };
-            expect(json.ok).toBe(true);
-            expect(json.data.ui.fields).toBeDefined();
-            expect(json.data.ui.outputs).toBeDefined();
-            expect(json.data.ui.actions).toBeDefined();
-          } else {
-            // 404 = UI not found but skill may still be registered
-            expect([200, 404]).toContain(res.status);
-          }
+          const res = await fetch(`${baseUrl}/v1/skills/${encodeURIComponent(skillId)}/run`, {
+            method: "POST",
+            headers: authHeaders(accessToken),
+            body: JSON.stringify({ input: {} }),
+          });
+          expect(res.status).not.toBe(200);
+          const json = (await res.json()) as {
+            ok?: boolean;
+            error?: { code?: string; message?: string };
+          };
+          expect(json.ok).not.toBe(true);
+          expect(json.error?.code).toMatch(/SKILL_NOT_AVAILABLE|SKILL_NOT_FOUND/);
         },
         10_000,
       );

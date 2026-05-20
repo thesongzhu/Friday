@@ -195,7 +195,8 @@ describe("skill generator page", () => {
       savedFiles: ["skill.manifest.json", "index.ts"],
       registryRefreshed: false,
       promotionStage: "candidate_staged",
-      promotedManifestTags: ["generated", "stabilized"],
+      candidateManifestTags: ["generated", "generated.candidate"],
+      promotedManifestTags: [],
       evidence: {
         sessionId: "session-1",
         validationSummary: {
@@ -293,9 +294,14 @@ describe("skill generator page", () => {
     });
 
     const receipt = getByTestId("skill-generator-approve-receipt");
-    expect(receipt.textContent).toContain("Approve success receipt");
+    expect(receipt.textContent).toContain("Candidate staged receipt");
     expect(receipt.textContent).toContain("incident-triage");
+    expect(receipt.textContent).toContain("incident-triage-1-0-0-candidate");
+    expect(receipt.textContent).toContain("/tmp/skill-candidates/incident-triage");
     expect(receipt.textContent).toContain("/tmp/skill-candidates/incident-triage/files");
     expect(receipt.textContent).toContain("candidate_staged");
+    expect(receipt.textContent).toContain("generated.candidate");
+    expect(receipt.textContent).not.toContain("stabilized");
+    expect(receipt.textContent).toContain("not installed, promoted, or runnable");
   });
 });

@@ -816,6 +816,12 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(approveResult.versionNumber).toBe(1);
       expect(approveResult.published).toBe(true);
       expect(approveResult.slug).toBeTruthy();
+      expect(approveResult.publicationBoundary).toEqual({
+        stage: "published_version",
+        lifecyclePromotion: "not_lifecycle_promoted",
+        proofBoundary: "crud_publish_only",
+        summary: expect.stringContaining("not shadow, canary, promote, or rollback proof"),
+      });
 
       expect(deps.workflowCrud.createWorkflow).toHaveBeenCalled();
       expect(deps.workflowCrud.createVersion).toHaveBeenCalled();

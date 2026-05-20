@@ -924,7 +924,7 @@ export function createFridaySkillGeneratorService(
     try {
       const manifestPath = resolveSafePath(tempDir, "skill.manifest.json");
       mkdirSync(dirname(manifestPath), { recursive: true });
-      writeFileSync(manifestPath, JSON.stringify(withStabilizedLifecycleTags(draft.manifest), null, 2), "utf-8");
+      writeFileSync(manifestPath, JSON.stringify(withCandidateLifecycleTags(draft.manifest), null, 2), "utf-8");
 
       const uiPath = resolveSafePath(tempDir, "skill.ui.json");
       mkdirSync(dirname(uiPath), { recursive: true });
@@ -1017,7 +1017,7 @@ export function createFridaySkillGeneratorService(
       return ["Fix the failing draft issues and regenerate the skill."];
     }
     if (input.session.status === "ready_for_review") {
-      return ["Approve and save the generated skill."];
+      return ["Approve and stage the generated skill candidate for lifecycle review."];
     }
     if (input.session.status === "needs_clarification") {
       return ["Answer the remaining clarification question(s)."];
@@ -1231,14 +1231,14 @@ export function createFridaySkillGeneratorService(
     };
   }
 
-  function withStabilizedLifecycleTags(manifest: SkillManifestV2): SkillManifestV2 {
+  function withCandidateLifecycleTags(manifest: SkillManifestV2): SkillManifestV2 {
     const nextTags = new Set<string>(
       normalizeLifecycleTags(
-        manifest.tags.filter((tag) => tag !== "generated.draft"),
+        manifest.tags.filter((tag) => !["stable", "stabilized", "skill.stabilized", "generated.draft"].includes(tag)),
       ),
     );
     nextTags.add("generated");
-    nextTags.add("skill.stabilized");
+    nextTags.add("generated.candidate");
     if (manifest.runtime.kind === "shell" || manifest.runtime.kind === "python") {
       nextTags.add("cli-backed");
     }
@@ -2129,7 +2129,7 @@ export function createFridaySkillGeneratorService(
         ".",
       );
       const skillId = draft.manifest.id;
-      const promotedManifest = withStabilizedLifecycleTags(draft.manifest);
+      const candidateManifest = withCandidateLifecycleTags(draft.manifest);
       const canonicalApprovalTicket = assertGeneratorCandidateApproval({
         session,
         draft,
@@ -2145,7 +2145,7 @@ export function createFridaySkillGeneratorService(
         supportedApiVersions: SUPPORTED_API_VERSIONS,
       });
       const candidateDraft = createFridayGeneratedSkillCandidateDraft({
-        manifest: promotedManifest,
+        manifest: candidateManifest,
         draft,
         convertedAt: deps.nowIso(),
       });
@@ -2174,6 +2174,10 @@ export function createFridaySkillGeneratorService(
       const savedSession: FridaySkillGenerationSession = {
         ...syncedApproved.session,
         status: "saved",
+        draftSkillId: skillId,
+        stagedCandidateId: candidate.candidateId,
+        stagedCandidateDir: candidate.candidateDir,
+        stagedCandidateFilesDir: candidate.filesDir,
         updatedAt: deps.nowIso(),
       };
       const syncedSaved = await syncSkillHarness(savedSession);
@@ -2191,7 +2195,8 @@ export function createFridaySkillGeneratorService(
         savedFiles,
         registryRefreshed: false,
         promotionStage: "candidate_staged",
-        promotedManifestTags: promotedManifest.tags,
+        candidateManifestTags: candidateManifest.tags,
+        promotedManifestTags: [],
         evidence: {
           packageLoaded: true,
           packageValidated: true,

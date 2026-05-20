@@ -187,7 +187,7 @@ export function createFridayAgentSkillGeneratorTool(
               savedFiles: result.savedFiles,
               registryRefreshed: result.registryRefreshed,
               promotionStage: result.promotionStage,
-              promotedManifestTags: result.promotedManifestTags,
+              candidateManifestTags: result.candidateManifestTags,
               evidence: result.evidence,
               requiredInputs,
               exampleRunInput,

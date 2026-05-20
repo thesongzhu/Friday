@@ -12,6 +12,7 @@ import type {
   FridayAutonomyPolicy,
   FridayCapabilityAcquisitionRun,
   FridayCapabilityAcquisitionStep,
+  FridayCapabilityAvailabilityBoundary,
   FridayCapabilityCandidate,
   FridayCapabilityExecutionSuggestion,
   FridayCapabilityVerificationResult,
@@ -64,6 +65,12 @@ interface AcquisitionRunRow {
 }
 
 const CAPABILITY_SET = new Set<string>(FRIDAY_RUNTIME_CAPABILITY_IDS);
+const LOCAL_CANDIDATE_SOURCE_TYPES = new Set<FridayCapabilityCandidate["sourceType"]>([
+  "skill_generator",
+  "workflow_generator",
+  "studio_artifact",
+  "builtin_catalog",
+]);
 
 export function createFridayCapabilityAcquisitionService(
   deps: CreateFridayCapabilityAcquisitionServiceDeps,
@@ -196,33 +203,48 @@ export function createFridayCapabilityAcquisitionService(
         || liveItem?.state === "available";
       const liveVerified = passed
         && candidate.sourceType !== "available_runtime"
-        && candidate.sourceType !== "skill_generator"
-        && candidate.sourceType !== "workflow_generator"
-        && candidate.sourceType !== "studio_artifact"
-        && candidate.sourceType !== "builtin_catalog";
+        && !LOCAL_CANDIDATE_SOURCE_TYPES.has(candidate.sourceType);
+      const availabilityBoundary = buildAvailabilityBoundary({
+        candidate,
+        passed,
+        liveVerified,
+      });
+      const localCandidateOnly = availabilityBoundary.proofTier === "local_candidate_registered";
       verificationResults.push({
         candidateId: candidate.id,
         capability,
-        status: passed ? "passed" : "blocked",
+        status: passed && !localCandidateOnly ? "passed" : "blocked",
         evidence: passed
           ? liveVerified
             ? `Live runtime capability matrix confirms ${capability} is available after external setup; doctor state verified at runtime.`
-            : `Sandbox/doctor dry-run accepted ${candidate.label}; runtime registration may proceed.`
+            : candidate.sourceType === "available_runtime"
+              ? `Runtime capability matrix already reports ${capability} as available.`
+              : localCandidateOnly
+                ? `Sandbox/doctor dry-run accepted ${candidate.label}, but lifecycle promotion or installation proof is missing; execution remains blocked.`
+                : `Sandbox/doctor verification accepted ${candidate.label}; inspect availability proof before execution.`
           : `${candidate.label} still requires external setup or installation evidence before registration.`,
         verifiedAt,
-        ...(passed ? {} : { blocker: "External setup/install must complete and pass doctor verification." }),
+        availabilityBoundary,
+        ...(passed && !localCandidateOnly
+          ? {}
+          : {
+              blocker: localCandidateOnly
+                ? "Lifecycle promotion or installation proof is required before this candidate can execute."
+                : "External setup/install must complete and pass doctor verification.",
+            }),
       });
       if (passed) {
         registeredCapabilities.push({
           capability,
           sourceCandidateId: candidate.id,
           registeredAt: verifiedAt,
-          state: "available",
+          state: localCandidateOnly ? "blocked" : "available",
           note: liveVerified
             ? "External setup completed; live capability matrix confirms availability via runtime doctor."
             : candidate.sourceType === "available_runtime"
               ? "Already present in runtime capability matrix."
-              : "Generated/local candidate passed the sandbox gate and can be routed.",
+              : "Generated/local candidate passed the sandbox gate, but remains blocked from task execution until lifecycle promotion or installation proof exists.",
+          availabilityBoundary,
         });
       }
     }
@@ -238,15 +260,17 @@ export function createFridayCapabilityAcquisitionService(
       executionSuggestion: allRegistered
         ? {
             canExecute: true,
-            reason: "All required capabilities are verified or registered.",
+            reason: summarizeRegisteredAvailability(registeredCapabilities),
             requiredCapabilities: current.requiredCapabilities,
             nextAction: "execute_task",
+            availabilityBoundary: summarizeAvailabilityBoundary(registeredCapabilities),
           }
         : {
             canExecute: false,
-            reason: "At least one candidate still needs external setup, installation evidence, or a provider key.",
+            reason: summarizeBlockedRegistration(registeredCapabilities),
             requiredCapabilities: current.requiredCapabilities,
             nextAction: "complete_human_setup",
+            availabilityBoundary: summarizeAvailabilityBoundary(registeredCapabilities),
           },
       updatedAt: verifiedAt,
     };
@@ -579,6 +603,100 @@ function matches(text: string, needles: readonly string[]): boolean {
   return needles.some((needle) => text.includes(needle.toLowerCase()));
 }
 
+function buildAvailabilityBoundary(input: {
+  candidate: FridayCapabilityCandidate;
+  passed: boolean;
+  liveVerified: boolean;
+}): FridayCapabilityAvailabilityBoundary {
+  if (!input.passed) {
+    return {
+      proofTier: "blocked_or_unverified",
+      liveRuntimeVerified: false,
+      localCandidateOnly: false,
+      summary: "This capability is not registered because setup, install evidence, or doctor verification is still missing.",
+    };
+  }
+  if (input.candidate.sourceType === "available_runtime") {
+    return {
+      proofTier: "already_available_runtime",
+      liveRuntimeVerified: true,
+      localCandidateOnly: false,
+      summary: "This capability was already present in the current runtime matrix.",
+    };
+  }
+  if (input.liveVerified) {
+    return {
+      proofTier: "live_runtime_verified",
+      liveRuntimeVerified: true,
+      localCandidateOnly: false,
+      summary: "External setup completed and the live runtime capability matrix confirmed availability.",
+    };
+  }
+  if (LOCAL_CANDIDATE_SOURCE_TYPES.has(input.candidate.sourceType)) {
+    return {
+      proofTier: "local_candidate_registered",
+      liveRuntimeVerified: false,
+      localCandidateOnly: true,
+      summary: "Generated/local candidate proof only: sandbox or doctor dry-run accepted this candidate, but this is not proof of external install, live provider availability, or lifecycle promotion.",
+    };
+  }
+  return {
+    proofTier: "blocked_or_unverified",
+    liveRuntimeVerified: false,
+    localCandidateOnly: false,
+    summary: "This capability still needs external setup or installation evidence before live availability can be claimed.",
+  };
+}
+
+function summarizeAvailabilityBoundary(
+  registeredCapabilities: readonly FridayRegisteredCapabilityResult[],
+): FridayCapabilityAvailabilityBoundary | undefined {
+  const boundaries = registeredCapabilities
+    .map((item) => item.availabilityBoundary)
+    .filter((value): value is FridayCapabilityAvailabilityBoundary => value !== undefined);
+  if (boundaries.length === 0) return undefined;
+  if (boundaries.some((boundary) => boundary.proofTier === "local_candidate_registered")) {
+    return {
+      proofTier: "local_candidate_registered",
+      liveRuntimeVerified: false,
+      localCandidateOnly: true,
+      summary: "One or more required capabilities are available only through generated/local candidate registration; do not treat this as installed external/live capability proof.",
+    };
+  }
+  if (boundaries.some((boundary) => boundary.proofTier === "live_runtime_verified")) {
+    return {
+      proofTier: "live_runtime_verified",
+      liveRuntimeVerified: true,
+      localCandidateOnly: false,
+      summary: "Required capabilities are backed by live runtime verification or already-present runtime capabilities.",
+    };
+  }
+  return boundaries[0];
+}
+
+function summarizeRegisteredAvailability(
+  registeredCapabilities: readonly FridayRegisteredCapabilityResult[],
+): string {
+  const boundary = summarizeAvailabilityBoundary(registeredCapabilities);
+  if (boundary?.proofTier === "local_candidate_registered") {
+    return "All required capabilities are registered, but at least one is only a generated/local candidate with sandbox or dry-run proof; do not treat it as installed, promoted, or live-provider verified.";
+  }
+  if (boundary?.proofTier === "live_runtime_verified") {
+    return "All required capabilities are verified against the live runtime matrix or already present.";
+  }
+  return "All required capabilities are verified or registered.";
+}
+
+function summarizeBlockedRegistration(
+  registeredCapabilities: readonly FridayRegisteredCapabilityResult[],
+): string {
+  const boundary = summarizeAvailabilityBoundary(registeredCapabilities);
+  if (boundary?.proofTier === "local_candidate_registered") {
+    return "At least one generated/local candidate passed sandbox or dry-run proof, but it is not installed, promoted, or live-provider verified; complete the lifecycle before task execution.";
+  }
+  return "At least one candidate still needs external setup, installation evidence, or a provider key.";
+}
+
 function collectHumanBlockers(
   candidates: readonly FridayCapabilityCandidate[],
   requiredCapabilities: readonly FridayRuntimeCapabilityId[],
@@ -731,6 +849,12 @@ function buildExecutionSuggestion(
         : "All required capabilities are verified and registered.",
       requiredCapabilities,
       nextAction: "execute_task",
+      availabilityBoundary: {
+        proofTier: "already_available_runtime",
+        liveRuntimeVerified: true,
+        localCandidateOnly: false,
+        summary: "The required capabilities were already present in the current runtime matrix.",
+      },
     };
   }
   if (humanBlockers.length > 0) {

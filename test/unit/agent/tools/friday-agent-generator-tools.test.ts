@@ -142,6 +142,45 @@ describe("generator tools", () => {
     );
   });
 
+  it("returns the workflow publication boundary when approving a generated workflow", async () => {
+    const generatorService = createMockWorkflowGeneratorService();
+    vi.mocked(generatorService.approveAndSave).mockResolvedValueOnce({
+      sessionId: "workflow-session-1",
+      workflowId: "workflow-1",
+      workflowVersionId: "workflow-version-1",
+      versionNumber: 1,
+      slug: "workflow-1",
+      published: true,
+      publicationBoundary: {
+        stage: "published_version",
+        lifecyclePromotion: "not_lifecycle_promoted",
+        proofBoundary: "crud_publish_only",
+        summary: "Published through Workflow CRUD only; lifecycle promotion is not claimed.",
+      },
+    });
+    const tool = createFridayAgentWorkflowGeneratorTool({ generatorService });
+
+    const result = await tool.execute({
+      action: "approve",
+      sessionId: "workflow-session-1",
+    });
+
+    expect(generatorService.approveAndSave).toHaveBeenCalledWith("workflow-session-1");
+    expect(result.isError).toBeUndefined();
+    const payload = JSON.parse(result.content) as {
+      publicationBoundary: {
+        proofBoundary: string;
+        lifecyclePromotion: string;
+      };
+      nextRecommendedAction: {
+        surface: string;
+      };
+    };
+    expect(payload.publicationBoundary.proofBoundary).toBe("crud_publish_only");
+    expect(payload.publicationBoundary.lifecyclePromotion).toBe("not_lifecycle_promoted");
+    expect(payload.nextRecommendedAction.surface).toBe("workflow_lifecycle");
+  });
+
   it("fails closed when skill approval requires canonical candidate staging approval", async () => {
     const generatorService = createMockSkillGeneratorService();
     const tool = createFridayAgentSkillGeneratorTool({ generatorService });

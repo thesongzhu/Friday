@@ -20,7 +20,7 @@ import {
   readLastSkillGeneratorSessionId,
   writeLastSkillGeneratorSessionId,
 } from "@/lib/skills/generator-session";
-import { buildSkillGeneratorHref, buildSkillHref } from "@/lib/skills/view-models";
+import { buildSkillGeneratorHref } from "@/lib/skills/view-models";
 
 function formatTimestamp(value?: string): string {
   if (!value) return "Not yet";
@@ -163,7 +163,7 @@ export function SkillGeneratorPage() {
       toast.success("Skill candidate saved for lifecycle review.");
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Could not approve and save the skill");
+      toast.error(error instanceof Error ? error.message : "Could not approve and stage the skill candidate");
     },
   });
 
@@ -194,8 +194,10 @@ export function SkillGeneratorPage() {
   const validationIssues = summarizeDraftIssues(draft ?? undefined);
   const testSummary = testMutation.data ?? approvalReceipt?.evidence.executableTestSummary ?? evidenceQuery.data?.executableTestSummary ?? null;
   const evidence = approvalReceipt?.evidence ?? evidenceQuery.data ?? null;
-  const savedSkillId = approvalReceipt?.skillId ?? evidence?.savedSkillIdentity?.skillId ?? null;
-  const savedSkillDir = approvalReceipt?.skillDir ?? evidence?.savedSkillIdentity?.skillDir ?? null;
+  const stagedSkillId = approvalReceipt?.skillId ?? evidence?.stagedCandidateIdentity?.skillId ?? null;
+  const stagedCandidateId = approvalReceipt?.candidateId ?? evidence?.stagedCandidateIdentity?.candidateId ?? null;
+  const stagedCandidateDir = approvalReceipt?.candidateDir ?? evidence?.stagedCandidateIdentity?.candidateDir ?? null;
+  const stagedFilesDir = approvalReceipt?.skillDir ?? evidence?.stagedCandidateIdentity?.filesDir ?? null;
 
   useEffect(() => {
     if (!draft?.files?.length) {
@@ -394,7 +396,7 @@ export function SkillGeneratorPage() {
             {testSummary ? (
               <>
                 <div className="grid gap-3 sm:grid-cols-4">
-                  <GeneratorMetric label="Executable" value={testSummary.executable ? "yes" : "no"} />
+                  <GeneratorMetric label="Self-test run" value={testSummary.executable ? "passed" : "blocked"} />
                   <GeneratorMetric label="Result" value={testSummary.ok ? "passed" : "issues"} />
                   <GeneratorMetric label="Duration" value={`${testSummary.durationMs} ms`} />
                   <GeneratorMetric label="Issues" value={String(testSummary.issues.length)} />
@@ -430,17 +432,22 @@ export function SkillGeneratorPage() {
             {approvalReceipt ? (
               <div className="rounded-[24px] border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-4" data-testid="skill-generator-approve-receipt">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-base font-semibold text-[color:var(--color-text-primary)]">Approve success receipt</p>
-                  <StatusPill tone="success">{approvalReceipt.promotionStage}</StatusPill>
+                  <p className="text-base font-semibold text-[color:var(--color-text-primary)]">Candidate staged receipt</p>
+                  <StatusPill tone="warning">{approvalReceipt.promotionStage}</StatusPill>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <GeneratorMetric label="Skill ID" value={approvalReceipt.skillId} />
+                  <GeneratorMetric label="Candidate ID" value={approvalReceipt.candidateId} />
                   <GeneratorMetric label="Registry refreshed" value={approvalReceipt.registryRefreshed ? "yes" : "no"} />
-                  <GeneratorMetric label="Skill dir" value={approvalReceipt.skillDir} />
+                  <GeneratorMetric label="Candidate dir" value={approvalReceipt.candidateDir} />
+                  <GeneratorMetric label="Files dir" value={approvalReceipt.skillDir} />
                   <GeneratorMetric label="Saved files" value={String(approvalReceipt.savedFiles.length)} />
                 </div>
+                <p className="mt-3 text-xs text-[color:var(--color-text-tertiary)]">
+                  Staged candidates are not installed, promoted, or runnable until the skill lifecycle completes verification and promotion.
+                </p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {approvalReceipt.promotedManifestTags.map((tag) => (
+                  {approvalReceipt.candidateManifestTags.map((tag) => (
                     <StatusPill key={tag}>{tag}</StatusPill>
                   ))}
                 </div>
@@ -459,9 +466,13 @@ export function SkillGeneratorPage() {
                   </p>
                 </div>
                 <div className="agent-subcard p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Saved skill identity</p>
-                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{savedSkillId ?? "Not saved yet"}</p>
-                  <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{savedSkillDir ?? "Skill directory will appear after approve."}</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Staged candidate identity</p>
+                  <p className="mt-2 text-sm text-[color:var(--color-text-secondary)]">{stagedCandidateId ?? "Not staged yet"}</p>
+                  <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
+                    {stagedSkillId ? `Skill: ${stagedSkillId}` : "Skill ID appears after approve."}
+                  </p>
+                  <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{stagedCandidateDir ?? "Candidate directory appears after approve."}</p>
+                  <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">{stagedFilesDir ?? "Files directory appears after approve."}</p>
                 </div>
               </div>
             ) : (
@@ -512,14 +523,14 @@ export function SkillGeneratorPage() {
             </div>
 
             <div className="agent-subcard p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Approve success CTAs</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">Candidate staging CTAs</p>
               <div className="mt-3 flex flex-wrap gap-3">
                 <Link
                   className="inline-flex items-center rounded-2xl bg-[color:var(--color-bg-surface)] px-4 py-2 text-sm text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-surface-strong)]"
-                  to={savedSkillId ? buildSkillHref(savedSkillId) : "/skills"}
+                  to="/skills"
                 >
                   <BadgeCheck className="mr-2 h-4 w-4" />
-                  Open skill detail
+                  Open skills lifecycle
                 </Link>
                 <button
                   type="button"
@@ -542,9 +553,9 @@ export function SkillGeneratorPage() {
               <GeneratorMetric label="Last updated" value={formatTimestamp(session?.updatedAt)} />
             </div>
 
-            {savedSkillId ? (
-              <ActionButton tone="secondary" onClick={() => navigate(buildSkillHref(savedSkillId))}>
-                Open saved skill
+            {stagedCandidateId ? (
+              <ActionButton tone="secondary" onClick={() => navigate("/skills")}>
+                Review staged candidate
               </ActionButton>
             ) : (
               <Link

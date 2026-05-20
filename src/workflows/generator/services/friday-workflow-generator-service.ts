@@ -23,6 +23,7 @@ import { createFridayWorkflowBuilderSpecVersionRepository } from "../../builder/
 
 import type {
   CreateFridayWorkflowGeneratorServiceDeps,
+  FridayWorkflowGeneratorPublicationBoundary,
   FridayWorkflowGeneratorService,
 } from "./friday-workflow-generator-service.types.js";
 
@@ -67,6 +68,12 @@ import type { FridayGeneratedWorkflowValidator } from "../validation/friday-gene
 
 const MAX_RECENT_TURNS = 12;
 const MAX_REPAIR_ATTEMPTS = 2;
+const WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY: FridayWorkflowGeneratorPublicationBoundary = {
+  stage: "published_version",
+  lifecyclePromotion: "not_lifecycle_promoted",
+  proofBoundary: "crud_publish_only",
+  summary: "The generated workflow version was published through Workflow CRUD. This is not shadow, canary, promote, or rollback proof from the workflow upgrade lifecycle.",
+};
 const DRAFT_NAMESPACE = "workflow-generator-draft";
 
 // ─── Requirements analyzer response shape ───
@@ -849,7 +856,7 @@ export function createFridayWorkflowGeneratorService(
         ?? (session.status === "needs_clarification"
           ? "Waiting for one more answer before generation can continue."
           : session.status === "saved"
-            ? "Generated workflow saved."
+            ? "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed."
             : "Workflow generator state recorded."),
       completedWork: [
         "Planning spec recorded.",
@@ -1755,6 +1762,7 @@ export function createFridayWorkflowGeneratorService(
         versionNumber: publishedVersion.versionNumber,
         slug: workflow.slug,
         published: true,
+        publicationBoundary: WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY,
         harness: syncedSaved.harnessSummary,
         qaVerdict: syncedReview.qaVerdict,
       };

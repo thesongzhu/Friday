@@ -2689,7 +2689,7 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
-                message: `Skill generation requests must use tool 'skill_generate', not skill_run on '${requestedSkillId}'. Start skill_generate with action=\"start\" and continue with generate/approve before attempting to run the created skill.`,
+                message: `Skill generation requests must use tool 'skill_generate', not skill_run on '${requestedSkillId}'. Start skill_generate with action=\"start\", continue with generate/approve to stage a candidate, then use the skill lifecycle shadow/canary/promote path before attempting to run it.`,
               }));
               continue;
             }
@@ -2704,7 +2704,7 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
-                message: `Skill authoring requests must use tool 'skill_generate', not manual ${toolUse.name} calls against '${targetPath}'. Continue through skill_generate generate/approve instead.`,
+                message: `Skill authoring requests must use tool 'skill_generate', not manual ${toolUse.name} calls against '${targetPath}'. Continue through skill_generate generate/approve to stage a candidate, then complete skill lifecycle promotion before execution.`,
               }));
               continue;
             }

@@ -62,7 +62,8 @@ const RECOVERABLE_PATTERNS: RecoveryPattern[] = [
         "1. Call skill_generate with action=\"start\" and restate the user's requested skill goal.",
         "2. If the generator asks follow-up questions, continue with skill_generate action=\"turn\".",
         "3. After the session is ready, call skill_generate action=\"generate\" and then action=\"approve\".",
-        "4. Only after approve succeeds may you call skills_list or skill_run on the newly created skill.",
+        "4. Treat approve as candidate staging only; do not call skill_run on the staged candidate.",
+        "5. Direct the user to the skill lifecycle shadow/canary/promote path before any run claim.",
         "Do NOT tell the user the skill generator is unavailable unless skill_generate itself fails.",
       ].join("\n");
     },

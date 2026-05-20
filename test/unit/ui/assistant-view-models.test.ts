@@ -182,7 +182,7 @@ describe("assistant view models", () => {
       },
     };
 
-    expect(summarizeSkillEvidence(evidence)).toBe("Ready to approve and save.");
+    expect(summarizeSkillEvidence(evidence)).toBe("Ready to approve and stage a candidate for lifecycle review.");
   });
 
   it("prioritizes quick assistant actions for issue, workflow, fleet, and alert recovery", () => {

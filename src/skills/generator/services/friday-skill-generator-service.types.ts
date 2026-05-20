@@ -58,6 +58,8 @@ export interface FridaySkillGeneratorService {
     savedFiles: string[];
     registryRefreshed: boolean;
     promotionStage: "candidate_staged";
+    candidateManifestTags: string[];
+    /** @deprecated Candidate staging no longer promotes a manifest; use candidateManifestTags. */
     promotedManifestTags: string[];
     evidence: {
       packageLoaded: boolean;

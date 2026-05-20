@@ -36,7 +36,7 @@ export function createFridayAgentWorkflowGeneratorTool(
       "start (begin a generation session with a goal), " +
       "turn (submit a follow-up message to an active session), " +
       "generate (generate the workflow draft from the conversation), " +
-      "approve (approve and save the generated workflow), " +
+      "approve (publish the generated workflow version; not lifecycle promotion), " +
       "cancel (cancel an active session), " +
       "status (check session status and draft).",
     parameters: {
@@ -154,6 +154,13 @@ export function createFridayAgentWorkflowGeneratorTool(
               versionNumber: result.versionNumber,
               slug: result.slug,
               published: result.published,
+              publicationBoundary: result.publicationBoundary,
+              nextRecommendedAction: {
+                surface: "workflow_lifecycle",
+                workflowId: result.workflowId,
+                workflowVersionId: result.workflowVersionId,
+                action: "run workflow lifecycle shadow/canary/promote proof before claiming lifecycle promotion",
+              },
             });
           }
 

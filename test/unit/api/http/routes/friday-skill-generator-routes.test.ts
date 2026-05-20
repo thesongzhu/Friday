@@ -187,7 +187,8 @@ function makeMockGeneratorService(): FridaySkillGeneratorService {
       savedFiles: ["skill.manifest.json", "index.mjs"],
       registryRefreshed: false,
       promotionStage: "candidate_staged" as const,
-      promotedManifestTags: ["starter.cli", "skill.stabilized"],
+      candidateManifestTags: ["starter.cli", "generated.candidate"],
+      promotedManifestTags: [],
       evidence: {
         sessionId: "sess-1",
         validationSummary: {
@@ -521,7 +522,13 @@ describe("FridaySkillGeneratorRoutes", () => {
           principal: PRINCIPAL,
           body: withCanonicalApproval({ idempotencyKey: "approve-1" }),
         }),
-      ) as { skillId: string; candidateId: string };
+      ) as {
+        skillId: string;
+        candidateId: string;
+        promotionStage: string;
+        candidateManifestTags: string[];
+        promotedManifestTags: string[];
+      };
 
       expect(generatorService.approveAndSave).toHaveBeenCalledWith("sess-1", {
         canonicalApprovalTicket: expect.objectContaining({
@@ -533,6 +540,8 @@ describe("FridaySkillGeneratorRoutes", () => {
       expect(result.skillId).toBe("test-skill");
       expect(result.candidateId).toBe("test-skill-1.0.0-candidate");
       expect(result.promotionStage).toBe("candidate_staged");
+      expect(result.candidateManifestTags).toEqual(["starter.cli", "generated.candidate"]);
+      expect(result.promotedManifestTags).toEqual([]);
     });
   });
 

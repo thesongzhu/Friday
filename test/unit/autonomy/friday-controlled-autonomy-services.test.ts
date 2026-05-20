@@ -98,6 +98,11 @@ describe("controlled autonomy closed loops", () => {
     const ocrVerification = approved.verificationResults.find((v) => v.capability === "ocr");
     expect(ocrVerification?.status).toBe("passed");
     expect(ocrVerification?.evidence).toContain("Live runtime capability matrix");
+    expect(ocrVerification?.availabilityBoundary).toMatchObject({
+      proofTier: "live_runtime_verified",
+      liveRuntimeVerified: true,
+      localCandidateOnly: false,
+    });
   });
 
   it("keeps partial blockers when only some external capabilities become available", async () => {
@@ -137,13 +142,28 @@ describe("controlled autonomy closed loops", () => {
     expect(run.approvalReasons.join("\n")).toContain("custom");
 
     const approved = await acquisitionService.approveRun(run.id);
-    expect(approved.status).toBe("verified");
-    expect(approved.executionSuggestion.canExecute).toBe(true);
+    expect(approved.status).toBe("human_blocked");
+    expect(approved.executionSuggestion.canExecute).toBe(false);
+    expect(approved.executionSuggestion.nextAction).toBe("complete_human_setup");
     expect(approved.registeredCapabilities).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ capability: "custom", state: "available" }),
+        expect.objectContaining({ capability: "custom", state: "blocked" }),
       ]),
     );
+    const customRegistration = approved.registeredCapabilities.find((item) => item.capability === "custom");
+    expect(customRegistration?.availabilityBoundary).toMatchObject({
+      proofTier: "local_candidate_registered",
+      liveRuntimeVerified: false,
+      localCandidateOnly: true,
+    });
+    expect(approved.executionSuggestion.availabilityBoundary).toMatchObject({
+      proofTier: "local_candidate_registered",
+    });
+    expect(approved.executionSuggestion.reason).toContain("not installed, promoted, or live-provider verified");
+    const customVerification = approved.verificationResults.find((item) => item.capability === "custom");
+    expect(customVerification?.status).toBe("blocked");
+    expect(customVerification?.evidence).toContain("lifecycle promotion or installation proof is missing");
+    expect(customVerification?.blocker).toContain("Lifecycle promotion or installation proof");
   });
 
   it("accepts studio artifact candidates in startRun and stays awaiting_approval before registration", async () => {
@@ -189,19 +209,26 @@ describe("controlled autonomy closed loops", () => {
     expect(run.executionSuggestion.nextAction).toBe("approve_run");
 
     const approved = await acquisitionService.approveRun(run.id);
-    expect(approved.status).toBe("verified");
-    expect(approved.executionSuggestion.canExecute).toBe(true);
+    expect(approved.status).toBe("human_blocked");
+    expect(approved.executionSuggestion.canExecute).toBe(false);
+    expect(approved.executionSuggestion.nextAction).toBe("complete_human_setup");
     expect(approved.registeredCapabilities).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ capability: "custom", state: "available" }),
+        expect.objectContaining({ capability: "custom", state: "blocked" }),
         expect.objectContaining({ capability: "skills", state: "available" }),
       ]),
     );
     const customVerification = approved.verificationResults.find((v) => v.capability === "custom");
-    expect(customVerification?.status).toBe("passed");
+    expect(customVerification?.status).toBe("blocked");
+    expect(customVerification?.blocker).toContain("Lifecycle promotion or installation proof");
+    expect(customVerification?.availabilityBoundary).toMatchObject({
+      proofTier: "local_candidate_registered",
+      liveRuntimeVerified: false,
+      localCandidateOnly: true,
+    });
   });
 
-  it("completes the studio artifact bridge pipeline: validate → candidates → startRun → approveRun → verified (sandbox/local proof only)", async () => {
+  it("completes the studio artifact bridge pipeline: validate → candidates → startRun → approveRun → lifecycle-blocked local proof", async () => {
     const { validateStudioArtifactAsCandidate, buildStudioArtifactCapabilityCandidate } = await import("../../../src/studio/friday-studio-artifact-candidate-bridge.js");
 
     const mockRun = {
@@ -242,17 +269,27 @@ describe("controlled autonomy closed loops", () => {
     expect(run.candidates.some((c) => c.sourceType === "studio_artifact")).toBe(true);
 
     const approved = await acquisitionService.approveRun(run.id);
-    expect(approved.status).toBe("verified");
-    expect(approved.executionSuggestion.canExecute).toBe(true);
+    expect(approved.status).toBe("human_blocked");
+    expect(approved.executionSuggestion.canExecute).toBe(false);
+    expect(approved.executionSuggestion.reason).toContain("complete the lifecycle");
 
     const customReg = approved.registeredCapabilities.find((r) => r.capability === "custom");
     expect(customReg).toBeDefined();
-    expect(customReg!.state).toBe("available");
+    expect(customReg!.state).toBe("blocked");
     expect(customReg!.note).toContain("sandbox");
+    expect(customReg!.note).toContain("blocked from task execution");
+    expect(customReg!.availabilityBoundary).toMatchObject({
+      proofTier: "local_candidate_registered",
+      liveRuntimeVerified: false,
+      localCandidateOnly: true,
+    });
 
     const customVerification = approved.verificationResults.find((v) => v.capability === "custom");
-    expect(customVerification?.status).toBe("passed");
+    expect(customVerification?.status).toBe("blocked");
     expect(customVerification?.evidence).toContain("Sandbox");
+    expect(customVerification?.evidence).toContain("execution remains blocked");
+    expect(customVerification?.blocker).toContain("Lifecycle promotion or installation proof");
+    expect(customVerification?.availabilityBoundary?.summary).toContain("not proof of external install");
   });
 
   it("proves the full Studio runProduct → validate → acquire → approve chain with cancelRun rollback (local sandbox proof only)", async () => {
@@ -296,11 +333,12 @@ describe("controlled autonomy closed loops", () => {
       expect(acqRun.executionSuggestion.nextAction).toBe("approve_run");
 
       const approved = await acquisitionService.approveRun(acqRun.id);
-      expect(approved.status).toBe("verified");
-      expect(approved.executionSuggestion.canExecute).toBe(true);
+      expect(approved.status).toBe("human_blocked");
+      expect(approved.executionSuggestion.canExecute).toBe(false);
+      expect(approved.executionSuggestion.nextAction).toBe("complete_human_setup");
       expect(approved.registeredCapabilities).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ capability: "custom", state: "available" }),
+          expect.objectContaining({ capability: "custom", state: "blocked" }),
         ]),
       );
 

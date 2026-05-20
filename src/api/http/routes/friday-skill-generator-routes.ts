@@ -799,6 +799,9 @@ export function createFridaySkillGeneratorRoutes(
       stagedCandidateIdentity: result.session.draftSkillId
         ? {
           skillId: result.session.draftSkillId,
+          candidateId: result.session.stagedCandidateId,
+          candidateDir: result.session.stagedCandidateDir,
+          filesDir: result.session.stagedCandidateFilesDir,
         }
         : undefined,
     };

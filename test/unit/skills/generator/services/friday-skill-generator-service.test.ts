@@ -1393,15 +1393,25 @@ describe("FridaySkillGeneratorService", () => {
         expect(result.promotionStage).toBe("candidate_staged");
         expect(result.candidateId).toContain("test-skill-1.0.0");
         expect(result.registryRefreshed).toBe(false);
-        expect(result.promotedManifestTags).toEqual(
-          expect.arrayContaining(["generated", "skill.stabilized", "cli-backed"]),
+        expect(result.candidateManifestTags).toEqual(
+          expect.arrayContaining(["generated", "generated.candidate", "cli-backed"]),
         );
+        expect(result.candidateManifestTags).not.toContain("skill.stabilized");
+        expect(result.candidateManifestTags).not.toContain("stabilized");
         expect(result.promotedManifestTags).not.toContain("generated.draft");
+        expect(result.promotedManifestTags).toEqual([]);
         expect(result.evidence).toEqual({
           packageLoaded: true,
           packageValidated: true,
           registryRefreshed: false,
           candidateStaged: true,
+        });
+        const savedSession = await service.getSession(startResult.session.sessionId);
+        expect(savedSession?.session).toMatchObject({
+          draftSkillId: "test-skill",
+          stagedCandidateId: result.candidateId,
+          stagedCandidateDir: result.candidateDir,
+          stagedCandidateFilesDir: result.skillDir,
         });
         expect(deps.memoryStateService.updateSkillStatus).not.toHaveBeenCalledWith(
           "test-skill",

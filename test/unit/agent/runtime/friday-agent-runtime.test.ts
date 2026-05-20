@@ -6817,7 +6817,10 @@ describe("FridayAgentRuntime", () => {
           content: JSON.stringify({
             approved: true,
             skillId: "generated-skill-1",
-            registryRefreshed: true,
+            candidateId: "generated-skill-1-candidate",
+            candidateDir: "/tmp/friday/skill-candidates/generated-skill-1-candidate",
+            registryRefreshed: false,
+            promotionStage: "candidate_staged",
           }),
         };
       }
@@ -6853,7 +6856,7 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
       ],
       [
-        { type: "text_delta", text: "Skill created and approved." },
+        { type: "text_delta", text: "Skill candidate staged." },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
       ],
     ]);
@@ -6913,7 +6916,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.response).toContain("Skill created and approved.");
+    expect(result.response).toContain("Skill candidate staged.");
     expect(skillRunSpy).not.toHaveBeenCalled();
     expect(skillGenerateSpy).toHaveBeenCalledTimes(3);
     expect(skillGenerateSpy).toHaveBeenNthCalledWith(
@@ -7241,7 +7244,10 @@ describe("FridayAgentRuntime", () => {
           content: JSON.stringify({
             approved: true,
             skillId: "generated-skill-auto-start-1",
-            registryRefreshed: true,
+            candidateId: "generated-skill-auto-start-1-candidate",
+            candidateDir: "/tmp/friday/skill-candidates/generated-skill-auto-start-1-candidate",
+            registryRefreshed: false,
+            promotionStage: "candidate_staged",
           }),
         };
       }
@@ -7277,7 +7283,7 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
       ],
       [
-        { type: "text_delta", text: "Skill created after inventory check." },
+        { type: "text_delta", text: "Skill candidate staged after inventory check." },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
       ],
     ]);
@@ -7317,7 +7323,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.response).toContain("Skill created after inventory check.");
+    expect(result.response).toContain("Skill candidate staged after inventory check.");
     expect(skillsListSpy).toHaveBeenCalledTimes(1);
     expect(skillGenerateSpy).toHaveBeenNthCalledWith(
       1,
@@ -7357,7 +7363,10 @@ describe("FridayAgentRuntime", () => {
           content: JSON.stringify({
             approved: true,
             skillId: "generated-skill-write-1",
-            registryRefreshed: true,
+            candidateId: "generated-skill-write-1-candidate",
+            candidateDir: "/tmp/friday/skill-candidates/generated-skill-write-1-candidate",
+            registryRefreshed: false,
+            promotionStage: "candidate_staged",
           }),
         };
       }
@@ -7396,7 +7405,7 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
       ],
       [
-        { type: "text_delta", text: "Skill created via generator." },
+        { type: "text_delta", text: "Skill candidate staged via generator." },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
       ],
     ]);
@@ -7436,7 +7445,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.response).toContain("Skill created via generator.");
+    expect(result.response).toContain("Skill candidate staged via generator.");
     expect(writeSpy).not.toHaveBeenCalled();
     expect(skillGenerateSpy).toHaveBeenNthCalledWith(
       1,
@@ -7476,7 +7485,10 @@ describe("FridayAgentRuntime", () => {
           content: JSON.stringify({
             approved: true,
             skillId: "generated-skill-skills-dir-1",
-            registryRefreshed: true,
+            candidateId: "generated-skill-skills-dir-1-candidate",
+            candidateDir: "/tmp/friday/skill-candidates/generated-skill-skills-dir-1-candidate",
+            registryRefreshed: false,
+            promotionStage: "candidate_staged",
           }),
         };
       }
@@ -7515,7 +7527,7 @@ describe("FridayAgentRuntime", () => {
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 5 },
       ],
       [
-        { type: "text_delta", text: "Skill created via generator after blocking top-level write." },
+        { type: "text_delta", text: "Skill candidate staged via generator after blocking top-level write." },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 5 },
       ],
     ]);
@@ -7555,7 +7567,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.response).toContain("Skill created via generator after blocking top-level write.");
+    expect(result.response).toContain("Skill candidate staged via generator after blocking top-level write.");
     expect(writeSpy).not.toHaveBeenCalled();
     expect(skillGenerateSpy).toHaveBeenNthCalledWith(
       1,

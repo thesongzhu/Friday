@@ -19,12 +19,12 @@
 ## Table of Contents
 
 1. [Test Infrastructure](#1-test-infrastructure)
-2. [Scenario 1: User Generates and Runs a Skill](#scenario-1-user-generates-and-runs-a-skill)
+2. [Scenario 1: User Generates and Stages a Skill Candidate](#scenario-1-user-generates-and-stages-a-skill-candidate)
 3. [Scenario 2: User Generates and Runs a Workflow](#scenario-2-user-generates-and-runs-a-workflow)
 4. [Scenario 3: Workflow with AI Inference Node](#scenario-3-workflow-with-ai-inference-node)
 5. [Scenario 4: Session with Memory Extraction](#scenario-4-session-with-memory-extraction)
 6. [Scenario 5: Session Fork and Merge](#scenario-5-session-fork-and-merge)
-7. [Scenario 6: Skill Converter Imports a Skill](#scenario-6-skill-converter-imports-a-skill)
+7. [Scenario 6: Skill Converter Stages an Imported Skill Candidate](#scenario-6-skill-converter-stages-an-imported-skill-candidate)
 8. [Scenario 7: Full Workflow Lifecycle with Builder](#scenario-7-full-workflow-lifecycle-with-builder)
 9. [Scenario 8: Memory Store → Search → Recall Cycle](#scenario-8-memory-store--search--recall-cycle)
 10. [Scenario 9: Workflow with Condition Branching](#scenario-9-workflow-with-condition-branching)
@@ -85,9 +85,9 @@ Tests share the hub instance and accumulate state across scenarios. Each scenari
 
 ---
 
-## Scenario 1: User Generates and Runs a Skill
+## Scenario 1: User Generates and Stages a Skill Candidate
 
-**User story:** "I want to create a skill that gives me the current date, without writing any code."
+**User story:** "I want to create a skill candidate that gives me the current date, without writing any code."
 
 **LLM calls:** 4-6 (requirements analyzer + manifest + code + UI schema, possibly repair)
 
@@ -99,9 +99,9 @@ Tests share the hub instance and accumulate state across scenarios. Each scenari
 | 1.2 | If clarification needed, answer | `POST` | `/v1/skills/generator/sessions/:sessionId/messages` | `{ message: "A shell skill using the date command. No inputs needed. Output the ISO 8601 date string.", requestedModel: MODEL }` | `status: 200`, `mode` transitions | ✅ ~5s |
 | 1.3 | Force generation | `POST` | `/v1/skills/generator/sessions/:sessionId/generate` | `{ requestedModel: MODEL }` | `status: 200` or `422`, if 200: `draft.manifest.id` exists, `draft.files.length > 0`, `draft.validation.ok === true` | ✅ ~30s |
 | 1.4 | Verify session state | `GET` | `/v1/skills/generator/sessions/:sessionId` | — | `session.status === "ready_for_review"`, `draft` present, `turns.length >= 2` | ❌ |
-| 1.5 | Approve and save to disk | `POST` | `/v1/skills/generator/sessions/:sessionId/approve` | — | `status: 200`, `skillId` returned, `savedFiles` includes `skill.manifest.json`, `registryRefreshed: true` | ❌ |
-| 1.6 | Verify skill is in registry | `GET` | `/v1/skills/:skillId/ui` | — | `status: 200`, UI schema returned with `fields`, `outputs`, `actions` arrays | ❌ |
-| 1.7 | Run the generated skill via hub executor | *(internal call)* | `hub.executor.execute({ skillId, input: {}, sessionId: "e2e", userId: "e2e", channel: "e2e" })` | — | `result.status === "completed"`, `result.stdout` or `result.output` contains date-like string | ❌ |
+| 1.5 | Approve and stage candidate | `POST` | `/v1/skills/generator/sessions/:sessionId/approve` | — | `status: 200`, `skillId`, `candidateId`, and `candidateDir` returned, `savedFiles` includes `skill.manifest.json`, `registryRefreshed: false`, `promotionStage: "candidate_staged"` | ❌ |
+| 1.6 | Verify staged candidate identity | `GET` | `/v1/skills/generator/sessions/:sessionId/evidence` | — | `status: 200`, `stagedCandidateIdentity.candidateId` matches approve response; evidence does not claim installed, promoted, or runnable | ❌ |
+| 1.7 | Verify direct skill run is blocked until lifecycle promotion | `POST` | `/v1/skills/:skillId/run` | `{ input: {} }` | non-200 response with `SKILL_NOT_AVAILABLE` or `SKILL_NOT_FOUND`; no completed execution is claimed before lifecycle promotion | ❌ |
 | 1.8 | Verify session is saved | `GET` | `/v1/skills/generator/sessions/:sessionId` | — | `session.status === "saved"` | ❌ |
 
 ### What Could Go Wrong
@@ -109,7 +109,7 @@ Tests share the hub instance and accumulate state across scenarios. Each scenari
 | Failure Mode | Likelihood | Mitigation |
 |-------------|-----------|------------|
 | LLM returns malformed manifest JSON | Medium | Generator has repair loop (MAX_REPAIR_ATTEMPTS=2). Accept 422 gracefully. |
-| Generated shell script fails to execute | Medium | Skip step 1.7 assertion on output content; just verify `status !== "failed"`. The script may not work on all platforms. |
+| Generated shell script self-test fails | Medium | Keep the candidate in review/failed validation; do not treat approve or direct run as installed execution proof. |
 | Session enters "failed" state after generation | Low-Medium | Check session status before approve. If failed, verify error structure and skip approval. |
 | Skill directory collision | Low | Each test run uses a fresh tmpDir. |
 | LLM asks too many clarification rounds | Low | Step 1.3 force-generates regardless of conversation state. |
@@ -304,9 +304,9 @@ ClawdBot has memory in `clawdbot/src/memory/` with Voyage embeddings and sync op
 
 ---
 
-## Scenario 6: Skill Converter Imports a Skill
+## Scenario 6: Skill Converter Stages an Imported Skill Candidate
 
-**User story:** "I have a ClawdBot skill.md file and want to import it into Friday."
+**User story:** "I have a ClawdBot skill.md file and want to stage it as a Friday skill candidate."
 
 **LLM calls:** 0
 
@@ -318,8 +318,8 @@ ClawdBot has memory in `clawdbot/src/memory/` with Voyage embeddings and sync op
 | 6.2 | Convert ClawdBot skill (dry run) | `POST` | `/v1/skills/convert` | See [ClawdBot Skill Fixture](#clawdbot-skill-fixture) | `status: 200`, `converterId === "clawdbot-skill-md"`, `detectedFormat === "clawdbot-skill-md"`, `drafts.length >= 1` | ❌ |
 | 6.3 | Verify draft structure | — | — | — | `drafts[0].manifest.id` exists, `drafts[0].manifest.runtime.kind === "shell"`, `drafts[0].files.length > 0` | ❌ |
 | 6.4 | Verify validation | — | — | — | `validation[0].ok` is `true` or has only warnings (no errors) | ❌ |
-| 6.5 | Import skill (real install) | `POST` | `/v1/skills/import` | `{ source: { contentBase64: <same> }, formatHint: "clawdbot-skill-md", target: "managed", replace: true, refreshRegistry: true }` | `status: 200`, `imports[0].installed === true`, `registryRefreshed === true` | ❌ |
-| 6.6 | Verify skill appears in registry | *(internal)* | `hub.skills.get("converted-skill-id")` | — | Skill exists in registry with correct manifest | ❌ |
+| 6.5 | Stage imported skill candidate | `POST` | `/v1/skills/import` | `{ source: { contentBase64: <same> }, formatHint: "clawdbot-skill-md", target: "managed", replace: true, refreshRegistry: true }` | `status: 200`, `candidates[0].candidateId` exists, `candidates[0].skillId` exists, `registryRefreshed === false` | ❌ |
+| 6.6 | Verify staged import is not runnable before lifecycle promotion | `POST` | `/v1/skills/:skillId/run` | `{ input: {} }` | non-200 response; import staging does not install or make the skill runnable | ❌ |
 
 #### ClawdBot Skill Fixture
 
@@ -358,8 +358,8 @@ const base64Content = Buffer.from(CLAWDBOT_SKILL_MD).toString("base64");
 |-------------|-----------|------------|
 | ClawdBot skill.md format changed | Low | Use the simplest possible skill.md format. |
 | Converter generates invalid manifest | Medium | Check validation results. If errors, verify they're structural (not converter bugs). |
-| Install path collision | Low | Use `replace: true`. |
-| Registry refresh fails | Low | Non-fatal — skill is installed but registry didn't see it. Verify file on disk as fallback. |
+| Candidate path collision | Low | Use `replace: true`, then verify the returned `candidateId`. |
+| Registry refresh confusion | Low | Treat `registryRefreshed === false` as expected for staged import; lifecycle promotion is required before execution. |
 
 ### ClawdBot Reference
 

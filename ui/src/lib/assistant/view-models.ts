@@ -62,7 +62,7 @@ export function summarizeSkillEvidence(evidence?: SkillGenerationEvidence | null
     return "No draft evidence yet.";
   }
   if (evidence.approvalReadiness.ready) {
-    return "Ready to approve and save.";
+    return "Ready to approve and stage a candidate for lifecycle review.";
   }
   if (!evidence.validationSummary.ok) {
     return "Draft needs validation fixes.";

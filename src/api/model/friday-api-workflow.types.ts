@@ -438,6 +438,14 @@ export interface FridayWorkflowGenerationEvidence {
   };
   qaVerdict?: FridayHarnessQaVerdictV1 | null;
   harness?: FridayTemplateHarnessSummary | null;
+  publicationBoundary?: FridayWorkflowGeneratorPublicationBoundary;
+}
+
+export interface FridayWorkflowGeneratorPublicationBoundary {
+  stage: "published_version";
+  lifecyclePromotion: "not_lifecycle_promoted";
+  proofBoundary: "crud_publish_only";
+  summary: string;
 }
 
 export interface FridayWorkflowGeneratorEvidenceResponse {
@@ -451,6 +459,7 @@ export interface FridayWorkflowGeneratorApproveResponse {
   versionNumber: number;
   slug: string;
   published: boolean;
+  publicationBoundary: FridayWorkflowGeneratorPublicationBoundary;
   evidence?: FridayWorkflowGenerationEvidence;
 }
 

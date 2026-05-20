@@ -482,9 +482,13 @@ export interface ApproveResponse {
   sessionId: string;
   skillId: string;
   skillDir: string;
+  candidateId: string;
+  candidateDir: string;
   savedFiles: string[];
   registryRefreshed: boolean;
-  promotionStage: "stabilized";
+  promotionStage: "candidate_staged";
+  candidateManifestTags: string[];
+  /** @deprecated Candidate staging no longer promotes a manifest; use candidateManifestTags. */
   promotedManifestTags: string[];
   evidence: SkillGenerationEvidence;
 }
@@ -561,9 +565,11 @@ export interface SkillGenerationEvidence {
   };
   qaVerdict?: FridayHarnessQaVerdictRecord | null;
   harness?: FridayTemplateHarnessSummary | null;
-  savedSkillIdentity?: {
+  stagedCandidateIdentity?: {
     skillId: string;
-    skillDir?: string;
+    candidateId?: string;
+    candidateDir?: string;
+    filesDir?: string;
   };
 }
 
@@ -581,6 +587,14 @@ export interface WorkflowGenerationEvidence {
   };
   qaVerdict?: FridayHarnessQaVerdictRecord | null;
   harness?: FridayTemplateHarnessSummary | null;
+  publicationBoundary?: FridayWorkflowGeneratorPublicationBoundary;
+}
+
+export interface FridayWorkflowGeneratorPublicationBoundary {
+  stage: "published_version";
+  lifecyclePromotion: "not_lifecycle_promoted";
+  proofBoundary: "crud_publish_only";
+  summary: string;
 }
 
 // ─── Skills registry list types ───
@@ -1533,6 +1547,7 @@ export interface FridayWorkflowGeneratorApproveResponse {
   versionNumber: number;
   slug: string;
   published: boolean;
+  publicationBoundary: FridayWorkflowGeneratorPublicationBoundary;
   evidence?: WorkflowGenerationEvidence;
 }
 
