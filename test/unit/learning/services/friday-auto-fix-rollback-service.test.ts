@@ -120,9 +120,18 @@ describe("FridayAutoFixRollbackService", () => {
     expect(result.success).toBe(false);
     expect(result.rollbackSucceeded).toBe(false);
     expect(result.errorMessage).toContain("no rollback plan available");
+    expect(result.action.rollbackAttempted).toBe(true);
+    expect(result.action.rollbackAttemptedAt).toBe(NOW);
+    expect(result.action.rollbackSucceeded).toBe(false);
+    expect(result.action.rollbackErrorMessage).toContain("no rollback plan available");
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-no-plan"))?.status,
     ).toBe("applied");
+    const persisted = db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-no-plan"));
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackAttemptedAt).toBe(NOW);
+    expect(persisted?.rollbackSucceeded).toBe(false);
+    expect(persisted?.rollbackErrorMessage).toContain("no rollback plan available");
   });
 
   it("fails closed when no hub executor backs a rollback step", async () => {
@@ -143,6 +152,10 @@ describe("FridayAutoFixRollbackService", () => {
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"))?.status,
     ).toBe("applied");
+    const persisted = db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"));
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackSucceeded).toBe(false);
+    expect(persisted?.rollbackErrorMessage).toContain("has no executor");
   });
 
   it("fails closed when an explicit override removes the executor", async () => {
@@ -165,6 +178,11 @@ describe("FridayAutoFixRollbackService", () => {
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"))?.status,
     ).toBe("applied");
+    const persisted = db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"));
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackAttemptedAt).toBe(NOW);
+    expect(persisted?.rollbackSucceeded).toBe(false);
+    expect(persisted?.rollbackErrorMessage).toContain("has no executor");
   });
 
   it("marks the action rolled_back only when rollback executes and verifies", async () => {
@@ -189,6 +207,11 @@ describe("FridayAutoFixRollbackService", () => {
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"))?.status,
     ).toBe("rolled_back");
+    const persisted = db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"));
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackAttemptedAt).toBe(NOW);
+    expect(persisted?.rollbackSucceeded).toBe(true);
+    expect(persisted?.rollbackErrorMessage).toBeUndefined();
   });
 
   it("leaves the action applied when rollback verification fails", async () => {
@@ -211,8 +234,17 @@ describe("FridayAutoFixRollbackService", () => {
     expect(result.success).toBe(false);
     expect(result.rollbackSucceeded).toBe(false);
     expect(result.errorMessage).toContain("failed verification");
+    expect(result.action.rollbackAttempted).toBe(true);
+    expect(result.action.rollbackAttemptedAt).toBe(NOW);
+    expect(result.action.rollbackSucceeded).toBe(false);
+    expect(result.action.rollbackErrorMessage).toContain("failed verification");
     expect(
       db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"))?.status,
     ).toBe("applied");
+    const persisted = db.withReadConnection((rdb) => actionRepo.getById(rdb, "action-rb-001"));
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackAttemptedAt).toBe(NOW);
+    expect(persisted?.rollbackSucceeded).toBe(false);
+    expect(persisted?.rollbackErrorMessage).toContain("failed verification");
   });
 });

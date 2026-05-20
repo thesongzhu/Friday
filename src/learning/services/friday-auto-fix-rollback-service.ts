@@ -42,6 +42,23 @@ export function createFridayAutoFixRollbackService(
     async rollback(actionId, reason) {
       const nowIso = deps.nowIso();
 
+      const recordRollbackAttempt = (input: {
+        succeeded: boolean;
+        errorMessage?: string;
+      }): FridayAutoFixExecutionResult["action"] => {
+        const updated = deps.db.withWriteTransaction((db) =>
+          deps.actionRepo.recordRollbackAttempt(db, actionId, {
+            attemptedAt: nowIso,
+            succeeded: input.succeeded,
+            errorMessage: input.errorMessage,
+          }, nowIso),
+        );
+        if (!updated) {
+          throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", `Action ${actionId} not found during rollback receipt write`, { httpStatus: 404 });
+        }
+        return updated;
+      };
+
       const action = deps.db.withReadConnection((db) =>
         deps.actionRepo.getById(db, actionId),
       );
@@ -62,13 +79,14 @@ export function createFridayAutoFixRollbackService(
       if (!rollbackPlan) {
         // No rollback plan: do NOT transition to rolled_back.
         // Preserve current status and fail explicitly.
+        const errorMessage = `Rollback requested (${reason}) but no rollback plan available`;
         return {
-          action,
+          action: recordRollbackAttempt({ succeeded: false, errorMessage }),
           success: false,
           verificationPassed: false,
           rollbackAttempted: true,
           rollbackSucceeded: false,
-          errorMessage: `Rollback requested (${reason}) but no rollback plan available`,
+          errorMessage,
         };
       }
 
@@ -85,41 +103,45 @@ export function createFridayAutoFixRollbackService(
         const executor = executors[step.kind];
         if (!executor) {
           persistRollbackEvidence(actionId, rollbackPlan, nowIso);
+          const errorMessage = `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) has no executor`;
           return {
-            action,
+            action: recordRollbackAttempt({ succeeded: false, errorMessage }),
             success: false,
             verificationPassed: false,
             rollbackAttempted: true,
             rollbackSucceeded: false,
-            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) has no executor`,
+            errorMessage,
           };
         }
         if (!await executor(step)) {
           persistRollbackEvidence(actionId, rollbackPlan, nowIso);
+          const errorMessage = `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed during execution`;
           return {
-            action,
+            action: recordRollbackAttempt({ succeeded: false, errorMessage }),
             success: false,
             verificationPassed: false,
             rollbackAttempted: true,
             rollbackSucceeded: false,
-            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed during execution`,
+            errorMessage,
           };
         }
         const verifier = verifiers[step.kind];
         if (verifier && !await verifier(step)) {
           persistRollbackEvidence(actionId, rollbackPlan, nowIso);
+          const errorMessage = `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed verification`;
           return {
-            action,
+            action: recordRollbackAttempt({ succeeded: false, errorMessage }),
             success: false,
             verificationPassed: false,
             rollbackAttempted: true,
             rollbackSucceeded: false,
-            errorMessage: `Rollback requested (${reason}) but step '${step.stepId}' (${step.kind}) failed verification`,
+            errorMessage,
           };
         }
       }
 
       persistRollbackEvidence(actionId, rollbackPlan, nowIso);
+      recordRollbackAttempt({ succeeded: true });
 
       return deps.db.withWriteTransaction((db) => {
         const rolledBack = deps.actionRepo.markRolledBack(

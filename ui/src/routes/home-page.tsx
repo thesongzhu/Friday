@@ -174,10 +174,11 @@ function buildPulseSummary(
     );
   }
   if (overview.coverage.autoFixActions > 0) {
+    const buckets = overview.coverage.autoFixOutcomeBuckets;
     return localize(
       locale,
-      `Friday 最近记录了 ${overview.coverage.autoFixActions} 次修复动作，是否完成以验证结果为准。`,
-      `Friday recently recorded ${overview.coverage.autoFixActions} repair action(s); completion depends on verification evidence.`,
+      `Friday 最近记录了 ${buckets.recordedActions} 次修复动作，其中 ${buckets.verifiedRepairs} 次已验证修复、${buckets.diagnosticOnly} 次为诊断结果。`,
+      `Friday recently recorded ${buckets.recordedActions} repair action(s): ${buckets.verifiedRepairs} verified repair(s), ${buckets.diagnosticOnly} diagnostic-only result(s).`,
     );
   }
   return locale === "zh"
@@ -745,8 +746,8 @@ export function HomePage() {
                 value: learningOverviewQuery.data?.coverage.patterns ?? 0,
               },
               {
-                label: localize(locale, "修复动作", "Repair actions"),
-                value: learningOverviewQuery.data?.coverage.autoFixActions ?? 0,
+                label: localize(locale, "已验证修复", "Verified repairs"),
+                value: learningOverviewQuery.data?.coverage.autoFixOutcomeBuckets.verifiedRepairs ?? 0,
               },
             ].map((item) => (
               <div

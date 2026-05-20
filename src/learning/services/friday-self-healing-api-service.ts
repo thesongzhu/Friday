@@ -113,6 +113,8 @@ export interface FridaySelfHealingActionDetails {
       rolledBackAt?: string;
       rollbackAttempted: boolean;
       rollbackSucceeded: boolean;
+      rollbackAttemptedAt?: string;
+      rollbackErrorMessage?: string;
     };
     acceptanceResult: {
       passed: boolean;
@@ -275,6 +277,17 @@ export interface FridayLearningCoverageSummary {
   incidents: number;
   diagnoses: number;
   autoFixActions: number;
+  autoFixOutcomeBuckets: {
+    recordedActions: number;
+    verifiedRepairs: number;
+    diagnosticOnly: number;
+    failed: number;
+    rolledBack: number;
+    rejected: number;
+    pending: number;
+    rollbackAttempted: number;
+    rollbackFailed: number;
+  };
 }
 
 export interface FridayLearningOverview {
@@ -554,6 +567,62 @@ function deriveAutoFixChangedKeys(
   return keys.length > 0 ? keys : undefined;
 }
 
+function deriveAutoFixOutcomeBuckets(
+  actions: FridayAutoFixActionEntity[],
+): FridayLearningCoverageSummary["autoFixOutcomeBuckets"] {
+  const buckets: FridayLearningCoverageSummary["autoFixOutcomeBuckets"] = {
+    recordedActions: actions.length,
+    verifiedRepairs: 0,
+    diagnosticOnly: 0,
+    failed: 0,
+    rolledBack: 0,
+    rejected: 0,
+    pending: 0,
+    rollbackAttempted: 0,
+    rollbackFailed: 0,
+  };
+
+  for (const action of actions) {
+    const rollbackAttempted = Boolean(
+      action.rollbackAttempted
+        || action.rollbackAttemptedAt
+        || action.rolledBackAt,
+    );
+    if (rollbackAttempted) {
+      buckets.rollbackAttempted += 1;
+    }
+    if (rollbackAttempted && !action.rollbackSucceeded && !action.rolledBackAt) {
+      buckets.rollbackFailed += 1;
+    }
+
+    if (action.status === "planned") {
+      buckets.pending += 1;
+      continue;
+    }
+    if (action.status === "rejected") {
+      buckets.rejected += 1;
+      continue;
+    }
+    if (action.status === "rolled_back") {
+      buckets.rolledBack += 1;
+      continue;
+    }
+
+    if (action.status === "applied" && action.outcome === "success") {
+      if (deriveAutoFixRepairOutcome(action) === "verified_repair") {
+        buckets.verifiedRepairs += 1;
+      } else {
+        buckets.diagnosticOnly += 1;
+      }
+      continue;
+    }
+
+    buckets.failed += 1;
+  }
+
+  return buckets;
+}
+
 function normalizeLearningKeySegment(value: string): string {
   return value
     .toLowerCase()
@@ -651,6 +720,8 @@ export function createFridaySelfHealingApiService(
     const acceptancePassed = action.status === "applied"
       && action.outcome === "success"
       && repairOutcome === "verified_repair";
+    const rollbackAttempted = Boolean(action.rollbackAttempted || action.rollbackAttemptedAt || action.rolledBackAt);
+    const rollbackSucceeded = Boolean(action.rollbackSucceeded || action.status === "rolled_back");
 
     return {
       action,
@@ -692,8 +763,10 @@ export function createFridaySelfHealingApiService(
         rollbackResult: {
           available: Boolean(action.rollbackPlan ?? action.plan.rollbackPlan),
           rolledBackAt: action.rolledBackAt,
-          rollbackAttempted: action.status === "rolled_back",
-          rollbackSucceeded: action.status === "rolled_back",
+          rollbackAttempted,
+          rollbackSucceeded,
+          rollbackAttemptedAt: action.rollbackAttemptedAt,
+          rollbackErrorMessage: action.rollbackErrorMessage,
         },
         acceptanceResult: {
           passed: acceptancePassed,
@@ -1107,6 +1180,12 @@ export function createFridaySelfHealingApiService(
         input.userId,
       ),
     );
+    const autoFixActions = deps.db.withReadConnection((db) =>
+      sqliteTableExists(db, "auto_fix_actions")
+        ? deps.actionRepo.listByUser(db, { userId: input.userId })
+        : [],
+    );
+    const autoFixOutcomeBuckets = deriveAutoFixOutcomeBuckets(autoFixActions);
 
     return {
       lessons,
@@ -1131,6 +1210,7 @@ export function createFridaySelfHealingApiService(
         incidents: incidentCount,
         diagnoses: diagnosisCount,
         autoFixActions: actionCount,
+        autoFixOutcomeBuckets,
       },
     };
   };

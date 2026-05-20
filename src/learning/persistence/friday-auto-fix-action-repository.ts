@@ -75,6 +75,17 @@ export interface FridayAutoFixActionRepository {
     nowIso: string,
   ): FridayAutoFixActionEntity | null;
 
+  recordRollbackAttempt(
+    db: Database.Database,
+    actionId: string,
+    input: {
+      attemptedAt: string;
+      succeeded: boolean;
+      errorMessage?: string;
+    },
+    nowIso: string,
+  ): FridayAutoFixActionEntity | null;
+
   countByDay(
     db: Database.Database,
     day: string,
@@ -104,6 +115,10 @@ function rowToEntity(row: FridayAutoFixActionRow): FridayAutoFixActionEntity {
     outcome: row.outcome,
     appliedAt: row.applied_at ?? undefined,
     rolledBackAt: row.rolled_back_at ?? undefined,
+    rollbackAttempted: row.rollback_attempted === 1,
+    rollbackAttemptedAt: row.rollback_attempted_at ?? undefined,
+    rollbackSucceeded: row.rollback_succeeded === 1,
+    rollbackErrorMessage: row.rollback_error_message ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -115,8 +130,10 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
       db.prepare(
         `INSERT INTO auto_fix_actions
          (action_id, incident_id, user_id, risk_tier, plan_json, rollback_plan_json,
-          status, outcome, applied_at, rolled_back_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          status, outcome, applied_at, rolled_back_at, rollback_attempted,
+          rollback_attempted_at, rollback_succeeded, rollback_error_message,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         action.actionId,
         action.incidentId,
@@ -128,6 +145,10 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
         action.outcome,
         action.appliedAt ?? null,
         action.rolledBackAt ?? null,
+        action.rollbackAttempted === true ? 1 : 0,
+        action.rollbackAttemptedAt ?? null,
+        action.rollbackSucceeded === true ? 1 : 0,
+        action.rollbackErrorMessage ?? null,
         action.createdAt,
         action.updatedAt,
       );
@@ -225,10 +246,17 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
       const changes = db
         .prepare(
           `UPDATE auto_fix_actions
-           SET status = 'rolled_back', outcome = 'failed', rolled_back_at = ?, updated_at = ?
+           SET status = 'rolled_back',
+               outcome = 'failed',
+               rolled_back_at = ?,
+               rollback_attempted = 1,
+               rollback_attempted_at = COALESCE(rollback_attempted_at, ?),
+               rollback_succeeded = 1,
+               rollback_error_message = NULL,
+               updated_at = ?
            WHERE action_id = ? AND status IN ('planned', 'applied')`,
         )
-        .run(nowIso, nowIso, actionId).changes;
+        .run(nowIso, nowIso, nowIso, actionId).changes;
       if (changes === 0) return null;
       return this.getById(db, actionId);
     },
@@ -266,6 +294,28 @@ export function createFridayAutoFixActionRepository(): FridayAutoFixActionReposi
         )
         .run(
           rollbackPlan ? JSON.stringify(rollbackPlan) : null,
+          nowIso,
+          actionId,
+        ).changes;
+      if (changes === 0) return null;
+      return this.getById(db, actionId);
+    },
+
+    recordRollbackAttempt(db, actionId, input, nowIso) {
+      const changes = db
+        .prepare(
+          `UPDATE auto_fix_actions
+           SET rollback_attempted = 1,
+               rollback_attempted_at = ?,
+               rollback_succeeded = ?,
+               rollback_error_message = ?,
+               updated_at = ?
+           WHERE action_id = ?`,
+        )
+        .run(
+          input.attemptedAt,
+          input.succeeded ? 1 : 0,
+          input.errorMessage ?? null,
           nowIso,
           actionId,
         ).changes;

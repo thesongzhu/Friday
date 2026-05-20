@@ -84,6 +84,8 @@ export interface FridayFixExecutionEvidence {
     rolledBackAt?: string;
     rollbackAttempted: boolean;
     rollbackSucceeded: boolean;
+    rollbackAttemptedAt?: string;
+    rollbackErrorMessage?: string;
   };
   acceptanceResult: {
     passed: boolean;
