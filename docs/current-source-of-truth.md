@@ -219,8 +219,10 @@ This document is the current architecture reference for steady-state Friday runt
 - Learned preference facts use a Bayesian-inspired confidence model with decay, conflict penalty, and evidence boost.
 - The self-learning context enrichment service is wired through hub bootstrap and becomes available after self-learning runtime creation.
 - Communication style affects wording, progress updates, failure phrasing, and clarification style only. It must not weaken approval gates, rollback rules, or destructive-action safeguards.
+- Raw learned facts are not blanket prompt injection. `createFridayPreferenceInjector` exists as a bounded injector utility and test target, but current hub prompt wiring uses the communication prompt builder plus persisted Reflex/User Constitution preference fragments instead of silently injecting raw learned facts.
+- High-impact execution, testing, security, memory-policy, workflow, skill, and User Constitution preferences must be confirmed through Review Center before they become persisted Reflex preferences that can enter the relevant prompt boundary.
 - Guided wizard contexts in `/assistant` are persisted in SQLite (`uix_guided_contexts`) and can be resumed after service restart. Onboarding session progress is also persisted in SQLite (`uix_onboarding_sessions`) and restored on boot.
-- Learned preference facts are now user-visible through `/v1/uix/learned-facts` and the current Home/Settings UI surfaces. Direct editing of learned preference facts is not yet part of the current UI surface.
+- Learned preference facts are user-visible through `/v1/uix/learned-facts`; the Settings UI renders explicit trust, memory, evidence, context-use, prompt-injection, review, and revocation boundaries. UIX learned-fact routes, memory search/list routes, and agent memory search metadata also return those boundary labels. The Assets surface can list and delete learned facts as learned knowledge, but it does not render the full boundary summary. Learned facts remain separate from explicit Memory and from confirmed Reflex preferences.
 
 ## Runtime admin and security surfaces
 

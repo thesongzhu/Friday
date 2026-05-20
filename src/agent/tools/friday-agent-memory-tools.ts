@@ -626,6 +626,9 @@ function createMemorySearchTool(
                 memoryBoundary: r.item.metadata.memoryBoundary,
                 evidenceBoundary: r.item.metadata.evidenceBoundary,
                 contextUseBoundary: r.item.metadata.contextUseBoundary,
+                promptInjectionBoundary: r.item.metadata.promptInjectionBoundary,
+                reviewBoundary: r.item.metadata.reviewBoundary,
+                revocationBoundary: r.item.metadata.revocationBoundary,
               }
               : {}),
           },

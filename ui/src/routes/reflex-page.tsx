@@ -450,7 +450,7 @@ export function ReflexPage() {
         <ShellCard title={localize(locale, "显式偏好", "Explicit Preferences")}>
           <p className="text-2xl font-semibold text-[color:var(--color-text-primary)]">{String(preferences.length)}</p>
           <p className="text-sm text-[color:var(--color-text-secondary)]">
-            {localize(locale, "会进入 prompt 和 UIX 偏好面", "Available to prompts and UIX surfaces")}
+            {localize(locale, "已确认的偏好；prompt 使用仍按边界执行", "Confirmed preferences; prompt use still follows boundaries")}
           </p>
         </ShellCard>
       </div>
@@ -619,45 +619,54 @@ export function ReflexPage() {
           </ShellCard>
           <ShellCard
             eyebrow={localize(locale, "Canonical Preferences", "Canonical Preferences")}
-            title={localize(locale, "跨渠道、prompt 和 UI 使用的偏好", "Preferences shared by channels, prompts, and UI")}
+            title={localize(locale, "按边界使用的已确认偏好", "Confirmed preferences used within boundaries")}
           >
             {preferencesQuery.isLoading ? (
               <SkeletonList rows={4} />
             ) : preferences.length === 0 ? (
               <EmptyState
                 title={localize(locale, "还没有 Reflex 偏好", "No Reflex preferences yet")}
-                description={localize(locale, "完成引导或让 Friday 记录普通偏好后，这里会显示可复用设置；需要确认的设置会先进入审核候选。", "Complete onboarding or ask Friday to record ordinary preferences to populate reusable settings; settings that need confirmation appear as review candidates first.")}
+                description={localize(locale, "普通偏好写入后会显示在这里；执行、测试、安全和 User Constitution 偏好会先进入 Review Center 候选，确认前不会作为 Reflex prompt 偏好生效。", "Ordinary preferences appear here after they are saved; execution, testing, safety, and User Constitution preferences enter Review Center first and do not become Reflex prompt preferences before confirmation.")}
               />
             ) : (
-              <div className="divide-y divide-[color:var(--color-border-soft)]">
-                {preferences.map((preference) => (
-                  <div key={preference.id} className="grid gap-3 py-3 md:grid-cols-[180px_1fr_150px_112px] md:items-center">
-                    <div>
-                      <StatusPill>{preference.category}</StatusPill>
-                      <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{preference.source}</p>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{preference.key}</p>
-                      <p className="mt-1 break-words text-sm text-[color:var(--color-text-secondary)]">
-                        {typeof preference.value === "string" ? preference.value : JSON.stringify(preference.value)}
+              <div className="space-y-3">
+                <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">
+                  {localize(
+                    locale,
+                    "这里显示的是已保存偏好，不是 raw learned facts。高影响偏好只有在 Review Center 确认并持久化后，才会进入对应 prompt 边界。",
+                    "This list shows saved preferences, not raw learned facts. High-impact preferences enter the relevant prompt boundary only after Review Center confirmation and persistence.",
+                  )}
+                </p>
+                <div className="divide-y divide-[color:var(--color-border-soft)]">
+                  {preferences.map((preference) => (
+                    <div key={preference.id} className="grid gap-3 py-3 md:grid-cols-[180px_1fr_150px_112px] md:items-center">
+                      <div>
+                        <StatusPill>{preference.category}</StatusPill>
+                        <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">{preference.source}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{preference.key}</p>
+                        <p className="mt-1 break-words text-sm text-[color:var(--color-text-secondary)]">
+                          {typeof preference.value === "string" ? preference.value : JSON.stringify(preference.value)}
+                        </p>
+                      </div>
+                      <p className="text-xs text-[color:var(--color-text-faint)] md:text-right">
+                        {formatTime(preference.updatedAt)}
                       </p>
-                    </div>
-                    <p className="text-xs text-[color:var(--color-text-faint)] md:text-right">
-                      {formatTime(preference.updatedAt)}
-                    </p>
-                    <div className="flex md:justify-end">
-                      <ActionButton
-                        tone="secondary"
-                        className="!min-h-[34px] !px-3 !text-xs"
-                        disabled={revokePreferenceMutation.isPending && busyPreferenceId === preference.id}
-                        onClick={() => revokePreferenceMutation.mutate(preference.id)}
-                      >
-                        <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                      <div className="flex md:justify-end">
+                        <ActionButton
+                          tone="secondary"
+                          className="!min-h-[34px] !px-3 !text-xs"
+                          disabled={revokePreferenceMutation.isPending && busyPreferenceId === preference.id}
+                          onClick={() => revokePreferenceMutation.mutate(preference.id)}
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                         {localize(locale, "撤销", "Revoke")}
                       </ActionButton>
                     </div>
                   </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </ShellCard>
