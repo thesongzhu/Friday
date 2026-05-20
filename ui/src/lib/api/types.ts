@@ -2255,6 +2255,17 @@ export interface FridayLearningOverview {
     incidents: number;
     diagnoses: number;
     autoFixActions: number;
+    autoFixOutcomeBuckets: {
+      recordedActions: number;
+      verifiedRepairs: number;
+      diagnosticOnly: number;
+      failed: number;
+      rolledBack: number;
+      rejected: number;
+      pending: number;
+      rollbackAttempted: number;
+      rollbackFailed: number;
+    };
   };
 }
 

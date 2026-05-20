@@ -31,11 +31,12 @@ function buildLearningBullets(
 ): string[] {
   const bullets: string[] = [];
   if (overview.coverage.autoFixActions > 0) {
+    const buckets = overview.coverage.autoFixOutcomeBuckets;
     bullets.push(
       localize(
         locale,
-        `${overview.coverage.autoFixActions} 次修复动作已记录，完成状态以验证证据为准`,
-        `${overview.coverage.autoFixActions} repair actions recorded; verified outcomes remain the source of truth`,
+        `${buckets.recordedActions} 次修复动作已记录，${buckets.verifiedRepairs} 次已验证修复，${buckets.rollbackFailed} 次回滚失败可审计`,
+        `${buckets.recordedActions} repair actions recorded; ${buckets.verifiedRepairs} verified repair(s), ${buckets.rollbackFailed} auditable rollback failure(s)`,
       ),
     );
   }

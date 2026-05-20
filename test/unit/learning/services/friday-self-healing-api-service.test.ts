@@ -3,12 +3,15 @@ import type { FridaySqliteLayer } from "#state";
 import {
   createFridayApprovalRequestRepository,
   createFridayAutoFixActionRepository,
+  createFridayAutoFixRollbackService,
   createFridayDiagnosisRecordRepository,
   createFridayErrorIncidentRepository,
   createFridayLearnedLessonRepository,
   createFridayPreferenceFactRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
+  type FridayAutoFixActionEntity,
+  type FridayAutoFixPlan,
 } from "#learning";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 
@@ -79,6 +82,120 @@ describe("FridaySelfHealingApiService", () => {
       NOW,
       NOW,
     );
+  }
+
+  function buildPlan(suffix: string, payload: Record<string, unknown> = {}): FridayAutoFixPlan {
+    return {
+      title: `Repair ${suffix}`,
+      summary: `Repair summary ${suffix}`,
+      steps: [
+        {
+          stepId: `step-${suffix}`,
+          kind: "apply_config_patch",
+          target: "config",
+          payload,
+          verify: { method: "config_reload_valid", timeoutMs: 1000 },
+        },
+      ],
+      rollbackPlan: {
+        summary: `Rollback ${suffix}`,
+        steps: [
+          {
+            stepId: `rollback-${suffix}`,
+            kind: "apply_config_patch",
+            target: "config",
+            payload: { revert: true },
+          },
+        ],
+      },
+      evidence: {
+        fingerprint: `sig-${suffix}`,
+        matchedLessonIds: [],
+        diagnosisId: `diag-${suffix}`,
+        recurrenceCount: 1,
+      },
+    };
+  }
+
+  function seedActionGraph(
+    suffix: string,
+    actionRepo: ReturnType<typeof createFridayAutoFixActionRepository>,
+    overrides: Partial<FridayAutoFixActionEntity> = {},
+  ): FridayAutoFixActionEntity {
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const plan = overrides.plan ?? buildPlan(suffix);
+
+    incidentRepo.insert(db.writer, {
+      incidentId: `inc-${suffix}`,
+      userId: "test-user",
+      ts: NOW,
+      category: "config",
+      severity: "medium",
+      signature: plan.evidence.fingerprint,
+      context: {},
+      autoFixEligible: true,
+      status: "open",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    diagnosisRepo.insert(db.writer, {
+      id: plan.evidence.diagnosisId,
+      incidentId: `inc-${suffix}`,
+      errorFingerprint: plan.evidence.fingerprint,
+      confidence: 0.9,
+      diagnosis: { summary: `Diagnosis ${suffix}` },
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const action: FridayAutoFixActionEntity = {
+      actionId: `action-${suffix}`,
+      incidentId: `inc-${suffix}`,
+      userId: "test-user",
+      riskTier: 1,
+      plan,
+      rollbackPlan: plan.rollbackPlan,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...overrides,
+    };
+    return actionRepo.insert(db.writer, action);
+  }
+
+  function buildService(
+    actionRepo = createFridayAutoFixActionRepository(),
+    rollbackService?: ReturnType<typeof createFridayAutoFixRollbackService>,
+  ): ReturnType<typeof createFridaySelfHealingApiService> {
+    const idGenerator = createTestIdGenerator();
+    const runtime = createFridaySelfLearningRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+    return createFridaySelfHealingApiService({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      incidentRepo: createFridayErrorIncidentRepository(),
+      diagnosisRepo: createFridayDiagnosisRecordRepository(),
+      lessonRepo: createFridayLearnedLessonRepository(),
+      actionRepo,
+      approvalRepo: createFridayApprovalRequestRepository(),
+      factRepo: createFridayPreferenceFactRepository(),
+      diagnosisService: runtime.diagnosis,
+      planService: runtime.autoFixPlan,
+      riskService: runtime.autoFixRisk,
+      executionService: runtime.autoFixExecution,
+      rollbackService: rollbackService ?? runtime.autoFixRollback,
+      approvalService: runtime.approvals,
+      autoFixDispatcher: runtime.autoFixDispatcher,
+      metricsService: runtime.metrics,
+      pipeline: runtime.pipeline,
+    });
   }
 
   it("returns a learning overview when incidents table is absent", () => {
@@ -221,5 +338,119 @@ describe("FridaySelfHealingApiService", () => {
     const lesson = lessonRepo.getByFingerprint(db.writer, incident!.signature);
     expect(lesson).toBeTruthy();
     expect(lesson!.title).toBe("Auto-fixed: retry workflow");
+  });
+
+  it("reports auto-fix action counts separately from verified repair outcomes", () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    seedActionGraph("verified", actionRepo, {
+      status: "applied",
+      outcome: "success",
+      appliedAt: NOW,
+      plan: buildPlan("verified", {
+        _configPatchApplied: true,
+        _configPatchRevision: 1,
+      }),
+    });
+    seedActionGraph("diagnostic", actionRepo, {
+      status: "applied",
+      outcome: "success",
+      appliedAt: NOW,
+      plan: buildPlan("diagnostic", {
+        _configPatchApplied: false,
+        _configPatchMode: "diagnostic_only",
+      }),
+    });
+    seedActionGraph("rolled-back", actionRepo, {
+      status: "rolled_back",
+      outcome: "failed",
+      rolledBackAt: NOW,
+    });
+    seedActionGraph("failed", actionRepo, {
+      status: "applied",
+      outcome: "failed",
+      appliedAt: NOW,
+    });
+    seedActionGraph("rejected", actionRepo, {
+      status: "rejected",
+      outcome: null,
+    });
+    seedActionGraph("pending", actionRepo);
+    seedActionGraph("rollback-failed", actionRepo, {
+      status: "applied",
+      outcome: "success",
+      appliedAt: NOW,
+      rollbackAttempted: true,
+      rollbackAttemptedAt: NOW,
+      rollbackSucceeded: false,
+      rollbackErrorMessage: "rollback failed verification",
+      plan: buildPlan("rollback-failed", {
+        _configPatchApplied: true,
+        _configPatchRevision: 2,
+      }),
+    });
+
+    const overview = buildService(actionRepo).getLearningOverview({ userId: "test-user", limit: 10 });
+
+    expect(overview.coverage.autoFixActions).toBe(7);
+    expect(overview.coverage.autoFixOutcomeBuckets).toMatchObject({
+      recordedActions: 7,
+      verifiedRepairs: 2,
+      diagnosticOnly: 1,
+      rolledBack: 1,
+      failed: 1,
+      rejected: 1,
+      pending: 1,
+      rollbackAttempted: 2,
+      rollbackFailed: 1,
+    });
+  });
+
+  it("persists failed rollback attempts into later action detail receipts", async () => {
+    const actionRepo = createFridayAutoFixActionRepository();
+    seedActionGraph("receipt", actionRepo, {
+      status: "applied",
+      outcome: "success",
+      appliedAt: NOW,
+      plan: buildPlan("receipt", {
+        _configPatchApplied: true,
+        _configPatchRevision: 3,
+      }),
+    });
+    const rollbackService = createFridayAutoFixRollbackService({
+      db,
+      actionRepo,
+      nowIso: () => NOW,
+      stepExecutors: {
+        apply_config_patch: async () => true,
+      },
+      stepVerifiers: {
+        apply_config_patch: async () => false,
+      },
+    });
+    const service = buildService(actionRepo, rollbackService);
+
+    const rollback = await service.rollbackAction({
+      actionId: "action-receipt",
+      userId: "test-user",
+      reason: "verification failed",
+    });
+
+    expect(rollback.result.rollbackAttempted).toBe(true);
+    expect(rollback.result.rollbackSucceeded).toBe(false);
+    expect(rollback.details.evidence.rollbackResult).toMatchObject({
+      rollbackAttempted: true,
+      rollbackAttemptedAt: NOW,
+      rollbackSucceeded: false,
+    });
+    expect(rollback.details.evidence.rollbackResult.rollbackErrorMessage).toContain("failed verification");
+
+    const reloaded = service.getAction({ actionId: "action-receipt", userId: "test-user" });
+    expect(reloaded?.evidence.rollbackResult).toMatchObject({
+      rollbackAttempted: true,
+      rollbackAttemptedAt: NOW,
+      rollbackSucceeded: false,
+    });
+    expect(reloaded?.evidence.rollbackResult.rollbackErrorMessage).toContain("failed verification");
+    expect(reloaded?.action.status).toBe("applied");
   });
 });

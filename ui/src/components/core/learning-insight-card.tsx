@@ -38,6 +38,7 @@ export function LearningInsightCard() {
 
   if (!overview) return null;
 
+  const autoFixBuckets = overview.coverage.autoFixOutcomeBuckets;
   const stats = [
     {
       icon: BookOpen,
@@ -55,8 +56,8 @@ export function LearningInsightCard() {
     },
     {
       icon: Shield,
-      value: overview.coverage.autoFixActions,
-      label: localize(locale, "修复动作", "Repair actions"),
+      value: autoFixBuckets.verifiedRepairs,
+      label: localize(locale, "已验证修复", "Verified repairs"),
       tone: "text-[color:var(--color-warning)]",
       bg: "bg-amber-50",
     },
@@ -90,13 +91,13 @@ export function LearningInsightCard() {
                 `Friday 已了解你的 ${String(overview.coverage.patterns)} 个工作习惯`,
                 `Friday has learned ${String(overview.coverage.patterns)} of your work habits`,
               )}
-            {overview.coverage.patterns > 0 && overview.coverage.autoFixActions > 0 &&
+            {overview.coverage.patterns > 0 && autoFixBuckets.recordedActions > 0 &&
               localize(
                 locale,
-                `，并记录了 ${String(overview.coverage.autoFixActions)} 个修复动作`,
-                `, and recorded ${String(overview.coverage.autoFixActions)} repair actions`,
+                `，并记录了 ${String(autoFixBuckets.recordedActions)} 个修复动作，其中 ${String(autoFixBuckets.verifiedRepairs)} 个已验证`,
+                `, and recorded ${String(autoFixBuckets.recordedActions)} repair actions, ${String(autoFixBuckets.verifiedRepairs)} verified`,
               )}
-            {overview.coverage.patterns > 0 && overview.coverage.autoFixActions === 0 && overview.coverage.lessons > 0 &&
+            {overview.coverage.patterns > 0 && autoFixBuckets.recordedActions === 0 && overview.coverage.lessons > 0 &&
               localize(
                 locale,
                 `，从过去的经验中学到了 ${String(overview.coverage.lessons)} 条教训`,
@@ -166,14 +167,14 @@ export function LearningInsightCard() {
                 )
               )}
 
-              {expandedStat === localize(locale, "修复动作", "Repair actions") && (
-                overview.rejectedFixes.length > 0 || overview.coverage.autoFixActions > 0 ? (
+              {expandedStat === localize(locale, "已验证修复", "Verified repairs") && (
+                overview.rejectedFixes.length > 0 || autoFixBuckets.recordedActions > 0 ? (
                   <div className="space-y-2">
                     <p className="text-xs text-[color:var(--color-text-secondary)]">
                       {localize(
                         locale,
-                        `共 ${String(overview.coverage.autoFixActions)} 次修复动作，完成状态以验证结果为准`,
-                        `${String(overview.coverage.autoFixActions)} repair action(s) total; verified outcomes remain the source of truth`,
+                        `共 ${String(autoFixBuckets.recordedActions)} 次修复动作：${String(autoFixBuckets.verifiedRepairs)} 次已验证修复，${String(autoFixBuckets.diagnosticOnly)} 次为诊断结果，${String(autoFixBuckets.rollbackFailed)} 次回滚失败可审计`,
+                        `${String(autoFixBuckets.recordedActions)} repair action(s): ${String(autoFixBuckets.verifiedRepairs)} verified repair(s), ${String(autoFixBuckets.diagnosticOnly)} diagnostic-only result(s), ${String(autoFixBuckets.rollbackFailed)} auditable rollback failure(s)`,
                       )}
                     </p>
                     {overview.rejectedFixes.slice(0, 3).map((item) => (
@@ -236,13 +237,13 @@ export function LearningInsightCard() {
             </div>
           )}
 
-          {overview.coverage.autoFixActions > 0 && overview.rollbackHotspots.length === 0 && (
+          {autoFixBuckets.recordedActions > 0 && overview.rollbackHotspots.length === 0 && (
             <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2">
               <p className="text-xs text-emerald-700">
                 {localize(
                   locale,
-                  `Friday 已记录 ${String(overview.coverage.autoFixActions)} 个修复动作，详情需以验证结果为准。`,
-                  `Friday recorded ${String(overview.coverage.autoFixActions)} repair action(s); verified outcomes remain the source of truth.`,
+                  `Friday 已记录 ${String(autoFixBuckets.recordedActions)} 个修复动作，${String(autoFixBuckets.verifiedRepairs)} 个已验证完成。`,
+                  `Friday recorded ${String(autoFixBuckets.recordedActions)} repair action(s); ${String(autoFixBuckets.verifiedRepairs)} verified repair(s).`,
                 )}
               </p>
             </div>

@@ -59,6 +59,11 @@ export type FridayDiagnosisIncidentStatus = "open" | "mitigated" | "resolved";
 export type FridayAutoFixRiskTier = 0 | 1 | 2;
 export type FridayAutoFixActionStatus = "planned" | "applied" | "rolled_back" | "rejected";
 export type FridayAutoFixOutcome = "success" | "failed" | null;
+export type FridayAutoFixRepairOutcome =
+  | "diagnostic_only"
+  | "verified_repair"
+  | "rolled_back"
+  | "failed";
 export type FridayApprovalRequestStatus = "pending" | "approved" | "rejected" | "expired";
 export type FridayReleaseChannelKind =
   | "sparkle"
@@ -243,6 +248,10 @@ export interface FridayAutoFixActionEntity {
   outcome: FridayAutoFixOutcome;
   appliedAt?: string;
   rolledBackAt?: string;
+  rollbackAttempted?: boolean;
+  rollbackAttemptedAt?: string;
+  rollbackSucceeded?: boolean;
+  rollbackErrorMessage?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -326,12 +335,16 @@ export interface FridayFixExecutionEvidence {
     status: FridayAutoFixActionStatus;
     outcome: FridayAutoFixOutcome;
     appliedAt?: string;
+    repairOutcome: FridayAutoFixRepairOutcome;
+    changedKeys?: string[];
   };
   rollbackResult: {
     available: boolean;
     rolledBackAt?: string;
     rollbackAttempted: boolean;
+    rollbackAttemptedAt?: string;
     rollbackSucceeded: boolean;
+    rollbackErrorMessage?: string;
   };
   acceptanceResult: {
     passed: boolean;

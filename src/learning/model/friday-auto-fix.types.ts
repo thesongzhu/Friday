@@ -86,6 +86,10 @@ export interface FridayAutoFixActionRow {
   outcome: "success" | "failed" | null;
   applied_at: string | null;
   rolled_back_at: string | null;
+  rollback_attempted: 0 | 1;
+  rollback_attempted_at: string | null;
+  rollback_succeeded: 0 | 1;
+  rollback_error_message: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +105,10 @@ export interface FridayAutoFixActionEntity {
   outcome: FridayAutoFixOutcome;
   appliedAt?: ISODateTime;
   rolledBackAt?: ISODateTime;
+  rollbackAttempted?: boolean;
+  rollbackAttemptedAt?: ISODateTime;
+  rollbackSucceeded?: boolean;
+  rollbackErrorMessage?: string;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }

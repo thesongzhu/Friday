@@ -213,6 +213,17 @@ describe("home self-repair", () => {
         incidents: 0,
         diagnoses: 0,
         autoFixActions: 0,
+        autoFixOutcomeBuckets: {
+          recordedActions: 0,
+          verifiedRepairs: 0,
+          diagnosticOnly: 0,
+          failed: 0,
+          rolledBack: 0,
+          rejected: 0,
+          pending: 0,
+          rollbackAttempted: 0,
+          rollbackFailed: 0,
+        },
       },
     });
     mocks.runReadyAutoFixActions.mockResolvedValue({
@@ -306,5 +317,53 @@ describe("home self-repair", () => {
       "已运行 2 项修复动作，完成状态以验证证据为准",
     );
     expect(getByTestId("home-self-repair-result").textContent).toContain("用户已有数据不会被清空或重置");
+  });
+
+  it("shows verified repair buckets separately from recorded repair actions", async () => {
+    mocks.getOverview.mockResolvedValue({
+      lessons: [],
+      patterns: [],
+      routeAdjustments: [],
+      routeBiases: [],
+      operatorPins: [],
+      penaltyFacts: [],
+      recentDecisionDiffs: [],
+      blockedRoutes: [],
+      rejectedFixes: [],
+      recentRejectedFixes: [],
+      rollbackHotspots: [],
+      coverage: {
+        lessons: 0,
+        patterns: 0,
+        routeAdjustments: 0,
+        recentDecisionDiffs: 0,
+        blockedRoutes: 0,
+        rejectedFixes: 0,
+        rollbackHotspots: 0,
+        incidents: 1,
+        diagnoses: 1,
+        autoFixActions: 4,
+        autoFixOutcomeBuckets: {
+          recordedActions: 4,
+          verifiedRepairs: 1,
+          diagnosticOnly: 1,
+          failed: 1,
+          rolledBack: 0,
+          rejected: 0,
+          pending: 1,
+          rollbackAttempted: 1,
+          rollbackFailed: 1,
+        },
+      },
+    });
+
+    await renderPage();
+    await act(async () => {
+      await flushCycles(12);
+    });
+
+    expect(container!.textContent).toContain("Friday 最近记录了 4 次修复动作");
+    expect(container!.textContent).toContain("其中 1 次已验证修复、1 次为诊断结果");
+    expect(container!.textContent).toContain("已验证修复");
   });
 });
