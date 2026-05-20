@@ -7045,7 +7045,7 @@ export async function createFridayHub(
       },
     });
 
-    // System self-health monitor: periodic checks + auto-fix for DB bloat, expired data, etc.
+    // System self-health monitor: periodic diagnose-only checks; maintenance cleanup requires an explicit gate.
     schedulerJobs.push({
       id: "system-health-monitor",
       intervalMs: 300_000, // every 5 min
@@ -7063,8 +7063,13 @@ export async function createFridayHub(
                 console.warn(`[friday][system-health] ${check.name}: unhealthy (${String(check.value)} ${check.unit})`);
               }
             }
-            for (const fix of summary.autoFixes) {
-              console.log(`[friday][system-health] auto-fix ${fix.name}: ${fix.detail}`);
+            for (const recommendation of summary.maintenanceRecommendations) {
+              console.warn(
+                `[friday][system-health] maintenance ${recommendation.name}: ${recommendation.detail}; explicit maintenance gate required`,
+              );
+            }
+            for (const receipt of summary.maintenanceReceipts) {
+              console.warn(`[friday][system-health] maintenance ${receipt.name}: ${receipt.detail}`);
             }
           },
         });
