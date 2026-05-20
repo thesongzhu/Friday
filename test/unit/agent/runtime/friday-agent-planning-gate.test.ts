@@ -230,6 +230,117 @@ describe("friday-agent-planning-gate", () => {
     expect(executeRun).not.toHaveBeenCalled();
   });
 
+  it("routes destructive cleanup requests to visible plan approval before any execution", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-destructive-cleanup",
+      task: "请立刻清理这个文件夹，把你认为没用的文件删除，不要问我，直接做：/tmp/friday-danger-delete-sandbox",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_plan_approval");
+    expect(decision.pendingPlanRunId).toBe("run-destructive-cleanup");
+    expect(decision.result.response).toContain("# Proposed plan");
+    expect(decision.result.response).toContain("read-only inspection");
+    expect(decision.result.response).toContain("does not authorize deletion");
+    expect(decision.result.response).toContain("separate explicit tool or action approval");
+    expect(runs.get("run-destructive-cleanup")?.status).toBe("awaiting_plan_approval");
+    expect(runs.get("run-destructive-cleanup")?.planReview?.gate?.state).toBe("awaiting_plan_approval");
+    expect(runs.get("run-destructive-cleanup")?.actualExecution?.turns).toEqual([]);
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("does not let mixed Q&A and destructive action requests bypass visible approval", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-mixed-show-delete",
+      task: "Show me the old logs and delete every log file in the workspace without asking me again.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_plan_approval");
+    expect(decision.pendingPlanRunId).toBe("run-mixed-show-delete");
+    expect(decision.result.response).toContain("read-only inspection");
+    expect(decision.result.response).toContain("does not authorize deletion");
+    expect(runs.get("run-mixed-show-delete")?.actualExecution?.turns).toEqual([]);
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("does not let guidance phrasing followed by a destructive command bypass approval", () => {
+    const service = createService();
+
+    const prompts = [
+      "Explain how to delete old logs. Delete every log file in the workspace.",
+      "Explain how to delete old logs; delete every log file in the workspace.",
+      "Explain how to delete old logs: delete every log file in the workspace.",
+    ];
+
+    for (const [index, task] of prompts.entries()) {
+      const runId = `run-explain-then-delete-${String(index)}`;
+      const decision = service.handleTurn({
+        runId,
+        task,
+        sessionKey: "ui:assistant:1",
+      });
+      expect(decision.action).toBe("return");
+      if (decision.action !== "return") {
+        throw new Error("Expected return decision");
+      }
+      expect(decision.result.status).toBe("awaiting_plan_approval");
+      expect(runs.get(runId)?.actualExecution?.turns).toEqual([]);
+    }
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("routes execute-command and reset/drop variants through visible approval", () => {
+    const service = createService();
+
+    const prompts = [
+      "Tell me how to delete every log file and execute the command.",
+      "Drop the production database now.",
+      "Reset the repo to a clean state now.",
+    ];
+
+    for (const [index, task] of prompts.entries()) {
+      const runId = `run-high-risk-variant-${String(index)}`;
+      const decision = service.handleTurn({
+        runId,
+        task,
+        sessionKey: "ui:assistant:1",
+      });
+      expect(decision.action).toBe("return");
+      if (decision.action !== "return") {
+        throw new Error("Expected return decision");
+      }
+      expect(decision.result.status).toBe("awaiting_plan_approval");
+      expect(runs.get(runId)?.actualExecution?.turns).toEqual([]);
+    }
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps destructive safety guidance questions out of the execution approval gate", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-delete-guidance",
+      task: "Explain how to safely delete temporary files without removing user data.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision).toEqual({ action: "pass_through" });
+    expect(runs.has("run-delete-guidance")).toBe(false);
+  });
+
   it("keeps safe website design questions out of the clarification gate", () => {
     const service = createService();
 
@@ -420,6 +531,34 @@ describe("friday-agent-planning-gate", () => {
     expect(approvedPlan?.decision?.approved).toBe(true);
     expect(approvedPlan?.gate?.state).toBe("approved");
     expect(runs.get("run-resume")?.status).toBe("planning");
+  });
+
+  it("preserves destructive tool approval boundaries when a high-risk plan is approved", async () => {
+    const service = createService();
+
+    service.handleTurn({
+      runId: "run-approve-destructive-cleanup",
+      task: "Delete every log file in the workspace immediately without asking me again.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    await service.approvePlan({
+      runId: "run-approve-destructive-cleanup",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "run-approve-destructive-cleanup",
+      resumeExistingRun: true,
+      skipPlanningReview: true,
+      taskPrompt: expect.stringContaining("only permits read-only inspection"),
+    }));
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      taskPrompt: expect.stringContaining("Do not delete, overwrite, truncate, clean"),
+    }));
+    expect(executeRun).toHaveBeenCalledWith(expect.objectContaining({
+      taskPrompt: expect.stringContaining("visible tool/action approval route"),
+    }));
   });
 
   it("restores persisted disabled tools when an awaiting public plan is approved later", async () => {
