@@ -4,6 +4,7 @@ import {
   buildAssistantRecoveryPaths,
   buildAssistantQuickActions,
   describeIntentConfidence,
+  getNextClarificationQuestion,
   summarizeActionStatus,
   summarizeSkillEvidence,
   toneForIssue,
@@ -16,6 +17,7 @@ import type {
   FridayWorkflowOverview,
 } from "@friday-operator-client";
 import type {
+  AgentRunRecord,
   FridayFleetSatelliteCard,
   FridayPendingSatellitePairingRequest,
   SkillCatalogItem,
@@ -183,6 +185,44 @@ describe("assistant view models", () => {
     };
 
     expect(summarizeSkillEvidence(evidence)).toBe("Ready to approve and stage a candidate for lifecycle review.");
+  });
+
+  it("selects the next unanswered clarification question for active runs", () => {
+    const run = {
+      status: "awaiting_clarification",
+      planReview: {
+        plan: {
+          task: "Build me a website",
+          stepCount: 3,
+          description: "Planning gate for major decision",
+        },
+        gate: {
+          kind: "major_decision",
+          state: "awaiting_clarification",
+          clarificationQuestions: [
+            "What outcome matters most?",
+            "What constraints matter?",
+          ],
+          answers: [{ question: "What outcome matters most?", answer: "A simple portfolio." }],
+        },
+      },
+    } as Pick<AgentRunRecord, "status" | "planReview">;
+
+    expect(getNextClarificationQuestion(run)).toBe("What constraints matter?");
+    expect(getNextClarificationQuestion({
+      ...run,
+      planReview: {
+        ...run.planReview!,
+        gate: {
+          ...run.planReview!.gate!,
+          answers: [
+            { question: "What outcome matters most?", answer: "A simple portfolio." },
+            { question: "What constraints matter?", answer: "No backend." },
+          ],
+        },
+      },
+    })).toBeNull();
+    expect(getNextClarificationQuestion({ ...run, status: "awaiting_plan_approval" })).toBeNull();
   });
 
   it("prioritizes quick assistant actions for issue, workflow, fleet, and alert recovery", () => {

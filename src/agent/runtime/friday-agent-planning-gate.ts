@@ -82,6 +82,8 @@ const GENERATE_WORKFLOW_HINTS = /\b((?:generate|create|build|set up|make) (?:a )
 const DEPLOY_WORKFLOW_HINTS = /\b(deploy workflow|publish workflow|ship workflow|roll out workflow)\b/i;
 const EXPORT_WORKFLOW_HINTS = /\b(export workflow|workflow bundle|package workflow)\b/i;
 const MAJOR_DECISION_HINTS = /\b(architecture|architect|strategy|migration|roadmap|implementation plan|rollout plan|major refactor|large refactor|overhaul|choose between|decision|tradeoff|design the approach)\b/i;
+const VAGUE_DELIVERABLE_HINTS = /\b(?:build|create|make|design|set up|put together|help me (?:build|create|make|design))\b[\s\S]{0,80}\b(?:website|web site|site|web app|app|landing page|dashboard|tool|project|prototype|feature|product)\b/i;
+const VAGUE_IMPROVEMENT_HINTS = /\b(?:make|improve|prepare|turn)\b[\s\S]{0,80}\b(?:friday|this app|the app|this project|the project|the repo|repository|workspace)\b[\s\S]{0,80}\b(?:better|production[- ]ready|usable|ready|safer|stable|polished)\b/i;
 const VAGUE_STRATEGIC_PLAN_HINTS = /\b(workflow plan|production[- ]ready|intentionally vague|vague request|ask the missing clarification questions|wait for (?:my|our|the )?answers before)\b/i;
 const CONSTRAINT_HINTS = /\b(must|should|avoid|without|constraint|permission|runtime|read.?only|safe|safely|don't|do not|cannot)\b/i;
 const DETAIL_HINTS = /\b(trigger|input|output|destination|runtime|workspace|browser|provider|channel|timeline|success|goal|constraint|notify|deploy|export)\b/i;
@@ -149,6 +151,8 @@ function detectPlanningKind(task: string, reviewRequired?: boolean): FridayPlann
   if (DEPLOY_WORKFLOW_HINTS.test(normalized)) return "deploy_workflow";
   if (EXPORT_WORKFLOW_HINTS.test(normalized)) return "export_workflow_bundle";
   if (GENERATE_WORKFLOW_HINTS.test(normalized)) return "generate_workflow";
+  if (VAGUE_DELIVERABLE_HINTS.test(normalized)) return "major_decision";
+  if (VAGUE_IMPROVEMENT_HINTS.test(normalized)) return "major_decision";
   if (VAGUE_STRATEGIC_PLAN_HINTS.test(normalized)) return "major_decision";
   if (MAJOR_DECISION_HINTS.test(normalized)) return "major_decision";
   return null;
@@ -159,6 +163,9 @@ function hasPlanningActionHint(task: string): boolean {
     || GENERATE_WORKFLOW_HINTS.test(task)
     || DEPLOY_WORKFLOW_HINTS.test(task)
     || EXPORT_WORKFLOW_HINTS.test(task)
+    || VAGUE_DELIVERABLE_HINTS.test(task)
+    || VAGUE_IMPROVEMENT_HINTS.test(task)
+    || VAGUE_STRATEGIC_PLAN_HINTS.test(task)
     || MAJOR_DECISION_HINTS.test(task);
 }
 

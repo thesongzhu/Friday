@@ -223,6 +223,7 @@ function buildAgentRunDecisionTrace(
   const planEventNames = new Set([
     "agent.run.planning",
     "agent.run.plan_ready",
+    "agent.run.awaiting_clarification",
     "agent.run.awaiting_plan_approval",
     "agent.run.plan_approved",
     "agent.run.plan_rejected",
@@ -433,6 +434,18 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(readStringField(payload, "planKind") ? { planKind: readStringField(payload, "planKind") } : {}),
       hasPlanMarkdown: typeof payload.planMarkdown === "string" && payload.planMarkdown.length > 0,
       hasPlanSummary: typeof payload.planSummary === "string" && payload.planSummary.length > 0,
+    };
+  }
+  if (event.eventName === "agent.run.awaiting_clarification") {
+    const questions = Array.isArray(payload.questions)
+      ? payload.questions.filter((question): question is string => typeof question === "string" && question.trim().length > 0)
+      : [];
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      status: "awaiting_clarification",
+      ...(readStringField(payload, "planKind") ? { planKind: readStringField(payload, "planKind") } : {}),
+      hasMessage: typeof payload.message === "string" && payload.message.length > 0,
+      questionCount: questions.length,
     };
   }
   if (event.eventName === "agent.run.awaiting_plan_approval") {
@@ -1161,6 +1174,7 @@ export function createFridayAgentRoutes(
           "agent.run.started",
           "agent.run.planning",
           "agent.run.plan_ready",
+          "agent.run.awaiting_clarification",
           "agent.run.awaiting_plan_approval",
           "agent.run.plan_approved",
           "agent.run.plan_rejected",

@@ -53,6 +53,7 @@ import {
 } from "@/lib/system/view-models";
 import { buildSkillHref } from "@/lib/skills/view-models";
 import { trackStarterSkillBatch, trackStarterSkillEvent } from "@/lib/skills/starter-skill-telemetry";
+import { getNextClarificationQuestion } from "@/lib/assistant/view-models";
 import {
   describeRunHealth,
   displayRunTask,
@@ -692,6 +693,7 @@ export function AgentPage() {
     || currentRun?.planReview?.gate?.planMarkdown
     || currentRun?.planReview?.gate?.planSummary
     || "";
+  const nextClarificationQuestion = getNextClarificationQuestion(currentRun);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr]">
@@ -895,9 +897,9 @@ export function AgentPage() {
                   </div>
                 ) : null}
               </div>
-              {currentRun?.status === "awaiting_clarification" && currentRun.planReview?.gate?.clarificationQuestions?.length ? (
+              {nextClarificationQuestion ? (
                 <div className="mb-3 rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] p-3 text-sm text-[color:var(--color-text-primary)]">
-                  {locale === "zh" ? "等待澄清。下一个问题：" : "Waiting for clarification. Next question: "}{currentRun.planReview.gate.clarificationQuestions[0]}
+                  {locale === "zh" ? "等待澄清。下一个问题：" : "Waiting for clarification. Next question: "}{nextClarificationQuestion}
                 </div>
               ) : null}
               {currentRun?.status === "awaiting_plan_approval" && currentRun.planReview?.gate?.approvalPrompt ? (

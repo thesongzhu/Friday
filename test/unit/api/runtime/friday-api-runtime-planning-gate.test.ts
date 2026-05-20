@@ -358,4 +358,69 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       .map((message) => message.contentText);
     expect(assistantMessages).toContain(approved.response);
   });
+
+  it("persists vague website requests as typed awaiting clarification with audit evidence", async () => {
+    db = createTestDb();
+    const idGenerator = makeIdGenerator();
+    const eventEmitter = createFridayAgentEventEmitter();
+    const agentRuntime: FridayAgentRuntime = {
+      executeRun: vi.fn(async () => {
+        throw new Error("Vague website request should stop at the planning gate.");
+      }),
+      registerTool: vi.fn(),
+      resumeStaleRunsOnBoot: vi.fn(() => 0),
+    };
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      providerService: makeProviderService(),
+      agentRuntime,
+      agentEventEmitter: eventEmitter,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      computeChecksum: (content: string) => `checksum-${content.length}`,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
+    const auditRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.audit");
+    expect(startRoute).toBeDefined();
+    expect(auditRoute).toBeDefined();
+
+    const initial = await startRoute!.handler({
+      body: {
+        task: "Build me a small website for my side project.",
+        sessionKey: "ui:vague-website:test",
+      },
+      principal: makeBoundPrincipal("vague-website-user"),
+    } as never);
+
+    expect(initial.status).toBe("awaiting_clarification");
+    expect(initial.response).toContain("Question 1/2");
+    expect(agentRuntime.executeRun).not.toHaveBeenCalled();
+
+    const audit = await auditRoute!.handler({
+      params: { runId: initial.runId },
+      principal: makeBoundPrincipal("vague-website-user"),
+    } as never);
+
+    expect(audit.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "agent.run.awaiting_clarification",
+          payload: expect.objectContaining({
+            status: "awaiting_clarification",
+            planKind: "major_decision",
+            hasMessage: true,
+            questionCount: 2,
+          }),
+        }),
+      ]),
+    );
+    expect(audit.decisionTrace.run.status).toBe("awaiting_clarification");
+    expect(audit.decisionTrace.plan.state).toBe("awaiting_clarification");
+    expect(audit.decisionTrace.plan.eventPointers.length).toBeGreaterThanOrEqual(2);
+  });
 });
