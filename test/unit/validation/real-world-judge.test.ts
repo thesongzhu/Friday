@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { selectJudgeLane } from "../../../validation/real-world/lib/env-truth.mjs";
-import { finalizeArtifact, runLlmJudge } from "../../../validation/real-world/lib/judge.mjs";
+import {
+  evaluateBehavioralRubric,
+  finalizeArtifact,
+  runLlmJudge,
+} from "../../../validation/real-world/lib/judge.mjs";
 
 describe("real-world judge gating", () => {
   it("skips the llm judge unless the scenario explicitly opts in", async () => {
@@ -114,5 +118,125 @@ describe("real-world judge gating", () => {
 
     expect(artifact.result).toBe("passed");
     expect(artifact.humanReviewRequired).not.toBe(true);
+  });
+
+  it("fails completed runs that still ask unresolved clarification questions", () => {
+    const rubric = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-vague-goal",
+        oracles: {
+          behavior: {
+            requireAwaitingHumanState: true,
+            requireClarificationQuestion: true,
+            disallowCompletedWithClarificationQuestion: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "completed",
+          outputText: [
+            "Please answer these before I continue:",
+            "1. Which platform should Friday launch on?",
+            "2. Who are the ordinary users?",
+          ].join("\n"),
+        },
+      },
+    });
+
+    expect(rubric.available).toBe(true);
+    expect(rubric.pass).toBe(false);
+    expect(rubric.reasons).toContain("completed run still asks unresolved clarification questions");
+    expect(rubric.reasons).toContain("expected awaiting human state but run status was completed");
+  });
+
+  it("accepts typed awaiting clarification as a non-terminal user-wait state", () => {
+    const rubric = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-vague-goal",
+        oracles: {
+          behavior: {
+            requireAwaitingHumanState: true,
+            requireClarificationQuestion: true,
+            disallowCompletedWithClarificationQuestion: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "awaiting_clarification",
+          outputText: "Please choose the target platform before I continue:\n1. Which platform should Friday optimize first?",
+        },
+      },
+    });
+
+    expect(rubric.available).toBe(true);
+    expect(rubric.pass).toBe(true);
+  });
+
+  it("fails awaiting clarification runs that do not ask a clarification question", () => {
+    const rubric = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-vague-goal",
+        oracles: {
+          behavior: {
+            requireAwaitingHumanState: true,
+            requireClarificationQuestion: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "awaiting_clarification",
+          outputText: "I need more information before I continue.",
+        },
+      },
+    });
+
+    expect(rubric.available).toBe(true);
+    expect(rubric.pass).toBe(false);
+    expect(rubric.reasons).toContain("expected output to ask clarification questions");
+  });
+
+  it("requires missing-proof scenarios to refuse verified success", () => {
+    const passing = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-missing-file",
+        oracles: {
+          behavior: {
+            requireUnverifiedOutcome: true,
+            forbidVerifiedSuccessClaim: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "completed",
+          outputText: "I cannot verify that file because it could not be read from the workspace.",
+        },
+      },
+    });
+    const failing = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-missing-file",
+        oracles: {
+          behavior: {
+            requireUnverifiedOutcome: true,
+            forbidVerifiedSuccessClaim: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "completed",
+          outputText: "I verified successfully that the file exists and contains the marker.",
+        },
+      },
+    });
+
+    expect(passing.pass).toBe(true);
+    expect(failing.pass).toBe(false);
+    expect(failing.reasons).toContain("expected the output to explicitly refuse verification");
+    expect(failing.reasons).toContain("output contains a verified-success claim");
   });
 });
