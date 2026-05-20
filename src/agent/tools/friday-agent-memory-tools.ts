@@ -1,5 +1,9 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
-import type { FridayMemoryService } from "#memory";
+import type {
+  FridayMemoryGuardContext,
+  FridayMemoryGuardServiceFactory,
+  FridayMemoryService,
+} from "#memory";
 import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
 import type { FridayLearningEventAppendInput } from "#ledger";
 import {
@@ -25,6 +29,7 @@ export interface CreateFridayAgentMemoryToolsDeps {
   idGenerator?: () => string;
   nowIso?: () => string;
   resolveSessionMemoryNamespace?: (sessionKey: string) => Promise<string | undefined>;
+  memoryGuardFactory?: FridayMemoryGuardServiceFactory;
   /**
    * Optional session or run identifier used to scope the memory namespace.
    * When provided, the default namespace "agent" becomes "agent:<sessionId>"
@@ -350,6 +355,17 @@ function shouldIncludeLearnedFacts(namespace: string | undefined): boolean {
     || normalized === "agent";
 }
 
+function shouldIncludeGuardedPrincipalMemory(namespace: string | undefined): boolean {
+  if (!namespace) {
+    return true;
+  }
+  const normalized = normalizeMemoryNamespace(namespace);
+  return normalized === "preference"
+    || normalized === "user"
+    || normalized === "default"
+    || normalized === "agent";
+}
+
 function taskPromptLooksLikeQuestion(taskPrompt: string | undefined): boolean {
   if (!taskPrompt || taskPrompt.trim().length === 0) {
     return false;
@@ -386,6 +402,28 @@ function resolvePrincipalId(
     return fromArgs.trim();
   }
   return undefined;
+}
+
+function resolvePrincipalMemoryGuardContext(input: {
+  args: Record<string, unknown>;
+  signal: AbortSignal;
+}): FridayMemoryGuardContext | undefined {
+  const executionContext = getFridayAgentToolExecutionContext(input.signal);
+  const principalId = resolvePrincipalId(input.args, input.signal);
+  const hubId = normalizeAgentMemoryScopeId(executionContext?.tenantContext?.hubId);
+  const userId = normalizeAgentMemoryScopeId(executionContext?.tenantContext?.userId)
+    ?? principalId;
+  if (!principalId || !hubId || !userId) {
+    return undefined;
+  }
+  return {
+    principalId,
+    subject: {
+      hubId,
+      userId,
+      accessLevel: "tenant",
+    },
+  };
 }
 
 function resolveMemoryScopeId(input: {
@@ -564,6 +602,15 @@ function createMemorySearchTool(
           namespace: scopedNamespace,
           limit: implicitSessionNamespace ? Math.max(limit * 2, limit) : limit,
         });
+        const memoryGuardFactory = deps.memoryGuardFactory;
+        const guardedContext = memoryGuardFactory && shouldIncludeGuardedPrincipalMemory(explicitNamespace)
+          ? resolvePrincipalMemoryGuardContext({ args, signal })
+          : undefined;
+        const guardedResults = guardedContext && memoryGuardFactory
+          ? await memoryGuardFactory.forContext(guardedContext).search(query, {
+            limit: Math.max(limit * 2, limit),
+          })
+          : [];
         const shouldUseSessionFallback =
           Boolean(implicitSessionNamespace && sessionId)
           && (
@@ -582,7 +629,10 @@ function createMemorySearchTool(
             })
             : [];
         const dedupedResults = (() => {
-          const merged = [...scopedResults, ...sessionLexicalCandidates];
+          const merged = [...scopedResults, ...guardedResults, ...sessionLexicalCandidates];
+          const directlySearchedIds = new Set(
+            [...scopedResults, ...guardedResults].map((candidate) => candidate.item.id),
+          );
           const seen = new Set<string>();
           const itemsByContent = new Map<string, FridayMemorySearchResult>();
           for (const result of merged) {
@@ -590,7 +640,7 @@ function createMemorySearchTool(
               continue;
             }
             seen.add(result.item.id);
-            const boostedResult = scopedResults.some((candidate) => candidate.item.id === result.item.id)
+            const boostedResult = directlySearchedIds.has(result.item.id)
               ? { ...result, score: result.score + 1 }
               : result;
             const adjustedResult = applyMemoryCandidateScoreAdjustments(boostedResult, sessionId);

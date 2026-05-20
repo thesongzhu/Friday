@@ -27,6 +27,7 @@ const DAILY_CORE_SCENARIOS = [
   "l3-long-summary-direct",
   "l3-json-extraction",
   "l3-multi-turn-memory",
+  "l3-memory-api-store-agent-recall-proof",
   "l4-file-tool-roundtrip",
   "l5-workflow-approval-roundtrip",
 ];

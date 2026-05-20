@@ -25,13 +25,16 @@ describe("real-world executors", () => {
     responseText = "Friday",
     status = "completed",
     planReview,
+    request,
   }: {
     artifactDir?: string;
     responseText?: string;
     status?: string;
     planReview?: unknown;
+    request?: (method: string, routePath: string, options?: unknown) => Promise<unknown>;
   }) {
     return {
+      request,
       async startAgentRun() {
         return { data: { runId: "agent-run-1", toolCallCount: artifactDir ? 1 : 0 } };
       },
@@ -51,6 +54,47 @@ describe("real-world executors", () => {
             },
           },
         };
+      },
+    };
+  }
+
+  function createStatefulMemoryRecallScenario() {
+    return {
+      id: "l3-memory-api-store-agent-recall-proof",
+      entrySurface: "/v1/memory/store -> /v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P0",
+      realWorldPrompt: "Use memory_search and answer BARB.",
+      execution: {
+        kind: "agent_run",
+        setupRequests: [
+          {
+            method: "POST",
+            path: "/v1/memory/store",
+            body: {
+              namespace: "phase-22d-proof",
+              content: "codename BARB",
+            },
+            expectStatus: 200,
+            expectOkEnvelope: true,
+            jsonPathsPresent: ["data.item.id"],
+          },
+        ],
+        cleanupRequests: [
+          {
+            method: "DELETE",
+            path: "/v1/memory/items/{{setupResponses.0.json.data.item.id}}",
+            expectStatus: 200,
+            expectOkEnvelope: true,
+            jsonPathsPresent: ["data.deleted"],
+          },
+        ],
+        cleanupFailureIsFailure: true,
+        expectedOutputSubstrings: ["BARB"],
+        expectedToolNames: ["memory_search"],
+        expectedToolResultSubstrings: ["BARB"],
+        expectToolCallCountMin: 1,
+        constraints: { readOnly: true },
       },
     };
   }
@@ -261,6 +305,73 @@ describe("real-world executors", () => {
     expect(artifact.notes).toContain(
       "expected failed read tool evidence for missing workspace file docs/friday-strict-verifier-missing-proof-file.md",
     );
+  });
+
+  it("fails stateful agent scenarios when required cleanup does not satisfy expectations", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-executor-"));
+    const artifactDir = join(tempRoot, ".friday", "agent-runs", "agent-run-1");
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(
+      join(artifactDir, "tool-calls.json"),
+      JSON.stringify([
+        {
+          toolName: "memory_search",
+          args: { query: "codename" },
+          result: { isError: false, content: '[{"content":"codename BARB"}]' },
+        },
+      ]),
+      "utf8",
+    );
+
+    const artifact = await executeScenario({
+      runId: "validation-run-stateful-cleanup",
+      suite: "smoke",
+      scenario: createStatefulMemoryRecallScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir,
+        responseText: "BARB",
+        request: async (method, routePath) => {
+          if (method === "POST" && routePath === "/v1/memory/store") {
+            return {
+              status: 200,
+              ok: true,
+              json: { ok: true, data: { item: { id: "memory-1" } } },
+              text: "",
+              durationMs: 1,
+            };
+          }
+          return {
+            status: 500,
+            ok: false,
+            json: { ok: false, error: { code: "CLEANUP_FAILED" } },
+            text: "",
+            durationMs: 1,
+          };
+        },
+      }),
+      envTruth: {},
+      reportRoot: tempRoot,
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("failed");
+    expect(artifact.failureClass).toBe("cleanup");
+    expect(artifact.notes).toContain(
+      "cleanup request 1 failed expectations: expected HTTP 200 but received 500; expected ok=true envelope; missing JSON path: data.deleted",
+    );
+    expect(artifact.raw.cleanupResponses).toEqual([
+      expect.objectContaining({
+        method: "DELETE",
+        path: "/v1/memory/items/memory-1",
+        status: 500,
+        expectationFailures: [
+          "expected HTTP 200 but received 500",
+          "expected ok=true envelope",
+          "missing JSON path: data.deleted",
+        ],
+      }),
+    ]);
   });
 
   describe("Phase 14.5B module_28b: auto_fix_doctor_roundtrip", () => {

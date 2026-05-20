@@ -994,6 +994,60 @@ export const REAL_WORLD_SCENARIOS = [
     },
     suites: ["daily", "nightly", "weekly"],
   }),
+  agentScenario({
+    id: "l3-memory-api-store-agent-recall-proof",
+    layer: "L3",
+    productArea: "memory",
+    entrySurface: "/v1/memory/store -> /v1/agent/runs",
+    routeFamily: "memory_recall",
+    providerLane: "default_only",
+    riskTier: "high",
+    realWorldPrompt:
+      "你需要回答这个 proof run 的项目 codename。请先使用 memory_search 从 Friday 记忆中查找，不要编造。marker=phase22d-rgg-{{timestamp}}。只回答 codename。",
+    execution: {
+      setupRequests: [
+        {
+          method: "POST",
+          path: "/v1/memory/store",
+          body: {
+            namespace: "phase-22d-proof",
+            content: "For this proof run, the user's project codename is BARB-{{timestamp}}. marker=phase22d-rgg-{{timestamp}}.",
+            source: "phase-22d-real-world-validation",
+            tags: ["phase-22d", "memory-recall", "real-world-validation"],
+          },
+          expectStatus: 200,
+          expectOkEnvelope: true,
+          jsonPathsPresent: ["data.item.id", "data.item.namespace", "data.item.content"],
+        },
+      ],
+      cleanupRequests: [
+        {
+          method: "DELETE",
+          path: "/v1/memory/items/{{setupResponses.0.json.data.item.id}}",
+          expectStatus: 200,
+          expectOkEnvelope: true,
+          jsonPathsPresent: ["data.deleted"],
+        },
+      ],
+      cleanupFailureIsFailure: true,
+      constraints: { readOnly: true },
+      taskProfile: { id: "deterministic" },
+      timeoutMs: 240_000,
+      expectedOutputSubstrings: ["BARB-{{timestamp}}"],
+      expectedToolNames: ["memory_search"],
+      expectedToolResultSubstrings: ["BARB-{{timestamp}}"],
+      expectToolCallCountMin: 1,
+    },
+    oracles: {
+      behavior: {
+        expectedSubstrings: ["BARB-"],
+        forbiddenSubstrings: ["找不到", "没有找到", "无法找到", "not found", "could not find"],
+      },
+    },
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P0",
+    tags: ["phase-22d", "memory", "agent-recall", "api-memory-store"],
+  }),
   // Phase 13.5A Module 26a/26d — task-workflows read-only boundary catalog.
   //
   // Honesty note: this scenario only probes that the read-only boundary
