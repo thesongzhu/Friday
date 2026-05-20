@@ -12,6 +12,7 @@ describe("FridaySystemHealthMonitor", () => {
   let monitor: FridaySystemHealthMonitor;
   const NOW = "2025-06-15T10:00:00.000Z";
   const summaries: FridaySystemHealthRunSummary[] = [];
+  const PAST_DATE = "2020-01-01T00:00:00.000Z";
 
   beforeEach(() => {
     db = createTestDb();
@@ -62,16 +63,47 @@ describe("FridaySystemHealthMonitor", () => {
     expect(summary.checks.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("triggers auto-fix when expired memory items exceed threshold", () => {
-    // Insert expired memory items to trigger unhealthy state
-    const pastDate = "2020-01-01T00:00:00.000Z";
+  function countExpiredMemoryItems(): number {
+    const row = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT COUNT(*) AS cnt FROM memory_items WHERE expires_at IS NOT NULL AND expires_at < ?")
+        .get(NOW),
+    ) as { cnt: number };
+    return row.cnt;
+  }
+
+  function countStaleRealtimeCheckpoints(): number {
+    const cutoff = new Date(new Date(NOW).getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const row = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT COUNT(*) AS cnt FROM realtime_checkpoints WHERE updated_at < ?")
+        .get(cutoff),
+    ) as { cnt: number };
+    return row.cnt;
+  }
+
+  function insertExpiredMemoryItems(count: number): void {
     db.withWriteTransaction((writerDb) => {
-      for (let i = 0; i < 600; i++) {
+      for (let i = 0; i < count; i++) {
         writerDb.prepare(
           "INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at, expires_at) VALUES (?, 'test', ?, '{}', '[]', ?, ?, ?)",
-        ).run(`mem-${i}`, `key-${i}`, pastDate, pastDate, pastDate);
+        ).run(`mem-${i}`, `key-${i}`, PAST_DATE, PAST_DATE, PAST_DATE);
       }
     });
+  }
+
+  function insertStaleRealtimeCheckpoints(count: number): void {
+    db.withWriteTransaction((writerDb) => {
+      for (let i = 0; i < count; i++) {
+        writerDb.prepare(
+          "INSERT INTO realtime_checkpoints (principal_id, stream_id, last_acked_seq, epoch, cursor, updated_at) VALUES (?, ?, 0, 1, NULL, ?)",
+        ).run(`principal-${i}`, `stream-${i}`, PAST_DATE);
+      }
+    });
+  }
+
+  it("diagnoses expired memory items without cleanup by default", () => {
+    insertExpiredMemoryItems(600);
 
     const summary = monitor.runAll();
     const memCheck = summary.checks.find((c) => c.name === "expired_memory_items");
@@ -79,14 +111,81 @@ describe("FridaySystemHealthMonitor", () => {
     expect(memCheck!.healthy).toBe(false);
     expect(memCheck!.value).toBe(600);
 
-    // Should have triggered auto-fix
-    const memFix = summary.autoFixes.find((f) => f.name === "expired_memory_items");
-    expect(memFix).toBeDefined();
-    expect(memFix!.fixed).toBe(true);
-    expect(memFix!.detail).toMatch(/Pruned \d+ expired memory items/);
+    expect(summary.maintenanceReceipts).toHaveLength(0);
+    expect(summary.maintenanceRecommendations).toContainEqual({
+      name: "expired_memory_items",
+      gateRequired: "explicit_maintenance",
+      detail: "Prune expired memory items in a bounded local batch",
+      value: 600,
+      unit: "items",
+    });
+    expect(countExpiredMemoryItems()).toBe(600);
   });
 
-  it("does not trigger auto-fix when checks are healthy", () => {
+  it("diagnoses stale realtime checkpoints without cleanup by default", () => {
+    insertStaleRealtimeCheckpoints(1001);
+
+    const summary = monitor.runAll();
+    const checkpointCheck = summary.checks.find((c) => c.name === "stale_realtime_checkpoints");
+
+    expect(checkpointCheck).toBeDefined();
+    expect(checkpointCheck!.healthy).toBe(false);
+    expect(checkpointCheck!.value).toBe(1001);
+    expect(summary.maintenanceReceipts).toHaveLength(0);
+    expect(summary.maintenanceRecommendations).toContainEqual({
+      name: "stale_realtime_checkpoints",
+      gateRequired: "explicit_maintenance",
+      detail: "Prune stale realtime checkpoints",
+      value: 1001,
+      unit: "checkpoints",
+    });
+    expect(countStaleRealtimeCheckpoints()).toBe(1001);
+  });
+
+  it("runs cleanup only with explicit maintenance gate and emits a non-reversible receipt", () => {
+    insertExpiredMemoryItems(600);
+
+    const summary = monitor.runAll({
+      maintenanceGate: {
+        requestedBy: "owner-user",
+        reason: "manual maintenance window",
+        approvedAt: NOW,
+        approvalRef: "maintenance-ticket-001",
+      },
+    });
+    const receipt = summary.maintenanceReceipts.find((item) => item.name === "expired_memory_items");
+
+    expect(summary.maintenanceRecommendations.find((item) => item.name === "expired_memory_items")).toBeUndefined();
+    expect(receipt).toMatchObject({
+      receiptId: `system-health-maintenance:expired_memory_items:${NOW}`,
+      name: "expired_memory_items",
+      status: "applied",
+      detail: "Pruned 200 expired memory items",
+      runAt: NOW,
+      requestedBy: "owner-user",
+      reason: "manual maintenance window",
+      approvedAt: NOW,
+      approvalRef: "maintenance-ticket-001",
+      rollbackClass: "non_reversible_local",
+      nonReversibleReason: "Expired memory item deletion removes local rows and cannot be reconstructed by Friday.",
+      evidence: { beforeValue: 600, unit: "items", changes: 200 },
+    });
+    expect(countExpiredMemoryItems()).toBe(400);
+  });
+
+  it("does not run cleanup with an incomplete maintenance gate", () => {
+    insertExpiredMemoryItems(600);
+
+    const summary = monitor.runAll({
+      maintenanceGate: { requestedBy: "owner-user", reason: "", approvedAt: NOW },
+    });
+
+    expect(summary.maintenanceReceipts).toHaveLength(0);
+    expect(summary.maintenanceRecommendations.find((item) => item.name === "expired_memory_items")).toBeDefined();
+    expect(countExpiredMemoryItems()).toBe(600);
+  });
+
+  it("does not recommend maintenance when checks are healthy", () => {
     const summary = monitor.runAll();
     // All checks should be healthy on a fresh test DB
     for (const check of summary.checks) {
@@ -94,7 +193,7 @@ describe("FridaySystemHealthMonitor", () => {
         expect(check.healthy).toBe(true);
       }
     }
-    // No auto-fixes should run for healthy checks
-    expect(summary.autoFixes.filter((f) => f.name === "db_size")).toHaveLength(0);
+    expect(summary.maintenanceRecommendations).toHaveLength(0);
+    expect(summary.maintenanceReceipts).toHaveLength(0);
   });
 });
