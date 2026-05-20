@@ -214,13 +214,18 @@ function readAnswerCount(planReview: FridayAgentPlanReviewPayload | undefined): 
 
 function buildClarificationPrompt(input: {
   kind: FridayPlanningKind;
-  question: string;
+  questions: string[];
   answeredCount: number;
   totalQuestions: number;
 }): string {
+  const questions = input.questions.length > 0
+    ? input.questions
+    : ["What detail matters most before I continue?"];
+  const detailLabel = questions.length === 1 ? "one detail" : "these details";
   return [
-    `Before I execute this ${input.kind.replaceAll("_", " ")}, I need one detail to make sure the direction is correct.`,
-    `Question ${String(input.answeredCount + 1)}/${String(input.totalQuestions)}: ${input.question}`,
+    `Before I execute this ${input.kind.replaceAll("_", " ")}, I need ${detailLabel} to make sure the direction is correct.`,
+    ...questions.map((question, index) =>
+      `Question ${String(input.answeredCount + index + 1)}/${String(input.totalQuestions)}: ${question}`),
   ].join("\n");
 }
 
@@ -537,7 +542,7 @@ export function createFridayAgentPlanningGateService(
       };
       const prompt = buildClarificationPrompt({
         kind: gate.kind,
-        question: nextQuestion,
+        questions: [nextQuestion],
         answeredCount: answers.length,
         totalQuestions: questions.length,
       });
@@ -732,11 +737,12 @@ export function createFridayAgentPlanningGateService(
         task: input.task,
         kind,
       });
+      const questions = initialReview.gate?.clarificationQuestions ?? ["What detail matters most before I continue?"];
       const prompt = buildClarificationPrompt({
         kind,
-        question: initialReview.gate?.clarificationQuestions?.[0] ?? "What detail matters most before I continue?",
+        questions,
         answeredCount: 0,
-        totalQuestions: initialReview.gate?.clarificationQuestions?.length ?? 1,
+        totalQuestions: questions.length,
       });
       return {
         action: "return",

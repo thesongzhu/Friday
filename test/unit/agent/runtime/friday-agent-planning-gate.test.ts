@@ -202,6 +202,8 @@ describe("friday-agent-planning-gate", () => {
     expect(decision.result.status).toBe("awaiting_clarification");
     expect(decision.pendingPlanRunId).toBe("run-vague-production-ready");
     expect(decision.result.response).toContain("Before I execute this major decision");
+    expect(decision.result.response).toContain("Question 1/2: What outcome matters most for this decision?");
+    expect(decision.result.response).toContain("Question 2/2: What constraints, risks, or non-goals must the plan respect?");
     expect(runs.get("run-vague-production-ready")?.status).toBe("awaiting_clarification");
     expect(runs.get("run-vague-production-ready")?.actualExecution?.turns).toEqual([]);
   });
