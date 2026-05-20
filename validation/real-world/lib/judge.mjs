@@ -71,7 +71,7 @@ function looksLikeUnresolvedClarification(outputText) {
   const questionMarkCount = (text.match(/[?？]/g) ?? []).length;
   const explicitAsk = /\b(?:please|need you to|tell me|answer|confirm|choose|clarify|before I continue|before proceeding)\b/i.test(text)
     || /(?:请|需要你|请先|告诉我|回答|确认|选择|澄清|说清楚|补充).{0,80}(?:继续|开始|执行|制定|计划|上线|使用)?/u.test(text);
-  const numberedQuestions = /(?:^|\n)\s*(?:\d+[.)、]|[-*])\s*[^。\n.!?？]*[?？]/u.test(text);
+  const numberedQuestions = /(?:^|\n)\s*(?:(?:(?:question|q|问题)\s*)?\d+(?:\/\d+)?[.)、:]|[-*])\s*[^。\n.!?？]*[?？]/iu.test(text);
   return (questionMarkCount >= 2 && explicitAsk) || numberedQuestions;
 }
 

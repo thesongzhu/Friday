@@ -174,6 +174,33 @@ describe("real-world judge gating", () => {
     expect(rubric.pass).toBe(true);
   });
 
+  it("accepts Friday's numbered clarification question labels", () => {
+    const rubric = evaluateBehavioralRubric({
+      scenario: {
+        id: "strict-vague-goal",
+        oracles: {
+          behavior: {
+            requireAwaitingHumanState: true,
+            requireClarificationQuestion: true,
+          },
+        },
+      },
+      artifact: {
+        raw: {
+          runStatus: "awaiting_clarification",
+          outputText: [
+            "Before I execute this major decision, I need these details to make sure the direction is correct.",
+            "Question 1/2: What outcome matters most for this decision?",
+            "Question 2/2: What constraints, risks, or non-goals must the plan respect?",
+          ].join("\n"),
+        },
+      },
+    });
+
+    expect(rubric.available).toBe(true);
+    expect(rubric.pass).toBe(true);
+  });
+
   it("fails awaiting clarification runs that do not ask a clarification question", () => {
     const rubric = evaluateBehavioralRubric({
       scenario: {
