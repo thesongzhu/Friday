@@ -316,6 +316,7 @@ describe("FridayAutoFixRoutes", () => {
 
     expect(service.approveAction).toHaveBeenCalledWith({
       actionId: "action-1",
+      userId: "user-1",
       respondedBy: "user-1",
       reason: "Looks safe",
     });
@@ -347,6 +348,7 @@ describe("FridayAutoFixRoutes", () => {
 
     expect(service.denyAction).toHaveBeenCalledWith({
       actionId: "action-1",
+      userId: "user-1",
       respondedBy: "user-1",
       reason: "This patch is too risky for prod",
       reasonCode: "too_risky",

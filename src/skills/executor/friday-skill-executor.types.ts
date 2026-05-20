@@ -139,9 +139,9 @@ export interface FridaySkillReadonlySystemServiceLike {
 export interface FridaySkillReadonlySelfHealingServiceLike {
   listIssueCards(input: { userId: string; limit?: number }): unknown[];
   listIncidents(input: { userId: string; limit?: number }): unknown[];
-  getIncident(input: { incidentId: string }): unknown | null;
+  getIncident(input: { incidentId: string; userId?: string }): unknown | null;
   listActions(input: { userId: string; status?: string; limit?: number }): unknown[];
-  getAction(input: { actionId: string }): unknown | null;
+  getAction(input: { actionId: string; userId?: string }): unknown | null;
 }
 
 export interface FridayNodeRunOptions {

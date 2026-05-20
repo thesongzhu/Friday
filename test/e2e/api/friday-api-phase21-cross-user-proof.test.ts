@@ -7,19 +7,19 @@ import {
   loginTestUser,
 } from "./_helpers/friday-api-test-server.helper.js";
 
-const runKnownVulnerabilityProof = process.env.FRIDAY_PHASE21A_ASSERT_KNOWN_VULN === "1";
-
 /**
- * Phase 21A proof fixture.
+ * Phase 21B ownership-boundary regression fixture.
  *
- * This intentionally asserts the current vulnerable behavior on
- * origin/main@b8b9c19 before Phase 21B fixes it. Default CI skips it so the
- * audit fixture does not lock the bug in place after 21B closes the route.
+ * Phase 21A used this file as an env-gated known-vulnerability proof. Phase 21B
+ * makes it a permanent denial test for identifier-based action and incident
+ * routes.
  */
-describe.skipIf(!runKnownVulnerabilityProof)("Phase 21A cross-user self-healing route proof", () => {
+describe("Phase 21B cross-user self-healing route denial", () => {
   let env: FridayApiTestEnv;
   let userAToken: string;
   let userBToken: string;
+  let actionId: string;
+  let incidentId: string;
 
   beforeAll(async () => {
     env = await createFridayApiTestEnv({ enableSelfHealing: true });
@@ -38,13 +38,7 @@ describe.skipIf(!runKnownVulnerabilityProof)("Phase 21A cross-user self-healing 
       severity: "high",
       message: "phase21-cross-user-proof",
     });
-  });
 
-  afterAll(async () => {
-    await env.close();
-  });
-
-  it("proves a non-owner can read another user's auto-fix action by actionId on the current baseline", async () => {
     const actionsRes = await fetch(`${env.baseUrl}/v1/auto-fix/actions`, {
       headers: authHeaders(userAToken),
     });
@@ -53,17 +47,10 @@ describe.skipIf(!runKnownVulnerabilityProof)("Phase 21A cross-user self-healing 
       ok: true;
       data: { items: Array<{ summary: { actionId: string } }> };
     };
-    const actionId = actions.data.items[0]?.summary.actionId;
-    expect(actionId).toBeTruthy();
+    const foundActionId = actions.data.items[0]?.summary.actionId;
+    expect(foundActionId).toBeTruthy();
+    actionId = foundActionId!;
 
-    const nonOwnerRes = await fetch(`${env.baseUrl}/v1/auto-fix/actions/${actionId!}`, {
-      headers: authHeaders(userBToken),
-    });
-
-    expect(nonOwnerRes.status).toBe(200);
-  });
-
-  it("proves a non-owner can read and manual-resolve another user's diagnosis incident by incidentId on the current baseline", async () => {
     const incidentsRes = await fetch(`${env.baseUrl}/v1/diagnosis/incidents`, {
       headers: authHeaders(userAToken),
     });
@@ -72,24 +59,51 @@ describe.skipIf(!runKnownVulnerabilityProof)("Phase 21A cross-user self-healing 
       ok: true;
       data: { items: Array<{ incident: { incidentId: string } }> };
     };
-    const incidentId = incidents.data.items[0]?.incident.incidentId;
-    expect(incidentId).toBeTruthy();
+    const foundIncidentId = incidents.data.items[0]?.incident.incidentId;
+    expect(foundIncidentId).toBeTruthy();
+    incidentId = foundIncidentId!;
+  });
 
-    const nonOwnerReadRes = await fetch(`${env.baseUrl}/v1/diagnosis/incidents/${incidentId!}`, {
-      headers: authHeaders(userBToken),
-    });
-    expect(nonOwnerReadRes.status).toBe(200);
+  afterAll(async () => {
+    await env.close();
+  });
 
-    const nonOwnerResolveRes = await fetch(`${env.baseUrl}/v1/diagnosis/incidents/${incidentId!}/manual-resolve`, {
-      method: "POST",
+  it.each([
+    ["GET", "/v1/auto-fix/actions/:actionId", undefined],
+    ["POST", "/v1/auto-fix/actions/:actionId/approve", {}],
+    ["POST", "/v1/auto-fix/actions/:actionId/deny", { reason: "not mine" }],
+    ["POST", "/v1/auto-fix/actions/:actionId/execute", {}],
+    ["POST", "/v1/auto-fix/actions/:actionId/rollback", { reason: "not mine" }],
+  ] as const)("denies non-owner %s %s", async (method, template, body) => {
+    const path = template.replace(":actionId", actionId);
+    const res = await fetch(`${env.baseUrl}${path}`, {
+      method,
       headers: authHeaders(userBToken),
-      body: JSON.stringify({
-        title: "Cross-user proof resolve",
-        cause: "Phase 21A proves the current route is not owner-scoped.",
-        fix: "Phase 21B must bind incident lookups to the current user.",
-        verificationSummary: "This request should be denied after Phase 21B.",
-      }),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    expect(nonOwnerResolveRes.status).toBe(200);
+
+    expect(res.status).toBe(404);
+  });
+
+  it.each([
+    ["GET", "/v1/diagnosis/incidents/:incidentId", undefined],
+    ["GET", "/v1/learning/incidents/:incidentId", undefined],
+    ["GET", "/v1/diagnosis/incidents/:incidentId/diagnosis", undefined],
+    ["GET", "/v1/learning/incidents/:incidentId/diagnosis", undefined],
+    ["POST", "/v1/diagnosis/incidents/:incidentId/manual-resolve", {
+      title: "Cross-user proof resolve",
+      cause: "Phase 21B denial test",
+      fix: "Owner-scoped incident routes deny this request.",
+      verificationSummary: "A non-owner cannot resolve another user's incident.",
+    }],
+  ] as const)("denies non-owner %s %s", async (method, template, body) => {
+    const path = template.replace(":incidentId", incidentId);
+    const res = await fetch(`${env.baseUrl}${path}`, {
+      method,
+      headers: authHeaders(userBToken),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+    expect(res.status).toBe(404);
   });
 });

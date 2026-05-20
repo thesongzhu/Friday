@@ -195,6 +195,7 @@ describe("FridayDiagnosisRoutes", () => {
 
     expect(service.manualResolveIncident).toHaveBeenCalledWith({
       incidentId: "incident-1",
+      userId: "user-1",
       resolvedBy: "user-1",
       title: "Manual repair",
       cause: "Patched a missing flag",
@@ -247,8 +248,8 @@ describe("FridayDiagnosisRoutes", () => {
       status: undefined,
       limit: 3,
     });
-    expect(service.getIncident).toHaveBeenCalledWith({ incidentId: "incident-1" });
-    expect(service.getIncidentDiagnosis).toHaveBeenCalledWith({ incidentId: "incident-1" });
+    expect(service.getIncident).toHaveBeenCalledWith({ incidentId: "incident-1", userId: "user-1" });
+    expect(service.getIncidentDiagnosis).toHaveBeenCalledWith({ incidentId: "incident-1", userId: "user-1" });
     expect(service.getLearningOverview).toHaveBeenCalledWith({ userId: "user-1", limit: 4 });
     expect(listRoute.path).toBe("/v1/learning/incidents");
     expect(detailRoute.path).toBe("/v1/learning/incidents/:incidentId");

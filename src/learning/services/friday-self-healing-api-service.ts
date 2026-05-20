@@ -300,9 +300,11 @@ export interface FridaySelfHealingApiService {
   }): FridayIncidentDiagnosisDetails[];
   getIncident(input: {
     incidentId: string;
+    userId?: string;
   }): FridayIncidentDiagnosisDetails | null;
   getIncidentDiagnosis(input: {
     incidentId: string;
+    userId?: string;
   }): FridayIncidentDiagnosisDetails | null;
   listActions(input: {
     userId: string;
@@ -312,20 +314,24 @@ export interface FridaySelfHealingApiService {
   }): FridaySelfHealingActionDetails[];
   getAction(input: {
     actionId: string;
+    userId?: string;
   }): FridaySelfHealingActionDetails | null;
   approveAction(input: {
     actionId: string;
+    userId?: string;
     respondedBy: string;
     reason?: string;
   }): Promise<FridaySelfHealingActionDetails>;
   denyAction(input: {
     actionId: string;
+    userId?: string;
     respondedBy: string;
     reason?: string;
     reasonCode?: FridayAutoFixFeedbackReasonCode;
   }): Promise<FridaySelfHealingActionDetails>;
   manualResolveIncident(input: {
     incidentId: string;
+    userId?: string;
     resolvedBy: string;
     fix: string;
     title?: string;
@@ -350,6 +356,7 @@ export interface FridaySelfHealingApiService {
   }): FridayLearningPatternRecord;
   executeAction(input: {
     actionId: string;
+    userId?: string;
   }): Promise<FridaySelfHealingExecutionDetails>;
   runReadyActions(input: {
     userId: string;
@@ -358,6 +365,7 @@ export interface FridaySelfHealingApiService {
   }): Promise<FridaySelfHealingRunReadyResult>;
   rollbackAction(input: {
     actionId: string;
+    userId?: string;
     reason: string;
   }): Promise<FridaySelfHealingExecutionDetails>;
   getMetrics(input: {
@@ -1143,6 +1151,9 @@ export function createFridaySelfHealingApiService(
       const incident = deps.db.withReadConnection((db) =>
         deps.incidentRepo.getById(db, input.incidentId),
       );
+      if (incident && input.userId && incident.userId !== input.userId) {
+        return null;
+      }
       return incident ? buildIncidentDetails(incident) : null;
     },
 
@@ -1150,6 +1161,9 @@ export function createFridaySelfHealingApiService(
       const incident = deps.db.withReadConnection((db) =>
         deps.incidentRepo.getById(db, input.incidentId),
       );
+      if (incident && input.userId && incident.userId !== input.userId) {
+        return null;
+      }
       return incident ? buildIncidentDetails(incident) : null;
     },
 
@@ -1169,10 +1183,17 @@ export function createFridaySelfHealingApiService(
       const action = deps.db.withReadConnection((db) =>
         deps.actionRepo.getById(db, input.actionId),
       );
+      if (action && input.userId && action.userId !== input.userId) {
+        return null;
+      }
       return action ? buildActionDetails(action) : null;
     },
 
     async approveAction(input) {
+      const action = this.getAction({ actionId: input.actionId, userId: input.userId });
+      if (!action) {
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found`, { httpStatus: 404 });
+      }
       const approval = deps.db.withReadConnection((db) =>
         deps.approvalRepo.getByActionId(db, input.actionId),
       );
@@ -1185,7 +1206,7 @@ export function createFridaySelfHealingApiService(
         reason: input.reason,
         nowIso: deps.nowIso(),
       });
-      const details = this.getAction({ actionId: input.actionId });
+      const details = this.getAction({ actionId: input.actionId, userId: input.userId });
       if (!details) {
         throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found after approval`, { httpStatus: 404 });
       }
@@ -1204,6 +1225,10 @@ export function createFridaySelfHealingApiService(
     },
 
     async denyAction(input) {
+      const action = this.getAction({ actionId: input.actionId, userId: input.userId });
+      if (!action) {
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found`, { httpStatus: 404 });
+      }
       const approval = deps.db.withReadConnection((db) =>
         deps.approvalRepo.getByActionId(db, input.actionId),
       );
@@ -1216,7 +1241,7 @@ export function createFridaySelfHealingApiService(
         reason: input.reason,
         nowIso: deps.nowIso(),
       });
-      const details = this.getAction({ actionId: input.actionId });
+      const details = this.getAction({ actionId: input.actionId, userId: input.userId });
       if (!details) {
         throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found after rejection`, { httpStatus: 404 });
       }
@@ -1265,7 +1290,7 @@ export function createFridaySelfHealingApiService(
       const incident = deps.db.withReadConnection((db) =>
         deps.incidentRepo.getById(db, input.incidentId),
       );
-      if (!incident) {
+      if (!incident || (input.userId && incident.userId !== input.userId)) {
         throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", `Incident ${input.incidentId} not found`, { httpStatus: 404 });
       }
 
@@ -1342,7 +1367,7 @@ export function createFridaySelfHealingApiService(
         incident.incidentId,
       );
 
-      const details = this.getIncident({ incidentId: incident.incidentId });
+      const details = this.getIncident({ incidentId: incident.incidentId, userId: input.userId });
       if (!details) {
         throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", `Incident ${incident.incidentId} not found after manual resolution`, { httpStatus: 404 });
       }
@@ -1426,7 +1451,7 @@ export function createFridaySelfHealingApiService(
       const action = deps.db.withReadConnection((db) =>
         deps.actionRepo.getById(db, input.actionId),
       );
-      if (!action) {
+      if (!action || (input.userId && action.userId !== input.userId)) {
         throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found`, { httpStatus: 404 });
       }
 
@@ -1522,6 +1547,12 @@ export function createFridaySelfHealingApiService(
     },
 
     async rollbackAction(input) {
+      const action = deps.db.withReadConnection((db) =>
+        deps.actionRepo.getById(db, input.actionId),
+      );
+      if (!action || (input.userId && action.userId !== input.userId)) {
+        throw new FridayDomainError("NOT_FOUND", `Action ${input.actionId} not found`, { httpStatus: 404 });
+      }
       const result = await deps.rollbackService.rollback(input.actionId, input.reason);
       const details = buildActionDetails(result.action);
       emitActionEvent("autofix.action.rolled_back", details, input.actionId);

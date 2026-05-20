@@ -23,6 +23,7 @@ import {
   createFridaySkillLifecycleCanaryInputDigest,
   createFridaySkillLifecycleMutatingActionRequest,
 } from "../../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
+import { createFridaySkillReadonlyRuntimeContext } from "../../../../src/skills/executor/friday-skill-runtime-bridge.js";
 
 /** Minimal mock registry that returns skills from a pre-built map. */
 function createMockRegistry(
@@ -1099,6 +1100,38 @@ export async function execute(_input, ctx) {
       }
       await fs.rm(scriptDir, { recursive: true, force: true });
     }
+  });
+
+  it("scopes readonly self-healing runtime get helpers to the executing user", async () => {
+    const getIncident = vi.fn((input: { incidentId: string; userId?: string }) =>
+      input.userId === "owner-user"
+        ? { incident: { incidentId: input.incidentId, userId: input.userId } }
+        : null,
+    );
+    const getAction = vi.fn((input: { actionId: string; userId?: string }) =>
+      input.userId === "owner-user"
+        ? { action: { actionId: input.actionId, userId: input.userId } }
+        : null,
+    );
+
+    const ctx = createFridaySkillReadonlyRuntimeContext({
+      getSelfHealingService: () => ({
+        listIssueCards: () => [],
+        listIncidents: () => [],
+        getIncident,
+        listActions: () => [],
+        getAction,
+      }),
+    }, {
+      skillId: "runtime-scope-proof",
+      sessionId: "session-1",
+      userId: "other-user",
+    });
+
+    await expect(ctx?.diagnosis?.getIncident("incident-owner")).resolves.toBeNull();
+    await expect(ctx?.autofix?.getAction("action-owner")).resolves.toBeNull();
+    expect(getIncident).toHaveBeenCalledWith({ incidentId: "incident-owner", userId: "other-user" });
+    expect(getAction).toHaveBeenCalledWith({ actionId: "action-owner", userId: "other-user" });
   });
 
   it("injects readonly channel runtime helpers into node skills", async () => {

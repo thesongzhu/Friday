@@ -97,9 +97,9 @@ export function createFridayDiagnosisRoutes(
   const getIncidentHandler = async (
     ctx: FridayHttpContext<unknown, unknown, unknown>,
   ): Promise<FridayGetDiagnosisIncidentResponse> => {
-    requireUserId(ctx.principal);
+    const userId = requireUserId(ctx.principal);
     const { incidentId } = ctx.params as { incidentId: string };
-    const incident = deps.service.getIncident({ incidentId });
+    const incident = deps.service.getIncident({ incidentId, userId });
     if (!incident) {
       throw new FridayDomainError("DIAGNOSIS_INCIDENT_NOT_FOUND", "Incident not found", {
         httpStatus: 404,
@@ -111,9 +111,9 @@ export function createFridayDiagnosisRoutes(
   const getIncidentDiagnosisHandler = async (
     ctx: FridayHttpContext<unknown, unknown, unknown>,
   ): Promise<FridayGetIncidentDiagnosisResponse> => {
-    requireUserId(ctx.principal);
+    const userId = requireUserId(ctx.principal);
     const { incidentId } = ctx.params as { incidentId: string };
-    const details = deps.service.getIncidentDiagnosis({ incidentId });
+    const details = deps.service.getIncidentDiagnosis({ incidentId, userId });
     if (!details) {
       throw new FridayDomainError("DIAGNOSIS_RECORD_NOT_FOUND", "Diagnosis not found", {
         httpStatus: 404,
@@ -230,6 +230,7 @@ export function createFridayDiagnosisRoutes(
         }
         const details = deps.service.manualResolveIncident({
           incidentId,
+          userId: resolvedBy,
           resolvedBy,
           fix,
           title: readTrimmedString(ctx.body, "title"),
