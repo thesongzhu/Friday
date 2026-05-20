@@ -6,6 +6,7 @@ import type {
   FridayWorkflowOverview,
 } from "@friday-operator-client";
 import type {
+  AgentRunRecord,
   FridayFleetSatelliteCard,
   FridayPendingSatellitePairingRequest,
   SkillCatalogItem,
@@ -71,6 +72,20 @@ export function summarizeSkillEvidence(evidence?: SkillGenerationEvidence | null
     return "Draft still needs to pass the explicit self-test.";
   }
   return evidence.approvalReadiness.reason;
+}
+
+export function getNextClarificationQuestion(
+  run?: Pick<AgentRunRecord, "status" | "planReview"> | null,
+): string | null {
+  if (!run || run.status !== "awaiting_clarification") {
+    return null;
+  }
+  const questions = run.planReview?.gate?.clarificationQuestions ?? [];
+  const answeredCount = run.planReview?.gate?.answers?.length ?? 0;
+  const nextQuestion = questions[answeredCount];
+  return typeof nextQuestion === "string" && nextQuestion.trim().length > 0
+    ? nextQuestion
+    : null;
 }
 
 export interface FridayAssistantQuickAction {

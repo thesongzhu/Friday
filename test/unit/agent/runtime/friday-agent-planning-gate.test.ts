@@ -208,6 +208,41 @@ describe("friday-agent-planning-gate", () => {
     expect(runs.get("run-vague-production-ready")?.actualExecution?.turns).toEqual([]);
   });
 
+  it("returns awaiting_clarification for ordinary vague website build requests", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-vague-website",
+      task: "Build me a small website for my side project.",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_clarification");
+    expect(decision.pendingPlanRunId).toBe("run-vague-website");
+    expect(decision.result.response).toContain("Before I execute this major decision");
+    expect(decision.result.response).toContain("Question 1/2");
+    expect(runs.get("run-vague-website")?.status).toBe("awaiting_clarification");
+    expect(runs.get("run-vague-website")?.actualExecution?.turns).toEqual([]);
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps safe website design questions out of the clarification gate", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-safe-website-question",
+      task: "Describe how to design a website navigation for beginners?",
+      sessionKey: "ui:assistant:1",
+    });
+
+    expect(decision).toEqual({ action: "pass_through" });
+    expect(runs.has("run-safe-website-question")).toBe(false);
+  });
+
   it("does not force safe Q&A through clarification when plan mode is present", () => {
     const service = createService();
 
