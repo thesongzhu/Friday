@@ -486,14 +486,17 @@ async function executeEnvTruth({ artifact, scenario, envTruth }) {
   return artifact;
 }
 
-function resolveAgentTurnPrompt({ scenario, execution, suite, attemptIndex, turn, turnIndex }) {
+function resolveAgentTurnPrompt({ scenario, execution, suite, attemptIndex, turn, turnIndex, templateContext }) {
   const applyPromptVariables = (value) => {
     if (typeof value !== "string" || value.length === 0) {
       return value;
     }
-    return value
+    const expanded = value
       .replaceAll("{{repoRoot}}", process.cwd())
       .replaceAll("{{workspaceRoot}}", process.cwd());
+    return templateContext
+      ? interpolateTemplateString(expanded, templateContext)
+      : expanded;
   };
   if (typeof turn?.prompt === "string" && turn.prompt.trim().length > 0) {
     return applyPromptVariables(turn.prompt);
@@ -584,6 +587,81 @@ async function executeHttpProbe({ artifact, client, scenario }) {
     artifact.failureClass = "http_contract";
   }
   return artifact;
+}
+
+async function executeTemplatedRequests({
+  artifact,
+  client,
+  scenario,
+  requests,
+  templateContext,
+  label,
+  throwOnExpectationFailure = true,
+}) {
+  if (!Array.isArray(requests) || requests.length === 0) {
+    return [];
+  }
+  const responses = [];
+  for (const [index, request] of requests.entries()) {
+    const requestContext = {
+      ...templateContext,
+      responses,
+    };
+    const requestPath = interpolateTemplateValue(request.path, requestContext);
+    const query = request.query
+      ? `?${new URLSearchParams(
+        Object.entries(request.query).reduce((acc, [key, value]) => {
+          acc[key] = String(interpolateTemplateValue(value, requestContext));
+          return acc;
+        }, {}),
+      ).toString()}`
+      : "";
+    const requestBody = request.body === undefined
+      ? undefined
+      : interpolateTemplateValue(request.body, requestContext);
+    const response = await client.request(request.method ?? "GET", `${requestPath}${query}`, {
+      timeoutMs: scenarioTimeout(scenario, 60_000),
+      headers: request.headers,
+      body: requestBody,
+    });
+    const record = {
+      method: request.method ?? "GET",
+      path: requestPath,
+      status: response.status,
+      ok: response.ok,
+      json: response.json ?? null,
+      text: response.text ?? null,
+      durationMs: response.durationMs,
+    };
+    artifact.observedEvidence.push(
+      `${label} ${String(index + 1)} ${record.method} ${requestPath} -> ${String(response.status)}`,
+    );
+
+    const reasons = [];
+    if (Number.isInteger(request.expectStatus) && response.status !== request.expectStatus) {
+      reasons.push(`expected HTTP ${String(request.expectStatus)} but received ${String(response.status)}`);
+    }
+    if (request.expectOkEnvelope && response.json?.ok !== true) {
+      reasons.push("expected ok=true envelope");
+    }
+    for (const path of request.jsonPathsPresent ?? []) {
+      if (resolveJsonPath(response.json, path) === undefined) {
+        reasons.push(`missing JSON path: ${path}`);
+      }
+    }
+    if (reasons.length > 0) {
+      record.expectationFailures = reasons;
+    }
+    responses.push(record);
+    if (reasons.length > 0) {
+      const message = `${label} request ${String(index + 1)} failed expectations: ${reasons.join("; ")}`;
+      if (throwOnExpectationFailure) {
+        throw new Error(message);
+      }
+      artifact.notes = [...(artifact.notes ?? []), message];
+    }
+  }
+  return responses;
 }
 
 // Phase 14.5B module_28b: live-HTTP RGG proof that all five /v1/auto-fix
@@ -1905,6 +1983,88 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
   let lastRunRecord = null;
   let lastData = null;
   let outputText = "";
+  const templateContext = {
+    scenario: {
+      id: scenario.id,
+      entrySurface: scenario.entrySurface,
+    },
+    timestamp: String(Date.now()),
+    nowIso: nowIso(),
+    attemptIndex: attemptIndex ?? 1,
+    lane: {
+      id: lane.id,
+      providerId: lane.providerId,
+      model: lane.model,
+    },
+  };
+  const setupResponses = await executeTemplatedRequests({
+    artifact,
+    client,
+    scenario,
+    requests: execution.setupRequests,
+    templateContext,
+    label: "setup",
+  });
+  const agentTemplateContext = {
+    ...templateContext,
+    setupResponses,
+  };
+  let cleanupCompleted = false;
+  const cleanupAgentRun = async () => {
+    if (cleanupCompleted) {
+      return;
+    }
+    cleanupCompleted = true;
+    try {
+      const cleanupResponses = await executeTemplatedRequests({
+        artifact,
+        client,
+        scenario,
+        requests: execution.cleanupRequests,
+        templateContext: {
+          ...agentTemplateContext,
+          turns: runTurns,
+          lastRun: lastRunRecord,
+        },
+        label: "cleanup",
+        throwOnExpectationFailure: false,
+      });
+      if (cleanupResponses.length > 0) {
+        artifact.raw = {
+          ...(artifact.raw ?? {}),
+          cleanupResponses,
+        };
+      }
+      const cleanupFailures = cleanupResponses.flatMap((response) =>
+        Array.isArray(response.expectationFailures)
+          ? response.expectationFailures
+          : [],
+      );
+      if (execution.cleanupFailureIsFailure === true && cleanupFailures.length > 0) {
+        if (!artifact.result || artifact.result === "passed") {
+          artifact.result = "failed";
+        }
+        artifact.failureClass = artifact.failureClass ?? "cleanup";
+      }
+    } catch (error) {
+      const message = `cleanup request failed: ${error instanceof Error ? error.message : String(error)}`;
+      artifact.notes = [...(artifact.notes ?? []), message];
+      if (execution.cleanupFailureIsFailure === true) {
+        if (!artifact.result || artifact.result === "passed") {
+          artifact.result = "failed";
+        }
+        artifact.failureClass = artifact.failureClass ?? "cleanup";
+        return;
+      }
+      throw error;
+    }
+  };
+  if (setupResponses.length > 0) {
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      setupResponses,
+    };
+  }
 
   for (const [index, turn] of turns.entries()) {
     const prompt = resolveAgentTurnPrompt({
@@ -1914,18 +2074,26 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       attemptIndex,
       turn,
       turnIndex: index,
+      templateContext: agentTemplateContext,
     });
-    const { data } = await client.startAgentRun({
-      task: prompt,
-      providerId: lane.providerId,
-      model: lane.model,
-      timeoutMs: scenarioTimeout(scenario, 180_000),
-      constraints: turn.constraints ?? execution.constraints ?? { readOnly: true },
-      taskProfile: turn.taskProfile ?? execution.taskProfile ?? { id: "deterministic" },
-      sessionKey: turn.sessionKey ?? sharedSessionKey,
-      executionContext: turn.executionContext ?? execution.executionContext,
-    });
-    const runRecord = (await client.getAgentRun(data.runId)).data.run;
+    let data;
+    let runRecord;
+    try {
+      ({ data } = await client.startAgentRun({
+        task: prompt,
+        providerId: lane.providerId,
+        model: lane.model,
+        timeoutMs: scenarioTimeout(scenario, 180_000),
+        constraints: turn.constraints ?? execution.constraints ?? { readOnly: true },
+        taskProfile: turn.taskProfile ?? execution.taskProfile ?? { id: "deterministic" },
+        sessionKey: turn.sessionKey ?? sharedSessionKey,
+        executionContext: turn.executionContext ?? execution.executionContext,
+      }));
+      runRecord = (await client.getAgentRun(data.runId)).data.run;
+    } catch (error) {
+      await cleanupAgentRun();
+      throw error;
+    }
     outputText = runRecord.responseText ?? runRecord.summary ?? data.finalResponse ?? data.response ?? "";
     const misrouteClass = detectMisroute({ scenario, outputText, run: runRecord });
 
@@ -1972,6 +2140,7 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       artifact.result = "failed";
       artifact.failureClass = "llm_misroute";
       artifact.misrouteClass = misrouteClass;
+      await cleanupAgentRun();
       return artifact;
     }
 
@@ -2000,6 +2169,7 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       artifact.result = ["awaiting_clarification", "awaiting_plan_approval"].includes(runRecord.status) ? "failed" : "partial";
       artifact.failureClass = runRecord.status === "failed" ? "provider_protocol" : "llm_behavior";
       artifact.notes = [...(artifact.notes ?? []), runRecord.errorMessage ?? `terminal status ${runRecord.status}`];
+      await cleanupAgentRun();
       return artifact;
     }
   }
@@ -2014,6 +2184,12 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     runRecord: lastRunRecord,
     turns: runTurns,
     sessionKey: sharedSessionKey ?? null,
+    ...(
+      (execution.expectedToolResultSubstrings ?? []).length > 0
+      || (execution.expectedToolNames ?? []).length > 0
+        ? { agentToolCalls }
+        : {}
+    ),
   };
   artifact.observedEvidence.push(
     `provider ${lastRunRecord?.actualExecution?.actualProviderId ?? lane.providerId}`,
@@ -2029,6 +2205,43 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     contextEstimatedInputTokens: totalContextEstimatedInputTokens,
   };
   artifact.result = "passed";
+
+  for (const expected of execution.expectedOutputSubstrings ?? []) {
+    const snippet = interpolateTemplateString(String(expected), agentTemplateContext);
+    if (!outputText.includes(snippet)) {
+      artifact.result = "failed";
+      artifact.failureClass = "llm_behavior";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `expected response to include ${JSON.stringify(snippet)}`,
+      ];
+    }
+  }
+
+  for (const expected of execution.expectedToolResultSubstrings ?? []) {
+    const snippet = interpolateTemplateString(String(expected), agentTemplateContext);
+    const toolEvidenceText = JSON.stringify(agentToolCalls);
+    if (!toolEvidenceText.includes(snippet)) {
+      artifact.result = "failed";
+      artifact.failureClass = "tool_bridge";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `expected tool evidence to include ${JSON.stringify(snippet)}`,
+      ];
+    }
+  }
+
+  for (const expectedToolName of execution.expectedToolNames ?? []) {
+    const found = agentToolCalls.some((call) => call?.toolName === expectedToolName || call?.name === expectedToolName);
+    if (!found) {
+      artifact.result = "failed";
+      artifact.failureClass = "tool_bridge";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `expected tool evidence for ${JSON.stringify(expectedToolName)}`,
+      ];
+    }
+  }
 
   if (typeof execution.expectWorkspaceFileTopH1 === "string" && execution.expectWorkspaceFileTopH1.trim().length > 0) {
     const relativeFilePath = execution.expectWorkspaceFileTopH1.trim();
@@ -2134,6 +2347,7 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     artifact.failureClass = "tool_bridge";
     artifact.notes = [...(artifact.notes ?? []), `expected at least ${String(execution.expectToolCallCountMin)} tool calls`];
   }
+  await cleanupAgentRun();
   return artifact;
 }
 

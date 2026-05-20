@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentMemoryTools } from "#agent";
-import type { FridayMemoryService } from "#memory";
+import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
+import type { FridayProviderTenantContext } from "#providers";
 import { attachFridayAgentToolExecutionContext } from "../../../../src/agent/runtime/friday-agent-tool-execution-context.js";
 
 function signal(): AbortSignal {
@@ -16,6 +17,7 @@ function signalWithContext(input: {
   principalId?: string;
   taskPrompt?: string;
   sessionKey?: string;
+  tenantContext?: FridayProviderTenantContext;
 }): AbortSignal {
   return attachFridayAgentToolExecutionContext(new AbortController().signal, {
     runId: "run-1",
@@ -23,6 +25,7 @@ function signalWithContext(input: {
     readOnly: false,
     principalId: input.principalId,
     taskPrompt: input.taskPrompt,
+    tenantContext: input.tenantContext,
   });
 }
 
@@ -72,6 +75,13 @@ function mockMemoryService(
     list: vi.fn().mockResolvedValue([]),
     delete: vi.fn().mockResolvedValue(false),
     prune: vi.fn().mockResolvedValue({ deletedCount: 0, deletedIds: [], dryRun: false }),
+  };
+}
+
+function mockMemoryGuardFactory(memoryService: FridayMemoryService): FridayMemoryGuardServiceFactory {
+  return {
+    forPrincipal: vi.fn().mockReturnValue(memoryService),
+    forContext: vi.fn().mockReturnValue(memoryService),
   };
 }
 
@@ -279,6 +289,78 @@ describe("FridayAgentMemoryTools", () => {
       expect(result.isError).toBe(true);
       expect(result.content).toContain("reserved");
       expect(svc.search).not.toHaveBeenCalled();
+    });
+
+    it("includes current-principal guarded API memory on default searches", async () => {
+      const svc = mockMemoryService([]);
+      const guardedSvc = mockMemoryService([
+        makeSearchResult({
+          item: makeItem({
+            id: "api-memory-1",
+            namespace: "tenant.admin-001.user.admin-001.five-scenario-proof",
+            content: "The proof run project codename is BARB-phase-22d.",
+            source: "five-scenario-real-proof",
+            tags: ["five-scenario", "preference"],
+          }),
+          score: 0.91,
+        }),
+      ]);
+      const memoryGuardFactory = mockMemoryGuardFactory(guardedSvc);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        memoryGuardFactory,
+      });
+
+      const result = await searchTool!.execute(
+        { query: "proof run project codename", limit: 3 },
+        signalWithContext({
+          principalId: "admin-001",
+          tenantContext: { hubId: "admin-001", userId: "admin-001" },
+        }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(memoryGuardFactory.forContext).toHaveBeenCalledWith({
+        principalId: "admin-001",
+        subject: {
+          hubId: "admin-001",
+          userId: "admin-001",
+          accessLevel: "tenant",
+        },
+      });
+      expect(guardedSvc.search).toHaveBeenCalledWith("proof run project codename", {
+        limit: 6,
+      });
+      expect(JSON.parse(result.content)).toMatchObject([
+        {
+          content: "The proof run project codename is BARB-phase-22d.",
+          metadata: {
+            id: "api-memory-1",
+            namespace: "tenant.admin-001.user.admin-001.five-scenario-proof",
+          },
+        },
+      ]);
+    });
+
+    it("does not search guarded API memory for explicit agent namespace", async () => {
+      const svc = mockMemoryService([]);
+      const guardedSvc = mockMemoryService([makeSearchResult()]);
+      const memoryGuardFactory = mockMemoryGuardFactory(guardedSvc);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        memoryGuardFactory,
+      });
+
+      await searchTool!.execute(
+        { query: "proof run project codename", namespace: "agent", limit: 3 },
+        signalWithContext({
+          principalId: "admin-001",
+          tenantContext: { hubId: "admin-001", userId: "admin-001" },
+        }),
+      );
+
+      expect(memoryGuardFactory.forContext).not.toHaveBeenCalled();
+      expect(guardedSvc.search).not.toHaveBeenCalled();
     });
 
     it("matches learned facts through token overlap when the model phrases the query differently", async () => {

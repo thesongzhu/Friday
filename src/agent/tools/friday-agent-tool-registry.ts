@@ -1,6 +1,6 @@
 import type { FridaySkillExecutor, FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
 import type { FridayWorkflowExecutionService } from "#workflows";
-import type { FridayMemoryService } from "#memory";
+import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import type { FridayAgentSsrfGuard } from "../security/friday-agent-ssrf-guard.js";
 import type { FridaySubagentContext, FridaySubagentRegistry } from "../subagent/friday-subagent.types.js";
@@ -74,6 +74,7 @@ export interface CreateFridayAgentToolRegistryOptions {
   getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
+  memoryGuardFactory?: FridayMemoryGuardServiceFactory;
   listLearnedFacts?: (input: { userId: string; limit: number }) => FridayLearnedFactView[];
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
   idGenerator?: () => string;
@@ -219,6 +220,7 @@ export function createFridayAgentToolRegistry(
         resolveSessionMemoryNamespace: options.sessionService
           ? async (sessionKey) => options.sessionService?.getSessionMemoryNamespace(sessionKey)
           : undefined,
+        memoryGuardFactory: options.memoryGuardFactory,
       }),
     );
   }

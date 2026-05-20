@@ -151,14 +151,14 @@ import {
   createFridayPluginSignatureVerifier,
 } from "#plugins";
 import type { FridayPluginService } from "#plugins";
-import { createFridayEpisodeExtractor, createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryService, createFridayPatternExtractor } from "#memory";
+import { createFridayEpisodeExtractor, createFridayMemoryFileSyncRepository, createFridayMemoryFileSyncService, createFridayMemoryGuardServiceFactory, createFridayMemoryService, createFridayPatternExtractor } from "#memory";
 import {
   createFridaySessionMemoryExtractionService,
   finalizeFridayConversationFocus,
   prepareFridayConversationTurn,
 } from "#sessions";
 import type { FridayConversationBlock } from "#sessions";
-import type { FridayMemoryFileSyncService, FridayMemoryService } from "#memory";
+import type { FridayMemoryFileSyncService, FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -1400,6 +1400,14 @@ export async function createFridayHub(
       nowIso,
     });
   }
+  const memoryGuardFactory: FridayMemoryGuardServiceFactory | undefined = stateRuntime && memoryService
+    ? createFridayMemoryGuardServiceFactory({
+      core: memoryService,
+      db: stateRuntime.sqlite,
+      nowIso,
+      nowMs: () => new Date(nowIso()).getTime(),
+    })
+    : undefined;
 
   // ─── Workflow runtime ───
 
@@ -2772,6 +2780,7 @@ export async function createFridayHub(
     getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
+    memoryGuardFactory,
     listLearnedFacts: (input) =>
       selfLearningRuntime.facts
         .listActiveFacts({ userId: input.userId, minConfidence: 0, limit: input.limit })
@@ -4761,6 +4770,7 @@ export async function createFridayHub(
         getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
+        memoryGuardFactory,
         listLearnedFacts: (input) =>
           selfLearningRuntime.facts
             .listActiveFacts({ userId: input.userId, minConfidence: 0, limit: input.limit })
