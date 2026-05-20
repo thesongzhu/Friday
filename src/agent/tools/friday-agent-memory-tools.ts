@@ -362,7 +362,8 @@ function shouldIncludeGuardedPrincipalMemory(namespace: string | undefined): boo
   const normalized = normalizeMemoryNamespace(namespace);
   return normalized === "preference"
     || normalized === "user"
-    || normalized === "default";
+    || normalized === "default"
+    || normalized === "agent";
 }
 
 function taskPromptLooksLikeQuestion(taskPrompt: string | undefined): boolean {

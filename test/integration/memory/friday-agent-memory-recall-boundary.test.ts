@@ -97,7 +97,7 @@ describe("Friday agent memory recall boundary", () => {
     vi.restoreAllMocks();
   });
 
-  it("recalls current-principal API memory through the agent memory_search tool", async () => {
+  it("recalls current-principal API memory through explicit agent memory_search", async () => {
     const memoryService = createFridayMemoryService({
       db,
       providerService: createMockProviderService(),
@@ -132,7 +132,7 @@ describe("Friday agent memory recall boundary", () => {
       memoryGuardFactory,
     });
     const result = await searchTool!.execute(
-      { query: "proof run project codename", limit: 3 },
+      { query: "proof run project codename", namespace: "agent", limit: 3 },
       signalWithAdminTenant(),
     );
 

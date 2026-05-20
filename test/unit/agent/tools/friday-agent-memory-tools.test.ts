@@ -342,7 +342,58 @@ describe("FridayAgentMemoryTools", () => {
       ]);
     });
 
-    it("does not search guarded API memory for explicit agent namespace", async () => {
+    it("includes current-principal guarded API memory for explicit agent namespace", async () => {
+      const svc = mockMemoryService([]);
+      const guardedSvc = mockMemoryService([
+        makeSearchResult({
+          item: makeItem({
+            id: "api-memory-1",
+            namespace: "tenant.admin-001.user.admin-001.five-scenario-proof",
+            content: "The proof run project codename is BARB-phase-22d.",
+            source: "five-scenario-real-proof",
+            tags: ["five-scenario", "preference"],
+          }),
+          score: 0.91,
+        }),
+      ]);
+      const memoryGuardFactory = mockMemoryGuardFactory(guardedSvc);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        memoryGuardFactory,
+      });
+
+      const result = await searchTool!.execute(
+        { query: "proof run project codename", namespace: "agent", limit: 3 },
+        signalWithContext({
+          principalId: "admin-001",
+          tenantContext: { hubId: "admin-001", userId: "admin-001" },
+        }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(memoryGuardFactory.forContext).toHaveBeenCalledWith({
+        principalId: "admin-001",
+        subject: {
+          hubId: "admin-001",
+          userId: "admin-001",
+          accessLevel: "tenant",
+        },
+      });
+      expect(guardedSvc.search).toHaveBeenCalledWith("proof run project codename", {
+        limit: 6,
+      });
+      expect(JSON.parse(result.content)).toMatchObject([
+        {
+          content: "The proof run project codename is BARB-phase-22d.",
+          metadata: {
+            id: "api-memory-1",
+            namespace: "tenant.admin-001.user.admin-001.five-scenario-proof",
+          },
+        },
+      ]);
+    });
+
+    it("does not search guarded API memory for custom agent namespaces", async () => {
       const svc = mockMemoryService([]);
       const guardedSvc = mockMemoryService([makeSearchResult()]);
       const memoryGuardFactory = mockMemoryGuardFactory(guardedSvc);
@@ -352,7 +403,7 @@ describe("FridayAgentMemoryTools", () => {
       });
 
       await searchTool!.execute(
-        { query: "proof run project codename", namespace: "agent", limit: 3 },
+        { query: "proof run project codename", namespace: "agent.custom", limit: 3 },
         signalWithContext({
           principalId: "admin-001",
           tenantContext: { hubId: "admin-001", userId: "admin-001" },
