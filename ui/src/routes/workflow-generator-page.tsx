@@ -136,7 +136,11 @@ export function WorkflowGeneratorPage() {
       return workflowGeneratorApi.approveSession(sessionId);
     },
     onSuccess: (result) => {
-      toast.success(localize(locale, "工作流已保存", "Workflow saved"));
+      toast.success(localize(
+        locale,
+        "工作流版本已发布；未声明升级生命周期推广。",
+        "Workflow version published; upgrade lifecycle promotion is not claimed.",
+      ));
       navigate(`/workflows/builder?workflowId=${encodeURIComponent(result.workflowId)}`);
     },
     onError: (err) => {
@@ -274,7 +278,7 @@ export function WorkflowGeneratorPage() {
 
           <ShellCard
             eyebrow={localize(locale, "证据", "Evidence")}
-            title={localize(locale, "生成与批准证据", "Generation and approval evidence")}
+            title={localize(locale, "生成、发布与生命周期边界", "Generation, publish, and lifecycle boundary")}
             aside={
               <ActionButton className="min-h-[34px] px-3 py-1 text-xs" tone="secondary" disabled={!sessionId || evidenceMutation.isPending} onClick={() => evidenceMutation.mutate()}>
                 {localize(locale, "刷新", "Refresh")}
@@ -287,7 +291,11 @@ export function WorkflowGeneratorPage() {
               </pre>
             ) : (
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                {localize(locale, "保存前后可以拉取生成证据，确认草案来源和校验结果。", "Load evidence before or after saving to inspect generation source and validation results.")}
+                {localize(
+                  locale,
+                  "保存前后可以拉取生成证据，确认草案来源、校验结果，以及发布版本并不等同于 shadow/canary/promote 生命周期推广。",
+                  "Load evidence before or after saving to inspect generation source, validation results, and the boundary that a published version is not shadow/canary/promote lifecycle promotion.",
+                )}
               </p>
             )}
           </ShellCard>

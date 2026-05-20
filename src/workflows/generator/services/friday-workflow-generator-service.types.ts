@@ -15,6 +15,13 @@ import type {
 
 // ─── Service interface ───
 
+export interface FridayWorkflowGeneratorPublicationBoundary {
+  stage: "published_version";
+  lifecyclePromotion: "not_lifecycle_promoted";
+  proofBoundary: "crud_publish_only";
+  summary: string;
+}
+
 export interface FridayWorkflowGeneratorService {
   startSession(
     input: FridayStartWorkflowGenerationRequest,
@@ -47,6 +54,7 @@ export interface FridayWorkflowGeneratorService {
     versionNumber: number;
     slug: string;
     published: boolean;
+    publicationBoundary: FridayWorkflowGeneratorPublicationBoundary;
     harness?: FridayTemplateHarnessSummary | null;
     qaVerdict?: FridayHarnessQaVerdictV1 | null;
   }>;

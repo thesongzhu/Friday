@@ -100,6 +100,7 @@ This document is the current architecture reference for steady-state Friday runt
 ## Capability acquisition and standing goals
 
 - Capability acquisition is a steady-state product loop: `candidate -> plan -> sandbox/test -> approval if required -> install/register -> doctor verify -> available`.
+- Capability acquisition status or registration fields are not blanket installed/live-provider claims. Clients must inspect the additive `availabilityBoundary` / proof-tier fields on verification results, registered capabilities, and execution suggestions. `local_candidate_registered` means a generated/local candidate passed sandbox or dry-run proof but remains blocked from task execution until installation or lifecycle promotion proof exists; its verification result must use blocked lifecycle semantics rather than a runnable `passed` claim.
 - Unverified generated, downloaded, imported, or discovered capability must not be routed as available.
 - Source ranking should prefer installed/trusted local capability before open internet discovery.
 - Open internet discovery is allowed only inside autonomy policy, budget, sandbox, and approval constraints.
@@ -146,6 +147,8 @@ This document is the current architecture reference for steady-state Friday runt
 - `/skills` is the operator-facing lifecycle surface for installed skills, updates, verification evidence, source policy, and generated-skill handoff from `/assistant`.
 - Skill verification evidence now includes a canonical `preflight` summary with `ready`, `needs_review`, or `blocked` verdicts plus blocking/warning/advisory checks across manifest, integrity, runtime requirements, permissions, dry-run, and trust.
 - Skill generation is not a terminal leaf product. Generated skills flow through the generator-to-candidate bridge so approved generated output carries a `candidateId` and can enter the candidate/lifecycle handoff instead of bypassing unified lifecycle tracking.
+- Skill generator approval stages a candidate only. `promotionStage: "candidate_staged"` with `registryRefreshed: false` must not be described as installed, promoted, or runnable until the skill lifecycle completes the required verification/promotion path.
+- Candidate approval receipts expose `candidateManifestTags`; legacy `promotedManifestTags` is compatibility-only and must remain empty for `candidate_staged` responses.
 - Skill verification evidence must remain structured around manifest verdict, package integrity, dependency checks, runtime dry-run, and trust summary.
 - `/v1/skills/catalog` and skill detail responses must expose machine-readable lifecycle guidance for operator surfaces, including trust tier, implementation status, blocked reasons, recommended next action, and first-use prompts. UI surfaces must consume that server-shaped guidance instead of reverse-engineering install state client-side.
 
@@ -164,6 +167,7 @@ This document is the current architecture reference for steady-state Friday runt
 - One-click deploy must remain an orchestration surface on top of the existing workflow builder, publisher, runner, and evidence exporters; clients must not need to manually chain compile, publish, run, export, and observability correlation.
 - `/assistant` may show simplified workflow deploy cards and recovery actions, but it must not expose builder jargon or raw DAG internals.
 - `/workflows` is the operator-facing workflow control plane for graph visualization, draft and published state, deploy status, run timeline, and evidence export.
+- Workflow generator approval creates and publishes a workflow version through Workflow CRUD. That publish result is not the workflow upgrade lifecycle's shadow/canary/promote/rollback proof, and API/UI evidence must preserve that boundary.
 - Workflow deploy, publish, export, and generated-workflow failures must emit trace correlation, audit records, metrics, and diagnosis-visible evidence instead of failing only inside workflow-local tables.
 
 ## Fleet and distributed execution

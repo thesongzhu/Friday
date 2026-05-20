@@ -61,6 +61,19 @@ export type FridayCapabilityVerificationStatus =
   | "failed"
   | "blocked";
 
+export type FridayCapabilityAvailabilityProofTier =
+  | "already_available_runtime"
+  | "live_runtime_verified"
+  | "local_candidate_registered"
+  | "blocked_or_unverified";
+
+export interface FridayCapabilityAvailabilityBoundary {
+  proofTier: FridayCapabilityAvailabilityProofTier;
+  liveRuntimeVerified: boolean;
+  localCandidateOnly: boolean;
+  summary: string;
+}
+
 export interface FridayAutonomyBudgetPolicy {
   maxUsdPerRun?: number;
   maxMinutesPerRun?: number;
@@ -130,6 +143,7 @@ export interface FridayCapabilityVerificationResult {
   evidence: string;
   verifiedAt?: string;
   blocker?: string;
+  availabilityBoundary?: FridayCapabilityAvailabilityBoundary;
 }
 
 export interface FridayRegisteredCapabilityResult {
@@ -138,6 +152,7 @@ export interface FridayRegisteredCapabilityResult {
   registeredAt: string;
   state: "available" | "blocked";
   note: string;
+  availabilityBoundary?: FridayCapabilityAvailabilityBoundary;
 }
 
 export interface FridayCapabilityExecutionSuggestion {
@@ -149,6 +164,7 @@ export interface FridayCapabilityExecutionSuggestion {
     | "approve_run"
     | "complete_human_setup"
     | "cancel_or_replan";
+  availabilityBoundary?: FridayCapabilityAvailabilityBoundary;
 }
 
 export interface FridayCapabilityAcquisitionRun {

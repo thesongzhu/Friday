@@ -862,9 +862,12 @@ export function createFridayReflexService(
       return {
         savedSkillId: saved.skillId,
         skillDir: saved.skillDir,
+        stagedCandidateId: saved.candidateId,
+        stagedCandidateDir: saved.candidateDir,
         savedFiles: saved.savedFiles,
         registryRefreshed: saved.registryRefreshed,
         promotionStage: saved.promotionStage,
+        lifecycleBoundary: "candidate_staged_not_installed_or_promoted",
       };
     }
     if (candidate.kind === "workflow") {
@@ -882,6 +885,12 @@ export function createFridayReflexService(
         versionNumber: saved.versionNumber,
         slug: saved.slug,
         published: saved.published,
+        publicationBoundary: {
+          stage: saved.publicationBoundary.stage,
+          lifecyclePromotion: saved.publicationBoundary.lifecyclePromotion,
+          proofBoundary: saved.publicationBoundary.proofBoundary,
+          summary: saved.publicationBoundary.summary,
+        },
       };
     }
     return {};

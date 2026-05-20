@@ -282,13 +282,16 @@ async function startSkillGeneratorSession(
   return { sessionId, draft };
 }
 
-async function approveAndRunGeneratedSkill(
+async function approveAndStageGeneratedSkillCandidate(
   baseUrl: string,
   token: string,
   sessionId: string,
   runInput: Record<string, unknown>,
 ): Promise<{
   skillId: string;
+  candidateId: string;
+  candidateDir: string;
+  promotionStage: string;
   testSummary: {
     ok: boolean;
     behavioralCheck?: {
@@ -298,10 +301,10 @@ async function approveAndRunGeneratedSkill(
       matchedMarkers: string[];
     };
   };
-  runResult: {
-    status: string;
-    completionDepth: string;
-    output: Record<string, unknown>;
+  blockedRun: {
+    status: number;
+    code?: string;
+    message?: string;
   };
 }> {
   const testRes = await fetch(
@@ -373,7 +376,10 @@ async function approveAndRunGeneratedSkill(
     ok: boolean;
     data: {
       skillId: string;
+      candidateId: string;
+      candidateDir: string;
       registryRefreshed: boolean;
+      promotionStage: string;
       evidence: {
         approvalReadiness: { ready: boolean };
         validationSummary: { ok: boolean };
@@ -382,11 +388,14 @@ async function approveAndRunGeneratedSkill(
   };
   if (
     !approveJson.ok ||
-    !approveJson.data.registryRefreshed ||
+    approveJson.data.registryRefreshed ||
+    approveJson.data.promotionStage !== "candidate_staged" ||
+    !approveJson.data.candidateId ||
+    !approveJson.data.candidateDir ||
     !approveJson.data.evidence.validationSummary.ok ||
     !approveJson.data.evidence.approvalReadiness.ready
   ) {
-    throw new Error(`Skill generator approve returned invalid evidence: ${JSON.stringify(approveJson)}`);
+    throw new Error(`Skill generator approve returned invalid candidate-staging evidence: ${JSON.stringify(approveJson)}`);
   }
 
   const skillId = approveJson.data.skillId;
@@ -398,21 +407,24 @@ async function approveAndRunGeneratedSkill(
       body: JSON.stringify({ input: runInput }),
     },
   );
-  if (runSkillRes.status !== 200) {
-    const body = await runSkillRes.text();
-    throw new Error(`Skill run failed (${String(runSkillRes.status)}): ${body}`);
-  }
   const runSkillJson = (await runSkillRes.json()) as {
-    ok: boolean;
-    data: { status: string; completionDepth: string; output: Record<string, unknown> };
+    ok?: boolean;
+    error?: { code?: string; message?: string };
   };
-  if (!runSkillJson.ok) {
-    throw new Error(`Skill run returned !ok: ${JSON.stringify(runSkillJson)}`);
+  if (runSkillRes.status === 200 || runSkillJson.ok === true) {
+    throw new Error(`Staged generated skill was runnable before lifecycle promotion: ${JSON.stringify(runSkillJson)}`);
   }
   return {
     skillId,
+    candidateId: approveJson.data.candidateId,
+    candidateDir: approveJson.data.candidateDir,
+    promotionStage: approveJson.data.promotionStage,
     testSummary: testJson.data.test,
-    runResult: runSkillJson.data,
+    blockedRun: {
+      status: runSkillRes.status,
+      code: runSkillJson.error?.code,
+      message: runSkillJson.error?.message,
+    },
   };
 }
 
@@ -610,7 +622,7 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LIVE_ANTHROPIC_API_KEY)("Friday L
   // ── 3. Skill Generator ──
 
   it(
-    "generates, approves, saves, and runs a skill via the skill generator",
+    "generates, approves, and stages a skill candidate via the skill generator",
     async () => {
       // Start a session
       const startRes = await fetch(
@@ -760,53 +772,36 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LIVE_ANTHROPIC_API_KEY)("Friday L
         ok: boolean;
         data: {
           skillId: string;
+          skillDir: string;
+          candidateId: string;
+          candidateDir: string;
           registryRefreshed: boolean;
+          promotionStage: string;
           evidence: {
             approvalReadiness: { ready: boolean };
             validationSummary: { ok: boolean };
+            stagedCandidateIdentity?: {
+              skillId: string;
+              candidateId?: string;
+              candidateDir?: string;
+              filesDir?: string;
+            };
           };
         };
       };
       expect(approveJson.ok).toBe(true);
-      expect(approveJson.data.registryRefreshed).toBe(true);
+      expect(approveJson.data.registryRefreshed).toBe(false);
+      expect(approveJson.data.promotionStage).toBe("candidate_staged");
+      expect(approveJson.data.candidateId).toBeTruthy();
+      expect(approveJson.data.candidateDir).toBeTruthy();
       expect(approveJson.data.evidence.validationSummary.ok).toBe(true);
       expect(approveJson.data.evidence.approvalReadiness.ready).toBe(true);
-
-      const skillId = approveJson.data.skillId;
-      const getSkillRes = await fetch(
-        `${env.baseUrl}/v1/skills/${encodeURIComponent(skillId)}`,
-        {
-          headers: authHeaders(env.token),
-        },
-      );
-      expect(getSkillRes.status).toBe(200);
-      const getSkillJson = (await getSkillRes.json()) as {
-        ok: boolean;
-        data: { skill: { skillId: string; status: string } };
-      };
-      expect(getSkillJson.ok).toBe(true);
-      expect(getSkillJson.data.skill.skillId).toBe(skillId);
-      expect(getSkillJson.data.skill.status).toBe("installed");
-
-      const runSkillRes = await fetch(
-        `${env.baseUrl}/v1/skills/${encodeURIComponent(skillId)}/run`,
-        {
-          method: "POST",
-          headers: authHeaders(env.token),
-          body: JSON.stringify({
-            input: { task: "Say hello and include today's date." },
-          }),
-        },
-      );
-      expect(runSkillRes.status).toBe(200);
-      const runSkillJson = (await runSkillRes.json()) as {
-        ok: boolean;
-        data: { status: string; completionDepth: string; output: Record<string, unknown> };
-      };
-      expect(runSkillJson.ok).toBe(true);
-      expect(runSkillJson.data.status).toBe("completed");
-      expect(runSkillJson.data.completionDepth).toBe("executed");
-      expect(Object.keys(runSkillJson.data.output).length).toBeGreaterThan(0);
+      expect(approveJson.data.evidence.stagedCandidateIdentity).toMatchObject({
+        skillId: approveJson.data.skillId,
+        candidateId: approveJson.data.candidateId,
+        candidateDir: approveJson.data.candidateDir,
+        filesDir: approveJson.data.skillDir,
+      });
     },
     90_000,
   );
@@ -922,7 +917,7 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LIVE_ANTHROPIC_API_KEY)("Friday L
   );
 
   it(
-    "regenerates an existing skill with the same id and upgraded versioned behavior",
+    "stages generated skill candidates with the same id without making them runnable",
     async () => {
       const requestedSkillId = `live-upgrade-skill-${Date.now().toString(36)}`;
 
@@ -936,66 +931,42 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LIVE_ANTHROPIC_API_KEY)("Friday L
       };
       expect(typeof firstDraft.manifest?.id).toBe("string");
 
-      const firstApproval = await approveAndRunGeneratedSkill(
+      const firstApproval = await approveAndStageGeneratedSkillCandidate(
         env.baseUrl,
         env.token,
         first.sessionId,
         { task: "Run the version one skill." },
       );
-      const firstOutput = JSON.stringify(firstApproval.runResult.output);
-      expect(firstApproval.runResult.status).toBe("completed");
-      expect(firstApproval.runResult.completionDepth).toBe("executed");
+      expect(firstApproval.promotionStage).toBe("candidate_staged");
+      expect(firstApproval.blockedRun.status).toBe(409);
+      expect(firstApproval.blockedRun.code).toMatch(/SKILL_NOT_AVAILABLE|SKILL_NOT_FOUND/);
       expect(firstApproval.testSummary.behavioralCheck?.attempted).toBe(true);
       expect(firstApproval.testSummary.behavioralCheck?.satisfied).toBe(true);
-      expect(firstOutput).toContain(`VERSION_ONE:${requestedSkillId}`);
 
       const second = await startSkillGeneratorSession(
         env.baseUrl,
         env.token,
-        `Update the existing installed Friday shell skill with manifest id "${firstApproval.skillId}". Keep the exact same manifest id "${firstApproval.skillId}", but change manifest version to "2.0.0". When the skill runs, it must output the exact string "VERSION_TWO:${firstApproval.skillId}" somewhere in the result. Do not create a new skill id.`,
+        `Create another Friday shell skill candidate with manifest id "${firstApproval.skillId}". Keep the exact same manifest id "${firstApproval.skillId}", but change manifest version to "2.0.0". When its explicit self-test runs, it must output the exact string "VERSION_TWO:${firstApproval.skillId}" somewhere in the result. Do not create a new skill id.`,
       );
       const secondDraft = second.draft as {
         manifest?: { id?: string; version?: string };
       };
       expect(typeof secondDraft.manifest?.id).toBe("string");
 
-      const secondApproval = await approveAndRunGeneratedSkill(
+      const secondApproval = await approveAndStageGeneratedSkillCandidate(
         env.baseUrl,
         env.token,
         second.sessionId,
         { task: "Run the upgraded version two skill." },
       );
-      const secondOutput = JSON.stringify(secondApproval.runResult.output);
 
       expect(secondApproval.skillId).toBe(firstApproval.skillId);
-      expect(secondApproval.runResult.status).toBe("completed");
-      expect(secondApproval.runResult.completionDepth).toBe("executed");
+      expect(secondApproval.promotionStage).toBe("candidate_staged");
+      expect(secondApproval.candidateId).not.toBe(firstApproval.candidateId);
+      expect(secondApproval.blockedRun.status).toBe(409);
+      expect(secondApproval.blockedRun.code).toMatch(/SKILL_NOT_AVAILABLE|SKILL_NOT_FOUND/);
       expect(secondApproval.testSummary.behavioralCheck?.attempted).toBe(true);
       expect(secondApproval.testSummary.behavioralCheck?.satisfied).toBe(true);
-      expect(secondOutput).toContain(`VERSION_TWO:${firstApproval.skillId}`);
-      expect(secondOutput).not.toBe(firstOutput);
-
-      const getSkillRes = await fetch(
-        `${env.baseUrl}/v1/skills/${encodeURIComponent(firstApproval.skillId)}`,
-        {
-          headers: authHeaders(env.token),
-        },
-      );
-      expect(getSkillRes.status).toBe(200);
-      const getSkillJson = (await getSkillRes.json()) as {
-        ok: boolean;
-        data: {
-          skill: {
-            skillId: string;
-            installedVersion?: string;
-            latestVersion?: string;
-          };
-        };
-      };
-      expect(getSkillJson.ok).toBe(true);
-      expect(getSkillJson.data.skill.skillId).toBe(firstApproval.skillId);
-      expect(getSkillJson.data.skill.installedVersion).toBe("2.0.0");
-      expect(getSkillJson.data.skill.latestVersion).toBe("2.0.0");
     },
     120_000,
   );

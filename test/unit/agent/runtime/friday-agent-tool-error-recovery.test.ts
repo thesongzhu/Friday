@@ -16,6 +16,9 @@ describe("buildToolErrorRecoveryHint", () => {
 
     expect(hint?.text).toContain("skill_generate");
     expect(hint?.text).toContain("action=\"start\"");
+    expect(hint?.text).toContain("candidate staging only");
+    expect(hint?.text).toContain("shadow/canary/promote");
+    expect(hint?.text).not.toContain("skill_run on the newly created skill");
     expect(hint?.text).toContain("Do NOT tell the user the skill generator is unavailable");
   });
 

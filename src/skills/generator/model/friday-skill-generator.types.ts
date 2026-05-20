@@ -33,6 +33,9 @@ export interface FridaySkillGenerationSession {
   openQuestions: string[];
   decisions: string[];
   draftSkillId?: string;
+  stagedCandidateId?: string;
+  stagedCandidateDir?: string;
+  stagedCandidateFilesDir?: string;
   explicitTest?: FridaySkillGenerationExplicitTestSummary;
   harnessStage?: FridayTemplateHarnessStage;
   planningSpecId?: string;

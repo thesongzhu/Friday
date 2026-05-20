@@ -77,6 +77,12 @@ function makeMockService(): FridayWorkflowGeneratorService {
       versionNumber: 1,
       slug: "test-workflow",
       published: true,
+      publicationBoundary: {
+        stage: "published_version",
+        lifecyclePromotion: "not_lifecycle_promoted",
+        proofBoundary: "crud_publish_only",
+        summary: "Published through Workflow CRUD only; lifecycle promotion is not claimed.",
+      },
     })),
     getQaVerdict: vi.fn(async () => null),
     getHarnessSummary: vi.fn(async () => null),
@@ -230,6 +236,51 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     expect(result).toHaveProperty("draft");
   });
 
+  it("does not claim publication in evidence before approve publishes", async () => {
+    const evidenceRoute = routes.find((r) => r.operationId === "workflows.generator.sessions.evidence.get")!;
+    const result = await evidenceRoute.handler(
+      makeCtx({ params: { sessionId: "s-1" } }) as never,
+    );
+
+    expect(result).not.toHaveProperty("evidence.publicationBoundary");
+    expect(result).toHaveProperty(
+      "evidence.approvalReadiness.reason",
+      "Draft passed generator validation and is ready for QA review.",
+    );
+  });
+
+  it("keeps publication boundary in evidence after approve removes the draft", async () => {
+    const evidenceRoute = routes.find((r) => r.operationId === "workflows.generator.sessions.evidence.get")!;
+    vi.mocked(service.getSession).mockResolvedValueOnce({
+      session: {
+        sessionId: "s-saved",
+        userId: "u-1",
+        channel: "test",
+        status: "saved",
+        goal: "test",
+        requirementsSummary: "",
+        openQuestions: [],
+        decisions: [],
+        workflowId: "wf-1",
+        workflowVersionId: "wv-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      turns: [],
+    });
+
+    const result = await evidenceRoute.handler(
+      makeCtx({ params: { sessionId: "s-saved" } }) as never,
+    );
+
+    expect(result).toHaveProperty("evidence.publicationBoundary.proofBoundary", "crud_publish_only");
+    expect(result).toHaveProperty("evidence.publicationBoundary.lifecyclePromotion", "not_lifecycle_promoted");
+    expect(result).toHaveProperty(
+      "evidence.approvalReadiness.reason",
+      "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
+    );
+  });
+
   it("approve delegates to service", async () => {
     const approveRoute = routes.find((r) => r.operationId === "workflows.generator.sessions.approve")!;
     const result = await approveRoute.handler(
@@ -237,6 +288,12 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     );
     expect(service.approveAndSave).toHaveBeenCalledWith("s-1");
     expect(result).toHaveProperty("workflowId");
+    expect(result).toHaveProperty("publicationBoundary.lifecyclePromotion", "not_lifecycle_promoted");
+    expect(result).toHaveProperty("evidence.publicationBoundary.proofBoundary", "crud_publish_only");
+    expect(result).toHaveProperty(
+      "evidence.approvalReadiness.reason",
+      "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
+    );
   });
 
   it("cancel delegates to service", async () => {
