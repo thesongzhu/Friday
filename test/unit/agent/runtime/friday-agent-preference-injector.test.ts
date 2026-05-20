@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { FridayMemoryItem } from "../../../../src/memory/model/friday-memory.types.js";
@@ -33,6 +35,14 @@ function buildMockMemoryService(items: FridayMemoryItem[]) {
 }
 
 describe("createFridayPreferenceInjector — high-impact gate", () => {
+  it("keeps the learned preference injector out of production hub prompt wiring", () => {
+    const hubBootstrapSource = readFileSync(resolve(process.cwd(), "src/hub/friday-hub-bootstrap.ts"), "utf8");
+
+    expect(hubBootstrapSource).toContain("communicationPromptBuilder");
+    expect(hubBootstrapSource).toContain("buildReflexPreferencePromptFragment");
+    expect(hubBootstrapSource).not.toContain("createFridayPreferenceInjector");
+  });
+
   // ── Source 1: learningContextBuilder ───────────────────────────────────
 
   it("Source 1: injects benign learned facts at the default learning confidence", async () => {

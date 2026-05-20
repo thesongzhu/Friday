@@ -509,6 +509,9 @@ describe("FridayUixRoutes", () => {
       memoryBoundary: "separate_from_durable_memory",
       evidenceBoundary: "preference_fact_evidence",
       contextUseBoundary: "learning_context_service_gated",
+      promptInjectionBoundary: "not_direct_prompt_injection",
+      reviewBoundary: "not_review_center_confirmed",
+      revocationBoundary: "clear_delete_or_synthetic_memory_delete",
     });
   });
 

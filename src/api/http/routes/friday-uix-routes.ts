@@ -26,6 +26,9 @@ import {
   FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
   FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
   FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
+  FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
+  FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+  FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
   FRIDAY_LEARNED_FACT_TRUST_LEVEL,
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
 
@@ -138,6 +141,9 @@ function enrichLearnedFactBoundary<T extends {
     memoryBoundary: string;
     evidenceBoundary: string;
     contextUseBoundary: string;
+    promptInjectionBoundary: string;
+    reviewBoundary: string;
+    revocationBoundary: string;
   };
 } {
   return {
@@ -147,6 +153,9 @@ function enrichLearnedFactBoundary<T extends {
       memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
       evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
       contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+      promptInjectionBoundary: FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
+      reviewBoundary: FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+      revocationBoundary: FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
     },
   };
 }

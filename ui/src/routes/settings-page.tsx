@@ -65,6 +65,25 @@ type PendingDefaultProviderChoice = {
   defaultModel?: string;
 };
 
+type LearnedFactBoundary = {
+  trustLevel: string;
+  memoryBoundary: string;
+  evidenceBoundary: string;
+  contextUseBoundary: string;
+  promptInjectionBoundary: string;
+  reviewBoundary: string;
+  revocationBoundary: string;
+};
+
+type LearnedFact = {
+  key: string;
+  value: unknown;
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: string;
+  boundary?: LearnedFactBoundary;
+};
+
 type RoutingCostMode = NonNullable<FridayModelRoutingConfig["costMode"]>;
 
 const ROUTING_COST_MODE_OPTIONS: readonly RoutingCostMode[] = [
@@ -77,6 +96,36 @@ function routingCostModeLabel(mode: RoutingCostMode, locale: AppLocale): string 
   if (mode === "frugal") return localize(locale, "省钱", "Frugal");
   if (mode === "strict") return localize(locale, "严格", "Strict");
   return localize(locale, "标准", "Standard");
+}
+
+function learnedFactBoundaryDetails(fact: LearnedFact, locale: AppLocale): Array<{ label: string; value: string }> {
+  const boundary = fact.boundary;
+  return [
+    {
+      label: localize(locale, "记忆", "Memory"),
+      value: boundary?.memoryBoundary === "separate_from_durable_memory"
+        ? localize(locale, "独立于显式 Memory", "separate from explicit Memory")
+        : boundary?.memoryBoundary ?? localize(locale, "边界未知", "boundary unknown"),
+    },
+    {
+      label: localize(locale, "Prompt", "Prompt"),
+      value: boundary?.promptInjectionBoundary === "not_direct_prompt_injection"
+        ? localize(locale, "不直接注入", "not direct injection")
+        : boundary?.promptInjectionBoundary ?? localize(locale, "边界未知", "boundary unknown"),
+    },
+    {
+      label: localize(locale, "审核", "Review"),
+      value: boundary?.reviewBoundary === "not_review_center_confirmed"
+        ? localize(locale, "未由 Review Center 确认", "not Review Center confirmed")
+        : boundary?.reviewBoundary ?? localize(locale, "边界未知", "boundary unknown"),
+    },
+    {
+      label: localize(locale, "撤销", "Revoke"),
+      value: boundary?.revocationBoundary === "clear_delete_or_synthetic_memory_delete"
+        ? localize(locale, "可清除或删除", "clear or delete available")
+        : boundary?.revocationBoundary ?? localize(locale, "边界未知", "boundary unknown"),
+    },
+  ];
 }
 
 function formatTimestamp(value?: string): string {
@@ -379,7 +428,7 @@ export function SettingsPage() {
   const { data: learnedFacts = [] } = useQuery({
     queryKey: ["settings", "learnedFacts"],
     queryFn: async () => {
-      const data = await apiClient.get<{ items: Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }> }>("/v1/uix/learned-facts");
+      const data = await apiClient.get<{ items: LearnedFact[] }>("/v1/uix/learned-facts");
       return data.items;
     },
     retry: 0,
@@ -1596,34 +1645,55 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
-        {learnedFacts.length > 0 ? (
-          <ShellCard eyebrow={localize(locale, "学习", "Learning")} title={localize(locale, "Friday 对你的了解", "What Friday Knows About You")}>
-            <div className="space-y-3">
+        <ShellCard eyebrow={localize(locale, "学习", "Learning")} title={localize(locale, "Friday 对你的了解", "What Friday Knows About You")}>
+          <div className="space-y-3">
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                "这些是 Friday 从互动中学到的置信度事实；它们独立于显式 Memory，不会作为原始 learned fact 直接注入 prompt。",
+                "These are confidence-scored facts Friday learned from interactions; they are separate from explicit Memory and are not injected into prompts as raw learned facts.",
+              )}
+            </p>
+            <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">
+              {localize(
+                locale,
+                "只有通信 persona 或 runtime context resolver 明确使用时才会产生影响；执行、测试、安全和 User Constitution 偏好仍需要 Review Center 确认后才会作为 Reflex 偏好进入 prompt。",
+                "They can influence behavior only when a communication persona or runtime context resolver explicitly uses them; execution, testing, safety, and User Constitution preferences still need Review Center confirmation before entering prompts as Reflex preferences.",
+              )}
+            </p>
+            {learnedFacts.length === 0 ? (
               <p className="text-sm text-[color:var(--color-text-secondary)]">
-                {localize(locale, "这些是 Friday 从你的互动中学到的偏好和事实。", "These are preferences and facts Friday has learned from your interactions.")}
+                {localize(locale, "还没有 learned facts。边界仍然生效：显式 Memory、learned fact、Reflex 偏好和 User Constitution 是分开的。", "No learned facts yet. The boundary still applies: explicit Memory, learned facts, Reflex preferences, and User Constitution settings are separate.")}
               </p>
-              {learnedFacts.map((fact) => (
-                <div key={fact.key} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Brain className="h-3.5 w-3.5 text-[color:var(--color-text-faint)]" />
-                        <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{fact.key}</p>
-                      </div>
-                      <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{String(fact.value)}</p>
+            ) : learnedFacts.map((fact) => (
+              <div key={fact.key} className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-3.5 w-3.5 text-[color:var(--color-text-faint)]" />
+                      <p className="text-sm font-medium text-[color:var(--color-text-primary)]">{fact.key}</p>
                     </div>
-                    <StatusPill tone={fact.confidence >= 0.7 ? "success" : fact.confidence >= 0.4 ? "warning" : "neutral"}>
-                      {(fact.confidence * 100).toFixed(0)}%
-                    </StatusPill>
+                    <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">{String(fact.value)}</p>
                   </div>
-                  <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
-                    {String(fact.evidenceCount)} evidence · last confirmed {formatTimestamp(fact.lastConfirmedAt)}
-                  </p>
+                  <StatusPill tone={fact.confidence >= 0.7 ? "success" : fact.confidence >= 0.4 ? "warning" : "neutral"}>
+                    {(fact.confidence * 100).toFixed(0)}%
+                  </StatusPill>
                 </div>
-              ))}
-            </div>
-          </ShellCard>
-        ) : null}
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {learnedFactBoundaryDetails(fact, locale).map((item) => (
+                    <div key={item.label} className="min-w-0 rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg)] px-3 py-2">
+                      <p className="text-[11px] uppercase text-[color:var(--color-text-faint)]">{item.label}</p>
+                      <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-[color:var(--color-text-faint)]">
+                  {String(fact.evidenceCount)} evidence · last confirmed {formatTimestamp(fact.lastConfirmedAt)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </ShellCard>
 
         <ShellCard eyebrow={localize(locale, "运维", "Operator")} title={localize(locale, "学习控制", "Learning Controls")}>
           {learningOverview ? (

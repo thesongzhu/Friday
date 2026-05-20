@@ -15,6 +15,9 @@ export const FRIDAY_LEARNED_FACT_TRUST_LEVEL = "confidence_scored_learning";
 export const FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY = "separate_from_durable_memory";
 export const FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY = "preference_fact_evidence";
 export const FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY = "learning_context_service_gated";
+export const FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY = "not_direct_prompt_injection";
+export const FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY = "not_review_center_confirmed";
+export const FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY = "clear_delete_or_synthetic_memory_delete";
 
 function stringifyLearnedFactValue(value: unknown): string {
   if (typeof value === "string") {
@@ -113,6 +116,9 @@ export function toLearnedFactMemoryItem(fact: FridayLearnedFactView): FridayMemo
       memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
       evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
       contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+      promptInjectionBoundary: FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
+      reviewBoundary: FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+      revocationBoundary: FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
       evidenceCount: fact.evidenceCount,
       lastConfirmedAt: fact.lastConfirmedAt,
     },
