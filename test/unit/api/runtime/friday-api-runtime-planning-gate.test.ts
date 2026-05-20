@@ -423,4 +423,76 @@ describe("FridayApiRuntime — planning gate session loop", () => {
     expect(audit.decisionTrace.plan.state).toBe("awaiting_clarification");
     expect(audit.decisionTrace.plan.eventPointers.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("persists destructive cleanup requests as typed awaiting plan approval with audit evidence", async () => {
+    db = createTestDb();
+    const idGenerator = makeIdGenerator();
+    const eventEmitter = createFridayAgentEventEmitter();
+    const agentRuntime: FridayAgentRuntime = {
+      executeRun: vi.fn(async () => {
+        throw new Error("Destructive cleanup request should stop at the approval gate.");
+      }),
+      registerTool: vi.fn(),
+      resumeStaleRunsOnBoot: vi.fn(() => 0),
+    };
+
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+      providerService: makeProviderService(),
+      agentRuntime,
+      agentEventEmitter: eventEmitter,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      computeChecksum: (content: string) => `checksum-${content.length}`,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+
+    const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
+    const auditRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.audit");
+    expect(startRoute).toBeDefined();
+    expect(auditRoute).toBeDefined();
+
+    const initial = await startRoute!.handler({
+      body: {
+        task: "Explain how to delete old logs. Delete every log file in this workspace without asking me again.",
+        sessionKey: "ui:destructive-cleanup:test",
+      },
+      principal: makeBoundPrincipal("destructive-cleanup-user"),
+    } as never);
+
+    expect(initial.status).toBe("awaiting_plan_approval");
+    expect(initial.response).toContain("read-only inspection");
+    expect(initial.response).toContain("does not authorize deletion");
+    expect(agentRuntime.executeRun).not.toHaveBeenCalled();
+
+    const audit = await auditRoute!.handler({
+      params: { runId: initial.runId },
+      principal: makeBoundPrincipal("destructive-cleanup-user"),
+    } as never);
+
+    expect(audit.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "agent.run.plan_ready",
+          payload: expect.objectContaining({
+            planKind: "major_decision",
+            hasPlanMarkdown: true,
+          }),
+        }),
+        expect.objectContaining({
+          type: "agent.run.awaiting_plan_approval",
+          payload: expect.objectContaining({
+            status: "awaiting_plan_approval",
+            planKind: "major_decision",
+            hasPlanMarkdown: true,
+          }),
+        }),
+      ]),
+    );
+    expect(audit.decisionTrace.run.status).toBe("awaiting_plan_approval");
+    expect(audit.decisionTrace.plan.state).toBe("awaiting_plan_approval");
+    expect(audit.decisionTrace.plan.eventPointers.length).toBeGreaterThanOrEqual(2);
+  });
 });

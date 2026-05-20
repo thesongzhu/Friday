@@ -85,6 +85,10 @@ const MAJOR_DECISION_HINTS = /\b(architecture|architect|strategy|migration|roadm
 const VAGUE_DELIVERABLE_HINTS = /\b(?:build|create|make|design|set up|put together|help me (?:build|create|make|design))\b[\s\S]{0,80}\b(?:website|web site|site|web app|app|landing page|dashboard|tool|project|prototype|feature|product)\b/i;
 const VAGUE_IMPROVEMENT_HINTS = /\b(?:make|improve|prepare|turn)\b[\s\S]{0,80}\b(?:friday|this app|the app|this project|the project|the repo|repository|workspace)\b[\s\S]{0,80}\b(?:better|production[- ]ready|usable|ready|safer|stable|polished)\b/i;
 const VAGUE_STRATEGIC_PLAN_HINTS = /\b(workflow plan|production[- ]ready|intentionally vague|vague request|ask the missing clarification questions|wait for (?:my|our|the )?answers before)\b/i;
+const DESTRUCTIVE_ACTION_HINTS = /\b(?:delete|remove|erase|wipe|purge|clean(?:\s+up)?|clear|drop|reset|destroy|rm|unlink|shred|truncate|format)\b[\s\S]{0,120}\b(?:file|files|folder|folders|directory|directories|workspace|repo|repository|database|table|branch|settings?|config|permissions?|backup|dump|snapshot|cache|tmp|logs?|all|everything)\b|\b(?:save|store|write|persist|record|remember)\b[\s\S]{0,80}\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|credential|private[_ -]?key)\b|\b(?:change|modify|update|set|disable|enable|remove|delete|reset)\b[\s\S]{0,100}\b(?:github|branch protection|repo settings|repository settings|permissions?|secrets?|provider config|routing config)\b|\b(?:rm|unlink|shred|truncate|mkfs|dd)\s+\S+/i;
+const DESTRUCTIVE_ACTION_CJK_HINTS = /(?:删除|清理|清空|抹掉|擦除|移除|销毁|格式化).{0,80}(?:文件|文件夹|目录|仓库|数据库|备份|快照|缓存|日志|所有|全部)|(?:保存|写入|记录|存储).{0,80}(?:token|令牌|密钥|密码|凭据|secret|api key)|(?:修改|更改|改变|关闭|开启|删除).{0,80}(?:GitHub|分支保护|仓库设置|权限|配置|provider|供应商)/iu;
+const INFORMATIONAL_HIGH_RISK_GUIDANCE_HINTS = /\b(?:explain|describe|how do i|how can i|what steps|guide me|walk me through|show me how|tell me how)\b|(?:如何|怎么|怎样|教我|告诉我怎么|指导我).{0,80}(?:安全|避免|步骤|风险|删除|清理|保存|修改|配置)/iu;
+const DIRECT_HIGH_RISK_ACTION_HINTS = /\b(?:and|then|also|after that|next)\s+(?:delete|remove|erase|wipe|purge|clean|clear|drop|reset|destroy|rm|unlink|shred|truncate|format|save|store|write|persist|change|modify|update|set|disable|enable)\b|(?:^|[.!?:;]\s*)(?:delete|remove|erase|wipe|purge|clean|clear|drop|reset|destroy|rm|unlink|shred|truncate|format|save|store|write|persist|change|modify|update|set|disable|enable)\b|\b(?:do it|directly|now|immediately|without asking|don't ask|do not ask|go ahead|execute it|run it|apply it|execute the command|run the command|apply the command)\b|\b(?:execute|run|apply)\s+(?:the\s+)?(?:command|operation|cleanup|deletion|change|mutation|script|settings?|config)\b|(?:^|[。！？.!?:;]\s*)(?:删除|清理|清空|抹掉|擦除|移除|销毁|格式化|保存|写入|记录|存储|修改|更改|改变|关闭|开启)\b|(?:直接|立刻|马上|不要问|不用问|直接做|执行|马上做)/iu;
 const CONSTRAINT_HINTS = /\b(must|should|avoid|without|constraint|permission|runtime|read.?only|safe|safely|don't|do not|cannot)\b/i;
 const DETAIL_HINTS = /\b(trigger|input|output|destination|runtime|workspace|browser|provider|channel|timeline|success|goal|constraint|notify|deploy|export)\b/i;
 const SIMPLE_ARITHMETIC_HINTS = /^\s*(?:what\s+is\s+)?-?\d+(?:\.\d+)?\s*(?:[+\-*/xX÷]|plus|minus|times|multiplied by|divided by)\s*-?\d+(?:\.\d+)?\s*\??\s*$/i;
@@ -138,14 +142,28 @@ function withDisabledToolBoundaryMetadata(
   };
 }
 
-const QA_BYPASS_HINTS = /\b(summarize|summarise|explain|describe|what is|tell me about|list|show|how does|overview|translate|recap|compare|analyze|analyse)\b/i;
+const QA_BYPASS_HINTS = /\b(summarize|summarise|explain|describe|what is|tell me about|list|show|how does|how do i|how can i|what steps|guide me|walk me through|overview|translate|recap|compare|analyze|analyse)\b/i;
+
+function isDestructiveOrHighRiskAction(task: string): boolean {
+  return DESTRUCTIVE_ACTION_HINTS.test(task) || DESTRUCTIVE_ACTION_CJK_HINTS.test(task);
+}
+
+function isInformationalHighRiskGuidance(task: string): boolean {
+  return INFORMATIONAL_HIGH_RISK_GUIDANCE_HINTS.test(task)
+    && !DIRECT_HIGH_RISK_ACTION_HINTS.test(task);
+}
 
 function detectPlanningKind(task: string, reviewRequired?: boolean): FridayPlanningKind | null {
   const normalized = normalizeText(task);
   if (reviewRequired) {
     return "major_decision";
   }
-  // Ordinary Q&A / summarization requests should never enter the planning gate
+  const highRiskAction = isDestructiveOrHighRiskAction(normalized);
+  if (highRiskAction && !isInformationalHighRiskGuidance(normalized)) {
+    return "major_decision";
+  }
+  // Ordinary Q&A / summarization requests should never enter the planning gate.
+  // Mixed requests that also ask Friday to mutate are handled above.
   if (QA_BYPASS_HINTS.test(normalized)) return null;
   if (GENERATE_SKILL_HINTS.test(normalized)) return "generate_skill";
   if (DEPLOY_WORKFLOW_HINTS.test(normalized)) return "deploy_workflow";
@@ -166,7 +184,8 @@ function hasPlanningActionHint(task: string): boolean {
     || VAGUE_DELIVERABLE_HINTS.test(task)
     || VAGUE_IMPROVEMENT_HINTS.test(task)
     || VAGUE_STRATEGIC_PLAN_HINTS.test(task)
-    || MAJOR_DECISION_HINTS.test(task);
+    || MAJOR_DECISION_HINTS.test(task)
+    || isDestructiveOrHighRiskAction(task);
 }
 
 function shouldBypassForcedPlanMode(task: string, reviewRequired?: boolean): boolean {
@@ -179,6 +198,9 @@ function shouldBypassForcedPlanMode(task: string, reviewRequired?: boolean): boo
 
 function isTaskDetailedEnough(task: string, kind: FridayPlanningKind): boolean {
   const normalized = normalizeText(task);
+  if (kind === "major_decision" && isDestructiveOrHighRiskAction(normalized)) {
+    return true;
+  }
   const longEnough = normalized.length >= (kind === "major_decision" ? 140 : 110);
   const hasDetails = DETAIL_HINTS.test(normalized);
   const hasConstraints = CONSTRAINT_HINTS.test(normalized);
@@ -247,8 +269,16 @@ function buildPlanMarkdown(input: {
         ? `- ${entry.question} ${entry.answer}`
         : `- ${entry.answer}`)
     : ["- No extra clarifications were required."];
+  const highRiskAction = input.kind === "major_decision" && isDestructiveOrHighRiskAction(input.task);
 
   const steps = (() => {
+    if (highRiskAction) {
+      return [
+        "Treat the request as destructive or high-risk and start with read-only inspection of the exact target and scope only.",
+        "Report what would change, the safest reversible alternative, and any backup/dry-run option before proposing a mutation.",
+        "Require a separate explicit tool or action approval tied to the exact command, file path, secret, or setting before any destructive mutation can run.",
+      ];
+    }
     switch (input.kind) {
       case "generate_skill":
         return [
@@ -284,6 +314,9 @@ function buildPlanMarkdown(input: {
   })();
 
   const summary = `Approved plan for ${input.kind.replaceAll("_", " ")}: ${summarize(input.task, 100)}`;
+  const approvalRequirement = highRiskAction
+    ? "Reply `approve` to continue with read-only inspection and the safe-alternative plan. This approval does not authorize deletion, secret storage, provider changes, GitHub settings changes, or any other destructive mutation; those still require a separate explicit tool/action approval."
+    : "Reply `approve` to continue or `reject` to stop before any real generation or execution starts.";
   const markdown = [
     "# Proposed plan",
     "",
@@ -296,7 +329,7 @@ function buildPlanMarkdown(input: {
     ...steps.map((step, index) => `${String(index + 1)}. ${step}`),
     "",
     "Approval requirement:",
-    "Reply `approve` to continue or `reject` to stop before any real generation or execution starts.",
+    approvalRequirement,
   ].join("\n");
 
   return { summary, markdown };
@@ -310,7 +343,12 @@ function buildExecutionTaskPrompt(input: {
     entry.question
       ? `- ${entry.question} ${entry.answer}`
       : `- ${entry.answer}`) ?? [];
+  const highRiskAction = input.planReview.gate?.kind === "major_decision"
+    && isDestructiveOrHighRiskAction(input.task);
   const toolchainInstruction = (() => {
+    if (highRiskAction) {
+      return "CRITICAL safety rule: this plan approval only permits read-only inspection and a safe-alternative/preview response. Do not delete, overwrite, truncate, clean, save or record secret-like material, change provider configuration, change GitHub settings, or run any mutating tool as part of this approved plan. If the user still wants a concrete mutation, stop at the visible tool/action approval route with the exact target and reason.";
+    }
     switch (input.planReview.gate?.kind) {
       case "generate_skill":
         return "CRITICAL execution rule: use the dedicated skill_generate toolchain to start, clarify, generate, and approve the skill. Do not create skill files manually with write/edit/exec unless skill_generate is unavailable or returns a concrete blocker you report truthfully.";
@@ -322,8 +360,11 @@ function buildExecutionTaskPrompt(input: {
         return undefined;
     }
   })();
+  const executionInstruction = highRiskAction
+    ? "The user approved the safe inspection plan. Continue with read-only inspection and a safe-alternative/preview response instead of asking for a new plan, unless a new hard blocker appears."
+    : "The user already approved this plan. Execute the task now instead of asking for a new plan, unless a new hard blocker appears.";
   return [
-    "The user already approved this plan. Execute the task now instead of asking for a new plan, unless a new hard blocker appears.",
+    executionInstruction,
     `Original task: ${input.task}`,
     input.planReview.gate?.planMarkdown ? `Approved plan:\n${input.planReview.gate.planMarkdown}` : undefined,
     answerLines.length > 0 ? `Confirmed details:\n${answerLines.join("\n")}` : undefined,
