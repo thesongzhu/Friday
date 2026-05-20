@@ -20,7 +20,17 @@ describe("real-world executors", () => {
     }
   });
 
-  function createAgentScenarioClient({ artifactDir }: { artifactDir?: string }) {
+  function createAgentScenarioClient({
+    artifactDir,
+    responseText = "Friday",
+    status = "completed",
+    planReview,
+  }: {
+    artifactDir?: string;
+    responseText?: string;
+    status?: string;
+    planReview?: unknown;
+  }) {
     return {
       async startAgentRun() {
         return { data: { runId: "agent-run-1", toolCallCount: artifactDir ? 1 : 0 } };
@@ -29,9 +39,10 @@ describe("real-world executors", () => {
         return {
           data: {
             run: {
-              status: "completed",
-              responseText: "Friday",
+              status,
+              responseText,
               artifactDir,
+              planReview,
               actualExecution: {
                 actualProviderId: "test-provider",
                 actualModel: "test-model",
@@ -40,6 +51,43 @@ describe("real-world executors", () => {
             },
           },
         };
+      },
+    };
+  }
+
+  function createAwaitingHumanScenario() {
+    return {
+      id: "l3-vague-goal-awaiting-user-state",
+      entrySurface: "/v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P0",
+      realWorldPrompt: "Ask clarifying questions before claiming this vague task is complete.",
+      execution: {
+        kind: "agent_run",
+        constraints: { readOnly: true },
+      },
+      oracles: {
+        behavior: {
+          requireAwaitingHumanState: true,
+          requireClarificationQuestion: true,
+          disallowCompletedWithClarificationQuestion: true,
+        },
+      },
+    };
+  }
+
+  function createMissingFileScenario() {
+    return {
+      id: "l4-missing-file-no-verified-success",
+      entrySurface: "/v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P2",
+      realWorldPrompt: "Call the read tool for docs/friday-strict-verifier-missing-proof-file.md.",
+      execution: {
+        kind: "agent_run",
+        expectMissingWorkspaceFile: "docs/friday-strict-verifier-missing-proof-file.md",
+        expectToolCallCountMin: 1,
+        constraints: { readOnly: true },
       },
     };
   }
@@ -122,6 +170,97 @@ describe("real-world executors", () => {
         matchesExpectedHeading: true,
       }),
     ]);
+  });
+
+  it("lets expected awaiting-human states reach the behavioral rubric", async () => {
+    const artifact = await executeScenario({
+      runId: "validation-run-awaiting-human",
+      suite: "smoke",
+      scenario: createAwaitingHumanScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        status: "awaiting_clarification",
+        responseText: "Please answer these questions before I continue:\n1. Which users should Friday optimize for?",
+        planReview: {
+          gate: {
+            state: "awaiting_clarification",
+            clarificationQuestions: ["Which users should Friday optimize for?"],
+          },
+        },
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(artifact.raw.runStatus).toBe("awaiting_clarification");
+  });
+
+  it("passes missing-file strict verification only with failed read tool evidence", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-executor-"));
+    const artifactDir = join(tempRoot, ".friday", "agent-runs", "agent-run-1");
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(
+      join(artifactDir, "tool-calls.json"),
+      JSON.stringify([
+        {
+          toolName: "read",
+          args: { path: "docs/friday-strict-verifier-missing-proof-file.md" },
+          result: { isError: true, content: "ENOENT: no such file or directory" },
+        },
+      ]),
+      "utf8",
+    );
+
+    const artifact = await executeScenario({
+      runId: "validation-run-missing-file",
+      suite: "smoke",
+      scenario: createMissingFileScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir,
+        responseText: "I cannot verify this file because the read tool reported it is missing.",
+      }),
+      envTruth: {},
+      reportRoot: tempRoot,
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(artifact.raw.missingWorkspaceFileOracle).toMatchObject({
+      path: "docs/friday-strict-verifier-missing-proof-file.md",
+      exists: false,
+    });
+    expect(artifact.raw.toolEvidence).toEqual([
+      expect.objectContaining({
+        toolName: "read",
+        isError: true,
+        matchesExpectedPath: true,
+      }),
+    ]);
+  });
+
+  it("fails missing-file strict verification when the read tool error is absent", async () => {
+    const artifact = await executeScenario({
+      runId: "validation-run-missing-file-no-tool",
+      suite: "smoke",
+      scenario: createMissingFileScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir: undefined,
+        responseText: "I cannot verify this file.",
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("failed");
+    expect(artifact.failureClass).toBe("tool_bridge");
+    expect(artifact.notes).toContain(
+      "expected failed read tool evidence for missing workspace file docs/friday-strict-verifier-missing-proof-file.md",
+    );
   });
 
   describe("Phase 14.5B module_28b: auto_fix_doctor_roundtrip", () => {

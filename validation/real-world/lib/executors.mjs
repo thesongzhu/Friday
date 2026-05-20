@@ -63,6 +63,28 @@ async function readAgentToolCalls(runRecord) {
   }
 }
 
+async function pathExists(filePath) {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+const AWAITING_HUMAN_STATUSES = new Set(["awaiting_clarification", "awaiting_plan_approval"]);
+
+function isExpectedAwaitingHumanStatus({ scenario, runRecord }) {
+  if (scenario.oracles?.behavior?.requireAwaitingHumanState !== true) {
+    return false;
+  }
+  return AWAITING_HUMAN_STATUSES.has(runRecord?.status)
+    || AWAITING_HUMAN_STATUSES.has(runRecord?.planReview?.gate?.state);
+}
+
 function outputShapeForToolResult(content) {
   if (typeof content !== "string") {
     return typeof content;
@@ -1972,6 +1994,9 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
         toolCallCount: totalToolCalls,
         contextEstimatedInputTokens: totalContextEstimatedInputTokens,
       };
+      if (isExpectedAwaitingHumanStatus({ scenario, runRecord })) {
+        break;
+      }
       artifact.result = ["awaiting_clarification", "awaiting_plan_approval"].includes(runRecord.status) ? "failed" : "partial";
       artifact.failureClass = runRecord.status === "failed" ? "provider_protocol" : "llm_behavior";
       artifact.notes = [...(artifact.notes ?? []), runRecord.errorMessage ?? `terminal status ${runRecord.status}`];
@@ -2056,6 +2081,50 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       artifact.notes = [
         ...(artifact.notes ?? []),
         `failed to read oracle file ${relativeFilePath}: ${error instanceof Error ? error.message : String(error)}`,
+      ];
+    }
+  }
+
+  if (typeof execution.expectMissingWorkspaceFile === "string" && execution.expectMissingWorkspaceFile.trim().length > 0) {
+    const relativeFilePath = execution.expectMissingWorkspaceFile.trim();
+    const absoluteFilePath = path.resolve(process.cwd(), relativeFilePath);
+    const exists = await pathExists(absoluteFilePath);
+    const toolEvidence = sanitizeToolEvidence({
+      toolCalls: agentToolCalls,
+      expectedHeading: null,
+      expectedPath: relativeFilePath,
+    });
+    const hasExpectedMissingReadEvidence = toolEvidence.some((entry) =>
+      entry.toolName === "read"
+      && entry.isError === true
+      && entry.matchesExpectedPath === true
+    );
+    artifact.observedEvidence.push(
+      `workspace missing file oracle ${relativeFilePath}`,
+      `workspace file exists ${String(exists)}`,
+    );
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      missingWorkspaceFileOracle: {
+        path: relativeFilePath,
+        exists,
+      },
+      toolEvidence,
+    };
+    if (exists) {
+      artifact.result = "failed";
+      artifact.failureClass = "environment";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `expected workspace file ${relativeFilePath} to be missing`,
+      ];
+    }
+    if (!hasExpectedMissingReadEvidence) {
+      artifact.result = "failed";
+      artifact.failureClass = "tool_bridge";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        `expected failed read tool evidence for missing workspace file ${relativeFilePath}`,
       ];
     }
   }

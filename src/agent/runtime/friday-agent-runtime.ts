@@ -3212,6 +3212,15 @@ export function createFridayAgentRuntime(
             }
           }
 
+          const missingWorkspaceFileResponse = buildMissingWorkspaceFileUnverifiedResponse({
+            task: params.task,
+            toolCalls: allToolCalls,
+          });
+          if (missingWorkspaceFileResponse) {
+            responseText = missingWorkspaceFileResponse;
+            break;
+          }
+
           const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
           // Layer-2 guard: if the original user task is clearly a Q&A / summarization
           // request, do NOT surface generator clarification — the LLM should answer
@@ -4322,6 +4331,15 @@ function detectEvidenceClosureGap(params: {
 
   if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
     const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    const failedReadEvidence = findFailedLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    if (
+      !hasReadEvidence
+      && failedReadEvidence
+      && taskAllowsMissingWorkspaceFileRefusal(normalizedTask)
+      && responseAcknowledgesWorkspaceFileUnverified(params.responseText)
+    ) {
+      return null;
+    }
     const refusalAfterRead = hasReadEvidence && responseLooksLikeLocalFileAccessRefusal(params.responseText);
     const missingRequestedHeading = hasReadEvidence
       && taskRequestsTopWorkspaceHeading(normalizedTask)
@@ -4891,6 +4909,63 @@ function hasSuccessfulLocalWorkspaceReadEvidence(
   });
 }
 
+function findFailedLocalWorkspaceReadEvidence(
+  task: string,
+  toolCalls: FridayAgentToolCallRecord[],
+): FridayAgentToolCallRecord | undefined {
+  const requestedFiles = extractLocalWorkspaceFileMentions(task);
+  return toolCalls.find((call) => {
+    if (call.toolName !== "read" || !call.result.isError) {
+      return false;
+    }
+    const rawPath = typeof call.args.path === "string" ? call.args.path.trim() : "";
+    if (rawPath.length === 0) {
+      return false;
+    }
+    if (requestedFiles.length === 0) {
+      return true;
+    }
+    return requestedFiles.some((requested) => localWorkspacePathMatchesRequested(rawPath, requested));
+  });
+}
+
+function taskAllowsMissingWorkspaceFileRefusal(task: string): boolean {
+  return /\bif\b[\s\S]{0,80}\b(?:missing|cannot be read|can't be read|could not be read|unreadable|not found|does not exist)\b/i.test(task)
+    || /\b(?:missing|cannot be read|can't be read|could not be read|unreadable|not found|does not exist)\b[\s\S]{0,80}\b(?:cannot|can't|could not|unable to|not able to)\s+(?:verify|confirm|read|access)\b/i.test(task)
+    || /\b(?:cannot|can't|could not|unable to|not able to)\s+(?:verify|confirm|read|access)\b[\s\S]{0,80}\b(?:missing|cannot be read|can't be read|could not be read|unreadable|not found|does not exist)\b/i.test(task)
+    || /(?:如果|若).{0,40}(缺失|不存在|无法读取|不能读取|读不到).{0,40}(无法|不能|未能).{0,20}(验证|确认|读取|访问)/u.test(task);
+}
+
+function responseAcknowledgesWorkspaceFileUnverified(responseText: string): boolean {
+  return /\b(?:cannot|can't|could not|unable to|not able to|failed to)\b.{0,80}\b(?:verify|confirm|read|access)\b/i.test(responseText)
+    || /\b(?:not verified|unverified|cannot be verified|could not be verified)\b/i.test(responseText)
+    || /(?:无法|不能|未能|没法).{0,30}(?:验证|确认|读取|访问|证明)/u.test(responseText)
+    || /(?:不能确认|无法确认|无法验证|未验证|无法读取|无法访问)/u.test(responseText);
+}
+
+function buildMissingWorkspaceFileUnverifiedResponse(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): string | null {
+  if (!taskAllowsMissingWorkspaceFileRefusal(params.task)) {
+    return null;
+  }
+  if (hasSuccessfulLocalWorkspaceReadEvidence(params.task, params.toolCalls)) {
+    return null;
+  }
+  const failedRead = findFailedLocalWorkspaceReadEvidence(params.task, params.toolCalls);
+  if (!failedRead) {
+    return null;
+  }
+  const rawPath = typeof failedRead.args.path === "string" ? failedRead.args.path.trim() : "the requested workspace file";
+  const failureDetail = failedRead.result.content.replace(/\s+/g, " ").trim().slice(0, 240);
+  return [
+    `I cannot verify ${rawPath}: the read tool reported that the requested workspace file could not be read.`,
+    `Tool evidence: ${failureDetail}`,
+    "Treat the requested marker or claim as unverified until the file is available and can be read.",
+  ].join("\n");
+}
+
 function taskRequestsTopWorkspaceHeading(task: string): boolean {
   return /\btop\s+(?:h1|heading)\b/i.test(task)
     || /\b(?:h1|heading)\b[\s\S]{0,32}\bonly\b/i.test(task);
@@ -4993,6 +5068,13 @@ function shouldEnforceToolEvidenceForTask(params: {
   if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
     const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, toolCalls);
     if (!hasReadEvidence) {
+      if (
+        taskAllowsMissingWorkspaceFileRefusal(normalizedTask)
+        && findFailedLocalWorkspaceReadEvidence(normalizedTask, toolCalls)
+        && responseAcknowledgesWorkspaceFileUnverified(responseText)
+      ) {
+        return false;
+      }
       return hasEvidenceCapableTools(toolMap, disabledToolNames, "desktop");
     }
     const missingRequestedHeading = taskRequestsTopWorkspaceHeading(normalizedTask)
