@@ -178,9 +178,9 @@ export function createFridayAutoFixRoutes(
       path: "/v1/auto-fix/actions/:actionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayGetAutoFixActionResponse> {
-        requireUserId(ctx.principal);
+        const userId = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
-        const action = deps.service.getAction({ actionId });
+        const action = deps.service.getAction({ actionId, userId });
         if (!action) {
           throw new FridayDomainError("AUTOFIX_ACTION_NOT_FOUND", "Auto-fix action not found", {
             httpStatus: 404,
@@ -203,6 +203,7 @@ export function createFridayAutoFixRoutes(
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.approveAction({
           actionId,
+          userId: respondedBy,
           respondedBy,
           reason: readReason(ctx.body),
         });
@@ -226,6 +227,7 @@ export function createFridayAutoFixRoutes(
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.denyAction({
           actionId,
+          userId: respondedBy,
           respondedBy,
           reason: readReason(ctx.body),
           reasonCode: (() => {
@@ -250,9 +252,9 @@ export function createFridayAutoFixRoutes(
         // synthetic public principal must be refused even though it carries
         // hub.admin scope for read-only routes.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.execute", "api");
-        requireUserId(ctx.principal);
+        const userId = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
-        const updated = await deps.service.executeAction({ actionId });
+        const updated = await deps.service.executeAction({ actionId, userId });
         return {
           action: toActionRecord(deps, updated.details),
           result: {
@@ -275,7 +277,7 @@ export function createFridayAutoFixRoutes(
         // Phase 14.5B module_28b: rollback also mutates runtime state, so
         // the same bound-principal gate applies as execute.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.rollback", "api");
-        requireUserId(ctx.principal);
+        const userId = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const reason = readReason(ctx.body);
         if (!reason) {
@@ -283,7 +285,7 @@ export function createFridayAutoFixRoutes(
             httpStatus: 400,
           });
         }
-        const updated = await deps.service.rollbackAction({ actionId, reason });
+        const updated = await deps.service.rollbackAction({ actionId, userId, reason });
         return {
           action: toActionRecord(deps, updated.details),
           result: {

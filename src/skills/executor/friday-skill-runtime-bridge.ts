@@ -65,7 +65,7 @@ export function createFridaySkillReadonlyRuntimeContext(
         }));
       },
       async getIncident(incidentId: string): Promise<Record<string, unknown> | null> {
-        return toJsonRecordOrNull(selfHealingService.getIncident({ incidentId }));
+        return toJsonRecordOrNull(selfHealingService.getIncident({ incidentId, userId: request.userId }));
       },
     };
     runtimeContext.autofix = {
@@ -77,7 +77,7 @@ export function createFridaySkillReadonlyRuntimeContext(
         }));
       },
       async getAction(actionId: string): Promise<Record<string, unknown> | null> {
-        return toJsonRecordOrNull(selfHealingService.getAction({ actionId }));
+        return toJsonRecordOrNull(selfHealingService.getAction({ actionId, userId: request.userId }));
       },
     };
   }
