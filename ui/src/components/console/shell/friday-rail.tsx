@@ -31,11 +31,7 @@ function buildLearningBullets(
 ): string[] {
   const bullets: string[] = [];
   if (overview.coverage.autoFixActions > 0) {
-    const buckets = overview.coverage.autoFixOutcomeBuckets ?? {
-      recordedActions: overview.coverage.autoFixActions,
-      verifiedRepairs: 0,
-      rollbackFailed: 0,
-    };
+    const buckets = overview.coverage.autoFixOutcomeBuckets;
     bullets.push(
       localize(
         locale,
