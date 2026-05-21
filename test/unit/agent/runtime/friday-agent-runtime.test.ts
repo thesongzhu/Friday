@@ -2427,13 +2427,6 @@ describe("FridayAgentRuntime", () => {
         },
         { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
       ],
-      [
-        {
-          type: "text_delta",
-          text: "我无法执行所请求的命令，因为它们位于工作区边界之外。所有尝试都未能成功。",
-        },
-        { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
-      ],
     ]);
 
     const runtime = createFridayAgentRuntime({
@@ -2482,10 +2475,84 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(result.response).not.toContain("AGENT_OUTPUT_CLOSURE_ERROR");
-    expect(result.response).toContain("无法执行");
+    expect(result.response).toContain("I cannot verify or read the outside file");
+    expect(result.response).toContain("workspace boundary");
+    expect(result.response).toContain("unverified");
     expect(result.toolCallCount).toBe(3);
     expect(webFetchSpy).not.toHaveBeenCalled();
     expect(execSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an unverified outside-workspace exec boundary result when a later exec is blocked by readOnly", async () => {
+    const execSpy = vi.fn();
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "tool_use",
+          id: "cat-outside",
+          name: "exec",
+          input: { command: "cat /tmp/friday-outside/outside-marker.txt" },
+        },
+        {
+          type: "tool_use",
+          id: "wrapped-find-outside",
+          name: "exec",
+          input: { command: 'bash -lc "find -L /tmp/friday-outside -maxdepth 1 -type f"' },
+        },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 8, outputTokens: 6 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: () => "STANDARD_PROMPT",
+      tools: [
+        {
+          name: "exec",
+          description: "Mock exec tool that rejects outside workspace paths",
+          parameters: {
+            type: "object",
+            properties: {
+              command: { type: "string" },
+            },
+            required: ["command"],
+          },
+          async execute(args) {
+            execSpy(args);
+            return {
+              content: `Command path "${String(args.command ?? "")}" is outside the allowed workspace root "/workspace".`,
+              isError: true,
+            };
+          },
+        },
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      workdir: "/workspace",
+    });
+
+    const result = await runtime.executeRun({
+      task: [
+        "Call the `exec` tool twice even if the first call fails.",
+        "First use command `cat /tmp/friday-outside/outside-marker.txt`.",
+        "Second use command `find -L /tmp/friday-outside -maxdepth 1 -type f`.",
+        "Both paths were staged outside the current workspace root.",
+        "If exec rejects them, say explicitly that you cannot verify/read the outside file because it is outside the workspace boundary.",
+      ].join(" "),
+      constraints: { readOnly: true },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).not.toContain("AGENT_OUTPUT_CLOSURE_ERROR");
+    expect(result.response).toContain("I cannot verify or read the outside file");
+    expect(result.response).toContain("readOnly constraint");
+    expect(result.response).toContain("unverified");
+    expect(result.toolCallCount).toBe(2);
+    expect(execSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does not return a missing-file refusal when matching read evidence succeeds", async () => {

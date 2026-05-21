@@ -3239,6 +3239,15 @@ export function createFridayAgentRuntime(
             break;
           }
 
+          const outsideWorkspaceExecBoundaryResponse = buildOutsideWorkspaceExecBoundaryUnverifiedResponse({
+            task: params.task,
+            toolCalls: allToolCalls,
+          });
+          if (outsideWorkspaceExecBoundaryResponse) {
+            responseText = outsideWorkspaceExecBoundaryResponse;
+            break;
+          }
+
           const generatorClarificationSignal = extractGeneratorClarificationSignal(allToolCalls);
           // Layer-2 guard: if the original user task is clearly a Q&A / summarization
           // request, do NOT surface generator clarification — the LLM should answer
@@ -4376,7 +4385,7 @@ function detectEvidenceClosureGap(params: {
     if (
       !hasReadEvidence
       && taskLooksLikeOutsideWorkspaceExecBoundaryProbe(normalizedTask)
-      && hasFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls)
+      && hasFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls, normalizedTask)
       && responseAcknowledgesWorkspaceFileUnverified(params.responseText)
     ) {
       return null;
@@ -4978,17 +4987,36 @@ function findFailedLocalWorkspaceReadEvidence(
   });
 }
 
-function hasFailedExecOutsideWorkspaceBoundaryEvidence(
+function getFailedExecOutsideWorkspaceBoundaryEvidence(
   toolCalls: FridayAgentToolCallRecord[],
-): boolean {
-  return toolCalls.some((call) => {
+  task?: string,
+): FridayAgentToolCallRecord[] {
+  const boundaryProbeTask = task ? taskLooksLikeOutsideWorkspaceExecBoundaryProbe(task) : false;
+  const requestedFiles = task ? extractLocalWorkspaceFileMentions(task) : [];
+  return toolCalls.filter((call) => {
     if (call.toolName !== "exec" || !call.result.isError) {
       return false;
     }
-    return /outside the allowed workspace root|outside(?: the)? workspace|outside(?: the)? workspace boundary|workspace boundary/i.test(
+    if (/outside the allowed workspace root|outside(?: the)? workspace|outside(?: the)? workspace boundary|workspace boundary/i.test(
       call.result.content,
-    );
+    )) {
+      return true;
+    }
+    if (!boundaryProbeTask || !/readOnly constraint/i.test(call.result.content)) {
+      return false;
+    }
+    const argsText = JSON.stringify(call.args ?? {}).toLowerCase();
+    return /\/tmp\/|outside-marker|friday-rgg-agent-file/i.test(argsText)
+      || requestedFiles.some((requested) =>
+        requested.length > 0 && argsText.includes(requested.toLowerCase()));
   });
+}
+
+function hasFailedExecOutsideWorkspaceBoundaryEvidence(
+  toolCalls: FridayAgentToolCallRecord[],
+  task?: string,
+): boolean {
+  return getFailedExecOutsideWorkspaceBoundaryEvidence(toolCalls, task).length > 0;
 }
 
 function taskAllowsMissingWorkspaceFileRefusal(task: string): boolean {
@@ -5027,6 +5055,30 @@ function buildMissingWorkspaceFileUnverifiedResponse(params: {
     `I cannot verify ${rawPath}: the read tool reported that the requested workspace file could not be read.`,
     `Tool evidence: ${failureDetail}`,
     "Treat the requested marker or claim as unverified until the file is available and can be read.",
+  ].join("\n");
+}
+
+function buildOutsideWorkspaceExecBoundaryUnverifiedResponse(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): string | null {
+  if (!taskLooksLikeOutsideWorkspaceExecBoundaryProbe(params.task)) {
+    return null;
+  }
+  if (hasSuccessfulLocalWorkspaceReadEvidence(params.task, params.toolCalls)) {
+    return null;
+  }
+  const failedExecBoundaryCalls = getFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls, params.task);
+  if (failedExecBoundaryCalls.length < 2) {
+    return null;
+  }
+  const evidence = failedExecBoundaryCalls
+    .slice(0, 2)
+    .map((call) => call.result.content.replace(/\s+/g, " ").trim().slice(0, 200));
+  return [
+    "I cannot verify or read the outside file: the exec tool rejected the requested commands at the workspace boundary.",
+    `Tool evidence: ${evidence.join(" | ")}`,
+    "Treat the outside marker or claim as unverified until it can be checked through an approved in-workspace evidence path.",
   ].join("\n");
 }
 
