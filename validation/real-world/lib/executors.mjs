@@ -63,6 +63,87 @@ async function readAgentToolCalls(runRecord) {
   }
 }
 
+async function inspectReplayableEvidenceReceipt({ client, runRecord, runId }) {
+  const failures = [];
+  const evidence = {
+    runId,
+    artifactDir: typeof runRecord?.artifactDir === "string" ? runRecord.artifactDir : null,
+    receiptPath: null,
+    receiptStatus: null,
+    replayFileKinds: [],
+    auditEndpoint: null,
+    auditReceiptStatus: null,
+  };
+  const artifactDir = typeof runRecord?.artifactDir === "string" ? runRecord.artifactDir.trim() : "";
+  if (!artifactDir) {
+    failures.push("run record did not include artifactDir");
+    return { failures, evidence };
+  }
+
+  const receiptArtifact = Array.isArray(runRecord?.artifacts)
+    ? runRecord.artifacts.find((artifact) => artifact?.type === "evidence_receipt" && typeof artifact.path === "string")
+    : null;
+  const receiptPath = receiptArtifact?.path ?? path.join(artifactDir, "evidence-receipt.json");
+  evidence.receiptPath = receiptPath;
+
+  let receipt;
+  try {
+    receipt = JSON.parse(await fs.readFile(receiptPath, "utf8"));
+  } catch (error) {
+    failures.push(`failed to read evidence receipt JSON: ${error instanceof Error ? error.message : String(error)}`);
+    return { failures, evidence };
+  }
+
+  evidence.receiptStatus = receipt?.receiptStatus ?? null;
+  evidence.replayFileKinds = Array.isArray(receipt?.replay?.files)
+    ? receipt.replay.files.map((file) => String(file?.kind ?? "unknown"))
+    : [];
+  evidence.auditEndpoint = receipt?.replay?.auditEndpoint ?? null;
+
+  if (receipt?.schemaVersion !== "friday.agent.evidence_receipt.v1") {
+    failures.push("evidence receipt schemaVersion mismatch");
+  }
+  if (receipt?.receiptKind !== "agent_run_replayable_evidence") {
+    failures.push("evidence receipt kind mismatch");
+  }
+  if (receipt?.run?.runId !== runId) {
+    failures.push("evidence receipt runId mismatch");
+  }
+  if (receipt?.replay?.auditEndpoint !== `/v1/agent/runs/${encodeURIComponent(runId)}/audit`) {
+    failures.push("evidence receipt audit endpoint mismatch");
+  }
+  if (!String(receipt?.proofBoundary ?? "").includes("not release proof")) {
+    failures.push("evidence receipt did not state not release proof");
+  }
+  if (!String(receipt?.proofBoundary ?? "").includes("same-SHA Real Green Gate")) {
+    failures.push("evidence receipt did not preserve same-SHA RGG proof boundary");
+  }
+  if (!evidence.replayFileKinds.includes("evidence_receipt")) {
+    failures.push("evidence receipt replay files did not include evidence_receipt");
+  }
+
+  let auditData;
+  try {
+    auditData = (await client.getAgentRunAudit(runId)).data;
+  } catch (error) {
+    failures.push(`failed to read run audit receipt: ${error instanceof Error ? error.message : String(error)}`);
+    return { failures, evidence };
+  }
+
+  evidence.auditReceiptStatus = auditData?.replayReceipt?.receiptStatus ?? null;
+  if (auditData?.replayReceipt?.schemaVersion !== "friday.agent.evidence_receipt.v1") {
+    failures.push("audit route replayReceipt schemaVersion mismatch");
+  }
+  if (auditData?.replayReceipt?.run?.runId !== runId) {
+    failures.push("audit route replayReceipt runId mismatch");
+  }
+  if (!String(auditData?.replayReceipt?.proofBoundary ?? "").includes("not release proof")) {
+    failures.push("audit route replayReceipt did not state not release proof");
+  }
+
+  return { failures, evidence };
+}
+
 async function pathExists(filePath) {
   try {
     await fs.stat(filePath);
@@ -2433,6 +2514,29 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     artifact.result = "failed";
     artifact.failureClass = "tool_bridge";
     artifact.notes = [...(artifact.notes ?? []), `expected at least ${String(execution.expectToolCallCountMin)} tool calls`];
+  }
+  if (execution.expectReplayableEvidenceReceipt === true && lastRunRecord && lastData?.runId) {
+    const receiptInspection = await inspectReplayableEvidenceReceipt({
+      client,
+      runRecord: lastRunRecord,
+      runId: lastData.runId,
+    });
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      replayableEvidenceReceipt: receiptInspection.evidence,
+    };
+    artifact.observedEvidence.push(
+      `evidence receipt ${receiptInspection.evidence.receiptStatus ?? "missing"}`,
+      `audit replay receipt ${receiptInspection.evidence.auditReceiptStatus ?? "missing"}`,
+    );
+    if (receiptInspection.failures.length > 0) {
+      artifact.result = "failed";
+      artifact.failureClass = "evidence_receipt";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        ...receiptInspection.failures,
+      ];
+    }
   }
   await cleanupAgentRun();
   return artifact;

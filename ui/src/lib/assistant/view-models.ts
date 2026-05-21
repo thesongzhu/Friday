@@ -6,6 +6,7 @@ import type {
   FridayWorkflowOverview,
 } from "@friday-operator-client";
 import type {
+  AgentRunEvidenceReceipt,
   AgentRunRecord,
   FridayFleetSatelliteCard,
   FridayPendingSatellitePairingRequest,
@@ -86,6 +87,48 @@ export function getNextClarificationQuestion(
   return typeof nextQuestion === "string" && nextQuestion.trim().length > 0
     ? nextQuestion
     : null;
+}
+
+export function toneForAgentEvidenceReceipt(
+  receipt?: AgentRunEvidenceReceipt | null,
+): "neutral" | "warning" | "danger" | "success" {
+  if (!receipt) {
+    return "neutral";
+  }
+  if (receipt.receiptStatus === "verified_receipt") {
+    return "success";
+  }
+  if (receipt.receiptStatus === "blocked_or_failed") {
+    return "danger";
+  }
+  if (receipt.receiptStatus === "waiting_for_human") {
+    return "warning";
+  }
+  return "neutral";
+}
+
+export function summarizeAgentEvidenceReceipt(
+  receipt?: AgentRunEvidenceReceipt | null,
+): string[] {
+  if (!receipt) {
+    return ["No replayable evidence receipt yet."];
+  }
+  const toolEvidenceLine = receipt.evidence.toolCalls.total > 0
+    ? `Tool evidence: ${String(receipt.evidence.toolCalls.total)} call(s), ${String(receipt.evidence.toolCalls.failed)} failed`
+    : typeof receipt.evidence.decisionTraceActionCount === "number" && receipt.evidence.decisionTraceActionCount > 0
+      ? `Tool evidence: ${String(receipt.evidence.decisionTraceActionCount)} audited action(s)`
+      : "Tool evidence: 0 call(s), 0 failed";
+  const lines = [
+    receipt.userSummary,
+    `Replay files: ${String(receipt.replay.files.length)}`,
+    toolEvidenceLine,
+    `Tests: ${String(receipt.evidence.tests.passed)} passed, ${String(receipt.evidence.tests.failed)} failed`,
+  ];
+  if (receipt.blockers.length > 0) {
+    lines.push(`Blockers: ${receipt.blockers.join("; ")}`);
+  }
+  lines.push(receipt.proofBoundary);
+  return lines;
 }
 
 export interface FridayAssistantQuickAction {

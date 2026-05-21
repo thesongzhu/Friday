@@ -186,6 +186,10 @@ export class FridayClient {
     return await this.api("GET", `/v1/agent/runs/${encodeURIComponent(runId)}`);
   }
 
+  async getAgentRunAudit(runId) {
+    return await this.api("GET", `/v1/agent/runs/${encodeURIComponent(runId)}/audit`);
+  }
+
   async waitForAgentRunTerminal(runId, maxMs = 240_000) {
     return await this.waitFor(
       async () => (await this.getAgentRun(runId)).data.run,

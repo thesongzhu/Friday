@@ -5,8 +5,10 @@ import {
   buildAssistantQuickActions,
   describeIntentConfidence,
   getNextClarificationQuestion,
+  summarizeAgentEvidenceReceipt,
   summarizeActionStatus,
   summarizeSkillEvidence,
+  toneForAgentEvidenceReceipt,
   toneForIssue,
 } from "../../../ui/src/lib/assistant/view-models";
 import { buildFleetHref } from "../../../ui/src/lib/fleet/view-models";
@@ -17,6 +19,7 @@ import type {
   FridayWorkflowOverview,
 } from "@friday-operator-client";
 import type {
+  AgentRunEvidenceReceipt,
   AgentRunRecord,
   FridayFleetSatelliteCard,
   FridayPendingSatellitePairingRequest,
@@ -223,6 +226,75 @@ describe("assistant view models", () => {
       },
     })).toBeNull();
     expect(getNextClarificationQuestion({ ...run, status: "awaiting_plan_approval" })).toBeNull();
+  });
+
+  it("summarizes a verified replayable evidence receipt without release overclaim", () => {
+    const receipt: AgentRunEvidenceReceipt = {
+      schemaVersion: "friday.agent.evidence_receipt.v1",
+      receiptKind: "agent_run_replayable_evidence",
+      receiptStatus: "verified_receipt",
+      issuedAt: "2026-05-21T04:00:00.000Z",
+      run: {
+        runId: "run-1",
+        task: "test",
+        status: "completed",
+      },
+      evidence: {
+        toolCalls: { total: 1, succeeded: 1, failed: 0 },
+        tests: { total: 1, passed: 1, failed: 0 },
+        artifacts: { total: 3, byType: { run_record: 1 } },
+      },
+      replay: {
+        auditEndpoint: "/v1/agent/runs/run-1/audit",
+        files: [
+          { label: "Audit API", kind: "audit_endpoint", href: "/v1/agent/runs/run-1/audit" },
+          { label: "Evidence receipt", kind: "evidence_receipt", path: "/tmp/evidence-receipt.json" },
+        ],
+      },
+      blockers: [],
+      limitations: [],
+      proofBoundary: "This is not release proof.",
+      userSummary: "Friday has a replayable receipt for this completed local run.",
+    };
+
+    expect(toneForAgentEvidenceReceipt(receipt)).toBe("success");
+    expect(summarizeAgentEvidenceReceipt(receipt)).toEqual(expect.arrayContaining([
+      "Friday has a replayable receipt for this completed local run.",
+      "Replay files: 2",
+      "Tool evidence: 1 call(s), 0 failed",
+      "Tests: 1 passed, 0 failed",
+      "This is not release proof.",
+    ]));
+  });
+
+  it("surfaces replay receipt blockers as danger", () => {
+    const receipt: AgentRunEvidenceReceipt = {
+      schemaVersion: "friday.agent.evidence_receipt.v1",
+      receiptKind: "agent_run_replayable_evidence",
+      receiptStatus: "blocked_or_failed",
+      issuedAt: "2026-05-21T04:00:00.000Z",
+      run: {
+        runId: "run-2",
+        task: "test",
+        status: "failed",
+      },
+      evidence: {
+        toolCalls: { total: 1, succeeded: 0, failed: 1 },
+        tests: { total: 0, passed: 0, failed: 0 },
+        artifacts: { total: 1, byType: { run_record: 1 } },
+      },
+      replay: {
+        auditEndpoint: "/v1/agent/runs/run-2/audit",
+        files: [{ label: "Audit API", kind: "audit_endpoint", href: "/v1/agent/runs/run-2/audit" }],
+      },
+      blockers: ["Run ended with status failed."],
+      limitations: [],
+      proofBoundary: "This is not release proof.",
+      userSummary: "Friday did not complete this run successfully; the receipt records the failure evidence.",
+    };
+
+    expect(toneForAgentEvidenceReceipt(receipt)).toBe("danger");
+    expect(summarizeAgentEvidenceReceipt(receipt)).toContain("Blockers: Run ended with status failed.");
   });
 
   it("prioritizes quick assistant actions for issue, workflow, fleet, and alert recovery", () => {
