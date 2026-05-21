@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 import { ensureDir } from "./io.mjs";
 import { resolveJsonPath, safeJsonParse, slugify, stripMarkdownFences } from "./defs.mjs";
@@ -11,6 +13,18 @@ import {
   buildSkillUpgradeDecideApprovalRequest,
   signCanonicalApprovalForRequest,
 } from "./skill-upgrade-approval.mjs";
+
+const execFileAsync = promisify(execFile);
+
+export const LIFECYCLE_UNIT_PROOF_TEST_FILES = Object.freeze([
+  "test/unit/autonomy/friday-skill-upgrade-lifecycle-service.test.ts",
+  "test/unit/autonomy/friday-plugin-upgrade-lifecycle-service.test.ts",
+  "test/unit/autonomy/friday-mcp-server-upgrade-lifecycle-service.test.ts",
+  "test/unit/api/runtime/friday-api-runtime-plugin-review-enable.test.ts",
+  "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
+  "test/unit/agent/tools/friday-agent-mcp-tool.test.ts",
+  "test/unit/agent/tools/friday-agent-skill-tool.test.ts",
+]);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,6 +37,29 @@ function nowIso() {
 function preview(value, max = 400) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+export function redactLifecycleProofOutput(value, max = 6000) {
+  const text = typeof value === "string" ? value : String(value ?? "");
+  const redacted = text
+    .replace(/(authorization\s*:\s*)[^\r\n]+/giu, "$1[redacted]")
+    .replace(/\b(Bearer|Basic|Bot|QQBot)\s+[A-Za-z0-9._~+/=-]{8,}/gu, "$1 [redacted]")
+    .replace(/((?:set-)?cookie\s*:\s*)[^\r\n]+/giu, "$1[redacted]")
+    .replace(
+      /([?&][A-Za-z0-9_.-]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|passphrase|api[_-]?key|apikey|signature|session|key)[A-Za-z0-9_.-]*=)[^&#\s]+/giu,
+      "$1[redacted]",
+    )
+    .replace(
+      /(["'][A-Za-z0-9_.$-]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|passphrase|api[_-]?key|apikey|authorization|cookie|signature|session)[A-Za-z0-9_.$-]*["']\s*:\s*["'])[^"']+(["'])/giu,
+      "$1[redacted]$2",
+    )
+    .replace(
+      /\b([A-Za-z0-9_.$-]*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|passphrase|api[_-]?key|apikey|authorization|cookie|signature|session)[A-Za-z0-9_.$-]*)(\s*[=:]\s*)(["']?)([^\s"'`,;}]+)\3?/giu,
+      (_match, key, separator, quote) => `${key}${separator}${quote || ""}[redacted]${quote || ""}`,
+    )
+    .replace(/sk-(?:proj-)?[A-Za-z0-9_-]{8,}/gu, "sk-[redacted]")
+    .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/gu, "[redacted.jwt]");
+  return redacted.length > max ? redacted.slice(-max) : redacted;
 }
 
 function normalizeHeadingText(value) {
@@ -3673,6 +3710,68 @@ async function executeSkillUpgradeLifecycle({ artifact, client, scenario, runId 
   return artifact;
 }
 
+async function executeLifecycleUnitProof({ artifact, scenario }) {
+  const timeoutMs = Number(scenario.execution?.timeoutMs) || 180_000;
+  const args = [
+    "exec",
+    "--",
+    "vitest",
+    "run",
+    ...LIFECYCLE_UNIT_PROOF_TEST_FILES,
+  ];
+  const commandLabel = `npm ${args.join(" ")}`;
+
+  try {
+    const result = await execFileAsync(
+      "npm",
+      args,
+      {
+        cwd: process.cwd(),
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    artifact.result = "passed";
+    artifact.observedEvidence.push(
+      "fixed lifecycle proof test command passed",
+      "skill lifecycle tests covered candidate staging, shadow, canary, promote, rollback, stale canary, digest, and approval gates",
+      "plugin lifecycle tests covered canonical approvals, runtime canary, promotion, rollback snapshots, redaction, and cleanup fail-closed behavior",
+      "MCP lifecycle and agent-tool tests covered canonical approvals, canary runtime proof, promotion/rollback evidence, and promoted-server availability gates",
+    );
+    artifact.metrics = {
+      ...(artifact.metrics ?? {}),
+      lifecycleProofTestFiles: LIFECYCLE_UNIT_PROOF_TEST_FILES.length,
+    };
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      lifecycleProof: {
+        command: commandLabel,
+        testFiles: [...LIFECYCLE_UNIT_PROOF_TEST_FILES],
+        stdoutTail: redactLifecycleProofOutput(result.stdout),
+        stderrTail: redactLifecycleProofOutput(result.stderr),
+      },
+    };
+  } catch (error) {
+    artifact.result = "failed";
+    artifact.failureClass = "lifecycle_runtime";
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      redactLifecycleProofOutput(errorMessage, 1200),
+    ];
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      lifecycleProof: {
+        command: commandLabel,
+        testFiles: [...LIFECYCLE_UNIT_PROOF_TEST_FILES],
+        stdoutTail: redactLifecycleProofOutput(error?.stdout),
+        stderrTail: redactLifecycleProofOutput(error?.stderr),
+      },
+    };
+  }
+  return artifact;
+}
+
 async function executeManualExternal({ artifact, scenario, blockers }) {
   const manualEvidenceTemplate = [
     `surface=${scenario.entrySurface}`,
@@ -3760,6 +3859,9 @@ export async function executeScenario({
         break;
       case "skill_upgrade_lifecycle":
         await executeSkillUpgradeLifecycle({ artifact, client, scenario, runId });
+        break;
+      case "lifecycle_unit_proof":
+        await executeLifecycleUnitProof({ artifact, scenario });
         break;
       case "auto_fix_doctor_roundtrip":
         await executeAutoFixDoctorRoundtrip({ artifact, client, scenario });

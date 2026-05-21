@@ -1615,6 +1615,27 @@ export const REAL_WORLD_SCENARIOS = [
     },
   }),
   baseScenario({
+    id: "l4-mcp-plugin-skill-lifecycle-proof",
+    layer: "L4",
+    productArea: "lifecycle",
+    entrySurface: "fixed local lifecycle proof tests",
+    routeFamily: "mcp plugin skill lifecycle",
+    providerLane: "none",
+    suites: ["daily", "nightly", "weekly"],
+    severityOnFailure: "P1",
+    expectedEvidence: [
+      "skill lifecycle tests prove candidate staging remains unavailable until shadow, canary, promote, and rollback evidence complete",
+      "plugin lifecycle tests prove canonical approval, real runtime canary, promotion gate, rollback snapshot, cleanup failure, and secret redaction behavior",
+      "MCP lifecycle tests prove canonical approval, read-only canary, promotion/rollback evidence, and agent availability filtering for promoted servers",
+      "the RGG executor runs a fixed test-file allowlist instead of accepting arbitrary catalog commands",
+    ],
+    execution: {
+      kind: "lifecycle_unit_proof",
+      timeoutMs: 180_000,
+    },
+    tags: ["phase-23d", "mcp-lifecycle", "plugin-lifecycle", "skill-lifecycle"],
+  }),
+  baseScenario({
     id: "l5-workflow-approval-roundtrip",
     layer: "L5",
     productArea: "workflow approval",
