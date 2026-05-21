@@ -1552,8 +1552,7 @@ export const REAL_WORLD_SCENARIOS = [
     providerLane: "default_only",
     preconditions: ["auth.ready"],
     realWorldPrompt: [
-      "This is a deterministic echo probe, not a research task.",
-      "For the Friday status check, reply with exactly these four words: context cost evidence recorded",
+      "Reply exactly with this phrase: context cost evidence recorded",
     ].join(" "),
     expectedEvidence: [
       "agent run persists contextCostSummary on the run record",
