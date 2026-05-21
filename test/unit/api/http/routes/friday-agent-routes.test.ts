@@ -868,6 +868,67 @@ describe("FridayAgentRoutes", () => {
     expect(result.replayReceipt.proofBoundary).toContain("not release proof");
   });
 
+  it("GET /v1/agent/runs/:runId/audit includes unified task state without raw tool approval params", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({ status: "executing" }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        eventId: "event-1",
+        runId: "run-1",
+        seq: 1,
+        eventName: "agent.run.awaiting_tool_approval",
+        emittedAt: "2026-01-01T00:00:03.000Z",
+        createdAt: "2026-01-01T00:00:03.000Z",
+        payload: {
+          runId: "run-1",
+          grantId: "grant-1",
+          toolCallId: "call-1",
+          toolName: "shell",
+          params: { command: "npm test" },
+          reason: "Needs approval for shell command",
+        },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:06.000Z",
+    }) as {
+      events: Array<{ payload: unknown }>;
+      unifiedTaskState: {
+        schemaVersion: string;
+        state: string;
+        requiredAction: string;
+        evidence: { openToolApproval?: unknown };
+        channelBoundary: { liveChannelProof: string };
+        proofBoundary: string;
+      };
+    };
+
+    expect(result.unifiedTaskState).toMatchObject({
+      schemaVersion: "friday.agent.unified_task_state.v1",
+      state: "awaiting_tool_approval",
+      requiredAction: "approve_or_reject_tool",
+      channelBoundary: { liveChannelProof: "not_claimed" },
+    });
+    expect(result.unifiedTaskState.evidence.openToolApproval).toEqual({
+      grantId: "grant-1",
+      toolCallId: "call-1",
+      toolName: "shell",
+      eventPointer: { kind: "agent_run_event", runId: "run-1", seq: 1 },
+    });
+    expect(result.unifiedTaskState.proofBoundary).toContain("not channel live proof");
+    expect(JSON.stringify(result.events)).not.toContain("npm test");
+    expect(JSON.stringify(result.unifiedTaskState)).not.toContain("npm test");
+    expect(JSON.stringify(result.unifiedTaskState)).not.toContain("Needs approval");
+  });
+
   // ─── Handler tests ───
 
   describe("POST /v1/agent/runs handler", () => {
@@ -1349,8 +1410,18 @@ describe("FridayAgentRoutes", () => {
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
-      const result = await route.handler(ctx) as { items: FridayAgentRunRecord[] };
-      expect(result.items).toEqual(runs);
+      const result = await route.handler(ctx) as {
+        items: Array<FridayAgentRunRecord & { unifiedTaskState: { state: string; channelBoundary: { liveChannelProof: string } } }>;
+      };
+      expect(result.items).toEqual([
+        expect.objectContaining({
+          id: runs[0]!.id,
+          unifiedTaskState: expect.objectContaining({
+            state: "executing",
+            channelBoundary: expect.objectContaining({ liveChannelProof: "not_claimed" }),
+          }),
+        }),
+      ]);
     });
 
     it("filters autonomous internal runs from the default list surface", async () => {
@@ -1377,8 +1448,13 @@ describe("FridayAgentRoutes", () => {
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
 
-      const result = await route.handler(ctx) as { items: FridayAgentRunRecord[] };
-      expect(result.items).toEqual([visibleRun]);
+      const result = await route.handler(ctx) as { items: Array<FridayAgentRunRecord & { unifiedTaskState: { state: string } }> };
+      expect(result.items).toEqual([
+        expect.objectContaining({
+          id: visibleRun.id,
+          unifiedTaskState: expect.objectContaining({ state: "executing" }),
+        }),
+      ]);
     });
 
     it("sanitizes historical custom-pack response text on read", async () => {
@@ -1505,8 +1581,11 @@ describe("FridayAgentRoutes", () => {
         requestId: "req-1",
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
-      const result = await route.handler(ctx) as { run: FridayAgentRunRecord };
-      expect(result.run).toEqual(run);
+      const result = await route.handler(ctx) as { run: FridayAgentRunRecord & { unifiedTaskState: { state: string } } };
+      expect(result.run).toEqual(expect.objectContaining({
+        ...run,
+        unifiedTaskState: expect.objectContaining({ state: "executing" }),
+      }));
     });
 
     it("sanitizes historical custom-pack detail reads", async () => {

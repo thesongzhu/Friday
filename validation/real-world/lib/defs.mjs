@@ -22,6 +22,7 @@ export const REAL_WORLD_FAILURE_CLASSES = Object.freeze([
   "llm_misroute",
   "provider_protocol",
   "tool_bridge",
+  "unified_task_state",
   "workflow_runtime",
   "generator",
   "self_healing",

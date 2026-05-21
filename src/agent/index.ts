@@ -594,6 +594,17 @@ export {
   FRIDAY_AGENT_EVIDENCE_RECEIPT_SCHEMA_VERSION,
   renderFridayAgentEvidenceReceiptMarkdown,
 } from "./services/friday-agent-evidence-receipt.js";
+export type {
+  BuildFridayAgentUnifiedTaskStateInput,
+  FridayAgentUnifiedTaskRequiredAction,
+  FridayAgentUnifiedTaskState,
+  FridayAgentUnifiedTaskStatePointer,
+  FridayAgentUnifiedTaskStateSnapshot,
+} from "./services/friday-agent-unified-task-state.js";
+export {
+  buildFridayAgentUnifiedTaskState,
+  FRIDAY_AGENT_UNIFIED_TASK_STATE_SCHEMA_VERSION,
+} from "./services/friday-agent-unified-task-state.js";
 export type { FridayAgentArtifactWriter, FridayAgentArtifactWriterParams, FridayAgentArtifactWriterResult } from "./services/friday-agent-artifact-writer.js";
 export { createFridayAgentArtifactWriter } from "./services/friday-agent-artifact-writer.js";
 

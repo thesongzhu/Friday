@@ -6,6 +6,7 @@ import type {
   AgentRunStatus,
   AgentRuntimeResult,
   AgentTaskProfileInput,
+  AgentUnifiedTaskStateSnapshot,
   SubagentRecord,
 } from "./types";
 
@@ -71,6 +72,7 @@ export interface RunAuditResponse {
   events: RunAuditEvent[];
   decisionTrace?: Record<string, unknown>;
   replayReceipt?: AgentRunEvidenceReceipt;
+  unifiedTaskState?: AgentUnifiedTaskStateSnapshot;
 }
 
 interface ListSubagentsResponse {
