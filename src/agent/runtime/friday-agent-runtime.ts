@@ -143,6 +143,26 @@ function withAgentContextCostComponent(
   };
 }
 
+function buildAgentToolRoutingContextCostSummary(input: {
+  toolNames: readonly string[];
+  toolRouting: ReturnType<typeof resolveFridayAgentToolRouting>;
+}): FridayAgentContextCostSummary {
+  const estimatedChars = input.toolNames.join(",").length;
+  return withAgentContextCostComponent(undefined, {
+    kind: "tool_routing",
+    estimatedChars,
+    estimatedInputTokens: estimateAgentContextInputTokens(estimatedChars),
+    count: input.toolNames.length,
+    metadata: {
+      profile: input.toolRouting.profile,
+      selectedToolPacks: input.toolRouting.selectedToolPacks,
+      deferredToolCount: input.toolRouting.deferredToolNames.length,
+      workspaceContextPolicy: input.toolRouting.workspaceContextPolicy,
+      reason: input.toolRouting.reason,
+    },
+  });
+}
+
 function hasCjkText(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
 }
@@ -1111,6 +1131,10 @@ export function createFridayAgentRuntime(
             description: tool.description.replace(/\s+/gu, " ").trim().slice(0, 180),
           }));
       };
+      latestContextCostSummary = buildAgentToolRoutingContextCostSummary({
+        toolNames: buildVisibleToolNames(),
+        toolRouting: effectiveToolRouting,
+      });
       const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
       let toolErrorRecoveryCount = 0;
@@ -1778,8 +1802,8 @@ export function createFridayAgentRuntime(
           ? promptBuildResult
           : promptBuildResult.prompt;
         latestContextCostSummary = typeof promptBuildResult === "string"
-          ? undefined
-          : promptBuildResult.contextCostSummary;
+          ? latestContextCostSummary
+          : promptBuildResult.contextCostSummary ?? latestContextCostSummary;
 
         let effectiveSystemPrompt = baseSystemPrompt;
         const skipSupplementalContext = toolRouting.promptProfile === "minimal";

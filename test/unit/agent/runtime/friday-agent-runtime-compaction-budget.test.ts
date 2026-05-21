@@ -7,6 +7,7 @@ import type {
   FridayAgentLlmStreamEvent,
   FridayAgentLlmStreamParams,
   FridayAgentMessage,
+  FridayAgentToolDefinition,
 } from "#agent";
 
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -156,5 +157,53 @@ describe("FridayAgentRuntime compaction budget", () => {
     expect(result.contextCostSummary?.totalEstimatedInputTokens).toBe(100);
     expect(persistedRun?.contextCostSummary?.totalEstimatedInputTokens).toBe(100);
     expect(routingContexts[0]?.estimatedInputTokens).toBeGreaterThan(100);
+  });
+
+  it("persists tool routing context cost evidence for delegated parent runs", async () => {
+    const webSearchTool: FridayAgentToolDefinition = {
+      name: "web_search",
+      description: "Search public web results.",
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ content: "unused" }),
+    };
+    const delegationHandler = vi.fn(async () => ({
+      delegated: true as const,
+      subagentId: "subagent-context-cost",
+      childRunId: "child-context-cost-run",
+      childSessionKey: "child-session",
+      statusSnapshot: "completed" as const,
+      outcome: {
+        status: "completed" as const,
+        response: "delegated done",
+        toolCallCount: 0,
+        durationMs: 7,
+        usageInput: 0,
+        usageOutput: 0,
+      },
+    }));
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient: createMockLlmClient([]),
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Static parent prompt.",
+      tools: [webSearchTool],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+      delegationHandler,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Search provider integration details for routing evidence.",
+      runId: "delegated-context-cost-parent",
+    });
+    const persistedRun = db.withReadConnection((reader) =>
+      createFridayAgentRunRepository().getById(reader, "delegated-context-cost-parent"));
+
+    expect(delegationHandler).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("completed");
+    expect(result.contextCostSummary?.components.some((component) => component.kind === "tool_routing")).toBe(true);
+    expect(persistedRun?.contextCostSummary?.totalEstimatedInputTokens).toBeGreaterThan(0);
   });
 });
