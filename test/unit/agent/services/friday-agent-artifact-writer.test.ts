@@ -53,6 +53,8 @@ describe("FridayAgentArtifactWriter", () => {
     expect(fs.existsSync(path.join(runDir, "tool-calls.json"))).toBe(true);
     expect(fs.existsSync(path.join(runDir, "test-results.json"))).toBe(true);
     expect(fs.existsSync(path.join(runDir, "response.md"))).toBe(true);
+    expect(fs.existsSync(path.join(runDir, "evidence-receipt.json"))).toBe(true);
+    expect(fs.existsSync(path.join(runDir, "evidence-receipt.md"))).toBe(true);
     expect(fs.existsSync(path.join(runDir, "artifacts.json"))).toBe(true);
   });
 
@@ -140,6 +142,28 @@ describe("FridayAgentArtifactWriter", () => {
     expect(response).toContain("Here is the hello world script.");
   });
 
+  it("writes a replayable evidence receipt with proof boundaries", () => {
+    const writer = createFridayAgentArtifactWriter(tmpDir);
+    const result = writer.writeRunArtifacts(makeParams());
+
+    const receipt = JSON.parse(fs.readFileSync(path.join(result.artifactDir, "evidence-receipt.json"), "utf-8"));
+    expect(receipt.schemaVersion).toBe("friday.agent.evidence_receipt.v1");
+    expect(receipt.receiptKind).toBe("agent_run_replayable_evidence");
+    expect(receipt.receiptStatus).toBe("verified_receipt");
+    expect(receipt.run.runId).toBe("run-001");
+    expect(receipt.replay.auditEndpoint).toBe("/v1/agent/runs/run-001/audit");
+    expect(receipt.replay.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "tool_calls", path: expect.stringContaining("tool-calls.json") }),
+      expect.objectContaining({ kind: "evidence_receipt", path: expect.stringContaining("evidence-receipt.json") }),
+    ]));
+    expect(receipt.proofBoundary).toContain("not release proof");
+    expect(receipt.proofBoundary).toContain("same-SHA Real Green Gate");
+
+    const markdown = fs.readFileSync(path.join(result.artifactDir, "evidence-receipt.md"), "utf-8");
+    expect(markdown).toContain("Friday Agent Evidence Receipt");
+    expect(markdown).toContain("not release proof");
+  });
+
   it("is idempotent — calling twice overwrites cleanly", () => {
     const writer = createFridayAgentArtifactWriter(tmpDir);
     const params = makeParams();
@@ -161,6 +185,15 @@ describe("FridayAgentArtifactWriter", () => {
     const runRecordArtifact = result.artifacts.find((a) => a.type === "run_record");
     expect(runRecordArtifact).toBeDefined();
     expect(runRecordArtifact?.path).toContain("run.json");
+    expect(result.artifacts.find((a) => a.type === "evidence_receipt")?.path).toContain("evidence-receipt.json");
+    expect(result.artifacts.find((a) => a.type === "evidence_receipt_markdown")?.path).toContain("evidence-receipt.md");
+
+    const artifactIndex = JSON.parse(fs.readFileSync(path.join(result.artifactDir, "artifacts.json"), "utf-8"));
+    expect(artifactIndex).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run_record" }),
+      expect.objectContaining({ type: "evidence_receipt" }),
+      expect.objectContaining({ type: "evidence_receipt_markdown" }),
+    ]));
   });
 
   it("does not perform any git operations", () => {

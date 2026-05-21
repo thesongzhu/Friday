@@ -147,6 +147,75 @@ export interface AgentRunMetadata {
   packContext?: AgentPackContextMetadata;
 }
 
+export type AgentEvidenceReceiptStatus =
+  | "verified_receipt"
+  | "blocked_or_failed"
+  | "waiting_for_human"
+  | "in_progress";
+
+export interface AgentEvidenceReceiptFile {
+  label: string;
+  kind:
+    | "run_record"
+    | "tool_calls"
+    | "test_results"
+    | "response"
+    | "artifacts"
+    | "evidence_receipt"
+    | "audit_endpoint"
+    | "artifact";
+  path?: string;
+  href?: string;
+}
+
+export interface AgentEvidenceReceiptCounts {
+  toolCalls: {
+    total: number;
+    succeeded: number;
+    failed: number;
+  };
+  tests: {
+    total: number;
+    passed: number;
+    failed: number;
+  };
+  artifacts: {
+    total: number;
+    byType: Record<string, number>;
+  };
+}
+
+export interface AgentRunEvidenceReceipt {
+  schemaVersion: "friday.agent.evidence_receipt.v1";
+  receiptKind: "agent_run_replayable_evidence";
+  receiptStatus: AgentEvidenceReceiptStatus;
+  issuedAt: string;
+  run: {
+    runId: string;
+    task: string;
+    status: string;
+    completedAt?: string;
+    durationMs?: number;
+    usageInput?: number;
+    usageOutput?: number;
+    costUsd?: number | null;
+  };
+  evidence: AgentEvidenceReceiptCounts & {
+    auditEventCount?: number;
+    decisionTraceAvailable?: boolean;
+    decisionTraceActionCount?: number;
+  };
+  replay: {
+    auditEndpoint: string;
+    artifactDir?: string;
+    files: AgentEvidenceReceiptFile[];
+  };
+  blockers: string[];
+  limitations: string[];
+  proofBoundary: string;
+  userSummary: string;
+}
+
 export interface AgentRunRecord {
   id: string;
   task: string;

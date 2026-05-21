@@ -1,6 +1,7 @@
 import { apiClient } from "./client";
 import type {
   AgentAutomation,
+  AgentRunEvidenceReceipt,
   AgentRunRecord,
   AgentRunStatus,
   AgentRuntimeResult,
@@ -68,6 +69,8 @@ export interface RunAuditEvent {
 export interface RunAuditResponse {
   runId: string;
   events: RunAuditEvent[];
+  decisionTrace?: Record<string, unknown>;
+  replayReceipt?: AgentRunEvidenceReceipt;
 }
 
 interface ListSubagentsResponse {

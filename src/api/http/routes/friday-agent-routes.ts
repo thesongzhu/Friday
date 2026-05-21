@@ -22,6 +22,7 @@ import type {
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";
+import { buildFridayAgentReplayableEvidenceReceipt } from "#agent";
 import type { FridayProviderTenantContext } from "#providers";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
@@ -1203,6 +1204,7 @@ export function createFridayAgentRoutes(
         const auditEvents = allEvents.filter((e) =>
           AUDIT_EVENT_NAMES.has(e.eventName) || e.eventName.startsWith("autonomous."),
         );
+        const decisionTrace = buildAgentRunDecisionTrace(run, auditEvents);
         return {
           runId,
           events: auditEvents.map((e) => ({
@@ -1211,7 +1213,24 @@ export function createFridayAgentRoutes(
             timestamp: e.emittedAt,
             payload: sanitizeAuditEventPayload(e),
           })),
-          decisionTrace: buildAgentRunDecisionTrace(run, auditEvents),
+          decisionTrace,
+          replayReceipt: buildFridayAgentReplayableEvidenceReceipt({
+            runId: run.id,
+            task: run.task,
+            status: run.status,
+            issuedAt: ctx.receivedAt,
+            completedAt: run.completedAt,
+            durationMs: run.durationMs,
+            usageInput: run.usageInput,
+            usageOutput: run.usageOutput,
+            costUsd: run.costUsd ?? run.actualExecution?.totalCostUsd,
+            artifactDir: run.artifactDir,
+            testResults: run.testResults,
+            artifacts: run.artifacts,
+            auditEventCount: auditEvents.length,
+            decisionTraceAvailable: true,
+            decisionTraceActionCount: decisionTrace.actions.length,
+          }),
         };
       },
     },

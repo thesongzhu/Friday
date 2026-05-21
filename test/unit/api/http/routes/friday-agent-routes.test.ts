@@ -810,6 +810,64 @@ describe("FridayAgentRoutes", () => {
     expect(result.decisionTrace.traceCompleteness.hasPlanDecision).toBe(false);
   });
 
+  it("GET /v1/agent/runs/:runId/audit includes a replayable evidence receipt", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      status: "completed",
+      completedAt: "2026-01-01T00:00:05.000Z",
+      durationMs: 5000,
+      usageInput: 100,
+      usageOutput: 50,
+      costUsd: 0.01,
+      artifactDir: "/tmp/friday/run-1",
+      artifacts: [
+        { type: "run_record", path: "/tmp/friday/run-1/run.json" },
+        { type: "evidence_receipt", path: "/tmp/friday/run-1/evidence-receipt.json" },
+      ],
+      testResults: [
+        { strategy: "execute", passed: true, errors: [], durationMs: 40 },
+      ],
+    }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        eventName: "agent.run.completed",
+        emittedAt: "2026-01-01T00:00:05.000Z",
+        payload: { runId: "run-1" },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:06.000Z",
+    }) as {
+      replayReceipt: {
+        schemaVersion: string;
+        receiptStatus: string;
+        run: { runId: string };
+        evidence: { auditEventCount: number };
+        replay: { auditEndpoint: string; files: Array<{ kind: string; path?: string }> };
+        proofBoundary: string;
+      };
+    };
+
+    expect(result.replayReceipt.schemaVersion).toBe("friday.agent.evidence_receipt.v1");
+    expect(result.replayReceipt.receiptStatus).toBe("verified_receipt");
+    expect(result.replayReceipt.run.runId).toBe("run-1");
+    expect(result.replayReceipt.evidence.auditEventCount).toBe(1);
+    expect(result.replayReceipt.replay.auditEndpoint).toBe("/v1/agent/runs/run-1/audit");
+    expect(result.replayReceipt.replay.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "evidence_receipt", path: expect.stringContaining("evidence-receipt.json") }),
+    ]));
+    expect(result.replayReceipt.proofBoundary).toContain("not release proof");
+  });
+
   // ─── Handler tests ───
 
   describe("POST /v1/agent/runs handler", () => {

@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { agentApi } from "@/lib/api/agent";
 import type { RunAuditEvent } from "@/lib/api/agent";
+import {
+  summarizeAgentEvidenceReceipt,
+  toneForAgentEvidenceReceipt,
+} from "@/lib/assistant/view-models";
 
 interface ChatAuditDrawerProps {
   runId: string;
@@ -43,6 +47,13 @@ const EVENT_DOTS: Record<string, string> = {
   "agent.run.failed": "bg-[color:var(--color-text-primary)]",
   "agent.run.cancelled": "bg-[color:var(--color-text-tertiary)]",
 };
+
+const RECEIPT_TONE_CLASSES = {
+  neutral: "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-secondary)]",
+  warning: "border-amber-300 bg-amber-50 text-amber-900",
+  danger: "border-red-300 bg-red-50 text-red-900",
+  success: "border-emerald-300 bg-emerald-50 text-emerald-900",
+} as const;
 
 function formatPayload(event: RunAuditEvent): string {
   const p = event.payload;
@@ -101,6 +112,27 @@ export function ChatAuditDrawer({ runId, open, onClose }: ChatAuditDrawerProps) 
       <div className="flex-1 overflow-y-auto p-4">
         {isLoading && (
           <p className="text-sm text-[color:var(--color-text-secondary)]">Loading audit events...</p>
+        )}
+        {data?.replayReceipt && (
+          <section className="mb-4 rounded-md border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-normal text-[color:var(--color-text-secondary)]">
+                Evidence Receipt
+              </h3>
+              <span
+                className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold ${RECEIPT_TONE_CLASSES[toneForAgentEvidenceReceipt(data.replayReceipt)]}`}
+              >
+                {data.replayReceipt.receiptStatus}
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {summarizeAgentEvidenceReceipt(data.replayReceipt).map((line, index) => (
+                <li key={`${String(index)}-${line}`} className="text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
         {data && data.events.length === 0 && (
           <p className="text-sm text-[color:var(--color-text-secondary)]">No audit events recorded.</p>
