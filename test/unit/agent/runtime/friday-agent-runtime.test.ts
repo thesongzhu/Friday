@@ -883,6 +883,7 @@ describe("FridayAgentRuntime", () => {
       "exec",
       "read",
       "request_tool_pack",
+      "tool_search",
       "web_fetch",
       "web_search",
       "write",
@@ -1145,6 +1146,73 @@ describe("FridayAgentRuntime", () => {
       "web_search",
     ]));
     expect(capturedToolsByCall[1]).not.toContain("provider");
+  });
+
+  it("loads an individual deferred tool on a second LLM turn when tool_search selects it", async () => {
+    const capturedToolsByCall: string[][] = [];
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    let callCount = 0;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream(params) {
+        capturedToolsByCall.push(params.tools.map((tool) => tool.name).sort());
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: "tool_use",
+            id: "search-provider-tool",
+            name: "tool_search",
+            input: { query: "select:provider" },
+          };
+          yield { type: "message_end", stopReason: "tool_use", inputTokens: 180, outputTokens: 12 };
+          return;
+        }
+        yield { type: "text_delta", text: "Provider tool is loaded." };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 220, outputTokens: 6 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "STANDARD_PROMPT";
+      },
+      tools: [
+        createSuccessfulWebSearchTool(),
+        createSuccessfulWebFetchTool(),
+        createNamedTool("provider"),
+        createNamedTool("desktop"),
+      ],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Research the documentation for example.com" });
+
+    expect(result.status).toBe("completed");
+    expect(result.toolCallCount).toBe(1);
+    expect(capturedPromptContext?.deferredToolHints?.map((hint) => hint.name)).toEqual(
+      expect.arrayContaining(["provider", "desktop"]),
+    );
+    expect(capturedToolsByCall[0]).toEqual(expect.arrayContaining([
+      "request_tool_pack",
+      "tool_search",
+      "web_fetch",
+      "web_search",
+    ]));
+    expect(capturedToolsByCall[0]).not.toContain("provider");
+    expect(capturedToolsByCall[1]).toEqual(expect.arrayContaining([
+      "provider",
+      "request_tool_pack",
+      "tool_search",
+      "web_fetch",
+      "web_search",
+    ]));
+    expect(capturedToolsByCall[1]).not.toContain("desktop");
   });
 
   it("prepends provided history messages before the new task", async () => {

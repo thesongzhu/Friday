@@ -105,6 +105,7 @@ import { filterToolsByMode, FRIDAY_MODE_CONFIGS, resolveToolCategory } from "./f
 import type { FridayOperationalMode } from "./friday-agent-operational-mode.js";
 import {
   createFridayAgentToolPackRequestTool,
+  createFridayAgentToolSearchTool,
   resolveFridayAgentToolNamesForPacks,
   resolveFridayAgentToolRouting,
 } from "./friday-agent-tool-routing.js";
@@ -1008,6 +1009,7 @@ export function createFridayAgentRuntime(
         }
         : toolRouting;
       const requestedToolPacks = new Set<string>();
+      const requestedToolNames = new Set<string>();
       const toolPackRequestTool = toolRouting.profile !== "trivial" && toolRouting.deferredToolNames.length > 0
         ? createFridayAgentToolPackRequestTool({
             availableTools: baseRunTools,
@@ -1023,8 +1025,30 @@ export function createFridayAgentRuntime(
             },
           })
         : undefined;
+      const toolSearchTool = toolRouting.profile !== "trivial" && toolRouting.deferredToolNames.length > 0
+        ? createFridayAgentToolSearchTool({
+            availableTools: baseRunTools,
+            deferredToolNames: toolRouting.deferredToolNames,
+            disabledToolNames,
+            onSearch: (request) => {
+              for (const toolName of request.loadedToolNames) {
+                requestedToolNames.add(toolName);
+              }
+              handleTrackedEvent("agent.run.tool_search_requested", {
+                runId,
+                queryKind: request.query.trim().toLowerCase().startsWith("select:") ? "select" : "keyword",
+                queryLength: request.query.length,
+                loadedToolNames: request.loadedToolNames,
+                matchCount: request.matches.length,
+              });
+            },
+          })
+        : undefined;
       if (toolPackRequestTool) {
         runToolMap.set(toolPackRequestTool.name, toolPackRequestTool);
+      }
+      if (toolSearchTool) {
+        runToolMap.set(toolSearchTool.name, toolSearchTool);
       }
       const buildVisibleToolNames = (): string[] => {
         const visible = new Set(toolRouting.selectedToolNames);
@@ -1035,8 +1059,14 @@ export function createFridayAgentRuntime(
         )) {
           visible.add(toolName);
         }
+        for (const toolName of requestedToolNames) {
+          visible.add(toolName);
+        }
         if (toolPackRequestTool) {
           visible.add(toolPackRequestTool.name);
+        }
+        if (toolSearchTool) {
+          visible.add(toolSearchTool.name);
         }
         return [...visible].filter((toolName) => runToolMap.has(toolName));
       };
@@ -1046,7 +1076,20 @@ export function createFridayAgentRuntime(
         if (toolPackRequestTool && visibleNames.has(toolPackRequestTool.name)) {
           visibleTools.push(toolPackRequestTool);
         }
+        if (toolSearchTool && visibleNames.has(toolSearchTool.name)) {
+          visibleTools.push(toolSearchTool);
+        }
         return visibleTools;
+      };
+      const buildDeferredToolHints = (): Array<{ name: string; description: string }> => {
+        const deferred = new Set(toolRouting.deferredToolNames);
+        return baseRunTools
+          .filter((tool) => deferred.has(tool.name) && !(disabledToolNames.has(tool.name)))
+          .slice(0, 12)
+          .map((tool) => ({
+            name: tool.name,
+            description: tool.description.replace(/\s+/gu, " ").trim().slice(0, 180),
+          }));
       };
       const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
@@ -1703,6 +1746,7 @@ export function createFridayAgentRuntime(
               workspaceContext: effectiveToolRouting.workspaceContextPolicy,
             },
             toolRouting: effectiveToolRouting,
+            deferredToolHints: buildDeferredToolHints(),
           }))
           : (staticSystemPrompt ?? "You are an AI assistant.");
         const baseSystemPrompt = typeof promptBuildResult === "string"
@@ -1837,11 +1881,11 @@ export function createFridayAgentRuntime(
           }
         }
 
-        // ─── Compact deferred tool-pack hint ───
+        // ─── Compact deferred tool discovery hint ───
         if (toolPackRequestTool && toolRouting.deferredToolNames.length > 0) {
           effectiveSystemPrompt +=
-            "\n\nAdditional Friday tool packs can be loaded on demand with request_tool_pack. " +
-            "Use it before telling the user a browser, desktop, provider/setup, workflow, skill, memory, media, or autonomy capability is missing.";
+            "\n\nAdditional Friday tools can be discovered on demand with tool_search, and broader packs can be loaded with request_tool_pack. " +
+            "Use one of these before telling the user a browser, desktop, provider/setup, workflow, skill, memory, media, or autonomy capability is missing.";
         }
 
         let iterations = 0;

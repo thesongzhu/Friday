@@ -100,6 +100,7 @@ const READ_ONLY_TOOLS = new Set([
   "capabilities",
   "task_status",
   "request_tool_pack",
+  "tool_search",
   "image_analysis",
 ]);
 

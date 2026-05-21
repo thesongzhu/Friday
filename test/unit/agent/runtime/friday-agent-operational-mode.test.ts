@@ -55,6 +55,7 @@ describe("resolveToolCategory", () => {
     expect(resolveToolCategory("capabilities")).toBe("read");
     expect(resolveToolCategory("task_status")).toBe("read");
     expect(resolveToolCategory("request_tool_pack")).toBe("read");
+    expect(resolveToolCategory("tool_search")).toBe("read");
     expect(resolveToolCategory("image_analysis")).toBe("read");
   });
 
@@ -126,7 +127,7 @@ describe("resolveToolCategory", () => {
       // read
       "read", "file_read", "file_list", "web_fetch", "web_search",
       "memory_search", "memory_query", "memory_get", "skills_list",
-      "agents_list", "capabilities", "task_status", "request_tool_pack", "image_analysis", "pdf_parse", "feedback",
+      "agents_list", "capabilities", "task_status", "request_tool_pack", "tool_search", "image_analysis", "pdf_parse", "feedback",
       // write
       "write", "edit", "file_write", "file_delete",
       "memory_store", "memory_extract",

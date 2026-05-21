@@ -145,6 +145,7 @@ export interface FridayAgentSystemPromptContext {
     workspaceContext?: "auto" | "skip";
   };
   toolRouting?: FridayAgentToolRoutingDecision;
+  deferredToolHints?: Array<{ name: string; description: string }>;
 }
 
 export interface FridayAgentContextCostComponent {

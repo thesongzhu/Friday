@@ -297,6 +297,25 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("treat approve/reject replies as control commands for that stored plan");
   });
 
+  it("tells the agent to discover deferred tools before claiming missing capability", () => {
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["web_search", "tool_search", "request_tool_pack"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+      deferredToolHints: [
+        {
+          name: "provider",
+          description: "Inspect configured model provider setup and routing.",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Additional tools available on demand");
+    expect(prompt).toContain("provider: Inspect configured model provider setup and routing.");
+    expect(prompt).toContain("use tool_search first");
+    expect(prompt).toContain("Only say the capability is unavailable after the discovery result proves no match or the lifecycle gate denies it");
+  });
+
   it("keeps conversation-only memory separate from durable memory writes", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["memory_search", "memory_store", "feedback"],
