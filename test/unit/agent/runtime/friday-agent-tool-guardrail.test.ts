@@ -14,7 +14,7 @@ describe("friday-agent-tool-guardrail", () => {
       toolInput: {
         command: "rm database.dump",
         path: "private-backup.dump",
-        canonicalApproval: { secret: "do-not-leak" },
+        canonicalApproval: { hiddenValue: "do-not-leak" },
       },
       mutating: true,
       readOnly: false,
