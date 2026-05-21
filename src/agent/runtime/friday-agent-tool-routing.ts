@@ -98,6 +98,7 @@ export function resolveFridayAgentToolRouting(input: {
   const availableTools = input.tools.filter((tool) => !(input.disabledToolNames?.has(tool.name) ?? false));
   const availableToolNames = new Set(availableTools.map((tool) => tool.name));
   const explicitWorkspaceReadToolTask = taskExplicitlyRequiresWorkspaceReadTool(task);
+  const explicitExecToolTask = taskExplicitlyRequiresExecTool(task);
   const profile = classifyFridayToolRoutingProfile({
     task,
     images: input.images,
@@ -128,10 +129,15 @@ export function resolveFridayAgentToolRouting(input: {
     if (availableToolNames.has("read")) {
       selected.add("read");
     }
+  } else if (explicitExecToolTask) {
+    selected.clear();
+    if (availableToolNames.has("exec")) {
+      selected.add("exec");
+    }
   }
 
   // Preserve small custom-tool runtimes and focused tests without reopening the full production registry.
-  if (!explicitWorkspaceReadToolTask && availableTools.length <= 6) {
+  if (!explicitWorkspaceReadToolTask && !explicitExecToolTask && availableTools.length <= 6) {
     for (const tool of availableTools) {
       if (!FRIDAY_KNOWN_TOOL_NAMES.has(tool.name)) {
         selected.add(tool.name);
@@ -140,7 +146,7 @@ export function resolveFridayAgentToolRouting(input: {
   }
 
   const selectedToolNames = [...selected].filter((name) => availableToolNames.has(name));
-  const deferredToolNames = explicitWorkspaceReadToolTask
+  const deferredToolNames = explicitWorkspaceReadToolTask || explicitExecToolTask
     ? []
     : availableTools
         .map((tool) => tool.name)
@@ -284,6 +290,9 @@ function classifyFridayToolRoutingProfile(input: {
   if (taskExplicitlyRequiresWorkspaceReadTool(text)) {
     return "code";
   }
+  if (taskExplicitlyRequiresExecTool(text)) {
+    return "code";
+  }
   if (/\b(latest|current|today|news|search|lookup|source|url|https?:\/\/|documentation|docs)\b|最新|今天|最近|新闻|搜索|查一下|资料|来源/u.test(text)) {
     return "web";
   }
@@ -308,6 +317,12 @@ function classifyFridayToolRoutingProfile(input: {
 function taskExplicitlyRequiresWorkspaceReadTool(task: string): boolean {
   return /\b(call|use)\s+the\s+`?read`?\s+tool\b[\s\S]{0,160}\b(?:file|repo|repository|workspace|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b/i.test(task)
     || /\b(?:file|repo|repository|workspace|readme|(?:[a-z0-9_.-]+\/)*[a-z0-9_.-]+\.[a-z0-9]+)\b[\s\S]{0,160}\b(call|use)\s+the\s+`?read`?\s+tool\b/i.test(task);
+}
+
+function taskExplicitlyRequiresExecTool(task: string): boolean {
+  return /\b(call|use)\s+the\s+`?exec`?\s+tool\b[\s\S]{0,200}\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b/i.test(task)
+    || /\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b[\s\S]{0,200}\b(call|use)\s+the\s+`?exec`?\s+tool\b/i.test(task)
+    || /`exec`\s+tool[\s\S]{0,200}\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b/i.test(task);
 }
 
 function buildToolRoutingIntentText(input: {

@@ -29,6 +29,7 @@ const DAILY_CORE_SCENARIOS = [
   "l3-multi-turn-memory",
   "l3-memory-api-store-agent-recall-proof",
   "l4-file-tool-roundtrip",
+  "l4-exec-outside-workspace-boundary",
   "l5-workflow-approval-roundtrip",
 ];
 

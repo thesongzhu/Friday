@@ -2636,6 +2636,24 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            const execBoundaryIntentViolation = toolCallViolatesExecBoundaryIntent({
+              task: params.task,
+              toolName: toolUse.name,
+            });
+            if (execBoundaryIntentViolation) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.exec_boundary",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: execBoundaryIntentViolation,
+              }));
+              continue;
+            }
+
             if (explicitAutonomousTask && isAutonomousTaskBypassTool(toolUse.name)) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
@@ -3218,6 +3236,15 @@ export function createFridayAgentRuntime(
           });
           if (missingWorkspaceFileResponse) {
             responseText = missingWorkspaceFileResponse;
+            break;
+          }
+
+          const outsideWorkspaceExecBoundaryResponse = buildOutsideWorkspaceExecBoundaryUnverifiedResponse({
+            task: params.task,
+            toolCalls: allToolCalls,
+          });
+          if (outsideWorkspaceExecBoundaryResponse) {
+            responseText = outsideWorkspaceExecBoundaryResponse;
             break;
           }
 
@@ -4000,6 +4027,19 @@ function taskExplicitlyRequiresReadToolForWorkspaceFile(task: string): boolean {
     );
 }
 
+function taskLooksLikeOutsideWorkspaceExecBoundaryProbe(task: string): boolean {
+  const requiresExec =
+    /\bcall\s+the\s+`?exec`?\s+tool\b/i.test(task)
+    || /\buse\s+the\s+`?exec`?\s+tool\b/i.test(task)
+    || /`exec`\s+tool/u.test(task);
+  if (!requiresExec) {
+    return false;
+  }
+  return /\boutside\b[\s\S]{0,96}\b(?:workspace|workspace root|allowed workspace root|workspace boundary)\b/i.test(task)
+    || /\b(?:workspace|workspace root|allowed workspace root|workspace boundary)\b[\s\S]{0,96}\boutside\b/i.test(task)
+    || /(?:工作区|workspace).{0,32}(?:之外|外部|边界外)/iu.test(task);
+}
+
 function toolCallViolatesLocalWorkspaceFileIntent(params: {
   task: string;
   toolName: string;
@@ -4025,6 +4065,16 @@ function toolCallViolatesLocalWorkspaceFileIntent(params: {
     return `The read tool path '${actualPath}' does not match the requested local workspace file '${requestedLabel}'. Call read with path="${requestedLabel}".`;
   }
   return null;
+}
+
+function toolCallViolatesExecBoundaryIntent(params: {
+  task: string;
+  toolName: string;
+}): string | null {
+  if (!taskLooksLikeOutsideWorkspaceExecBoundaryProbe(params.task) || params.toolName === "exec") {
+    return null;
+  }
+  return `This task explicitly requires tool 'exec' for an outside-workspace boundary check. Do not use '${params.toolName}', web, browser, search, or file-url detours for this boundary check. Call exec with the requested command next and report the exec boundary result.`;
 }
 
 function isRuntimeSkillAuthoringPath(input: Record<string, unknown> | undefined): boolean {
@@ -4332,6 +4382,14 @@ function detectEvidenceClosureGap(params: {
   if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
     const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
     const failedReadEvidence = findFailedLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    if (
+      !hasReadEvidence
+      && taskLooksLikeOutsideWorkspaceExecBoundaryProbe(normalizedTask)
+      && hasFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls, normalizedTask)
+      && responseAcknowledgesWorkspaceFileUnverified(params.responseText)
+    ) {
+      return null;
+    }
     if (
       !hasReadEvidence
       && failedReadEvidence
@@ -4929,6 +4987,38 @@ function findFailedLocalWorkspaceReadEvidence(
   });
 }
 
+function getFailedExecOutsideWorkspaceBoundaryEvidence(
+  toolCalls: FridayAgentToolCallRecord[],
+  task?: string,
+): FridayAgentToolCallRecord[] {
+  const boundaryProbeTask = task ? taskLooksLikeOutsideWorkspaceExecBoundaryProbe(task) : false;
+  const requestedFiles = task ? extractLocalWorkspaceFileMentions(task) : [];
+  return toolCalls.filter((call) => {
+    if (call.toolName !== "exec" || !call.result.isError) {
+      return false;
+    }
+    if (/outside the allowed workspace root|outside(?: the)? workspace|outside(?: the)? workspace boundary|workspace boundary/i.test(
+      call.result.content,
+    )) {
+      return true;
+    }
+    if (!boundaryProbeTask || !/readOnly constraint/i.test(call.result.content)) {
+      return false;
+    }
+    const argsText = JSON.stringify(call.args ?? {}).toLowerCase();
+    return /\/tmp\/|outside-marker|friday-rgg-agent-file/i.test(argsText)
+      || requestedFiles.some((requested) =>
+        requested.length > 0 && argsText.includes(requested.toLowerCase()));
+  });
+}
+
+function hasFailedExecOutsideWorkspaceBoundaryEvidence(
+  toolCalls: FridayAgentToolCallRecord[],
+  task?: string,
+): boolean {
+  return getFailedExecOutsideWorkspaceBoundaryEvidence(toolCalls, task).length > 0;
+}
+
 function taskAllowsMissingWorkspaceFileRefusal(task: string): boolean {
   return /\bif\b[\s\S]{0,80}\b(?:missing|cannot be read|can't be read|could not be read|unreadable|not found|does not exist)\b/i.test(task)
     || /\b(?:missing|cannot be read|can't be read|could not be read|unreadable|not found|does not exist)\b[\s\S]{0,80}\b(?:cannot|can't|could not|unable to|not able to)\s+(?:verify|confirm|read|access)\b/i.test(task)
@@ -4940,7 +5030,9 @@ function responseAcknowledgesWorkspaceFileUnverified(responseText: string): bool
   return /\b(?:cannot|can't|could not|unable to|not able to|failed to)\b.{0,80}\b(?:verify|confirm|read|access)\b/i.test(responseText)
     || /\b(?:not verified|unverified|cannot be verified|could not be verified)\b/i.test(responseText)
     || /(?:无法|不能|未能|没法).{0,30}(?:验证|确认|读取|访问|证明)/u.test(responseText)
-    || /(?:不能确认|无法确认|无法验证|未验证|无法读取|无法访问)/u.test(responseText);
+    || /(?:不能确认|无法确认|无法验证|未验证|无法读取|无法访问)/u.test(responseText)
+    || /\b(?:cannot|can't|could not|unable to|not able to|failed to)\b.{0,80}\b(?:execute|run)\b.{0,120}\b(?:outside|workspace boundary|workspace root)\b/i.test(responseText)
+    || /(?:无法|不能|未能|没法).{0,30}(?:执行|运行).{0,80}(?:工作区|workspace).{0,30}(?:之外|外部|边界外|边界)/iu.test(responseText);
 }
 
 function buildMissingWorkspaceFileUnverifiedResponse(params: {
@@ -4963,6 +5055,30 @@ function buildMissingWorkspaceFileUnverifiedResponse(params: {
     `I cannot verify ${rawPath}: the read tool reported that the requested workspace file could not be read.`,
     `Tool evidence: ${failureDetail}`,
     "Treat the requested marker or claim as unverified until the file is available and can be read.",
+  ].join("\n");
+}
+
+function buildOutsideWorkspaceExecBoundaryUnverifiedResponse(params: {
+  task: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): string | null {
+  if (!taskLooksLikeOutsideWorkspaceExecBoundaryProbe(params.task)) {
+    return null;
+  }
+  if (hasSuccessfulLocalWorkspaceReadEvidence(params.task, params.toolCalls)) {
+    return null;
+  }
+  const failedExecBoundaryCalls = getFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls, params.task);
+  if (failedExecBoundaryCalls.length < 2) {
+    return null;
+  }
+  const evidence = failedExecBoundaryCalls
+    .slice(0, 2)
+    .map((call) => call.result.content.replace(/\s+/g, " ").trim().slice(0, 200));
+  return [
+    "I cannot verify or read the outside file: the exec tool rejected the requested commands at the workspace boundary.",
+    `Tool evidence: ${evidence.join(" | ")}`,
+    "Treat the outside marker or claim as unverified until it can be checked through an approved in-workspace evidence path.",
   ].join("\n");
 }
 
