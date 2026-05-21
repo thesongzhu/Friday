@@ -10,6 +10,7 @@ import {
   createGateEnv,
   createRuntimeEnv,
 } from "../../../scripts/ops/run-real-green-gate-self-hosted.mjs";
+import { PHASE24_CHANNEL_ENV_REQUIREMENTS } from "../../../validation/real-world/lib/env-truth.mjs";
 
 describe("run-real-green-gate-self-hosted", () => {
   let tempRoot: string | null = null;
@@ -165,5 +166,15 @@ describe("run-real-green-gate-self-hosted", () => {
     expect(workflow).toContain("self_hosted_runtime_build_failed");
     expect(workflow).toContain("buildErroredResult");
     expect(workflow).toContain("node scripts/ops/run-real-green-gate-self-hosted.mjs");
+  });
+
+  it("binds the Phase24 live-channel environment and exposes only env names to RGG", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/real-green-gate.yml"), "utf8");
+
+    expect(workflow).toContain("environment: phase-24-live-channels");
+    for (const envName of Object.values(PHASE24_CHANNEL_ENV_REQUIREMENTS).flat()) {
+      expect(workflow).toContain(`${envName}:`);
+    }
+    expect(workflow).not.toContain("FRIDAY_WHATSAPP");
   });
 });
