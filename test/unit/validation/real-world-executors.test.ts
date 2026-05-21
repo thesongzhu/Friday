@@ -778,12 +778,12 @@ describe("real-world executors", () => {
       "Authorization: [redacted] fixtureAuthorizationTail123",
       "Cookie: session=fixtureCookieValue; other=ok",
       "Set-Cookie: refresh=fixtureRefreshCookie; Path=/",
-      '{"token":"fixtureJsonToken","access_token":"fixtureAccessToken","apiKey":"fixtureApiKey"}',
+      '{"token":"fixtureJsonToken","access_token":"fixtureAccessToken","apiKey":"fixtureApiKey"}', // pragma: allowlist secret
       "https://example.test/callback?token=fixtureQueryToken&api_key=fixtureQueryKey",
       "password = fixturePasswordValue",
-      "FRIDAY_TOKEN_SECRET=fixtureEnvTokenSecret",
+      "FRIDAY_TOKEN_SECRET=fixtureEnvTokenSecret", // pragma: allowlist secret
       "clientSecret: fixtureClientSecretValue",
-      "tokenSecret='fixtureTokenSecretValue'",
+      "tokenSecret='fixtureTokenSecretValue'", // pragma: allowlist secret
       "rollbackSnapshotSecret=fixtureRollbackSnapshotSecretValue",
       '{"signatureValue":"fixtureSignatureValue"}',
     ].join("\n");
