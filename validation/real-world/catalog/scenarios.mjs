@@ -1543,6 +1543,35 @@ export const REAL_WORLD_SCENARIOS = [
       },
     },
   }),
+  agentScenario({
+    id: "l4-context-cost-control-evidence",
+    layer: "L4",
+    productArea: "providers",
+    entrySurface: "/v1/agent/runs",
+    routeFamily: "context cost control",
+    providerLane: "default_only",
+    preconditions: ["auth.ready"],
+    realWorldPrompt: [
+      "For this Friday context-cost evidence check, answer exactly: context cost evidence recorded",
+      "Do not use web search or tools.",
+    ].join(" "),
+    expectedEvidence: [
+      "agent run persists contextCostSummary on the run record",
+      "contextCostSummary reports nonzero totalEstimatedInputTokens",
+      "real-world validation fails if that token evidence is missing or zero",
+    ],
+    execution: {
+      useJudge: false,
+      expectedOutputSubstrings: ["context cost evidence recorded"],
+      expectedContextEstimatedInputTokensMin: 1,
+    },
+    oracles: {
+      behavior: {
+        minimumTextLength: 20,
+        disallowStatuses: ["awaiting_clarification", "awaiting_plan_approval"],
+      },
+    },
+  }),
   baseScenario({
     id: "l5-workflow-approval-roundtrip",
     layer: "L5",

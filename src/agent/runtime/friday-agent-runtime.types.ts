@@ -149,14 +149,16 @@ export interface FridayAgentSystemPromptContext {
 }
 
 export interface FridayAgentContextCostComponent {
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents" | "tool_routing";
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents" | "tool_routing" | "context_replay";
   estimatedChars: number;
+  estimatedInputTokens: number;
   count?: number;
   metadata?: Record<string, unknown>;
 }
 
 export interface FridayAgentContextCostSummary {
   totalEstimatedChars: number;
+  totalEstimatedInputTokens: number;
   components: FridayAgentContextCostComponent[];
 }
 

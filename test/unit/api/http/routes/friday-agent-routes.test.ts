@@ -110,6 +110,47 @@ describe("FridayAgentRoutes", () => {
     expect(route!.auth).toEqual({ public: true });
   });
 
+  it("POST /v1/agent/runs returns context cost token estimates from the runtime result", async () => {
+    stubDeps.startRun = vi.fn().mockResolvedValue(createStubResult({
+      contextCostSummary: {
+        totalEstimatedChars: 480,
+        totalEstimatedInputTokens: 120,
+        components: [
+          {
+            kind: "tool_routing",
+            estimatedChars: 480,
+            estimatedInputTokens: 120,
+            count: 4,
+          },
+        ],
+      },
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+
+    const response = await route.handler({
+      body: { task: "Summarize context cost." },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(response).toMatchObject({
+      contextCostSummary: {
+        totalEstimatedInputTokens: 120,
+        components: [
+          expect.objectContaining({
+            kind: "tool_routing",
+            estimatedInputTokens: 120,
+          }),
+        ],
+      },
+    });
+  });
+
   it("POST /v1/agent/runs isolates unauthenticated public v1 runs from server-workspace tools", async () => {
     const routes = createFridayAgentRoutes(stubDeps);
     const route = routes.find((r) => r.operationId === "agent.runs.start")!;

@@ -2593,6 +2593,17 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     artifact.failureClass = "tool_bridge";
     artifact.notes = [...(artifact.notes ?? []), `expected at least ${String(execution.expectToolCallCountMin)} tool calls`];
   }
+  if (
+    typeof execution.expectedContextEstimatedInputTokensMin === "number"
+    && totalContextEstimatedInputTokens < execution.expectedContextEstimatedInputTokensMin
+  ) {
+    artifact.result = "failed";
+    artifact.failureClass = "tool_bridge";
+    artifact.notes = [
+      ...(artifact.notes ?? []),
+      `expected context estimated input tokens >= ${String(execution.expectedContextEstimatedInputTokensMin)} but got ${String(totalContextEstimatedInputTokens)}`,
+    ];
+  }
   if (execution.expectReplayableEvidenceReceipt === true && lastRunRecord && lastData?.runId) {
     const receiptInspection = await inspectReplayableEvidenceReceipt({
       client,
