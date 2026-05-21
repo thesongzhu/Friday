@@ -5,6 +5,7 @@ import type {
   FridayAgentRunRecord,
   FridayAgentRunStatus,
   FridayAgentTaskProfileInput,
+  FridayAgentUnifiedTaskStateSnapshot,
   FridayResolvedAgentTaskProfile,
 } from "#agent";
 import type { FridayPaginationQuery } from "./friday-api-common.types.js";
@@ -48,12 +49,16 @@ export interface FridayListAgentRunsQuery extends FridayPaginationQuery {
   status?: FridayAgentRunStatus;
 }
 
+export interface FridayAgentRunWithUnifiedTaskState extends FridayAgentRunRecord {
+  unifiedTaskState: FridayAgentUnifiedTaskStateSnapshot;
+}
+
 export interface FridayListAgentRunsResponse {
-  items: FridayAgentRunRecord[];
+  items: FridayAgentRunWithUnifiedTaskState[];
 }
 
 export interface FridayGetAgentRunResponse {
-  run: FridayAgentRunRecord;
+  run: FridayAgentRunWithUnifiedTaskState;
 }
 
 export interface FridayCancelAgentRunResponse {

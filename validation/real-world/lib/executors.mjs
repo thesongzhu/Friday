@@ -144,6 +144,84 @@ async function inspectReplayableEvidenceReceipt({ client, runRecord, runId }) {
   return { failures, evidence };
 }
 
+async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
+  const failures = [];
+  const runState = runRecord?.unifiedTaskState ?? null;
+  const expectedStates = Array.isArray(expected?.allowedStates)
+    ? expected.allowedStates.map((state) => String(state))
+    : (typeof expected?.state === "string" ? [expected.state] : []);
+  const evidence = {
+    runId,
+    expectedStates,
+    getState: runState?.state ?? null,
+    auditState: null,
+    schemaVersion: runState?.schemaVersion ?? null,
+    auditSchemaVersion: null,
+    liveChannelProof: runState?.channelBoundary?.liveChannelProof ?? null,
+    auditLiveChannelProof: null,
+  };
+
+  if (!runState || typeof runState !== "object") {
+    failures.push("GET run did not include unifiedTaskState");
+  } else {
+    if (runState.schemaVersion !== "friday.agent.unified_task_state.v1") {
+      failures.push("GET run unifiedTaskState schemaVersion mismatch");
+    }
+    if (expectedStates.length > 0 && !expectedStates.includes(runState.state)) {
+      failures.push(`GET run unifiedTaskState expected ${expectedStates.join(" or ")} but received ${String(runState.state)}`);
+    }
+    if (runState.channelBoundary?.consumableByChannelAdapters !== true) {
+      failures.push("GET run unifiedTaskState did not mark the contract consumable by channel adapters");
+    }
+    if (runState.channelBoundary?.liveChannelProof !== "not_claimed") {
+      failures.push("GET run unifiedTaskState overclaimed live channel proof");
+    }
+    const proofBoundary = String(runState.proofBoundary ?? "");
+    if (!proofBoundary.includes("not channel live proof")) {
+      failures.push("GET run unifiedTaskState did not state not channel live proof");
+    }
+    if (!proofBoundary.includes("same-SHA Real Green Gate")) {
+      failures.push("GET run unifiedTaskState did not preserve same-SHA RGG proof boundary");
+    }
+  }
+
+  let auditData;
+  try {
+    auditData = (await client.getAgentRunAudit(runId)).data;
+  } catch (error) {
+    failures.push(`failed to read run audit unifiedTaskState: ${error instanceof Error ? error.message : String(error)}`);
+    return { failures, evidence };
+  }
+
+  const auditState = auditData?.unifiedTaskState ?? null;
+  evidence.auditState = auditState?.state ?? null;
+  evidence.auditSchemaVersion = auditState?.schemaVersion ?? null;
+  evidence.auditLiveChannelProof = auditState?.channelBoundary?.liveChannelProof ?? null;
+
+  if (!auditState || typeof auditState !== "object") {
+    failures.push("audit route did not include unifiedTaskState");
+  } else {
+    if (auditState.schemaVersion !== "friday.agent.unified_task_state.v1") {
+      failures.push("audit unifiedTaskState schemaVersion mismatch");
+    }
+    if (expectedStates.length > 0 && !expectedStates.includes(auditState.state)) {
+      failures.push(`audit unifiedTaskState expected ${expectedStates.join(" or ")} but received ${String(auditState.state)}`);
+    }
+    if (runState?.state && auditState.state !== runState.state) {
+      failures.push(`GET/audit unifiedTaskState mismatch: ${String(runState.state)} vs ${String(auditState.state)}`);
+    }
+    if (auditState.channelBoundary?.liveChannelProof !== "not_claimed") {
+      failures.push("audit unifiedTaskState overclaimed live channel proof");
+    }
+    const auditProofBoundary = String(auditState.proofBoundary ?? "");
+    if (!auditProofBoundary.includes("not channel live proof")) {
+      failures.push("audit unifiedTaskState did not state not channel live proof");
+    }
+  }
+
+  return { failures, evidence };
+}
+
 async function pathExists(filePath) {
   try {
     await fs.stat(filePath);
@@ -2535,6 +2613,31 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       artifact.notes = [
         ...(artifact.notes ?? []),
         ...receiptInspection.failures,
+      ];
+    }
+  }
+  if (execution.expectUnifiedTaskState && lastRunRecord && lastData?.runId) {
+    const stateInspection = await inspectUnifiedTaskState({
+      client,
+      runRecord: lastRunRecord,
+      runId: lastData.runId,
+      expected: execution.expectUnifiedTaskState,
+    });
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      unifiedTaskState: stateInspection.evidence,
+    };
+    artifact.observedEvidence.push(
+      `unified task state ${stateInspection.evidence.getState ?? "missing"}`,
+      `audit unified task state ${stateInspection.evidence.auditState ?? "missing"}`,
+      `unified task live channel proof ${stateInspection.evidence.liveChannelProof ?? "missing"}`,
+    );
+    if (stateInspection.failures.length > 0) {
+      artifact.result = "failed";
+      artifact.failureClass = "unified_task_state";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        ...stateInspection.failures,
       ];
     }
   }

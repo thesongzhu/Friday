@@ -1,6 +1,7 @@
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayAgentRunExecutionResponse,
+  FridayAgentRunWithUnifiedTaskState,
   FridayCancelAgentRunResponse,
   FridayGetAgentRunResponse,
   FridayListAgentRunsQuery,
@@ -22,7 +23,7 @@ import type {
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
 } from "#agent";
-import { buildFridayAgentReplayableEvidenceReceipt } from "#agent";
+import { buildFridayAgentReplayableEvidenceReceipt, buildFridayAgentUnifiedTaskState } from "#agent";
 import type { FridayProviderTenantContext } from "#providers";
 import { FridayDomainError } from "#errors";
 import { isValidCronExpression } from "#jobs";
@@ -175,6 +176,51 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
     ...(run.responseText ? { responseText: sanitizeCustomPackText(run.responseText) } : {}),
     ...(run.summary ? { summary: sanitizeCustomPackText(run.summary) } : {}),
     ...(run.errorMessage ? { errorMessage: sanitizeCustomPackText(run.errorMessage) } : {}),
+  };
+}
+
+function buildReplayableEvidenceReceiptForRun(
+  run: FridayAgentRunRecord,
+  auditEvents: FridayAgentRunEventRecord[],
+  issuedAt: string,
+  decisionTrace?: FridayAgentAuditDecisionTrace,
+) {
+  return buildFridayAgentReplayableEvidenceReceipt({
+    runId: run.id,
+    task: run.task,
+    status: run.status,
+    issuedAt,
+    completedAt: run.completedAt,
+    durationMs: run.durationMs,
+    usageInput: run.usageInput,
+    usageOutput: run.usageOutput,
+    costUsd: run.costUsd ?? run.actualExecution?.totalCostUsd,
+    artifactDir: run.artifactDir,
+    testResults: run.testResults,
+    artifacts: run.artifacts,
+    auditEventCount: auditEvents.length,
+    ...(decisionTrace
+      ? {
+        decisionTraceAvailable: true,
+        decisionTraceActionCount: decisionTrace.actions.length,
+      }
+      : {}),
+  });
+}
+
+function buildVisibleRunWithUnifiedTaskState(
+  run: FridayAgentRunRecord,
+  events: FridayAgentRunEventRecord[],
+  issuedAt: string,
+): FridayAgentRunWithUnifiedTaskState {
+  const replayReceipt = buildReplayableEvidenceReceiptForRun(run, events, issuedAt);
+  return {
+    ...sanitizeUserVisibleRun(run),
+    unifiedTaskState: buildFridayAgentUnifiedTaskState({
+      run,
+      events,
+      replayReceipt,
+    }),
   };
 }
 
@@ -1076,7 +1122,7 @@ export function createFridayAgentRoutes(
         });
         const items = filterVisibleAgentRuns(fetchedRuns)
           .slice(0, limit ?? AGENT_MAX_LIST_LIMIT)
-          .map((run) => sanitizeUserVisibleRun(run));
+          .map((run) => buildVisibleRunWithUnifiedTaskState(run, deps.listRunEvents(run.id), ctx.receivedAt));
         const response: FridayListAgentRunsResponse = { items };
         return response;
       },
@@ -1135,7 +1181,9 @@ export function createFridayAgentRoutes(
       async handler(ctx) {
         const { runId } = ctx.params as { runId: string };
         const run = getVisibleRunOrThrow(runId);
-        const response: FridayGetAgentRunResponse = { run };
+        const response: FridayGetAgentRunResponse = {
+          run: buildVisibleRunWithUnifiedTaskState(run, deps.listRunEvents(runId), ctx.receivedAt),
+        };
         return response;
       },
     },
@@ -1205,6 +1253,12 @@ export function createFridayAgentRoutes(
           AUDIT_EVENT_NAMES.has(e.eventName) || e.eventName.startsWith("autonomous."),
         );
         const decisionTrace = buildAgentRunDecisionTrace(run, auditEvents);
+        const replayReceipt = buildReplayableEvidenceReceiptForRun(run, auditEvents, ctx.receivedAt, decisionTrace);
+        const unifiedTaskState = buildFridayAgentUnifiedTaskState({
+          run,
+          events: auditEvents,
+          replayReceipt,
+        });
         return {
           runId,
           events: auditEvents.map((e) => ({
@@ -1214,23 +1268,8 @@ export function createFridayAgentRoutes(
             payload: sanitizeAuditEventPayload(e),
           })),
           decisionTrace,
-          replayReceipt: buildFridayAgentReplayableEvidenceReceipt({
-            runId: run.id,
-            task: run.task,
-            status: run.status,
-            issuedAt: ctx.receivedAt,
-            completedAt: run.completedAt,
-            durationMs: run.durationMs,
-            usageInput: run.usageInput,
-            usageOutput: run.usageOutput,
-            costUsd: run.costUsd ?? run.actualExecution?.totalCostUsd,
-            artifactDir: run.artifactDir,
-            testResults: run.testResults,
-            artifacts: run.artifacts,
-            auditEventCount: auditEvents.length,
-            decisionTraceAvailable: true,
-            decisionTraceActionCount: decisionTrace.actions.length,
-          }),
+          replayReceipt,
+          unifiedTaskState,
         };
       },
     },

@@ -216,6 +216,80 @@ export interface AgentRunEvidenceReceipt {
   userSummary: string;
 }
 
+export type AgentUnifiedTaskState =
+  | "awaiting_clarification"
+  | "awaiting_plan_approval"
+  | "awaiting_tool_approval"
+  | "executing"
+  | "verified_receipt"
+  | "blocked_recoverable";
+
+export interface AgentUnifiedTaskStateSnapshot {
+  schemaVersion: "friday.agent.unified_task_state.v1";
+  state: AgentUnifiedTaskState;
+  source:
+    | "planning_gate"
+    | "tool_approval_event"
+    | "run_status"
+    | "evidence_receipt"
+    | "terminal_recovery";
+  requiredAction:
+    | "answer_clarification"
+    | "approve_or_reject_plan"
+    | "approve_or_reject_tool"
+    | "wait_for_execution"
+    | "read_verified_receipt"
+    | "review_blocker_or_retry";
+  summary: string;
+  run: {
+    runId: string;
+    runStatus: AgentRunStatus;
+    sourceSurface?: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+  evidence: {
+    statePointer: {
+      kind: "agent_run_event" | "agent_evidence_receipt" | "agent_run_record";
+      runId: string;
+      seq?: number;
+      path?: string;
+      href?: string;
+    };
+    receiptStatus?: AgentEvidenceReceiptStatus;
+    auditEventCount: number;
+    openToolApproval?: {
+      grantId?: string;
+      toolCallId?: string;
+      toolName?: string;
+      eventPointer: {
+        kind: "agent_run_event" | "agent_evidence_receipt" | "agent_run_record";
+        runId: string;
+        seq?: number;
+        path?: string;
+        href?: string;
+      };
+    };
+    terminalPointer?: {
+      kind: "agent_run_event" | "agent_evidence_receipt" | "agent_run_record";
+      runId: string;
+      seq?: number;
+      path?: string;
+      href?: string;
+    };
+  };
+  recovery: {
+    retryable: boolean;
+    reason?: string;
+  };
+  channelBoundary: {
+    consumableByChannelAdapters: true;
+    liveChannelProof: "not_claimed";
+    message: string;
+  };
+  proofBoundary: string;
+}
+
 export interface AgentRunRecord {
   id: string;
   task: string;
@@ -312,6 +386,7 @@ export interface AgentRunRecord {
   health?: AgentRunHealthSnapshot;
   contextSummary?: AgentRunContextSummarySnapshot;
   rollbackAvailable?: boolean;
+  unifiedTaskState?: AgentUnifiedTaskStateSnapshot;
 }
 
 export interface AgentAutomation {

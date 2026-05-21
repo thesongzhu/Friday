@@ -28,6 +28,8 @@ describe("real-world executors", () => {
     request,
     onStartAgentRun,
     toolCallCount,
+    unifiedTaskState,
+    auditUnifiedTaskState,
   }: {
     artifactDir?: string;
     responseText?: string;
@@ -36,6 +38,8 @@ describe("real-world executors", () => {
     request?: (method: string, routePath: string, options?: unknown) => Promise<unknown>;
     onStartAgentRun?: (body: unknown) => void;
     toolCallCount?: number;
+    unifiedTaskState?: unknown;
+    auditUnifiedTaskState?: unknown;
   }) {
     return {
       request,
@@ -47,16 +51,25 @@ describe("real-world executors", () => {
         return {
           data: {
             run: {
+              id: "agent-run-1",
               status,
               responseText,
               artifactDir,
               planReview,
+              unifiedTaskState,
               actualExecution: {
                 actualProviderId: "test-provider",
                 actualModel: "test-model",
                 turns: [],
               },
             },
+          },
+        };
+      },
+      async getAgentRunAudit() {
+        return {
+          data: {
+            unifiedTaskState: auditUnifiedTaskState ?? unifiedTaskState,
           },
         };
       },
@@ -187,6 +200,34 @@ describe("real-world executors", () => {
         expectToolCallCountMin: 2,
         constraints: { readOnly: true },
       },
+    };
+  }
+
+  function createUnifiedTaskStateScenario() {
+    return {
+      id: "l3-agent-unified-task-state-machine",
+      entrySurface: "/v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P0",
+      realWorldPrompt: "Reply with exactly: unified state probe complete.",
+      execution: {
+        kind: "agent_run",
+        expectUnifiedTaskState: { state: "verified_receipt" },
+        constraints: { readOnly: true },
+      },
+    };
+  }
+
+  function createUnifiedTaskStateFixture(state = "verified_receipt") {
+    return {
+      schemaVersion: "friday.agent.unified_task_state.v1",
+      state,
+      requiredAction: "read_verified_receipt",
+      channelBoundary: {
+        consumableByChannelAdapters: true,
+        liveChannelProof: "not_claimed",
+      },
+      proofBoundary: "This state is not channel live proof and still requires same-SHA Real Green Gate for release/default-on claims.",
     };
   }
 
@@ -401,6 +442,30 @@ describe("real-world executors", () => {
     expect(capturedTask).toContain(setupFile.path);
     expect(existsSync(setupFile.path)).toBe(false);
     expect(JSON.stringify(artifact.raw.agentToolCalls)).toContain("outside the allowed workspace root");
+  });
+
+  it("passes unified task state inspection only when GET and audit agree and do not claim live channels", async () => {
+    const artifact = await executeScenario({
+      runId: "validation-run-unified-state",
+      suite: "smoke",
+      scenario: createUnifiedTaskStateScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        responseText: "unified state probe complete.",
+        unifiedTaskState: createUnifiedTaskStateFixture(),
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(artifact.raw.unifiedTaskState).toMatchObject({
+      getState: "verified_receipt",
+      auditState: "verified_receipt",
+      liveChannelProof: "not_claimed",
+    });
+    expect(artifact.observedEvidence).toContain("unified task live channel proof not_claimed");
   });
 
   it("fails stateful agent scenarios when required cleanup does not satisfy expectations", async () => {
