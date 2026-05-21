@@ -31,6 +31,8 @@ describe("real-world executors", () => {
     unifiedTaskState,
     auditUnifiedTaskState,
     contextCostSummary,
+    auditEvents,
+    auditDecisionTrace,
   }: {
     artifactDir?: string;
     responseText?: string;
@@ -42,6 +44,8 @@ describe("real-world executors", () => {
     unifiedTaskState?: unknown;
     auditUnifiedTaskState?: unknown;
     contextCostSummary?: unknown;
+    auditEvents?: unknown[];
+    auditDecisionTrace?: unknown;
   }) {
     return {
       request,
@@ -72,6 +76,8 @@ describe("real-world executors", () => {
       async getAgentRunAudit() {
         return {
           data: {
+            events: auditEvents,
+            decisionTrace: auditDecisionTrace,
             unifiedTaskState: auditUnifiedTaskState ?? unifiedTaskState,
           },
         };
@@ -248,6 +254,59 @@ describe("real-world executors", () => {
         constraints: { readOnly: true },
       },
     };
+  }
+
+  function createToolGuardrailEvidenceScenario() {
+    return {
+      id: "l4-tool-guardrail-pre-post-evidence",
+      entrySurface: "/v1/agent/runs -> /v1/agent/runs/:runId/audit",
+      expectedEvidence: [],
+      severityOnFailure: "P1",
+      realWorldPrompt: "Call the read tool with path README.md and answer exactly: tool guardrails recorded.",
+      execution: {
+        kind: "agent_run",
+        expectedOutputSubstrings: ["tool guardrails recorded"],
+        expectedToolNames: ["read"],
+        expectToolCallCountMin: 1,
+        expectToolGuardrailEvidence: true,
+        constraints: { readOnly: true },
+      },
+    };
+  }
+
+  function createToolGuardrailFixture() {
+    const pre = {
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "pre",
+      decision: "allow",
+      toolCallId: "call-read",
+      toolName: "read",
+      mutating: false,
+      readOnly: true,
+      approvalRequired: false,
+      riskLevel: "low",
+      routeId: "agent.execute.tool",
+      correlationId: "agent-run-1",
+      checks: ["runtime_tool_execution_entry"],
+      inputKeys: ["path"],
+      evidenceBoundary: "This guardrail receipt is local tool-execution audit evidence, not release proof.",
+    };
+    const post = {
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "post",
+      status: "completed",
+      toolCallId: "call-read",
+      toolName: "read",
+      isError: false,
+      durationMs: 10,
+      routeId: "agent.execute.tool",
+      correlationId: "agent-run-1",
+      evidenceCaptured: true,
+      outputPointerKind: "agent_tool_output_event",
+      summaryAvailable: true,
+      evidenceBoundary: "This guardrail receipt is local tool-execution audit evidence, not release proof.",
+    };
+    return { pre, post };
   }
 
   const lane = {
@@ -535,6 +594,101 @@ describe("real-world executors", () => {
     expect(artifact.notes).toContain(
       "expected context estimated input tokens >= 1 but got 0",
     );
+  });
+
+  it("passes tool guardrail evidence only when artifact and audit trace include pre/post receipts", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-guardrail-"));
+    const artifactDir = join(tempRoot, ".friday", "agent-runs", "agent-run-1");
+    mkdirSync(artifactDir, { recursive: true });
+    const guardrail = createToolGuardrailFixture();
+    writeFileSync(
+      join(artifactDir, "tool-calls.json"),
+      JSON.stringify([
+        {
+          toolName: "read",
+          args: { path: "README.md" },
+          result: { isError: false, content: "# Friday\n" },
+          guardrail,
+        },
+      ]),
+      "utf8",
+    );
+
+    const artifact = await executeScenario({
+      runId: "validation-run-tool-guardrail",
+      suite: "smoke",
+      scenario: createToolGuardrailEvidenceScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir,
+        responseText: "tool guardrails recorded",
+        auditEvents: [
+          { payload: { guardrail: guardrail.pre } },
+          { payload: { guardrail: guardrail.post } },
+        ],
+        auditDecisionTrace: {
+          actions: [
+            {
+              guardrails: {
+                pre: { phase: "pre" },
+                post: { phase: "post", evidenceCaptured: true },
+              },
+            },
+          ],
+        },
+      }),
+      envTruth: {},
+      reportRoot: tempRoot,
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(artifact.raw.toolGuardrailEvidence).toMatchObject({
+      artifactGuardrailCount: 1,
+      auditPreGuardrailCount: 1,
+      auditPostGuardrailCount: 1,
+      decisionTraceGuardrailActionCount: 1,
+    });
+  });
+
+  it("fails tool guardrail evidence when the audit trace lacks post evidence", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-guardrail-missing-"));
+    const artifactDir = join(tempRoot, ".friday", "agent-runs", "agent-run-1");
+    mkdirSync(artifactDir, { recursive: true });
+    const guardrail = createToolGuardrailFixture();
+    writeFileSync(
+      join(artifactDir, "tool-calls.json"),
+      JSON.stringify([
+        {
+          toolName: "read",
+          args: { path: "README.md" },
+          result: { isError: false, content: "# Friday\n" },
+          guardrail,
+        },
+      ]),
+      "utf8",
+    );
+
+    const artifact = await executeScenario({
+      runId: "validation-run-tool-guardrail-missing-audit",
+      suite: "smoke",
+      scenario: createToolGuardrailEvidenceScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir,
+        responseText: "tool guardrails recorded",
+        auditEvents: [{ payload: { guardrail: guardrail.pre } }],
+        auditDecisionTrace: { actions: [] },
+      }),
+      envTruth: {},
+      reportRoot: tempRoot,
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("failed");
+    expect(artifact.failureClass).toBe("tool_guardrail");
+    expect(artifact.notes).toContain("audit route did not include a post-tool guardrail event payload");
+    expect(artifact.notes).toContain("audit decision trace did not attach pre/post guardrails to a tool action");
   });
 
   it("fails stateful agent scenarios when required cleanup does not satisfy expectations", async () => {

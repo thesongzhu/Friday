@@ -235,6 +235,58 @@ function readStringField(record: Record<string, unknown> | null, key: string): s
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function readToolGuardrail(record: Record<string, unknown> | null): Record<string, unknown> | null {
+  return asRecord(record?.guardrail);
+}
+
+function sanitizeToolGuardrailForAudit(
+  guardrail: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  if (!guardrail) return undefined;
+  return {
+    ...(readStringField(guardrail, "schemaVersion") ? { schemaVersion: readStringField(guardrail, "schemaVersion") } : {}),
+    ...(readStringField(guardrail, "phase") ? { phase: readStringField(guardrail, "phase") } : {}),
+    ...(readStringField(guardrail, "decision") ? { decision: readStringField(guardrail, "decision") } : {}),
+    ...(readStringField(guardrail, "status") ? { status: readStringField(guardrail, "status") } : {}),
+    ...(readStringField(guardrail, "toolCallId") ? { toolCallId: readStringField(guardrail, "toolCallId") } : {}),
+    ...(readStringField(guardrail, "toolName") ? { toolName: readStringField(guardrail, "toolName") } : {}),
+    ...(typeof guardrail.mutating === "boolean" ? { mutating: guardrail.mutating } : {}),
+    ...(typeof guardrail.readOnly === "boolean" ? { readOnly: guardrail.readOnly } : {}),
+    ...(typeof guardrail.approvalRequired === "boolean" ? { approvalRequired: guardrail.approvalRequired } : {}),
+    ...(readStringField(guardrail, "riskLevel") ? { riskLevel: readStringField(guardrail, "riskLevel") } : {}),
+    ...(typeof guardrail.evidenceCaptured === "boolean" ? { evidenceCaptured: guardrail.evidenceCaptured } : {}),
+    ...(readStringField(guardrail, "outputPointerKind") ? { outputPointerKind: readStringField(guardrail, "outputPointerKind") } : {}),
+    ...(typeof guardrail.summaryAvailable === "boolean" ? { summaryAvailable: guardrail.summaryAvailable } : {}),
+    ...(typeof guardrail.durationMs === "number" ? { durationMs: guardrail.durationMs } : {}),
+    ...(readStringField(guardrail, "routeId") ? { routeId: readStringField(guardrail, "routeId") } : {}),
+    ...(readStringField(guardrail, "correlationId") ? { correlationId: readStringField(guardrail, "correlationId") } : {}),
+    ...(Array.isArray(guardrail.checks) ? { checks: guardrail.checks.filter((entry): entry is string => typeof entry === "string") } : {}),
+    ...(Array.isArray(guardrail.inputKeys) ? { inputKeys: guardrail.inputKeys.filter((entry): entry is string => typeof entry === "string") } : {}),
+    ...(readStringField(guardrail, "evidenceBoundary") ? { evidenceBoundary: readStringField(guardrail, "evidenceBoundary") } : {}),
+  };
+}
+
+function buildToolGuardrailTrace(
+  guardrail: Record<string, unknown> | null,
+  event: FridayAgentRunEventRecord,
+  kind: string,
+): FridayAgentAuditToolGuardrailTrace | undefined {
+  const sanitized = sanitizeToolGuardrailForAudit(guardrail);
+  if (!sanitized) return undefined;
+  return {
+    phase: sanitized.phase === "post" ? "post" : "pre",
+    eventPointer: eventPointer(event, kind),
+    ...(typeof sanitized.decision === "string" ? { decision: sanitized.decision as "allow" | "block" | "requires_approval" } : {}),
+    ...(typeof sanitized.status === "string" ? { status: sanitized.status as "completed" | "failed" | "blocked" } : {}),
+    ...(typeof sanitized.riskLevel === "string" ? { riskLevel: sanitized.riskLevel } : {}),
+    ...(typeof sanitized.mutating === "boolean" ? { mutating: sanitized.mutating } : {}),
+    ...(typeof sanitized.approvalRequired === "boolean" ? { approvalRequired: sanitized.approvalRequired } : {}),
+    ...(typeof sanitized.evidenceCaptured === "boolean" ? { evidenceCaptured: sanitized.evidenceCaptured } : {}),
+    ...(typeof sanitized.routeId === "string" ? { routeId: sanitized.routeId } : {}),
+    ...(typeof sanitized.correlationId === "string" ? { correlationId: sanitized.correlationId } : {}),
+  };
+}
+
 function eventPointer(event: FridayAgentRunEventRecord, kind = "agent_run_event"): FridayAgentAuditPointer {
   const payload = asRecord(event.payload);
   return {
@@ -311,6 +363,18 @@ function buildAgentRunDecisionTrace(
       const endEvent = endByToolCallId.get(toolCallId);
       const endPayload = asRecord(endEvent?.payload);
       const isError = endPayload?.isError === true;
+      const preGuardrail = buildToolGuardrailTrace(
+        readToolGuardrail(startPayload),
+        startEvent,
+        "agent_tool_pre_guardrail_event",
+      );
+      const postGuardrail = endEvent
+        ? buildToolGuardrailTrace(
+            readToolGuardrail(endPayload),
+            endEvent,
+            "agent_tool_post_guardrail_event",
+          )
+        : undefined;
       return {
         toolCallId,
         toolName: readStringField(startPayload, "toolName") ?? readStringField(endPayload, "toolName") ?? "unknown",
@@ -318,6 +382,14 @@ function buildAgentRunDecisionTrace(
         inputPointer: eventPointer(startEvent, "agent_tool_input_event"),
         ...(endEvent ? { outputPointer: eventPointer(endEvent, "agent_tool_output_event") } : {}),
         ...(endEvent ? { evidencePointer: eventPointer(endEvent, "agent_tool_evidence_event") } : {}),
+        ...(preGuardrail || postGuardrail
+          ? {
+            guardrails: {
+              ...(preGuardrail ? { pre: preGuardrail } : {}),
+              ...(postGuardrail ? { post: postGuardrail } : {}),
+            },
+          }
+          : {}),
         ...(readStringField(endPayload, "routeId") ? { routeId: readStringField(endPayload, "routeId") } : {}),
         ...(readStringField(endPayload, "correlationId") ? { correlationId: readStringField(endPayload, "correlationId") } : {}),
       };
@@ -506,6 +578,7 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
     };
   }
   if (event.eventName === "agent.run.tool_start" || event.eventName === "agent.run.tool_end") {
+    const guardrail = sanitizeToolGuardrailForAudit(readToolGuardrail(payload));
     return {
       ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
       ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
@@ -516,9 +589,11 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(event.eventName === "agent.run.tool_end" && readStringField(payload, "correlationId") ? { correlationId: readStringField(payload, "correlationId") } : {}),
       hasParams: event.eventName === "agent.run.tool_start" && typeof payload.params === "object" && payload.params !== null,
       hasSummary: event.eventName === "agent.run.tool_end" && typeof payload.summary === "string" && payload.summary.length > 0,
+      ...(guardrail ? { guardrail } : {}),
     };
   }
   if (event.eventName === "agent.run.awaiting_tool_approval") {
+    const guardrail = sanitizeToolGuardrailForAudit(readToolGuardrail(payload));
     return {
       ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
       status: "awaiting_tool_approval",
@@ -529,6 +604,7 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(readStringField(payload, "riskLevel") ? { riskLevel: readStringField(payload, "riskLevel") } : {}),
       hasParams: typeof payload.params === "object" && payload.params !== null,
       hasReason: typeof payload.reason === "string" && payload.reason.length > 0,
+      ...(guardrail ? { guardrail } : {}),
     };
   }
   if (
@@ -628,6 +704,19 @@ interface FridayAgentAuditPointer {
   seq?: number;
 }
 
+interface FridayAgentAuditToolGuardrailTrace {
+  phase: "pre" | "post";
+  eventPointer: FridayAgentAuditPointer;
+  decision?: "allow" | "block" | "requires_approval";
+  status?: "completed" | "failed" | "blocked";
+  riskLevel?: string;
+  mutating?: boolean;
+  approvalRequired?: boolean;
+  evidenceCaptured?: boolean;
+  routeId?: string;
+  correlationId?: string;
+}
+
 interface FridayAgentAuditActionTrace {
   toolCallId: string;
   toolName: string;
@@ -635,6 +724,10 @@ interface FridayAgentAuditActionTrace {
   inputPointer: FridayAgentAuditPointer;
   outputPointer?: FridayAgentAuditPointer;
   evidencePointer?: FridayAgentAuditPointer;
+  guardrails?: {
+    pre?: FridayAgentAuditToolGuardrailTrace;
+    post?: FridayAgentAuditToolGuardrailTrace;
+  };
   routeId?: string;
   correlationId?: string;
 }

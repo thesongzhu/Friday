@@ -45,6 +45,10 @@ export { createFridayPreferenceInjector } from "./runtime/friday-agent-preferenc
 
 export type {
   FridayAgentRunStatus,
+  FridayAgentToolGuardrailRiskLevel,
+  FridayAgentToolPreGuardrailEvidence,
+  FridayAgentToolPostGuardrailEvidence,
+  FridayAgentToolGuardrailReceipt,
   FridayAgentToolDefinition,
   FridayAgentToolResult,
   FridayAgentToolResultTextBlock,
@@ -94,6 +98,7 @@ export type {
   FridayAgentCapabilityGrantUsedPayload,
   FridayAgentCapabilityGrantRevokedPayload,
 } from "./model/friday-agent.types.js";
+export { FRIDAY_AGENT_TOOL_GUARDRAIL_SCHEMA_VERSION } from "./model/friday-agent.types.js";
 
 // ─── Runtime ───
 
@@ -195,6 +200,10 @@ export type {
   FridayFileVersionTracker,
 } from "./runtime/friday-agent-file-version-tracker.js";
 export { createFridayFileVersionTracker } from "./runtime/friday-agent-file-version-tracker.js";
+export {
+  buildFridayAgentToolPostGuardrailEvidence,
+  buildFridayAgentToolPreGuardrailEvidence,
+} from "./runtime/friday-agent-tool-guardrail.js";
 
 // ─── LLM client ───
 
