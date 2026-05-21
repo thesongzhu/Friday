@@ -38,6 +38,24 @@ describe("resolveFridayAgentToolRouting", () => {
     expect(routing.deferredToolNames).toEqual([]);
   });
 
+  it("routes explicit exec-tool tasks to exec only before file-url fallback tools", () => {
+    const routing = resolveFridayAgentToolRouting({
+      task: [
+        "Call the `exec` tool twice even if the first command fails.",
+        "First use command `cat /tmp/friday-outside/outside-marker.txt`.",
+        "Second use command `find -L /tmp/friday-outside -maxdepth 1 -type f`.",
+        "Both paths are outside the current workspace root.",
+        "Do not use web search or file URL fetch for this workspace boundary probe.",
+      ].join(" "),
+      tools,
+    });
+
+    expect(routing.profile).toBe("code");
+    expect(routing.selectedToolPacks).toEqual(["code"]);
+    expect(routing.selectedToolNames).toEqual(["exec"]);
+    expect(routing.deferredToolNames).toEqual([]);
+  });
+
   it("keeps ordinary web lookup tasks on the web profile", () => {
     const routing = resolveFridayAgentToolRouting({
       task: "Search the latest TypeScript release notes and include source URLs.",

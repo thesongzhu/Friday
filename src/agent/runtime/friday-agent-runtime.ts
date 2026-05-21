@@ -5002,7 +5002,9 @@ function responseAcknowledgesWorkspaceFileUnverified(responseText: string): bool
   return /\b(?:cannot|can't|could not|unable to|not able to|failed to)\b.{0,80}\b(?:verify|confirm|read|access)\b/i.test(responseText)
     || /\b(?:not verified|unverified|cannot be verified|could not be verified)\b/i.test(responseText)
     || /(?:无法|不能|未能|没法).{0,30}(?:验证|确认|读取|访问|证明)/u.test(responseText)
-    || /(?:不能确认|无法确认|无法验证|未验证|无法读取|无法访问)/u.test(responseText);
+    || /(?:不能确认|无法确认|无法验证|未验证|无法读取|无法访问)/u.test(responseText)
+    || /\b(?:cannot|can't|could not|unable to|not able to|failed to)\b.{0,80}\b(?:execute|run)\b.{0,120}\b(?:outside|workspace boundary|workspace root)\b/i.test(responseText)
+    || /(?:无法|不能|未能|没法).{0,30}(?:执行|运行).{0,80}(?:工作区|workspace).{0,30}(?:之外|外部|边界外|边界)/iu.test(responseText);
 }
 
 function buildMissingWorkspaceFileUnverifiedResponse(params: {

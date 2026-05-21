@@ -2430,7 +2430,7 @@ describe("FridayAgentRuntime", () => {
       [
         {
           type: "text_delta",
-          text: "I cannot verify or read the outside file because it is outside the workspace boundary.",
+          text: "我无法执行所请求的命令，因为它们位于工作区边界之外。所有尝试都未能成功。",
         },
         { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 6 },
       ],
@@ -2482,7 +2482,7 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(result.response).not.toContain("AGENT_OUTPUT_CLOSURE_ERROR");
-    expect(result.response).toContain("cannot verify or read");
+    expect(result.response).toContain("无法执行");
     expect(result.toolCallCount).toBe(3);
     expect(webFetchSpy).not.toHaveBeenCalled();
     expect(execSpy).toHaveBeenCalledTimes(2);
