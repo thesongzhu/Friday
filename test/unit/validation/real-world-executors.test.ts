@@ -7,7 +7,9 @@ import {
   AUTO_FIX_DOCTOR_BOUND_PRINCIPAL_ERROR_CODE,
   AUTO_FIX_DOCTOR_PROBE_ACTION_ID,
   AUTO_FIX_DOCTOR_ROUTES,
+  LIFECYCLE_UNIT_PROOF_TEST_FILES,
   executeScenario,
+  redactLifecycleProofOutput,
 } from "../../../validation/real-world/lib/executors.mjs";
 
 describe("real-world executors", () => {
@@ -756,6 +758,60 @@ describe("real-world executors", () => {
         ],
       }),
     ]);
+  });
+
+  it("keeps lifecycle proof executor scoped to a fixed test-file allowlist", () => {
+    expect(LIFECYCLE_UNIT_PROOF_TEST_FILES).toEqual([
+      "test/unit/autonomy/friday-skill-upgrade-lifecycle-service.test.ts",
+      "test/unit/autonomy/friday-plugin-upgrade-lifecycle-service.test.ts",
+      "test/unit/autonomy/friday-mcp-server-upgrade-lifecycle-service.test.ts",
+      "test/unit/api/runtime/friday-api-runtime-plugin-review-enable.test.ts",
+      "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
+      "test/unit/agent/tools/friday-agent-mcp-tool.test.ts",
+      "test/unit/agent/tools/friday-agent-skill-tool.test.ts",
+    ]);
+  });
+
+  it("redacts lifecycle proof diagnostics before writing failure artifacts", () => {
+    const sensitiveDiagnostics = [
+      "Authorization: Bearer fixtureBearerTail123",
+      "Authorization: [redacted] fixtureAuthorizationTail123",
+      "Cookie: session=fixtureCookieValue; other=ok",
+      "Set-Cookie: refresh=fixtureRefreshCookie; Path=/",
+      '{"token":"fixtureJsonToken","access_token":"fixtureAccessToken","apiKey":"fixtureApiKey"}', // pragma: allowlist secret
+      "https://example.test/callback?token=fixtureQueryToken&api_key=fixtureQueryKey",
+      "password = fixturePasswordValue",
+      "FRIDAY_TOKEN_SECRET=fixtureEnvTokenSecret", // pragma: allowlist secret
+      "clientSecret: fixtureClientSecretValue",
+      "tokenSecret='fixtureTokenSecretValue'", // pragma: allowlist secret
+      "rollbackSnapshotSecret=fixtureRollbackSnapshotSecretValue",
+      '{"signatureValue":"fixtureSignatureValue"}',
+    ].join("\n");
+
+    const redacted = redactLifecycleProofOutput(sensitiveDiagnostics, 10_000);
+
+    for (const value of [
+      "fixtureBearerTail123",
+      "fixtureAuthorizationTail123",
+      "fixtureCookieValue",
+      "fixtureRefreshCookie",
+      "fixtureJsonToken",
+      "fixtureAccessToken",
+      "fixtureApiKey",
+      "fixtureQueryToken",
+      "fixtureQueryKey",
+      "fixturePasswordValue",
+      "fixtureEnvTokenSecret",
+      "fixtureClientSecretValue",
+      "fixtureTokenSecretValue",
+      "fixtureRollbackSnapshotSecretValue",
+      "fixtureSignatureValue",
+    ]) {
+      expect(redacted).not.toContain(value);
+    }
+    expect(redacted).toContain("Authorization: [redacted]");
+    expect(redacted).toContain("Cookie: [redacted]");
+    expect(redacted).toContain("Set-Cookie: [redacted]");
   });
 
   describe("Phase 14.5B module_28b: auto_fix_doctor_roundtrip", () => {
