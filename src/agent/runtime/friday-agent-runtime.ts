@@ -68,6 +68,8 @@ import type {
 import type {
   CreateFridayAgentRuntimeDeps,
   FridayAgentCompactionContextBuildResult,
+  FridayAgentContextCostComponent,
+  FridayAgentContextCostSummary,
   FridayAgentConversationContext,
   FridayAgentExecutionContext,
   FridayAgentRuntime,
@@ -124,6 +126,42 @@ const AGENT_COMPACTION_SOFT_CHAR_THRESHOLD = Math.floor(
   * AGENT_COMPACTION_APPROX_CHARS_PER_TOKEN
   * AGENT_COMPACTION_TRIGGER_RATIO,
 );
+
+function estimateAgentContextInputTokens(estimatedChars: number): number {
+  return Math.max(0, Math.ceil(Math.max(0, estimatedChars) / AGENT_COMPACTION_APPROX_CHARS_PER_TOKEN));
+}
+
+function withAgentContextCostComponent(
+  summary: FridayAgentContextCostSummary | undefined,
+  component: FridayAgentContextCostComponent,
+): FridayAgentContextCostSummary {
+  const components = [...(summary?.components ?? []), component];
+  return {
+    totalEstimatedChars: components.reduce((sum, item) => sum + item.estimatedChars, 0),
+    totalEstimatedInputTokens: components.reduce((sum, item) => sum + item.estimatedInputTokens, 0),
+    components,
+  };
+}
+
+function buildAgentToolRoutingContextCostSummary(input: {
+  toolNames: readonly string[];
+  toolRouting: ReturnType<typeof resolveFridayAgentToolRouting>;
+}): FridayAgentContextCostSummary {
+  const estimatedChars = input.toolNames.join(",").length;
+  return withAgentContextCostComponent(undefined, {
+    kind: "tool_routing",
+    estimatedChars,
+    estimatedInputTokens: estimateAgentContextInputTokens(estimatedChars),
+    count: input.toolNames.length,
+    metadata: {
+      profile: input.toolRouting.profile,
+      selectedToolPacks: input.toolRouting.selectedToolPacks,
+      deferredToolCount: input.toolRouting.deferredToolNames.length,
+      workspaceContextPolicy: input.toolRouting.workspaceContextPolicy,
+      reason: input.toolRouting.reason,
+    },
+  });
+}
 
 function hasCjkText(text: string): boolean {
   return /[\u4e00-\u9fff]/u.test(text);
@@ -836,6 +874,8 @@ export function createFridayAgentRuntime(
           durationMs: input.durationMs,
           usageInput: input.usageInput,
           usageOutput: input.usageOutput,
+          ...(input.contextCostSummary ? { contextCostSummary: input.contextCostSummary } : {}),
+          ...(input.taskProfile ? { taskProfile: input.taskProfile } : {}),
           ...(input.images ? { images: input.images } : {}),
           ...(input.finalResponse ? { finalResponse: input.finalResponse } : {}),
         };
@@ -1091,6 +1131,10 @@ export function createFridayAgentRuntime(
             description: tool.description.replace(/\s+/gu, " ").trim().slice(0, 180),
           }));
       };
+      latestContextCostSummary = buildAgentToolRoutingContextCostSummary({
+        toolNames: buildVisibleToolNames(),
+        toolRouting: effectiveToolRouting,
+      });
       const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
       let toolErrorRecoveryCount = 0;
@@ -1113,7 +1157,7 @@ export function createFridayAgentRuntime(
       let latestRouteDecisionTrace: FridayAgentActualExecution["routeDecisionTrace"] | undefined;
 
       const estimateRoutingContext = (): NonNullable<FridayAgentLlmStreamParams["routingContext"]> => {
-        const estimatedChars =
+        const messageEstimatedChars =
           params.task.length
           + messages.reduce((sum, message) => {
             if (typeof message.content === "string") {
@@ -1121,13 +1165,18 @@ export function createFridayAgentRuntime(
             }
             return sum + JSON.stringify(message.content).length;
           }, 0);
+        const contextEstimatedChars = latestContextCostSummary?.totalEstimatedChars ?? 0;
+        const estimatedChars = messageEstimatedChars + contextEstimatedChars;
+        const estimatedInputTokens =
+          estimateAgentContextInputTokens(messageEstimatedChars)
+          + (latestContextCostSummary?.totalEstimatedInputTokens ?? 0);
         const complexity = resolvedTaskProfile.id === "planning" || resolvedTaskProfile.id === "review"
           ? "complex"
           : estimatedChars < 1200
             ? "simple"
             : "medium";
         return {
-          estimatedInputTokens: Math.max(1, Math.ceil(estimatedChars / 4)),
+          estimatedInputTokens: Math.max(1, estimatedInputTokens),
           complexity,
           requiresNativeTools: inferFridayTaskRequiresNativeTools({
             task: params.task,
@@ -1753,8 +1802,8 @@ export function createFridayAgentRuntime(
           ? promptBuildResult
           : promptBuildResult.prompt;
         latestContextCostSummary = typeof promptBuildResult === "string"
-          ? undefined
-          : promptBuildResult.contextCostSummary;
+          ? latestContextCostSummary
+          : promptBuildResult.contextCostSummary ?? latestContextCostSummary;
 
         let effectiveSystemPrompt = baseSystemPrompt;
         const skipSupplementalContext = toolRouting.promptProfile === "minimal";
@@ -1768,6 +1817,20 @@ export function createFridayAgentRuntime(
             if (loadedContext) {
               const fragment = loadedContext.fragment.trim();
               effectiveSystemPrompt += `\n\n${fragment}`;
+              latestContextCostSummary = withAgentContextCostComponent(latestContextCostSummary, {
+                kind: "context_replay",
+                estimatedChars: fragment.length,
+                estimatedInputTokens: estimateAgentContextInputTokens(fragment.length),
+                count: loadedContext.blockCount ?? loadedContext.sources?.length ?? 1,
+                metadata: {
+                  sourceCount: loadedContext.sources?.length ?? 0,
+                  evidenceTier: loadedContext.evidenceTier ?? "audit_replay_evidence",
+                  trustLevel: loadedContext.trustLevel ?? "unconfirmed_summary",
+                  memoryBoundary: loadedContext.memoryBoundary ?? "not_user_confirmed_memory",
+                  redactionApplied: loadedContext.redactionApplied ?? false,
+                  redactionCount: loadedContext.redactionCount ?? 0,
+                },
+              });
               handleTrackedEvent("agent.run.context_replay_loaded", {
                 runId,
                 sessionKey: loadedContext.sessionKey ?? params.sessionKey,

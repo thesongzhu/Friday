@@ -101,14 +101,16 @@ export interface ResolvedAgentTaskProfile {
 }
 
 export interface AgentContextCostComponent {
-  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents";
+  kind: "workspace_context" | "starter_skills" | "mcp" | "subagents" | "tool_routing" | "context_replay";
   estimatedChars: number;
+  estimatedInputTokens: number;
   count?: number;
   metadata?: Record<string, unknown>;
 }
 
 export interface AgentContextCostSummary {
   totalEstimatedChars: number;
+  totalEstimatedInputTokens: number;
   components: AgentContextCostComponent[];
 }
 
@@ -130,6 +132,7 @@ export interface AgentRunContextSummarySnapshot {
   taskProfileId?: string;
   taskProfileLabel?: string;
   totalEstimatedChars?: number;
+  totalEstimatedInputTokens?: number;
   dominantContextKinds: string[];
   learningAdjusted: boolean;
   fallbackAttemptCount: number;

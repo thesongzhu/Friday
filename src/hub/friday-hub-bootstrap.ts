@@ -3820,8 +3820,10 @@ export async function createFridayHub(
       + skill.triggerPhrases.join(", ").length
       + (skill.tags ?? []).join(", ").length,
     0);
+    const estimateContextInputTokens = (estimatedChars: number) =>
+      Math.max(0, Math.ceil(Math.max(0, estimatedChars) / 4));
     const mcpStates = mcpAdapter?.listServerStates() ?? [];
-    const components = [
+    const rawComponents = [
       workspaceContextSummary && (
         workspaceContextSummary.promptChars > 0
         || workspaceContextSummary.loadErrors.length > 0
@@ -3891,10 +3893,15 @@ export async function createFridayHub(
           }
         : null,
     ].filter((component): component is NonNullable<typeof component> => component !== null);
+    const components = rawComponents.map((component) => ({
+      ...component,
+      estimatedInputTokens: estimateContextInputTokens(component.estimatedChars),
+    }));
     return {
       prompt,
       contextCostSummary: {
         totalEstimatedChars: components.reduce((sum, component) => sum + component.estimatedChars, 0),
+        totalEstimatedInputTokens: components.reduce((sum, component) => sum + component.estimatedInputTokens, 0),
         components,
       },
     };

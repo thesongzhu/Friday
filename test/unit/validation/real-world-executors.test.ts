@@ -30,6 +30,7 @@ describe("real-world executors", () => {
     toolCallCount,
     unifiedTaskState,
     auditUnifiedTaskState,
+    contextCostSummary,
   }: {
     artifactDir?: string;
     responseText?: string;
@@ -40,6 +41,7 @@ describe("real-world executors", () => {
     toolCallCount?: number;
     unifiedTaskState?: unknown;
     auditUnifiedTaskState?: unknown;
+    contextCostSummary?: unknown;
   }) {
     return {
       request,
@@ -62,6 +64,7 @@ describe("real-world executors", () => {
                 actualModel: "test-model",
                 turns: [],
               },
+              contextCostSummary,
             },
           },
         };
@@ -228,6 +231,22 @@ describe("real-world executors", () => {
         liveChannelProof: "not_claimed",
       },
       proofBoundary: "This state is not channel live proof and still requires same-SHA Real Green Gate for release/default-on claims.",
+    };
+  }
+
+  function createContextCostEvidenceScenario() {
+    return {
+      id: "l4-context-cost-control-evidence",
+      entrySurface: "/v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P1",
+      realWorldPrompt: "Reply exactly: context cost evidence recorded.",
+      execution: {
+        kind: "agent_run",
+        expectedOutputSubstrings: ["context cost evidence recorded"],
+        expectedContextEstimatedInputTokensMin: 1,
+        constraints: { readOnly: true },
+      },
     };
   }
 
@@ -466,6 +485,56 @@ describe("real-world executors", () => {
       liveChannelProof: "not_claimed",
     });
     expect(artifact.observedEvidence).toContain("unified task live channel proof not_claimed");
+  });
+
+  it("passes context cost evidence only when the run record has nonzero estimated input tokens", async () => {
+    const artifact = await executeScenario({
+      runId: "validation-run-context-cost",
+      suite: "smoke",
+      scenario: createContextCostEvidenceScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        responseText: "context cost evidence recorded",
+        contextCostSummary: {
+          totalEstimatedChars: 24,
+          totalEstimatedInputTokens: 6,
+          components: [
+            {
+              kind: "tool_routing",
+              estimatedChars: 24,
+              estimatedInputTokens: 6,
+            },
+          ],
+        },
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(artifact.metrics?.contextEstimatedInputTokens).toBe(6);
+  });
+
+  it("fails context cost evidence when the run record lacks estimated input tokens", async () => {
+    const artifact = await executeScenario({
+      runId: "validation-run-context-cost-missing",
+      suite: "smoke",
+      scenario: createContextCostEvidenceScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        responseText: "context cost evidence recorded",
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("failed");
+    expect(artifact.failureClass).toBe("tool_bridge");
+    expect(artifact.notes).toContain(
+      "expected context estimated input tokens >= 1 but got 0",
+    );
   });
 
   it("fails stateful agent scenarios when required cleanup does not satisfy expectations", async () => {

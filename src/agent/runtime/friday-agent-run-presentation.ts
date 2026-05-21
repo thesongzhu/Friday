@@ -18,6 +18,7 @@ export interface FridayAgentRunContextSummarySnapshot {
   taskProfileId?: string;
   taskProfileLabel?: string;
   totalEstimatedChars?: number;
+  totalEstimatedInputTokens?: number;
   dominantContextKinds: string[];
   learningAdjusted: boolean;
   fallbackAttemptCount: number;
@@ -125,6 +126,7 @@ export function buildFridayAgentRunContextSummarySnapshot(
     taskProfileId: run.taskProfile?.id,
     taskProfileLabel: run.taskProfile?.label,
     totalEstimatedChars: run.contextCostSummary?.totalEstimatedChars,
+    totalEstimatedInputTokens: run.contextCostSummary?.totalEstimatedInputTokens,
     dominantContextKinds,
     learningAdjusted: run.actualExecution?.learningAdjusted === true,
     fallbackAttemptCount: run.actualExecution?.fallbackAttempts?.length ?? 0,
