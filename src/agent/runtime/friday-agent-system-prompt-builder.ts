@@ -308,7 +308,7 @@ export function buildFridayAgentSystemPrompt(
     (deferredToolHints && deferredToolHints.length > 0
       ? "\n\nAdditional tools available on demand (not loaded in this prompt):\n" +
         deferredToolHints.map((t) => `- ${t.name}: ${t.description}`).join("\n") +
-        "\nIf you need one of these tools, inform the user which tool you require."
+        "\nIf you need one of these tools, use tool_search first; use request_tool_pack for a broader pack. Only say the capability is unavailable after the discovery result proves no match or the lifecycle gate denies it."
       : "") +
     // ─── Operational mode suffix ───
     (operationalModeSuffix ? `\n\n[Operational Mode] ${operationalModeSuffix}` : "")

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { FridayAgentToolDefinition } from "../../../../src/agent/model/friday-agent.types.js";
-import { resolveFridayAgentToolRouting } from "../../../../src/agent/runtime/friday-agent-tool-routing.js";
+import {
+  createFridayAgentToolSearchTool,
+  resolveFridayAgentToolRouting,
+  searchFridayDeferredTools,
+} from "../../../../src/agent/runtime/friday-agent-tool-routing.js";
 
 function tool(name: string): FridayAgentToolDefinition {
   return {
@@ -66,5 +70,89 @@ describe("resolveFridayAgentToolRouting", () => {
     expect(routing.selectedToolPacks).toEqual(["web"]);
     expect(routing.selectedToolNames).toContain("web_search");
     expect(routing.selectedToolNames).not.toContain("read");
+  });
+});
+
+describe("searchFridayDeferredTools", () => {
+  const searchableTools = [
+    tool("web_search"),
+    tool("provider"),
+    tool("browser"),
+    tool("desktop"),
+  ];
+
+  it("loads explicitly selected deferred tools only", () => {
+    const matches = searchFridayDeferredTools({
+      query: "select:provider,browser,missing",
+      availableTools: searchableTools,
+      deferredToolNames: ["provider", "browser", "desktop"],
+    });
+
+    expect(matches.map((match) => match.name)).toEqual(["provider", "browser"]);
+  });
+
+  it("keyword-searches deferred tool names and descriptions", () => {
+    const matches = searchFridayDeferredTools({
+      query: "+provider setup",
+      availableTools: [
+        tool("web_search"),
+        {
+          ...tool("provider"),
+          description: "Inspect configured model provider setup and routing.",
+        },
+        {
+          ...tool("desktop"),
+          description: "Desktop screenshots and user device control.",
+        },
+      ],
+      deferredToolNames: ["provider", "desktop"],
+    });
+
+    expect(matches[0]?.name).toBe("provider");
+  });
+
+  it("does not return selected or disabled tools", () => {
+    const matches = searchFridayDeferredTools({
+      query: "provider",
+      availableTools: searchableTools,
+      deferredToolNames: ["desktop"],
+      disabledToolNames: new Set(["desktop"]),
+    });
+
+    expect(matches).toEqual([]);
+  });
+});
+
+describe("createFridayAgentToolSearchTool", () => {
+  it("records matched deferred tools and returns no schemas", async () => {
+    const requests: string[][] = [];
+    const toolSearch = createFridayAgentToolSearchTool({
+      availableTools: [
+        tool("web_search"),
+        {
+          ...tool("provider"),
+          description: "Inspect configured model provider setup and routing.",
+        },
+      ],
+      deferredToolNames: ["provider"],
+      onSearch: (request) => {
+        requests.push(request.loadedToolNames);
+      },
+    });
+
+    const result = await toolSearch.execute({ query: "select:provider" }, new AbortController().signal);
+    const parsed = JSON.parse(result.content);
+
+    expect(result.isError).not.toBe(true);
+    expect(parsed.status).toBe("loaded");
+    expect(parsed.loadedToolNames).toEqual(["provider"]);
+    expect(parsed.matches).toEqual([
+      {
+        name: "provider",
+        description: "Inspect configured model provider setup and routing.",
+      },
+    ]);
+    expect(result.content).not.toContain("\"parameters\"");
+    expect(requests).toEqual([["provider"]]);
   });
 });

@@ -15,7 +15,7 @@ function makeResult(overrides: Partial<FridayAgentToolResult> = {}): FridayAgent
 describe("summarizeToolCall", () => {
   describe("toolCategory classification", () => {
     it("classifies read tools", () => {
-      for (const tool of ["read", "glob", "grep", "web_fetch", "web_search", "skills_list"]) {
+      for (const tool of ["read", "glob", "grep", "web_fetch", "web_search", "skills_list", "request_tool_pack", "tool_search"]) {
         const summary = summarizeToolCall(tool, {}, makeResult(), 0, 0);
         expect(summary.toolCategory).toBe("read");
       }

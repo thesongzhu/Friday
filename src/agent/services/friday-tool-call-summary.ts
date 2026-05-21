@@ -25,7 +25,7 @@ export interface FridayToolCallSummary {
 
 // ─── Category classification ───
 
-const READ_TOOLS = new Set(["read", "glob", "grep", "web_fetch", "web_search", "skills_list"]);
+const READ_TOOLS = new Set(["read", "glob", "grep", "web_fetch", "web_search", "skills_list", "request_tool_pack", "tool_search"]);
 const WRITE_TOOLS = new Set(["write", "edit"]);
 const QUERY_TOOLS = new Set(["system", "todo_read"]);
 const NAVIGATE_TOOLS = new Set(["browser", "canvas", "desktop"]);

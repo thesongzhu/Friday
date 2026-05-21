@@ -39,6 +39,18 @@ export interface FridayAgentToolPackRequest {
   loadedToolNames: string[];
 }
 
+export interface FridayAgentToolSearchMatch {
+  name: string;
+  description: string;
+  score: number;
+}
+
+export interface FridayAgentToolSearchRequest {
+  query: string;
+  loadedToolNames: string[];
+  matches: FridayAgentToolSearchMatch[];
+}
+
 const TOOL_PACKS: Record<Exclude<FridayAgentToolRoutingProfile, "trivial">, string[]> = {
   status: ["capabilities", "task_status"],
   memory: ["memory_search", "memory_store", "feedback", "memory_extract"],
@@ -66,6 +78,7 @@ const FRIDAY_KNOWN_TOOL_NAMES = new Set<string>([
 const DYNAMIC_TOOL_PACKS = Object.keys(TOOL_PACKS).filter((name) =>
   name !== "general" && name !== "status",
 );
+const TOOL_SEARCH_MAX_RESULTS = 8;
 
 export function resolveFridayAgentToolNamesForPacks(
   packNames: Iterable<string>,
@@ -225,8 +238,243 @@ export function createFridayAgentToolPackRequestTool(input: {
   };
 }
 
+export function searchFridayDeferredTools(input: {
+  query: string;
+  availableTools: readonly FridayAgentToolDefinition[];
+  deferredToolNames: readonly string[];
+  disabledToolNames?: ReadonlySet<string>;
+  maxResults?: number;
+}): FridayAgentToolSearchMatch[] {
+  const query = normalizeToolSearchText(input.query);
+  if (!query) {
+    return [];
+  }
+
+  const maxResults = clampToolSearchMaxResults(input.maxResults);
+  const deferredToolNameSet = new Set(input.deferredToolNames);
+  const candidates = input.availableTools
+    .filter((tool) =>
+      deferredToolNameSet.has(tool.name)
+      && !(input.disabledToolNames?.has(tool.name) ?? false)
+    );
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const selectMatch = query.match(/^select:(.+)$/iu);
+  if (selectMatch) {
+    const requested = selectMatch[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    const matches: FridayAgentToolSearchMatch[] = [];
+    for (const requestedName of requested) {
+      const tool = candidates.find((candidate) =>
+        candidate.name.toLowerCase() === requestedName.toLowerCase()
+      );
+      if (tool && !matches.some((match) => match.name === tool.name)) {
+        matches.push({
+          name: tool.name,
+          description: summarizeToolDescription(tool.description),
+          score: 100,
+        });
+      }
+    }
+    return matches.slice(0, maxResults);
+  }
+
+  const exact = candidates.find((tool) => tool.name.toLowerCase() === query.toLowerCase());
+  if (exact) {
+    return [{
+      name: exact.name,
+      description: summarizeToolDescription(exact.description),
+      score: 100,
+    }];
+  }
+
+  const { requiredTerms, optionalTerms } = parseToolSearchTerms(query);
+  const scoringTerms = requiredTerms.length > 0
+    ? [...requiredTerms, ...optionalTerms]
+    : optionalTerms;
+  if (scoringTerms.length === 0) {
+    return [];
+  }
+
+  return candidates
+    .map((tool) => {
+      const description = summarizeToolDescription(tool.description);
+      const searchableDescription = description.toLowerCase();
+      const name = tool.name.toLowerCase();
+      const nameParts = parseToolNameParts(tool.name);
+      const matchesRequired = requiredTerms.every((term) =>
+        name.includes(term)
+        || nameParts.includes(term)
+        || searchableDescription.includes(term)
+      );
+      if (!matchesRequired) {
+        return null;
+      }
+
+      let score = 0;
+      if (name.includes(query.toLowerCase())) {
+        score += 20;
+      }
+      for (const term of scoringTerms) {
+        if (nameParts.includes(term)) {
+          score += 12;
+        } else if (name.includes(term)) {
+          score += 8;
+        }
+        if (searchableDescription.includes(term)) {
+          score += 3;
+        }
+      }
+      return score > 0
+        ? {
+            name: tool.name,
+            description,
+            score,
+          }
+        : null;
+    })
+    .filter((match): match is FridayAgentToolSearchMatch => match !== null)
+    .sort((left, right) =>
+      right.score - left.score || left.name.localeCompare(right.name)
+    )
+    .slice(0, maxResults);
+}
+
+export function createFridayAgentToolSearchTool(input: {
+  availableTools: readonly FridayAgentToolDefinition[];
+  deferredToolNames: readonly string[];
+  disabledToolNames?: ReadonlySet<string>;
+  onSearch: (request: FridayAgentToolSearchRequest) => void;
+}): FridayAgentToolDefinition {
+  return {
+    name: "tool_search",
+    description:
+      "Search already-registered deferred Friday tools by name or description, then load matching tool schemas for the next model turn.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Search query. Use select:tool_name for exact selection, or keywords such as 'browser snapshot' or '+provider setup'.",
+        },
+        max_results: {
+          type: "number",
+          description: "Maximum number of deferred tool matches to load, from 1 to 8. Defaults to 5.",
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    async execute(args): Promise<FridayAgentToolResult> {
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      const maxResults = typeof args.max_results === "number" ? args.max_results : undefined;
+      const matches = searchFridayDeferredTools({
+        query,
+        availableTools: input.availableTools,
+        deferredToolNames: input.deferredToolNames,
+        disabledToolNames: input.disabledToolNames,
+        maxResults,
+      });
+      const totalDeferredToolCount = input.availableTools.filter((tool) =>
+        input.deferredToolNames.includes(tool.name)
+        && !(input.disabledToolNames?.has(tool.name) ?? false)
+      ).length;
+
+      if (!query) {
+        return {
+          content: JSON.stringify({
+            status: "invalid_query",
+            query,
+            loadedToolNames: [],
+            matches: [],
+            totalDeferredToolCount,
+            message: "tool_search requires a non-empty query.",
+          }),
+          isError: true,
+        };
+      }
+
+      if (matches.length === 0) {
+        return {
+          content: JSON.stringify({
+            status: "no_match",
+            query,
+            loadedToolNames: [],
+            matches: [],
+            totalDeferredToolCount,
+            instruction:
+              "No matching deferred tools were found. Do not claim a capability exists unless another visible tool or approved lifecycle surface proves it.",
+          }),
+        };
+      }
+
+      const loadedToolNames = matches.map((match) => match.name);
+      input.onSearch({
+        query,
+        loadedToolNames,
+        matches,
+      });
+
+      return {
+        content: JSON.stringify({
+          status: "loaded",
+          query,
+          loadedToolNames,
+          matches: matches.map(({ name, description }) => ({ name, description })),
+          totalDeferredToolCount,
+          instruction: "Continue the task using the newly loaded tools on the next model turn.",
+        }),
+      };
+    },
+  };
+}
+
 export function getFridayAgentToolPackNames(): string[] {
   return [...DYNAMIC_TOOL_PACKS];
+}
+
+function normalizeToolSearchText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function summarizeToolDescription(description: string): string {
+  return normalizeToolSearchText(description).slice(0, 180);
+}
+
+function clampToolSearchMaxResults(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 5;
+  }
+  return Math.max(1, Math.min(TOOL_SEARCH_MAX_RESULTS, Math.floor(value)));
+}
+
+function parseToolSearchTerms(query: string): { requiredTerms: string[]; optionalTerms: string[] } {
+  const requiredTerms: string[] = [];
+  const optionalTerms: string[] = [];
+  for (const rawTerm of query.toLowerCase().split(/\s+/u)) {
+    const term = rawTerm.trim();
+    if (!term) continue;
+    if (term.startsWith("+") && term.length > 1) {
+      requiredTerms.push(term.slice(1));
+    } else {
+      optionalTerms.push(term);
+    }
+  }
+  return { requiredTerms, optionalTerms };
+}
+
+function parseToolNameParts(name: string): string[] {
+  return name
+    .replace(/([a-z])([A-Z])/gu, "$1 $2")
+    .replace(/[_:.-]+/gu, " ")
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((part) => part.length > 0);
 }
 
 function selectFridayToolPacksForProfile(

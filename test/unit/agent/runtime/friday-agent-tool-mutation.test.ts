@@ -67,6 +67,10 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("request_tool_pack", { pack: "code" })).toBe(false);
   });
 
+  it("classifies tool_search as non-mutating", () => {
+    expect(isMutatingToolCall("tool_search", { query: "select:provider" })).toBe(false);
+  });
+
   // ─── Conditional: browser ───
 
   it("classifies browser click as mutating", () => {

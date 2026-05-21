@@ -3603,6 +3603,7 @@ export async function createFridayHub(
       selectedToolPacks: string[];
       reason: string;
     };
+    deferredToolHints?: Array<{ name: string; description: string }>;
   }) => {
     let workspaceContext: string | undefined;
     let workspaceContextSummary:
@@ -3791,6 +3792,7 @@ export async function createFridayHub(
       enforceStarterSkillRouting: starterSkillRoutingEnforced,
       subagentForkModeEnabled,
       promptProfile: input.promptProfile,
+      deferredToolHints: input.deferredToolHints,
       currentTime: {
         nowIso: input.nowIso,
         timezone: input.timezone,
