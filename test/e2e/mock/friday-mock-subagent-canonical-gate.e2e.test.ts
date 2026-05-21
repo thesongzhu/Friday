@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -188,7 +187,7 @@ describe("Friday mock subagent canonical gate E2E", () => {
   it("requires canonical approval before a subagent mutating tool executes", async () => {
     const mock = env.mockFor("anthropic");
     const sentinel = path.join(
-      os.tmpdir(),
+      env.stateDir,
       `friday-subagent-canonical-${String(process.pid)}-${String(Date.now())}.txt`,
     );
     try {
@@ -318,7 +317,7 @@ describe("Friday live-channel canonical approval adversarial E2E", () => {
   it("rejects a second group sender stealing approval before the original sender approves", async () => {
     const mock = env.mockFor("anthropic");
     const sentinel = path.join(
-      os.tmpdir(),
+      env.stateDir,
       `friday-channel-canonical-${String(process.pid)}-${String(Date.now())}.txt`,
     );
 

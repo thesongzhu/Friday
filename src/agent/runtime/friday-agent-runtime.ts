@@ -2636,6 +2636,24 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            const execBoundaryIntentViolation = toolCallViolatesExecBoundaryIntent({
+              task: params.task,
+              toolName: toolUse.name,
+            });
+            if (execBoundaryIntentViolation) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.exec_boundary",
+                correlationId: runId,
+                errorCode: "WRONG_TOOL_FOR_TASK",
+                message: execBoundaryIntentViolation,
+              }));
+              continue;
+            }
+
             if (explicitAutonomousTask && isAutonomousTaskBypassTool(toolUse.name)) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
                 toolUse,
@@ -4000,6 +4018,19 @@ function taskExplicitlyRequiresReadToolForWorkspaceFile(task: string): boolean {
     );
 }
 
+function taskLooksLikeOutsideWorkspaceExecBoundaryProbe(task: string): boolean {
+  const requiresExec =
+    /\bcall\s+the\s+`?exec`?\s+tool\b/i.test(task)
+    || /\buse\s+the\s+`?exec`?\s+tool\b/i.test(task)
+    || /`exec`\s+tool/u.test(task);
+  if (!requiresExec) {
+    return false;
+  }
+  return /\boutside\b[\s\S]{0,96}\b(?:workspace|workspace root|allowed workspace root|workspace boundary)\b/i.test(task)
+    || /\b(?:workspace|workspace root|allowed workspace root|workspace boundary)\b[\s\S]{0,96}\boutside\b/i.test(task)
+    || /(?:工作区|workspace).{0,32}(?:之外|外部|边界外)/iu.test(task);
+}
+
 function toolCallViolatesLocalWorkspaceFileIntent(params: {
   task: string;
   toolName: string;
@@ -4025,6 +4056,16 @@ function toolCallViolatesLocalWorkspaceFileIntent(params: {
     return `The read tool path '${actualPath}' does not match the requested local workspace file '${requestedLabel}'. Call read with path="${requestedLabel}".`;
   }
   return null;
+}
+
+function toolCallViolatesExecBoundaryIntent(params: {
+  task: string;
+  toolName: string;
+}): string | null {
+  if (!taskLooksLikeOutsideWorkspaceExecBoundaryProbe(params.task) || params.toolName === "exec") {
+    return null;
+  }
+  return `This task explicitly requires tool 'exec' for an outside-workspace boundary check. Do not use '${params.toolName}', web, browser, search, or file-url detours for this boundary check. Call exec with the requested command next and report the exec boundary result.`;
 }
 
 function isRuntimeSkillAuthoringPath(input: Record<string, unknown> | undefined): boolean {
@@ -4332,6 +4373,14 @@ function detectEvidenceClosureGap(params: {
   if (taskLooksLikeLocalWorkspaceFileInspection(normalizedTask)) {
     const hasReadEvidence = hasSuccessfulLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
     const failedReadEvidence = findFailedLocalWorkspaceReadEvidence(normalizedTask, params.toolCalls);
+    if (
+      !hasReadEvidence
+      && taskLooksLikeOutsideWorkspaceExecBoundaryProbe(normalizedTask)
+      && hasFailedExecOutsideWorkspaceBoundaryEvidence(params.toolCalls)
+      && responseAcknowledgesWorkspaceFileUnverified(params.responseText)
+    ) {
+      return null;
+    }
     if (
       !hasReadEvidence
       && failedReadEvidence
@@ -4926,6 +4975,19 @@ function findFailedLocalWorkspaceReadEvidence(
       return true;
     }
     return requestedFiles.some((requested) => localWorkspacePathMatchesRequested(rawPath, requested));
+  });
+}
+
+function hasFailedExecOutsideWorkspaceBoundaryEvidence(
+  toolCalls: FridayAgentToolCallRecord[],
+): boolean {
+  return toolCalls.some((call) => {
+    if (call.toolName !== "exec" || !call.result.isError) {
+      return false;
+    }
+    return /outside the allowed workspace root|outside(?: the)? workspace|outside(?: the)? workspace boundary|workspace boundary/i.test(
+      call.result.content,
+    );
   });
 }
 
