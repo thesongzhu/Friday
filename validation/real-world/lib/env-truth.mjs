@@ -57,6 +57,67 @@ function readExternalChannelsStatus(processEnv) {
   };
 }
 
+export const PHASE24_CHANNEL_ENV_REQUIREMENTS = Object.freeze({
+  discord: Object.freeze([
+    "FRIDAY_DISCORD_BOT_TOKEN",
+    "FRIDAY_DISCORD_GUILD_ID",
+    "FRIDAY_DISCORD_CHANNEL_ID",
+    "FRIDAY_DISCORD_SETUP_USER_ID",
+    "FRIDAY_DISCORD_BOT_USER_ID",
+    "FRIDAY_DISCORD_APPROVAL_MODE",
+    "FRIDAY_DISCORD_GROUP_APPROVAL",
+    "FRIDAY_DISCORD_REQUIRE_MENTION",
+  ]),
+  telegram: Object.freeze([
+    "FRIDAY_TELEGRAM_BOT_TOKEN",
+    "FRIDAY_TELEGRAM_CHAT_ID",
+    "FRIDAY_TELEGRAM_ALLOWED_USER_ID",
+    "FRIDAY_TELEGRAM_MODE",
+    "FRIDAY_TELEGRAM_APPROVAL_MODE",
+    "FRIDAY_TELEGRAM_GROUP_APPROVAL",
+  ]),
+  lark: Object.freeze([
+    "FRIDAY_LARK_APP_ID",
+    "FRIDAY_LARK_APP_SECRET",
+    "FRIDAY_LARK_CHAT_ID",
+    "FRIDAY_LARK_GROUP_CHAT_ID",
+    "FRIDAY_LARK_ALLOWED_USER_ID",
+    "FRIDAY_LARK_USE_FEISHU",
+    "FRIDAY_LARK_RECEIVE_MODE",
+    "FRIDAY_LARK_APPROVAL_MODE",
+    "FRIDAY_LARK_GROUP_APPROVAL",
+  ]),
+  providers: Object.freeze([
+    "DEEPSEEK_API_KEY",
+    "FRIDAY_DEEPSEEK_API_KEY",
+    "OPENAI_API_KEY",
+  ]),
+});
+
+function readPhase24ChannelsStatus(processEnv) {
+  const missingByGroup = Object.fromEntries(
+    Object.entries(PHASE24_CHANNEL_ENV_REQUIREMENTS).map(([group, requiredEnv]) => [
+      group,
+      requiredEnv.filter((key) => !String(processEnv[key] ?? "").trim()),
+    ]),
+  );
+  const missingEnv = Object.values(missingByGroup).flat();
+  const status = missingEnv.length === 0 ? "ready" : "missing";
+  return {
+    status,
+    source: "phase-24-live-channels",
+    requiredEnvByGroup: Object.fromEntries(
+      Object.entries(PHASE24_CHANNEL_ENV_REQUIREMENTS).map(([group, requiredEnv]) => [group, [...requiredEnv]]),
+    ),
+    missingEnvByGroup: missingByGroup,
+    missingEnv,
+    valuesRedacted: true,
+    note: status === "ready"
+      ? "Phase24 channel/provider env names are present in the RGG process environment; values are intentionally redacted."
+      : "Phase24 channel/provider env names are not all present in the RGG process environment; missing names are listed without values.",
+  };
+}
+
 function readExternalAlertsStatus(processEnv) {
   const declared = readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_EXTERNAL_ALERTS_READY");
   if (declared.status !== "ready") {
@@ -467,6 +528,7 @@ export async function collectEnvironmentTruth({
     prerequisites: {
       desktop: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_DESKTOP_READY"),
       externalChannels: readExternalChannelsStatus(processEnv),
+      phase24Channels: readPhase24ChannelsStatus(processEnv),
       externalAlerts: readExternalAlertsStatus(processEnv),
       cloud: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_CLOUD_READY"),
       satellite: readCapabilityStatus(processEnv, "FRIDAY_REAL_WORLD_SATELLITE_READY"),

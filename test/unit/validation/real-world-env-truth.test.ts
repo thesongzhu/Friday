@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PHASE24_CHANNEL_ENV_REQUIREMENTS,
+  collectEnvironmentTruth,
   resolveFallbackLaneRequirement,
   resolveScenarioLanes,
 } from "../../../validation/real-world/lib/env-truth.mjs";
@@ -24,6 +26,72 @@ function makeProvider(overrides = {}) {
     updatedAt: NOW,
     ...overrides,
   };
+}
+
+function createClient() {
+  return {
+    authMode: "local",
+    authSource: "test",
+    authDetails: null,
+    user: { id: "test-user" },
+    async initialize() {
+      return {
+        authMode: "local",
+        authSource: "test",
+        authDetails: null,
+        user: { id: "test-user" },
+      };
+    },
+    async request(_method: string, routePath: string) {
+      if (routePath === "/v1/health") {
+        return { ok: true, status: 200, json: { ok: true, data: { status: "ok" } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/version") {
+        return { ok: true, status: 200, json: { ok: true, data: { version: "test" } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/auth/bootstrap/status") {
+        return { ok: true, status: 200, json: { ok: true, data: { bootstrapRequired: false } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/setup/status") {
+        return { ok: true, status: 200, json: { ok: true, data: { needsSetup: false } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/providers") {
+        return { ok: true, status: 200, json: { ok: true, data: { items: [] } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/providers/health") {
+        return { ok: true, status: 200, json: { ok: true, data: { items: [] } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/model-routing") {
+        return { ok: true, status: 200, json: { ok: true, data: { routing: {} } }, durationMs: 1 };
+      }
+      if (routePath === "/v1/uix/persona") {
+        return { ok: true, status: 200, json: { ok: true, data: {} }, durationMs: 1 };
+      }
+      if (routePath === "/v1/uix/user-profile") {
+        return {
+          ok: true,
+          status: 200,
+          json: {
+            ok: true,
+            data: {
+              profileType: "owner",
+              onboardedAt: "2026-05-21T00:00:00.000Z",
+            },
+          },
+          durationMs: 1,
+        };
+      }
+      throw new Error(`unexpected route ${routePath}`);
+    },
+  };
+}
+
+function allPhase24Env(valuePrefix: string) {
+  return Object.fromEntries(
+    Object.values(PHASE24_CHANNEL_ENV_REQUIREMENTS)
+      .flat()
+      .map((envName, index) => [envName, `${valuePrefix}-${String(index)}`]),
+  );
 }
 
 describe("real-world env truth fallback requirements", () => {
@@ -113,5 +181,53 @@ describe("resolveScenarioLanes", () => {
     expect(lanes).toEqual([
       { id: "default-lane", laneKey: "default", source: "routing.default" },
     ]);
+  });
+});
+
+describe("real-world Phase24 environment truth", () => {
+  it("records redacted Phase24 channel/provider env readiness when every name is present", async () => {
+    const envTruth = await collectEnvironmentTruth({
+      client: createClient(),
+      baseUrl: "http://127.0.0.1:3141",
+      uiBaseUrl: "http://127.0.0.1:3141",
+      processEnv: allPhase24Env("sensitive-ready-value"),
+    });
+
+    const phase24 = envTruth.prerequisites.phase24Channels;
+
+    expect(phase24.status).toBe("ready");
+    expect(phase24.valuesRedacted).toBe(true);
+    expect(phase24.requiredEnvByGroup).toMatchObject({
+      discord: [...PHASE24_CHANNEL_ENV_REQUIREMENTS.discord],
+      telegram: [...PHASE24_CHANNEL_ENV_REQUIREMENTS.telegram],
+      lark: [...PHASE24_CHANNEL_ENV_REQUIREMENTS.lark],
+      providers: [...PHASE24_CHANNEL_ENV_REQUIREMENTS.providers],
+    });
+    expect(phase24.missingEnv).toEqual([]);
+    expect(JSON.stringify(phase24)).not.toContain("sensitive-ready-value");
+  });
+
+  it("lists missing Phase24 env names without exposing present values", async () => {
+    const processEnv = allPhase24Env("sensitive-partial-value");
+    delete processEnv.FRIDAY_LARK_GROUP_CHAT_ID;
+    delete processEnv.FRIDAY_TELEGRAM_BOT_TOKEN;
+
+    const envTruth = await collectEnvironmentTruth({
+      client: createClient(),
+      baseUrl: "http://127.0.0.1:3141",
+      uiBaseUrl: "http://127.0.0.1:3141",
+      processEnv,
+    });
+
+    const phase24 = envTruth.prerequisites.phase24Channels;
+
+    expect(phase24.status).toBe("missing");
+    expect(phase24.missingEnv).toEqual([
+      "FRIDAY_TELEGRAM_BOT_TOKEN",
+      "FRIDAY_LARK_GROUP_CHAT_ID",
+    ]);
+    expect(phase24.missingEnvByGroup.telegram).toEqual(["FRIDAY_TELEGRAM_BOT_TOKEN"]);
+    expect(phase24.missingEnvByGroup.lark).toEqual(["FRIDAY_LARK_GROUP_CHAT_ID"]);
+    expect(JSON.stringify(phase24)).not.toContain("sensitive-partial-value");
   });
 });
