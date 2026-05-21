@@ -3463,6 +3463,11 @@ describe("FridayAgentRuntime", () => {
     const webFetchSpy = vi.fn();
     const onOpen = vi.fn();
     const onSnapshot = vi.fn();
+    const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_start", (payload) => {
+      toolStartEvents.push(payload as Record<string, unknown>);
+    });
 
     const runtime = createFridayAgentRuntime({
       db,
@@ -3477,12 +3482,15 @@ describe("FridayAgentRuntime", () => {
         ),
         createBrowserTool({ onOpen, onSnapshot }),
       ],
-      eventEmitter: createFridayAgentEventEmitter(),
+      eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
     });
 
-    const result = await runtime.executeRun({ task: "summarize this youtube url" });
+    const result = await runtime.executeRun({
+      task: "summarize this youtube url",
+      constraints: { readOnly: true },
+    });
 
     expect(result.status).toBe("completed");
     expect(result.toolCallCount).toBe(1);
@@ -3491,6 +3499,13 @@ describe("FridayAgentRuntime", () => {
     expect(onSnapshot).toHaveBeenCalledTimes(1);
     expect(result.response).toContain("summary");
     expect(result.response).not.toContain("no successful tool call evidence");
+    const fallbackStarts = toolStartEvents.filter((event) =>
+      String(event.toolCallId ?? "").startsWith("call-1:fallback-browser-"));
+    expect(fallbackStarts).toHaveLength(2);
+    expect(fallbackStarts.map((event) => event.guardrail)).toEqual([
+      expect.objectContaining({ phase: "pre", readOnly: true }),
+      expect.objectContaining({ phase: "pre", readOnly: true }),
+    ]);
   });
 
   it("marks feedback-recorded claim as unverified when no feedback persistence tool was used", async () => {
@@ -5519,7 +5534,11 @@ describe("FridayAgentRuntime", () => {
 
     const desktopSpy = vi.fn();
     const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
     const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_start", (payload) => {
+      toolStartEvents.push(payload as Record<string, unknown>);
+    });
     emitter.on("agent.run.tool_end", (payload) => {
       toolEndEvents.push(payload as Record<string, unknown>);
     });
@@ -5536,7 +5555,10 @@ describe("FridayAgentRuntime", () => {
       nowIso: () => NOW,
     });
 
-    const result = await runtime.executeRun({ task: "在我的桌面上看一下 codex 回复是什么" });
+    const result = await runtime.executeRun({
+      task: "在我的桌面上看一下 codex 回复是什么",
+      constraints: { readOnly: true },
+    });
 
     expect(result.status).toBe("completed");
     expect(result.toolCallCount).toBe(1);
@@ -5548,8 +5570,14 @@ describe("FridayAgentRuntime", () => {
 
     const primaryToolEnd = toolEndEvents.find((event) => event.toolCallId === "call-1");
     const recoveryToolEnd = toolEndEvents.find((event) => event.toolCallId === "call-1:input-recovery");
+    const recoveryToolStart = toolStartEvents.find((event) => event.toolCallId === "call-1:input-recovery");
     expect(primaryToolEnd).toBeDefined();
     expect(recoveryToolEnd).toBeDefined();
+    expect(recoveryToolStart?.guardrail).toMatchObject({
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "pre",
+      readOnly: true,
+    });
     expect(primaryToolEnd?.isError).toBe(false);
     expect(recoveryToolEnd?.isError).toBe(false);
   });
@@ -6029,6 +6057,91 @@ describe("FridayAgentRuntime", () => {
 
   // ─── IMPL-4: readOnly run blocks mutating tools ───
 
+  it("records pre/post tool guardrails on tool events and persisted tool call records", async () => {
+    const readTool: FridayAgentToolDefinition = {
+      name: "read",
+      description: "Read file",
+      parameters: { properties: { path: { type: "string" } }, required: ["path"] },
+      async execute() {
+        return { content: "# Friday\n" };
+      },
+    };
+
+    const llmClient = createMockLlmClient([
+      [
+        { type: "tool_use", id: "call-read", name: "read", input: { path: "README.md" } },
+        { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
+      ],
+      [
+        { type: "text_delta", text: "tool guardrails recorded" },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 4, outputTokens: 2 },
+      ],
+    ]);
+
+    const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
+    const toolEndEvents: Array<Record<string, unknown>> = [];
+    emitter.on("agent.run.tool_start", (payload) => toolStartEvents.push(payload as Record<string, unknown>));
+    emitter.on("agent.run.tool_end", (payload) => toolEndEvents.push(payload as Record<string, unknown>));
+
+    const mockWriter = {
+      writeRunArtifacts: vi.fn().mockReturnValue({
+        artifactDir: "/tmp/.friday/agent-runs/tool-guardrail",
+        artifacts: [],
+      }),
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "Test",
+      tools: [readTool],
+      eventEmitter: emitter,
+      idGenerator,
+      nowIso: () => NOW,
+      artifactWriter: mockWriter,
+    });
+
+    const result = await runtime.executeRun({
+      task: "Read README and report guardrails",
+      constraints: { readOnly: true },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(toolStartEvents[0]?.guardrail).toMatchObject({
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "pre",
+      decision: "allow",
+      toolCallId: "call-read",
+      toolName: "read",
+      readOnly: true,
+      approvalRequired: false,
+    });
+    expect(JSON.stringify(toolStartEvents[0]?.guardrail)).not.toContain("README.md");
+    expect(toolEndEvents[0]?.guardrail).toMatchObject({
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "post",
+      status: "completed",
+      evidenceCaptured: true,
+      outputPointerKind: "agent_tool_output_event",
+    });
+    expect(mockWriter.writeRunArtifacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolCalls: [
+          expect.objectContaining({
+            toolCallId: "call-read",
+            guardrail: {
+              pre: expect.objectContaining({ phase: "pre", decision: "allow" }),
+              post: expect.objectContaining({ phase: "post", evidenceCaptured: true }),
+            },
+          }),
+        ],
+      }),
+    );
+  });
+
   it("readOnly run blocks mutating tools", async () => {
     const writeTool: FridayAgentToolDefinition = {
       name: "write",
@@ -6041,7 +6154,12 @@ describe("FridayAgentRuntime", () => {
 
     const llmClient = createMockLlmClient([
       [
-        { type: "tool_use", id: "call-1", name: "write", input: { path: "/tmp/x", content: "y" } },
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "write",
+          input: { path: "/tmp/private-guardrail-path", content: "secret-content-value-4477" },
+        },
         { type: "message_end", stopReason: "tool_use", inputTokens: 5, outputTokens: 3 },
       ],
       [
@@ -6051,6 +6169,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const emitter = createFridayAgentEventEmitter();
+    const toolStartEvents: Array<Record<string, unknown>> = [];
     const toolEndEvents: Array<{
       isError: boolean;
       summary?: string;
@@ -6066,6 +6185,9 @@ describe("FridayAgentRuntime", () => {
         routeId: payload.routeId,
         correlationId: payload.correlationId,
       });
+    });
+    emitter.on("agent.run.tool_start", (payload) => {
+      toolStartEvents.push(payload as Record<string, unknown>);
     });
 
     const runtime = createFridayAgentRuntime({
@@ -6087,6 +6209,15 @@ describe("FridayAgentRuntime", () => {
 
     // Tool was blocked, not actually executed
     expect(result.toolCallCount).toBe(1);
+    expect(toolStartEvents[0]?.guardrail).toMatchObject({
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "pre",
+      decision: "block",
+      readOnly: true,
+      approvalRequired: false,
+    });
+    expect(JSON.stringify(toolStartEvents[0]?.guardrail)).not.toContain("/tmp/private-guardrail-path");
+    expect(JSON.stringify(toolStartEvents[0]?.guardrail)).not.toContain("secret-content-value-4477");
     expect(toolEndEvents).toHaveLength(1);
     expect(toolEndEvents[0].isError).toBe(true);
     expect(toolEndEvents[0].summary).toContain("readOnly");

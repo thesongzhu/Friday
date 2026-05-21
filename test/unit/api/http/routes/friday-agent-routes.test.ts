@@ -851,6 +851,111 @@ describe("FridayAgentRoutes", () => {
     expect(result.decisionTrace.traceCompleteness.hasPlanDecision).toBe(false);
   });
 
+  it("GET /v1/agent/runs/:runId/audit exposes sanitized tool guardrail pointers", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({ status: "completed" }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        seq: 1,
+        eventName: "agent.run.tool_start",
+        emittedAt: "2026-01-01T00:00:01.000Z",
+        payload: {
+          runId: "run-1",
+          toolCallId: "call-read",
+          toolName: "read",
+          params: { path: "README.md" },
+          guardrail: {
+            schemaVersion: "friday.agent.tool_guardrail.v1",
+            phase: "pre",
+            decision: "allow",
+            toolCallId: "call-read",
+            toolName: "read",
+            mutating: false,
+            readOnly: true,
+            approvalRequired: false,
+            riskLevel: "low",
+            routeId: "agent.execute.tool",
+            correlationId: "run-1",
+            checks: ["runtime_tool_execution_entry"],
+            inputKeys: ["path"],
+            evidenceBoundary: "not release proof",
+          },
+        },
+      },
+      {
+        seq: 2,
+        eventName: "agent.run.tool_end",
+        emittedAt: "2026-01-01T00:00:02.000Z",
+        payload: {
+          runId: "run-1",
+          toolCallId: "call-read",
+          toolName: "read",
+          durationMs: 42,
+          isError: false,
+          summary: "# Friday",
+          routeId: "agent.execute.tool",
+          correlationId: "run-1",
+          guardrail: {
+            schemaVersion: "friday.agent.tool_guardrail.v1",
+            phase: "post",
+            status: "completed",
+            toolCallId: "call-read",
+            toolName: "read",
+            isError: false,
+            durationMs: 42,
+            routeId: "agent.execute.tool",
+            correlationId: "run-1",
+            evidenceCaptured: true,
+            outputPointerKind: "agent_tool_output_event",
+            summaryAvailable: true,
+            evidenceBoundary: "not release proof",
+          },
+        },
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-guardrail",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    }) as {
+      events: Array<{ payload: Record<string, unknown> }>;
+      decisionTrace: {
+        actions: Array<{
+          guardrails?: {
+            pre?: Record<string, unknown>;
+            post?: Record<string, unknown>;
+          };
+        }>;
+      };
+    };
+
+    expect(result.events[0]?.payload).not.toHaveProperty("params");
+    expect(result.events[0]?.payload.guardrail).toMatchObject({
+      schemaVersion: "friday.agent.tool_guardrail.v1",
+      phase: "pre",
+      decision: "allow",
+      inputKeys: ["path"],
+    });
+    expect(JSON.stringify(result.events[0]?.payload.guardrail)).not.toContain("README.md");
+    expect(result.decisionTrace.actions[0]?.guardrails?.pre).toMatchObject({
+      phase: "pre",
+      decision: "allow",
+      eventPointer: { kind: "agent_tool_pre_guardrail_event", runId: "run-1", seq: 1 },
+    });
+    expect(result.decisionTrace.actions[0]?.guardrails?.post).toMatchObject({
+      phase: "post",
+      status: "completed",
+      evidenceCaptured: true,
+      eventPointer: { kind: "agent_tool_post_guardrail_event", runId: "run-1", seq: 2 },
+    });
+  });
+
   it("GET /v1/agent/runs/:runId/audit includes a replayable evidence receipt", async () => {
     stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
       status: "completed",

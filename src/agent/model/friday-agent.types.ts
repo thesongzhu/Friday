@@ -28,6 +28,50 @@ export type FridayAgentRunStatus =
 
 // ─── Tool definition & result ───
 
+export const FRIDAY_AGENT_TOOL_GUARDRAIL_SCHEMA_VERSION = "friday.agent.tool_guardrail.v1";
+
+export type FridayAgentToolGuardrailRiskLevel = "low" | "medium" | "high" | "critical";
+
+export interface FridayAgentToolPreGuardrailEvidence {
+  schemaVersion: typeof FRIDAY_AGENT_TOOL_GUARDRAIL_SCHEMA_VERSION;
+  phase: "pre";
+  decision: "allow" | "block" | "requires_approval";
+  toolCallId: string;
+  toolName: string;
+  mutating: boolean;
+  readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
+  approvalRequired: boolean;
+  riskLevel: FridayAgentToolGuardrailRiskLevel;
+  routeId: string;
+  correlationId: string;
+  checks: string[];
+  inputKeys: string[];
+  evidenceBoundary: string;
+}
+
+export interface FridayAgentToolPostGuardrailEvidence {
+  schemaVersion: typeof FRIDAY_AGENT_TOOL_GUARDRAIL_SCHEMA_VERSION;
+  phase: "post";
+  status: "completed" | "failed" | "blocked";
+  toolCallId: string;
+  toolName: string;
+  isError: boolean;
+  durationMs: number;
+  routeId: string;
+  correlationId: string;
+  evidenceCaptured: true;
+  outputPointerKind: "agent_tool_output_event";
+  summaryAvailable: boolean;
+  errorCode?: string;
+  evidenceBoundary: string;
+}
+
+export interface FridayAgentToolGuardrailReceipt {
+  pre: FridayAgentToolPreGuardrailEvidence;
+  post?: FridayAgentToolPostGuardrailEvidence;
+}
+
 export interface FridayAgentToolDefinition {
   name: string;
   description: string;
@@ -135,6 +179,7 @@ export interface FridayAgentToolCallRecord {
   result: FridayAgentToolResult;
   durationMs: number;
   startedAt: string;
+  guardrail?: FridayAgentToolGuardrailReceipt;
 }
 
 // ─── Agent run record (persisted) ───
@@ -523,6 +568,7 @@ export interface FridayAgentToolStartPayload {
   toolName: string;
   toolCallId: string;
   params: Record<string, unknown>;
+  guardrail?: FridayAgentToolPreGuardrailEvidence;
 }
 
 export interface FridayAgentToolEndPayload {
@@ -543,6 +589,7 @@ export interface FridayAgentToolEndPayload {
   correlationId?: string;
   /** Lightweight tool call classification for execution trace data collection. */
   toolCallSummary?: FridayToolCallSummary;
+  guardrail?: FridayAgentToolPostGuardrailEvidence;
 }
 
 export interface FridayAgentRunCompletedPayload {

@@ -222,6 +222,78 @@ async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
   return { failures, evidence };
 }
 
+async function inspectToolGuardrailEvidence({ client, runRecord, runId }) {
+  const failures = [];
+  const toolCalls = await readAgentToolCalls(runRecord);
+  const evidence = {
+    runId,
+    toolCallCount: toolCalls.length,
+    artifactGuardrailCount: 0,
+    auditPreGuardrailCount: 0,
+    auditPostGuardrailCount: 0,
+    decisionTraceGuardrailActionCount: 0,
+    proofBoundary: null,
+  };
+
+  if (toolCalls.length === 0) {
+    failures.push("tool guardrail check expected at least one persisted tool call");
+  }
+
+  const guardedToolCalls = toolCalls.filter((call) =>
+    call?.guardrail?.pre?.schemaVersion === "friday.agent.tool_guardrail.v1"
+    && call?.guardrail?.pre?.phase === "pre"
+    && call?.guardrail?.post?.schemaVersion === "friday.agent.tool_guardrail.v1"
+    && call?.guardrail?.post?.phase === "post"
+    && call?.guardrail?.post?.evidenceCaptured === true,
+  );
+  evidence.artifactGuardrailCount = guardedToolCalls.length;
+  evidence.proofBoundary = guardedToolCalls[0]?.guardrail?.pre?.evidenceBoundary ?? null;
+
+  if (toolCalls.length > 0 && guardedToolCalls.length !== toolCalls.length) {
+    failures.push(`expected every persisted tool call to include pre/post guardrail evidence but found ${guardedToolCalls.length}/${toolCalls.length}`);
+  }
+  if (!String(evidence.proofBoundary ?? "").includes("not release proof")) {
+    failures.push("tool guardrail proof boundary did not state not release proof");
+  }
+
+  let auditData;
+  try {
+    auditData = (await client.getAgentRunAudit(runId)).data;
+  } catch (error) {
+    failures.push(`failed to read run audit tool guardrails: ${error instanceof Error ? error.message : String(error)}`);
+    return { failures, evidence };
+  }
+
+  const auditEvents = Array.isArray(auditData?.events) ? auditData.events : [];
+  evidence.auditPreGuardrailCount = auditEvents.filter((event) =>
+    event?.payload?.guardrail?.schemaVersion === "friday.agent.tool_guardrail.v1"
+    && event?.payload?.guardrail?.phase === "pre").length;
+  evidence.auditPostGuardrailCount = auditEvents.filter((event) =>
+    event?.payload?.guardrail?.schemaVersion === "friday.agent.tool_guardrail.v1"
+    && event?.payload?.guardrail?.phase === "post"
+    && event?.payload?.guardrail?.evidenceCaptured === true).length;
+
+  const actions = Array.isArray(auditData?.decisionTrace?.actions)
+    ? auditData.decisionTrace.actions
+    : [];
+  evidence.decisionTraceGuardrailActionCount = actions.filter((action) =>
+    action?.guardrails?.pre?.phase === "pre"
+    && action?.guardrails?.post?.phase === "post"
+    && action?.guardrails?.post?.evidenceCaptured === true).length;
+
+  if (evidence.auditPreGuardrailCount < 1) {
+    failures.push("audit route did not include a pre-tool guardrail event payload");
+  }
+  if (evidence.auditPostGuardrailCount < 1) {
+    failures.push("audit route did not include a post-tool guardrail event payload");
+  }
+  if (evidence.decisionTraceGuardrailActionCount < 1) {
+    failures.push("audit decision trace did not attach pre/post guardrails to a tool action");
+  }
+
+  return { failures, evidence };
+}
+
 async function pathExists(filePath) {
   try {
     await fs.stat(filePath);
@@ -2649,6 +2721,29 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       artifact.notes = [
         ...(artifact.notes ?? []),
         ...stateInspection.failures,
+      ];
+    }
+  }
+  if (execution.expectToolGuardrailEvidence === true && lastRunRecord && lastData?.runId) {
+    const guardrailInspection = await inspectToolGuardrailEvidence({
+      client,
+      runRecord: lastRunRecord,
+      runId: lastData.runId,
+    });
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      toolGuardrailEvidence: guardrailInspection.evidence,
+    };
+    artifact.observedEvidence.push(
+      `tool guardrail artifact count ${String(guardrailInspection.evidence.artifactGuardrailCount)}`,
+      `tool guardrail audit pre/post ${String(guardrailInspection.evidence.auditPreGuardrailCount)}/${String(guardrailInspection.evidence.auditPostGuardrailCount)}`,
+    );
+    if (guardrailInspection.failures.length > 0) {
+      artifact.result = "failed";
+      artifact.failureClass = "tool_guardrail";
+      artifact.notes = [
+        ...(artifact.notes ?? []),
+        ...guardrailInspection.failures,
       ];
     }
   }

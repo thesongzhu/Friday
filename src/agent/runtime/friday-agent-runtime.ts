@@ -88,6 +88,10 @@ import {
   extractFilePaths,
 } from "./friday-agent-tool-batch-executor.js";
 import { attachFridayAgentToolExecutionContext } from "./friday-agent-tool-execution-context.js";
+import {
+  buildFridayAgentToolPostGuardrailEvidence,
+  buildFridayAgentToolPreGuardrailEvidence,
+} from "./friday-agent-tool-guardrail.js";
 import { shouldDelegateFridayAgentTask } from "./friday-agent-delegation-policy.js";
 import { resolveFridayAgentTaskProfile } from "./friday-agent-task-profile.js";
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
@@ -2720,6 +2724,8 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.guard",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' is disabled for this run.`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2739,6 +2745,8 @@ export function createFridayAgentRuntime(
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
                 message: localWorkspaceFileIntentViolation,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2757,6 +2765,8 @@ export function createFridayAgentRuntime(
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
                 message: execBoundaryIntentViolation,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2771,6 +2781,8 @@ export function createFridayAgentRuntime(
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
                 message: buildAutonomousWrongToolMessage(toolUse.name, params.task),
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2815,6 +2827,8 @@ export function createFridayAgentRuntime(
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
                 message: `Skill generation requests must use tool 'skill_generate', not skill_run on '${requestedSkillId}'. Start skill_generate with action=\"start\", continue with generate/approve to stage a candidate, then use the skill lifecycle shadow/canary/promote path before attempting to run it.`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2830,6 +2844,8 @@ export function createFridayAgentRuntime(
                 correlationId: runId,
                 errorCode: "WRONG_TOOL_FOR_TASK",
                 message: `Skill authoring requests must use tool 'skill_generate', not manual ${toolUse.name} calls against '${targetPath}'. Continue through skill_generate generate/approve to stage a candidate, then complete skill lifecycle promotion before execution.`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2862,6 +2878,8 @@ export function createFridayAgentRuntime(
                   routeId: "agent.execute.tool.policy",
                   correlationId: runId,
                   message,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
                 }));
                 continue;
               }
@@ -2881,6 +2899,8 @@ export function createFridayAgentRuntime(
                   correlationId: runId,
                   errorCode: "TOOL_UNAVAILABLE",
                   message: `Tool '${toolUse.name}' blocked: not available in ${runOperationalMode} mode`,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
                 }));
                 continue;
               }
@@ -2897,6 +2917,8 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.readonly",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' blocked: run has readOnly constraint`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2915,6 +2937,8 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.policy",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' denied by policy. ${policyDeniedReason}`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
               }));
               continue;
             }
@@ -2951,6 +2975,8 @@ export function createFridayAgentRuntime(
                   routeId: "agent.execute.tool.canonical_gate",
                   correlationId: runId,
                   message: `Tool '${toolUse.name}' denied by canonical gate. ${gateResult.reason}`,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
                 }));
                 continue;
               }
@@ -2974,6 +3000,19 @@ export function createFridayAgentRuntime(
                     actionDigest: gateResult.actionDigest,
                     riskLevel: gateResult.risk,
                     canonicalAction: gateRequest.action,
+                    guardrail: buildFridayAgentToolPreGuardrailEvidence({
+                      toolCallId: toolUse.id,
+                      toolName: toolUse.name,
+                      toolInput: redactToolInputForAudit(toolUse.input),
+                      mutating: toolCallIsMutating,
+                      readOnly: isReadOnly,
+                      operationalMode: runOperationalMode,
+                      approvalRequiredReason: reason,
+                      decision: "requires_approval",
+                      routeId: "agent.execute.tool.canonical_gate",
+                      correlationId: runId,
+                      checks: ["canonical_mutating_action_gate"],
+                    }),
                     ...(principalId ? { principalId } : {}),
                     ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
                     ...(sessionKey ? { sessionKey } : {}),
@@ -3013,6 +3052,9 @@ export function createFridayAgentRuntime(
                       routeId: "agent.execute.tool.canonical_gate",
                       correlationId: runId,
                       message: `Tool '${toolUse.name}' rejected by canonical gate. approver principal is required`,
+                      readOnly: isReadOnly,
+                      operationalMode: runOperationalMode,
+                      approvalRequiredReason: reason,
                     }));
                     continue;
                   }
@@ -3064,6 +3106,9 @@ export function createFridayAgentRuntime(
                     routeId: "agent.execute.tool.canonical_gate",
                     correlationId: runId,
                     message: `Tool '${toolUse.name}' rejected by canonical gate. ${approvedGateResult.reason}`,
+                    readOnly: isReadOnly,
+                    operationalMode: runOperationalMode,
+                    approvalRequiredReason: reason,
                   }));
                   continue;
                 }
@@ -3075,6 +3120,10 @@ export function createFridayAgentRuntime(
                   routeId: "agent.execute.tool.canonical_gate",
                   correlationId: runId,
                   message: `Tool '${toolUse.name}' blocked pending canonical approval. ${reason}`,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
+                  approvalRequiredReason: reason,
+                  guardrailDecision: "requires_approval",
                 }));
                 continue;
               }
@@ -3102,6 +3151,19 @@ export function createFridayAgentRuntime(
                   reason: approvalRequiredReason,
                   expiresAt,
                   ...(shellRisk ? { riskLevel: shellRisk } : {}),
+                  guardrail: buildFridayAgentToolPreGuardrailEvidence({
+                    toolCallId: toolUse.id,
+                    toolName: toolUse.name,
+                    toolInput: redactToolInputForAudit(toolUse.input),
+                    mutating: toolCallIsMutating,
+                    readOnly: isReadOnly,
+                    operationalMode: runOperationalMode,
+                    approvalRequiredReason,
+                    decision: "requires_approval",
+                    routeId: "agent.execute.tool.approval_required",
+                    correlationId: runId,
+                    checks: ["tool_approval_gate"],
+                  }),
                   ...(principalId ? { principalId } : {}),
                   ...(approvalScopes.length > 0 ? { scopes: approvalScopes } : {}),
                   ...(sessionKey ? { sessionKey } : {}),
@@ -3149,6 +3211,9 @@ export function createFridayAgentRuntime(
                   routeId: "agent.execute.tool.approval_required",
                   correlationId: runId,
                   message: `Tool '${toolUse.name}' rejected by user. ${decision.reason ?? approvalRequiredReason}`,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
+                  approvalRequiredReason,
                 }));
                 continue;
               }
@@ -3161,6 +3226,10 @@ export function createFridayAgentRuntime(
                 routeId: "agent.execute.tool.approval_required",
                 correlationId: runId,
                 message: `Tool '${toolUse.name}' blocked pending approval. ${approvalRequiredReason}`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
+                approvalRequiredReason,
+                guardrailDecision: "requires_approval",
               }));
               continue;
             }
@@ -7330,6 +7399,7 @@ function buildToolEndEventPayload(params: {
   routeId: string;
   correlationId: string;
   toolCallSummary?: ReturnType<typeof summarizeToolCall>;
+  toolGuardrail?: ReturnType<typeof buildFridayAgentToolPostGuardrailEvidence>;
 }): Record<string, unknown> {
   const browserPayload = readBrowserPresentationPayload(params.result);
   return {
@@ -7345,6 +7415,7 @@ function buildToolEndEventPayload(params: {
     routeId: params.result.routeId ?? params.routeId,
     correlationId: params.result.correlationId ?? params.correlationId,
     ...(params.toolCallSummary ? { toolCallSummary: params.toolCallSummary } : {}),
+    ...(params.toolGuardrail ? { guardrail: params.toolGuardrail } : {}),
     ...(typeof browserPayload?.presentationMode === "string"
       ? { presentationMode: browserPayload.presentationMode }
       : {}),
@@ -7377,18 +7448,50 @@ function emitImmediateToolCallResult(params: {
   correlationId: string;
   message: string;
   errorCode?: string;
+  readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
+  approvalRequiredReason?: string | null;
+  guardrailDecision?: "block" | "requires_approval";
 }): FridayAgentToolCallRecord {
   const auditInput = redactToolInputForAudit(params.toolUse.input);
+  const isMutating = isMutatingToolCall(params.toolUse.name, params.toolUse.input);
+  const approvalRequiredReason = params.approvalRequiredReason
+    ?? getApprovalRequiredReasonForToolCall(params.toolUse.name, params.toolUse.input);
+  const preGuardrail = buildFridayAgentToolPreGuardrailEvidence({
+    toolCallId: params.toolUse.id,
+    toolName: params.toolUse.name,
+    toolInput: auditInput,
+    mutating: isMutating,
+    readOnly: params.readOnly,
+    operationalMode: params.operationalMode,
+    approvalRequiredReason,
+    decision: params.guardrailDecision ?? "block",
+    routeId: params.routeId,
+    correlationId: params.correlationId,
+    checks: ["immediate_guardrail_block"],
+  });
   const result = {
     content: params.message,
     isError: true,
   };
+  const postGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+    toolCallId: params.toolUse.id,
+    toolName: params.toolUse.name,
+    durationMs: 0,
+    isError: true,
+    routeId: params.routeId,
+    correlationId: params.correlationId,
+    summary: result.content.slice(0, 200),
+    errorCode: params.errorCode ?? FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
+    status: "blocked",
+  });
 
   params.emitRunEvent("agent.run.tool_start", {
     runId: params.runId,
     toolName: params.toolUse.name,
     toolCallId: params.toolUse.id,
     params: auditInput,
+    guardrail: preGuardrail,
   });
 
   params.emitRunEvent("agent.run.tool_end", {
@@ -7401,6 +7504,7 @@ function emitImmediateToolCallResult(params: {
     errorCode: params.errorCode ?? FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
     routeId: params.routeId,
     correlationId: params.correlationId,
+    guardrail: postGuardrail,
   });
 
   return {
@@ -7410,6 +7514,10 @@ function emitImmediateToolCallResult(params: {
     result,
     durationMs: 0,
     startedAt: params.nowIso(),
+    guardrail: {
+      pre: preGuardrail,
+      post: postGuardrail,
+    },
   };
 }
 
@@ -7421,6 +7529,38 @@ async function executeToolCall(
   const correlationId = runId;
   const startedAt = Date.now();
   const auditInput = redactToolInputForAudit(toolUse.input);
+  const isMutating = isMutatingToolCall(toolUse.name, toolUse.input);
+  const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
+  const preGuardrail = buildFridayAgentToolPreGuardrailEvidence({
+    toolCallId: toolUse.id,
+    toolName: toolUse.name,
+    toolInput: auditInput,
+    mutating: isMutating,
+    readOnly: params.readOnly,
+    operationalMode: params.operationalMode,
+    approvalRequiredReason,
+    decision: "allow",
+    routeId,
+    correlationId,
+    checks: ["runtime_tool_execution_entry"],
+  });
+  const buildPostGuardrail = (input: {
+    durationMs: number;
+    result: FridayAgentToolResult;
+    routeId?: string;
+    correlationId?: string;
+    status?: "completed" | "failed" | "blocked";
+  }) => buildFridayAgentToolPostGuardrailEvidence({
+    toolCallId: toolUse.id,
+    toolName: toolUse.name,
+    durationMs: input.durationMs,
+    isError: input.result.isError ?? false,
+    routeId: input.result.routeId ?? input.routeId ?? routeId,
+    correlationId: input.result.correlationId ?? input.correlationId ?? correlationId,
+    summary: input.result.content.slice(0, 200),
+    errorCode: input.result.errorCode,
+    status: input.status,
+  });
   const toolArgs = augmentToolArgsForRuntime({
     toolName: toolUse.name,
     input: toolUse.input,
@@ -7434,6 +7574,7 @@ async function executeToolCall(
     toolName: toolUse.name,
     toolCallId: toolUse.id,
     params: auditInput,
+    guardrail: preGuardrail,
   });
 
   const touchedPaths = extractFilePaths(toolUse.name, toolUse.input);
@@ -7448,6 +7589,12 @@ async function executeToolCall(
           isError: true,
         };
         const durationMs = Date.now() - startedAt;
+        const postGuardrail = buildPostGuardrail({
+          durationMs,
+          result,
+          routeId: "agent.execute.tool.file_tracker",
+          status: "blocked",
+        });
 
         console.warn(
           `[friday][marker] tool_write_conflict_blocked runId=${runId} tool=${toolUse.name} path=${filePath} reason=${conflict.reason}`,
@@ -7462,6 +7609,7 @@ async function executeToolCall(
           errorCode: FRIDAY_AGENT_ERROR_CODES.VALIDATION_ERROR,
           routeId: "agent.execute.tool.file_tracker",
           correlationId,
+          guardrail: postGuardrail,
         });
 
         return {
@@ -7471,6 +7619,10 @@ async function executeToolCall(
           result,
           durationMs,
           startedAt: nowIso(),
+          guardrail: {
+            pre: preGuardrail,
+            post: postGuardrail,
+          },
         };
       }
     }
@@ -7484,6 +7636,11 @@ async function executeToolCall(
       isError: true,
     };
     const durationMs = Date.now() - startedAt;
+    const postGuardrail = buildPostGuardrail({
+      durationMs,
+      result,
+      status: "failed",
+    });
 
     emitRunEvent("agent.run.tool_end", {
       runId,
@@ -7495,6 +7652,7 @@ async function executeToolCall(
       errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
       routeId,
       correlationId,
+      guardrail: postGuardrail,
     });
 
     return {
@@ -7504,6 +7662,10 @@ async function executeToolCall(
       result,
       durationMs,
       startedAt: nowIso(),
+      guardrail: {
+        pre: preGuardrail,
+        post: postGuardrail,
+      },
     };
   }
 
@@ -7518,6 +7680,11 @@ async function executeToolCall(
       isError: true,
     };
     const durationMs = Date.now() - startedAt;
+    const postGuardrail = buildPostGuardrail({
+      durationMs,
+      result,
+      status: "blocked",
+    });
 
     emitRunEvent("agent.run.tool_end", {
       runId,
@@ -7529,6 +7696,7 @@ async function executeToolCall(
       errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
       routeId,
       correlationId,
+      guardrail: postGuardrail,
     });
 
     return {
@@ -7538,6 +7706,10 @@ async function executeToolCall(
       result,
       durationMs,
       startedAt: nowIso(),
+      guardrail: {
+        pre: preGuardrail,
+        post: postGuardrail,
+      },
     };
   }
 
@@ -7590,6 +7762,8 @@ async function executeToolCall(
         emitRunEvent,
         maxResultChars: toolCap,
         initialResult: result,
+        readOnly: params.readOnly,
+        operationalMode: params.operationalMode,
       });
       result = capToolResultContent(result, toolCap);
     }
@@ -7605,9 +7779,13 @@ async function executeToolCall(
         emitRunEvent,
         maxResultChars: toolCap,
         initialResult: result,
+        readOnly: params.readOnly,
+        operationalMode: params.operationalMode,
       });
       result = capToolResultContent(result, toolCap);
     }
+
+    const postGuardrail = buildPostGuardrail({ durationMs, result });
 
     emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
       runId,
@@ -7618,6 +7796,7 @@ async function executeToolCall(
       routeId,
       correlationId,
       toolCallSummary: summarizeToolCall(toolUse.name, auditInput, result, 0, 0),
+      toolGuardrail: postGuardrail,
     }));
 
     if (!result.isError && params.fileVersionTracker && touchedPaths.length > 0) {
@@ -7633,11 +7812,20 @@ async function executeToolCall(
       result,
       durationMs,
       startedAt: nowIso(),
+      guardrail: {
+        pre: preGuardrail,
+        post: postGuardrail,
+      },
     };
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = error instanceof Error ? error.message : String(error);
     const result = { content: `Tool error: ${errorMessage}`, isError: true };
+    const postGuardrail = buildPostGuardrail({
+      durationMs,
+      result,
+      status: "failed",
+    });
 
     emitRunEvent("agent.run.tool_end", {
       runId,
@@ -7649,6 +7837,7 @@ async function executeToolCall(
       errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
       routeId,
       correlationId,
+      guardrail: postGuardrail,
     });
 
     return {
@@ -7658,6 +7847,10 @@ async function executeToolCall(
       result,
       durationMs,
       startedAt: nowIso(),
+      guardrail: {
+        pre: preGuardrail,
+        post: postGuardrail,
+      },
     };
   } finally {
     clearTimeout(toolTimer);
@@ -7698,6 +7891,8 @@ interface MaybeRecoverToolInputErrorParams {
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   initialResult: FridayAgentToolResult;
+  readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
 }
 
 interface RecoveryExecutionResult {
@@ -7752,6 +7947,8 @@ async function maybeRecoverDesktopInputError(
     emitRunEvent,
     maxResultChars,
     initialResult,
+    readOnly,
+    operationalMode,
   } = params;
   const desktopTool = toolMap.get("desktop");
   if (!desktopTool) return initialResult;
@@ -7802,6 +7999,8 @@ async function maybeRecoverDesktopInputError(
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
+    readOnly,
+    operationalMode,
   });
 
   if (recovery.recovered) {
@@ -7830,6 +8029,8 @@ async function maybeRecoverBrowserInputError(
     emitRunEvent,
     maxResultChars,
     initialResult,
+    readOnly,
+    operationalMode,
   } = params;
   const browserTool = toolMap.get("browser");
   if (!browserTool) return initialResult;
@@ -7863,6 +8064,8 @@ async function maybeRecoverBrowserInputError(
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
+    readOnly,
+    operationalMode,
   });
 
   if (recovery.recovered) {
@@ -7891,6 +8094,8 @@ async function maybeRecoverMcpInputError(
     emitRunEvent,
     maxResultChars,
     initialResult,
+    readOnly,
+    operationalMode,
   } = params;
   const mcpTool = toolMap.get("mcp");
   if (!mcpTool) return initialResult;
@@ -7924,6 +8129,8 @@ async function maybeRecoverMcpInputError(
     emitRunEvent,
     maxResultChars,
     routeId: "agent.execute.tool.input_recovery",
+    readOnly,
+    operationalMode,
   });
 
   if (recovery.recovered) {
@@ -7953,6 +8160,8 @@ async function executeToolRecoveryAttempt(params: {
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   routeId: string;
+  readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
 }): Promise<RecoveryExecutionResult> {
   const {
     toolName,
@@ -7969,20 +8178,37 @@ async function executeToolRecoveryAttempt(params: {
     emitRunEvent,
     maxResultChars,
     routeId,
+    readOnly,
+    operationalMode,
   } = params;
   const correlationId = runId;
   const recoveryCallId = `${toolUse.id}:input-recovery`;
+  const recoveryAuditInput = {
+    ...recoveryArgs,
+    fallback: "tool_input_error",
+    fallbackReason: recoveryReason,
+    parentToolCallId: toolUse.id,
+  };
+  const recoveryPreGuardrail = buildFridayAgentToolPreGuardrailEvidence({
+    toolCallId: recoveryCallId,
+    toolName,
+    toolInput: recoveryAuditInput,
+    mutating: isMutatingToolCall(toolName, recoveryArgs),
+    readOnly,
+    operationalMode,
+    approvalRequiredReason: getApprovalRequiredReasonForToolCall(toolName, recoveryArgs),
+    decision: "allow",
+    routeId,
+    correlationId,
+    checks: ["auto_recovery_tool_guardrail"],
+  });
 
   emitRunEvent("agent.run.tool_start", {
     runId,
     toolName,
     toolCallId: recoveryCallId,
-    params: {
-      ...recoveryArgs,
-      fallback: "tool_input_error",
-      fallbackReason: recoveryReason,
-      parentToolCallId: toolUse.id,
-    },
+    params: recoveryAuditInput,
+    guardrail: recoveryPreGuardrail,
   });
 
   const startedAt = Date.now();
@@ -8001,34 +8227,60 @@ async function executeToolRecoveryAttempt(params: {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const durationMs = Date.now() - startedAt;
+    const result = {
+      content: `${recoveryTag} failed: ${message}`,
+      isError: true,
+    };
+    const recoveryPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+      toolCallId: recoveryCallId,
+      toolName,
+      durationMs,
+      isError: true,
+      routeId,
+      correlationId,
+      summary: result.content.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      status: "failed",
+    });
     emitRunEvent("agent.run.tool_end", {
       runId,
       toolName,
       toolCallId: recoveryCallId,
-      durationMs: Date.now() - startedAt,
+      durationMs,
       isError: true,
-      summary: `${recoveryTag} failed: ${message}`.slice(0, 200),
+      summary: result.content.slice(0, 200),
       errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
       routeId,
       correlationId,
+      guardrail: recoveryPostGuardrail,
     });
     return {
       recovered: false,
-      result: {
-        content: `${recoveryTag} failed: ${message}`,
-        isError: true,
-      },
+      result,
     };
   }
 
+  const recoveryDurationMs = Date.now() - startedAt;
+  const recoveryPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+    toolCallId: recoveryCallId,
+    toolName,
+    durationMs: recoveryDurationMs,
+    isError: recoveryResult.isError ?? false,
+    routeId,
+    correlationId,
+    summary: recoveryResult.content.slice(0, 200),
+    errorCode: recoveryResult.errorCode,
+  });
   emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName,
     toolCallId: recoveryCallId,
-    durationMs: Date.now() - startedAt,
+    durationMs: recoveryDurationMs,
     result: recoveryResult,
     routeId,
     correlationId,
+    toolGuardrail: recoveryPostGuardrail,
   }));
 
   if (recoveryResult.isError) {
@@ -8059,6 +8311,8 @@ interface MaybeFallbackWebFetchWithBrowserParams {
   emitRunEvent: (name: string, payload: Record<string, unknown>) => void;
   maxResultChars: number;
   initialResult: FridayAgentToolResult;
+  readOnly: boolean;
+  operationalMode?: "plan" | "execute" | "restricted";
 }
 
 async function maybeFallbackWebFetchWithBrowser(
@@ -8075,6 +8329,8 @@ async function maybeFallbackWebFetchWithBrowser(
     emitRunEvent,
     maxResultChars,
     initialResult,
+    readOnly,
+    operationalMode,
   } = params;
   const routeId = "agent.execute.tool.web_fetch_fallback";
   const correlationId = runId;
@@ -8090,11 +8346,26 @@ async function maybeFallbackWebFetchWithBrowser(
   const fallbackTag = "[auto-fallback:web_fetch->browser]";
   const openArgs: Record<string, unknown> = { action: "open", url };
   const openCallId = `${toolUse.id}:fallback-browser-open`;
+  const openAuditInput = { ...openArgs, fallback: "web_fetch_error" };
+  const openPreGuardrail = buildFridayAgentToolPreGuardrailEvidence({
+    toolCallId: openCallId,
+    toolName: "browser",
+    toolInput: openAuditInput,
+    mutating: isMutatingToolCall("browser", openArgs),
+    readOnly,
+    operationalMode,
+    approvalRequiredReason: getApprovalRequiredReasonForToolCall("browser", openArgs),
+    decision: "allow",
+    routeId,
+    correlationId,
+    checks: ["web_fetch_browser_fallback_guardrail"],
+  });
   emitRunEvent("agent.run.tool_start", {
     runId,
     toolName: "browser",
     toolCallId: openCallId,
-    params: { ...openArgs, fallback: "web_fetch_error" },
+    params: openAuditInput,
+    guardrail: openPreGuardrail,
   });
 
   const openStarted = Date.now();
@@ -8113,33 +8384,59 @@ async function maybeFallbackWebFetchWithBrowser(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    emitRunEvent("agent.run.tool_end", {
-      runId,
-      toolName: "browser",
-      toolCallId: openCallId,
-      durationMs: Date.now() - openStarted,
-      isError: true,
-      summary: `${fallbackTag} open failed: ${message}`.slice(0, 200),
-      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
-      routeId,
-      correlationId,
-    });
-    return {
+    const durationMs = Date.now() - openStarted;
+    const result = {
       content:
         `${initialResult.content}\n\n` +
         `${fallbackTag} open failed: ${message}`,
       isError: true,
     };
+    const openPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+      toolCallId: openCallId,
+      toolName: "browser",
+      durationMs,
+      isError: true,
+      routeId,
+      correlationId,
+      summary: `${fallbackTag} open failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      status: "failed",
+    });
+    emitRunEvent("agent.run.tool_end", {
+      runId,
+      toolName: "browser",
+      toolCallId: openCallId,
+      durationMs,
+      isError: true,
+      summary: `${fallbackTag} open failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      routeId,
+      correlationId,
+      guardrail: openPostGuardrail,
+    });
+    return result;
   }
 
+  const openDurationMs = Date.now() - openStarted;
+  const openPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+    toolCallId: openCallId,
+    toolName: "browser",
+    durationMs: openDurationMs,
+    isError: openResult.isError ?? false,
+    routeId,
+    correlationId,
+    summary: openResult.content.slice(0, 200),
+    errorCode: openResult.errorCode,
+  });
   emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName: "browser",
     toolCallId: openCallId,
-    durationMs: Date.now() - openStarted,
+    durationMs: openDurationMs,
     result: openResult,
     routeId,
     correlationId,
+    toolGuardrail: openPostGuardrail,
   }));
 
   if (openResult.isError) {
@@ -8166,12 +8463,27 @@ async function maybeFallbackWebFetchWithBrowser(
   const snapshotArgs: Record<string, unknown> = { action: "snapshot", sessionId };
   if (tabId) snapshotArgs.tabId = tabId;
   const snapshotCallId = `${toolUse.id}:fallback-browser-snapshot`;
+  const snapshotAuditInput = { ...snapshotArgs, fallback: "web_fetch_error" };
+  const snapshotPreGuardrail = buildFridayAgentToolPreGuardrailEvidence({
+    toolCallId: snapshotCallId,
+    toolName: "browser",
+    toolInput: snapshotAuditInput,
+    mutating: isMutatingToolCall("browser", snapshotArgs),
+    readOnly,
+    operationalMode,
+    approvalRequiredReason: getApprovalRequiredReasonForToolCall("browser", snapshotArgs),
+    decision: "allow",
+    routeId,
+    correlationId,
+    checks: ["web_fetch_browser_fallback_guardrail"],
+  });
 
   emitRunEvent("agent.run.tool_start", {
     runId,
     toolName: "browser",
     toolCallId: snapshotCallId,
-    params: { ...snapshotArgs, fallback: "web_fetch_error" },
+    params: snapshotAuditInput,
+    guardrail: snapshotPreGuardrail,
   });
 
   const snapshotStarted = Date.now();
@@ -8190,16 +8502,29 @@ async function maybeFallbackWebFetchWithBrowser(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const durationMs = Date.now() - snapshotStarted;
+    const snapshotPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+      toolCallId: snapshotCallId,
+      toolName: "browser",
+      durationMs,
+      isError: true,
+      routeId,
+      correlationId,
+      summary: `${fallbackTag} snapshot failed: ${message}`.slice(0, 200),
+      errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
+      status: "failed",
+    });
     emitRunEvent("agent.run.tool_end", {
       runId,
       toolName: "browser",
       toolCallId: snapshotCallId,
-      durationMs: Date.now() - snapshotStarted,
+      durationMs,
       isError: true,
       summary: `${fallbackTag} snapshot failed: ${message}`.slice(0, 200),
       errorCode: FRIDAY_AGENT_ERROR_CODES.TOOL_ERROR,
       routeId,
       correlationId,
+      guardrail: snapshotPostGuardrail,
     });
     return {
       content:
@@ -8209,14 +8534,26 @@ async function maybeFallbackWebFetchWithBrowser(
     };
   }
 
+  const snapshotDurationMs = Date.now() - snapshotStarted;
+  const snapshotPostGuardrail = buildFridayAgentToolPostGuardrailEvidence({
+    toolCallId: snapshotCallId,
+    toolName: "browser",
+    durationMs: snapshotDurationMs,
+    isError: snapshotResult.isError ?? false,
+    routeId,
+    correlationId,
+    summary: snapshotResult.content.slice(0, 200),
+    errorCode: snapshotResult.errorCode,
+  });
   emitRunEvent("agent.run.tool_end", buildToolEndEventPayload({
     runId,
     toolName: "browser",
     toolCallId: snapshotCallId,
-    durationMs: Date.now() - snapshotStarted,
+    durationMs: snapshotDurationMs,
     result: snapshotResult,
     routeId,
     correlationId,
+    toolGuardrail: snapshotPostGuardrail,
   }));
 
   if (snapshotResult.isError) {
