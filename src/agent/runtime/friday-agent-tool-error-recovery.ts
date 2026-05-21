@@ -28,6 +28,22 @@ interface RecoveryPattern {
   strategy: (ctx: ToolErrorContext) => string;
 }
 
+function readPathArgument(ctx: ToolErrorContext): string {
+  return typeof ctx.args.path === "string"
+    ? ctx.args.path
+    : typeof ctx.args.file_path === "string"
+      ? ctx.args.file_path
+      : "";
+}
+
+function safeFindPattern(filePath: string): string | null {
+  const fileName = filePath.split(/[\\/]/).pop() ?? "";
+  const baseName = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^A-Za-z0-9._-]/g, "");
+  return baseName ? `${baseName}*` : null;
+}
+
 const RECOVERABLE_PATTERNS: RecoveryPattern[] = [
   {
     tools: ["skill_run"],
@@ -85,15 +101,19 @@ const RECOVERABLE_PATTERNS: RecoveryPattern[] = [
     tools: ["read"],
     pattern: /not found|no such file|ENOENT|does not exist/i,
     strategy: (ctx) => {
-      const filePath = typeof ctx.args.file_path === "string" ? ctx.args.file_path : "";
-      const fileName = filePath.split("/").pop() ?? "";
-      const baseName = fileName.replace(/\.[^.]+$/, ""); // strip extension
+      const filePath = readPathArgument(ctx);
+      const findPattern = safeFindPattern(filePath);
+      const findCommand = findPattern
+        ? `find . -maxdepth 2 -iname ${findPattern} -type f`
+        : "find . -maxdepth 2 -type f";
       return [
         `The file "${filePath}" was not found.`,
         `You MUST try these alternatives before reporting failure to the user:`,
-        `1. Use the "exec" tool with command: find . -maxdepth 2 -iname ${baseName}* -type f`,
+        `1. Use the "exec" tool with command: ${findCommand}`,
         `2. If find returns results, use the "read" tool to read the correct file and show it to the user`,
-        `3. If the filename might be wrong, ask the user "Did you mean [found filename]?"`,
+        `3. Keep exec fallback inside the workspace root and explain the original read failure before any answer`,
+        `4. If the filename might be wrong, ask the user "Did you mean [found filename]?"`,
+        `Do NOT claim verified success from a failed read tool call.`,
         `Do NOT respond to the user until you have searched for alternatives.`,
       ].join("\n");
     },
@@ -104,11 +124,11 @@ const RECOVERABLE_PATTERNS: RecoveryPattern[] = [
     tools: ["read"],
     pattern: /permission denied|EACCES/i,
     strategy: (ctx) => {
-      const filePath = typeof ctx.args.file_path === "string" ? ctx.args.file_path : "";
+      const filePath = readPathArgument(ctx);
       return [
         `Permission denied reading "${filePath}".`,
-        `Try: Use "exec" to run: cat "${filePath}" as an alternative.`,
-        `If that also fails, tell the user exactly which permission is needed.`,
+        `If you use exec as an alternative, keep it inside the workspace root and state why the read tool failed.`,
+        `If that also fails, tell the user exactly which permission is needed and do not claim verified success.`,
       ].join("\n");
     },
   },

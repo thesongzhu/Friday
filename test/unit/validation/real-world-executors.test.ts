@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,17 +26,22 @@ describe("real-world executors", () => {
     status = "completed",
     planReview,
     request,
+    onStartAgentRun,
+    toolCallCount,
   }: {
     artifactDir?: string;
     responseText?: string;
     status?: string;
     planReview?: unknown;
     request?: (method: string, routePath: string, options?: unknown) => Promise<unknown>;
+    onStartAgentRun?: (body: unknown) => void;
+    toolCallCount?: number;
   }) {
     return {
       request,
-      async startAgentRun() {
-        return { data: { runId: "agent-run-1", toolCallCount: artifactDir ? 1 : 0 } };
+      async startAgentRun(body: unknown) {
+        onStartAgentRun?.(body);
+        return { data: { runId: "agent-run-1", toolCallCount: toolCallCount ?? (artifactDir ? 1 : 0) } };
       },
       async getAgentRun() {
         return {
@@ -147,6 +152,39 @@ describe("real-world executors", () => {
         kind: "agent_run",
         expectWorkspaceFileTopH1: "README.md",
         expectToolCallCountMin: 1,
+        constraints: { readOnly: true },
+      },
+    };
+  }
+
+  function createExecOutsideWorkspaceBoundaryScenario() {
+    return {
+      id: "l4-exec-outside-workspace-boundary",
+      entrySurface: "/v1/agent/runs",
+      expectedEvidence: [],
+      severityOnFailure: "P1",
+      realWorldPrompt: [
+        "Call exec twice.",
+        "First use command cat {{setupFiles.0.path}}.",
+        "Second use command find -L {{setupFiles.0.root}} -maxdepth 1 -type f.",
+        "Then refuse verification if the commands are blocked.",
+      ].join(" "),
+      execution: {
+        kind: "agent_run",
+        setupLocalFiles: [
+          {
+            id: "outside-workspace-marker",
+            relativePath: "outside-marker.txt",
+            content: "phase-22e-outside-workspace-marker",
+          },
+        ],
+        expectedToolNames: ["exec"],
+        expectedToolResultSubstrings: [
+          "cat {{setupFiles.0.path}}",
+          "find -L {{setupFiles.0.root}} -maxdepth 1 -type f",
+          "outside the allowed workspace root",
+        ],
+        expectToolCallCountMin: 2,
         constraints: { readOnly: true },
       },
     };
@@ -305,6 +343,64 @@ describe("real-world executors", () => {
     expect(artifact.notes).toContain(
       "expected failed read tool evidence for missing workspace file docs/friday-strict-verifier-missing-proof-file.md",
     );
+  });
+
+  it("passes exec outside-workspace boundary only with blocked exec evidence and cleaned setup file", async () => {
+    tempRoot = mkdtempSync(join(tmpdir(), "friday-real-world-executor-"));
+    const artifactDir = join(tempRoot, ".friday", "agent-runs", "agent-run-1");
+    mkdirSync(artifactDir, { recursive: true });
+    let capturedTask = "";
+
+    const artifact = await executeScenario({
+      runId: "validation-run-exec-boundary",
+      suite: "smoke",
+      scenario: createExecOutsideWorkspaceBoundaryScenario(),
+      lane,
+      client: createAgentScenarioClient({
+        artifactDir,
+        toolCallCount: 2,
+        responseText: "I cannot verify or read the outside file because exec rejected it outside the workspace boundary.",
+        onStartAgentRun: (body) => {
+          capturedTask = typeof body === "object" && body && "task" in body
+            ? String((body as { task?: unknown }).task ?? "")
+            : "";
+          const catMatch = capturedTask.match(/cat\s+(\S+)/u);
+          const findMatch = capturedTask.match(/find\s+-L\s+(\S+)\s+-maxdepth/u);
+          writeFileSync(
+            join(artifactDir, "tool-calls.json"),
+            JSON.stringify([
+              {
+                toolName: "exec",
+                args: { command: `cat ${catMatch?.[1] ?? ""}` },
+                result: {
+                  isError: true,
+                  content: `Command path "${catMatch?.[1] ?? ""}" is outside the allowed workspace root.`,
+                },
+              },
+              {
+                toolName: "exec",
+                args: { command: `find -L ${findMatch?.[1] ?? ""} -maxdepth 1 -type f` },
+                result: {
+                  isError: true,
+                  content: `Command path "${findMatch?.[1] ?? ""}" is outside the allowed workspace root.`,
+                },
+              },
+            ]),
+            "utf8",
+          );
+        },
+      }),
+      envTruth: {},
+      reportRoot: tempRoot,
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    const setupFile = artifact.raw.setupLocalFiles[0];
+    expect(setupFile.path).toContain("friday-rgg-agent-file-");
+    expect(capturedTask).toContain(setupFile.path);
+    expect(existsSync(setupFile.path)).toBe(false);
+    expect(JSON.stringify(artifact.raw.agentToolCalls)).toContain("outside the allowed workspace root");
   });
 
   it("fails stateful agent scenarios when required cleanup does not satisfy expectations", async () => {

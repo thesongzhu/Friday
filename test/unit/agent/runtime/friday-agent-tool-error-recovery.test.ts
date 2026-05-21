@@ -69,4 +69,39 @@ describe("buildToolErrorRecoveryHint", () => {
     expect(hint?.text).toContain("action=\"execute_goal\"");
     expect(hint?.text).toContain("Only report success after autonomous returns goal/result evidence");
   });
+
+  it("uses the read tool path argument when suggesting missing-file recovery", () => {
+    const hint = buildToolErrorRecoveryHint([
+      {
+        toolName: "read",
+        errorContent: "Failed to read file: File not found: docs/missing-proof.md",
+        args: {
+          path: "docs/missing-proof.md",
+        },
+      },
+    ]);
+
+    expect(hint?.text).toContain("docs/missing-proof.md");
+    expect(hint?.text).toContain("find . -maxdepth 2 -iname missing-proof* -type f");
+    expect(hint?.text).toContain("Keep exec fallback inside the workspace root");
+    expect(hint?.text).toContain("Do NOT claim verified success from a failed read tool call");
+    expect(hint?.text).not.toContain("-iname * -type f");
+  });
+
+  it("keeps read permission recovery workspace-bound and non-claiming", () => {
+    const hint = buildToolErrorRecoveryHint([
+      {
+        toolName: "read",
+        errorContent: "EACCES: permission denied",
+        args: {
+          path: "private-note.txt",
+        },
+      },
+    ]);
+
+    expect(hint?.text).toContain("private-note.txt");
+    expect(hint?.text).toContain("inside the workspace root");
+    expect(hint?.text).toContain("do not claim verified success");
+    expect(hint?.text).not.toContain("cat \"private-note.txt\"");
+  });
 });

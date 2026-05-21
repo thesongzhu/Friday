@@ -75,6 +75,61 @@ async function pathExists(filePath) {
   }
 }
 
+function isPathWithinBase(basePath, targetPath) {
+  const relative = path.relative(path.resolve(basePath), path.resolve(targetPath));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+async function setupAgentRunLocalFiles({ artifact, execution, templateContext }) {
+  const specs = Array.isArray(execution.setupLocalFiles) ? execution.setupLocalFiles : [];
+  const tempRoots = new Set();
+  const files = [];
+  const cleanup = async () => {
+    await Promise.all([...tempRoots].map((root) => fs.rm(root, { recursive: true, force: true })));
+  };
+  try {
+    for (const [index, spec] of specs.entries()) {
+      if (!spec || typeof spec !== "object") {
+        throw new Error(`setupLocalFiles.${String(index)} must be an object`);
+      }
+      const location = typeof spec.location === "string" ? spec.location : "tmp";
+      if (location !== "tmp") {
+        throw new Error(`setupLocalFiles.${String(index)} location must be "tmp"`);
+      }
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "friday-rgg-agent-file-"));
+      tempRoots.add(root);
+      const id = typeof spec.id === "string" && spec.id.trim().length > 0
+        ? spec.id.trim()
+        : `file-${String(index + 1)}`;
+      const relativePath = typeof spec.relativePath === "string" && spec.relativePath.trim().length > 0
+        ? spec.relativePath.trim()
+        : `${id}.txt`;
+      if (path.isAbsolute(relativePath) || relativePath.split(/[\\/]/u).includes("..")) {
+        throw new Error(`setupLocalFiles.${String(index)} relativePath must stay within its temp root`);
+      }
+      const filePath = path.resolve(root, relativePath);
+      if (!isPathWithinBase(root, filePath)) {
+        throw new Error(`setupLocalFiles.${String(index)} path escaped its temp root`);
+      }
+      const content = interpolateTemplateString(String(spec.content ?? ""), templateContext);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf8");
+      files.push({
+        id,
+        location,
+        root,
+        relativePath,
+        path: filePath,
+      });
+      artifact.observedEvidence.push(`setup local file ${id} at ${filePath}`);
+    }
+  } catch (error) {
+    await cleanup().catch(() => undefined);
+    throw error;
+  }
+  return { files, cleanup };
+}
+
 const AWAITING_HUMAN_STATUSES = new Set(["awaiting_clarification", "awaiting_plan_approval"]);
 
 function isExpectedAwaitingHumanStatus({ scenario, runRecord }) {
@@ -1997,16 +2052,33 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
       model: lane.model,
     },
   };
-  const setupResponses = await executeTemplatedRequests({
-    artifact,
-    client,
-    scenario,
-    requests: execution.setupRequests,
-    templateContext,
-    label: "setup",
-  });
-  const agentTemplateContext = {
+  const localFileSetup = await setupAgentRunLocalFiles({ artifact, execution, templateContext });
+  const setupTemplateContext = {
     ...templateContext,
+    setupFiles: localFileSetup.files,
+  };
+  if (localFileSetup.files.length > 0) {
+    artifact.raw = {
+      ...(artifact.raw ?? {}),
+      setupLocalFiles: localFileSetup.files,
+    };
+  }
+  let setupResponses;
+  try {
+    setupResponses = await executeTemplatedRequests({
+      artifact,
+      client,
+      scenario,
+      requests: execution.setupRequests,
+      templateContext: setupTemplateContext,
+      label: "setup",
+    });
+  } catch (error) {
+    await localFileSetup.cleanup().catch(() => undefined);
+    throw error;
+  }
+  const agentTemplateContext = {
+    ...setupTemplateContext,
     setupResponses,
   };
   let cleanupCompleted = false;
@@ -2057,6 +2129,21 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
         return;
       }
       throw error;
+    } finally {
+      try {
+        await localFileSetup.cleanup();
+      } catch (error) {
+        artifact.notes = [
+          ...(artifact.notes ?? []),
+          `local file cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        ];
+        if (execution.cleanupFailureIsFailure === true) {
+          if (!artifact.result || artifact.result === "passed") {
+            artifact.result = "failed";
+          }
+          artifact.failureClass = artifact.failureClass ?? "cleanup";
+        }
+      }
     }
   };
   if (setupResponses.length > 0) {
