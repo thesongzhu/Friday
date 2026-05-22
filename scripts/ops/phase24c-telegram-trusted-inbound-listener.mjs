@@ -114,6 +114,16 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function apiFetch(baseUrl, method, pathname, body) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
@@ -149,9 +159,12 @@ function inspectTelegramUpdate(update, config, receivedAtMs) {
   const nonceMatched = content.includes(config.probeNonce);
   const normalized = normalizeTelegramUpdate(update);
   const messageId = message?.message_id === undefined ? null : String(message.message_id);
+  const messageDateMs = Number.isFinite(message?.date) ? message.date * 1000 : null;
+  const freshForRun = typeof messageDateMs === "number" && messageDateMs >= config.acceptAfterMs;
   const rawTargetMatched = authorBotFalse
     && senderMatched
     && chatMatched
+    && freshForRun
     && probeBodyMatched
     && nonceMatched;
   return {
@@ -164,6 +177,8 @@ function inspectTelegramUpdate(update, config, receivedAtMs) {
     chatIdTail: tail(chatId),
     senderIdTail: tail(senderId),
     chatType: message?.chat?.type ?? null,
+    messageDate: typeof messageDateMs === "number" ? new Date(messageDateMs).toISOString() : null,
+    freshForRun,
     authorBot,
     authorBotFalse,
     senderMatched,
@@ -185,6 +200,8 @@ function redactedTelegramInspection(inspection) {
     chatIdTail: inspection.chatIdTail,
     senderIdTail: inspection.senderIdTail,
     chatType: inspection.chatType,
+    messageDate: inspection.messageDate,
+    freshForRun: inspection.freshForRun,
     authorBot: inspection.authorBot,
     authorBotFalse: inspection.authorBotFalse,
     senderMatched: inspection.senderMatched,
@@ -204,10 +221,11 @@ function recordTelegramUpdate(report, observedEventsByMessageId, update, config)
   const diagnostics = report.diagnostics.telegramHubAdapter;
   diagnostics.updateCount += 1;
   if (inspection.messageId) diagnostics.messageUpdateCount += 1;
+  if (inspection.messageId && !inspection.freshForRun) diagnostics.staleMessageUpdateCount += 1;
   diagnostics.lastUpdate = redacted;
   if (inspection.fullProbeMatched) diagnostics.nonceUpdateCount += 1;
   if (inspection.rawTargetMatched) diagnostics.targetRawUpdateCount += 1;
-  if (inspection.messageId && inspection.chatMatched) {
+  if (inspection.messageId && inspection.chatMatched && inspection.freshForRun) {
     observedEventsByMessageId.set(inspection.messageId, {
       update,
       normalized: inspection.normalized,
@@ -228,6 +246,7 @@ function recordTelegramUpdate(report, observedEventsByMessageId, update, config)
     ...redacted,
   };
   diagnostics.matchedUpdate = redacted;
+  return inspection;
 }
 
 function createInstrumentedTelegramPollingService(config, report, observedEventsByMessageId) {
@@ -235,7 +254,8 @@ function createInstrumentedTelegramPollingService(config, report, observedEvents
   return {
     async startPolling(token, onUpdate) {
       await polling.startPolling(token, (update) => {
-        recordTelegramUpdate(report, observedEventsByMessageId, update, config);
+        const inspection = recordTelegramUpdate(report, observedEventsByMessageId, update, config);
+        if (!inspection?.freshForRun) return;
         onUpdate(update);
       });
       report.criteria.pollingConnected = polling.isPolling();
@@ -269,6 +289,7 @@ function initialReport(config, reportPath) {
       timeoutMs: config.timeoutMs,
       pollingTimeoutSec: config.pollingTimeoutSec,
       telegramMode: config.mode,
+      acceptAfter: new Date(config.acceptAfterMs).toISOString(),
       configuredChatIdTail: tail(config.chatId),
       configuredAllowedUserIdTail: tail(config.allowedUserId),
       telegramTokenPresent: Boolean(config.botToken),
@@ -318,6 +339,7 @@ function initialReport(config, reportPath) {
         realHubAdapterAcceptedMessage: false,
         updateCount: 0,
         messageUpdateCount: 0,
+        staleMessageUpdateCount: 0,
         nonceUpdateCount: 0,
         targetRawUpdateCount: 0,
         lastUpdate: null,
@@ -331,6 +353,7 @@ function initialReport(config, reportPath) {
         evidenceMatchesNonce: false,
       },
       localNonCurrentRunnerAmbiguityPossible: true,
+      cleanupFailures: [],
     },
     observedTelegramEvent: null,
     normalizedMessage: null,
@@ -452,6 +475,7 @@ function readEnvConfig() {
   const probeNonce = buildProbeNonce();
   const probeText = `${PROBE_BODY_TEXT} ${probeNonce}`;
   const mode = process.env.FRIDAY_TELEGRAM_MODE?.trim() || "polling";
+  const acceptAfterMs = Date.now() - 5_000;
   return {
     botToken: process.env.FRIDAY_TELEGRAM_BOT_TOKEN?.trim() ?? "",
     allowedUserId: process.env.FRIDAY_TELEGRAM_ALLOWED_USER_ID?.trim() ?? "",
@@ -459,6 +483,7 @@ function readEnvConfig() {
     mode,
     timeoutMs: envInteger("PHASE24C_TELEGRAM_LISTENER_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
     pollingTimeoutSec: envInteger("PHASE24C_TELEGRAM_POLLING_TIMEOUT_SEC", 5),
+    acceptAfterMs,
     githubRunId: process.env.GITHUB_RUN_ID?.trim() || null,
     githubSha: process.env.GITHUB_SHA?.trim() || null,
     probeBodyText: PROBE_BODY_TEXT,
@@ -784,9 +809,30 @@ async function main() {
     await writeReport(report, config?.botToken ?? "").catch(() => {});
     process.exitCode = 1;
   } finally {
-    if (server) await server.close().catch(() => {});
-    if (hub) await hub.stop().catch(() => {});
-    if (stateDir) await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
+    const cleanupFailures = [];
+    if (server) {
+      await withTimeout(server.close(), 5_000, "http_server_close").catch((error) => {
+        cleanupFailures.push(safeError(error, config?.botToken ?? ""));
+      });
+    }
+    if (hub) {
+      await withTimeout(hub.stop(), 5_000, "hub_stop").catch((error) => {
+        cleanupFailures.push(safeError(error, config?.botToken ?? ""));
+      });
+    }
+    if (stateDir) {
+      await withTimeout(fs.rm(stateDir, { recursive: true, force: true }), 5_000, "state_dir_cleanup").catch((error) => {
+        cleanupFailures.push(safeError(error, config?.botToken ?? ""));
+      });
+    }
+    if (cleanupFailures.length > 0) {
+      report.diagnostics.cleanupFailures = cleanupFailures;
+      await writeReport(report, config?.botToken ?? "").catch(() => {});
+      if (process.exitCode === 0 || process.exitCode === undefined) process.exitCode = 1;
+    }
+    if (cleanupFailures.length > 0 && process.env.GITHUB_ACTIONS === "true") {
+      process.exit(process.exitCode ?? 1);
+    }
   }
 }
 
