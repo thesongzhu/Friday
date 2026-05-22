@@ -73,6 +73,7 @@ export interface FridayEnginePlanningGate {
     constraints?: FridayAgentRunConstraints;
     reviewRequired?: boolean;
     disabledToolNames?: string[];
+    executionContext?: FridayEngineRunInput["executionContext"];
     conversationContext?: FridayPreparedEngineContext["conversationContext"];
     focusState?: { pendingPlanRunId?: string } | null;
   }): FridayEnginePlanningDecision;
@@ -359,6 +360,7 @@ export function createFridayEngineRunExecutor(deps: CreateFridayEngineRunExecuto
         constraints: input.constraints,
         reviewRequired: input.reviewRequired,
         disabledToolNames: input.disabledToolNames,
+        executionContext: input.executionContext,
         conversationContext: prepared.conversationContext,
         focusState: prepared.focusState,
       });

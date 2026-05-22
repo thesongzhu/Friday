@@ -255,6 +255,33 @@ describe("friday-agent-planning-gate", () => {
     expect(executeRun).not.toHaveBeenCalled();
   });
 
+  it("preserves channel-origin surface on planning-gated runs", () => {
+    const service = createService();
+
+    const decision = service.handleTurn({
+      runId: "run-channel-destructive-cleanup",
+      task: "Show me the old logs and delete every log file in the workspace without asking me again.",
+      sessionKey: "channel:discord:group-1:user-a",
+      executionContext: {
+        surface: "channel",
+        interactive: true,
+        channelKind: "discord",
+        channelChatType: "group",
+        channelControlRoute: "full_agent",
+      },
+    });
+
+    expect(decision.action).toBe("return");
+    if (decision.action !== "return") {
+      throw new Error("Expected return decision");
+    }
+    expect(decision.result.status).toBe("awaiting_plan_approval");
+    expect(runs.get("run-channel-destructive-cleanup")?.metadata).toMatchObject({
+      surface: "channel",
+    });
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
   it("does not let mixed Q&A and destructive action requests bypass visible approval", () => {
     const service = createService();
 

@@ -194,9 +194,14 @@ async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
     auditState: null,
     schemaVersion: runState?.schemaVersion ?? null,
     auditSchemaVersion: null,
+    sourceSurface: runState?.run?.sourceSurface ?? null,
+    auditSourceSurface: null,
     liveChannelProof: runState?.channelBoundary?.liveChannelProof ?? null,
     auditLiveChannelProof: null,
   };
+  const expectedSourceSurface = typeof expected?.sourceSurface === "string"
+    ? expected.sourceSurface.trim()
+    : "";
 
   if (!runState || typeof runState !== "object") {
     failures.push("GET run did not include unifiedTaskState");
@@ -206,6 +211,9 @@ async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
     }
     if (expectedStates.length > 0 && !expectedStates.includes(runState.state)) {
       failures.push(`GET run unifiedTaskState expected ${expectedStates.join(" or ")} but received ${String(runState.state)}`);
+    }
+    if (expectedSourceSurface && runState.run?.sourceSurface !== expectedSourceSurface) {
+      failures.push(`GET run unifiedTaskState expected sourceSurface=${expectedSourceSurface} but received ${String(runState.run?.sourceSurface ?? "missing")}`);
     }
     if (runState.channelBoundary?.consumableByChannelAdapters !== true) {
       failures.push("GET run unifiedTaskState did not mark the contract consumable by channel adapters");
@@ -233,6 +241,7 @@ async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
   const auditState = auditData?.unifiedTaskState ?? null;
   evidence.auditState = auditState?.state ?? null;
   evidence.auditSchemaVersion = auditState?.schemaVersion ?? null;
+  evidence.auditSourceSurface = auditState?.run?.sourceSurface ?? null;
   evidence.auditLiveChannelProof = auditState?.channelBoundary?.liveChannelProof ?? null;
 
   if (!auditState || typeof auditState !== "object") {
@@ -246,6 +255,12 @@ async function inspectUnifiedTaskState({ client, runRecord, runId, expected }) {
     }
     if (runState?.state && auditState.state !== runState.state) {
       failures.push(`GET/audit unifiedTaskState mismatch: ${String(runState.state)} vs ${String(auditState.state)}`);
+    }
+    if (expectedSourceSurface && auditState.run?.sourceSurface !== expectedSourceSurface) {
+      failures.push(`audit unifiedTaskState expected sourceSurface=${expectedSourceSurface} but received ${String(auditState.run?.sourceSurface ?? "missing")}`);
+    }
+    if (runState?.run?.sourceSurface && auditState.run?.sourceSurface !== runState.run.sourceSurface) {
+      failures.push(`GET/audit unifiedTaskState sourceSurface mismatch: ${String(runState.run.sourceSurface)} vs ${String(auditState.run?.sourceSurface ?? "missing")}`);
     }
     if (auditState.channelBoundary?.liveChannelProof !== "not_claimed") {
       failures.push("audit unifiedTaskState overclaimed live channel proof");
@@ -2439,6 +2454,9 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
         providerId: lane.providerId,
         model: lane.model,
         timeoutMs: scenarioTimeout(scenario, 180_000),
+        ...((turn.requireReview ?? execution.requireReview) !== undefined
+          ? { requireReview: Boolean(turn.requireReview ?? execution.requireReview) }
+          : {}),
         constraints: turn.constraints ?? execution.constraints ?? { readOnly: true },
         taskProfile: turn.taskProfile ?? execution.taskProfile ?? { id: "deterministic" },
         sessionKey: turn.sessionKey ?? sharedSessionKey,
@@ -2750,6 +2768,7 @@ async function executeAgentRun({ artifact, client, scenario, lane, suite, attemp
     artifact.observedEvidence.push(
       `unified task state ${stateInspection.evidence.getState ?? "missing"}`,
       `audit unified task state ${stateInspection.evidence.auditState ?? "missing"}`,
+      `unified task source surface ${stateInspection.evidence.sourceSurface ?? "missing"}`,
       `unified task live channel proof ${stateInspection.evidence.liveChannelProof ?? "missing"}`,
     );
     if (stateInspection.failures.length > 0) {

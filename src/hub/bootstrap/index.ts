@@ -8,6 +8,7 @@ export type {
 
 export {
   // Cross-channel identity
+  evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,
   resolveFridayChannelSessionKey,
   resolveFridayChannelDisabledToolNames,

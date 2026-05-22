@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canResolveFridayChannelApprovalFromMessage,
+  evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,
   resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
@@ -102,9 +103,43 @@ describe("cross-channel identity mapping", () => {
       route,
       message: makeMessage({
         chatType: "group",
+        channelKind: "telegram",
+        chatId: "group-1",
+        senderId: "user-1",
+      }),
+    })).toBe(false);
+    expect(canResolveFridayChannelApprovalFromMessage({
+      route,
+      message: makeMessage({
+        chatType: "group",
+        chatId: "group-2",
+        senderId: "user-1",
+      }),
+    })).toBe(false);
+    expect(canResolveFridayChannelApprovalFromMessage({
+      route,
+      message: makeMessage({
+        chatType: "group",
         chatId: "group-1",
         senderId: "user-2",
       }),
     })).toBe(false);
+  });
+
+  it("requires channel approval codes to be unexpired", () => {
+    expect(evaluateFridayChannelApprovalExpiry({
+      expiresAt: "2026-05-21T10:15:00.000Z",
+      nowIso: "2026-05-21T10:14:59.000Z",
+    })).toEqual({ expired: false });
+
+    expect(evaluateFridayChannelApprovalExpiry({
+      expiresAt: "2026-05-21T10:15:00.000Z",
+      nowIso: "2026-05-21T10:15:00.000Z",
+    })).toEqual({ expired: true, reason: "approval_expired" });
+
+    expect(evaluateFridayChannelApprovalExpiry({
+      expiresAt: "not-a-date",
+      nowIso: "2026-05-21T10:15:00.000Z",
+    })).toEqual({ expired: true, reason: "approval_expiration_invalid" });
   });
 });

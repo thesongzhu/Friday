@@ -76,6 +76,8 @@ describe("setup provider regressions", () => {
     expect(hubSource).toContain("parseChannelToolApprovalCommand");
     expect(hubSource).toContain("notifyChannelToolApprovalRequest(prompt)");
     expect(hubSource).toContain("resolveToolApproval(");
+    expect(hubSource).toContain("evaluateFridayChannelApprovalExpiry");
+    expect(hubSource).toContain("approval_expired");
     expect(hubSource).toContain("toolApprovalCommand: true");
     expect(hubSource).toContain("回复「批准");
   });

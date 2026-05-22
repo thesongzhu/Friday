@@ -352,6 +352,20 @@ describe("Friday live-channel canonical approval adversarial E2E", () => {
       expect(fs.existsSync(sentinel)).toBe(false);
 
       channel.emit({
+        id: "msg-wrong-chat-approve",
+        senderId: "user-a",
+        senderName: "User A",
+        chatId: "group-2",
+        text: `批准 ${shortId}`,
+      });
+
+      await waitFor(() =>
+        channel.sent.find((message) => message.text.includes(`没有找到待审批操作 ${shortId}`)) ?? null,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(fs.existsSync(sentinel)).toBe(false);
+
+      channel.emit({
         id: "msg-attacker-approve",
         senderId: "user-b",
         senderName: "User B",
@@ -378,6 +392,24 @@ describe("Friday live-channel canonical approval adversarial E2E", () => {
       );
       await waitFor(() => fs.existsSync(sentinel) ? true : null);
       expect(fs.existsSync(sentinel)).toBe(true);
+      const firstApprovalMtimeMs = fs.statSync(sentinel).mtimeMs;
+
+      channel.emit({
+        id: "msg-replay-approve",
+        senderId: "user-a",
+        senderName: "User A",
+        chatId: "group-1",
+        text: `批准 ${shortId}`,
+      });
+
+      await waitFor(() =>
+        channel.sent.find((message) =>
+          message.text.includes(`审批 ${shortId} 已经结束，不需要重复处理。`)
+          || message.text.includes(`没有找到待审批操作 ${shortId}`),
+        ) ?? null,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(fs.statSync(sentinel).mtimeMs).toBe(firstApprovalMtimeMs);
     } finally {
       fs.rmSync(sentinel, { force: true });
     }

@@ -373,6 +373,7 @@ import {
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
+  evaluateFridayChannelApprovalExpiry,
   loadChannelsConfigFromSetupState,
   mapPolicyBundleRow,
   mapRuleRow,
@@ -395,6 +396,7 @@ import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gate
 // Re-export public API for backward compatibility with `#hub` barrel.
 export {
   canResolveFridayChannelApprovalFromMessage,
+  evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,
   resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
@@ -4414,7 +4416,7 @@ export async function createFridayHub(
       approverPrincipalType?: string;
       approvalSurface?: string;
     },
-  ): { resolved: boolean; grantId?: string; decision?: "approved" | "rejected" } => {
+  ): { resolved: boolean; grantId?: string; decision?: "approved" | "rejected"; reason?: string } => {
     const runMap = toolApprovalGates.get(runId);
     if (!runMap) return { resolved: false };
     const gate = runMap.get(toolCallId);
@@ -4431,16 +4433,48 @@ export async function createFridayHub(
       ...(options.approverPrincipalType ? { approvedByPrincipalType: options.approverPrincipalType } : {}),
       ...(options.approvalSurface ? { approvalSurface: options.approvalSurface } : {}),
       ...(gate.prompt.principalId ? { principalId: gate.prompt.principalId } : {}),
-	      ...(gate.prompt.scopes?.length ? { scopes: gate.prompt.scopes } : {}),
-	      ...(gate.prompt.sessionKey ? { sessionKey: gate.prompt.sessionKey } : {}),
-	      ...(gate.prompt.surface ? { surface: gate.prompt.surface } : {}),
-	      ...(gate.prompt.canonicalActionDigest ? { canonicalActionDigest: gate.prompt.canonicalActionDigest } : {}),
-	      ...(gate.prompt.canonicalAction ? { canonicalAction: gate.prompt.canonicalAction } : {}),
-	      ...(gate.prompt.canonicalRisk ? { canonicalRisk: gate.prompt.canonicalRisk } : {}),
-	      ...(gate.prompt.canonicalMutating !== undefined ? { canonicalMutating: gate.prompt.canonicalMutating } : {}),
-	      ...(gate.prompt.canonicalResourceType ? { canonicalResourceType: gate.prompt.canonicalResourceType } : {}),
-	      ...(gate.prompt.canonicalResourceId ? { canonicalResourceId: gate.prompt.canonicalResourceId } : {}),
-	    };
+      ...(gate.prompt.scopes?.length ? { scopes: gate.prompt.scopes } : {}),
+      ...(gate.prompt.sessionKey ? { sessionKey: gate.prompt.sessionKey } : {}),
+      ...(gate.prompt.surface ? { surface: gate.prompt.surface } : {}),
+      ...(gate.prompt.canonicalActionDigest ? { canonicalActionDigest: gate.prompt.canonicalActionDigest } : {}),
+      ...(gate.prompt.canonicalAction ? { canonicalAction: gate.prompt.canonicalAction } : {}),
+      ...(gate.prompt.canonicalRisk ? { canonicalRisk: gate.prompt.canonicalRisk } : {}),
+      ...(gate.prompt.canonicalMutating !== undefined ? { canonicalMutating: gate.prompt.canonicalMutating } : {}),
+      ...(gate.prompt.canonicalResourceType ? { canonicalResourceType: gate.prompt.canonicalResourceType } : {}),
+      ...(gate.prompt.canonicalResourceId ? { canonicalResourceId: gate.prompt.canonicalResourceId } : {}),
+    };
+    const expiryDecision = evaluateFridayChannelApprovalExpiry({
+      expiresAt: gate.prompt.expiresAt,
+      nowIso: nowIso(),
+    });
+    if (expiryDecision.expired) {
+      const denialReason = expiryDecision.reason;
+      appendAgentRunEventOutsideRuntime(runId, "agent.run.capability_grant_denied", {
+        ...grantPayloadBase,
+        denialReason,
+      });
+      appendCapabilityGrantAudit({
+        ...grantPayloadBase,
+        decision: "denied",
+        denialReason,
+      });
+      gate.resolve({
+        approved: false,
+        reason: denialReason,
+        decidedByPrincipalId: options.approverPrincipalId,
+        ...(options.approverPrincipalType ? { decidedByPrincipalType: options.approverPrincipalType } : {}),
+        ...(options.approvalSurface ? { approvalSurface: options.approvalSurface } : {}),
+      });
+      runMap.delete(toolCallId);
+      deleteChannelToolApprovalSessionsForRun(runId, toolCallId);
+      if (runMap.size === 0) toolApprovalGates.delete(runId);
+      return {
+        resolved: true,
+        grantId: gate.prompt.grantId,
+        decision: "rejected",
+        reason: denialReason,
+      };
+    }
     if (approved) {
       appendAgentRunEventOutsideRuntime(runId, "agent.run.capability_grant_issued", {
         ...grantPayloadBase,
@@ -8391,9 +8425,15 @@ export async function createFridayHub(
 	                      },
 	                    );
 	                    if (resolution.resolved) {
-	                      ackText = approvalCommand.approved
-	                        ? `已批准 ${pendingApprovalForCommand.shortId}，Friday 会继续执行。`
-	                        : `已拒绝 ${pendingApprovalForCommand.shortId}，Friday 不会执行该敏感操作。`;
+	                      if (resolution.reason === "approval_expired") {
+	                        ackText = `审批 ${pendingApprovalForCommand.shortId} 已过期，请重新发起操作。`;
+	                      } else if (resolution.reason === "approval_expiration_invalid") {
+	                        ackText = `审批 ${pendingApprovalForCommand.shortId} 的过期时间无效，Friday 已拒绝继续执行。`;
+	                      } else {
+	                        ackText = approvalCommand.approved
+	                          ? `已批准 ${pendingApprovalForCommand.shortId}，Friday 会继续执行。`
+	                          : `已拒绝 ${pendingApprovalForCommand.shortId}，Friday 不会执行该敏感操作。`;
+	                      }
 	                    } else {
 	                      ackText = `审批 ${pendingApprovalForCommand.shortId} 已经结束，不需要重复处理。`;
 	                    }

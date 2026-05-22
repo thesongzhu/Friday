@@ -223,16 +223,19 @@ describe("real-world executors", () => {
       realWorldPrompt: "Reply with exactly: unified state probe complete.",
       execution: {
         kind: "agent_run",
-        expectUnifiedTaskState: { state: "verified_receipt" },
+        expectUnifiedTaskState: { state: "verified_receipt", sourceSurface: "channel" },
         constraints: { readOnly: true },
       },
     };
   }
 
-  function createUnifiedTaskStateFixture(state = "verified_receipt") {
+  function createUnifiedTaskStateFixture(state = "verified_receipt", sourceSurface = "channel") {
     return {
       schemaVersion: "friday.agent.unified_task_state.v1",
       state,
+      run: {
+        sourceSurface,
+      },
       requiredAction: "read_verified_receipt",
       channelBoundary: {
         consumableByChannelAdapters: true,
@@ -543,9 +546,45 @@ describe("real-world executors", () => {
     expect(artifact.raw.unifiedTaskState).toMatchObject({
       getState: "verified_receipt",
       auditState: "verified_receipt",
+      sourceSurface: "channel",
+      auditSourceSurface: "channel",
       liveChannelProof: "not_claimed",
     });
+    expect(artifact.observedEvidence).toContain("unified task source surface channel");
     expect(artifact.observedEvidence).toContain("unified task live channel proof not_claimed");
+  });
+
+  it("forwards forced review requirements to agent runs", async () => {
+    let capturedBody: unknown;
+    const artifact = await executeScenario({
+      runId: "validation-run-forced-review",
+      suite: "smoke",
+      scenario: {
+        id: "l3-forced-review-probe",
+        entrySurface: "/v1/agent/runs",
+        expectedEvidence: [],
+        severityOnFailure: "P0",
+        realWorldPrompt: "Forced review probe.",
+        execution: {
+          kind: "agent_run",
+          requireReview: true,
+          constraints: { readOnly: true },
+        },
+      },
+      lane,
+      client: createAgentScenarioClient({
+        responseText: "forced review probe complete",
+        onStartAgentRun: (body) => {
+          capturedBody = body;
+        },
+      }),
+      envTruth: {},
+      reportRoot: tmpdir(),
+      uiBaseUrl: "http://127.0.0.1:3141",
+    });
+
+    expect(artifact.result).toBe("passed");
+    expect(capturedBody).toMatchObject({ requireReview: true });
   });
 
   it("passes context cost evidence only when the run record has nonzero estimated input tokens", async () => {
