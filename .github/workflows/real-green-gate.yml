@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      phase24c_telegram_trusted_inbound:
+        description: "Run the manual Phase24C Telegram trusted-user inbound listener."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -163,3 +168,44 @@ jobs:
         with:
           name: phase24b-discord-trusted-inbound-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24b-discord-trusted-inbound
+
+  phase24c-telegram-trusted-inbound:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24c_telegram_trusted_inbound == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
+      FRIDAY_TELEGRAM_CHAT_ID: ${{ secrets.FRIDAY_TELEGRAM_CHAT_ID || vars.FRIDAY_TELEGRAM_CHAT_ID }}
+      FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
+      FRIDAY_TELEGRAM_MODE: ${{ secrets.FRIDAY_TELEGRAM_MODE || vars.FRIDAY_TELEGRAM_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      PHASE24C_TELEGRAM_LISTENER_TIMEOUT_MS: "480000"
+      PHASE24C_TELEGRAM_POLLING_TIMEOUT_SEC: "5"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Telegram user-origin message
+        run: PHASE24C_REPORT_ROOT="$RUNNER_TEMP/phase24c-telegram-trusted-inbound" npm run ops:phase24c:telegram-trusted-inbound
+
+      - name: Upload Phase24C Telegram trusted inbound artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24c-telegram-trusted-inbound-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24c-telegram-trusted-inbound
