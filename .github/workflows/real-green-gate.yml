@@ -138,7 +138,6 @@ jobs:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
       PHASE24B_DISCORD_LISTENER_TIMEOUT_MS: "480000"
-      PHASE24B_REPORT_ROOT: ${{ runner.temp }}/phase24b-discord-trusted-inbound
     steps:
       - uses: actions/checkout@v5
         with:
@@ -156,7 +155,7 @@ jobs:
         run: npm run build:api
 
       - name: Wait for trusted Discord user-origin message
-        run: npm run ops:phase24b:discord-trusted-inbound
+        run: PHASE24B_REPORT_ROOT="$RUNNER_TEMP/phase24b-discord-trusted-inbound" npm run ops:phase24b:discord-trusted-inbound
 
       - name: Upload Phase24B Discord trusted inbound artifact
         if: always()
