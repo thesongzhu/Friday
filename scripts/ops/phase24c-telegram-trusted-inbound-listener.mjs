@@ -830,8 +830,8 @@ async function main() {
       await writeReport(report, config?.botToken ?? "").catch(() => {});
       if (process.exitCode === 0 || process.exitCode === undefined) process.exitCode = 1;
     }
-    if (cleanupFailures.length > 0 && process.env.GITHUB_ACTIONS === "true") {
-      process.exit(process.exitCode ?? 1);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      process.exit(process.exitCode ?? 0);
     }
   }
 }
