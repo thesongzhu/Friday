@@ -44,6 +44,7 @@ export interface FridayAgentPlanningGateService {
     taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: FridayAgentRunConstraints;
     disabledToolNames?: string[];
+    executionContext?: FridayAgentResumeRunParams["executionContext"];
     reviewRequired?: boolean;
     conversationContext?: FridayAgentConversationContext;
     focusState?: {
@@ -139,6 +140,20 @@ function withDisabledToolBoundaryMetadata(
         },
       }
       : {}),
+  };
+}
+
+function withExecutionSurfaceMetadata(
+  metadata: FridayAgentRunMetadata | undefined,
+  executionContext: FridayAgentResumeRunParams["executionContext"] | undefined,
+): FridayAgentRunMetadata | undefined {
+  const surface = executionContext?.surface?.trim();
+  if (!metadata && !surface) {
+    return undefined;
+  }
+  return {
+    ...(metadata ?? {}),
+    ...(surface ? { surface } : {}),
   };
 }
 
@@ -427,13 +442,17 @@ export function createFridayAgentPlanningGateService(
     taskProfile?: FridayResolvedAgentTaskProfile;
     constraints?: FridayAgentRunConstraints;
     disabledToolNames?: string[];
+    executionContext?: FridayAgentResumeRunParams["executionContext"];
     kind: FridayPlanningKind;
     status: "awaiting_clarification" | "awaiting_plan_approval";
     message: string;
     planReview: FridayAgentPlanReviewPayload;
   }): FridayAgentRuntimeResult {
     const existing = deps.db.withReadConnection((reader) => deps.repo.getById(reader, input.runId));
-    const metadata = withDisabledToolBoundaryMetadata(existing?.metadata, input.disabledToolNames);
+    const metadata = withExecutionSurfaceMetadata(
+      withDisabledToolBoundaryMetadata(existing?.metadata, input.disabledToolNames),
+      input.executionContext,
+    );
     const actualExecution: FridayAgentActualExecution = {
       requestedProviderId: input.providerId,
       requestedModel: input.model,
@@ -772,6 +791,7 @@ export function createFridayAgentPlanningGateService(
             taskProfile: input.taskProfile,
             constraints: input.constraints,
             disabledToolNames: input.disabledToolNames,
+            executionContext: input.executionContext,
             kind,
             status: "awaiting_plan_approval",
             message: plan.markdown,
@@ -803,6 +823,7 @@ export function createFridayAgentPlanningGateService(
           taskProfile: input.taskProfile,
           constraints: input.constraints,
           disabledToolNames: input.disabledToolNames,
+          executionContext: input.executionContext,
           kind,
           status: "awaiting_clarification",
           message: prompt,

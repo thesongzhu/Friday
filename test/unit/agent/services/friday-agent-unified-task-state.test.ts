@@ -95,6 +95,34 @@ describe("buildFridayAgentUnifiedTaskState", () => {
     });
   });
 
+  it("preserves channel-origin runs in the same shared state contract without claiming live delivery", () => {
+    const snapshot = buildFridayAgentUnifiedTaskState({
+      run: run({
+        status: "awaiting_plan_approval",
+        metadata: { surface: "channel" },
+      }),
+      events: [event(1, "agent.run.awaiting_plan_approval")],
+    });
+
+    expect(snapshot).toMatchObject({
+      schemaVersion: FRIDAY_AGENT_UNIFIED_TASK_STATE_SCHEMA_VERSION,
+      state: "awaiting_plan_approval",
+      source: "planning_gate",
+      requiredAction: "approve_or_reject_plan",
+      run: {
+        runId: "run-1",
+        runStatus: "awaiting_plan_approval",
+        sourceSurface: "channel",
+      },
+      channelBoundary: {
+        consumableByChannelAdapters: true,
+        liveChannelProof: "not_claimed",
+      },
+    });
+    expect(snapshot.proofBoundary).toContain("shared local/API/channel-origin task-state contract");
+    expect(snapshot.proofBoundary).toContain("not channel live proof");
+  });
+
   it("keeps unresolved tool approval open without repeating raw approval params", () => {
     const snapshot = buildFridayAgentUnifiedTaskState({
       run: run({ status: "executing" }),

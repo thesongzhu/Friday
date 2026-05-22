@@ -187,6 +187,34 @@ export function canResolveFridayChannelApprovalFromMessage(input: {
     && input.route.senderId === input.message.senderId;
 }
 
+export type FridayChannelApprovalExpiryDecision =
+  | { expired: false }
+  | {
+    expired: true;
+    reason: "approval_expired" | "approval_expiration_invalid";
+  };
+
+export function evaluateFridayChannelApprovalExpiry(input: {
+  expiresAt: string;
+  nowIso: string;
+}): FridayChannelApprovalExpiryDecision {
+  const expiresAtMs = Date.parse(input.expiresAt);
+  const nowMs = Date.parse(input.nowIso);
+  if (!Number.isFinite(expiresAtMs) || !Number.isFinite(nowMs)) {
+    return {
+      expired: true,
+      reason: "approval_expiration_invalid",
+    };
+  }
+  if (expiresAtMs <= nowMs) {
+    return {
+      expired: true,
+      reason: "approval_expired",
+    };
+  }
+  return { expired: false };
+}
+
 export interface FridayChannelTerminalTextInput {
   status: "completed" | "failed" | "cancelled";
   response: string;
