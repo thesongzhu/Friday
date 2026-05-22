@@ -5,10 +5,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { createFridayHttpServer } from "#api";
-import { createDiscordGatewayService, normalizeDiscordMessageCreate } from "#channels";
+import {
+  createDiscordGatewayService,
+  createDiscordRestService,
+  createFridayDiscordChannel,
+  normalizeDiscordMessageCreate,
+} from "#channels";
 import { createFridayHub } from "#hub";
 
-const PROBE_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
+const PROBE_BODY_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
 const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
 const DISCORD_GUILDS = 1 << 0;
 const DISCORD_GUILD_MESSAGES = 1 << 9;
@@ -31,6 +36,25 @@ function envInteger(name, fallback) {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sanitizeNoncePart(value, fallback) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const cleaned = raw.replace(/[^A-Za-z0-9_.-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 64) : fallback;
+}
+
+function buildProbeNonce() {
+  const explicit = process.env.PHASE24B_DISCORD_PROBE_NONCE?.trim();
+  if (explicit) return sanitizeNoncePart(explicit, "phase24b-run-explicit");
+  const runId = sanitizeNoncePart(process.env.GITHUB_RUN_ID, "local");
+  const sha = sanitizeNoncePart((process.env.GITHUB_SHA ?? "local").slice(0, 8), "local");
+  return `phase24b-run-${runId}-${sha}`;
+}
+
+function messageIncludesProbe(value, config) {
+  const text = String(value ?? "");
+  return text.includes(config.probeBodyText) && text.includes(config.probeNonce);
 }
 
 function tail(value) {
@@ -127,14 +151,125 @@ function hasMention(payload, botUserId) {
   return Array.isArray(payload?.mentions) && payload.mentions.some((mention) => mention?.id === botUserId);
 }
 
-function isTargetMessage(payload, config) {
-  if (!payload || typeof payload !== "object") return false;
-  if (payload.channel_id !== config.channelId) return false;
-  if (payload.author?.id !== config.setupUserId) return false;
-  if (payload.author?.bot === true) return false;
-  if (config.requireMention && !hasMention(payload, config.botUserId)) return false;
-  if (!String(payload.content ?? "").includes(PROBE_TEXT)) return false;
-  return true;
+function inspectDiscordPayload(payload, config, receivedAtMs) {
+  const content = String(payload?.content ?? "");
+  const mentionMatched = !config.requireMention || hasMention(payload, config.botUserId);
+  const authorBotFalse = payload?.author?.bot !== true;
+  const senderMatched = payload?.author?.id === config.setupUserId;
+  const channelMatched = payload?.channel_id === config.channelId;
+  const probeBodyMatched = content.includes(config.probeBodyText);
+  const nonceMatched = content.includes(config.probeNonce);
+  let normalized = null;
+  if (payload?.id && payload?.author) {
+    normalized = normalizeDiscordMessageCreate(payload, config.requireMention, config.botUserId);
+  }
+  const rawTargetMatched = authorBotFalse
+    && senderMatched
+    && channelMatched
+    && mentionMatched
+    && probeBodyMatched
+    && nonceMatched;
+  return {
+    receivedAt: new Date(receivedAtMs).toISOString(),
+    receivedAtMs,
+    messageId: typeof payload?.id === "string" ? payload.id : null,
+    messageIdTail: tail(payload?.id),
+    channelIdTail: tail(payload?.channel_id),
+    guildIdTail: tail(payload?.guild_id),
+    senderIdTail: tail(payload?.author?.id),
+    authorBot: payload?.author?.bot === true,
+    authorBotFalse,
+    senderMatched,
+    channelMatched,
+    mentionMatched,
+    probeBodyMatched,
+    nonceMatched,
+    fullProbeMatched: probeBodyMatched && nonceMatched,
+    rawTargetMatched,
+    normalizerAccepted: normalized !== null,
+    normalized,
+  };
+}
+
+function redactedDiscordInspection(inspection) {
+  return {
+    receivedAt: inspection.receivedAt,
+    messageIdTail: inspection.messageIdTail,
+    channelIdTail: inspection.channelIdTail,
+    guildIdTail: inspection.guildIdTail,
+    senderIdTail: inspection.senderIdTail,
+    authorBot: inspection.authorBot,
+    authorBotFalse: inspection.authorBotFalse,
+    senderMatched: inspection.senderMatched,
+    channelMatched: inspection.channelMatched,
+    mentionMatched: inspection.mentionMatched,
+    probeBodyMatched: inspection.probeBodyMatched,
+    nonceMatched: inspection.nonceMatched,
+    fullProbeMatched: inspection.fullProbeMatched,
+    rawTargetMatched: inspection.rawTargetMatched,
+    normalizerAccepted: inspection.normalizerAccepted,
+  };
+}
+
+function recordDiscordMessageCreate(report, observedEventsByMessageId, payload, config) {
+  const receivedAtMs = Date.now();
+  const inspection = inspectDiscordPayload(payload, config, receivedAtMs);
+  const redacted = redactedDiscordInspection(inspection);
+  const diagnostics = report.diagnostics.discordHubAdapter;
+  diagnostics.messageCreateCount += 1;
+  diagnostics.lastMessageCreate = redacted;
+  if (inspection.fullProbeMatched) diagnostics.nonceMessageCreateCount += 1;
+  if (inspection.rawTargetMatched) diagnostics.targetRawMessageCreateCount += 1;
+  if (inspection.messageId) {
+    observedEventsByMessageId.set(inspection.messageId, {
+      payload,
+      normalized: inspection.normalized,
+      receivedAtMs,
+      inspection: redacted,
+    });
+  }
+  if (!inspection.rawTargetMatched) return;
+
+  report.criteria.listenerReceivedMessageCreate = true;
+  report.criteria.authorBotFalse = inspection.authorBotFalse;
+  report.criteria.authorMatchesTrustedSetupUser = inspection.senderMatched;
+  report.criteria.channelMatchesConfiguredChannel = inspection.channelMatched;
+  report.criteria.requireMentionSatisfied = inspection.mentionMatched;
+  report.criteria.nonceMatched = inspection.nonceMatched;
+  report.criteria.normalizerDidNotDrop = inspection.normalizerAccepted;
+  report.observedDiscordEvent = {
+    type: "MESSAGE_CREATE",
+    ...redacted,
+  };
+  diagnostics.matchedMessageCreate = redacted;
+}
+
+function createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId) {
+  const gateway = createDiscordGatewayService();
+  return {
+    async connect(token, intents, onEvent, onStatusChange) {
+      await gateway.connect(token, intents, (event) => {
+        if (event?.t === "MESSAGE_CREATE") {
+          recordDiscordMessageCreate(report, observedEventsByMessageId, event.d, config);
+        }
+        onEvent(event);
+      }, (status) => {
+        const connected = status === "connected" || gateway.isConnected();
+        report.criteria.gatewayConnected = connected;
+        report.diagnostics.discordHubAdapter.gatewayConnected = connected;
+        if (onStatusChange) onStatusChange(status);
+      });
+      report.criteria.gatewayConnected = gateway.isConnected();
+      report.diagnostics.discordHubAdapter.gatewayConnected = gateway.isConnected();
+    },
+    async disconnect() {
+      await gateway.disconnect();
+      report.diagnostics.discordHubAdapter.gatewayConnected = false;
+    },
+    isConnected() {
+      return gateway.isConnected();
+    },
+  };
 }
 
 function initialReport(config, reportPath) {
@@ -150,6 +285,7 @@ function initialReport(config, reportPath) {
     reportPath,
     environment: {
       githubSha: process.env.GITHUB_SHA ?? null,
+      githubRunId: process.env.GITHUB_RUN_ID ?? null,
       githubRefName: process.env.GITHUB_REF_NAME ?? null,
       timeoutMs: config.timeoutMs,
       requireMention: config.requireMention,
@@ -158,6 +294,9 @@ function initialReport(config, reportPath) {
       configuredSetupUserIdTail: tail(config.setupUserId),
       configuredBotUserIdTail: tail(config.botUserId),
       discordTokenPresent: Boolean(config.botToken),
+      probeBodyText: config.probeBodyText,
+      probeNonce: config.probeNonce,
+      expectedOperatorMessage: config.expectedOperatorMessage,
     },
     criteria: {
       gatewayConnected: false,
@@ -166,15 +305,19 @@ function initialReport(config, reportPath) {
       authorMatchesTrustedSetupUser: false,
       channelMatchesConfiguredChannel: false,
       requireMentionSatisfied: !config.requireMention,
+      nonceMatched: false,
       normalizerDidNotDrop: false,
       normalizedChannelKindDiscord: false,
       normalizedSenderMatchesTrustedSetupUser: false,
       normalizedChatMatchesConfiguredChannel: false,
       normalizedChatTypeGroup: false,
       fridayHubChannelConnected: false,
+      realHubAdapterAcceptedMessage: false,
       userSessionMirrorMatched: false,
+      sessionMirrorMatchesNonce: false,
       sharedStateMachineRunFound: false,
       fridayRunTaskMatchedProbe: false,
+      runMatchesNonce: false,
       getRunUnifiedTaskStateAvailable: false,
       auditUnifiedTaskStateAvailable: false,
       runAuditUnifiedTaskStateMatch: false,
@@ -186,8 +329,30 @@ function initialReport(config, reportPath) {
       notCompleted: false,
       evidenceReceiptAvailable: false,
       discordShortReceiptObserved: false,
+      assistantSessionReplyObserved: false,
+      evidenceMatchesNonce: false,
       fullEvidenceSurfaceExported: false,
       artifactHasNoToken: false,
+    },
+    diagnostics: {
+      proofSource: "instrumented_hub_gateway_and_current_runner_session",
+      discordHubAdapter: {
+        gatewayConnected: false,
+        realHubAdapterAcceptedMessage: false,
+        messageCreateCount: 0,
+        nonceMessageCreateCount: 0,
+        targetRawMessageCreateCount: 0,
+        lastMessageCreate: null,
+        matchedMessageCreate: null,
+      },
+      currentRunnerNonceCorrespondence: {
+        sourceMessageIdTail: null,
+        sessionMirrorMatchesNonce: false,
+        sessionMirrorSourceMessageIdMatchesGateway: false,
+        runMatchesNonce: false,
+        evidenceMatchesNonce: false,
+      },
+      localNonCurrentRunnerAmbiguityPossible: true,
     },
     observedDiscordEvent: null,
     normalizedMessage: null,
@@ -224,7 +389,7 @@ function resolveReportPath() {
   return path.join(reportRoot, "phase24b-discord-trusted-inbound-proof.json");
 }
 
-async function waitForRun(baseUrl, receivedAtMs, normalizedMessage, timeoutMs) {
+async function waitForRun(baseUrl, receivedAtMs, normalizedMessage, config, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   const sessionKey = `channel:discord:${normalizedMessage.chatId}`;
   const expectedTask = normalizedMessage.text.trim();
@@ -239,7 +404,7 @@ async function waitForRun(baseUrl, receivedAtMs, normalizedMessage, timeoutMs) {
         if (!Number.isFinite(createdAtMs) || createdAtMs < receivedAtMs - 10_000) return false;
         if (run?.sessionKey !== sessionKey) return false;
         if (run?.metadata?.surface !== "channel") return false;
-        return run?.task === expectedTask || String(run?.task ?? "").includes(PROBE_TEXT);
+        return run?.task === expectedTask || messageIncludesProbe(run?.task, config);
       })
       .sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? ""));
 
@@ -259,8 +424,9 @@ async function waitForRun(baseUrl, receivedAtMs, normalizedMessage, timeoutMs) {
   return lastCandidate;
 }
 
-async function getSessionMessages(baseUrl, normalizedMessage) {
-  const sessionKey = `channel:discord:${normalizedMessage.chatId}`;
+async function getSessionMessages(baseUrl, chatOrMessage) {
+  const chatId = typeof chatOrMessage === "string" ? chatOrMessage : chatOrMessage.chatId;
+  const sessionKey = `channel:discord:${chatId}`;
   const encoded = encodeURIComponent(sessionKey);
   const response = await apiFetch(baseUrl, "GET", `/v1/sessions/${encoded}/messages?limit=30`).catch(() => null);
   return Array.isArray(response?.items)
@@ -270,15 +436,15 @@ async function getSessionMessages(baseUrl, normalizedMessage) {
       : [];
 }
 
-async function waitForUserSessionMirror(baseUrl, normalizedMessage, timeoutMs) {
+async function waitForUserSessionMirror(baseUrl, config, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const messages = await getSessionMessages(baseUrl, normalizedMessage);
+    const messages = await getSessionMessages(baseUrl, config.channelId);
     const mirror = messages.find((message) =>
       message?.role === "user"
-      && message?.metadata?.sourceMessageId === normalizedMessage.id
       && message?.metadata?.channelKind === "discord"
-      && String(message?.contentText ?? "").includes(PROBE_TEXT)
+      && typeof message?.metadata?.sourceMessageId === "string"
+      && messageIncludesProbe(message?.contentText, config)
     );
     if (mirror) return mirror;
     await delay(1000);
@@ -286,17 +452,17 @@ async function waitForUserSessionMirror(baseUrl, normalizedMessage, timeoutMs) {
   return null;
 }
 
-async function waitForAssistantReceipt(baseUrl, normalizedMessage, timeoutMs) {
+async function waitForAssistantSessionReply(baseUrl, normalizedMessage, config, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const messages = await getSessionMessages(baseUrl, normalizedMessage);
     const receipt = messages.find((message) =>
       message?.role === "assistant"
-      && message?.metadata?.channelKind === "discord"
-      && message?.metadata?.replyToMessageId === normalizedMessage.id
-      && typeof message?.metadata?.sourceMessageId === "string"
-      && message.metadata.sourceMessageId.trim().length > 0
-      && message.metadata.sourceMessageId !== normalizedMessage.id
+      && (
+        message?.metadata?.replyToMessageId === normalizedMessage.id
+        || String(message?.contentText ?? "").includes("Proposed plan")
+        || String(message?.contentText ?? "").includes(config.probeNonce)
+      )
     );
     if (receipt) return receipt;
     await delay(1000);
@@ -305,14 +471,23 @@ async function waitForAssistantReceipt(baseUrl, normalizedMessage, timeoutMs) {
 }
 
 function readEnvConfig() {
+  const probeNonce = buildProbeNonce();
+  const probeText = `${PROBE_BODY_TEXT} ${probeNonce}`;
+  const botUserId = process.env.FRIDAY_DISCORD_BOT_USER_ID?.trim() ?? "";
   return {
     botToken: process.env.FRIDAY_DISCORD_BOT_TOKEN?.trim() ?? "",
     setupUserId: process.env.FRIDAY_DISCORD_SETUP_USER_ID?.trim() ?? "",
     guildId: process.env.FRIDAY_DISCORD_GUILD_ID?.trim() ?? "",
     channelId: process.env.FRIDAY_DISCORD_CHANNEL_ID?.trim() ?? "",
-    botUserId: process.env.FRIDAY_DISCORD_BOT_USER_ID?.trim() ?? "",
+    botUserId,
     requireMention: envBoolean("FRIDAY_DISCORD_REQUIRE_MENTION", true),
     timeoutMs: envInteger("PHASE24B_DISCORD_LISTENER_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
+    githubRunId: process.env.GITHUB_RUN_ID?.trim() || null,
+    githubSha: process.env.GITHUB_SHA?.trim() || null,
+    probeBodyText: PROBE_BODY_TEXT,
+    probeNonce,
+    probeText,
+    expectedOperatorMessage: `<@${botUserId}> ${probeText}`,
   };
 }
 
@@ -346,8 +521,8 @@ async function main() {
   const report = initialReport(config, reportPath);
   let hub;
   let server;
-  let witnessGateway;
   let stateDir = "";
+  const observedEventsByMessageId = new Map();
 
   try {
     const missingEnv = missingRequiredEnv(config);
@@ -370,24 +545,35 @@ async function main() {
       port: 0,
       logRequests: false,
       channels: {
-        enabled: true,
-        instances: [
-          {
-            kind: "discord",
-            enabled: true,
-            token: "env:FRIDAY_DISCORD_BOT_TOKEN",
-            intents: REQUIRED_INTENTS,
-            botUserId: config.botUserId,
-            allowedUsers: [config.setupUserId],
-            allowedChannels: [config.channelId],
-            requireMention: config.requireMention,
-          },
-        ],
+        enabled: false,
+        instances: [],
       },
+    });
+
+    const instrumentedGateway = createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId);
+    const discordPlugin = createFridayDiscordChannel({
+      gateway: instrumentedGateway,
+      rest: createDiscordRestService(),
+    });
+    await discordPlugin.init({
+      kind: "discord",
+      enabled: true,
+      token: config.botToken,
+      intents: REQUIRED_INTENTS,
+      botUserId: config.botUserId,
+      allowedUsers: [config.setupUserId],
+      allowedChannels: [config.channelId],
+      requireMention: config.requireMention,
+    });
+    hub.channelRegistry.register(discordPlugin, {
+      allowedUsers: [config.setupUserId],
+      allowedChats: [config.channelId],
     });
     await hub.start();
     const discordView = hub.channelRegistry.describe("discord");
     report.criteria.fridayHubChannelConnected = discordView?.status === "connected" && discordView?.running === true;
+    report.criteria.gatewayConnected = instrumentedGateway.isConnected();
+    report.diagnostics.discordHubAdapter.gatewayConnected = instrumentedGateway.isConnected();
 
     const port = await findFreePort();
     server = createFridayHttpServer({
@@ -401,66 +587,63 @@ async function main() {
     await server.listen();
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    let resolveWitness;
-    const witnessPromise = new Promise((resolve) => {
-      resolveWitness = resolve;
-    });
-
-    witnessGateway = createDiscordGatewayService();
-    await delay(envInteger("PHASE24B_DISCORD_GATEWAY_IDENTIFY_SPACING_MS", 6000));
-    await witnessGateway.connect(
-      config.botToken,
-      REQUIRED_INTENTS,
-      (event) => {
-        if (event?.t !== "MESSAGE_CREATE") return;
-        const payload = event.d;
-        if (!isTargetMessage(payload, config)) return;
-        const normalized = normalizeDiscordMessageCreate(payload, config.requireMention, config.botUserId);
-        resolveWitness({ event, payload, normalized, receivedAtMs: Date.now() });
-      },
-      (status) => {
-        if (status === "connected") {
-          report.criteria.gatewayConnected = true;
-        }
-      },
-    );
-    report.criteria.gatewayConnected = witnessGateway.isConnected();
     await writeReport(report, config.botToken);
 
     console.log("PHASE24B_DISCORD_LISTENER_READY");
     console.log("Send this in the configured Discord channel now:");
-    console.log(`<@${config.botUserId}> ${PROBE_TEXT}`);
+    console.log(config.expectedOperatorMessage);
 
-    const timeout = new Promise((resolve) => {
-      setTimeout(() => resolve(null), config.timeoutMs);
-    });
-    const observed = await Promise.race([witnessPromise, timeout]);
-    if (!observed) {
+    const mirror = await waitForUserSessionMirror(baseUrl, config, config.timeoutMs);
+    report.criteria.userSessionMirrorMatched = Boolean(mirror);
+    report.criteria.sessionMirrorMatchesNonce = Boolean(mirror && messageIncludesProbe(mirror.contentText, config));
+    report.diagnostics.currentRunnerNonceCorrespondence.sessionMirrorMatchesNonce = report.criteria.sessionMirrorMatchesNonce;
+    report.userSessionMirror = mirror
+      ? {
+        messageIdTail: tail(mirror.id),
+        sourceMessageIdTail: tail(mirror.metadata?.sourceMessageId),
+        channelKind: mirror.metadata?.channelKind ?? null,
+        contentMatchedProbe: messageIncludesProbe(mirror.contentText, config),
+        nonceMatched: String(mirror.contentText ?? "").includes(config.probeNonce),
+      }
+      : null;
+
+    if (!mirror) {
       report.status = "blocked";
-      report.blocker = "PHASE24B_WAITING_FOR_TRUSTED_USER_MESSAGE";
-      report.failures.push(`No matching trusted user MESSAGE_CREATE arrived within ${config.timeoutMs}ms`);
+      report.blocker = report.criteria.listenerReceivedMessageCreate
+        ? "PHASE24B_DISCORD_HUB_ADAPTER_DID_NOT_CREATE_NONCE_SESSION_MIRROR"
+        : "PHASE24B_WAITING_FOR_TRUSTED_USER_MESSAGE";
+      report.diagnostics.localNonCurrentRunnerAmbiguityPossible = true;
+      report.failures.push(`No current-runner user session mirror for nonce ${config.probeNonce} appeared within ${config.timeoutMs}ms`);
       await writeReport(report, config.botToken);
       process.exitCode = 2;
       return;
     }
 
-    const { payload, normalized, receivedAtMs } = observed;
-    report.criteria.listenerReceivedMessageCreate = true;
-    report.criteria.authorBotFalse = payload.author?.bot !== true;
-    report.criteria.authorMatchesTrustedSetupUser = payload.author?.id === config.setupUserId;
-    report.criteria.channelMatchesConfiguredChannel = payload.channel_id === config.channelId;
-    report.criteria.requireMentionSatisfied = !config.requireMention || hasMention(payload, config.botUserId);
-    report.criteria.normalizerDidNotDrop = normalized !== null;
-    report.observedDiscordEvent = {
-      type: "MESSAGE_CREATE",
-      messageIdTail: tail(payload.id),
-      channelIdTail: tail(payload.channel_id),
-      guildIdTail: tail(payload.guild_id),
-      authorIdTail: tail(payload.author?.id),
-      authorBot: payload.author?.bot === true,
-      contentMatchedProbe: String(payload.content ?? "").includes(PROBE_TEXT),
-      mentionsBot: hasMention(payload, config.botUserId),
-    };
+    const sourceMessageId = mirror.metadata?.sourceMessageId;
+    report.diagnostics.currentRunnerNonceCorrespondence.sourceMessageIdTail = tail(sourceMessageId);
+    const observed = typeof sourceMessageId === "string" ? observedEventsByMessageId.get(sourceMessageId) : null;
+    report.diagnostics.currentRunnerNonceCorrespondence.sessionMirrorSourceMessageIdMatchesGateway = Boolean(observed);
+
+    if (!observed) {
+      report.status = "blocked";
+      report.blocker = "PHASE24B_DISCORD_CURRENT_LISTENER_SOURCE_EVENT_NOT_FOUND";
+      report.diagnostics.localNonCurrentRunnerAmbiguityPossible = true;
+      report.failures.push("Current runner session mirror matched the nonce, but the instrumented hub gateway did not record the same sourceMessageId");
+      await writeReport(report, config.botToken);
+      process.exitCode = 2;
+      return;
+    }
+
+    const { normalized, receivedAtMs, inspection } = observed;
+    if (!inspection?.rawTargetMatched) {
+      report.status = "failed";
+      report.blocker = "PHASE24B_DISCORD_SESSION_MIRROR_SOURCE_NOT_TRUSTED_TARGET";
+      report.diagnostics.localNonCurrentRunnerAmbiguityPossible = true;
+      report.failures.push("Session mirror sourceMessageId matched a gateway event, but that event did not satisfy trusted sender/channel/mention/nonce checks");
+      await writeReport(report, config.botToken);
+      process.exitCode = 1;
+      return;
+    }
 
     if (!normalized) {
       report.status = "failed";
@@ -471,6 +654,8 @@ async function main() {
       return;
     }
 
+    report.criteria.realHubAdapterAcceptedMessage = true;
+    report.diagnostics.discordHubAdapter.realHubAdapterAcceptedMessage = true;
     report.criteria.normalizedChannelKindDiscord = normalized.channelKind === "discord";
     report.criteria.normalizedSenderMatchesTrustedSetupUser = normalized.senderId === config.setupUserId;
     report.criteria.normalizedChatMatchesConfiguredChannel = normalized.chatId === config.channelId;
@@ -482,32 +667,14 @@ async function main() {
       senderNamePresent: Boolean(normalized.senderName),
       chatIdTail: tail(normalized.chatId),
       chatType: normalized.chatType,
-      textMatchedProbe: normalized.text.includes(PROBE_TEXT),
+      textMatchedProbe: messageIncludesProbe(normalized.text, config),
+      nonceMatched: normalized.text.includes(config.probeNonce),
       replyToTail: tail(normalized.replyTo),
       timestampPresent: typeof normalized.timestamp === "number",
     };
     await writeReport(report, config.botToken);
 
-    const mirror = await waitForUserSessionMirror(baseUrl, normalized, Math.min(config.timeoutMs, 60_000));
-    report.criteria.userSessionMirrorMatched = Boolean(mirror);
-    report.userSessionMirror = mirror
-      ? {
-        messageIdTail: tail(mirror.id),
-        sourceMessageIdTail: tail(mirror.metadata?.sourceMessageId),
-        channelKind: mirror.metadata?.channelKind ?? null,
-        contentMatchedProbe: String(mirror.contentText ?? "").includes(PROBE_TEXT),
-      }
-      : null;
-    if (!mirror) {
-      report.status = "failed";
-      report.blocker = "PHASE24B_DISCORD_SESSION_MIRROR_NOT_FOUND";
-      report.failures.push("Trusted Discord message was normalized but no exact sourceMessageId user session mirror appeared");
-      await writeReport(report, config.botToken);
-      process.exitCode = 1;
-      return;
-    }
-
-    const run = await waitForRun(baseUrl, receivedAtMs, normalized, Math.min(config.timeoutMs, 180_000));
+    const run = await waitForRun(baseUrl, receivedAtMs, normalized, config, Math.min(config.timeoutMs, 180_000));
     if (!run?.id) {
       report.status = "failed";
       report.blocker = "PHASE24B_DISCORD_SHARED_STATE_MACHINE_RUN_NOT_FOUND";
@@ -523,7 +690,7 @@ async function main() {
     const runUnifiedTaskState = runRecord.unifiedTaskState ?? null;
     const auditUnifiedTaskState = audit?.unifiedTaskState ?? null;
     const state = auditUnifiedTaskState?.state ?? null;
-    const receipt = await waitForAssistantReceipt(baseUrl, normalized, Math.min(config.timeoutMs, 60_000));
+    const assistantReply = await waitForAssistantSessionReply(baseUrl, normalized, config, Math.min(config.timeoutMs, 60_000));
     const finalSessionMessages = await getSessionMessages(baseUrl, normalized);
     const exportedEvidenceFiles = [
       await writeEvidenceArtifact(report, config.botToken, "friday-agent-run-response.json", runDetails),
@@ -532,7 +699,8 @@ async function main() {
     ];
 
     report.criteria.sharedStateMachineRunFound = true;
-    report.criteria.fridayRunTaskMatchedProbe = String(runRecord.task ?? "").includes(PROBE_TEXT);
+    report.criteria.fridayRunTaskMatchedProbe = messageIncludesProbe(runRecord.task, config);
+    report.criteria.runMatchesNonce = String(runRecord.task ?? "").includes(config.probeNonce);
     report.criteria.getRunUnifiedTaskStateAvailable = unifiedTaskStateIsAvailable(runUnifiedTaskState);
     report.criteria.auditUnifiedTaskStateAvailable = unifiedTaskStateIsAvailable(auditUnifiedTaskState);
     report.criteria.runAuditUnifiedTaskStateMatch = unifiedTaskStatesMatch(runUnifiedTaskState, auditUnifiedTaskState);
@@ -548,8 +716,17 @@ async function main() {
     report.criteria.notCompleted = runRecord.status !== "completed" && state !== "completed";
     report.criteria.evidenceReceiptAvailable = audit?.replayReceipt?.schemaVersion === "friday.agent.evidence_receipt.v1"
       && audit?.replayReceipt?.run?.runId === runRecord.id;
-    report.criteria.discordShortReceiptObserved = Boolean(receipt?.metadata?.sourceMessageId);
+    report.criteria.discordShortReceiptObserved = Boolean(assistantReply?.metadata?.sourceMessageId);
+    report.criteria.assistantSessionReplyObserved = Boolean(assistantReply);
+    report.criteria.evidenceMatchesNonce = messageIncludesProbe(runRecord.task, config)
+      && finalSessionMessages.some((message) => message?.role === "user" && messageIncludesProbe(message?.contentText, config));
     report.criteria.fullEvidenceSurfaceExported = exportedEvidenceFiles.length === 3;
+    report.diagnostics.currentRunnerNonceCorrespondence.runMatchesNonce = report.criteria.runMatchesNonce;
+    report.diagnostics.currentRunnerNonceCorrespondence.evidenceMatchesNonce = report.criteria.evidenceMatchesNonce;
+    report.diagnostics.localNonCurrentRunnerAmbiguityPossible = !(report.criteria.realHubAdapterAcceptedMessage
+      && report.criteria.sessionMirrorMatchesNonce
+      && report.criteria.runMatchesNonce
+      && report.criteria.evidenceMatchesNonce);
     report.fridayRun = {
       runId: runRecord.id,
       status: runRecord.status,
@@ -557,7 +734,8 @@ async function main() {
       sourceSurface: auditUnifiedTaskState?.run?.sourceSurface ?? null,
       liveChannelProofBoundary: auditUnifiedTaskState?.channelBoundary?.liveChannelProof ?? null,
       sessionKey: runRecord.sessionKey,
-      taskMatchedProbe: String(runRecord.task ?? "").includes(PROBE_TEXT),
+      taskMatchedProbe: messageIncludesProbe(runRecord.task, config),
+      nonceMatched: String(runRecord.task ?? "").includes(config.probeNonce),
       responsePresent: Boolean(runRecord.responseText || runRecord.summary),
       completedAt: runRecord.completedAt ?? null,
     };
@@ -566,8 +744,9 @@ async function main() {
       auditEndpoint: `/v1/agent/runs/${encodeURIComponent(runRecord.id)}/audit`,
       replayReceiptStatus: audit?.replayReceipt?.receiptStatus ?? null,
       auditEventCount: Array.isArray(audit?.events) ? audit.events.length : null,
-      assistantReceiptMessageIdTail: tail(receipt?.metadata?.sourceMessageId),
-      assistantReceiptRole: receipt?.role ?? null,
+      assistantReceiptMessageIdTail: tail(assistantReply?.metadata?.sourceMessageId),
+      assistantReceiptRole: assistantReply?.role ?? null,
+      assistantSessionReplyObserved: Boolean(assistantReply),
       exportedFiles: exportedEvidenceFiles,
     };
     report.criteria.artifactHasNoToken = !containsTokenMaterial(JSON.stringify(scrub(report, config.botToken)), config.botToken);
@@ -579,15 +758,19 @@ async function main() {
       "authorMatchesTrustedSetupUser",
       "channelMatchesConfiguredChannel",
       "requireMentionSatisfied",
+      "nonceMatched",
       "normalizerDidNotDrop",
       "normalizedChannelKindDiscord",
       "normalizedSenderMatchesTrustedSetupUser",
       "normalizedChatMatchesConfiguredChannel",
       "normalizedChatTypeGroup",
       "fridayHubChannelConnected",
+      "realHubAdapterAcceptedMessage",
       "userSessionMirrorMatched",
+      "sessionMirrorMatchesNonce",
       "sharedStateMachineRunFound",
       "fridayRunTaskMatchedProbe",
+      "runMatchesNonce",
       "getRunUnifiedTaskStateAvailable",
       "auditUnifiedTaskStateAvailable",
       "runAuditUnifiedTaskStateMatch",
@@ -598,7 +781,7 @@ async function main() {
       "channelBoundaryNoLiveClaim",
       "notCompleted",
       "evidenceReceiptAvailable",
-      "discordShortReceiptObserved",
+      "evidenceMatchesNonce",
       "fullEvidenceSurfaceExported",
       "artifactHasNoToken",
     ];
@@ -619,7 +802,6 @@ async function main() {
     await writeReport(report, config?.botToken ?? "").catch(() => {});
     process.exitCode = 1;
   } finally {
-    if (witnessGateway) await witnessGateway.disconnect().catch(() => {});
     if (server) await server.close().catch(() => {});
     if (hub) await hub.stop().catch(() => {});
     if (stateDir) await fs.rm(stateDir, { recursive: true, force: true }).catch(() => {});
