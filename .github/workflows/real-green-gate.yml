@@ -2,6 +2,12 @@ name: Real Green Gate
 
 on:
   workflow_dispatch:
+    inputs:
+      phase24b_discord_trusted_inbound:
+        description: "Run the manual Phase24B Discord trusted-user inbound listener."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -115,3 +121,46 @@ jobs:
         with:
           name: real-green-gate-${{ github.run_id }}
           path: ${{ runner.temp }}/real-green-gate
+
+  phase24b-discord-trusted-inbound:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24b_discord_trusted_inbound == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_DISCORD_BOT_TOKEN: ${{ secrets.FRIDAY_DISCORD_BOT_TOKEN }}
+      FRIDAY_DISCORD_SETUP_USER_ID: ${{ secrets.FRIDAY_DISCORD_SETUP_USER_ID || vars.FRIDAY_DISCORD_SETUP_USER_ID }}
+      FRIDAY_DISCORD_GUILD_ID: ${{ secrets.FRIDAY_DISCORD_GUILD_ID || vars.FRIDAY_DISCORD_GUILD_ID }}
+      FRIDAY_DISCORD_CHANNEL_ID: ${{ secrets.FRIDAY_DISCORD_CHANNEL_ID || vars.FRIDAY_DISCORD_CHANNEL_ID }}
+      FRIDAY_DISCORD_BOT_USER_ID: ${{ secrets.FRIDAY_DISCORD_BOT_USER_ID || vars.FRIDAY_DISCORD_BOT_USER_ID }}
+      FRIDAY_DISCORD_REQUIRE_MENTION: ${{ secrets.FRIDAY_DISCORD_REQUIRE_MENTION || vars.FRIDAY_DISCORD_REQUIRE_MENTION }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      PHASE24B_DISCORD_LISTENER_TIMEOUT_MS: "480000"
+      PHASE24B_REPORT_ROOT: ${{ runner.temp }}/phase24b-discord-trusted-inbound
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Discord user-origin message
+        run: npm run ops:phase24b:discord-trusted-inbound
+
+      - name: Upload Phase24B Discord trusted inbound artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24b-discord-trusted-inbound-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24b-discord-trusted-inbound
