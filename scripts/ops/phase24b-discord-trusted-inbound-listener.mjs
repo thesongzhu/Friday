@@ -8,7 +8,7 @@ import { createFridayHttpServer } from "#api";
 import { createDiscordGatewayService, normalizeDiscordMessageCreate } from "#channels";
 import { createFridayHub } from "#hub";
 
-const PROBE_TEXT = "phase24 trusted user test";
+const PROBE_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
 const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
 const DISCORD_GUILDS = 1 << 0;
 const DISCORD_GUILD_MESSAGES = 1 << 9;
