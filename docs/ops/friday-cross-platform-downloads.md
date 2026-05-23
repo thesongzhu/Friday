@@ -4,7 +4,9 @@ Friday is moving from a source-first developer tool to a downloadable Agent OS p
 
 The release strategy is intentionally phased:
 
-1. `macOS` becomes the formal release baseline.
+1. `macOS` is the first formal release-baseline target, with real
+   signing/notarization, Sparkle/Homebrew publication, and clean-machine
+   evidence still required before calling the beta baseline release-complete.
 2. `iOS` gains a trusted-device remote console beta through TestFlight.
 3. `Android` gains a trusted-device remote console beta through Play internal or closed testing.
 4. `Windows` finishes the desktop Agent OS shell last.
@@ -22,7 +24,7 @@ Supported release baselines for this milestone:
 
 | Platform | Current Operator Path | Tagged Release Artifact | Native Companion | Truthful Status |
 | --- | --- | --- | --- | --- |
-| `macOS` | GitHub Releases, source install, launchd | `DMG` + `zip` | `Swift/AppKit` | Shipping beta baseline; Sparkle and Homebrew completion in progress |
+| `macOS` | Source install and launchd today; GitHub Releases after a tagged artifact is produced | `DMG` + `zip` | `Swift/AppKit` | Local/CI beta packaging baseline; real signed/notarized evidence and clean-machine smoke remain missing |
 | `iOS` | browser fallback today | TestFlight beta planned | mobile remote console planned | Not yet shipped for this milestone |
 | `Android` | browser fallback today | Play internal or closed beta planned | mobile remote console planned | Not yet shipped for this milestone |
 | `Windows` | source install (`npm install -g @thesongzhu/friday`) | signed installer planned | `.NET` scaffold | Scaffolded, not release-complete |

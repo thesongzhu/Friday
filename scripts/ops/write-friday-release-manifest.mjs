@@ -7,13 +7,13 @@ const PLATFORM_ORDER = ["macos", "ios", "android", "windows"];
 
 const PLATFORM_DEFAULTS = {
   macos: {
-    availability: "shipping",
-    milestone: "full_agent_os_baseline",
+    availability: "release_baseline_target",
+    milestone: "macos_beta_release_baseline_target",
     nativeCompanion: "swift_app",
     scaffolds: ["apps/macos/FridayCompanion"],
     notes: [
-      "macOS is the first full Agent OS release baseline for Friday.",
-      "Sparkle, Homebrew, and npm are required release channels for this milestone.",
+      "macOS is the first Agent OS release-baseline target, not a completed release claim.",
+      "Real signed/notarized artifacts, Sparkle/Homebrew publication evidence, and clean-machine smoke evidence are required before calling the beta baseline release-complete.",
     ],
   },
   ios: {
@@ -86,6 +86,71 @@ function sortArtifacts(artifacts) {
 
 function channelAvailability(channelMetadata, channel, fallback) {
   return channelMetadata[channel]?.availability ?? fallback;
+}
+
+function isPublishedChannel(channelMetadata, channel) {
+  return channelAvailability(channelMetadata, channel, "planned") === "published";
+}
+
+function isReleaseReadyMacosArtifact(artifact) {
+  return (
+    (artifact.kind === "dmg" || artifact.kind === "zip") &&
+    artifact.notarizationStatus === "completed" &&
+    ["signed", "notarized"].includes(artifact.signingStatus)
+  );
+}
+
+async function hasCompleteMacosCleanMachineEvidence(repoRoot) {
+  const configuredPath = process.env.FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH?.trim();
+  const evidencePath = configuredPath
+    ? path.resolve(repoRoot, configuredPath)
+    : path.join(repoRoot, "docs", "reports", "ops", "cross-platform-agent-os-beta-evidence", "macos-15-clean-machine.md");
+  try {
+    const evidence = await fs.readFile(evidencePath, "utf8");
+    return /^Status:\s*complete\s*$/imu.test(evidence);
+  } catch {
+    return false;
+  }
+}
+
+function resolveMacosPlatformStatus(platformArtifacts, channelMetadata, cleanMachineEvidenceComplete) {
+  const hasArtifacts = platformArtifacts.length > 0;
+  const hasReleaseReadyArtifact = platformArtifacts.some(isReleaseReadyMacosArtifact);
+  const hasPublishedSparkle = isPublishedChannel(channelMetadata, "sparkle");
+  const hasPublishedHomebrew = isPublishedChannel(channelMetadata, "homebrew");
+  const releaseComplete =
+    hasReleaseReadyArtifact &&
+    hasPublishedSparkle &&
+    hasPublishedHomebrew &&
+    cleanMachineEvidenceComplete;
+
+  if (releaseComplete) {
+    return {
+      availability: "shipping_beta_baseline",
+      milestone: "macos_signed_notarized_beta_baseline",
+      notes: [
+        "macOS has signed/notarized artifacts, published Sparkle/Homebrew channels, and complete clean-machine evidence for this beta baseline.",
+        "Keep release evidence attached to the tagged release before treating this as a shipped baseline.",
+      ],
+    };
+  }
+
+  if (hasArtifacts) {
+    return {
+      availability: "local_ci_packaging_baseline",
+      milestone: "macos_beta_release_baseline_target",
+      notes: [
+        "macOS artifacts are local/CI packaging outputs until release credentials, channel publication, and clean-machine smoke are all proven.",
+        "DMG/zip presence alone does not prove signed/notarized release readiness.",
+      ],
+    };
+  }
+
+  return {
+    availability: PLATFORM_DEFAULTS.macos.availability,
+    milestone: PLATFORM_DEFAULTS.macos.milestone,
+    notes: PLATFORM_DEFAULTS.macos.notes,
+  };
 }
 
 function buildChannels({ macosArtifacts, iosArtifacts, androidArtifacts, sourceArtifacts, channelMetadata }) {
@@ -234,19 +299,20 @@ async function main() {
   }
 
   const sourceArtifacts = sortArtifacts(artifacts.filter((artifact) => artifact.platform === "source"));
+  const macosCleanMachineEvidenceComplete = await hasCompleteMacosCleanMachineEvidence(repoRoot);
   const platformEntries = PLATFORM_ORDER.map((platform) => {
     const defaults = PLATFORM_DEFAULTS[platform];
     const platformArtifacts = sortArtifacts(artifacts.filter((artifact) => artifact.platform === platform));
-    const availability = platformArtifacts.length > 0 && platform === "macos"
-      ? "shipping"
-      : defaults.availability;
+    const macosStatus = platform === "macos"
+      ? resolveMacosPlatformStatus(platformArtifacts, channelMetadata, macosCleanMachineEvidenceComplete)
+      : null;
     return {
       platform,
-      availability,
-      milestone: defaults.milestone,
+      availability: macosStatus?.availability ?? defaults.availability,
+      milestone: macosStatus?.milestone ?? defaults.milestone,
       nativeCompanion: defaults.nativeCompanion,
       scaffolds: defaults.scaffolds,
-      notes: defaults.notes,
+      notes: macosStatus?.notes ?? defaults.notes,
       artifacts: platformArtifacts,
     };
   });
