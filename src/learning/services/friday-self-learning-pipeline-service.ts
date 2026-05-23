@@ -34,10 +34,6 @@ export interface FridaySelfLearningPipelineService {
   ): FridaySelfLearningProcessResult[];
 }
 
-export interface FridayLearningMemoryWriter {
-  store(namespace: string, content: string, metadata?: Record<string, unknown>): Promise<unknown>;
-}
-
 export interface CreateSelfLearningPipelineServiceDeps {
   db: FridaySqliteLayer;
   events: FridayLearningEventCollectionService;
@@ -52,8 +48,6 @@ export interface CreateSelfLearningPipelineServiceDeps {
   diagnosisService?: FridayErrorDiagnosisService;
   planService?: FridayAutoFixPlanService;
   riskService?: FridayAutoFixRiskAssessmentService;
-  /** Optional memory service for persisting extracted preferences as searchable memory items. */
-  memoryWriter?: FridayLearningMemoryWriter;
   idGenerator: () => string;
   nowIso: () => string;
 }

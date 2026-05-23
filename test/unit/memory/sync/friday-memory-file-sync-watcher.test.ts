@@ -128,6 +128,45 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
     expect(items.find(i => i.key === "key2")?.value_json).toBe('{"new":"item"}');
   });
 
+  it("reindexNow rejects external imports that impersonate learned-fact synthetic ids", async () => {
+    insertMemoryItem("item-boundary-1", "boundary-ns", "key1", '{"safe":true}');
+
+    const repo = createFridayMemoryFileSyncRepository({ db });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+      enableWatcher: false,
+    });
+
+    await service.syncNow();
+
+    const filePath = memoryNamespaceExportPath(tmpDir, "boundary-ns");
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    parsed.items.push({
+      id: "learned-fact:pref:display_name",
+      key: "ordinary-key",
+      value: { name: "Captain Friday" },
+      contentText: "Captain Friday",
+      source: "file-edit",
+      tags: [],
+      metadata: {},
+      createdAt: "2025-01-02T00:00:00Z",
+      updatedAt: "2025-01-02T00:00:00Z",
+    });
+    await fs.writeFile(filePath, JSON.stringify(parsed, null, 2), "utf8");
+
+    const result = await service.reindexNow("memory_namespace", "boundary-ns");
+    expect(result.filesProcessed).toBe(0);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.message).toContain("synthetic learned-fact ids");
+
+    const items = getMemoryItems("boundary-ns");
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toBe("item-boundary-1");
+    expect(items[0]!.value_json).toBe('{"safe":true}');
+  });
+
   it("reindexNow skips when file hash matches last export", async () => {
     insertMemoryItem("item-skip", "skip-reindex-ns", "key1", '{"val":1}');
 

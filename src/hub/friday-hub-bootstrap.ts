@@ -370,6 +370,7 @@ import {
   buildFridayChannelDeliveryFailureText,
   buildFridayChannelMessageTooLongText,
   canResolveFridayChannelApprovalFromMessage,
+  createFridayChannelToolApprovalShortId,
   createFridayHubAutoFixExecutionSupport,
   createStubConfigManager,
   createStubMemoryState,
@@ -396,6 +397,7 @@ import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gate
 // Re-export public API for backward compatibility with `#hub` barrel.
 export {
   canResolveFridayChannelApprovalFromMessage,
+  createFridayChannelToolApprovalShortId,
   evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,
   resolveFridayChannelApprovalPrincipalId,
@@ -3926,7 +3928,6 @@ export async function createFridayHub(
     nowIso,
     stepExecutors: hubAutoFixSupport.stepExecutors,
     stepVerifiers: hubAutoFixSupport.stepVerifiers,
-    memoryWriter: memoryService,
   });
 
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
@@ -4028,6 +4029,14 @@ export async function createFridayHub(
 	    canonicalAction?: string;
 	    canonicalRisk?: string;
 	  };
+  type FridayRestartedChannelToolApproval = Omit<FridayPendingChannelToolApproval, "params" | "route">;
+  type FridayAgentRunEventSqlRow = {
+    run_id: string;
+    seq: number;
+    event_name: string;
+    payload_json: string;
+    emitted_at: string;
+  };
   const channelApprovalRoutesBySession = new Map<string, FridayChannelApprovalRoute>();
   const channelApprovalRoutesByRun = new Map<string, FridayChannelApprovalRoute>();
   const channelApprovalRoutesBySessionPrincipal = new Map<string, FridayChannelApprovalRoute>();
@@ -4045,11 +4054,6 @@ export async function createFridayHub(
 
   const channelApprovalSessionPrincipalKey = (sessionKey: string, principalId: string): string =>
     `${sessionKey}:${principalId}`;
-
-  const createChannelToolApprovalShortId = (runId: string, toolCallId: string): string => {
-    const source = `${runId}:${toolCallId}`.replace(/[^a-z0-9]/gi, "");
-    return (source.slice(-6) || "ACTION").toUpperCase();
-  };
 
   const parseChannelToolApprovalCommand = (text: string): FridayChannelToolApprovalCommand | null => {
     const trimmed = text.trim();
@@ -4139,6 +4143,73 @@ export async function createFridayHub(
   ): FridayPendingChannelToolApproval[] =>
     [...channelToolApprovalSessions.values()].filter((pending) => pending.sessionKey === sessionKey);
 
+  const listRestartedChannelToolApprovalsForSession = (
+    sessionKey: string,
+  ): FridayRestartedChannelToolApproval[] => {
+    const decisionEventNames = new Set([
+      "agent.run.capability_grant_issued",
+      "agent.run.capability_grant_denied",
+      "agent.run.capability_grant_used",
+    ]);
+    const pendingByKey = new Map<string, FridayRestartedChannelToolApproval>();
+    try {
+      const rows = stateRuntime!.sqlite.withReadConnection((db) =>
+        db.prepare(
+          `SELECT run_id, seq, event_name, payload_json, emitted_at
+             FROM friday_agent_run_events
+            WHERE event_name IN (
+              'agent.run.awaiting_tool_approval',
+              'agent.run.capability_grant_issued',
+              'agent.run.capability_grant_denied',
+              'agent.run.capability_grant_used'
+            )
+              AND json_extract(payload_json, '$.sessionKey') = ?
+            ORDER BY emitted_at ASC, seq ASC
+            LIMIT 1000`,
+        ).all(sessionKey) as FridayAgentRunEventSqlRow[],
+      );
+      for (const row of rows) {
+        const payload = safeJsonParse<Record<string, unknown>>(row.payload_json) ?? {};
+        const runId = typeof payload.runId === "string" ? payload.runId : row.run_id;
+        const toolCallId = typeof payload.toolCallId === "string" ? payload.toolCallId : undefined;
+        if (!toolCallId) continue;
+        const key = `${runId}:${toolCallId}`;
+        if (decisionEventNames.has(row.event_name)) {
+          pendingByKey.delete(key);
+          continue;
+        }
+        if (
+          row.event_name !== "agent.run.awaiting_tool_approval"
+          || payload.surface !== "channel"
+          || payload.sessionKey !== sessionKey
+        ) {
+          continue;
+        }
+        const grantId = typeof payload.grantId === "string" ? payload.grantId : undefined;
+        const toolName = typeof payload.toolName === "string" ? payload.toolName : undefined;
+        const reason = typeof payload.reason === "string" ? payload.reason : undefined;
+        const expiresAt = typeof payload.expiresAt === "string" ? payload.expiresAt : undefined;
+        if (!grantId || !toolName || !reason || !expiresAt) continue;
+        pendingByKey.set(key, {
+          runId,
+          sessionKey,
+          grantId,
+          toolCallId,
+          toolName,
+          shortId: createFridayChannelToolApprovalShortId(runId, toolCallId),
+          reason,
+          expiresAt,
+          ...(typeof payload.actionDigest === "string" ? { canonicalActionDigest: payload.actionDigest } : {}),
+          ...(typeof payload.canonicalAction === "string" ? { canonicalAction: payload.canonicalAction } : {}),
+          ...(typeof payload.riskLevel === "string" ? { canonicalRisk: payload.riskLevel } : {}),
+        });
+      }
+    } catch (err) {
+      warnHubBootstrapOnce(`[friday] channel-tool-approval-restart-scan: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return [...pendingByKey.values()];
+  };
+
   const deleteChannelToolApprovalSessionsForRun = (runId: string, toolCallId?: string): void => {
     for (const [key, pending] of channelToolApprovalSessions) {
       if (pending.runId === runId && (!toolCallId || pending.toolCallId === toolCallId)) {
@@ -4212,7 +4283,7 @@ export async function createFridayHub(
           )
         : undefined);
     if (!route) return;
-    const shortId = createChannelToolApprovalShortId(prompt.runId, prompt.toolCallId);
+    const shortId = createFridayChannelToolApprovalShortId(prompt.runId, prompt.toolCallId);
     const approvalSessionKey = route.sessionKey;
     const pending: FridayPendingChannelToolApproval = {
       runId: prompt.runId,
@@ -8193,6 +8264,9 @@ export async function createFridayHub(
           const pendingApprovalsForCommand = approvalCommand
             ? listPendingChannelToolApprovalsForSession(sessionKey)
             : [];
+          const restartedApprovalsForCommand = approvalCommand && pendingApprovalsForCommand.length === 0
+            ? listRestartedChannelToolApprovalsForSession(sessionKey)
+            : [];
           const pendingApprovalForCommand = approvalCommand
             ? approvalCommand.shortId
               ? pendingApprovalsForCommand.find((pending) => pending.shortId === approvalCommand.shortId)
@@ -8200,9 +8274,22 @@ export async function createFridayHub(
                 ? pendingApprovalsForCommand[0]
                 : undefined
             : undefined;
+          const restartedApprovalForCommand = approvalCommand
+            ? approvalCommand.shortId
+              ? restartedApprovalsForCommand.find((pending) => pending.shortId === approvalCommand.shortId)
+              : restartedApprovalsForCommand.length === 1
+                ? restartedApprovalsForCommand[0]
+                : undefined
+            : undefined;
           const shouldRouteToolApprovalCommand = Boolean(
             approvalCommand
-            && (pendingApprovalForCommand || approvalCommand.shortId || pendingApprovalsForCommand.length > 1),
+            && (
+              pendingApprovalForCommand
+              || restartedApprovalForCommand
+              || approvalCommand.shortId
+              || pendingApprovalsForCommand.length > 1
+              || restartedApprovalsForCommand.length > 1
+            ),
           );
           const reflexCandidateCommand = text.length > 0 ? parseReflexCandidateDecisionCommand(text) : null;
           if (reflexCandidateCommand) {
@@ -8440,8 +8527,22 @@ export async function createFridayHub(
 	                      ackText = `审批 ${pendingApprovalForCommand.shortId} 已经结束，不需要重复处理。`;
 	                    }
 	                  }
-	                } else if (pendingApprovalsForCommand.length > 1 && !approvalCommand.shortId) {
-                  const ids = pendingApprovalsForCommand.map((pending) => pending.shortId).join(", ");
+	                } else if (restartedApprovalForCommand) {
+	                  const expiryDecision = evaluateFridayChannelApprovalExpiry({
+	                    expiresAt: restartedApprovalForCommand.expiresAt,
+	                    nowIso: nowIso(),
+	                  });
+	                  if (expiryDecision.expired) {
+	                    ackText = `审批 ${restartedApprovalForCommand.shortId} 已过期，请重新发起操作。`;
+	                  } else {
+	                    ackText = `审批 ${restartedApprovalForCommand.shortId} 所属运行已在重启后中断，Friday 不能继续执行旧敏感操作；请重新发起操作，我会重新请求确认。`;
+	                  }
+	                } else if ((pendingApprovalsForCommand.length + restartedApprovalsForCommand.length) > 1 && !approvalCommand.shortId) {
+                  const combinedApprovals = [
+                    ...pendingApprovalsForCommand,
+                    ...restartedApprovalsForCommand,
+                  ];
+                  const ids = combinedApprovals.map((pending) => pending.shortId).join(", ");
                   ackText = `当前有多个待审批操作：${ids}。请回复「批准 <编号>」或「拒绝 <编号>」。`;
                 } else {
                   ackText = `没有找到待审批操作 ${approvalCommand.shortId ?? ""}。`;

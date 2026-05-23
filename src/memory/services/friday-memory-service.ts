@@ -23,6 +23,7 @@ import {
 import { createFridayMemoryItemRepository } from "../persistence/friday-memory-item-repository.js";
 import { createFridayMemoryEmbeddingRepository } from "../persistence/friday-memory-embedding-repository.js";
 import { createFridayMemoryByokEmbeddingClient } from "./friday-memory-byok-embedding-client.js";
+import { assertFridayDurableMemoryBoundaryAllowed } from "./friday-memory-boundary-policy.js";
 import { mergeHybridResults } from "../search/friday-memory-hybrid.js";
 
 // P2-06: Module-level Set avoids WeakMap edge cases with replaced warn sinks.
@@ -96,6 +97,12 @@ export function createFridayMemoryService(
       const tags = metadata?.tags ?? [];
       const meta = metadata?.metadata ?? {};
       const ttlSeconds = metadata?.ttlSeconds;
+      assertFridayDurableMemoryBoundaryAllowed({
+        source,
+        key,
+        tags,
+        metadata: meta,
+      });
 
       let expiresAt = metadata?.expiresAt;
       if (!expiresAt && ttlSeconds) {

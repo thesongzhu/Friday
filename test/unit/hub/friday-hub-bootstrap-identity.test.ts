@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canResolveFridayChannelApprovalFromMessage,
+  createFridayChannelToolApprovalShortId,
   evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,
   resolveFridayChannelApprovalPrincipalId,
@@ -141,5 +142,10 @@ describe("cross-channel identity mapping", () => {
       expiresAt: "not-a-date",
       nowIso: "2026-05-21T10:15:00.000Z",
     })).toEqual({ expired: true, reason: "approval_expiration_invalid" });
+  });
+
+  it("derives stable channel tool approval short codes from run and tool call ids", () => {
+    expect(createFridayChannelToolApprovalShortId("run-abc-123456", "tool-xyz-999999")).toBe("999999");
+    expect(createFridayChannelToolApprovalShortId("!!!", "***")).toBe("ACTION");
   });
 });

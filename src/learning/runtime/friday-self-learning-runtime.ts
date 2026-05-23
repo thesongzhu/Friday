@@ -179,7 +179,6 @@ export function createFridaySelfLearningRuntime(
     diagnosisService: diagnosis,
     planService: autoFixPlan,
     riskService: autoFixRisk,
-    memoryWriter: deps.memoryWriter,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
   });

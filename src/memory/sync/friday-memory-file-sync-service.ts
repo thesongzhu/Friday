@@ -46,6 +46,7 @@ import {
   createFridayMemoryFileSyncWatcher,
   type FridayMemoryFileSyncWatcher,
 } from "./friday-memory-file-sync-watcher.js";
+import { assertFridayDurableMemoryBoundaryAllowed } from "../services/friday-memory-boundary-policy.js";
 
 // ─── Dependencies ───
 
@@ -389,6 +390,18 @@ export function createFridayMemoryFileSyncService(
 
   // ─── Reindex logic (file → DB) ───
 
+  function readExportTags(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((tag): tag is string => typeof tag === "string")
+      : [];
+  }
+
+  function readExportMetadata(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
+  }
+
   async function reindexEntity(
     entityType: FridayMemorySyncEntityType,
     entityKey: string,
@@ -430,17 +443,31 @@ export function createFridayMemoryFileSyncService(
           return;
         }
 
-        const items = parsed.items.map((item: Record<string, unknown>) => ({
-          id: item.id as string,
-          key: item.key as string,
-          value_json: JSON.stringify(item.value ?? null),
-          content_text: (item.contentText as string | null) ?? null,
-          source: (item.source as string) ?? "file-import",
-          tags_json: JSON.stringify(item.tags ?? []),
-          metadata_json: JSON.stringify(item.metadata ?? null),
-          created_at: (item.createdAt as string) ?? nowIso(),
-          updated_at: (item.updatedAt as string) ?? nowIso(),
-        }));
+        const items = parsed.items.map((item: Record<string, unknown>) => {
+          const id = item.id as string;
+          const source = (item.source as string) ?? "file-import";
+          const key = item.key as string;
+          const tags = readExportTags(item.tags);
+          const metadata = readExportMetadata(item.metadata);
+          assertFridayDurableMemoryBoundaryAllowed({
+            id,
+            source,
+            key,
+            tags,
+            metadata,
+          });
+          return {
+            id,
+            key,
+            value_json: JSON.stringify(item.value ?? null),
+            content_text: (item.contentText as string | null) ?? null,
+            source,
+            tags_json: JSON.stringify(tags),
+            metadata_json: JSON.stringify(metadata ?? null),
+            created_at: (item.createdAt as string) ?? nowIso(),
+            updated_at: (item.updatedAt as string) ?? nowIso(),
+          };
+        });
 
         const { upserted, deleted } = repository.upsertMemoryItemsFromExport(entityKey, items);
         result.itemsUpserted += upserted;

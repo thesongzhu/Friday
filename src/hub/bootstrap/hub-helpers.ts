@@ -187,6 +187,11 @@ export function canResolveFridayChannelApprovalFromMessage(input: {
     && input.route.senderId === input.message.senderId;
 }
 
+export function createFridayChannelToolApprovalShortId(runId: string, toolCallId: string): string {
+  const source = `${runId}:${toolCallId}`.replace(/[^a-z0-9]/gi, "");
+  return (source.slice(-6) || "ACTION").toUpperCase();
+}
+
 export type FridayChannelApprovalExpiryDecision =
   | { expired: false }
   | {
