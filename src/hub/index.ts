@@ -27,6 +27,7 @@ export {
 // Hub bootstrap
 export {
   canResolveFridayChannelApprovalFromMessage,
+  createFridayChannelToolApprovalShortId,
   createFridayHub,
   evaluateFridayChannelApprovalExpiry,
   parseFridayChannelIdentityMap,

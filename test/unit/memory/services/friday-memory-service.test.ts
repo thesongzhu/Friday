@@ -141,6 +141,26 @@ describe("FridayMemoryService", () => {
     expect(item.expiresAt).toBeDefined();
   });
 
+  it("rejects durable writes that impersonate synthetic learned-fact memory", async () => {
+    await expect(service.store("preference", "Captain Friday", {
+      source: "learned_fact",
+    })).rejects.toMatchObject({ code: "MEMORY_BOUNDARY_RESERVED" });
+
+    await expect(service.store("preference", "Captain Friday", {
+      key: "learned-fact:pref:name",
+    })).rejects.toMatchObject({ code: "MEMORY_BOUNDARY_RESERVED" });
+
+    await expect(service.store("preference", "Captain Friday", {
+      tags: ["preference_fact"],
+    })).rejects.toMatchObject({ code: "MEMORY_BOUNDARY_RESERVED" });
+
+    await expect(service.store("preference", "Captain Friday", {
+      metadata: {
+        memoryBoundary: "separate_from_durable_memory",
+      },
+    })).rejects.toMatchObject({ code: "MEMORY_BOUNDARY_RESERVED" });
+  });
+
   it("stores successfully even when embedding fails (graceful fallback)", async () => {
     const failService = createMockProviderService({ embedFails: true });
     const svc = createFridayMemoryService({

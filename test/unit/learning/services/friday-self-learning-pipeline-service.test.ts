@@ -222,51 +222,17 @@ describe("FridaySelfLearningPipelineService", () => {
     expect(result.factsUpdated[0]!.value).toBe("Python");
   });
 
-  it("does not duplicate learned preferences into exported memory", () => {
-    const memoryWriter = {
-      store: vi.fn(),
-    };
-    const ledger = createFridayLearningEventLedger({ db });
-    const factRepo = createFridayPreferenceFactRepository();
-    const incidentRepo = createFridayErrorIncidentRepository();
-    const diagnosisRepo = createFridayDiagnosisRecordRepository();
-    const lessonRepo = createFridayLearnedLessonRepository();
-    const events = createFridayLearningEventCollectionService({ ledger });
-    const extraction = createFridayPreferenceExtractionService({
-      idGenerator: idGen,
-    });
-    const facts = createFridayPreferenceFactService({
-      db,
-      factRepo,
-      idGenerator: idGen,
-      nowIso: () => NOW,
-    });
-    const lifecycle = createFridayLearningLifecycleService({
-      db,
-      factRepo,
-    });
-    const pipelineWithoutPreferenceExports = createFridaySelfLearningPipelineService({
-      db,
-      events,
-      extraction,
-      facts,
-      lifecycle,
-      incidentRepo,
-      diagnosisRepo,
-      lessonRepo,
-      memoryWriter,
-      idGenerator: idGen,
-      nowIso: () => NOW,
-    });
-
-    const result = pipelineWithoutPreferenceExports.processEvent(makeEvent({
+  it("keeps learned preferences in preference facts instead of durable memory", () => {
+    const result = pipeline.processEvent(makeEvent({
       kind: "user_message",
       payload: { text: "Call me Codex." },
     }));
 
     expect(result.factsUpdated).toHaveLength(1);
     expect(result.factsUpdated[0]!.key).toBe("pref:display_name");
-    expect(memoryWriter.store).not.toHaveBeenCalled();
+    const memoryCount = db.withReadConnection((reader) =>
+      reader.prepare("SELECT COUNT(*) as cnt FROM memory_items").get() as { cnt: number });
+    expect(memoryCount.cnt).toBe(0);
   });
 
   it("processEvent creates incidents for error signals", () => {

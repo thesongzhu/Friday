@@ -20,6 +20,7 @@ import {
   toLearnedFactMemoryItem,
   toLearnedFactSearchResult,
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
+import { isFridayReflexConfirmationRequiredKey } from "../../../reflex/services/friday-reflex-preference-sensitivity.js";
 import { FridayDomainError } from "#errors";
 import { FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_MAX_LIMIT } from "#memory";
 import {
@@ -134,6 +135,81 @@ function readPrincipalUserId(principal: unknown): string {
   return userId;
 }
 
+function readStoreMetadata(body: FridayMemoryStoreRequest): Record<string, unknown> | undefined {
+  return body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+    ? body.metadata as Record<string, unknown>
+    : undefined;
+}
+
+function readNestedRecord(record: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
+  const value = record?.[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function readStringValue(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function readStorePreferenceKeyCandidates(body: FridayMemoryStoreRequest): string[] {
+  const metadata = readStoreMetadata(body);
+  const preference = readNestedRecord(metadata, "preference");
+  const reflex = readNestedRecord(metadata, "reflex");
+  return [
+    body.key,
+    readStringValue(metadata, "key"),
+    readStringValue(metadata, "preferenceKey"),
+    readStringValue(metadata, "reflexPreferenceKey"),
+    readStringValue(preference, "key"),
+    readStringValue(reflex, "key"),
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function memoryStoreLooksLikePreferenceActivation(body: FridayMemoryStoreRequest): boolean {
+  const metadata = readStoreMetadata(body);
+  const preference = readNestedRecord(metadata, "preference");
+  const reflex = readNestedRecord(metadata, "reflex");
+  if (
+    preference
+    || reflex
+    || readStringValue(metadata, "preferenceKey")
+    || readStringValue(metadata, "reflexPreferenceKey")
+  ) {
+    return true;
+  }
+  const tags = Array.isArray(body.tags)
+    ? body.tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const corpus = [
+    body.namespace,
+    body.source,
+    body.memoryType,
+    readStringValue(metadata, "category"),
+    readStringValue(metadata, "preferenceCategory"),
+    readStringValue(preference, "category"),
+    readStringValue(reflex, "category"),
+    ...tags,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+  return /\b(reflex|preference|preferences|user_preference|explicit_preference)\b/.test(corpus);
+}
+
+function enforceMemoryStoreApprovalBoundary(body: FridayMemoryStoreRequest): void {
+  const protectedKey = readStorePreferenceKeyCandidates(body)
+    .find((key) => isFridayReflexConfirmationRequiredKey(key));
+  if (!protectedKey) return;
+  if (!memoryStoreLooksLikePreferenceActivation(body) && body.key !== protectedKey) return;
+  throw new FridayDomainError(
+    "MEMORY_REQUIRES_REVIEW_CENTER_CONFIRMATION",
+    `High-impact preference '${protectedKey}' must be confirmed through /v1/reflex/preferences/${protectedKey} before durable activation.`,
+    { httpStatus: 409 },
+  );
+}
+
 function shouldIncludeLearnedFacts(input: {
   namespace?: string | string[];
   source?: string | string[];
@@ -228,6 +304,7 @@ export function createFridayMemoryRoutes(
         validateStoreNumericFields(rawBody);
         validateStoreBody(rawBody);
         const body = rawBody;
+        enforceMemoryStoreApprovalBoundary(body);
         const memory = deps.memoryGuardFactory.forPrincipal(ctx.principal);
         const idempotencyKey = readIdempotencyKeyHeader(ctx.headers);
         if (idempotencyKey) {
@@ -295,6 +372,7 @@ export function createFridayMemoryRoutes(
         validateStoreNumericFields(rawBody);
         validateStoreBody(rawBody);
         const body = rawBody;
+        enforceMemoryStoreApprovalBoundary(body);
         const principalId = readPrincipalUserId(ctx.principal);
         const idempotencyKey = readIdempotencyKeyHeader(ctx.headers);
         if (idempotencyKey) {

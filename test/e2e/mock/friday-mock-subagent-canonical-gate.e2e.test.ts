@@ -7,6 +7,7 @@ import {
   createMockHubEnv,
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
+import { createFridayChannelToolApprovalShortId } from "#hub";
 import type {
   FridayChannelMessage,
   FridayChannelMessageHandler,
@@ -413,5 +414,65 @@ describe("Friday live-channel canonical approval adversarial E2E", () => {
     } finally {
       fs.rmSync(sentinel, { force: true });
     }
+  }, 30_000);
+
+  it("tells the original sender to reissue an approval after restart state is only durable", async () => {
+    const runId = "run-restarted-approval-1";
+    const toolCallId = "tool-restarted-approval-1";
+    const sessionKey = "channel:test-channel:group-1";
+    const shortId = createFridayChannelToolApprovalShortId(runId, toolCallId);
+    const db = new Database(path.join(env.stateDir, "friday.db"));
+    try {
+      db.prepare(
+        `INSERT INTO friday_agent_runs (id, task, status, session_key, max_attempts, created_at, started_at)
+         VALUES (?, ?, 'failed', ?, 1, ?, ?)`,
+      ).run(
+        runId,
+        "Interrupted channel approval",
+        sessionKey,
+        "2026-05-21T10:00:00.000Z",
+        "2026-05-21T10:00:00.000Z",
+      );
+      db.prepare(
+        `INSERT INTO friday_agent_run_events
+          (event_id, run_id, seq, event_name, payload_json, emitted_at, created_at)
+         VALUES (?, ?, 1, 'agent.run.awaiting_tool_approval', ?, ?, ?)`,
+      ).run(
+        "evt-restarted-approval-1",
+        runId,
+        JSON.stringify({
+          runId,
+          status: "awaiting_tool_approval",
+          grantId: `capgrant:${runId}:${toolCallId}`,
+          toolName: "exec",
+          toolCallId,
+          params: { command: "touch should-not-run" },
+          reason: "Canonical approval required for agent.tool.exec",
+          expiresAt: "2999-05-21T10:15:00.000Z",
+          riskLevel: "high",
+          sessionKey,
+          surface: "channel",
+        }),
+        "2026-05-21T10:00:01.000Z",
+        "2026-05-21T10:00:01.000Z",
+      );
+    } finally {
+      db.close();
+    }
+
+    channel.emit({
+      id: "msg-restarted-approve",
+      senderId: "user-a",
+      senderName: "User A",
+      chatId: "group-1",
+      text: `批准 ${shortId}`,
+    });
+
+    await waitFor(() =>
+      channel.sent.find((message) =>
+        message.text.includes(`审批 ${shortId} 所属运行已在重启后中断`)
+        && message.text.includes("请重新发起操作"),
+      ) ?? null,
+    );
   }, 30_000);
 });

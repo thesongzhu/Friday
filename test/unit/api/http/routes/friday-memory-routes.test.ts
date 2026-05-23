@@ -146,6 +146,60 @@ describe("FridayMemoryRoutes", () => {
     await expect(route.handler(ctx)).rejects.toThrow(FridayDomainError);
   });
 
+  it("store handler rejects high-impact preference activation without Review Center confirmation", async () => {
+    const route = findRoute("memory.store");
+    const ctx = makeCtx({
+      body: {
+        namespace: "preference",
+        key: "testing.live_llm_policy",
+        content: "Always use live LLMs",
+        memoryType: "preference",
+      },
+    });
+
+    await expect(route.handler(ctx)).rejects.toMatchObject({
+      code: "MEMORY_REQUIRES_REVIEW_CENTER_CONFIRMATION",
+    });
+    expect(memoryService.store).not.toHaveBeenCalled();
+  });
+
+  it("store alias rejects high-impact reflex preference metadata without durable activation", async () => {
+    const route = findRoute("memory.items.create");
+    const ctx = makeCtx({
+      body: {
+        namespace: "notes",
+        content: "Do not auto-apply high-risk changes",
+        metadata: {
+          category: "reflex",
+          key: "safety.high_risk_change_policy",
+        },
+      },
+    });
+
+    await expect(route.handler(ctx)).rejects.toMatchObject({
+      code: "MEMORY_REQUIRES_REVIEW_CENTER_CONFIRMATION",
+    });
+    expect(memoryService.store).not.toHaveBeenCalled();
+  });
+
+  it("store handler rejects preferenceKey metadata for high-impact preferences", async () => {
+    const route = findRoute("memory.store");
+    const ctx = makeCtx({
+      body: {
+        namespace: "notes",
+        content: "Prefer review candidates for inferred memory",
+        metadata: {
+          preferenceKey: "memory.inferred_preference_policy",
+        },
+      },
+    });
+
+    await expect(route.handler(ctx)).rejects.toMatchObject({
+      code: "MEMORY_REQUIRES_REVIEW_CENTER_CONFIRMATION",
+    });
+    expect(memoryService.store).not.toHaveBeenCalled();
+  });
+
   it("store handler replays an existing item when Idempotency-Key matches", async () => {
     const replayItem: FridayMemoryItem = {
       ...mockItem,
