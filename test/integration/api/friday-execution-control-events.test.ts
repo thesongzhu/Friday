@@ -370,6 +370,43 @@ describe("Audit Sink Integration", () => {
     expect(record.result).toBe("failure");
   });
 
+  it("audit record marks DLQ enqueue events with failure result", () => {
+    const bus = freshBus();
+    const auditRecords: unknown[] = [];
+    const emitter = createExecutionControlEventEmitter({
+      eventBus: bus,
+      nowIso,
+      auditSink: (record) => auditRecords.push(record),
+    });
+
+    emitter.emit("retry.dlq.enqueued", {
+      entryId: "dlq-1",
+      contextId: "rc-1",
+      failureCategory: "timeout",
+      reason: "max retries exhausted",
+    });
+
+    const record = auditRecords[0] as Record<string, unknown>;
+    expect(record.result).toBe("failure");
+  });
+
+  it("keeps emittedEvents bounded to the configured inspection window", () => {
+    const bus = freshBus();
+    const emitter = createExecutionControlEventEmitter({
+      eventBus: bus,
+      nowIso,
+      maxEmittedEvents: 2,
+    });
+
+    emitter.emit("rules.bundle.created", { bundleId: "pb-1", name: "A" });
+    emitter.emit("rules.bundle.updated", { bundleId: "pb-1", fields: ["name"] });
+    emitter.emit("playbook.selected", { playbookId: "pb-1", workflowType: "etl", reason: "best" });
+
+    expect(emitter.emittedEvents).toHaveLength(2);
+    expect(emitter.emittedEvents[0].event).toBe("rules.bundle.updated");
+    expect(emitter.emittedEvents[1].event).toBe("playbook.selected");
+  });
+
   it("audit records include correlationId as requestId", () => {
     const bus = freshBus();
     const auditRecords: unknown[] = [];
@@ -403,6 +440,30 @@ describe("Audit Sink Integration", () => {
     });
 
     expect(envelope.event).toBe("rules.bundle.created");
+  });
+
+  it("surfaces audit sink failures without breaking event emission", () => {
+    const bus = freshBus();
+    const emitter = createExecutionControlEventEmitter({
+      eventBus: bus,
+      nowIso,
+      auditSink: () => { throw new Error("Audit sink crashed"); },
+      maxAuditSinkFailures: 2,
+    });
+
+    const envelope = emitter.emit("rules.bundle.created", {
+      bundleId: "pb-1",
+      name: "test",
+    });
+
+    expect(envelope.event).toBe("rules.bundle.created");
+    expect(emitter.auditSinkFailures).toHaveLength(1);
+    expect(emitter.auditSinkFailures[0]).toMatchObject({
+      event: "rules.bundle.created",
+      streamId: "rules:pb-1",
+      emittedAt: "2026-02-25T12:00:00.000Z",
+      message: "Audit sink crashed",
+    });
   });
 });
 

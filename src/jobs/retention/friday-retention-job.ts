@@ -34,93 +34,102 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
     run(nowIsoOverride?) {
       const nowIso = nowIsoOverride ?? deps.nowIso();
 
-      // All cleanup runs in one write transaction for atomicity
-      const result = deps.db.withWriteTransaction((db) => {
-        // 1. Mark stale pending pairing requests as expired
+      const result: FridayRetentionJobResult = {
+        markedPairingExpired: 0,
+        deletedPairingRequests: 0,
+        deletedHeartbeats: 0,
+        markedOutboxExpired: 0,
+        deletedOutboxTerminal: 0,
+        deletedLearningEvents: 0,
+        deletedSkillRuns: 0,
+        deletedAuditLogs: 0,
+        deletedAgentRuns: 0,
+        deletedLlmUsageRecords: 0,
+        deletedErrorIncidents: 0,
+      };
+
+      result.markedPairingExpired = deps.db.withWriteTransaction((db) => {
         const pairingCutoff = nowIso;
         const staleRequests = deps.pairingRequestRepo.listPendingExpiredBefore(db, pairingCutoff);
         for (const req of staleRequests) {
           deps.pairingRequestRepo.updateStatus(db, req.id, "expired", null, nowIso);
         }
-        const markedPairingExpired = staleRequests.length;
+        return staleRequests.length;
+      });
 
-        // 2. Delete old resolved pairing requests
+      result.deletedPairingRequests = deps.db.withWriteTransaction((db) => {
         const pairingDeleteCutoff = subtractDays(nowIso, policy.pairingRequestsDays);
-        const deletedPairingRequests = deps.pairingRequestRepo.deleteResolvedBefore(
+        return deps.pairingRequestRepo.deleteResolvedBefore(
           db,
           pairingDeleteCutoff,
         );
+      });
 
-        // 3. Delete old heartbeat rows
+      result.deletedHeartbeats = deps.db.withWriteTransaction((db) => {
         const heartbeatCutoff = subtractDays(nowIso, policy.heartbeatsDays);
-        const deletedHeartbeats = deps.heartbeatRepo.deleteBefore(db, heartbeatCutoff);
+        return deps.heartbeatRepo.deleteBefore(db, heartbeatCutoff);
+      });
 
-        // 4. Mark TTL-breached outbox rows as expired
-        const markedOutboxExpired = deps.outboxRepo.expireByTtl(db, nowIso);
+      result.markedOutboxExpired = deps.db.withWriteTransaction((db) =>
+        deps.outboxRepo.expireByTtl(db, nowIso),
+      );
 
-        // 5. Delete old terminal outbox rows
+      result.deletedOutboxTerminal = deps.db.withWriteTransaction((db) => {
         const outboxDeleteCutoff = subtractDays(nowIso, policy.outboxTerminalDays);
-        const deletedOutboxTerminal = deps.outboxRepo.deleteTerminalBefore(db, outboxDeleteCutoff);
+        return deps.outboxRepo.deleteTerminalBefore(db, outboxDeleteCutoff);
+      });
 
-        // 6. Delete old learning events
+      result.deletedLearningEvents = deps.db.withWriteTransaction((db) => {
         const learningCutoff = subtractDays(nowIso, policy.learningEventsDays);
-        const deletedLearningEvents = db
+        return db
           .prepare("DELETE FROM learning_events WHERE ts < ?")
           .run(learningCutoff).changes;
+      });
 
-        // 7. Delete terminal skill run snapshots
+      result.deletedSkillRuns = deps.db.withWriteTransaction((db) => {
         const skillRunCutoff = subtractDays(nowIso, policy.skillRunTerminalDays);
         let deletedSkillRuns = 0;
         for (const status of ["completed", "failed", "cancelled"]) {
-          const result = db
+          const deleteResult = db
             .prepare(
               "DELETE FROM memory_items WHERE namespace = 'skill_runs' AND tags_json LIKE ? AND updated_at < ?",
             )
             .run(`%"status:${status}"%`, skillRunCutoff);
-          deletedSkillRuns += result.changes;
+          deletedSkillRuns += deleteResult.changes;
         }
+        return deletedSkillRuns;
+      });
 
-        // 8. Delete old audit logs
+      result.deletedAuditLogs = deps.db.withWriteTransaction((db) => {
         const auditCutoff = subtractDays(nowIso, policy.auditLogsDays);
-        const deletedAuditLogs = db
+        return db
           .prepare("DELETE FROM audit_logs WHERE ts < ?")
           .run(auditCutoff).changes;
+      });
 
-        // 9. Delete old terminal agent runs (events cascade via ON DELETE CASCADE)
+      result.deletedAgentRuns = deps.db.withWriteTransaction((db) => {
         const agentRunCutoff = subtractDays(nowIso, policy.agentRunsDays);
-        const deletedAgentRuns = db
+        return db
           .prepare(
             "DELETE FROM friday_agent_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
           )
           .run(agentRunCutoff).changes;
+      });
 
-        // 10. Delete old LLM usage records
+      result.deletedLlmUsageRecords = deps.db.withWriteTransaction((db) => {
         const llmUsageCutoff = subtractDays(nowIso, policy.llmUsageRecordsDays);
-        const deletedLlmUsageRecords = db
+        return db
           .prepare("DELETE FROM llm_usage_records WHERE created_at < ?")
           .run(llmUsageCutoff).changes;
+      });
 
-        // 11. Delete old resolved error incidents
+      result.deletedErrorIncidents = deps.db.withWriteTransaction((db) => {
         const errorCutoff = subtractDays(nowIso, policy.errorIncidentsDays);
-        const deletedErrorIncidents = db
+        return db
           .prepare(
             "DELETE FROM error_incidents WHERE status = 'resolved' AND updated_at < ?",
           )
           .run(errorCutoff).changes;
-
-        return {
-          markedPairingExpired,
-          deletedPairingRequests,
-          deletedHeartbeats,
-          markedOutboxExpired,
-          deletedOutboxTerminal,
-          deletedLearningEvents,
-          deletedSkillRuns,
-          deletedAuditLogs,
-          deletedAgentRuns,
-          deletedLlmUsageRecords,
-          deletedErrorIncidents,
-        };
       });
 
       // Run PRAGMA optimize after cleanup to update query planner statistics

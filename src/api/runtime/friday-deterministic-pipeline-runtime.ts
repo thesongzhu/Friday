@@ -1708,8 +1708,6 @@ export function createFridayDeterministicPipelineRuntime(
         );
         const targetId = asString(payload.targetId) ?? `${asString(payload.workflowId) ?? "workflow"}:${asString(payload.nodeId) ?? "node"}`;
         if (decision.shouldRetry) {
-          retryCircuitBreakers.recordSuccess(targetId);
-        } else {
           retryCircuitBreakers.recordFailure(targetId);
         }
         const snapshot = retryCircuitBreakers.getSnapshot(targetId);

@@ -542,6 +542,37 @@ describe("FridayProviderFallback", () => {
       expect(fb.isInCooldown("p1")).toBe(true);
     });
 
+    it("keeps cooldown state scoped to the current fallback instance", async () => {
+      let now = Date.parse("2026-02-24T12:00:00.000Z");
+      const p1 = makeProvider("p1");
+      const p2 = makeProvider("p2");
+      const fb = createFridayProviderFallback({
+        nowMs: () => now,
+        cooldownMs: 120_000,
+      });
+
+      await fb.runWithFallback({
+        candidates: [
+          { provider: p1, model: "gpt-4o" },
+          { provider: p2, model: "gpt-4o" },
+        ],
+        run: async (route) => {
+          if (route.provider.id === "p1") throw new Error("429 rate_limit");
+          return "ok";
+        },
+      });
+
+      expect(fb.isInCooldown("p1")).toBe(true);
+
+      now += 1;
+      const restartedFallback = createFridayProviderFallback({
+        nowMs: () => now,
+        cooldownMs: 120_000,
+      });
+
+      expect(restartedFallback.isInCooldown("p1")).toBe(false);
+    });
+
     it("unknown permanent errors do not set cooldown", async () => {
       const fb = createFridayProviderFallback();
       const p1 = makeProvider("p1");

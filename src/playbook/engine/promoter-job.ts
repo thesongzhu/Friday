@@ -300,6 +300,9 @@ export function createPromoterJobRunner(deps: PromoterJobRunnerDeps): PromoterJo
           await onError?.(error);
         });
       }, intervalMs);
+      if (typeof intervalHandle.unref === "function") {
+        intervalHandle.unref();
+      }
 
       return {
         stop,

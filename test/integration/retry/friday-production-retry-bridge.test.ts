@@ -82,6 +82,18 @@ describe("Production Retry Bridge", () => {
       expect(categories).toContain("unknown");
     });
 
+    it("uses the canonical strategy discriminator for default policies", () => {
+      const strategyKinds = DEFAULT_PRODUCTION_STRATEGIES.map((strategy) => strategy.strategy);
+      const legacyKinds = DEFAULT_PRODUCTION_STRATEGIES.map(
+        (strategy) => (strategy as unknown as Record<string, unknown>).type,
+      );
+
+      expect(strategyKinds).toContain("exponential");
+      expect(strategyKinds).toContain("linear");
+      expect(strategyKinds).toContain("fixed");
+      expect(legacyKinds.every((kind) => kind === undefined)).toBe(true);
+    });
+
     it("marks auth and logic as non-retryable (maxAttempts = 0)", () => {
       const authStrategy = DEFAULT_PRODUCTION_STRATEGIES.find(
         (s) => (s as unknown as Record<string, unknown>).failureCategory === "auth",
@@ -121,6 +133,7 @@ describe("Production Retry Bridge", () => {
 
     it("retries transient failures and succeeds on second attempt", async () => {
       const bridge = createBridge();
+      const sleep = vi.fn(async () => {});
       let attempt = 0;
       const fn = vi.fn(async () => {
         attempt++;
@@ -137,11 +150,14 @@ describe("Production Retry Bridge", () => {
         "run-1" as UUID,
         "wf-1" as UUID,
         "node-1",
-        { sleep: async () => {} }, // Skip actual delays in tests
+        { sleep }, // Skip actual delays in tests
       );
 
       expect(result).toBe("recovered");
       expect(fn).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledOnce();
+      expect(sleep.mock.calls[0]?.[0]).toEqual(expect.any(Number));
+      expect(sleep.mock.calls[0]?.[0]).toBeGreaterThan(0);
     });
 
     it("rejects non-retryable failures immediately", async () => {
