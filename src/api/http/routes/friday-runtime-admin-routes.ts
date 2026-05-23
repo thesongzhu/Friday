@@ -1,6 +1,7 @@
 import { FridayDomainError } from "#errors";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import type {
   FridayGetConfigQuery,
   FridayGetConfigResponse,
@@ -52,6 +53,16 @@ function readStringArrayQuery(value: unknown): string[] | undefined {
   return undefined;
 }
 
+function assertRuntimeConfigAdminPrincipal(
+  principal: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[0],
+  operation: "runtime.config.update" | "runtime.config.revert",
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin"],
+    anyOfRoles: ["owner", "admin"],
+  });
+}
+
 export function createFridayRuntimeAdminRoutes(
   deps: FridayRuntimeAdminRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -87,6 +98,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config",
         auth: { public: true },
         async handler(ctx) {
+          assertRuntimeConfigAdminPrincipal(ctx.principal ?? null, "runtime.config.update");
           const body = (ctx.body ?? {}) as Record<string, unknown>;
           if (!Number.isInteger(body.expectedRevision) || Number(body.expectedRevision) < 1) {
             throw new FridayDomainError("VALIDATION_ERROR", "expectedRevision must be a positive integer", {
@@ -135,6 +147,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config/revert",
         auth: { public: true },
         async handler(ctx) {
+          assertRuntimeConfigAdminPrincipal(ctx.principal ?? null, "runtime.config.revert");
           const body = (ctx.body ?? {}) as Record<string, unknown>;
           if (!Number.isInteger(body.toRevision) || Number(body.toRevision) < 1) {
             throw new FridayDomainError("VALIDATION_ERROR", "toRevision must be a positive integer", {
