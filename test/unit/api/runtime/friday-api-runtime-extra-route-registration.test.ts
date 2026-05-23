@@ -273,6 +273,150 @@ describe("API Runtime — Extended Route Registration", () => {
     expect((analyzeThrown as FridayDomainError).httpStatus).toBe(503);
   });
 
+  it("grant revoke rejects a bound principal that neither owns the grant nor has admin authority", async () => {
+    const deps = makeBaseDeps();
+    const runtime = createFridayApiRuntime(deps);
+    deps.db.writer.prepare(
+      `INSERT INTO capability_grants (id, principal_id, target, scopes, issued_at)
+       VALUES ('grant-1', 'owner-principal', 'shell', '["exec"]', ?)`,
+    ).run(NOW);
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "grants.revoke")!;
+
+    await expect(
+      route.handler({
+        requestId: "req-grant-revoke-wrong-principal",
+        receivedAt: NOW,
+        params: { grantId: "grant-1" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({
+          principalId: "other-principal",
+          userId: "other-user",
+          role: "viewer",
+          scopes: ["workflow.read"],
+        }),
+      }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      httpStatus: 403,
+    });
+  });
+
+  it("grant revoke allows the grant owner without broad admin authority", async () => {
+    const deps = makeBaseDeps();
+    const runtime = createFridayApiRuntime(deps);
+    deps.db.writer.prepare(
+      `INSERT INTO capability_grants (id, principal_id, target, scopes, issued_at)
+       VALUES ('grant-1', 'owner-principal', 'shell', '["exec"]', ?)`,
+    ).run(NOW);
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "grants.revoke")!;
+
+    await expect(
+      route.handler({
+        requestId: "req-grant-revoke-owner",
+        receivedAt: NOW,
+        params: { grantId: "grant-1" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({
+          principalId: "owner-principal",
+          userId: "owner-user",
+          role: "viewer",
+          scopes: ["workflow.read"],
+        }),
+      }),
+    ).resolves.toEqual({ revoked: true });
+    const row = deps.db.writer
+      .prepare("SELECT revoked_at FROM capability_grants WHERE id = 'grant-1'")
+      .get() as { revoked_at: string | null };
+    expect(row.revoked_at).toBe(NOW);
+  });
+
+  it.each([
+    ["admin role", makePrincipal({ principalId: "admin-principal", role: "admin", scopes: ["workflow.read"] })],
+    ["security write scope", makePrincipal({ principalId: "security-principal", role: "viewer", scopes: ["security.write"] })],
+  ])("grant revoke allows %s for another principal's grant", async (_label, principal) => {
+    const deps = makeBaseDeps();
+    const runtime = createFridayApiRuntime(deps);
+    deps.db.writer.prepare(
+      `INSERT INTO capability_grants (id, principal_id, target, scopes, issued_at)
+       VALUES ('grant-1', 'owner-principal', 'shell', '["exec"]', ?)`,
+    ).run(NOW);
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "grants.revoke")!;
+
+    await expect(
+      route.handler({
+        requestId: "req-grant-revoke-admin",
+        receivedAt: NOW,
+        params: { grantId: "grant-1" },
+        query: {},
+        body: {},
+        headers: {},
+        principal,
+      }),
+    ).resolves.toEqual({ revoked: true });
+    const row = deps.db.writer
+      .prepare("SELECT revoked_at FROM capability_grants WHERE id = 'grant-1'")
+      .get() as { revoked_at: string | null };
+    expect(row.revoked_at).toBe(NOW);
+  });
+
+  it("workflow trigger mutations reject the synthetic public principal", async () => {
+    const runtime = createFridayApiRuntime(makeBaseDeps());
+    const updateRoute = runtime.routes.getRoutes().find((r) => r.operationId === "workflows.triggers.update")!;
+    const resyncRoute = runtime.routes.getRoutes().find((r) => r.operationId === "workflows.triggers.resync")!;
+
+    await expect(
+      updateRoute.handler({
+        requestId: "req-trigger-update-public",
+        receivedAt: NOW,
+        params: { registrationId: "reg-1" },
+        query: {},
+        body: { enabled: true },
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: "public:default",
+          userId: "00000000-0000-0000-0000-000000000001",
+          role: "viewer",
+          scopes: ["workflow.read"],
+          tokenId: "00000000-0000-0000-0000-000000000002",
+          tokenKind: "access",
+          issuedAt: NOW,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+
+    await expect(
+      resyncRoute.handler({
+        requestId: "req-trigger-resync-public",
+        receivedAt: NOW,
+        params: { workflowId: "wf-1" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: "public:default",
+          userId: "00000000-0000-0000-0000-000000000001",
+          role: "viewer",
+          scopes: ["workflow.read"],
+          tokenId: "00000000-0000-0000-0000-000000000002",
+          tokenKind: "access",
+          issuedAt: NOW,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+  });
+
   it("does not require provider setup canonical approval when canonical gate profile is off", async () => {
     const providerService = makeMockProviderService();
     const runtime = createFridayApiRuntime({

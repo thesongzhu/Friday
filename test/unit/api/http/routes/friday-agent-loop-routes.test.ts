@@ -312,4 +312,21 @@ describe("FridayAgentLoopRoutes", () => {
     expect(service.getExpertMode).not.toHaveBeenCalled();
     expect(service.updateExpertMode).not.toHaveBeenCalled();
   });
+
+  it("rejects synthetic public principals from policy update", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({ service });
+    const putRoute = routes.find((entry) => entry.operationId === "agent.loop.policy.update")!;
+
+    await expect(
+      putRoute.handler(makeCtx({
+        principal: createFridayDefaultPublicHttpPrincipal(),
+        body: { paused: true },
+      })),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      httpStatus: 401,
+    });
+    expect(service.updatePolicy).not.toHaveBeenCalled();
+  });
 });

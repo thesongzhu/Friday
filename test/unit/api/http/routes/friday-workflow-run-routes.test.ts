@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFridayWorkflowRunRoutes } from "#api";
-import type { FridayAuthPrincipal, FridayWorkflowRunRoutesDeps } from "#api";
+import type { FridayAuthPrincipal, FridayHttpContext, FridayWorkflowRunRoutesDeps } from "#api";
 import type { FridayWorkflowRunEntity } from "#workflows";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 const stubRun: FridayWorkflowRunEntity = {
   id: "run-1",
@@ -11,6 +12,36 @@ const stubRun: FridayWorkflowRunEntity = {
   triggerType: "manual",
   startedAt: "2025-01-01T00:00:00Z",
 };
+const NOW = "2025-01-01T00:00:00Z";
+
+function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-1",
+    userId: "user-1",
+    role: "operator",
+    scopes: ["workflow.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: NOW,
+    ...overrides,
+  };
+}
+
+function makeCtx(
+  overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
+): FridayHttpContext<unknown, unknown, unknown> {
+  return {
+    requestId: "req-1",
+    receivedAt: NOW,
+    params: { runId: "run-1", exportId: "exp-1" },
+    query: {},
+    body: {},
+    headers: {},
+    principal: makePrincipal(),
+    ...overrides,
+  };
+}
 
 describe("FridayWorkflowRunRoutes", () => {
   const stubDeps: FridayWorkflowRunRoutesDeps = {
@@ -49,7 +80,7 @@ describe("FridayWorkflowRunRoutes", () => {
         artifactId: "artifact-1",
         uri: "friday://workflow-runs/run-1/evidence-exports/exp-1.json",
         checksum: "checksum",
-        createdAt: "2025-01-01T00:00:00Z",
+        createdAt: NOW,
         persisted: true,
         filePersisted: false,
         query: {},
@@ -69,7 +100,7 @@ describe("FridayWorkflowRunRoutes", () => {
       },
       evidence: {
         run: stubRun,
-        exportedAt: "2025-01-01T00:00:00Z",
+        exportedAt: NOW,
         query: {},
         summary: {
           totalEvents: 0,
@@ -98,7 +129,7 @@ describe("FridayWorkflowRunRoutes", () => {
         artifactId: "artifact-1",
         uri: "friday://workflow-runs/run-1/evidence-exports/exp-1.json",
         checksum: "checksum",
-        createdAt: "2025-01-01T00:00:00Z",
+        createdAt: NOW,
         persisted: true,
         filePersisted: false,
         query: {},
@@ -182,7 +213,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(routes).toHaveLength(12);
   });
 
-  it("POST /v1/workflow-runs requires workflow.run", () => {
+  it("POST /v1/workflow-runs requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "runs.start");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
@@ -205,7 +236,7 @@ describe("FridayWorkflowRunRoutes", () => {
     expect(route!.auth).toEqual({ public: true });
   });
 
-  it("POST /v1/workflow-runs/:runId/evidence/exports requires workflow.read", () => {
+  it("POST /v1/workflow-runs/:runId/evidence/exports requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "runs.evidence.export");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
@@ -238,7 +269,7 @@ describe("FridayWorkflowRunRoutes", () => {
       scopes: ["workflow.read"],
       tokenId: "token-1",
       tokenKind: "access",
-      issuedAt: "2025-01-01T00:00:00Z",
+      issuedAt: NOW,
     };
     let seen: FridayAuthPrincipal | null = null;
     const localRoutes = createFridayWorkflowRunRoutes({
@@ -257,22 +288,13 @@ describe("FridayWorkflowRunRoutes", () => {
       headers: {},
       principal,
       requestId: "req-1",
-      receivedAt: "2025-01-01T00:00:00Z",
+      receivedAt: NOW,
     } as never);
     expect(seen).toEqual(principal);
   });
 
   it("passes principal through to run read and control handlers", async () => {
-    const principal: FridayAuthPrincipal = {
-      principalType: "user",
-      principalId: "tenant-1",
-      userId: "user-1",
-      role: "viewer",
-      scopes: ["workflow.read", "workflow.run"],
-      tokenId: "token-1",
-      tokenKind: "access",
-      issuedAt: "2025-01-01T00:00:00Z",
-    };
+    const principal = makePrincipal({ principalId: "tenant-1" });
     const seen: Array<{ op: string; principal: FridayAuthPrincipal | null }> = [];
     const localRoutes = createFridayWorkflowRunRoutes({
       ...stubDeps,
@@ -317,13 +339,67 @@ describe("FridayWorkflowRunRoutes", () => {
     ]);
   });
 
-  it("POST /v1/workflow-runs/:runId/cancel requires workflow.run", () => {
+  it.each([
+    ["runs.start", { params: {}, body: { workflowId: "wf-1" } }],
+    ["runs.evidence.export", { body: {} }],
+    ["runs.cancel", { body: { reason: "test" } }],
+    ["runs.retry", { body: {} }],
+    ["workflows.runs.resume", {}],
+  ])("%s rejects the synthetic public principal", async (operationId, ctxOverrides) => {
+    const route = routes.find((r) => r.operationId === operationId)!;
+    await expect(
+      route.handler(makeCtx({
+        ...ctxOverrides,
+        principal: createFridayDefaultPublicHttpPrincipal(),
+      })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+  });
+
+  it.each([
+    ["runs.start", { params: {}, body: { workflowId: "wf-1" } }],
+    ["runs.evidence.export", { body: {} }],
+    ["runs.cancel", { body: { reason: "test" } }],
+    ["runs.retry", { body: {} }],
+    ["workflows.runs.resume", {}],
+  ])("%s rejects a bound principal without workflow write authority", async (operationId, ctxOverrides) => {
+    const route = routes.find((r) => r.operationId === operationId)!;
+    await expect(
+      route.handler(makeCtx({
+        ...ctxOverrides,
+        principal: makePrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
+      httpStatus: 403,
+    });
+  });
+
+  it("allows a bound workflow writer to start a run", async () => {
+    const startRun = vi.fn(async () => ({ run: stubRun }));
+    const localRoutes = createFridayWorkflowRunRoutes({
+      ...stubDeps,
+      startRun,
+    });
+    const route = localRoutes.find((r) => r.operationId === "runs.start")!;
+    await expect(
+      route.handler(makeCtx({ params: {}, body: { workflowId: "wf-1" } })),
+    ).resolves.toEqual({ run: stubRun });
+    expect(startRun).toHaveBeenCalledWith(
+      { workflowId: "wf-1" },
+      expect.objectContaining({ principalId: "user-1" }),
+    );
+  });
+
+  it("POST /v1/workflow-runs/:runId/cancel requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "runs.cancel");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");
   });
 
-  it("POST /v1/workflow-runs/:runId/resume requires workflow.run", () => {
+  it("POST /v1/workflow-runs/:runId/resume requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "workflows.runs.resume");
     expect(route).toBeDefined();
     expect(route!.method).toBe("POST");

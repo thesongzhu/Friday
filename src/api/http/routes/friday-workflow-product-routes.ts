@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import type {
@@ -62,9 +63,18 @@ export function createFridayWorkflowProductRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<{ deployment: FridayWorkflowDeployResult }> {
+        const bound = assertBoundPrincipalAuthorityForOperation(
+          ctx.principal ?? null,
+          "workflow.deploy",
+          "api",
+          {
+            anyOfScopes: ["hub.admin", "workflow.write"],
+            anyOfRoles: ["owner", "admin", "operator"],
+          },
+        );
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
-        const actorUserId = ctx.principal?.userId ?? "workflow-operator";
+        const actorUserId = bound.userId ?? bound.principalId;
         if (body.lockToken !== undefined && typeof body.lockToken !== "string") {
           throw new FridayDomainError("VALIDATION_ERROR", "lockToken must be a string when provided", {
             httpStatus: 400,

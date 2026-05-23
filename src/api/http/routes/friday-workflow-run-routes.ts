@@ -2,6 +2,10 @@ import type {
   FridayAuthPrincipal,
   FridayRouteDefinition,
 } from "../../model/friday-api-common.types.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 import type { UUID } from "#workflows";
 import { FridayDomainError } from "#errors";
 import type { FridayHttpRawTextResponse } from "../friday-http-raw-response.js";
@@ -88,6 +92,16 @@ export interface FridayWorkflowRunRoutesDeps {
   ) => Promise<FridayResumeRunResponse>;
 }
 
+function assertWorkflowRunWritePrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: FridayPublicMutationOperation,
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "workflow.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
+}
+
 export function createFridayWorkflowRunRoutes(
   deps: FridayWorkflowRunRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -99,6 +113,7 @@ export function createFridayWorkflowRunRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.start_run",
       async handler(ctx) {
+        assertWorkflowRunWritePrincipal(ctx.principal ?? null, "workflow.run.start");
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.workflowId !== "string" || body.workflowId.trim() === "") {
           throw new FridayDomainError(
@@ -177,6 +192,7 @@ export function createFridayWorkflowRunRoutes(
       path: "/v1/workflow-runs/:runId/evidence/exports",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowRunWritePrincipal(ctx.principal ?? null, "workflow.run.evidence.export");
         const { runId } = ctx.params as { runId: UUID };
         return deps.exportRunEvidence(runId, (ctx.body ?? {}) as FridayExportRunEvidenceRequest, ctx.principal);
       },
@@ -207,6 +223,7 @@ export function createFridayWorkflowRunRoutes(
       path: "/v1/workflow-runs/:runId/cancel",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowRunWritePrincipal(ctx.principal ?? null, "workflow.run.cancel");
         const { runId } = ctx.params as { runId: UUID };
         return deps.cancelRun(runId, ctx.body as FridayCancelRunRequest, ctx.principal);
       },
@@ -217,6 +234,7 @@ export function createFridayWorkflowRunRoutes(
       path: "/v1/workflow-runs/:runId/retry",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowRunWritePrincipal(ctx.principal ?? null, "workflow.run.retry");
         const { runId } = ctx.params as { runId: UUID };
         return deps.retryRun(runId, ctx.body as FridayRetryRunRequest, ctx.principal);
       },
@@ -227,6 +245,7 @@ export function createFridayWorkflowRunRoutes(
       path: "/v1/workflow-runs/:runId/resume",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowRunWritePrincipal(ctx.principal ?? null, "workflow.run.resume");
         const { runId } = ctx.params as { runId: UUID };
         return deps.resumeRun(runId, ctx.principal);
       },

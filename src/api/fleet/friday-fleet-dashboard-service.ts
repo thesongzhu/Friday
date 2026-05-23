@@ -474,17 +474,17 @@ export function createFridayFleetDashboardService(
           // for satellites, we match by principal_type + a label or ID convention.
           const hasRevokedTokens = (db
             .prepare(
-              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND revoked_at IS NOT NULL",
+              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND principal_type = 'satellite' AND revoked_at IS NOT NULL",
             )
             .get(sat.id) as { count: number }).count > 0;
           const hasExpiredHighPrivTokens = (db
             .prepare(
-              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND expires_at IS NOT NULL AND expires_at <= ? AND revoked_at IS NULL AND (scopes_json LIKE '%hub.admin%' OR scopes_json LIKE '%security.write%')",
+              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND principal_type = 'satellite' AND expires_at IS NOT NULL AND expires_at <= ? AND revoked_at IS NULL AND (scopes_json LIKE '%hub.admin%' OR scopes_json LIKE '%security.write%')",
             )
             .get(sat.id, now) as { count: number }).count > 0;
           const recentRevocationCount = (db
             .prepare(
-              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND revoked_at IS NOT NULL AND revoked_at >= ?",
+              "SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ? AND principal_type = 'satellite' AND revoked_at IS NOT NULL AND revoked_at >= ?",
             )
             .get(sat.id, oneHourAgo) as { count: number }).count;
 

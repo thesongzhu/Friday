@@ -67,15 +67,30 @@ describe("FridayFleetDashboardService", () => {
 
   function insertApiToken(
     tokenId: string,
-    opts: { scopes?: string[]; revokedAt?: string | null; expiresAt?: string | null } = {},
+    opts: {
+      scopes?: string[];
+      revokedAt?: string | null;
+      expiresAt?: string | null;
+      userId?: string;
+      principalType?: "user" | "satellite";
+    } = {},
   ) {
+    const userId = opts.userId ?? "test-user";
+    db.writer
+      .prepare(
+        `INSERT OR IGNORE INTO users (id, display_name, role, is_local_only, created_at, updated_at)
+         VALUES (?, ?, 'admin', 1, ?, ?)`,
+      )
+      .run(userId, `User ${userId}`, NOW, NOW);
     db.writer
       .prepare(
         `INSERT INTO api_tokens (id, user_id, principal_type, label, token_hash, scopes_json, expires_at, revoked_at, created_at, updated_at)
-         VALUES (?, 'test-user', 'user', ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         tokenId,
+        userId,
+        opts.principalType ?? "user",
         `Token ${tokenId}`,
         `hash-${tokenId}`,
         JSON.stringify(opts.scopes ?? ["workflow.read"]),
@@ -180,6 +195,35 @@ describe("FridayFleetDashboardService", () => {
 
     const overview = service.getOverview();
     expect(overview.trust.averageScore).toBeGreaterThan(0);
+  });
+
+  it("does not count colliding user tokens as satellite trust hygiene signals", () => {
+    insertSatellite("sat-1", { pairingStatus: "online", trustLevel: "trusted" });
+    insertApiToken("tok-user-collision", {
+      userId: "sat-1",
+      principalType: "user",
+      scopes: ["hub.admin"],
+      revokedAt: "2025-06-15T09:30:00.000Z",
+    });
+
+    const overview = service.getOverview();
+
+    expect(overview.trust.lowTrustCount).toBe(0);
+    expect(overview.trust.averageScore).toBe(90);
+  });
+
+  it("counts satellite-principal tokens for satellite trust hygiene", () => {
+    insertSatellite("sat-1", { pairingStatus: "online", trustLevel: "trusted" });
+    insertApiToken("tok-satellite-revoked", {
+      userId: "sat-1",
+      principalType: "satellite",
+      scopes: ["hub.admin"],
+      revokedAt: "2025-06-15T09:30:00.000Z",
+    });
+
+    const overview = service.getOverview();
+
+    expect(overview.trust.averageScore).toBeLessThan(100);
   });
 
   it("returns empty overview when no satellites exist", () => {

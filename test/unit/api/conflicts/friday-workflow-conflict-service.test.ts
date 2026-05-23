@@ -345,4 +345,82 @@ describe("FridayWorkflowConflictService", () => {
 
     expect(result.draft.revision).toBe(6);
   });
+
+  it("fails closed when resolver identity is omitted", () => {
+    insertLock("wf-1", "lock-1", "user-1");
+    insertDraft("draft-1", "wf-1", 1);
+
+    const conflict = service.detectConflict({
+      workflowId: "wf-1",
+      draftId: "draft-1",
+      baseWorkflowVersionId: "v1",
+      headWorkflowVersionId: "v2",
+      summary: "resolver required",
+    })!;
+
+    expect(() =>
+      service.resolveConflict(
+        conflict.conflictId,
+        {
+          resolution: { strategy: "accept_local" },
+          lockToken: "lock-1",
+          expectedDraftRevision: 1,
+        },
+        undefined,
+      ),
+    ).toThrow(FridayConflictServiceError);
+
+    try {
+      service.resolveConflict(
+        conflict.conflictId,
+        {
+          resolution: { strategy: "accept_local" },
+          lockToken: "lock-1",
+          expectedDraftRevision: 1,
+        },
+        undefined,
+      );
+    } catch (err) {
+      expect((err as FridayConflictServiceError).code).toBe("RESOLVER_ID_REQUIRED");
+    }
+  });
+
+  it("rejects a resolver that does not own the lock token", () => {
+    insertLock("wf-1", "lock-1", "user-1");
+    insertDraft("draft-1", "wf-1", 1);
+
+    const conflict = service.detectConflict({
+      workflowId: "wf-1",
+      draftId: "draft-1",
+      baseWorkflowVersionId: "v1",
+      headWorkflowVersionId: "v2",
+      summary: "wrong resolver",
+    })!;
+
+    expect(() =>
+      service.resolveConflict(
+        conflict.conflictId,
+        {
+          resolution: { strategy: "accept_local" },
+          lockToken: "lock-1",
+          expectedDraftRevision: 1,
+        },
+        "user-2",
+      ),
+    ).toThrow(FridayConflictServiceError);
+
+    try {
+      service.resolveConflict(
+        conflict.conflictId,
+        {
+          resolution: { strategy: "accept_local" },
+          lockToken: "lock-1",
+          expectedDraftRevision: 1,
+        },
+        "user-2",
+      );
+    } catch (err) {
+      expect((err as FridayConflictServiceError).code).toBe("LOCK_OWNER_MISMATCH");
+    }
+  });
 });

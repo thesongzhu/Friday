@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createFridayWorkflowRoutes } from "#api";
-import type { FridayWorkflowRoutesDeps } from "#api";
+import type { FridayAuthPrincipal, FridayHttpContext, FridayWorkflowRoutesDeps } from "#api";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 import type {
   FridayWorkflowEntity,
   FridayWorkflowVersionEntity,
@@ -9,6 +10,36 @@ import type {
 /** Handlers are never invoked; stubs only satisfy the type signature. */
 const stubWorkflow = {} as unknown as FridayWorkflowEntity;
 const stubVersion = {} as unknown as FridayWorkflowVersionEntity;
+const NOW = "2026-05-22T00:00:00.000Z";
+
+function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-1",
+    userId: "user-1",
+    role: "operator",
+    scopes: ["workflow.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: NOW,
+    ...overrides,
+  };
+}
+
+function makeCtx(
+  overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
+): FridayHttpContext<unknown, unknown, unknown> {
+  return {
+    requestId: "req-1",
+    receivedAt: NOW,
+    params: {},
+    query: {},
+    body: {},
+    headers: {},
+    principal: makePrincipal(),
+    ...overrides,
+  };
+}
 
 describe("FridayWorkflowRoutes", () => {
   const stubDeps: FridayWorkflowRoutesDeps = {
@@ -61,5 +92,45 @@ describe("FridayWorkflowRoutes", () => {
     expect(route!.method).toBe("GET");
     expect(route!.path).toBe("/v1/workflow-versions/:versionId");
     expect(route!.auth).toEqual({ public: true });
+  });
+
+  it.each([
+    ["workflows.create", { body: { slug: "wf", name: "Workflow", graph: {} } }],
+    ["workflows.update", { params: { workflowId: "wf-1" }, body: { expectedRevision: 1, etag: "etag-1" } }],
+    ["workflows.archive", { params: { workflowId: "wf-1" } }],
+    ["workflows.publish", { params: { workflowId: "wf-1" }, body: { versionNumber: 1 } }],
+  ])("%s rejects the synthetic public principal", async (operationId, ctxOverrides) => {
+    const route = routes.find((r) => r.operationId === operationId)!;
+    await expect(
+      route.handler(makeCtx({
+        ...ctxOverrides,
+        principal: createFridayDefaultPublicHttpPrincipal(),
+      })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+  });
+
+  it("rejects a bound principal without workflow write authority", async () => {
+    const route = routes.find((r) => r.operationId === "workflows.create")!;
+    await expect(
+      route.handler(makeCtx({
+        principal: makePrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+        body: { slug: "wf", name: "Workflow", graph: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
+      httpStatus: 403,
+    });
+  });
+
+  it("allows a bound workflow writer to create a workflow", async () => {
+    const route = routes.find((r) => r.operationId === "workflows.create")!;
+    await expect(
+      route.handler(makeCtx({
+        body: { slug: "wf", name: "Workflow", graph: {} },
+      })),
+    ).resolves.toEqual({ workflow: stubWorkflow, version: stubVersion });
   });
 });

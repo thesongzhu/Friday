@@ -5,7 +5,7 @@ import {
   FRIDAY_DEFAULT_PUBLIC_HTTP_TOKEN_ID,
   FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
 } from "../api/http/friday-default-public-principal.js";
-import type { FridayAuthPrincipal } from "../api/model/friday-api-auth.types.js";
+import type { FridayAuthPrincipal, FridayRole, FridayScope } from "../api/model/friday-api-auth.types.js";
 
 // Phase 14.5A — module_28a owner/session/channel capability gate.
 // Source-aware boundary above high-risk public mutating operations.
@@ -14,6 +14,35 @@ import type { FridayAuthPrincipal } from "../api/model/friday-api-auth.types.js"
 // open via an explicit per-resource opt-in that the operator configures.
 
 export type FridayPublicMutationOperation =
+  | "capability.grant.revoke"
+  | "workflow.create"
+  | "workflow.update"
+  | "workflow.archive"
+  | "workflow.publish"
+  | "workflow.template.instantiate"
+  | "workflow.draft.create"
+  | "workflow.bundle.import"
+  | "workflow.draft.save"
+  | "workflow.draft.autosave"
+  | "workflow.draft.compile"
+  | "workflow.draft.publish"
+  | "workflow.lock.acquire"
+  | "workflow.lock.renew"
+  | "workflow.lock.release"
+  | "workflow.deploy"
+  | "workflow.generator.session.create"
+  | "workflow.generator.message.create"
+  | "workflow.generator.generate"
+  | "workflow.generator.approve"
+  | "workflow.generator.cancel"
+  | "workflow.trigger.update"
+  | "workflow.trigger.resync"
+  | "workflow.conflict.resolve"
+  | "workflow.run.start"
+  | "workflow.run.evidence.export"
+  | "workflow.run.cancel"
+  | "workflow.run.retry"
+  | "workflow.run.resume"
   | "workflow.webhook.invoke"
   | "workflow.approval.approve"
   | "workflow.approval.reject"
@@ -53,6 +82,7 @@ export type FridayPublicMutationOperation =
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
 
 const ERROR_CODE_BOUND_PRINCIPAL_REQUIRED = "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED";
+const ERROR_CODE_BOUND_PRINCIPAL_AUTHORITY_REQUIRED = "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED";
 const ERROR_CODE_WEBHOOK_HMAC_REQUIRED = "WORKFLOW_WEBHOOK_HMAC_REQUIRED";
 const ERROR_CODE_WEBHOOK_PATH_TOKEN_WEAK = "WORKFLOW_WEBHOOK_PATH_TOKEN_WEAK";
 
@@ -95,6 +125,11 @@ export interface FridayBoundPrincipalDescriptor {
   readonly source: FridayBoundPrincipalSource;
 }
 
+export interface FridayBoundPrincipalAuthorityRequirement {
+  readonly anyOfScopes?: readonly FridayScope[];
+  readonly anyOfRoles?: readonly FridayRole[];
+}
+
 export function assertBoundPrincipalForOperation(
   principal: FridayAuthPrincipal | null | undefined,
   operation: FridayPublicMutationOperation,
@@ -118,6 +153,30 @@ export function assertBoundPrincipalForOperation(
     tokenId: bound.tokenId,
     source,
   };
+}
+
+export function assertBoundPrincipalAuthorityForOperation(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: FridayPublicMutationOperation,
+  source: FridayBoundPrincipalSource,
+  requirement: FridayBoundPrincipalAuthorityRequirement,
+): FridayBoundPrincipalDescriptor {
+  const bound = assertBoundPrincipalForOperation(principal, operation, source);
+  const allowedScopes = requirement.anyOfScopes ?? [];
+  const allowedRoles = requirement.anyOfRoles ?? [];
+  const hasScope = allowedScopes.length > 0
+    && allowedScopes.some((scope) => principal?.scopes?.includes(scope) ?? false);
+  const hasRole = allowedRoles.length > 0
+    && principal?.role !== undefined
+    && allowedRoles.includes(principal.role);
+  if ((allowedScopes.length > 0 || allowedRoles.length > 0) && !hasScope && !hasRole) {
+    throw new FridayDomainError(
+      ERROR_CODE_BOUND_PRINCIPAL_AUTHORITY_REQUIRED,
+      `${operation} requires an authorized owner/admin/operator principal; the bound principal does not have the required authority.`,
+      { httpStatus: 403 },
+    );
+  }
+  return bound;
 }
 
 // Phase 14.5A WP-001 conversational parity (decision 8): the deterministic
@@ -234,6 +293,7 @@ export function describeWebhookReceiptTrust(opts: {
 
 export const FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES = {
   BOUND_PRINCIPAL_REQUIRED: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
+  BOUND_PRINCIPAL_AUTHORITY_REQUIRED: ERROR_CODE_BOUND_PRINCIPAL_AUTHORITY_REQUIRED,
   WEBHOOK_HMAC_REQUIRED: ERROR_CODE_WEBHOOK_HMAC_REQUIRED,
   WEBHOOK_PATH_TOKEN_WEAK: ERROR_CODE_WEBHOOK_PATH_TOKEN_WEAK,
 } as const;
