@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
 import {
   createMockHubEnv,
+  startMockAgentRunAndApproveTools,
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
@@ -55,7 +56,7 @@ describe("Friday Mock Multi-Turn E2E", () => {
   let model: string;
 
   beforeAll(async () => {
-    env = await createMockHubEnv({ providerKinds: ["anthropic"] });
+    env = await createMockHubEnv({ providerKinds: ["anthropic"], canonicalGate: true });
     const provider = env.providers["anthropic"]!;
     providerId = provider.providerId;
     model = provider.model;
@@ -250,13 +251,15 @@ describe("Friday Mock Multi-Turn E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "write",
+      toolCallId: "cross-run-write-1",
       toolInput: { path: sharedFile, content: "shared data between runs" },
     });
     mock.enqueue({ type: "text", text: "File written." });
 
-    await apiFetch<AgentRunResult>(
-      env.baseUrl, env.accessToken, "POST", "/v1/agent/runs",
+    await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "Write shared data", providerId, model, timeoutMs: 15_000 },
+      ["cross-run-write-1"],
     );
     mock.reset();
     resetMockCounters();

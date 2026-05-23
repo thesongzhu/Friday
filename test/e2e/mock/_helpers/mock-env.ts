@@ -62,6 +62,51 @@ export interface MockHubEnv {
   cleanup: () => Promise<void>;
 }
 
+interface MockAgentRunEnvelope {
+  ok: boolean;
+  data: {
+    runId: string;
+    status: string;
+    response: string;
+    toolCallCount: number;
+    images?: string[];
+  };
+  error?: { code?: string; message?: string };
+}
+
+interface MockAgentRunListEnvelope {
+  ok: boolean;
+  data: {
+    items: Array<{
+      id: string;
+      task: string;
+      status: string;
+    }>;
+  };
+}
+
+interface MockSubagentListEnvelope {
+  ok: boolean;
+  data: {
+    items: Array<{
+      id: string;
+      task: string;
+      status: string;
+      childRunId: string;
+    }>;
+  };
+}
+
+interface MockToolApprovalEnvelope {
+  ok: boolean;
+  data?: {
+    resolved: boolean;
+    grantId?: string;
+    decision?: "approved" | "rejected";
+  };
+  error?: { code?: string; message?: string };
+}
+
 const AUTO_DETECT_PROVIDER_ENV_VARS = [
   "FRIDAY_ANTHROPIC_API_KEY",
   "ANTHROPIC_API_KEY",
@@ -279,6 +324,8 @@ export async function createMockHubEnv(opts?: {
   beforeStart?: (hub: FridayHub) => Promise<void> | void;
   /** Optional SSRF guard policy override. Defaults to { allowPrivateNetwork: true } for mock E2E tests. */
   ssrfPolicy?: { allowPrivateNetwork?: boolean; hostnameAllowlist?: string[] };
+  /** Enable the canonical mutating-action gate for this mock hub. */
+  canonicalGate?: boolean;
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -286,10 +333,14 @@ export async function createMockHubEnv(opts?: {
   // Capture original fetch instance-locally to avoid races between multiple envs
   const originalFetch = globalThis.fetch;
   const originalWarningSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  const originalCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
   const originalAutoDetectEnv = new Map<string, string | undefined>(
     AUTO_DETECT_PROVIDER_ENV_VARS.map((key) => [key, process.env[key]]),
   );
   process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+  if (opts?.canonicalGate !== undefined) {
+    process.env.FRIDAY_CANONICAL_GATE = opts.canonicalGate ? "true" : "false";
+  }
   for (const key of AUTO_DETECT_PROVIDER_ENV_VARS) {
     delete process.env[key];
   }
@@ -319,6 +370,13 @@ export async function createMockHubEnv(opts?: {
     await opts?.beforeStart?.(hub);
     await hub.start();
   } finally {
+    if (opts?.canonicalGate !== undefined) {
+      if (originalCanonicalGate === undefined) {
+        delete process.env.FRIDAY_CANONICAL_GATE;
+      } else {
+        process.env.FRIDAY_CANONICAL_GATE = originalCanonicalGate;
+      }
+    }
     for (const [key, value] of originalAutoDetectEnv) {
       if (value === undefined) {
         delete process.env[key];
@@ -479,4 +537,128 @@ export async function createMockHubEnv(opts?: {
       }
     },
   };
+}
+
+async function waitForMockCondition<T>(
+  poll: () => Promise<T | null>,
+  options: { timeoutMs: number; intervalMs?: number; label: string },
+): Promise<T> {
+  const startedAt = Date.now();
+  const intervalMs = options.intervalMs ?? 100;
+  while (Date.now() - startedAt < options.timeoutMs) {
+    const value = await poll();
+    if (value !== null) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`Timed out waiting for ${options.label}`);
+}
+
+export async function findMockAgentRunIdByTask(
+  env: Pick<MockHubEnv, "baseUrl" | "accessToken">,
+  task: string,
+  options?: { timeoutMs?: number },
+): Promise<string> {
+  return waitForMockCondition(
+    async () => {
+      const res = await apiFetch<MockAgentRunListEnvelope>(
+        env.baseUrl,
+        env.accessToken,
+        "GET",
+        "/v1/agent/runs?limit=20",
+      );
+      if (res.status !== 200 || !res.json.ok) {
+        return null;
+      }
+      return res.json.data.items.find((run) => run.task === task)?.id ?? null;
+    },
+    {
+      timeoutMs: options?.timeoutMs ?? 10_000,
+      label: `agent run for task ${task}`,
+    },
+  );
+}
+
+export async function approveMockAgentToolCall(
+  env: Pick<MockHubEnv, "baseUrl" | "accessToken">,
+  input: { task: string; toolCallId: string; toolName?: string; timeoutMs?: number },
+): Promise<NonNullable<MockToolApprovalEnvelope["data"]>> {
+  const runId = await findMockAgentRunIdByTask(env, input.task, {
+    timeoutMs: input.timeoutMs,
+  });
+  const tryApprove = async (
+    targetRunId: string,
+    toolCallId: string,
+  ): Promise<NonNullable<MockToolApprovalEnvelope["data"]> | null> => {
+    const res = await apiFetch<MockToolApprovalEnvelope>(
+      env.baseUrl,
+      env.accessToken,
+      "POST",
+      `/v1/agent/runs/${encodeURIComponent(targetRunId)}/approve-tool`,
+      { toolCallId },
+    );
+    if (res.status !== 200 || !res.json.ok || !res.json.data?.resolved) {
+      return null;
+    }
+    return res.json.data;
+  };
+  const readChildRunIds = async (): Promise<string[]> => {
+    const res = await apiFetch<MockSubagentListEnvelope>(
+      env.baseUrl,
+      env.accessToken,
+      "GET",
+      `/v1/agent/runs/${encodeURIComponent(runId)}/subagents`,
+    );
+    if (res.status !== 200 || !res.json.ok) {
+      return [];
+    }
+    return res.json.data.items
+      .map((item) => item.childRunId)
+      .filter((childRunId): childRunId is string => typeof childRunId === "string" && childRunId.length > 0);
+  };
+  return waitForMockCondition(
+    async () => {
+      const requestedApproval = await tryApprove(runId, input.toolCallId);
+      if (requestedApproval) {
+        return requestedApproval;
+      }
+      for (const childRunId of await readChildRunIds()) {
+        const childApproval = await tryApprove(childRunId, input.toolCallId);
+        if (childApproval) {
+          return childApproval;
+        }
+      }
+      return null;
+    },
+    {
+      timeoutMs: input.timeoutMs ?? 10_000,
+      label: `tool approval ${input.toolCallId}`,
+    },
+  );
+}
+
+export async function startMockAgentRunAndApproveTools<T extends MockAgentRunEnvelope = MockAgentRunEnvelope>(
+  env: Pick<MockHubEnv, "baseUrl" | "accessToken">,
+  body: Record<string, unknown> & { task: string },
+  toolCallIds: readonly string[],
+  options?: { timeoutMs?: number },
+): Promise<{ status: number; json: T }> {
+  const runPromise = apiFetch<T>(
+    env.baseUrl,
+    env.accessToken,
+    "POST",
+    "/v1/agent/runs",
+    body,
+  );
+
+  for (const toolCallId of toolCallIds) {
+    await approveMockAgentToolCall(env, {
+      task: body.task,
+      toolCallId,
+      timeoutMs: options?.timeoutMs,
+    });
+  }
+
+  return await runPromise;
 }

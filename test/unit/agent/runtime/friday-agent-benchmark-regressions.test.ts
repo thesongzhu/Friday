@@ -13,6 +13,7 @@ import {
   createFridayAgentRuntime,
 } from "#agent";
 import type {
+  CreateFridayAgentRuntimeDeps,
   FridayAgentLlmClient,
   FridayAgentLlmStreamEvent,
 } from "#agent";
@@ -21,7 +22,14 @@ describe("Friday agent benchmark regressions", () => {
   let db: FridaySqliteLayer;
   let idGenerator: () => string;
   const nowIso = "2026-03-25T22:00:00.000Z";
+  const CANONICAL_APPROVAL_SECRET = "test-canonical-secret"; // pragma: allowlist secret
   const tempDirs: string[] = [];
+  type ToolApprovalResolver = NonNullable<CreateFridayAgentRuntimeDeps["toolApprovalResolver"]>;
+  interface TestApprovalDecision {
+    readonly toolName: string;
+    readonly path: string | null;
+    readonly approved: boolean;
+  }
 
   beforeEach(() => {
     db = createTestDb();
@@ -55,6 +63,35 @@ describe("Friday agent benchmark regressions", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     tempDirs.push(dir);
     return dir;
+  }
+
+  function createCanonicalPathApprovalResolver(
+    approvedArtifactPaths: readonly string[],
+  ): { resolver: ToolApprovalResolver; decisions: TestApprovalDecision[] } {
+    const approvedPaths = new Set(approvedArtifactPaths.map((filePath) => path.resolve(filePath)));
+    const decisions: TestApprovalDecision[] = [];
+    const resolver: ToolApprovalResolver = async (prompt) => {
+      const filePath = typeof prompt.params.path === "string"
+        ? path.resolve(prompt.params.path)
+        : null;
+      const approved = (
+        (prompt.toolName === "write" || prompt.toolName === "edit")
+        && filePath !== null
+        && approvedPaths.has(filePath)
+      );
+      decisions.push({ toolName: prompt.toolName, path: filePath, approved });
+      if (approved) {
+        return {
+          approved: true,
+          decidedByPrincipalId: "benchmark-test-approver",
+        };
+      }
+      return {
+        approved: false,
+        reason: "Mutation blocked pending explicit approval; test resolver denies destructive or non-artifact mutations.",
+      };
+    };
+    return { resolver, decisions };
   }
 
   it("rewrites vague destructive reset answers into an explicit approval boundary", async () => {
@@ -141,6 +178,9 @@ describe("Friday agent benchmark regressions", () => {
       "Friday needs a cleaner benchmark harness.\n",
       "utf8",
     );
+    const { resolver: toolApprovalResolver, decisions } = createCanonicalPathApprovalResolver([
+      resultPath,
+    ]);
 
     const llmClient = createMockLlmClient([
       [
@@ -194,6 +234,9 @@ describe("Friday agent benchmark regressions", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => nowIso,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+      toolApprovalResolver,
     });
 
     const result = await runtime.executeRun({
@@ -201,6 +244,14 @@ describe("Friday agent benchmark regressions", () => {
     });
 
     expect(result.status).toBe("completed");
+    expect(decisions.map((decision) => ({
+      toolName: decision.toolName,
+      path: decision.path,
+      approved: decision.approved,
+    }))).toEqual([
+      { toolName: "write", path: path.resolve(resultPath), approved: true },
+      { toolName: "write", path: path.resolve(resultPath), approved: true },
+    ]);
     expect(fs.readFileSync(resultPath, "utf8")).toContain("Blocker:");
     expect(fs.readFileSync(resultPath, "utf8")).toContain("reference.txt is missing");
   });
@@ -212,6 +263,9 @@ describe("Friday agent benchmark regressions", () => {
     const dumpPath = path.join(workspaceRoot, "database.dump");
     fs.writeFileSync(configPath, JSON.stringify({ apiToken: "test-token" }, null, 2), "utf8");
     fs.writeFileSync(dumpPath, "dump-data", "utf8");
+    const { resolver: toolApprovalResolver, decisions } = createCanonicalPathApprovalResolver([
+      decisionPath,
+    ]);
 
     const llmClient = createMockLlmClient([
       [
@@ -277,6 +331,9 @@ describe("Friday agent benchmark regressions", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => nowIso,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+      toolApprovalResolver,
     });
 
     const result = await runtime.executeRun({
@@ -284,6 +341,15 @@ describe("Friday agent benchmark regressions", () => {
     });
 
     expect(result.status).toBe("completed");
+    expect(decisions.map((decision) => ({
+      toolName: decision.toolName,
+      path: decision.path,
+      approved: decision.approved,
+    }))).toEqual([
+      { toolName: "exec", path: null, approved: false },
+      { toolName: "write", path: path.resolve(decisionPath), approved: true },
+      { toolName: "write", path: path.resolve(decisionPath), approved: true },
+    ]);
     expect(result.response).toContain("approval is required");
     expect(result.response).toContain("not executed");
     expect(fs.existsSync(dumpPath)).toBe(true);

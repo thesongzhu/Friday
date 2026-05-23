@@ -9,7 +9,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createFridayDiscordChannel } from "#channels";
 
 import {
+  approveMockAgentToolCall,
   createMockHubEnv,
+  startMockAgentRunAndApproveTools,
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
@@ -598,6 +600,7 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     env = await createMockHubEnv({
       providerKinds: ["anthropic"],
       channels: WEBCHAT_CHANNEL_CONFIG,
+      canonicalGate: true,
     });
     providerId = env.providers.anthropic!.providerId;
     model = env.providers.anthropic!.model;
@@ -656,6 +659,7 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "browser",
+      toolCallId: "browser-open-api-1",
       toolInput: { action: "open", url: "https://example.com" },
     });
     mock.enqueue({
@@ -668,17 +672,16 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
       text: "Screenshot captured and attached.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<ApiEnvelope<AgentRunResult>>(
+      env,
       {
         task: "Open example.com and take a screenshot",
         providerId,
         model,
         timeoutMs: 30_000,
       },
+      ["browser-open-api-1"],
+      { timeoutMs: 20_000 },
     );
 
     expect(res.status).toBe(200);
@@ -705,6 +708,7 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "browser",
+      toolCallId: "browser-open-webchat-1",
       toolInput: { action: "open", url: "https://example.com" },
     });
     mock.enqueue({
@@ -726,9 +730,18 @@ describe("Friday OpenClaw Parity Closure E2E", () => {
         timestamp: Date.now(),
       };
       client.send(inbound);
+      await approveMockAgentToolCall(env, {
+        task: inbound.text,
+        toolCallId: "browser-open-webchat-1",
+        timeoutMs: 20_000,
+      });
 
       const outbound = await client.waitForFrame(
-        (frame) => frame.type === "message" && frame.replyTo === inbound.id,
+        (frame) =>
+          frame.type === "message" &&
+          frame.replyTo === inbound.id &&
+          typeof frame.text === "string" &&
+          frame.text.includes("Screenshot"),
         35_000,
       );
       expect(outbound.text).toContain("Screenshot");
@@ -1284,6 +1297,7 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
         enabled: true,
         instances: [],
       },
+      canonicalGate: true,
       beforeStart: async (hub) => {
         const discordPlugin = createFridayDiscordChannel({
           gateway: discordHarness.gateway as never,
@@ -1321,6 +1335,7 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
     mock.enqueue({
       type: "tool_use",
       toolName: "browser",
+      toolCallId: "browser-open-discord-1",
       toolInput: { action: "open", url: "https://example.com" },
     });
     mock.enqueue({
@@ -1343,11 +1358,17 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
       content: "Open example.com and attach a screenshot",
       timestamp: new Date().toISOString(),
     });
+    await approveMockAgentToolCall(env, {
+      task: "Open example.com and attach a screenshot",
+      toolCallId: "browser-open-discord-1",
+      timeoutMs: 20_000,
+    });
 
     const outbound = await waitFor(
       async () => discordHarness.sent.find((call) =>
         call.channelId === inboundChannelId &&
-        call.payload.message_reference?.message_id === inboundMessageId
+        call.payload.message_reference?.message_id === inboundMessageId &&
+        call.payload.content.includes("Screenshot")
       ) ?? null,
       { timeoutMs: 40_000, label: "discord outbound send (success)" },
     );
@@ -1423,6 +1444,7 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
     mock.enqueue({
       type: "tool_use",
       toolName: "browser",
+      toolCallId: "browser-open-discord-delivery-1",
       toolInput: { action: "open", url: "https://example.com" },
     });
     mock.enqueue({
@@ -1435,8 +1457,6 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
       text: "Delivery path executed.",
     });
 
-    discordHarness.enqueueSendFailure("simulated primary discord transport failure");
-
     const inboundMessageId = "discord-msg-delivery-fallback-1";
     const inboundChannelId = "discord-channel-delivery-fallback";
 
@@ -1447,11 +1467,26 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
       content: "Open example.com, screenshot it, and reply",
       timestamp: new Date().toISOString(),
     });
+    await waitFor(
+      async () => discordHarness.sent.find((call) =>
+        call.channelId === inboundChannelId &&
+        call.payload.message_reference?.message_id === inboundMessageId &&
+        call.payload.content.includes("需要确认敏感操作")
+      ) ?? null,
+      { timeoutMs: 20_000, label: "discord tool approval prompt" },
+    );
+    discordHarness.enqueueSendFailure("simulated primary discord transport failure");
+    await approveMockAgentToolCall(env, {
+      task: "Open example.com, screenshot it, and reply",
+      toolCallId: "browser-open-discord-delivery-1",
+      timeoutMs: 20_000,
+    });
 
     const outbound = await waitFor(
       async () => discordHarness.sent.find((call) =>
         call.channelId === inboundChannelId &&
-        call.payload.message_reference?.message_id === inboundMessageId
+        call.payload.message_reference?.message_id === inboundMessageId &&
+        call.payload.content.includes("delivery failed (E-CH-OUTBOUND-001)")
       ) ?? null,
       { timeoutMs: 45_000, label: "discord outbound send (delivery fallback)" },
     );

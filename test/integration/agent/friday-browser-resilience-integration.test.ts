@@ -94,6 +94,7 @@ describe("Browser Resilience Integration", () => {
   let idGenerator: () => string;
   let eventEmitter: FridayAgentEventEmitter;
   const NOW = "2026-03-02T12:00:00.000Z";
+  const CANONICAL_APPROVAL_SECRET = "test-canonical-secret"; // pragma: allowlist secret
 
   beforeEach(() => {
     db = createTestDb();
@@ -128,6 +129,12 @@ describe("Browser Resilience Integration", () => {
       eventEmitter,
       idGenerator,
       nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+      toolApprovalResolver: async () => ({
+        approved: true,
+        decidedByPrincipalId: "browser-resilience-test-approver",
+      }),
     });
 
     return runtime;
