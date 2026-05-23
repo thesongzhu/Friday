@@ -1,7 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: vi.fn(actual.readFile),
+  };
+});
+
 import {
   appendFridayAuditLog,
   buildFridayAuditRecordBase,
@@ -239,8 +249,35 @@ describe("FridayAuditLog (security)", () => {
       expect(lines).toHaveLength(10);
       // Each line should be valid JSON
       for (const line of lines) {
-        expect(() => JSON.parse(line)).not.toThrow();
+        const parsed = JSON.parse(line) as FridayAuditRecord;
+        expect(parsed.id).toMatch(/^audit-concurrent-\d+$/);
       }
+    });
+
+    it("reports rotation errors without hiding the append result", async () => {
+      const rotationError = new Error("rotation-read-failed");
+      vi.mocked(fsPromises.readFile).mockRejectedValueOnce(rotationError);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const onRotationError = vi.fn();
+
+      try {
+        await appendFridayAuditLog(logPath, makeRecord("rotation-signal"), {
+          maxBytes: 1,
+          keepLines: 1,
+          onRotationError,
+        });
+      } finally {
+        warnSpy.mockRestore();
+      }
+
+      expect(onRotationError).toHaveBeenCalledWith(rotationError, {
+        filePath: logPath,
+        maxBytes: 1,
+        keepLines: 1,
+      });
+      const lines = fs.readFileSync(logPath, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(1);
+      expect((JSON.parse(lines[0]) as FridayAuditRecord).action).toBe("rotation-signal");
     });
   });
 });

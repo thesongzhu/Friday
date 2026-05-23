@@ -19,6 +19,22 @@ rm -rf "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e"
 mkdir -p "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e"
 cp -R "${ROOT_DIR}/artifacts/docker-e2e/." "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e/"
 
+if [ ! -s "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e/health.json" ]; then
+  echo "[contract-docker] missing copied health.json artifact" >&2
+  exit 1
+fi
+
+if [ ! -s "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e/container-auth-flow.json" ]; then
+  echo "[contract-docker] missing copied container-auth-flow.json artifact" >&2
+  exit 1
+fi
+
+LOGIN_STATUS="$(tr -d '[:space:]' < "${ROOT_DIR}/artifacts/contract/docker/local-docker-e2e/login.status")"
+if [ "${LOGIN_STATUS}" != "200" ]; then
+  echo "[contract-docker] expected copied login.status=200, got ${LOGIN_STATUS}" >&2
+  exit 1
+fi
+
 cat > "${ROOT_DIR}/artifacts/contract/docker/result.json" <<JSON
 {"env":"docker","status":"PASS","script":"scripts/ci/docker-e2e-smoke.sh","artifacts":"artifacts/contract/docker/local-docker-e2e"}
 JSON

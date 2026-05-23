@@ -13,7 +13,7 @@
  * @module security/multi-tenant/persistence
  */
 
-import type { FridaySqliteLayer } from "../../../state/sqlite/friday-sqlite.types.js";
+import type Database from "better-sqlite3";
 import type {
   FridayRole,
   FridayRoleAssignment,
@@ -38,6 +38,11 @@ import type {
 function safeJsonParse<T>(input: string | null | undefined, fallback: T): T {
   if (!input) return fallback;
   try { return JSON.parse(input) as T; } catch { return fallback; }
+}
+
+interface FridaySecuritySqliteLayer {
+  withReadConnection<T>(fn: (db: Database.Database) => T): T;
+  withWriteTransaction<T>(fn: (db: Database.Database) => T): T;
 }
 
 // ─── Tenant persistence ───
@@ -159,7 +164,7 @@ function membershipEntityToRow(entity: FridayWorkspaceMembership): SecurityMembe
   };
 }
 
-export function createSqliteTenantPersistence(sqlite: FridaySqliteLayer): TenantPersistenceBackend {
+export function createSqliteTenantPersistence(sqlite: FridaySecuritySqliteLayer): TenantPersistenceBackend {
   return {
     hydrateTenants() {
       const rows = sqlite.withReadConnection((db) => db.prepare("SELECT * FROM security_tenants").all() as SecurityTenantRow[]);
@@ -383,7 +388,7 @@ function accessLogEntityToRow(entity: FridaySecretAccessLog): SecuritySecretAcce
   };
 }
 
-export function createSqliteSecretPersistence(sqlite: FridaySqliteLayer): SecretPersistenceBackend {
+export function createSqliteSecretPersistence(sqlite: FridaySecuritySqliteLayer): SecretPersistenceBackend {
   return {
     hydrateSecrets() {
       const rows = sqlite.withReadConnection((db) =>
@@ -562,7 +567,7 @@ function violationEntityToRow(entity: FridaySecurityViolation): SecurityViolatio
   };
 }
 
-export function createSqliteAuditPersistence(sqlite: FridaySqliteLayer): AuditPersistenceBackend {
+export function createSqliteAuditPersistence(sqlite: FridaySecuritySqliteLayer): AuditPersistenceBackend {
   return {
     hydrateAuditEntries() {
       const rows = sqlite.withReadConnection((db) =>
@@ -718,7 +723,7 @@ function assignmentEntityToRow(assignment: FridayRoleAssignment): SecurityRoleAs
   };
 }
 
-export function createSqliteRbacPersistence(sqlite: FridaySqliteLayer): RbacPersistenceBackend {
+export function createSqliteRbacPersistence(sqlite: FridaySecuritySqliteLayer): RbacPersistenceBackend {
   return {
     hydrateRoles() {
       const rows = sqlite.withReadConnection((db) => db.prepare("SELECT * FROM security_roles").all() as SecurityRoleRow[]);
@@ -818,7 +823,7 @@ function scopedResourceEntityToRow(
 }
 
 export function createSqliteTenantScopedResourcePersistence(
-  sqlite: FridaySqliteLayer,
+  sqlite: FridaySecuritySqliteLayer,
 ): TenantScopedResourcePersistenceBackend {
   return {
     hydrate() {

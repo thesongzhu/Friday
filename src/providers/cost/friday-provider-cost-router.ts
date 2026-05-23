@@ -36,7 +36,7 @@ function scoreByBudgetDowngrade(
   );
   const costScore = 1 - Math.min(pricing.inputPer1MUsd / 20, 1);
   const qualityScore = QUALITY_TIER_SCORE[pricing.qualityTier] ?? 0.5;
-  return costScore * 0.80 + qualityScore * 0.20;
+  return costScore * 0.98 + qualityScore * 0.02;
 }
 
 function scoreByQuality(

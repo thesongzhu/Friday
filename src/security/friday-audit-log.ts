@@ -69,6 +69,12 @@ export interface FridayAuditRecord {
   details?: Record<string, unknown>;
 }
 
+export interface FridayAuditLogRotationErrorContext {
+  filePath: string;
+  maxBytes: number;
+  keepLines: number;
+}
+
 // ─── Build helpers ───
 
 /**
@@ -98,6 +104,8 @@ export interface FridayAuditLogWriterOptions {
   maxBytes?: number;
   /** Number of most-recent lines to keep after rotation. Default: 1000. */
   keepLines?: number;
+  /** Optional operational hook for rotation failures; append still completes. */
+  onRotationError?: (error: unknown, context: FridayAuditLogRotationErrorContext) => void;
 }
 
 // ─── Constants ───
@@ -149,6 +157,21 @@ async function bestEffortChmod(filePath: string, mode: number): Promise<void> {
   }
 }
 
+function notifyRotationError(
+  options: FridayAuditLogWriterOptions | undefined,
+  error: unknown,
+  context: FridayAuditLogRotationErrorContext,
+): void {
+  try {
+    options?.onRotationError?.(error, context);
+  } catch (callbackError) {
+    console.warn(
+      "[friday][audit-log] rotation error hook failed:",
+      callbackError instanceof Error ? callbackError.message : String(callbackError),
+    );
+  }
+}
+
 // ─── Writer ───
 
 /**
@@ -196,7 +219,8 @@ export async function appendFridayAuditLog(
         await bestEffortChmod(filePath, FILE_MODE);
       }
     } catch (err) {
-      // Rotation failure is non-fatal — log continues to work
+      notifyRotationError(options, err, { filePath, maxBytes, keepLines });
+      // Rotation failure is non-fatal — append has already completed.
       console.warn("[friday][audit-log] rotation failed:", err instanceof Error ? err.message : String(err));
     }
   });

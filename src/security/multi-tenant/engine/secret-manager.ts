@@ -33,8 +33,8 @@ import type { FridayCreateSecretScopeInput } from "../api/friday-multi-tenant-se
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
-import { decryptSecret, encryptSecret, getMasterKey } from "../../../providers/security/friday-secret-crypto.js";
-import type { FridayEncryptedEnvelope } from "../../../providers/security/friday-secret-crypto.js";
+import { decryptSecret, encryptSecret, getMasterKey } from "../../friday-secret-crypto.js";
+import type { FridayEncryptedEnvelope } from "../../friday-secret-crypto.js";
 
 // ─── Input Types ───
 
