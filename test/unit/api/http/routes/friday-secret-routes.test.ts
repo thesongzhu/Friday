@@ -132,7 +132,7 @@ describe("FridaySecretRoutes", () => {
     await route.handler(
       makeCtx({
         principal: makeSecretAdminPrincipal(),
-        params: { secretId: "secret-1" },
+        params: { secretId: "secret-1" }, // pragma: allowlist secret
         body: { value: "next-secret" },
       }), // pragma: allowlist secret
     );
@@ -147,7 +147,7 @@ describe("FridaySecretRoutes", () => {
       await route.handler(
         makeCtx({
           principal: makeSecretAdminPrincipal({ role: "viewer", scopes: ["secrets.read"] }),
-          params: { secretId: "secret-1" },
+          params: { secretId: "secret-1" }, // pragma: allowlist secret
           body: { value: "next-secret" },
         }), // pragma: allowlist secret
       );
@@ -163,7 +163,7 @@ describe("FridaySecretRoutes", () => {
     const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.delete")!;
     const result = await route.handler(makeCtx({
       principal: makeSecretAdminPrincipal({ scopes: ["security.write"] }),
-      params: { secretId: "secret-1" },
+      params: { secretId: "secret-1" }, // pragma: allowlist secret
     })); // pragma: allowlist secret
     expect(result).toEqual({ deleted: true });
     expect(deps.service.deleteSecret).toHaveBeenCalledWith("secret-1"); // pragma: allowlist secret
