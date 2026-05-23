@@ -4,7 +4,8 @@ import { FridayDomainError } from "#errors";
  * Trace Manager — Distributed tracing with spans, parent-child relationships,
  * and context propagation.
  *
- * Manages the lifecycle of traces and spans following OTel-inspired conventions.
+ * Manages the lifecycle of traces and spans using local OTel-shaped conventions.
+ * This is in-process tracing, not an OTLP exporter or W3C traceparent wire contract.
  * Supports creating root and child spans, recording events, setting status,
  * and ending spans. Active traces are held in memory; completed traces can be
  * retrieved for persistence or export.

@@ -2,32 +2,12 @@
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export CONTRACT_ENV=server
+# Server contract lane intentionally mirrors production mode while running the
+# same promise scripts as local.
 export NODE_ENV=production
+source "${ROOT_DIR}/tests/contract/_helpers/contract-script-list.sh"
 
-SCRIPTS=(
-  tests/contract/P1_cli_runtime/success.sh
-  tests/contract/P1_cli_runtime/failure.sh
-  tests/contract/P2_http_envelope/success.sh
-  tests/contract/P2_http_envelope/failure.sh
-  tests/contract/P3_agent_run_traceable/success.sh
-  tests/contract/P3_agent_run_traceable/failure.sh
-  tests/contract/P4_workflow_lifecycle/success.sh
-  tests/contract/P4_workflow_lifecycle/failure.sh
-  tests/contract/P5_channel_delivery/success.sh
-  tests/contract/P5_channel_delivery/failure.sh
-  tests/contract/P6_browser_artifact/success.sh
-  tests/contract/P6_browser_artifact/failure.sh
-  tests/contract/P7_desktop_capability/success.sh
-  tests/contract/P7_desktop_capability/failure.sh
-  tests/contract/P8_marketplace_gating/success.sh
-  tests/contract/P8_marketplace_gating/failure.sh
-  tests/contract/P9_not_enabled_explicit/success.sh
-  tests/contract/P9_not_enabled_explicit/failure.sh
-  tests/contract/P10_traceability_fields/success.sh
-  tests/contract/P10_traceability_fields/failure.sh
-)
-
-for script in "${SCRIPTS[@]}"; do
+for script in "${CONTRACT_SCRIPTS[@]}"; do
   echo "[contract-server] running ${script}"
   (cd "${ROOT_DIR}" && bash "${script}")
 done

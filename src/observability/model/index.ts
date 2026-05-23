@@ -13,7 +13,7 @@ export type {
   JsonValue,
   JsonObject,
 
-  // OTel-compatible attribute types
+  // Local OTel-shaped attribute primitive types; no external exporter is shipped here.
   FridayAttributeValue,
   FridayAttributes,
 

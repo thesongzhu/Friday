@@ -29,7 +29,8 @@ export interface JsonObject {
 }
 
 /**
- * Attribute value type compatible with OpenTelemetry attribute constraints.
+ * Attribute value type shaped for future OpenTelemetry export constraints.
+ * Friday does not ship an OTLP exporter or wire-level OTel integration here.
  * No nested JSON — only primitives and homogeneous arrays of primitives.
  */
 export type FridayAttributeValue =
@@ -41,7 +42,7 @@ export type FridayAttributeValue =
   | boolean[];
 
 /**
- * An attribute map following OTel constraints.
+ * An attribute map following local OTel-shaped constraints.
  * Keys are strings; values are primitives or homogeneous arrays.
  */
 export interface FridayAttributes {
@@ -55,7 +56,7 @@ export interface FridayAttributes {
 // ─── Span Kind ───
 
 /**
- * The kind of span, following OpenTelemetry semantics.
+ * The kind of span, using local Friday trace/span names.
  *
  * - `internal` — In-process function call (e.g., Rules Engine evaluation).
  * - `server` — Inbound API request.
@@ -91,7 +92,7 @@ export type FridaySpanStatus =
  * Carries the trace ID, span ID, and trace flags needed to
  * reconstruct the full trace tree.
  *
- * Inspired by OpenTelemetry conventions (not W3C traceparent compatible).
+ * Local Friday propagation token (not W3C traceparent compatible).
  */
 export interface FridaySpanContext {
   /** The globally unique trace identifier (128-bit hex string). */
@@ -106,7 +107,7 @@ export interface FridaySpanContext {
   traceFlags: number;
   /**
    * Additional vendor-specific trace state.
-   * Inspired by OTel tracestate; opaque key=value pairs.
+   * Local opaque key=value trace state.
    */
   tracestate?: string;
 }
@@ -123,7 +124,7 @@ export interface FridaySpanEvent {
   name: string;
   /** When the event occurred. */
   timestamp: ISODateTime;
-  /** Structured attributes on the event (OTel-compatible). */
+  /** Structured attributes on the event (local OTel-shaped primitives only). */
   attributes?: FridayAttributes;
 }
 
@@ -155,7 +156,7 @@ export interface FridaySpan {
    * Corresponds to `friday.module` attribute.
    */
   module: FridayObservabilityModule;
-  /** Structured attributes for filtering and correlation (OTel-compatible). */
+  /** Structured attributes for filtering and correlation (local OTel-shaped primitives only). */
   attributes: FridayAttributes;
   /** Timestamped events within this span. */
   events: FridaySpanEvent[];
@@ -205,7 +206,7 @@ export interface FridayTrace {
   /** Trace status: derived from the root span's status. */
   status: FridaySpanStatus;
   /**
-   * Structured attributes at the trace level (OTel-compatible).
+   * Structured attributes at the trace level (local OTel-shaped primitives only).
    * Common keys: `friday.workflow.id`, `friday.workflow.run_id`, `friday.principal.id`.
    */
   attributes: FridayAttributes;

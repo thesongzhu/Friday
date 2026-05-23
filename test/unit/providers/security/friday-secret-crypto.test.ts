@@ -47,7 +47,7 @@ describe("FridaySecretCrypto", () => {
     it("fails to decrypt with wrong key", () => {
       const envelope = encryptSecret("secret", validKey);
       const wrongKey = crypto.randomBytes(32);
-      expect(() => decryptSecret(envelope, wrongKey)).toThrow();
+      expect(() => decryptSecret(envelope, wrongKey)).toThrow(/authenticat|Unsupported state/i);
     });
 
     it("fails to decrypt with tampered ciphertext", () => {
@@ -56,7 +56,7 @@ describe("FridaySecretCrypto", () => {
         ...envelope,
         ciphertext: Buffer.from("tampered").toString("base64"),
       };
-      expect(() => decryptSecret(tampered, validKey)).toThrow();
+      expect(() => decryptSecret(tampered, validKey)).toThrow(/authenticat|Unsupported state/i);
     });
 
     it("fails to decrypt with tampered tag", () => {
@@ -65,7 +65,7 @@ describe("FridaySecretCrypto", () => {
         ...envelope,
         tag: Buffer.from("tampered-tag-1234").toString("base64"),
       };
-      expect(() => decryptSecret(tampered, validKey)).toThrow();
+      expect(() => decryptSecret(tampered, validKey)).toThrow(/authenticat|Unsupported state|Invalid authentication tag/i);
     });
 
     it("rejects master key with wrong length", () => {
@@ -123,7 +123,7 @@ describe("FridaySecretCrypto", () => {
       delete process.env.FRIDAY_MASTER_KEY;
       process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
 
-      expect(() => getMasterKey()).toThrow();
+      expect(() => getMasterKey()).toThrow("FRIDAY_MASTER_KEY_SOURCE=keychain");
     });
 
     it("generates random key when env var not set", () => {
