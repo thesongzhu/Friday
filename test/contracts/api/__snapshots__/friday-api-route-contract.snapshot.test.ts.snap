@@ -3,20 +3,20 @@
 exports[`MECHANISM-4 — API Route Contract (Snapshot) > Phase 14.5A WP-001: every public mutating route maps to an accepted gate family 1`] = `
 {
   "classified": {
-    "bound_principal": 54,
+    "bound_principal": 59,
     "channel_signature": 4,
     "hmac_or_bearer_opt_in": 1,
     "public_low_risk": 2,
     "rate_limited_pending": 4,
-    "unclassified": 255,
+    "unclassified": 250,
   },
   "total_public_mutating": 320,
   "unclassified_sample_max_5": [
-    "config.update",
-    "config.revisions.revert",
     "capabilities.acquisition.runs.create",
     "capabilities.acquisition.runs.approve",
     "capabilities.acquisition.runs.cancel",
+    "autonomy.policy.patch",
+    "standing.goals.create",
   ],
 }
 `;

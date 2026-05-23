@@ -813,6 +813,12 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "task.workflows.claims.verify",
         "task.workflows.claims.block",
         "task.workflows.closeout",
+        // Post-global follow-up: runtime config and standalone secret admin writes.
+        "config.update",
+        "config.revisions.revert",
+        "secrets.create",
+        "secrets.update",
+        "secrets.delete",
         // Phase 14.5B module_28b: one-click repair / recovery doctor.
         "autofix.actions.run.ready",
         "autofix.actions.approve",
@@ -900,12 +906,13 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       expect(counts.rate_limited_pending).toBeGreaterThan(0);
 
       // The unclassified bucket exists to capture broader public-mutating
-      // surfaces (config/autonomy/secrets/packaging/etc.) that today run
-      // inside the synthetic public-principal compatibility layer + their
-      // own scope/role checks. Phase 14.5B module_28b moved the five
+      // surfaces (autonomy/packaging/provider/setup/etc.) that still require
+      // route-by-route reconciliation before they can be promoted into an
+      // accepted gate family. Phase 14.5B module_28b moved the five
       // /v1/auto-fix/* mutating routes from this bucket into BOUND_PRINCIPAL;
-      // read-shaped auto-fix routes remain public. The invariant records
-      // the count so any further expansion is visible in this snapshot
+      // this post-global follow-up moves runtime config writes and standalone
+      // secret admin writes into BOUND_PRINCIPAL. The invariant records
+      // the remaining count so any further expansion is visible in this snapshot
       // rather than silently shipping.
       expect(counts.unclassified + counts.hmac_or_bearer_opt_in + counts.channel_signature + counts.bound_principal + counts.rate_limited_pending + counts.public_low_risk).toBe(mutating.length);
       expect({

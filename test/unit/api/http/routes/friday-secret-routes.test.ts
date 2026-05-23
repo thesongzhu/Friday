@@ -5,6 +5,7 @@ import {
   createFridaySecretRoutes,
   type FridaySecretRoutesDeps,
 } from "#api";
+import type { FridayAuthPrincipal } from "#api";
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -17,6 +18,22 @@ function makeCtx(
     body: null,
     headers: {},
     principal: null,
+    ...overrides,
+  };
+}
+
+function makeSecretAdminPrincipal(
+  overrides: Partial<FridayAuthPrincipal> = {},
+): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-1",
+    userId: "user-1",
+    role: "admin",
+    scopes: ["secrets.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: "2026-03-08T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -85,24 +102,69 @@ describe("FridaySecretRoutes", () => {
 
   it("validates create body", async () => {
     const route = createFridaySecretRoutes(makeDeps()).find((entry) => entry.operationId === "secrets.create")!;
-    await expect(route.handler(makeCtx({ body: { scope: "provider", refKey: "", value: "x" } }))).rejects.toThrow(
-      "refKey is required",
-    );
+    await expect(
+      route.handler(makeCtx({
+        principal: makeSecretAdminPrincipal(),
+        body: { scope: "provider", refKey: "", value: "x" },
+      })),
+    ).rejects.toThrow("refKey is required");
+  });
+
+  it("refuses the synthetic public principal before creating a secret", async () => {
+    const deps = makeDeps();
+    const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.create")!;
+    let thrown: unknown;
+    try {
+      await route.handler(makeCtx({
+        principal: { principalId: "public:default" } as never,
+        body: { scope: "provider", refKey: "provider:openai:key", value: "x" },
+      }));
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(deps.service.createSecret).not.toHaveBeenCalled();
   });
 
   it("updates with partial payloads", async () => {
     const deps = makeDeps();
     const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.update")!;
     await route.handler(
-      makeCtx({ params: { secretId: "secret-1" }, body: { value: "next-secret" } }), // pragma: allowlist secret
+      makeCtx({
+        principal: makeSecretAdminPrincipal(),
+        params: { secretId: "secret-1" }, // pragma: allowlist secret
+        body: { value: "next-secret" },
+      }), // pragma: allowlist secret
     );
     expect(deps.service.updateSecret).toHaveBeenCalledWith("secret-1", { value: "next-secret" }); // pragma: allowlist secret
+  });
+
+  it("refuses a bound principal without secret write authority before updating", async () => {
+    const deps = makeDeps();
+    const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.update")!;
+    let thrown: unknown;
+    try {
+      await route.handler(
+        makeCtx({
+          principal: makeSecretAdminPrincipal({ role: "viewer", scopes: ["secrets.read"] }),
+          params: { secretId: "secret-1" }, // pragma: allowlist secret
+          body: { value: "next-secret" },
+        }), // pragma: allowlist secret
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED");
+    expect(deps.service.updateSecret).not.toHaveBeenCalled();
   });
 
   it("returns deleted flag", async () => {
     const deps = makeDeps();
     const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.delete")!;
-    const result = await route.handler(makeCtx({ params: { secretId: "secret-1" } })); // pragma: allowlist secret
+    const result = await route.handler(makeCtx({
+      principal: makeSecretAdminPrincipal({ scopes: ["security.write"] }),
+      params: { secretId: "secret-1" }, // pragma: allowlist secret
+    })); // pragma: allowlist secret
     expect(result).toEqual({ deleted: true });
     expect(deps.service.deleteSecret).toHaveBeenCalledWith("secret-1"); // pragma: allowlist secret
   });

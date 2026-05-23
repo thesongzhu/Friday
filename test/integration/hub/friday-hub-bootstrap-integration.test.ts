@@ -1400,6 +1400,16 @@ describe("FridayHub Bootstrap Integration", () => {
       headers: {},
       principal: null,
     };
+    const configAdminPrincipal = {
+      principalType: "user",
+      principalId: "config-admin-1",
+      userId: "config-admin-1",
+      role: "admin",
+      scopes: ["hub.admin"],
+      tokenId: "config-token-1",
+      tokenKind: "access",
+      issuedAt: "2026-03-08T00:00:00.000Z",
+    };
 
     const initial = await getConfig.handler({
       ...baseCtx,
@@ -1411,6 +1421,7 @@ describe("FridayHub Bootstrap Integration", () => {
 
     const updated = await updateConfig.handler({
       ...baseCtx,
+      principal: configAdminPrincipal,
       body: {
         expectedRevision: initial.revision,
         patch: { database: { busyTimeoutMs: 6000 } },
@@ -1435,6 +1446,7 @@ describe("FridayHub Bootstrap Integration", () => {
 
     const reverted = await revertConfig.handler({
       ...baseCtx,
+      principal: configAdminPrincipal,
       body: { toRevision: 1 },
     } as never) as { revision: number; revertedFrom: number; changedKeys: string[] };
     expect(reverted).toMatchObject({ revision: 3, revertedFrom: 2 });
