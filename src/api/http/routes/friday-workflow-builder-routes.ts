@@ -3,6 +3,10 @@ import type {
   FridayPaginationQuery,
   FridayRouteDefinition,
 } from "../../model/friday-api-common.types.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 import type { UUID } from "#workflows";
 import type {
   FridayAcquireWorkflowLockRequest,
@@ -40,6 +44,16 @@ export interface FridayWorkflowBuilderTemplateRoutesDeps {
   ) => FridayInstantiateWorkflowBuilderTemplateResponse;
 }
 
+function assertWorkflowBuilderWritePrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: FridayPublicMutationOperation,
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "workflow.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
+}
+
 export function createFridayWorkflowBuilderTemplateRoutes(
   deps: FridayWorkflowBuilderTemplateRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -72,6 +86,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       path: "/v1/workflow-builder/templates/:templateId/instantiate",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.template.instantiate");
         const { templateId } = ctx.params as { templateId: string };
         const body = ctx.body as FridayInstantiateWorkflowBuilderTemplateRequest;
         return deps.instantiateTemplate(templateId, body);
@@ -127,6 +142,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.create");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.createDraft(workflowId, ctx.body as FridayCreateDraftRequest);
       },
@@ -157,6 +173,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/import",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.bundle.import");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.importWorkflowBundle(workflowId, ctx.body as FridayImportWorkflowBundleRequest);
       },
@@ -167,6 +184,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.save");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.saveDraft(workflowId, draftId, ctx.body as FridaySaveDraftRequest);
       },
@@ -177,6 +195,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId/autosave",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.autosave");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.autosaveDraft(workflowId, draftId, ctx.body as FridayAutosaveDraftRequest);
       },
@@ -187,6 +206,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId/compile",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.compile");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.compileDraft(workflowId, draftId);
       },
@@ -198,6 +218,7 @@ export function createFridayWorkflowBuilderRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.publish");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.publishDraft(workflowId, draftId, ctx.body as FridayPublishDraftRequest);
       },
@@ -208,6 +229,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/acquire",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.acquire");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.acquireLock(workflowId, ctx.body as FridayAcquireWorkflowLockRequest, ctx.principal);
       },
@@ -218,6 +240,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/renew",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.renew");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.renewLock(workflowId, ctx.body as FridayRenewWorkflowLockRequest, ctx.principal);
       },
@@ -228,6 +251,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/release",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.release");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.releaseLock(workflowId, ctx.body as FridayReleaseWorkflowLockRequest, ctx.principal);
       },

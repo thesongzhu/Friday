@@ -657,6 +657,8 @@ describe("createFridaySystemService", () => {
 
     const approval = await fixture.service.executeIntent({
       action: "approve",
+      actorId: "agent-1",
+      actorKind: "agent",
       target: "clipboard_read",
       reason: "Allow clipboard access for testing",
     });
@@ -690,6 +692,31 @@ describe("createFridaySystemService", () => {
     expect(result.status).toBe("blocked");
     expect(result.message).toContain("Canonical approval required");
     expect(fixture.execCommand).not.toHaveBeenCalledWith("bash", expect.any(Array));
+  });
+
+  it("treats approval-rule updates as control-lease mutations", async () => {
+    const fixture = await createServiceFixture();
+    allocatedDbs.push(fixture.db);
+
+    await fixture.service.executeIntent({
+      action: "request_control",
+      actorId: "agent-1",
+      actorKind: "agent",
+      leaseTtlMs: 60_000,
+    });
+
+    await expect(
+      fixture.service.executeIntent({
+        action: "approve",
+        actorId: "agent-2",
+        actorKind: "agent",
+        target: "clipboard_read",
+        reason: "wrong actor",
+      }),
+    ).resolves.toMatchObject({
+      status: "blocked",
+      message: "Control lease is currently held by agent:agent-1",
+    });
   });
 
   it("allows system mutations with a matching canonical approval ticket", async () => {
@@ -1133,6 +1160,8 @@ describe("createFridaySystemService", () => {
 
     await fixture.service.executeIntent({
       action: "approve",
+      actorId: "agent-1",
+      actorKind: "agent",
       target: "notification_act",
       reason: "Allow notification actions for testing",
     });
@@ -1173,6 +1202,8 @@ describe("createFridaySystemService", () => {
 
     await fixture.service.executeIntent({
       action: "approve",
+      actorId: "agent-1",
+      actorKind: "agent",
       target: "notification_act",
       reason: "Allow notification actions for testing",
     });

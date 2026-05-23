@@ -101,6 +101,17 @@ describe("FridayAuthService", () => {
     ).toThrow("already been completed");
   });
 
+  it("accepts loopback aliases consistently for local bootstrap", () => {
+    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
+
+    const result = service.bootstrapLocalPassphrase(
+      { passphrase: "super-secret-passphrase" },
+      "::ffff:127.0.0.2",
+    );
+
+    expect(result.initialized).toBe(true);
+  });
+
   it("rejects bootstrap from non-localhost IP", () => {
     db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
     expect(() =>

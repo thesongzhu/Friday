@@ -574,7 +574,7 @@ export function createFridayAgentRuntime(
     compactionBridge,
     compactionContextReplaySink,
   } = deps;
-  const canonicalMutatingActionGate = deps.canonicalMutatingActionGate
+  const canonicalMutatingActionGate = deps.canonicalMutatingActionGate === true
     ? createFridayMutatingActionGate({
         nowIso,
         ticketIdGenerator: () => idGenerator(),
@@ -2944,6 +2944,22 @@ export function createFridayAgentRuntime(
             }
 
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
+            if (toolCallIsMutating && !canonicalMutatingActionGate) {
+              toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                toolUse,
+                runId,
+                nowIso,
+                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                routeId: "agent.execute.tool.canonical_gate",
+                correlationId: runId,
+                message: `Tool '${toolUse.name}' blocked: canonical mutating action gate is required for mutating tool calls`,
+                readOnly: isReadOnly,
+                operationalMode: runOperationalMode,
+                approvalRequiredReason: approvalRequiredReason ?? "Canonical mutating action gate is required for mutating tool calls.",
+                guardrailDecision: "block",
+              }));
+              continue;
+            }
             if (canonicalMutatingActionGate) {
               const gateRequest = buildCanonicalAgentToolGateRequest({
                 toolUse,

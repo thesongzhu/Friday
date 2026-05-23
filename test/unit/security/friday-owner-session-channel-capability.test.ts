@@ -6,6 +6,7 @@ import {
   FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES,
   FRIDAY_WORKFLOW_WEBHOOK_PATH_TOKEN_MIN_LENGTH,
   assertBoundActorForSessionOperation,
+  assertBoundPrincipalAuthorityForOperation,
   assertBoundPrincipalForOperation,
   describeWebhookReceiptTrust,
   evaluateWorkflowWebhookGate,
@@ -83,6 +84,35 @@ describe("FridayOwnerSessionChannelCapability", () => {
       expect(bound.principalId).toBe("user-real-1");
       expect(bound.source).toBe("api");
       expect(bound.tokenId).toBe("22222222-2222-2222-2222-222222222222");
+    });
+  });
+
+  describe("assertBoundPrincipalAuthorityForOperation", () => {
+    it("throws when a bound principal lacks the required role or scope", () => {
+      let thrown: unknown;
+      try {
+        assertBoundPrincipalAuthorityForOperation(
+          realPrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+          "workflow.create",
+          "api",
+          { anyOfScopes: ["workflow.write"], anyOfRoles: ["admin"] },
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { code?: string }).code).toBe(
+        FRIDAY_OWNER_SESSION_CHANNEL_ERROR_CODES.BOUND_PRINCIPAL_AUTHORITY_REQUIRED,
+      );
+    });
+
+    it("allows a bound principal with the required write scope", () => {
+      const bound = assertBoundPrincipalAuthorityForOperation(
+        realPrincipal({ role: "operator", scopes: ["workflow.write"] }),
+        "workflow.create",
+        "api",
+        { anyOfScopes: ["workflow.write"], anyOfRoles: ["admin"] },
+      );
+      expect(bound.principalId).toBe("user-real-1");
     });
   });
 

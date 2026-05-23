@@ -11,6 +11,7 @@ import {
   createFridayAgentRuntime,
 } from "#agent";
 import type { FridayAgentLlmClient, FridayAgentLlmStreamEvent } from "#agent";
+import type { CreateFridayAgentRuntimeDeps } from "#agent";
 import { createTestDb, createTestIdGenerator } from "../unit/satellites/_helpers/create-test-db.helper.js";
 import {
   PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS,
@@ -18,6 +19,15 @@ import {
 
 const [, TROUBLESHOOT_HIGH_RISK_APPROVAL_BOUNDARY_CASE_ID] = PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS;
 const NOW = "2026-03-24T18:30:00.000Z";
+const CANONICAL_APPROVAL_SECRET = "test-canonical-key"; // pragma: allowlist secret
+
+type ToolApprovalResolver = NonNullable<CreateFridayAgentRuntimeDeps["toolApprovalResolver"]>;
+
+interface TestApprovalDecision {
+  readonly toolName: string;
+  readonly path: string | null;
+  readonly approved: boolean;
+}
 
 function createMockLlmClient(
   events: FridayAgentLlmStreamEvent[][],
@@ -36,6 +46,32 @@ function createMockLlmClient(
 
 function createWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "friday-struct-approval-"));
+}
+
+function createCanonicalArtifactApprovalResolver(
+  approvedArtifactPaths: readonly string[],
+): { resolver: ToolApprovalResolver; decisions: TestApprovalDecision[] } {
+  const approvedPaths = new Set(approvedArtifactPaths.map((filePath) => path.resolve(filePath)));
+  const decisions: TestApprovalDecision[] = [];
+  const resolver: ToolApprovalResolver = async (prompt) => {
+    const filePath = typeof prompt.params.path === "string"
+      ? path.resolve(prompt.params.path)
+      : null;
+    const approved = (
+      (prompt.toolName === "write" || prompt.toolName === "edit")
+      && filePath !== null
+      && approvedPaths.has(filePath)
+    );
+    decisions.push({ toolName: prompt.toolName, path: filePath, approved });
+    if (approved) {
+      return { approved: true, decidedByPrincipalId: "test-artifact-approver" };
+    }
+    return {
+      approved: false,
+      reason: "Mutation blocked pending explicit approval; test resolver denies destructive or secret file mutations outside approved proof artifacts.",
+    };
+  };
+  return { resolver, decisions };
 }
 
 describe("Structural approval-boundary adversarial coverage", () => {
@@ -61,6 +97,9 @@ describe("Structural approval-boundary adversarial coverage", () => {
         "No destructive changes were executed.",
         "",
       ].join("\n");
+      const { resolver: toolApprovalResolver, decisions } = createCanonicalArtifactApprovalResolver([
+        decisionPath,
+      ]);
 
       const llmClient = createMockLlmClient([
         [
@@ -134,6 +173,9 @@ describe("Structural approval-boundary adversarial coverage", () => {
         eventEmitter: createFridayAgentEventEmitter(),
         idGenerator: createTestIdGenerator(),
         nowIso: () => NOW,
+        canonicalMutatingActionGate: true,
+        canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+        toolApprovalResolver,
         artifactWriter: createFridayAgentArtifactWriter(workspaceRoot),
         workdir: workspaceRoot,
       });
@@ -149,6 +191,14 @@ describe("Structural approval-boundary adversarial coverage", () => {
 
       expect(result.status).toBe("completed");
       expect(result.toolCallCount).toBe(4);
+      expect(decisions.filter((decision) => !decision.approved).map((decision) => decision.path)).toEqual([
+        path.resolve(dumpPath),
+        path.resolve(configPath),
+      ]);
+      expect(decisions.filter((decision) => decision.approved).map((decision) => decision.path)).toEqual([
+        path.resolve(decisionPath),
+        path.resolve(decisionPath),
+      ]);
       expect(fs.readFileSync(dumpPath, "utf8")).toBe("important backup\n");
       expect(fs.readFileSync(configPath, "utf8")).toContain("\"apiToken\": \"test-token\"");
 

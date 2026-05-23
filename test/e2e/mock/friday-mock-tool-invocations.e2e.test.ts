@@ -12,6 +12,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
 import {
   createMockHubEnv,
+  startMockAgentRunAndApproveTools,
   type MockHubEnv,
 } from "./_helpers/mock-env.js";
 import { resetMockCounters } from "../../_mocks/mock-llm-providers.js";
@@ -82,7 +83,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
   let model: string;
 
   beforeAll(async () => {
-    env = await createMockHubEnv({ providerKinds: ["anthropic"] });
+    env = await createMockHubEnv({ providerKinds: ["anthropic"], canonicalGate: true });
     const provider = env.providers["anthropic"]!;
     providerId = provider.providerId;
     model = provider.model;
@@ -240,6 +241,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "exec",
+      toolCallId: "exec-metachar-1",
       toolInput: { command: "echo hello; cat /etc/passwd" },
     });
     mock.enqueue({
@@ -247,12 +249,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "The command was blocked due to shell metacharacters.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "Run a command", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      ["exec-metachar-1"],
     );
 
     expect(res.status).toBe(200);
@@ -304,6 +304,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "write",
+      toolCallId: "write-round-trip-1",
       toolInput: { path: targetPath, content: "Written by agent tool test" },
     });
     mock.enqueue({
@@ -311,12 +312,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "File written successfully.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "Write a file", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      ["write-round-trip-1"],
     );
 
     expect(res.status).toBe(200);
@@ -336,6 +335,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "write",
+      toolCallId: "write-path-traversal-1",
       toolInput: { path: "../../../tmp/evil.txt", content: "pwned" },
     });
     mock.enqueue({
@@ -343,12 +343,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "The write operation was rejected for security reasons.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "Write a file outside workspace", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      ["write-path-traversal-1"],
     );
 
     expect(res.status).toBe(200);
@@ -368,6 +366,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "memory_store",
+      toolCallId: "memory-store-1",
       toolInput: {
         content: "The user prefers dark mode for all interfaces",
         namespace: "e2e-tool-test",
@@ -379,17 +378,15 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "I have stored the preference about dark mode.",
     });
 
-    const run1 = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const run1 = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       {
         task: "Store this note for later: the interface should default to dark mode",
         providerId,
         model,
         timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS,
       },
+      ["memory-store-1"],
     );
 
     expect(run1.json.data.status).toBe("completed");
@@ -508,6 +505,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "exec",
+      toolCallId: "exec-chain-1",
       toolInput: { command: `echo chain-test-data > ${JSON.stringify(chainFile)}` },
     });
     // Step 2: LLM reads the file it just wrote
@@ -522,12 +520,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "Successfully created and verified the file.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "Create a file and verify its contents", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      ["exec-chain-1"],
     );
 
     expect(res.status).toBe(200);
@@ -548,6 +544,7 @@ describe("Friday Mock Tool Invocations E2E", () => {
     mock.enqueue({
       type: "tool_use",
       toolName: "list",
+      toolCallId: "list-state-dir-1",
       toolInput: { path: env.stateDir },
     });
     mock.enqueue({
@@ -555,12 +552,10 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "The directory contains several test files.",
     });
 
-    const res = await apiFetch<AgentRunResult>(
-      env.baseUrl,
-      env.accessToken,
-      "POST",
-      "/v1/agent/runs",
+    const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
+      env,
       { task: "List files in the state directory", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
+      ["list-state-dir-1"],
     );
 
     expect(res.status).toBe(200);

@@ -120,6 +120,8 @@ const MUTATING_INTENTS = new Set<FridaySystemIntentAction>([
   "recover_ui",
   "clipboard_read",
   "clipboard_write",
+  "approve",
+  "deny",
 ]);
 
 export interface FridaySystemExecResult {

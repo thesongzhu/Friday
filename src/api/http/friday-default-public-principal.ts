@@ -6,47 +6,30 @@ import type { FridayScope } from "../model/friday-api-auth.types.js";
  * Authorization header, passphrase, or bearer token. To keep formerly-authenticated
  * handlers — which read `ctx.principal.userId`, `ctx.principal.tenantId`, role, and
  * scopes — operational, the HTTP server injects this synthetic principal into
- * `ctx.principal` for every public HTTP request.
+ * `ctx.principal` for every public HTTP request. The synthetic principal is
+ * intentionally read-biased; mutating public routes must add their own
+ * bound-principal gate instead of inheriting write/admin authority from here.
  *
  * Stable principalId / userId / tenantId so audit logs and idempotency keys
  * derived from `ctx.principal.principalId` are deterministic.
  */
 
 const FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_SCOPES: FridayScope[] = [
-  "hub.admin",
   "workflow.read",
-  "workflow.write",
-  "workflow.run",
-  "workflow.conflict.resolve",
   "satellite.read",
-  "satellite.write",
   "fleet.read",
   "security.read",
-  "security.write",
-  "secrets.read",
-  "secrets.write",
   "session.read",
-  "session.write",
   "diagnosis.read",
-  "diagnosis.write",
   "agent.read",
-  "agent.run",
-  "agent.write",
   "skill.read",
-  "skill.write",
   "plugin.read",
-  "plugin.write",
-  "plugin.install",
   "desktop.read",
-  "desktop.write",
-  "desktop.execute",
   "rules.read",
-  "rules.write",
   "execution.read",
   "acceptance.read",
   "retry.read",
   "playbook.read",
-  "playbook.write",
 ];
 
 export const FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID = "public:default";
@@ -61,7 +44,7 @@ export function createFridayDefaultPublicHttpPrincipal(): FridayAuthPrincipal {
     principalId: FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
     tenantId: FRIDAY_DEFAULT_PUBLIC_HTTP_TENANT_ID,
     userId: FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
-    role: "admin",
+    role: "viewer",
     scopes: [...FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_SCOPES],
     tokenId: FRIDAY_DEFAULT_PUBLIC_HTTP_TOKEN_ID,
     tokenKind: "access",

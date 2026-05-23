@@ -73,6 +73,7 @@ export function createFridayWorkflowConflictService(
     },
 
     resolveConflict(conflictId, request, resolvedByUserId) {
+      const resolverUserId = typeof resolvedByUserId === "string" ? resolvedByUserId.trim() : "";
       const conflict = deps.db.withReadConnection((db) => repo.findById(db, conflictId));
 
       if (!conflict) {
@@ -103,7 +104,11 @@ export function createFridayWorkflowConflictService(
         throw new FridayConflictServiceError("LOCK_NOT_FOUND", `Lock token '${request.lockToken}' not found for workflow`);
       }
 
-      if (resolvedByUserId && lockRow.owner_user_id !== resolvedByUserId) {
+      if (!resolverUserId) {
+        throw new FridayConflictServiceError("RESOLVER_ID_REQUIRED", "Resolver user id is required to validate lock ownership");
+      }
+
+      if (lockRow.owner_user_id !== resolverUserId) {
         throw new FridayConflictServiceError("LOCK_OWNER_MISMATCH", "Lock token does not belong to the resolving user");
       }
 
@@ -134,7 +139,7 @@ export function createFridayWorkflowConflictService(
 
       // Apply resolution strategy and persist
       const result = deps.db.withWriteTransaction((db) => {
-        const resolved = repo.resolve(db, conflictId, resolvedByUserId, now);
+        const resolved = repo.resolve(db, conflictId, resolverUserId, now);
         if (!resolved) {
           throw new FridayConflictServiceError("RESOLVE_FAILED", "Failed to resolve conflict");
         }

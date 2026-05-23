@@ -94,7 +94,7 @@ export async function collectDarwinWindows(
   const windows: FridaySystemWindowRef[] = [];
   for (const app of apps) {
     const script =
-      `tell application "System Events" to tell process "${app.name}" to get name of every window`;
+      `tell application "System Events" to tell process ${toAppleScriptIdentifierLiteral(app.name, "app identifier")} to get name of every window`;
     const result = await execFileAsync("osascript", ["-e", script]).catch(() => ({ stdout: "" }));
     const names = result.stdout
       .split(",")

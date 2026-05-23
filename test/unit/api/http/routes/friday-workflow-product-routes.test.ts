@@ -1,9 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FridayHttpContext } from "#api";
+import type { FridayAuthPrincipal, FridayHttpContext } from "#api";
 import { createFridayWorkflowProductRoutes } from "../../../../../src/api/http/routes/friday-workflow-product-routes.js";
 import type { FridayWorkflowProductService } from "../../../../../src/workflows/services/friday-workflow-product-service.js";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 const NOW = "2026-03-07T10:00:00.000Z";
+
+function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-1",
+    userId: "user-1",
+    role: "operator",
+    scopes: ["workflow.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: NOW,
+    ...overrides,
+  };
+}
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -15,7 +30,7 @@ function makeCtx(
     query: {},
     body: {},
     headers: {},
-    principal: { userId: "user-1" } as never,
+    principal: makePrincipal(),
     ...overrides,
   };
 }
@@ -113,6 +128,24 @@ describe("createFridayWorkflowProductRoutes", () => {
       lockTtlSec: undefined,
     });
     expect(result.deployment.workflowId).toBe("wf-1");
+  });
+
+  it("rejects synthetic public deploy before side effects", async () => {
+    const service = makeService();
+    const routes = createFridayWorkflowProductRoutes({ service });
+
+    await expect(
+      routes[2]!.handler(
+        makeCtx({
+          params: { workflowId: "wf-1", draftId: "draft-1" },
+          principal: createFridayDefaultPublicHttpPrincipal(),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+    expect(service.deployDraft).not.toHaveBeenCalled();
   });
 
   it("passes external review confirmation to deploy when present", async () => {

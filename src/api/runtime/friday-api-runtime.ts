@@ -128,7 +128,10 @@ import {
   type FridayMutatingActionTicket,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
-import { assertBoundPrincipalForOperation } from "../../security/friday-owner-session-channel-capability.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  assertBoundPrincipalForOperation,
+} from "../../security/friday-owner-session-channel-capability.js";
 import {
   buildFridayAgentRunContextSummarySnapshot,
   buildFridayAgentRunHealthSnapshot,
@@ -379,6 +382,20 @@ function isPrivilegedRunEvidencePrincipal(principal: FridayAuthPrincipal | null)
     return true;
   }
   return principal.role === "owner" || principal.role === "admin";
+}
+
+function canRevokeCapabilityGrant(
+  principal: FridayAuthPrincipal,
+  grantPrincipalId: string,
+): boolean {
+  const scopes = principal.scopes ?? [];
+  if (scopes.includes("hub.admin") || scopes.includes("security.write")) {
+    return true;
+  }
+  if (principal.role === "owner" || principal.role === "admin") {
+    return true;
+  }
+  return principal.principalId === grantPrincipalId || principal.userId === grantPrincipalId;
 }
 
 function resolvePrincipalTenantId(principal: FridayAuthPrincipal | null): string | null {
@@ -2213,6 +2230,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     path: "/v1/workflow-triggers/:registrationId",
     auth: { public: true },
     async handler(ctx) {
+      assertBoundPrincipalAuthorityForOperation(
+        ctx.principal ?? null,
+        "workflow.trigger.update",
+        "api",
+        {
+          anyOfScopes: ["hub.admin", "workflow.write"],
+          anyOfRoles: ["owner", "admin", "operator"],
+        },
+      );
       const { registrationId } = ctx.params as { registrationId: string };
       const body = ctx.body as { enabled?: boolean };
       if (body.enabled != null) {
@@ -2231,6 +2257,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     path: "/v1/workflows/:workflowId/triggers/resync",
     auth: { public: true },
     async handler(ctx) {
+      assertBoundPrincipalAuthorityForOperation(
+        ctx.principal ?? null,
+        "workflow.trigger.resync",
+        "api",
+        {
+          anyOfScopes: ["hub.admin", "workflow.write"],
+          anyOfRoles: ["owner", "admin", "operator"],
+        },
+      );
       const { workflowId } = ctx.params as { workflowId: string };
       await workflowRuntime.triggers.syncPublishedVersionTriggers(workflowId);
       return { synced: true };
@@ -2415,9 +2450,24 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }));
       });
     },
-    async revokeGrant(grantId, reason) {
-      const now = new Date().toISOString();
+    async revokeGrant(grantId, _reason, principal) {
+      const now = deps.nowIso();
       deps.db.withWriteTransaction((writer) => {
+        const row = writer.prepare(`
+          SELECT id, principal_id, revoked_at
+          FROM capability_grants
+          WHERE id = ?
+        `).get(grantId) as { id: string; principal_id: string; revoked_at: string | null } | undefined;
+        if (!row || row.revoked_at !== null) {
+          return;
+        }
+        if (!canRevokeCapabilityGrant(principal, row.principal_id)) {
+          throw new FridayDomainError(
+            "FORBIDDEN",
+            "Grant revoke requires admin/security authority or ownership of the grant principal",
+            { httpStatus: 403 },
+          );
+        }
         writer.prepare(`UPDATE capability_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).run(now, grantId);
       });
       return { revoked: true };

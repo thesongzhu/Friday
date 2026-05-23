@@ -1,7 +1,25 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { createFridayWorkflowGeneratorRoutes } from "#api";
+import type { FridayAuthPrincipal } from "#api";
 import type { FridayWorkflowGeneratorService } from "#workflows";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
+
+const NOW = "2026-01-01T00:00:00.000Z";
+
+function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "u-1",
+    userId: "u-1",
+    role: "operator",
+    scopes: ["workflow.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: NOW,
+    ...overrides,
+  };
+}
 
 // ─── Mock service ───
 
@@ -17,8 +35,8 @@ function makeMockService(): FridayWorkflowGeneratorService {
         requirementsSummary: "",
         openQuestions: ["Q1"],
         decisions: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
+        createdAt: NOW,
+        updatedAt: NOW,
       },
       mode: "clarification_required" as const,
       questions: ["Q1"],
@@ -33,8 +51,8 @@ function makeMockService(): FridayWorkflowGeneratorService {
         requirementsSummary: "",
         openQuestions: [],
         decisions: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
+        createdAt: NOW,
+        updatedAt: NOW,
       },
       mode: "clarification_required" as const,
     })),
@@ -50,8 +68,8 @@ function makeMockService(): FridayWorkflowGeneratorService {
           requirementsSummary: "",
           openQuestions: [],
           decisions: [],
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
+          createdAt: NOW,
+          updatedAt: NOW,
         },
         turns: [],
         draft: {
@@ -97,15 +115,16 @@ function makeCtx(overrides: {
   query?: Record<string, string>;
   body?: unknown;
   headers?: Record<string, string>;
+  principal?: unknown;
 }) {
   return {
     requestId: "req-1",
-    receivedAt: "2026-01-01T00:00:00.000Z",
+    receivedAt: NOW,
     params: overrides.params ?? {},
     query: overrides.query ?? {},
     body: overrides.body ?? {},
     headers: overrides.headers ?? {},
-    principal: { userId: "u-1", type: "user" as const, roles: ["admin"] },
+    principal: overrides.principal ?? makePrincipal(),
   };
 }
 
@@ -181,6 +200,44 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       },
     });
     expect(result).toBeDefined();
+  });
+
+  it.each([
+    ["workflows.generator.sessions.create", { body: { goal: "Build workflow", userId: "u-1", channel: "test" } }],
+    ["workflows.generator.sessions.messages.create", { params: { sessionId: "s-1" }, body: { message: "Use manual trigger" } }],
+    ["workflows.generator.sessions.generate", { params: { sessionId: "s-1" }, body: {} }],
+    ["workflows.generator.sessions.approve", { params: { sessionId: "s-1" }, body: {} }],
+    ["workflows.generator.sessions.cancel", { params: { sessionId: "s-1" }, body: {} }],
+  ])("%s rejects synthetic public principals from generator mutations", async (operationId, ctxOverrides) => {
+    const localService = makeMockService();
+    const localRoutes = createFridayWorkflowGeneratorRoutes({ workflowGenerator: localService });
+    const route = localRoutes.find((r) => r.operationId === operationId)!;
+    await expect(
+      route.handler(makeCtx({
+        ...ctxOverrides,
+        principal: createFridayDefaultPublicHttpPrincipal(),
+      }) as never),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+    expect(localService.startSession).not.toHaveBeenCalled();
+    expect(localService.submitTurn).not.toHaveBeenCalled();
+    expect(localService.generateDraft).not.toHaveBeenCalled();
+    expect(localService.approveAndSave).not.toHaveBeenCalled();
+    expect(localService.cancelSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a create-session userId that does not match the bound principal", async () => {
+    const createRoute = routes.find((r) => r.operationId === "workflows.generator.sessions.create")!;
+    await expect(
+      createRoute.handler(makeCtx({
+        body: { goal: "Build workflow", userId: "other-user", channel: "test" },
+      }) as never),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      httpStatus: 400,
+    });
   });
 
   it("create session validates required fields", async () => {

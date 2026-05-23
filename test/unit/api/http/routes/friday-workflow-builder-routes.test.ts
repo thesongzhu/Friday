@@ -4,9 +4,12 @@ import {
   createFridayWorkflowBuilderTemplateRoutes,
 } from "#api";
 import type {
+  FridayAuthPrincipal,
+  FridayHttpContext,
   FridayWorkflowBuilderRoutesDeps,
   FridayWorkflowBuilderTemplateRoutesDeps,
 } from "#api";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 import type {
   FridayWorkflowDraftEntity,
   FridayCompiledWorkflowGraphV2,
@@ -17,6 +20,36 @@ import type {
 const stubDraft = {} as unknown as FridayWorkflowDraftEntity;
 const stubCompiled = {} as unknown as FridayCompiledWorkflowGraphV2;
 const stubValidation = {} as unknown as FridayWorkflowBuilderValidationReport;
+const NOW = "2026-05-22T00:00:00.000Z";
+
+function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuthPrincipal {
+  return {
+    principalType: "user",
+    principalId: "user-1",
+    userId: "user-1",
+    role: "operator",
+    scopes: ["workflow.write"],
+    tokenId: "token-1",
+    tokenKind: "access",
+    issuedAt: NOW,
+    ...overrides,
+  };
+}
+
+function makeCtx(
+  overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
+): FridayHttpContext<unknown, unknown, unknown> {
+  return {
+    requestId: "req-1",
+    receivedAt: NOW,
+    params: { workflowId: "wf-1", draftId: "draft-1", templateId: "template-1" },
+    query: {},
+    body: {},
+    headers: {},
+    principal: makePrincipal(),
+    ...overrides,
+  };
+}
 
 describe("FridayWorkflowBuilderRoutes", () => {
   const stubDeps: FridayWorkflowBuilderRoutesDeps = {
@@ -105,5 +138,45 @@ describe("FridayWorkflowBuilderRoutes", () => {
     expect(route!.method).toBe("POST");
     expect(route!.path).toBe("/v1/workflow-builder/templates/:templateId/instantiate");
     expect(route!.auth).toEqual({ public: true });
+  });
+
+  it.each([
+    [templateRoutes, "templates.instantiate"],
+    [routes, "drafts.create"],
+    [routes, "workflows.bundles.import"],
+    [routes, "drafts.save"],
+    [routes, "drafts.autosave"],
+    [routes, "drafts.compile"],
+    [routes, "drafts.publish"],
+    [routes, "locks.acquire"],
+    [routes, "locks.renew"],
+    [routes, "locks.release"],
+  ])("%s rejects a bound principal without workflow write authority", async (routeSet, operationId) => {
+    const route = routeSet.find((r) => r.operationId === operationId)!;
+    await expect(
+      route.handler(makeCtx({
+        principal: makePrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
+      httpStatus: 403,
+    });
+  });
+
+  it("rejects the synthetic public principal before template instantiation", async () => {
+    const route = templateRoutes.find((r) => r.operationId === "templates.instantiate")!;
+    await expect(
+      route.handler(makeCtx({ principal: createFridayDefaultPublicHttpPrincipal() })),
+    ).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      httpStatus: 401,
+    });
+  });
+
+  it("allows a bound workflow writer to create a draft", async () => {
+    const route = routes.find((r) => r.operationId === "drafts.create")!;
+    await expect(route.handler(makeCtx({ body: { title: "Draft" } }))).resolves.toEqual({
+      draft: stubDraft,
+    });
   });
 });

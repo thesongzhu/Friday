@@ -125,7 +125,7 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
     expect(body.data.principalId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
     expect(body.data.userId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID);
     expect(body.data.tenantId).toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_TENANT_ID);
-    expect(body.data.role).toBe("admin");
+    expect(body.data.role).toBe("viewer");
   });
 
   it("memory-style: handler calling memoryGuardFactory.forPrincipal-style with ctx.principal succeeds without auth header", async () => {

@@ -120,8 +120,9 @@ describe("API — Auth / RBAC / Error mapping", () => {
     expect(json.ok).toBe(true);
     expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
     expect(json.data.user.displayName).toBe("Friday Public");
-    expect(json.data.user.role).toBe("admin");
-    expect(json.data.scopes).toContain("hub.admin");
+    expect(json.data.user.role).toBe("viewer");
+    expect(json.data.scopes).toContain("workflow.read");
+    expect(json.data.scopes).not.toContain("hub.admin");
     expect(typeof json.requestId).toBe("string");
     expect(json.requestId.length).toBeGreaterThan(0);
   });

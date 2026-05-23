@@ -11,6 +11,7 @@ import {
   createFridayAgentRuntime,
 } from "#agent";
 import type { FridayAgentLlmClient, FridayAgentLlmStreamEvent } from "#agent";
+import type { CreateFridayAgentRuntimeDeps } from "#agent";
 import { createTestDb, createTestIdGenerator } from "../unit/satellites/_helpers/create-test-db.helper.js";
 import {
   PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS,
@@ -18,6 +19,15 @@ import {
 
 const [DOING_CONTINUE_WITH_BLOCKER_CASE_ID] = PROMOTED_BENCHMARK_STRONG_REGRESSION_CASE_IDS;
 const NOW = "2026-03-24T18:00:00.000Z";
+const CANONICAL_APPROVAL_SECRET = "test-canonical-key"; // pragma: allowlist secret
+
+type ToolApprovalResolver = NonNullable<CreateFridayAgentRuntimeDeps["toolApprovalResolver"]>;
+
+interface TestApprovalDecision {
+  readonly toolName: string;
+  readonly path: string | null;
+  readonly approved: boolean;
+}
 
 function createMockLlmClient(
   events: FridayAgentLlmStreamEvent[][],
@@ -38,6 +48,32 @@ function createWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "friday-struct-truth-"));
 }
 
+function createCanonicalArtifactApprovalResolver(
+  approvedArtifactPaths: readonly string[],
+): { resolver: ToolApprovalResolver; decisions: TestApprovalDecision[] } {
+  const approvedPaths = new Set(approvedArtifactPaths.map((filePath) => path.resolve(filePath)));
+  const decisions: TestApprovalDecision[] = [];
+  const resolver: ToolApprovalResolver = async (prompt) => {
+    const filePath = typeof prompt.params.path === "string"
+      ? path.resolve(prompt.params.path)
+      : null;
+    const approved = (
+      (prompt.toolName === "write" || prompt.toolName === "edit")
+      && filePath !== null
+      && approvedPaths.has(filePath)
+    );
+    decisions.push({ toolName: prompt.toolName, path: filePath, approved });
+    if (approved) {
+      return { approved: true, decidedByPrincipalId: "test-artifact-approver" };
+    }
+    return {
+      approved: false,
+      reason: "Test resolver denies mutations outside approved proof artifacts.",
+    };
+  };
+  return { resolver, decisions };
+}
+
 describe("Structural truth alignment adversarial coverage", () => {
   // STRUCT-BENCHMARK-GAP-doing-continue-with-blocker
   it(`STRUCT-ARTIFACT-TRUTH-001 STRUCT-BENCHMARK-GAP-${DOING_CONTINUE_WITH_BLOCKER_CASE_ID} retries until blocker evidence is written`, async () => {
@@ -48,6 +84,9 @@ describe("Structural truth alignment adversarial coverage", () => {
       const referencePath = path.join(workspaceRoot, "reference.txt");
       const resultPath = path.join(workspaceRoot, "result.md");
       fs.writeFileSync(mainPath, "Friday needs a cleaner benchmark harness.\n", "utf8");
+      const { resolver: toolApprovalResolver, decisions } = createCanonicalArtifactApprovalResolver([
+        resultPath,
+      ]);
 
       const llmClient = createMockLlmClient([
         [
@@ -105,6 +144,9 @@ describe("Structural truth alignment adversarial coverage", () => {
         eventEmitter: createFridayAgentEventEmitter(),
         idGenerator: createTestIdGenerator(),
         nowIso: () => NOW,
+        canonicalMutatingActionGate: true,
+        canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+        toolApprovalResolver,
         artifactWriter: createFridayAgentArtifactWriter(workspaceRoot),
         workdir: workspaceRoot,
       });
@@ -120,6 +162,14 @@ describe("Structural truth alignment adversarial coverage", () => {
       const written = fs.readFileSync(resultPath, "utf8");
       expect(result.status).toBe("completed");
       expect(result.toolCallCount).toBe(3);
+      expect(decisions.map((decision) => ({
+        toolName: decision.toolName,
+        path: decision.path,
+        approved: decision.approved,
+      }))).toEqual([
+        { toolName: "write", path: path.resolve(resultPath), approved: true },
+        { toolName: "edit", path: path.resolve(resultPath), approved: true },
+      ]);
       expect(written).toContain("cleaner benchmark harness");
       expect(written).toContain("## Blocker");
       expect(written).toContain(referencePath);
@@ -138,6 +188,9 @@ describe("Structural truth alignment adversarial coverage", () => {
       const mainPath = path.join(workspaceRoot, "main.txt");
       const resultPath = path.join(workspaceRoot, "result.md");
       fs.writeFileSync(mainPath, "Friday needs a cleaner benchmark harness.\n", "utf8");
+      const { resolver: toolApprovalResolver, decisions } = createCanonicalArtifactApprovalResolver([
+        resultPath,
+      ]);
 
       const llmClient = createMockLlmClient([
         [
@@ -182,6 +235,9 @@ describe("Structural truth alignment adversarial coverage", () => {
         eventEmitter: createFridayAgentEventEmitter(),
         idGenerator: createTestIdGenerator(),
         nowIso: () => NOW,
+        canonicalMutatingActionGate: true,
+        canonicalApprovalSecret: CANONICAL_APPROVAL_SECRET,
+        toolApprovalResolver,
         artifactWriter: createFridayAgentArtifactWriter(workspaceRoot),
         workdir: workspaceRoot,
       });
@@ -194,6 +250,14 @@ describe("Structural truth alignment adversarial coverage", () => {
       });
 
       expect(result.status).toBe("completed");
+      expect(decisions.map((decision) => ({
+        toolName: decision.toolName,
+        path: decision.path,
+        approved: decision.approved,
+      }))).toEqual([
+        { toolName: "write", path: path.resolve(resultPath), approved: true },
+        { toolName: "edit", path: path.resolve(resultPath), approved: true },
+      ]);
       expect(fs.readFileSync(resultPath, "utf8")).toContain("cleaner benchmark harness");
       expect(result.response).toContain("created result.md");
     } finally {

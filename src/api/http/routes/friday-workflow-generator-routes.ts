@@ -1,5 +1,10 @@
 import { FridayDomainError } from "#errors";
 import type { FridayProviderTenantContext } from "#providers";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  type FridayBoundPrincipalDescriptor,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
@@ -46,6 +51,16 @@ function buildTenantContext(principal: unknown, fallbackUserId: string, fallback
     userId,
     channelKind: fallbackChannel,
   };
+}
+
+function assertWorkflowGeneratorPrincipal(
+  principal: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[0],
+  operation: FridayPublicMutationOperation,
+): FridayBoundPrincipalDescriptor {
+  return assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "workflow.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
 }
 
 // ─── Validation helpers ───
@@ -213,6 +228,28 @@ export function createFridayWorkflowGeneratorRoutes(
     };
   }
 
+  async function assertSessionOwner(
+    sessionId: string,
+    bound: FridayBoundPrincipalDescriptor,
+  ): Promise<void> {
+    const result = await workflowGenerator.getSession(sessionId);
+    if (!result) {
+      throw new FridayDomainError(
+        "GENERATOR_SESSION_NOT_FOUND",
+        `Generation session not found: ${sessionId}`,
+        { httpStatus: 404 },
+      );
+    }
+    const actorUserId = bound.userId ?? bound.principalId;
+    if (result.session.userId !== actorUserId) {
+      throw new FridayDomainError(
+        "FORBIDDEN",
+        "Workflow generator session does not belong to the bound principal",
+        { httpStatus: 403 },
+      );
+    }
+  }
+
   return [
     // 1. Create session
     {
@@ -222,8 +259,17 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayWorkflowGeneratorStartSessionResponse> {
+        const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.session.create");
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;
+        const actorUserId = bound.userId ?? bound.principalId;
+        if (body.userId !== actorUserId) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "userId must match the bound principal",
+            { httpStatus: 400 },
+          );
+        }
         const result = await workflowGenerator.startSession({
           goal: body.goal,
           requestedModel: body.requestedModel,
@@ -279,6 +325,8 @@ export function createFridayWorkflowGeneratorRoutes(
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorSubmitMessageResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
+        const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.message.create");
+        await assertSessionOwner(sessionId, bound);
         validateSubmitMessageBody(ctx.body);
         const body = ctx.body;
         const result = await workflowGenerator.submitTurn(sessionId, {
@@ -305,6 +353,8 @@ export function createFridayWorkflowGeneratorRoutes(
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorGenerateResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
+        const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.generate");
+        await assertSessionOwner(sessionId, bound);
         validateGenerateBody(ctx.body);
         const body = ctx.body as { requestedModel?: string };
         let draft;
@@ -372,6 +422,8 @@ export function createFridayWorkflowGeneratorRoutes(
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<FridayWorkflowGeneratorApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
+        const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.approve");
+        await assertSessionOwner(sessionId, bound);
         const evidence = await buildEvidence(sessionId);
         if (!evidence.approvalReadiness.ready) {
           const session = await workflowGenerator.getSession(sessionId);
@@ -426,6 +478,8 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorCancelResponse> {
         const { sessionId } = ctx.params as { sessionId: string };
+        const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.cancel");
+        await assertSessionOwner(sessionId, bound);
         await workflowGenerator.cancelSession(sessionId);
         return { cancelled: true };
       },

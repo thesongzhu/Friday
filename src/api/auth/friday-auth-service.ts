@@ -29,6 +29,7 @@ import { createFridayUserRepository } from "../persistence/friday-user-repositor
 import type { FridayUserRow } from "../persistence/friday-user-repository.js";
 import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
 import { isFridayTestSecurityWarningSuppressed } from "#utilities";
+import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
 
 // ─── Helpers ───
 
@@ -37,8 +38,7 @@ function hashToken(token: string): string {
 }
 
 function isLocalhostAddress(addr?: string): boolean {
-  if (!addr) return false;
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "localhost";
+  return isFridayLoopbackAddress(addr);
 }
 
 function normalizeTenantId(value: string | null | undefined): string | null | undefined {

@@ -58,6 +58,17 @@ describe("FridayAgentRuntime", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
+  function allowCanonicalMutatingToolCalls() {
+    return {
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
+      toolApprovalResolver: vi.fn(async () => ({
+        approved: true,
+        decidedByPrincipalId: "test-approver-1",
+      })),
+    };
+  }
+
   function createEchoTool(): FridayAgentToolDefinition {
     return {
       name: "echo",
@@ -3563,6 +3574,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({ task: "记录偏好" });
@@ -3606,6 +3618,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({
@@ -3650,6 +3663,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({
@@ -4211,6 +4225,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({
@@ -4227,8 +4242,9 @@ describe("FridayAgentRuntime", () => {
     expect(String(toolEndEvents[0]?.summary ?? "")).toContain("inspect existing desktop/app content");
   });
 
-  it("allows app-launch tool calls when the task explicitly asks to open the app", async () => {
+  it("allows app-launch tool calls when canonical mutating approval is satisfied", async () => {
     const systemSpy = vi.fn();
+    const resolver = vi.fn(async () => ({ approved: true, decidedByPrincipalId: "user-approver-1" }));
     const llmClient = createMockLlmClient([
       [
         {
@@ -4255,6 +4271,9 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
+      toolApprovalResolver: resolver,
     });
 
     const result = await runtime.executeRun({
@@ -4263,6 +4282,9 @@ describe("FridayAgentRuntime", () => {
 
     expect(result.status).toBe("completed");
     expect(result.toolCallCount).toBe(1);
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
+      canonicalAction: "system.open",
+    }));
     expect(systemSpy).toHaveBeenCalledTimes(1);
     expect(systemSpy.mock.calls[0]?.[0]).toMatchObject({ action: "open", appIdentifier: "codex app" });
     expect(result.response).toContain("已打开 Codex");
@@ -5650,6 +5672,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({ task: "在我的桌面上看一下 codex 回复是什么" });
@@ -5696,6 +5719,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({ task: "请点击页面上的按钮" });
@@ -5843,6 +5867,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({ task: "Use the slow tool once." });
@@ -6315,6 +6340,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     try {
@@ -6335,7 +6361,7 @@ describe("FridayAgentRuntime", () => {
     }
   });
 
-  it("blocks approval-gated mutating tools before execution", async () => {
+  it("blocks mutating tools when the canonical mutating gate is absent", async () => {
     const execExecute = vi.fn(async () => ({ content: "deleted" }));
     const execTool: FridayAgentToolDefinition = {
       name: "exec",
@@ -6393,8 +6419,8 @@ describe("FridayAgentRuntime", () => {
     expect(execExecute).not.toHaveBeenCalled();
     expect(toolEndEvents).toHaveLength(1);
     expect(toolEndEvents[0].isError).toBe(true);
-    expect(toolEndEvents[0].summary).toContain("approval");
-    expect(toolEndEvents[0].routeId).toBe("agent.execute.tool.approval_required");
+    expect(toolEndEvents[0].summary).toContain("canonical mutating action gate is required");
+    expect(toolEndEvents[0].routeId).toBe("agent.execute.tool.canonical_gate");
     expect(toolEndEvents[0].correlationId).toBe(result.runId);
   });
 
@@ -6436,6 +6462,8 @@ describe("FridayAgentRuntime", () => {
       idGenerator,
       nowIso: () => NOW,
       toolApprovalResolver,
+      canonicalMutatingActionGate: true,
+      canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
     });
 
     const result = await runtime.executeRun({
@@ -6673,6 +6701,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: emitter,
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
     });
 
     const result = await runtime.executeRun({
@@ -7163,6 +7192,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
       selfTestService: {
         async runTests() {
           return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
@@ -7359,6 +7389,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
       selfTestService: {
         async runTests() {
           return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
@@ -7468,6 +7499,7 @@ describe("FridayAgentRuntime", () => {
       eventEmitter: createFridayAgentEventEmitter(),
       idGenerator,
       nowIso: () => NOW,
+      ...allowCanonicalMutatingToolCalls(),
       selfTestService: {
         async runTests() {
           return [{ strategy: "llm_eval", passed: true, errors: [], durationMs: 0 }];
@@ -9229,6 +9261,7 @@ describe("FridayAgentRuntime", () => {
         eventEmitter: createFridayAgentEventEmitter(),
         idGenerator,
         nowIso: () => NOW,
+        ...allowCanonicalMutatingToolCalls(),
         workdir: tempDir,
       });
 

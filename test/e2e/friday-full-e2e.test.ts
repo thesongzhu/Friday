@@ -296,8 +296,9 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       expect(json.ok).toBe(true);
       expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
       expect(json.data.user.displayName).toBe("Friday Public");
-      expect(json.data.user.role).toBe("admin");
-      expect(json.data.scopes).toContain("hub.admin");
+      expect(json.data.user.role).toBe("viewer");
+      expect(json.data.scopes).toContain("workflow.read");
+      expect(json.data.scopes).not.toContain("hub.admin");
     });
 
     it("B5: Invalid Bearer falls back to synthetic Friday Public user (auth-boundary product invariant)", async () => {
@@ -312,7 +313,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       expect(json.ok).toBe(true);
       expect(json.data.user.id).toBe("00000000-0000-0000-0000-000000000001");
       expect(json.data.user.displayName).toBe("Friday Public");
-      expect(json.data.user.role).toBe("admin");
+      expect(json.data.user.role).toBe("viewer");
     });
 
     it("B6: Logout", async () => {

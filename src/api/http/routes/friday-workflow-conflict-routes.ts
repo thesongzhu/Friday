@@ -1,3 +1,4 @@
+import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import type {
@@ -42,11 +43,20 @@ export function createFridayWorkflowConflictRoutes(
       rateLimitPolicyId: "workflow.resolve_conflict",
       async handler(ctx) {
         const { workflowId, conflictId } = ctx.params as { workflowId: UUID; conflictId: UUID };
+        const bound = assertBoundPrincipalAuthorityForOperation(
+          ctx.principal ?? null,
+          "workflow.conflict.resolve",
+          "api",
+          {
+            anyOfScopes: ["hub.admin", "workflow.conflict.resolve", "workflow.write"],
+            anyOfRoles: ["owner", "admin", "operator"],
+          },
+        );
         return deps.resolveConflict(
           workflowId,
           conflictId,
           ctx.body as FridayResolveWorkflowConflictRequest,
-          ctx.principal?.userId,
+          bound.userId ?? bound.principalId,
         );
       },
     },

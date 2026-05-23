@@ -1,6 +1,10 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import { FridayDomainError } from "#errors";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 
 /** Maximum value for list endpoint limit query parameters. */
 const WORKFLOW_MAX_LIST_LIMIT = 100;
@@ -29,6 +33,16 @@ export interface FridayWorkflowRoutesDeps {
   publishWorkflow: (workflowId: UUID, input: FridayPublishWorkflowRequest) => FridayPublishWorkflowResponse;
   listVersions: (workflowId: UUID, query: FridayListVersionsQuery) => FridayListVersionsResponse;
   getVersion: (versionId: UUID) => FridayGetWorkflowVersionResponse;
+}
+
+function assertWorkflowWritePrincipal(
+  principal: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[0],
+  operation: FridayPublicMutationOperation,
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "workflow.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
 }
 
 export function createFridayWorkflowRoutes(
@@ -68,6 +82,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.create");
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.slug !== "string" || body.slug.trim() === "") {
           throw new FridayDomainError(
@@ -116,6 +131,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows/:workflowId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.update");
         const { workflowId } = ctx.params as { workflowId: UUID };
         const body = ctx.body as Record<string, unknown> | null;
         if (
@@ -146,6 +162,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows/:workflowId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.archive");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.archiveWorkflow(workflowId);
       },
@@ -157,6 +174,7 @@ export function createFridayWorkflowRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
+        assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.publish");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.publishWorkflow(workflowId, ctx.body as FridayPublishWorkflowRequest);
       },
