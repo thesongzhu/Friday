@@ -4,6 +4,8 @@
  * Real implementations use Node's built-in fetch (Node 22+).
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import { FridayDomainError } from "#errors";
 
 // ─── Types ───
@@ -50,6 +52,17 @@ export interface TelegramSendMessageResponse {
   };
 }
 
+export interface TelegramWebhookRelayResult {
+  accepted: boolean;
+  statusCode: number;
+  code?:
+    | "TELEGRAM_LISTENER_INACTIVE"
+    | "TELEGRAM_SECRET_UNCONFIGURED"
+    | "TELEGRAM_SECRET_MISSING"
+    | "TELEGRAM_SECRET_INVALID"
+    | "TELEGRAM_PAYLOAD_INVALID";
+}
+
 // ─── Service Interface ───
 
 export interface TelegramPollingService {
@@ -79,12 +92,18 @@ export interface TelegramWebhookService {
   startWebhook(
     botToken: string,
     webhookUrl: string,
+    webhookSecretToken: string,
     onUpdate: (update: TelegramUpdate) => void,
   ): Promise<void>;
   /** Stop the webhook listener. */
   stopWebhook(): Promise<void>;
   /** Check if webhook is active. */
   isListening(): boolean;
+  /** Handle inbound Telegram webhook POST relayed by the HTTP server. */
+  handleHttpWebhook(
+    rawBody: string,
+    secretTokenHeader?: string,
+  ): TelegramWebhookRelayResult;
 }
 
 // ─── Helpers ───
@@ -93,6 +112,12 @@ const TELEGRAM_API_BASE = "https://api.telegram.org";
 
 function botUrl(token: string, method: string): string {
   return `${TELEGRAM_API_BASE}/bot${token}/${method}`;
+}
+
+function constantTimeStringEqual(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(leftDigest, rightDigest);
 }
 
 // ─── Stub Implementations ───
@@ -118,7 +143,7 @@ export function createTelegramWebhookServiceStub(): TelegramWebhookService {
   let listening = false;
 
   return {
-    async startWebhook(_botToken, _webhookUrl, _onUpdate) {
+    async startWebhook(_botToken, _webhookUrl, _webhookSecretToken, _onUpdate) {
       listening = true;
       // Stub: in production, calls setWebhook and starts HTTP listener
     },
@@ -127,6 +152,13 @@ export function createTelegramWebhookServiceStub(): TelegramWebhookService {
     },
     isListening() {
       return listening;
+    },
+    handleHttpWebhook() {
+      return {
+        accepted: false,
+        statusCode: 503,
+        code: "TELEGRAM_LISTENER_INACTIVE",
+      };
     },
   };
 }
@@ -272,15 +304,24 @@ export function createTelegramWebhookService(): TelegramWebhookService {
   let listening = false;
   let storedOnUpdate: ((update: TelegramUpdate) => void) | null = null;
   let storedToken: string | null = null;
+  let storedWebhookSecretToken: string | null = null;
 
   return {
-    async startWebhook(botToken, webhookUrl, onUpdate) {
+    async startWebhook(botToken, webhookUrl, webhookSecretToken, onUpdate) {
+      const normalizedSecretToken = webhookSecretToken.trim();
+      if (!normalizedSecretToken) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "Telegram webhook mode requires webhookSecretToken in config",
+          { httpStatus: 400 },
+        );
+      }
       // Register the webhook URL with Telegram.
       const url = botUrl(botToken, "setWebhook");
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: webhookUrl }),
+        body: JSON.stringify({ url: webhookUrl, secret_token: normalizedSecretToken }),
       });
 
       if (!res.ok) {
@@ -306,6 +347,7 @@ export function createTelegramWebhookService(): TelegramWebhookService {
       }
 
       storedToken = botToken;
+      storedWebhookSecretToken = normalizedSecretToken;
       storedOnUpdate = onUpdate;
       listening = true;
     },
@@ -315,6 +357,7 @@ export function createTelegramWebhookService(): TelegramWebhookService {
         listening = false;
         storedOnUpdate = null;
         storedToken = null;
+        storedWebhookSecretToken = null;
         return;
       }
 
@@ -339,11 +382,62 @@ export function createTelegramWebhookService(): TelegramWebhookService {
         listening = false;
         storedOnUpdate = null;
         storedToken = null;
+        storedWebhookSecretToken = null;
       }
     },
 
     isListening() {
       return listening;
+    },
+
+    handleHttpWebhook(rawBody, secretTokenHeader) {
+      if (!listening || !storedOnUpdate) {
+        return {
+          accepted: false,
+          statusCode: 503,
+          code: "TELEGRAM_LISTENER_INACTIVE",
+        };
+      }
+
+      if (!storedWebhookSecretToken) {
+        return {
+          accepted: false,
+          statusCode: 503,
+          code: "TELEGRAM_SECRET_UNCONFIGURED",
+        };
+      }
+
+      if (!secretTokenHeader) {
+        return {
+          accepted: false,
+          statusCode: 401,
+          code: "TELEGRAM_SECRET_MISSING",
+        };
+      }
+
+      if (!constantTimeStringEqual(secretTokenHeader, storedWebhookSecretToken)) {
+        return {
+          accepted: false,
+          statusCode: 403,
+          code: "TELEGRAM_SECRET_INVALID",
+        };
+      }
+
+      try {
+        const payload = JSON.parse(rawBody) as TelegramUpdate;
+        storedOnUpdate(payload);
+        return {
+          accepted: true,
+          statusCode: 200,
+        };
+      } catch (err) {
+        console.warn("[friday][telegram-webhook] invalid payload:", err instanceof Error ? err.message : String(err));
+        return {
+          accepted: false,
+          statusCode: 400,
+          code: "TELEGRAM_PAYLOAD_INVALID",
+        };
+      }
     },
   };
 }

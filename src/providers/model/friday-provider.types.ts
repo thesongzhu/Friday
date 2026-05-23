@@ -270,7 +270,9 @@ export interface FridayOAuthLoginInitiation extends FridayOAuthAuthorizationRequ
 export interface FridayOAuthLoginResult {
   providerId: string;
   oauthProvider: FridayOAuthProviderId;
-  connected: true;
+  connected: boolean;
+  runtimeReady: boolean;
+  validation: FridayProviderValidationState;
   expiresAt: string;
   tokenType: string;
   scope: string;

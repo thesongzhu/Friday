@@ -344,6 +344,9 @@ describe("FridayRecordingConverter", () => {
         (f) => f.path === "entrypoint.js",
       );
       expect(entrypoint!.content).toContain("recording-steps.json");
+      expect(entrypoint!.content).toContain("import.meta.url");
+      expect(entrypoint!.content).toContain("fileURLToPath");
+      expect(entrypoint!.content).not.toContain("__dirname");
     });
 
     it("entrypoint contains parameter substitution when params exist", async () => {
@@ -377,6 +380,62 @@ describe("FridayRecordingConverter", () => {
       expect(entrypoint!.content).toContain("Recording ID: rec-001");
       expect(entrypoint!.content).toContain("Platform: darwin");
       expect(entrypoint!.content).toContain("Steps: 3");
+    });
+
+    it("entrypoint escapes generated block comments for recording metadata", async () => {
+      const rec = makeRecording({
+        id: 'rec-001 */\nthrow new Error("pwned")\n/*',
+        name: 'Login */\nthrow new Error("pwned")\n/* Flow',
+        platform: 'darwin */\nthrow new Error("pwned")\n/*',
+      });
+      const result = await converter.convert(makeSource(rec), makeCtx());
+      const entrypoint = result.drafts[0].files.find(
+        (f) => f.path === "entrypoint.js",
+      );
+      const headerComment = entrypoint!.content.slice(0, entrypoint!.content.indexOf("import "));
+
+      expect(headerComment).toContain("*\\/");
+      expect(headerComment).not.toContain('*/\nthrow new Error("pwned")');
+      expect(entrypoint!.content).toContain(`recordingId: ${JSON.stringify(rec.id)}`);
+      expect(entrypoint!.content).toContain(`platform: ${JSON.stringify(rec.platform)}`);
+      expect(entrypoint!.content).toContain("class FridayDomainError extends Error");
+      const executableBody = entrypoint!.content.slice(
+        entrypoint!.content.indexOf("const moduleDir"),
+      ).replace("import.meta.url", JSON.stringify("file:///tmp/entrypoint.js"));
+      expect(() =>
+        new Function(executableBody.replace("export default async function execute", "async function execute")),
+      ).not.toThrow();
+    });
+
+    it("entrypoint fail-closed desktop path throws the generated domain error", async () => {
+      const rec = makeRecording();
+      const result = await converter.convert(makeSource(rec), makeCtx());
+      const entrypoint = result.drafts[0].files.find(
+        (f) => f.path === "entrypoint.js",
+      );
+      const executableBody = entrypoint!.content.slice(
+        entrypoint!.content.indexOf("const moduleDir"),
+      ).replace("import.meta.url", JSON.stringify("file:///tmp/entrypoint.js"));
+      const factory = new Function(
+        "readFileSync",
+        "join",
+        "dirname",
+        "fileURLToPath",
+        `${executableBody.replace("export default async function execute", "async function execute")}
+return execute;`,
+      );
+      const execute = factory(
+        () => "[]",
+        (...parts: string[]) => parts.join("/"),
+        () => "/tmp",
+        () => "/tmp/entrypoint.js",
+      ) as (input: unknown, ctx: Record<string, unknown>) => Promise<unknown>;
+
+      await expect(execute({}, {})).rejects.toMatchObject({
+        name: "FridayDomainError",
+        code: "NOT_INITIALIZED",
+        httpStatus: 503,
+      });
     });
 
     it("steps JSON contains all recording steps", async () => {

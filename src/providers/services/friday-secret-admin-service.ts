@@ -3,7 +3,7 @@ import { FridayDomainError } from "#errors";
 
 import type { FridaySecretEntity } from "../persistence/friday-secret-repository.js";
 import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
-import { encryptSecret, getMasterKey } from "../security/friday-secret-crypto.js";
+import { encryptSecret, getStrictMasterKey } from "../security/friday-secret-crypto.js";
 
 export interface FridaySecretSummary {
   id: string;
@@ -104,7 +104,7 @@ export function createFridaySecretAdminService(
         );
       }
 
-      const envelope = encryptSecret(input.value, getMasterKey());
+      const envelope = encryptSecret(input.value, getStrictMasterKey());
       deps.db.withWriteTransaction((db) => {
         secretRepo.upsert(db, {
           id: deps.idGenerator(),
@@ -157,7 +157,7 @@ export function createFridaySecretAdminService(
       let encryptedValue: string | undefined;
       if (input.value !== undefined) {
         assertNonEmptyString(input.value, "value");
-        encryptedValue = JSON.stringify(encryptSecret(input.value, getMasterKey()));
+        encryptedValue = JSON.stringify(encryptSecret(input.value, getStrictMasterKey()));
       }
 
       const updated = deps.db.withWriteTransaction((db) =>

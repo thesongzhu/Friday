@@ -63,6 +63,7 @@ export function installFridayApiRuntimeBaseRoutes(input: InstallFridayApiRuntime
             line: deps.channelWebhooks?.lineWebhookRelay?.isListening() === true,
             whatsapp: deps.channelWebhooks?.whatsappWebhookRelay?.isListening() === true,
             lark: deps.channelWebhooks?.larkWebhookRelay?.isListening() === true,
+            telegram: deps.channelWebhooks?.telegramWebhookRelay?.isListening() === true,
           },
         },
         mcp: {

@@ -26,9 +26,11 @@ import {
   createSqliteTrustedKeyStore,
 } from "../../../src/packaging/persistence/friday-package-sqlite-store.js";
 import { verifySignatureLogical } from "../../../src/packaging/engine/package-validator.js";
+import type { PackageVerifier } from "../../../src/packaging/engine/package-installer.js";
 import type {
   FridayPackageManifest,
   FridayPackageSignature,
+  FridayPackageTrustedKey,
 } from "../../../src/packaging/model/friday-packaging.types.js";
 
 function buildLayer(dbPath: string): FridaySqliteLayer {
@@ -98,6 +100,17 @@ function buildSignature(opts: {
   };
 }
 
+function trustedVerifier(trustedKeys: () => readonly FridayPackageTrustedKey[]): PackageVerifier {
+  return (context) =>
+    verifySignatureLogical(
+      context.entry.signature,
+      context.entry.manifestDigest,
+      context.entry.archiveDigest,
+      trustedKeys(),
+      context.verifiedAt,
+    );
+}
+
 let tmpdir: string;
 let dbPath: string;
 let layer: FridaySqliteLayer;
@@ -158,6 +171,7 @@ describe("packaging SQLite persistence (Phase 11 Module 16)", () => {
     const installer = createSqlitePackageInstaller({
       sqlite: layer,
       registry,
+      verifyPackage: trustedVerifier(() => trusted.listAll()),
     });
     const installResult = installer.install({
       packageName: m.name,
@@ -172,8 +186,12 @@ describe("packaging SQLite persistence (Phase 11 Module 16)", () => {
     layer = buildLayer(dbPath);
 
     const registry2 = createSqliteRegistryManager({ sqlite: layer });
-    const installer2 = createSqlitePackageInstaller({ sqlite: layer, registry: registry2 });
     const trusted2 = createSqliteTrustedKeyStore({ sqlite: layer });
+    const installer2 = createSqlitePackageInstaller({
+      sqlite: layer,
+      registry: registry2,
+      verifyPackage: trustedVerifier(() => trusted2.listAll()),
+    });
 
     expect(registry2.count()).toBe(1);
     const survived = registry2.getByNameVersion(m.name, m.version, "tenant-a");
@@ -264,7 +282,11 @@ describe("packaging SQLite persistence (Phase 11 Module 16)", () => {
     publish("1.0.0");
     publish("1.1.0");
 
-    const installer = createSqlitePackageInstaller({ sqlite: layer, registry });
+    const installer = createSqlitePackageInstaller({
+      sqlite: layer,
+      registry,
+      verifyPackage: trustedVerifier(() => trusted.listAll()),
+    });
     const installResult = installer.install({
       packageName: "@friday/test-package",
       tenantId: "tenant-z",
@@ -314,5 +336,48 @@ describe("packaging SQLite persistence (Phase 11 Module 16)", () => {
     expect(ops.has("install")).toBe(true);
     expect(ops.has("uninstall")).toBe(true);
     expect(ops.has("rollback")).toBe(true);
+  });
+
+  it("fails closed when a SQLite installer is created without a package verifier", () => {
+    const keys = makeKeyMaterial();
+    const publicKeyBase64 = keys.publicKey.toString("base64");
+    const trusted = createSqliteTrustedKeyStore({ sqlite: layer });
+    trusted.add({ keyId: "test-key-3", publicKey: publicKeyBase64, owner: "Friday Tests" });
+
+    const registry = createSqliteRegistryManager({ sqlite: layer });
+    const archive = "archive-bytes-no-verifier";
+    const m = manifest();
+    const { signature, manifestDigest, archiveDigest } = buildSignature({
+      manifestObj: m,
+      archive,
+      keyId: "test-key-3",
+      publicKeyBase64,
+      privateKeyDer: keys.privateKey,
+    });
+    registry.publish({
+      manifest: m,
+      signature,
+      archiveDigest,
+      manifestDigest,
+      sizeBytes: archive.length,
+      publishedBy: "tester",
+      tenantId: "tenant-no-verifier",
+    });
+
+    const installer = createSqlitePackageInstaller({ sqlite: layer, registry });
+    const installResult = installer.install({
+      packageName: m.name,
+      tenantId: "tenant-no-verifier",
+      installedBy: "tester",
+      platformVersion: "1.0.0",
+    });
+
+    expect(installResult.success).toBe(false);
+    expect(installResult.install?.state).toBe("verification_failed");
+    expect(installResult.errorCode).toBe("PACKAGING_SIGNATURE_INVALID");
+    expect(installResult.verification).toMatchObject({
+      valid: false,
+      outcome: "signature_invalid",
+    });
   });
 });

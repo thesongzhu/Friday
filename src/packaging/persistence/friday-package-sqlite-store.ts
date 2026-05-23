@@ -624,7 +624,7 @@ export function createSqlitePackageInstaller(
       }
 
       const verifier = config.verifyPackage;
-      const verification: FridayPackageVerificationResult | null = verifier
+      const verification: FridayPackageVerificationResult = verifier
         ? verifier({
             entry: targetEntry,
             tenantId,
@@ -632,7 +632,14 @@ export function createSqlitePackageInstaller(
             initiatedBy: options.installedBy,
             verifiedAt: nowIso(),
           })
-        : null;
+        : {
+            valid: false,
+            outcome: "signature_invalid",
+            message: "Package verifier is required for SQLite installs.",
+            keyId: targetEntry.signature.keyId,
+            verifiedAt: nowIso(),
+            durationMs: 0,
+          };
 
       const baseInstall: FridayPackageInstall = {
         id: generateId(),
@@ -660,7 +667,7 @@ export function createSqlitePackageInstaller(
         details: { installId: baseInstall.id },
       });
 
-      if (verification && !verification.valid) {
+      if (!verification.valid) {
         const failedInstall = transition(transition(baseInstall, "verifying"), "verification_failed", {
           error: verification.message,
           errorCode: `PACKAGING_${verification.outcome.toUpperCase()}`,

@@ -15,7 +15,7 @@ import {
   getFridayProviderAuthModesForBackend,
   getFridayProviderCapability,
   getFridayProviderPreset,
-  getMasterKey,
+  getStrictMasterKey,
   isFridayProviderAuthModeSupportedForKind,
 } from "#providers";
 import type { FridayEncryptedEnvelope } from "#providers";
@@ -1373,7 +1373,7 @@ function resolveSetupChannelSecretValue(deps: Pick<FridaySetupRoutesDeps, "db">,
     );
     if (!entity) return undefined;
     const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-    return decryptSecret(envelope, getMasterKey());
+    return decryptSecret(envelope, getStrictMasterKey());
   } catch (error) {
     console.warn("[friday][setup-routes] could not resolve channel secret for setup welcome:", error instanceof Error ? error.message : String(error));
     return undefined;
@@ -2474,7 +2474,7 @@ export function createFridaySetupRoutes(
         }
 
         if (secretWrites.length > 0) {
-          const masterKey = getMasterKey();
+          const masterKey = getStrictMasterKey();
           deps.db.withWriteTransaction((db) => {
             for (const write of secretWrites) {
               const envelope = encryptSecret(write.plaintext, masterKey);

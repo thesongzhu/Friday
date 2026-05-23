@@ -75,6 +75,7 @@ import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-
 import type {
   LarkWebhookRelayService,
   LineWebhookListenerService,
+  TelegramWebhookService,
   WhatsappWebhookService,
 } from "#channels";
 
@@ -345,6 +346,7 @@ export interface CreateFridayApiRuntimeDeps {
     lineWebhookRelay?: LineWebhookListenerService;
     whatsappWebhookRelay?: WhatsappWebhookService;
     larkWebhookRelay?: LarkWebhookRelayService;
+    telegramWebhookRelay?: TelegramWebhookService;
   };
   outboxQueueService?: FridayOutboxQueueService;
   /** Optional: packaging system route surface (publish, install, upgrade, rollback, keys). */

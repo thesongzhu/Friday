@@ -1,19 +1,39 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import net from "node:net";
 
 import { createFridayObservabilityApiService } from "../../../../src/observability/services/friday-observability-api-service.js";
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
+import { resetMasterKeyCache } from "#providers";
 
 const NOW = "2026-03-07T12:00:00.000Z";
 
 describe("createFridayObservabilityApiService", () => {
   const allocatedDbs: Array<ReturnType<typeof createTestDb>> = [];
+  const previousMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const previousMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+
+  beforeEach(() => {
+    process.env.FRIDAY_MASTER_KEY = "16".repeat(32);
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
+  });
 
   afterEach(() => {
     while (allocatedDbs.length > 0) {
       allocatedDbs.pop()?.close();
     }
+    if (previousMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = previousMasterKey;
+    }
+    if (previousMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = previousMasterKeySource;
+    }
+    resetMasterKeyCache();
   });
 
   function createService(options?: {
@@ -473,6 +493,21 @@ describe("createFridayObservabilityApiService", () => {
       expect(fetched.channels[0].webhookUrl).toBe("********");
       expect(fetched.channels[0].webhookUrl).not.toContain("secret-token");
     }
+  });
+
+  it("fails closed when storing alert credentials without FRIDAY_MASTER_KEY", async () => {
+    delete process.env.FRIDAY_MASTER_KEY;
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
+    const service = createService();
+
+    await expect(
+      service.routes.alertDestinations.create({
+        type: "slack",
+        name: "Ops Slack",
+        webhookUrl: "https://hooks.slack.example/credential-marker",
+      }),
+    ).rejects.toThrow(/FRIDAY_MASTER_KEY is not configured/);
   });
 
   it("dispatches alerts to Slack destinations", async () => {

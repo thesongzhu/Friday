@@ -14,6 +14,7 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import { resetMasterKeyCache } from "#providers";
 import { createFridayProviderSetupMutatingActionRequest } from "../../../../src/api/http/routes/friday-provider-routes.js";
 
 import type {
@@ -119,6 +120,7 @@ const AUTO_DETECT_PROVIDER_ENV_VARS = [
   "OLLAMA_BASE_URL",
 ] as const;
 const MOCK_E2E_TOKEN_SECRET = "mock-e2e-token-secret"; // pragma: allowlist secret -- deterministic signing key for canonical-gate mock E2E setup
+const MOCK_E2E_MASTER_KEY = Buffer.alloc(32, 23).toString("hex");
 const MOCK_E2E_ACTOR = {
   kind: "user",
   id: "admin-001",
@@ -334,10 +336,13 @@ export async function createMockHubEnv(opts?: {
   const originalFetch = globalThis.fetch;
   const originalWarningSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
   const originalCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+  const originalMasterKey = process.env.FRIDAY_MASTER_KEY;
   const originalAutoDetectEnv = new Map<string, string | undefined>(
     AUTO_DETECT_PROVIDER_ENV_VARS.map((key) => [key, process.env[key]]),
   );
   process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+  process.env.FRIDAY_MASTER_KEY = MOCK_E2E_MASTER_KEY;
+  resetMasterKeyCache();
   if (opts?.canonicalGate !== undefined) {
     process.env.FRIDAY_CANONICAL_GATE = opts.canonicalGate ? "true" : "false";
   }
@@ -533,6 +538,12 @@ export async function createMockHubEnv(opts?: {
         } else {
           process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalWarningSuppression;
         }
+        if (originalMasterKey === undefined) {
+          delete process.env.FRIDAY_MASTER_KEY;
+        } else {
+          process.env.FRIDAY_MASTER_KEY = originalMasterKey;
+        }
+        resetMasterKeyCache();
         clearTimeout(closeTimeout);
       }
     },

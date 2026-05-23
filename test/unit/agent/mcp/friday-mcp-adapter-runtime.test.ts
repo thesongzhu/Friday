@@ -1,10 +1,24 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFridayMcpAdapter,
   FRIDAY_MCP_ADAPTER_ERROR_CODES,
   isFridayMcpAdapterError,
 } from "#agent";
+
+const dnsMocks = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  resolve6: vi.fn(),
+}));
+
+vi.mock("node:dns", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns")>();
+  return {
+    ...actual,
+    resolve: dnsMocks.resolve,
+    resolve6: dnsMocks.resolve6,
+  };
+});
 
 function jsonRpcResponse(id: number, result: unknown): string {
   return JSON.stringify({
@@ -24,6 +38,25 @@ function okHttpResponse(body: string) {
 }
 
 describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
+  beforeEach(() => {
+    dnsMocks.resolve.mockImplementation((hostname: string, rrtypeOrCallback: unknown, maybeCallback?: unknown) => {
+      const callback = typeof rrtypeOrCallback === "function" ? rrtypeOrCallback : maybeCallback;
+      if (typeof callback === "function") {
+        const addresses = hostname === "private.example.test" ? ["10.0.0.12"] : ["203.0.113.10"];
+        (callback as (err: NodeJS.ErrnoException | null, addresses: string[]) => void)(null, addresses);
+      }
+      return undefined;
+    });
+    dnsMocks.resolve6.mockImplementation((hostname: string, rrtypeOrCallback: unknown, maybeCallback?: unknown) => {
+      void hostname;
+      const callback = typeof rrtypeOrCallback === "function" ? rrtypeOrCallback : maybeCallback;
+      if (typeof callback === "function") {
+        (callback as (err: NodeJS.ErrnoException | null, addresses: string[]) => void)(null, []);
+      }
+      return undefined;
+    });
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -250,6 +283,99 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
       return true;
     });
     expect(textSpy).not.toHaveBeenCalled();
+  });
+
+  it("blocks HTTP transport SSRF targets before fetch", async () => {
+    const fetchMock = vi.fn(async () => okHttpResponse("{}"));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "metadata-http",
+          transport: "http",
+          url: "http://169.254.169.254/latest/meta-data",
+        },
+      ],
+    });
+
+    await expect(adapter.listTools({ serverId: "metadata-http" })).rejects.toSatisfy((error: unknown) => {
+      if (!isFridayMcpAdapterError(error)) {
+        return false;
+      }
+      expect(error.code).toBe(FRIDAY_MCP_ADAPTER_ERROR_CODES.REQUEST_FAILED);
+      expect(error.message).toContain("SSRF");
+      expect(error.details).toMatchObject({
+        serverId: "metadata-http",
+        transport: "http",
+      });
+      return true;
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks HTTP transport hostnames that resolve to private addresses before fetch", async () => {
+    const fetchMock = vi.fn(async () => okHttpResponse("{}"));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "dns-private-http",
+          transport: "http",
+          url: "https://private.example.test/rpc",
+        },
+      ],
+    });
+
+    await expect(adapter.listTools({ serverId: "dns-private-http" })).rejects.toSatisfy((error: unknown) => {
+      if (!isFridayMcpAdapterError(error)) {
+        return false;
+      }
+      expect(error.code).toBe(FRIDAY_MCP_ADAPTER_ERROR_CODES.REQUEST_FAILED);
+      expect(error.message).toContain("DNS resolved to private IP");
+      expect(error.details).toMatchObject({
+        serverId: "dns-private-http",
+        transport: "http",
+      });
+      return true;
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks HTTP transport redirects to private addresses before following them", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest/meta-data" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "redirect-private-http",
+          transport: "http",
+          url: "https://mcp.example.com/rpc",
+        },
+      ],
+    });
+
+    await expect(adapter.listTools({ serverId: "redirect-private-http" })).rejects.toSatisfy((error: unknown) => {
+      if (!isFridayMcpAdapterError(error)) {
+        return false;
+      }
+      expect(error.code).toBe(FRIDAY_MCP_ADAPTER_ERROR_CODES.REQUEST_FAILED);
+      expect(error.message).toContain("SSRF");
+      expect(error.details).toMatchObject({
+        serverId: "redirect-private-http",
+        transport: "http",
+      });
+      return true;
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
   });
 
   it("deduplicates repeated read-only resource reads", async () => {

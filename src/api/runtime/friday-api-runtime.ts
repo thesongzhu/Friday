@@ -8,7 +8,7 @@ import {
   createFridaySecretAdminService,
   createFridaySecretRepository,
   decryptSecret,
-  getMasterKey,
+  getStrictMasterKey,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderTenantContext } from "#providers";
 import {
@@ -420,7 +420,7 @@ function createWorkflowWebhookSecretResolver(
         );
         if (!entity) continue;
         const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, getMasterKey());
+        return decryptSecret(envelope, getStrictMasterKey());
       }
       return null;
     } catch (error) {

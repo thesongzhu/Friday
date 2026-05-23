@@ -2,7 +2,7 @@
 
 import type { FridaySqliteLayer } from "#state";
 import { safeJsonParse } from "#utilities";
-import { decryptSecret, encryptSecret, getMasterKey } from "#providers";
+import { decryptSecret, encryptSecret, getStrictMasterKey } from "#providers";
 import type { FridayEncryptedEnvelope } from "#providers";
 import { xhsRandomUserAgent } from "./friday-xhs-stealth.js";
 
@@ -62,7 +62,7 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
     const now = nowIso();
     const userAgent = xhsRandomUserAgent();
     const plaintext = JSON.stringify(cookies);
-    const encrypted = JSON.stringify(encryptSecret(plaintext, getMasterKey()));
+    const encrypted = JSON.stringify(encryptSecret(plaintext, getStrictMasterKey()));
 
     sqlite.withWriteTransaction((db) => {
       db.prepare(`
@@ -87,7 +87,7 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
 
       try {
         const envelope = safeJsonParse(row.cookies_encrypted) as FridayEncryptedEnvelope;
-        const plaintext = decryptSecret(envelope, getMasterKey());
+        const plaintext = decryptSecret(envelope, getStrictMasterKey());
         return safeJsonParse(plaintext) as XhsCookie[];
       } catch (err) {
         console.warn("[friday][xhs-session] cookie decryption failed:", err instanceof Error ? err.message : String(err));
@@ -112,7 +112,7 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
       let cookies: XhsCookie[];
       try {
         const envelope = safeJsonParse(row.cookies_encrypted) as FridayEncryptedEnvelope;
-        const plaintext = decryptSecret(envelope, getMasterKey());
+        const plaintext = decryptSecret(envelope, getStrictMasterKey());
         cookies = safeJsonParse(plaintext) as XhsCookie[];
       } catch (err) {
         console.warn("[friday][xhs-session] session validation cookie parse failed:", err instanceof Error ? err.message : String(err));

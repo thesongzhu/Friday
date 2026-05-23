@@ -23,6 +23,7 @@ import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
+import { resetMasterKeyCache } from "#providers";
 import { signFridayCanonicalApproval } from "../../src/security/friday-mutating-action-gate.js";
 import {
   clearAutoDetectProviderEnv,
@@ -40,6 +41,7 @@ const LOCAL_PASSPHRASE =
   process.env.FRIDAY_LOCAL_PASSPHRASE ??
   "friday-test-local-passphrase-123";
 const TEST_TOKEN_SECRET = "setup-test-token-secret-for-canonical-skill-stage-approval-123"; // pragma: allowlist secret
+const TEST_SETUP_MASTER_KEY = "18".repeat(32);
 
 function resolveUiStaticDir(): string | undefined {
   const uiStaticDir = path.resolve(process.cwd(), "dist/ui");
@@ -132,9 +134,16 @@ describe("Setup Wizard E2E", () => {
   let refreshToken: string;
   let adminPrincipalId: string;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+  let originalMasterKey: string | undefined;
+  let originalMasterKeySource: string | undefined;
 
   beforeAll(async () => {
     autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    originalMasterKey = process.env.FRIDAY_MASTER_KEY;
+    originalMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+    process.env.FRIDAY_MASTER_KEY = TEST_SETUP_MASTER_KEY;
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
 
     // 1. Create temp state dir
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-setup-wizard-e2e-"));
@@ -247,6 +256,17 @@ describe("Setup Wizard E2E", () => {
       restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
       autoDetectEnvSnapshot = null;
     }
+    if (originalMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = originalMasterKey;
+    }
+    if (originalMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = originalMasterKeySource;
+    }
+    resetMasterKeyCache();
     clearTimeout(closeTimeout);
   }, 15_000);
 

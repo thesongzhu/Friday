@@ -1,12 +1,20 @@
 import { createHash, createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { FridayHttpContext, FridayRouteDefinition } from "#api";
 import {
   createLineWebhookListenerService,
   createLarkWebhookRelayService,
+  createTelegramWebhookService,
   createWhatsappWebhookService,
 } from "#channels";
 import { createFridayChannelWebhookRoutes } from "../../../../../src/api/http/routes/friday-channel-webhook-routes.js";
+
+const originalFetch = globalThis.fetch;
+const TELEGRAM_WEBHOOK_MARKER = "telegram-webhook-marker";
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -211,6 +219,77 @@ describe("createFridayChannelWebhookRoutes", () => {
 
     expect(result.received).toBe(true);
     expect(capturedMessageId).toBe("wamid.001");
+  });
+
+  it("rejects WhatsApp POST when app-secret is not configured", async () => {
+    const relay = createWhatsappWebhookService();
+    await relay.startWebhook("verify-token", () => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      whatsappWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.whatsapp");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({ object: "whatsapp_business_account", entry: [] }),
+          headers: { "x-hub-signature-256": "sha256=" + "00".repeat(32) },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "WHATSAPP_SIGNATURE_UNCONFIGURED",
+      httpStatus: 503,
+    });
+  });
+
+  it("validates Telegram webhook secret token and dispatches payload", async () => {
+    const relay = createTelegramWebhookService();
+    let capturedUpdateId = 0;
+    globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), { status: 200 });
+    await relay.startWebhook("bot-token", "https://example.com/telegram", TELEGRAM_WEBHOOK_MARKER, (payload) => {
+      capturedUpdateId = payload.update_id;
+    });
+
+    const routes = createFridayChannelWebhookRoutes({
+      telegramWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.telegram");
+
+    const result = await route.handler(
+      makeCtx({
+        rawBody: JSON.stringify({ update_id: 101, message: { message_id: 1, chat: { id: 1, type: "private" }, date: 1 } }),
+        headers: { "x-telegram-bot-api-secret-token": TELEGRAM_WEBHOOK_MARKER },
+      }),
+    ) as { accepted: boolean };
+
+    expect(result.accepted).toBe(true);
+    expect(capturedUpdateId).toBe(101);
+    await relay.stopWebhook();
+  });
+
+  it("rejects Telegram webhook when secret token is missing", async () => {
+    const relay = createTelegramWebhookService();
+    globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), { status: 200 });
+    await relay.startWebhook("bot-token", "https://example.com/telegram", TELEGRAM_WEBHOOK_MARKER, () => {});
+
+    const routes = createFridayChannelWebhookRoutes({
+      telegramWebhookRelay: relay,
+    });
+    const route = findRoute(routes, "channels.webhooks.telegram");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          rawBody: JSON.stringify({ update_id: 102 }),
+          headers: {},
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "TELEGRAM_SECRET_MISSING",
+      httpStatus: 401,
+    });
+    await relay.stopWebhook();
   });
 
   it("handles Lark url_verification and event relay", async () => {

@@ -374,7 +374,10 @@ export function createFridayPluginService(
 
       // Verify dependencies are met
       const allPlugins = registry.list();
-      const loadPlan = resolver.resolveLoadOrder(allPlugins, [pluginId]);
+      const resolvedLoadPlan = resolver.resolveLoadOrder(allPlugins, [pluginId]);
+      const loadPlan = options?.lifecycleBypass
+        ? { ...resolvedLoadPlan, lifecycleBypass: options.lifecycleBypass }
+        : resolvedLoadPlan;
 
       const now = nowIso();
       registry.setStatus(pluginId, "enabled", now);

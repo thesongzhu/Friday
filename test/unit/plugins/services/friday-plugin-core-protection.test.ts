@@ -42,6 +42,8 @@ function makeInput(id: string, overrides?: Partial<FridayUpsertPluginInput>): Fr
     status: "installed",
     enabled: false,
     trustMode: "trust_on_install",
+    compatibilityStatus: "compatible",
+    promotionChannel: "active",
     installPath: `/plugins/${id}`,
     kinds: ["skill"],
     manifest: makeManifest(id),

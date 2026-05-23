@@ -439,6 +439,102 @@ describe("OpenAiGptActionConverter", () => {
       // createPet handler should include body handling
       expect(indexMjs.content).toContain("body_name");
     });
+
+    it("skips null query/header values in generated operation handlers", async () => {
+      const converter = createFridayOpenAiGptActionConverter({ splitOperations: false });
+      const filePath = join(testDir, "spec.json");
+      writeFileSync(filePath, JSON.stringify(makeOpenApiSpec({
+        paths: {
+          "/search": {
+            get: {
+              operationId: "search",
+              parameters: [
+                { name: "q", in: "query", schema: { type: "string" } },
+                { name: "X-Trace", in: "header", schema: { type: "string" } },
+              ],
+            },
+          },
+        },
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexMjs = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexMjs.content).toContain('inputs["q"] !== undefined && inputs["q"] !== null');
+      expect(indexMjs.content).toContain('inputs["X-Trace"] !== undefined && inputs["X-Trace"] !== null');
+    });
+
+    it("escapes generated operation comments and path parameter replacement tokens", async () => {
+      const converter = createFridayOpenAiGptActionConverter();
+      const filePath = join(testDir, "spec.json");
+      const unsafePath = '/pets/*/\nthrow new Error("pwned")\n/*';
+      const unsafeParamName = 'petId"); throw new Error("pwned");//';
+      writeFileSync(filePath, JSON.stringify(makeOpenApiSpec({
+        paths: {
+          [unsafePath]: {
+            get: {
+              operationId: "getPet",
+              parameters: [
+                { name: unsafeParamName, in: "path", schema: { type: "string" } },
+              ],
+            },
+          },
+        },
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexMjs = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexMjs.content).toContain("*\\/");
+      expect(indexMjs.content).not.toContain('*/\nthrow new Error("pwned")');
+      expect(indexMjs.content).toContain(`url = url.replace(${JSON.stringify(`{${unsafeParamName}}`)},`);
+      expect(indexMjs.content).not.toContain(`url = url.replace("{${unsafeParamName}}",`);
+      expect(() =>
+        new Function(indexMjs.content.replace("export default async function execute", "async function execute")),
+      ).not.toThrow();
+    });
+
+    it("fails closed when generated operation handlers are missing required path params", async () => {
+      const converter = createFridayOpenAiGptActionConverter();
+      const filePath = join(testDir, "spec.json");
+      writeFileSync(filePath, JSON.stringify(makeOpenApiSpec({
+        paths: {
+          "/pets/{petId}": {
+            get: {
+              operationId: "getPet",
+              parameters: [
+                { name: "petId", in: "path", required: true, schema: { type: "string" } },
+              ],
+            },
+          },
+        },
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexMjs = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexMjs.content).toContain('if (inputs["petId"] === undefined || inputs["petId"] === null)');
+      expect(indexMjs.content).toContain("Missing required path parameter: petId");
+      expect(indexMjs.content).not.toContain('String(inputs["petId"] ?? "")');
+    });
+
+    it("generates unique handler names for sanitized operation id collisions", async () => {
+      const converter = createFridayOpenAiGptActionConverter({ splitOperations: false });
+      const filePath = join(testDir, "spec.json");
+      writeFileSync(filePath, JSON.stringify(makeOpenApiSpec({
+        paths: {
+          "/one": { get: { operationId: "same-name" } },
+          "/two": { get: { operationId: "same_name" } },
+        },
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexMjs = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexMjs.content).toContain("async function op_same_name(");
+      expect(indexMjs.content).toContain("async function op_same_name_2(");
+      expect(indexMjs.content).toContain("return await op_same_name_2(inputs, env);");
+    });
   });
 
   // ─── skillIdPrefix ───
@@ -577,6 +673,38 @@ paths:
       // Should append to query params
       expect(indexMjs.content).toContain("queryParams.set");
       expect(indexMjs.content).toContain("api_key");
+    });
+
+    it("sanitizes security scheme names before using them in auth inputs and generated code", async () => {
+      const converter = createFridayOpenAiGptActionConverter();
+      const filePath = join(testDir, "spec.json");
+      const schemeName = 'api-key"]; throw new Error("pwned");//';
+      writeFileSync(filePath, JSON.stringify(makeOpenApiSpec({
+        components: {
+          securitySchemes: {
+            [schemeName]: {
+              type: "apiKey",
+              in: "header",
+              name: "X-API-Key",
+            },
+          },
+        },
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const draft = result.drafts[0]!;
+      const indexMjs = draft.files.find((f) => f.path === "index.mjs")!;
+      const authInput = draft.manifest.inputs.find((input) => input.type === "secret")!;
+      const envVar = draft.manifest.requirements.env[0]!;
+
+      expect(authInput.key).toMatch(/^auth_[A-Za-z0-9_]+$/);
+      expect(envVar).toMatch(/^AUTH_[A-Z0-9_]+$/);
+      expect(indexMjs.content).toContain(`inputs[${JSON.stringify(authInput.key)}]`);
+      expect(indexMjs.content).toContain(`env[${JSON.stringify(envVar)}]`);
+      expect(indexMjs.content).not.toContain("inputs.auth_");
+      expect(indexMjs.content).not.toContain("env.AUTH_");
+      expect(indexMjs.content).not.toContain(schemeName);
+      expect(indexMjs.content).not.toContain("throw new Error");
     });
 
     it("handles API key in cookie", async () => {

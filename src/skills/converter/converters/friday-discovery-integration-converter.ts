@@ -165,7 +165,7 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isSafePayloadIdentifier(value: unknown): value is string {
-  return isNonEmptyString(value) && !value.includes("/") && !value.includes("\\");
+  return isNonEmptyString(value) && /^[A-Za-z0-9._:-]+$/.test(value);
 }
 
 function isIntegrationPath(value: unknown): value is FridayIntegrationPath {
@@ -263,11 +263,16 @@ function buildMinimalUiSchema(manifest: SkillManifestV2): FridaySkillUiSchemaV1 
 }
 
 function buildEntrypointFile(payload: FridayDiscoveryIntegrationPayload): FridayConvertedSkillFile {
+  const result = {
+    status: "staged",
+    programId: payload.programId,
+    integrationPath: payload.integrationPath,
+  };
   const content = [
     "#!/usr/bin/env sh",
-    `# Discovery integration stub for ${payload.programName}`,
+    `# Discovery integration stub for ${shellCommentText(payload.programName)}`,
     `# Integration path: ${payload.integrationPath}`,
-    `echo '{"status":"staged","programId":"${payload.programId}","integrationPath":"${payload.integrationPath}"}'`,
+    `printf '%s\\n' ${shellSingleQuote(JSON.stringify(result))}`,
     "",
   ].join("\n");
   return {
@@ -275,4 +280,12 @@ function buildEntrypointFile(payload: FridayDiscoveryIntegrationPayload): Friday
     content,
     executable: true,
   };
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function shellCommentText(value: string): string {
+  return value.replace(/[\r\n\0]/g, " ");
 }

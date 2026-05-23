@@ -13,6 +13,8 @@ export const FridayTelegramChannelConfigSchema = z.object({
   mode: z.enum(["polling", "webhook"]).default("polling"),
   /** Webhook URL (required if mode is "webhook"). */
   webhookUrl: z.string().optional(),
+  /** Telegram Bot API secret token for inbound webhook verification. */
+  webhookSecretToken: z.string().optional(),
   /** If set, only accept messages from these user IDs. */
   allowedUsers: z.array(z.string()).optional(),
   /** If set, only accept messages from these chat IDs. */

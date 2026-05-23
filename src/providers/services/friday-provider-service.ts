@@ -57,7 +57,7 @@ import {
 import {
   decryptSecret,
   encryptSecret,
-  getMasterKey,
+  getStrictMasterKey,
 } from "../security/friday-secret-crypto.js";
 import { createFridayEphemeralSecretHandleRegistry } from "../security/friday-secret-handle-registry.js";
 import { createFridayProviderValidator } from "../validation/friday-provider-validator.js";
@@ -525,7 +525,7 @@ export function createFridayProviderService(
       return keySource;
     }
     const refKey = secretRefKey(providerId);
-    const masterKey = getMasterKey();
+    const masterKey = getStrictMasterKey();
     const envelope = encryptSecret(apiKey, masterKey);
     deps.db.withWriteTransaction((db) => {
       secretRepo.upsert(db, {
@@ -600,7 +600,7 @@ export function createFridayProviderService(
         if (!secret) {
           return null;
         }
-        const masterKey = getMasterKey();
+        const masterKey = getStrictMasterKey();
         const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
         return decryptSecret(envelope, masterKey);
       },
@@ -2109,7 +2109,7 @@ export function createFridayProviderService(
         if (!secret) {
           return null;
         }
-        const masterKey = getMasterKey();
+        const masterKey = getStrictMasterKey();
         const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
         return decryptSecret(envelope, masterKey);
       },
@@ -2925,7 +2925,7 @@ export function createFridayProviderService(
         oauthProvider = oauthProvider ?? defaultOAuthProviderForKind(existing.kind);
       } else if (oldAuthMode === "oauth") {
         // Switching away from OAuth — clear OAuth credentials and oauthProvider
-        oauthTokenManager.clear(providerId);
+        oauthTokenManager.clearProviderProfile(providerId);
         oauthProvider = undefined;
       }
 
@@ -3064,7 +3064,7 @@ export function createFridayProviderService(
       }
 
       // Clear OAuth credentials if present
-      oauthTokenManager.clear(providerId);
+      oauthTokenManager.clearProviderProfile(providerId);
 
       deps.db.withWriteTransaction((db) => {
         authProfileRepo.deleteByProviderProfileId(db, providerId);
@@ -3567,8 +3567,9 @@ export function createFridayProviderService(
       });
 
       // Post-exchange validation: verify the access token works
+      let validation: FridayProviderValidationState;
       try {
-        const validationState = await validator.validate({
+        validation = await validator.validate({
           kind: profile.kind,
           api: profile.config.api,
           baseUrl: profile.baseUrl,
@@ -3576,26 +3577,29 @@ export function createFridayProviderService(
           model: profile.defaultModel,
           authMode: "oauth",
         });
-        profile.config.validation = validationState;
+        profile.config.validation = validation;
       } catch (err) {
-        // Don't block the flow — just warn via validation state
         console.warn("[friday][provider-service] post-login validation failed:", err instanceof Error ? err.message : String(err));
-        profile.config.validation = {
+        validation = {
           status: "failed",
           checkedAt: deps.nowIso(),
           errorCode: "PROVIDER_UNREACHABLE",
           errorMessage: "Post-login validation failed; token may still be valid",
         };
+        profile.config.validation = validation;
       }
 
       deps.db.withWriteTransaction((db) => {
         profileRepo.update(db, profile);
       });
 
+      const runtimeReady = validation.status === "ok";
       return {
         providerId: profile.id,
         oauthProvider,
-        connected: true,
+        connected: runtimeReady,
+        runtimeReady,
+        validation,
         expiresAt: tokenSet.expiresAt,
         tokenType: tokenSet.tokenType,
         scope: tokenSet.scope,
@@ -3685,8 +3689,9 @@ export function createFridayProviderService(
         tokenSet,
       });
 
+      let validation: FridayProviderValidationState;
       try {
-        const validationState = await validator.validate({
+        validation = await validator.validate({
           kind: profile.kind,
           api: profile.config.api,
           baseUrl: profile.baseUrl,
@@ -3694,25 +3699,29 @@ export function createFridayProviderService(
           model: profile.defaultModel,
           authMode: "oauth",
         });
-        profile.config.validation = validationState;
+        profile.config.validation = validation;
       } catch (err) {
         console.warn("[friday][provider-service] post-device-login validation failed:", err instanceof Error ? err.message : String(err));
-        profile.config.validation = {
+        validation = {
           status: "failed",
           checkedAt: deps.nowIso(),
           errorCode: "PROVIDER_UNREACHABLE",
           errorMessage: "Post-device-login validation failed; token may still be valid",
         };
+        profile.config.validation = validation;
       }
 
       deps.db.withWriteTransaction((db) => {
         profileRepo.update(db, profile);
       });
 
+      const runtimeReady = validation.status === "ok";
       return {
         providerId: profile.id,
         oauthProvider,
-        connected: true,
+        connected: runtimeReady,
+        runtimeReady,
+        validation,
         expiresAt: tokenSet.expiresAt,
         tokenType: tokenSet.tokenType,
         scope: tokenSet.scope,

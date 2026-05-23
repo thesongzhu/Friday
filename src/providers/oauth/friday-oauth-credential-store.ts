@@ -16,7 +16,7 @@ import { FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID } from "../model/friday-provider.type
 import {
   decryptSecret,
   encryptSecret,
-  getMasterKey,
+  getStrictMasterKey,
 } from "../security/friday-secret-crypto.js";
 import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.js";
 
@@ -58,7 +58,7 @@ function parseEnvelope(raw: string, field: string): FridayEncryptedEnvelope {
 }
 
 function rowToCredential(row: FridayOAuthCredentialRow): FridayOAuthCredential {
-  const masterKey = getMasterKey();
+  const masterKey = getStrictMasterKey();
   const accessEnvelope = parseEnvelope(row.access_token_encrypted, "access_token_encrypted");
   const refreshEnvelope = parseEnvelope(row.refresh_token_encrypted, "refresh_token_encrypted");
   let metadata: Record<string, unknown> = {};
@@ -117,7 +117,7 @@ export function createFridayOAuthCredentialStore(
     },
 
     upsert(input) {
-      const masterKey = getMasterKey();
+      const masterKey = getStrictMasterKey();
       const accessEncrypted = JSON.stringify(
         encryptSecret(input.tokenSet.accessToken, masterKey),
       );

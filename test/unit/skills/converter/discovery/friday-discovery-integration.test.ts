@@ -156,10 +156,13 @@ describe("FridayDiscoveryIntegrationConverter", () => {
     it("rejects direct payloads with path-like program or skill identifiers", async () => {
       const badProgramId = makePayload({ programId: "/Users/jarvis/Applications/TestApp.app" });
       const badSkillId = makePayload({ skillId: "discovery-/Users/jarvis/Applications/TestApp.app" });
+      const badShellId = makePayload({ programId: "testapp'; rm -rf / #" });
 
       await expect(converter.detect({ contentBase64: encodePayload(badProgramId) }))
         .resolves.toBeNull();
       await expect(converter.detect({ contentBase64: encodePayload(badSkillId) }))
+        .resolves.toBeNull();
+      await expect(converter.detect({ contentBase64: encodePayload(badShellId) }))
         .resolves.toBeNull();
       await expect(converter.convert({ contentBase64: encodePayload(badProgramId) }, ctx))
         .rejects.toThrow();
@@ -225,6 +228,8 @@ describe("FridayDiscoveryIntegrationConverter", () => {
 
       const entrypoint = draft.files.find((f) => f.path === "run.sh")!;
       expect(entrypoint.executable).toBe(true);
+      expect(entrypoint.content).toContain("printf '%s\\n'");
+      expect(entrypoint.content).not.toContain("echo '{");
     });
 
     it("throws on missing contentBase64", async () => {

@@ -2,6 +2,8 @@ import { FridayDomainError } from "#errors";
 import { spawn } from "node:child_process";
 
 import { FRIDAY_VERSION } from "../../lib/version.js";
+import { fetchWithFridayAgentSsrfGuard } from "../security/friday-agent-fetch-guard.js";
+import { createFridayAgentSsrfGuard } from "../security/friday-agent-ssrf-guard.js";
 import { createFridayMcpRequestDedup } from "./friday-mcp-request-dedup.js";
 import type {
   FridayMcpAdapter,
@@ -1283,14 +1285,18 @@ async function sendHttpRpc(
   }
 
   try {
-    const response = await fetch(input.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(input.headers ?? {}),
+    const response = await fetchWithFridayAgentSsrfGuard({
+      url: input.url,
+      guard: createFridayAgentSsrfGuard(),
+      init: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(input.headers ?? {}),
+        },
+        body: JSON.stringify(payload),
+        signal: timeoutController.signal,
       },
-      body: JSON.stringify(payload),
-      signal: timeoutController.signal,
     });
 
     if (!response.ok) {

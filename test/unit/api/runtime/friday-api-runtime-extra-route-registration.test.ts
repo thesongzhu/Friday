@@ -177,6 +177,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(operationIds).toContain("channels.webhooks.line");
     expect(operationIds).toContain("channels.webhooks.whatsapp.verify");
     expect(operationIds).toContain("channels.webhooks.whatsapp");
+    expect(operationIds).toContain("channels.webhooks.telegram");
     expect(operationIds).toContain("channels.webhooks.lark");
     expect(operationIds.some((id) => id.startsWith("channels.") && !id.startsWith("channels.webhooks."))).toBe(false);
     expect(operationIds.some((id) => id.startsWith("system."))).toBe(false);
@@ -678,6 +679,7 @@ describe("API Runtime — Extended Route Registration", () => {
           webhookEndpoints?: {
             line: boolean;
             whatsapp: boolean;
+            telegram: boolean;
             lark: boolean;
           };
         };
@@ -691,6 +693,7 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(result.capabilities.channels.webhookEndpoints).toEqual({
       line: false,
       whatsapp: false,
+      telegram: false,
       lark: false,
     });
     expect(result.capabilities.mcp?.enabled).toBe(false);

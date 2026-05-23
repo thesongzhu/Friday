@@ -15,9 +15,11 @@ describe("FridayProviderService", () => {
   let db: FridaySqliteLayer;
   let idGen: () => string;
   let service: FridayProviderService;
+  let originalMasterKey: string | undefined;
   const NOW = "2026-02-17T10:00:00.000Z";
   const NOW_MS = Date.parse(NOW);
   const originalFetch = globalThis.fetch;
+  const TEST_MASTER_KEY = Buffer.alloc(32, 13).toString("hex");
 
   function listAuthProfiles() {
     return db.withReadConnection((conn) =>
@@ -112,6 +114,8 @@ describe("FridayProviderService", () => {
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
+    originalMasterKey = process.env.FRIDAY_MASTER_KEY;
+    process.env.FRIDAY_MASTER_KEY = TEST_MASTER_KEY;
     resetMasterKeyCache();
     service = createFridayProviderService({
       db,
@@ -126,6 +130,11 @@ describe("FridayProviderService", () => {
 
   afterEach(() => {
     db.close();
+    if (originalMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = originalMasterKey;
+    }
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
     resetMasterKeyCache();
@@ -167,6 +176,24 @@ describe("FridayProviderService", () => {
       });
 
       expect(profile.config.keySource.kind).toBe("secret-ref");
+    });
+
+    it("fails closed for raw runtime provider secrets when FRIDAY_MASTER_KEY is missing", async () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      resetMasterKeyCache();
+
+      await expect(service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-real-key-456", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
+      })).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
     });
 
     it("creates a provider with a file-ref key source", async () => {
@@ -2937,6 +2964,63 @@ describe("FridayProviderService", () => {
 
       const result = await service.getProvider("test-id-0001");
       expect(result).toBeNull();
+    });
+
+    it("surfaces failed post-login OAuth validation instead of reporting runtime connected", async () => {
+      const oauthFetch = vi.fn(async (url: string | URL | Request) => {
+        const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+        if (href.includes("/v1/oauth/token")) {
+          return new Response(JSON.stringify({
+            access_token: "oauth-access-token",
+            refresh_token: "oauth-refresh-token",
+            expires_in: 3600,
+            token_type: "Bearer",
+            scope: "org:create_api_key user:profile user:inference",
+          }), { status: 200 });
+        }
+        if (href.endsWith("/v1/messages")) {
+          return new Response(JSON.stringify({ error: { message: "invalid token" } }), { status: 401 });
+        }
+        return new Response("{}", { status: 200 });
+      }) as typeof fetch;
+      globalThis.fetch = oauthFetch;
+      const oauthService = createFridayProviderService({
+        db,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        fetchImpl: oauthFetch,
+        nowMs: () => NOW_MS,
+      });
+
+      const profile = await oauthService.createProvider({
+        kind: "anthropic",
+        name: "Anthropic OAuth",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "oauth",
+        api: "anthropic-messages",
+        supportedModels: ["claude-sonnet-4-20250514"],
+        defaultModel: "claude-sonnet-4-20250514",
+      });
+      const initiation = await oauthService.initiateOAuthLogin({ providerId: profile.id });
+
+      const result = await oauthService.completeOAuthLogin({
+        providerId: profile.id,
+        authorizationCode: `auth-code#${initiation.state}`,
+        state: initiation.state,
+      });
+
+      expect(result.connected).toBe(false);
+      expect(result.runtimeReady).toBe(false);
+      expect(result.validation).toMatchObject({
+        status: "failed",
+        errorCode: "PROVIDER_AUTH_INVALID",
+      });
+
+      const stored = await oauthService.getProvider(profile.id);
+      expect(stored?.config.validation).toMatchObject({
+        status: "failed",
+        errorCode: "PROVIDER_AUTH_INVALID",
+      });
     });
 
     it("switches from oauth to token and validates with Bearer auth", async () => {

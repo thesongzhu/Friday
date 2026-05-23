@@ -75,8 +75,10 @@ export function decryptSecret(
 // ─── Master key resolution ───
 
 // P2-SEC: Master key cache with TTL for rotation support (re-reads from env/file after 1 hour)
+type MasterKeyCacheSource = "env" | "keychain" | "file" | "generated";
 let cachedMasterKey: Buffer | null = null;
 let cachedMasterKeyExpiresAt = 0;
+let cachedMasterKeySource: MasterKeyCacheSource | null = null;
 const MASTER_KEY_CACHE_TTL_MS = 3_600_000; // 1 hour
 
 const MASTER_KEY_DIR = path.join(os.homedir(), ".friday");
@@ -137,6 +139,8 @@ export function getMasterKey(): Buffer {
     return cachedMasterKey;
   }
   cachedMasterKey = null;
+  cachedMasterKeyExpiresAt = 0;
+  cachedMasterKeySource = null;
 
   // 1. Prefer explicit env var
   const envKey = process.env.FRIDAY_MASTER_KEY;
@@ -150,6 +154,7 @@ export function getMasterKey(): Buffer {
       );
     }
     cachedMasterKey = buf;
+    cachedMasterKeySource = "env";
     cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
     return cachedMasterKey;
   }
@@ -160,6 +165,7 @@ export function getMasterKey(): Buffer {
     const keychainKey = readKeychainMasterKey();
     if (keychainKey) {
       cachedMasterKey = keychainKey;
+      cachedMasterKeySource = "keychain";
       cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
       return cachedMasterKey;
     }
@@ -194,6 +200,7 @@ export function getMasterKey(): Buffer {
     const buf = Buffer.from(hex, "hex");
     if (buf.length === KEY_BYTES) {
       cachedMasterKey = buf;
+      cachedMasterKeySource = "file";
       cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
       return cachedMasterKey;
     }
@@ -227,6 +234,7 @@ export function getMasterKey(): Buffer {
   );
 
   cachedMasterKey = newKey;
+  cachedMasterKeySource = "generated";
   cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
   return cachedMasterKey;
 }
@@ -236,6 +244,8 @@ export function getMasterKey(): Buffer {
  */
 export function resetMasterKeyCache(): void {
   cachedMasterKey = null;
+  cachedMasterKeyExpiresAt = 0;
+  cachedMasterKeySource = null;
 }
 
 /**
@@ -248,10 +258,9 @@ export function resetMasterKeyCache(): void {
  * rather than silently generating a key and printing it.
  */
 export function getStrictMasterKey(): Buffer {
-  if (cachedMasterKey && Date.now() < cachedMasterKeyExpiresAt) {
+  if (cachedMasterKey && cachedMasterKeySource === "env" && process.env.FRIDAY_MASTER_KEY && Date.now() < cachedMasterKeyExpiresAt) {
     return cachedMasterKey;
   }
-  cachedMasterKey = null;
 
   const envKey = process.env.FRIDAY_MASTER_KEY;
   if (envKey) {
@@ -264,14 +273,19 @@ export function getStrictMasterKey(): Buffer {
       );
     }
     cachedMasterKey = buf;
+    cachedMasterKeySource = "env";
     cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
     return cachedMasterKey;
   }
 
   if (process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
+    if (cachedMasterKey && cachedMasterKeySource === "keychain" && Date.now() < cachedMasterKeyExpiresAt) {
+      return cachedMasterKey;
+    }
     const keychainKey = readKeychainMasterKey();
     if (keychainKey) {
       cachedMasterKey = keychainKey;
+      cachedMasterKeySource = "keychain";
       cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
       return cachedMasterKey;
     }

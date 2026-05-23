@@ -74,7 +74,7 @@ export {
 } from "./cli/friday-provider-cli-backend.js";
 
 // Security
-export { encryptSecret, decryptSecret, getMasterKey, resetMasterKeyCache } from "./security/friday-secret-crypto.js";
+export { encryptSecret, decryptSecret, getMasterKey, getStrictMasterKey, resetMasterKeyCache } from "./security/friday-secret-crypto.js";
 export type {
   CreateFridayEphemeralSecretHandleRegistryDeps,
   FridayEphemeralSecretHandle,
