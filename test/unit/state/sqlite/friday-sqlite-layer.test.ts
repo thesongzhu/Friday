@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
 import { ensureFridayApiBuildForNodeWorkers } from "../../../helpers/friday-ensure-api-build.helper.js";
@@ -72,6 +73,34 @@ describe("friday-sqlite-layer", () => {
       db.prepare("SELECT v FROM kv WHERE k = ?").get("key1"),
     );
     expect(row).toBeUndefined();
+  });
+
+  it("withWriteTransaction acquires the write lock immediately", () => {
+    const dbPath = path.join(tmpDir, "immediate.db");
+    layer = createFridaySqliteLayer({
+      dbPath,
+      readPoolSize: 1,
+      pragmas: { busyTimeoutMs: 5000, synchronous: "NORMAL" },
+    });
+    layer.writer.exec("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)");
+
+    const competingWriter = new Database(dbPath);
+    competingWriter.pragma("busy_timeout = 0");
+
+    try {
+      expect(() => {
+        layer.withWriteTransaction(() => {
+          competingWriter.prepare("INSERT INTO kv (k, v) VALUES (?, ?)").run("other", "value");
+        });
+      }).toThrow(/database is locked|SQLITE_BUSY|busy/i);
+
+      const row = layer.withReadConnection((db) =>
+        db.prepare("SELECT v FROM kv WHERE k = ?").get("other"),
+      );
+      expect(row).toBeUndefined();
+    } finally {
+      competingWriter.close();
+    }
   });
 
   it("close() closes all connections", () => {

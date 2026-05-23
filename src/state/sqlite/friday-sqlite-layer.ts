@@ -64,7 +64,8 @@ export function createFridaySqliteLayer(
     reads,
 
     withWriteTransaction<T>(fn: (db: Database.Database) => T): T {
-      return writer.transaction(() => fn(writer))();
+      const transaction = writer.transaction(() => fn(writer));
+      return transaction.immediate();
     },
 
     withReadConnection<T>(fn: (db: Database.Database) => T): T {

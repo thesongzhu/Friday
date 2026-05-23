@@ -157,6 +157,7 @@ export function createFridayJobSchedulerService(
     const timeoutMs = jobDef.timeoutMs ?? FRIDAY_SCHEDULER_DEFAULT_TIMEOUT_MS;
     const startMs = nowMs();
     const schedule = getJobSchedule(jobDef);
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     repository.markRunning(jobId, nowIso());
 
@@ -164,7 +165,7 @@ export function createFridayJobSchedulerService(
       await Promise.race([
         jobDef.run(),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error("SCHEDULER_JOB_TIMEOUT")), timeoutMs);
+          timeoutHandle = setTimeout(() => reject(new Error("SCHEDULER_JOB_TIMEOUT")), timeoutMs);
         }),
       ]);
 
@@ -210,6 +211,10 @@ export function createFridayJobSchedulerService(
       // For one-shot "at" jobs: disable after max retries to prevent hot-looping
       if (schedule.kind === "at" && failures >= AT_JOB_MAX_RETRIES) {
         repository.disableJob(jobId, nowIso());
+      }
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
       }
     }
   }

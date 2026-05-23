@@ -348,6 +348,38 @@ describe("FridayJobSchedulerService", () => {
     expect(runCount).toBe(1);
   });
 
+  it("clears the per-job timeout timer after a successful run", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-24T12:00:00.000Z"));
+
+    try {
+      const repo = createFridayJobSchedulerRepository({ db });
+      let runCount = 0;
+
+      const scheduler = createFridayJobSchedulerService({
+        repository: repo,
+        jobs: [
+          {
+            id: "timer-cleanup-job",
+            intervalMs: 60_000,
+            timeoutMs: 600_000,
+            run: async () => {
+              runCount++;
+            },
+          },
+        ],
+      });
+
+      await scheduler.start();
+      await scheduler.stop();
+
+      expect(runCount).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // ─── CX65: Invalid cron disables instead of hot-looping ───
 
   it("CX65: invalid cron expression disables job on seed instead of hot-looping", async () => {

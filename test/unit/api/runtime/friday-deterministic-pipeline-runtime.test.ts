@@ -19,6 +19,7 @@ function clearRulesState(db: ReturnType<typeof createTestDb>): void {
 describe("Friday deterministic pipeline runtime wiring", () => {
   const originalPipelineMode = process.env.FRIDAY_PIPELINE_MODE;
   const originalPipelineEnable = process.env.FRIDAY_PIPELINE_ENABLE;
+  const originalRetryCircuitThreshold = process.env.FRIDAY_PIPELINE_RETRY_CIRCUIT_THRESHOLD;
 
   afterEach(() => {
     if (originalPipelineMode === undefined) {
@@ -30,6 +31,11 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       delete process.env.FRIDAY_PIPELINE_ENABLE;
     } else {
       process.env.FRIDAY_PIPELINE_ENABLE = originalPipelineEnable;
+    }
+    if (originalRetryCircuitThreshold === undefined) {
+      delete process.env.FRIDAY_PIPELINE_RETRY_CIRCUIT_THRESHOLD;
+    } else {
+      process.env.FRIDAY_PIPELINE_RETRY_CIRCUIT_THRESHOLD = originalRetryCircuitThreshold;
     }
   });
 
@@ -316,6 +322,57 @@ describe("Friday deterministic pipeline runtime wiring", () => {
     expect(traces.items.length).toBeGreaterThan(0);
     expect(breakers.items.some((item) => item.targetId === "provider:openai")).toBe(true);
     expect(escalations.items.length).toBeGreaterThanOrEqual(0);
+    db.close();
+  });
+
+  it("counts retryable decideRetry failures toward the circuit breaker without treating terminal no-retry as failure", () => {
+    process.env.FRIDAY_PIPELINE_RETRY_CIRCUIT_THRESHOLD = "3";
+    const db = createTestDb();
+    const runtime = createFridayDeterministicPipelineRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => "2026-02-27T00:00:00.000Z",
+      invokeSkill: async () => ({ ok: true }),
+    });
+
+    for (let index = 0; index < 3; index += 1) {
+      const decided = runtime.retry.decideRetry({
+        runId: `run-retry-${index}`,
+        workflowId: "wf-retry",
+        nodeId: "node-retry",
+        currentAttemptNumber: 1,
+        error: { errorCode: "ECONNRESET", errorMessage: "connection reset" },
+        targetId: "provider:retryable",
+      }) as { decision: { shouldRetry: boolean } };
+
+      expect(decided.decision.shouldRetry).toBe(true);
+    }
+
+    runtime.retry.decideRetry({
+      runId: "run-auth",
+      workflowId: "wf-auth",
+      nodeId: "node-auth",
+      currentAttemptNumber: 1,
+      error: { errorCode: "AUTH_FAILED", errorMessage: "Unauthorized" },
+      targetId: "provider:auth",
+    });
+
+    const breakers = runtime.retry.listCircuitBreakers({}) as {
+      items: Array<{ targetId: string; state: string; consecutiveFailures: number; tripCount: number }>;
+    };
+    const retryable = breakers.items.find((item) => item.targetId === "provider:retryable");
+    const terminal = breakers.items.find((item) => item.targetId === "provider:auth");
+
+    expect(retryable).toMatchObject({
+      state: "open",
+      consecutiveFailures: 3,
+      tripCount: 1,
+    });
+    expect(terminal).toMatchObject({
+      state: "closed",
+      consecutiveFailures: 0,
+      tripCount: 0,
+    });
     db.close();
   });
 

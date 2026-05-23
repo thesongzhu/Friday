@@ -27,9 +27,9 @@ import type { RetryBudgetInstance } from "./retry-budget.js";
  * Default retry strategies by failure category.
  * These follow the unified failure taxonomy.
  */
-export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
+export const DEFAULT_PRODUCTION_STRATEGIES: FridayRetryStrategy[] = [
   {
-    type: "exponential",
+    strategy: "exponential",
     failureCategory: "rate_limit",
     maxAttempts: 5,
     baseDelayMs: 1000,
@@ -42,7 +42,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalationChannel: "operator",
   },
   {
-    type: "exponential",
+    strategy: "exponential",
     failureCategory: "timeout",
     maxAttempts: 2,
     baseDelayMs: 2000,
@@ -55,7 +55,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalationChannel: "operator",
   },
   {
-    type: "exponential",
+    strategy: "exponential",
     failureCategory: "transient",
     maxAttempts: 3,
     baseDelayMs: 500,
@@ -68,7 +68,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalationChannel: "developer",
   },
   {
-    type: "linear",
+    strategy: "linear",
     failureCategory: "resource",
     maxAttempts: 2,
     baseDelayMs: 5000,
@@ -81,7 +81,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalationChannel: "operator",
   },
   {
-    type: "none",
+    strategy: "none",
     failureCategory: "auth",
     maxAttempts: 0,
     respectRetryAfter: false,
@@ -90,7 +90,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalateOnExhaustion: false,
   },
   {
-    type: "none",
+    strategy: "none",
     failureCategory: "logic",
     maxAttempts: 0,
     respectRetryAfter: false,
@@ -99,7 +99,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalateOnExhaustion: false,
   },
   {
-    type: "fixed",
+    strategy: "fixed",
     failureCategory: "unknown",
     maxAttempts: 1,
     baseDelayMs: 1000,
@@ -111,7 +111,7 @@ export const DEFAULT_PRODUCTION_STRATEGIES: readonly FridayRetryStrategy[] = [
     escalateOnExhaustion: true,
     escalationChannel: "developer",
   },
-] as unknown as FridayRetryStrategy[];
+];
 
 /**
  * Default cost budget for production retry.
@@ -176,7 +176,7 @@ export function createProductionRetryBridge(
   config: ProductionRetryBridgeConfig,
 ): ProductionRetryBridge {
   const { generateId, nowIso } = config;
-  const strategies = config.strategies ?? (DEFAULT_PRODUCTION_STRATEGIES as unknown as FridayRetryStrategy[]);
+  const strategies = config.strategies ?? DEFAULT_PRODUCTION_STRATEGIES;
   const costBudget = config.costBudget ?? DEFAULT_PRODUCTION_COST_BUDGET;
 
   // Create the failure classifier with full taxonomy

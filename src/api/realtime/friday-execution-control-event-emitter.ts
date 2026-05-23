@@ -21,6 +21,9 @@ import type { FridayRealtimeEventBus } from "./friday-realtime-event-bus.types.j
 import type { FridayAuditRecord } from "../../security/friday-audit-log.js";
 import { redactEventPayload } from "./friday-event-payload-redactor.js";
 
+const DEFAULT_EMITTED_EVENTS_LIMIT = 1_000;
+const DEFAULT_AUDIT_SINK_FAILURES_LIMIT = 100;
+
 // ─── Execution-control event name subset ───
 
 export type FridayExecutionControlEventName =
@@ -103,19 +106,52 @@ function buildAuditRecord(
       payload.executionId ?? payload.resultId ?? payload.entryId ??
       payload.contextId ?? payload.candidateId ?? payload.playbookId) as string | undefined,
     requestId: correlationId,
-    result: action.includes("failed") || action.includes("exhausted") ? "failure" : "success",
+    result: isFailureAuditEvent(event, action) ? "failure" : "success",
     caller: "execution-control-event-emitter",
     details: redactEventPayload(payload) as Record<string, unknown>,
   };
 }
 
+function isFailureAuditEvent(event: FridayExecutionControlEventName, action: string): boolean {
+  return action.includes("failed") || action.includes("exhausted") || event === "retry.dlq.enqueued";
+}
+
+function pushBounded<T>(items: T[], item: T, limit: number): void {
+  items.push(item);
+  while (items.length > limit) {
+    items.shift();
+  }
+}
+
+function clampPositiveInteger(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function auditSinkErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw
+    .replace(/\b(sk-|key-|pk-|rk-|xai-|gsk_|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\b[A-Za-z0-9/+]{40,}={0,2}\b/g, "[REDACTED]");
+}
+
 // ─── Deps ───
+
+export interface FridayExecutionControlAuditSinkFailure {
+  event: FridayExecutionControlEventName;
+  streamId: string;
+  emittedAt: string;
+  message: string;
+}
 
 export interface CreateExecutionControlEventEmitterDeps {
   eventBus: FridayRealtimeEventBus;
   nowIso: () => string;
   /** Optional audit sink — receives forensic records for persistence. */
   auditSink?: (record: FridayAuditRecord) => void;
+  /** Maximum in-memory envelopes retained for inspection. */
+  maxEmittedEvents?: number;
+  /** Maximum audit-sink failures retained for inspection. */
+  maxAuditSinkFailures?: number;
 }
 
 // ─── Public interface ───
@@ -135,6 +171,11 @@ export interface FridayExecutionControlEventEmitter {
    * List all events emitted during this emitter's lifetime (useful for testing).
    */
   readonly emittedEvents: ReadonlyArray<FridayRealtimeEventEnvelope>;
+
+  /**
+   * List recent audit-sink failures without breaking event emission.
+   */
+  readonly auditSinkFailures: ReadonlyArray<FridayExecutionControlAuditSinkFailure>;
 }
 
 // ─── Factory ───
@@ -142,7 +183,10 @@ export interface FridayExecutionControlEventEmitter {
 export function createExecutionControlEventEmitter(
   deps: CreateExecutionControlEventEmitterDeps,
 ): FridayExecutionControlEventEmitter {
+  const emittedLimit = clampPositiveInteger(deps.maxEmittedEvents, DEFAULT_EMITTED_EVENTS_LIMIT);
+  const auditFailureLimit = clampPositiveInteger(deps.maxAuditSinkFailures, DEFAULT_AUDIT_SINK_FAILURES_LIMIT);
   const emitted: FridayRealtimeEventEnvelope[] = [];
+  const auditFailures: FridayExecutionControlAuditSinkFailure[] = [];
 
   return {
     emit<TEvent extends FridayExecutionControlEventName>(
@@ -164,7 +208,7 @@ export function createExecutionControlEventEmitter(
         correlationId,
       );
 
-      emitted.push(envelope as FridayRealtimeEventEnvelope);
+      pushBounded(emitted, envelope as FridayRealtimeEventEnvelope, emittedLimit);
 
       // 4. Write audit record (non-blocking, best-effort)
       if (deps.auditSink) {
@@ -177,7 +221,14 @@ export function createExecutionControlEventEmitter(
           );
           deps.auditSink(record);
         } catch (err) {
-          console.warn("[friday][execution-control-event-emitter] operation failed:", err instanceof Error ? err.message : String(err));
+          const message = auditSinkErrorMessage(err);
+          pushBounded(auditFailures, {
+            event,
+            streamId,
+            emittedAt: envelope.emittedAt,
+            message,
+          }, auditFailureLimit);
+          console.warn("[friday][execution-control-event-emitter] operation failed:", message);
           // Audit sink failure is non-fatal
         }
       }
@@ -187,6 +238,10 @@ export function createExecutionControlEventEmitter(
 
     get emittedEvents() {
       return emitted;
+    },
+
+    get auditSinkFailures() {
+      return auditFailures;
     },
   };
 }

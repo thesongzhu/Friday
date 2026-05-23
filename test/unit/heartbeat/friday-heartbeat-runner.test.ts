@@ -165,6 +165,38 @@ describe("FridayHeartbeatRunner", () => {
     expect(repo.state.cooldownUntil).toBe("2026-02-23T10:02:00.000Z");
   });
 
+  it("treats unexpected non-empty non-OK output as fail-safe action-required truth", async () => {
+    const repo = createMemoryRepo();
+    const executeRun = vi.fn(async () => ({
+      runId: "run-noisy",
+      status: "completed" as const,
+      response: "diagnostic: downstream service returned 503",
+    }));
+    const onActionRequired = vi.fn();
+
+    const runner = createFridayHeartbeatRunner({
+      config: {
+        enabled: true,
+        intervalMs: 60_000,
+        cooldownMs: 120_000,
+        fallbackPrompt: "respond HEARTBEAT_OK only when no action is required",
+        sessionKey: "system:heartbeat",
+      },
+      repository: repo.repository,
+      agentRuntime: { executeRun },
+      nowIso: () => "2026-02-23T10:00:00.000Z",
+      idGenerator: () => "hb-noisy",
+      onActionRequired,
+    });
+
+    const result = await runner.runOnce();
+
+    expect(result.status).toBe("ok");
+    expect(result.actionRequired).toBe(true);
+    expect(onActionRequired).toHaveBeenCalledOnce();
+    expect(repo.state.cooldownUntil).toBe("2026-02-23T10:02:00.000Z");
+  });
+
   it("loads session history and forwards it into agent execution", async () => {
     const repo = createMemoryRepo();
     const executeRun = vi.fn(async () => ({

@@ -136,6 +136,24 @@ describe("FridayRetentionJob", () => {
     expect(result.deletedHeartbeats).toBe(1);
   });
 
+  it("keeps earlier cleanup commits when a later retention step fails", () => {
+    db.writer
+      .prepare(
+        `INSERT INTO satellite_heartbeats (id, satellite_id, ts, status)
+         VALUES ('hb-old', 'sat-1', '2025-01-01T00:00:00.000Z', 'online')`,
+      )
+      .run();
+    db.writer.exec("DROP TABLE learning_events");
+
+    const job = createJob();
+
+    expect(() => job.run(NOW)).toThrow(/learning_events/i);
+    const heartbeat = db.writer
+      .prepare("SELECT id FROM satellite_heartbeats WHERE id = 'hb-old'")
+      .get();
+    expect(heartbeat).toBeUndefined();
+  });
+
   it("marks TTL-expired outbox messages", () => {
     db.withWriteTransaction((d) => {
       outboxRepo.insertMessage(d, "msg-expired", {

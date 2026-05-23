@@ -276,5 +276,29 @@ describe("Promoter Job Runner", () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(getKpis).toHaveBeenCalledTimes(2);
     });
+
+    it("unrefs the interval handle when the runtime supports it", () => {
+      const unref = vi.fn();
+      const intervalHandle = { unref } as unknown as ReturnType<typeof setInterval>;
+      const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(intervalHandle);
+      const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
+
+      try {
+        const runner = createPromoterJobRunner({
+          store,
+          promotionEngine,
+          versionManager,
+          getKpis: () => ({ reuseHitRate: 0.5, successLift: 0.3, badPromotionRollbackRate: 0.001 }),
+          nowIso: () => NOW,
+        });
+
+        const control = runner.start(1_000);
+        expect(unref).toHaveBeenCalledOnce();
+        control.stop();
+      } finally {
+        setIntervalSpy.mockRestore();
+        clearIntervalSpy.mockRestore();
+      }
+    });
   });
 });
