@@ -12,6 +12,8 @@ interface RpcRequest {
   params?: Record<string, unknown>;
 }
 
+const PUBLIC_HTTP_MCP_TEST_URL = "https://93.184.216.34/rpc";
+
 function buildRpcResult(request: RpcRequest): Record<string, unknown> {
   const method = request.method;
   const params = request.params ?? {};
@@ -252,7 +254,7 @@ describe("MCP transport parity contract", () => {
         {
           id: "http",
           transport: "http",
-          url: "https://mcp.example.com/rpc",
+          url: PUBLIC_HTTP_MCP_TEST_URL,
         },
       ],
     });
@@ -315,7 +317,7 @@ describe("MCP transport parity contract", () => {
         {
           id: "http",
           transport: "http",
-          url: "https://mcp.example.com/rpc",
+          url: PUBLIC_HTTP_MCP_TEST_URL,
         },
       ],
     });
@@ -344,7 +346,7 @@ describe("MCP transport parity contract", () => {
         {
           id: "http",
           transport: "http",
-          url: "https://mcp.example.com/rpc",
+          url: PUBLIC_HTTP_MCP_TEST_URL,
           policy: {
             toolAllowlist: ["echo"],
             rateLimit: {

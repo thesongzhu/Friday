@@ -509,6 +509,7 @@ describe("Setup Wizard E2E", () => {
 
     it("A8: save channels config should require Discord DM verification and persist encrypted token", async () => {
       const originalFetch = globalThis.fetch;
+      const originalDiscordBotToken = process.env.FRIDAY_DISCORD_BOT_TOKEN;
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url === "https://discord.com/api/v10/users/@me") {
@@ -549,6 +550,7 @@ describe("Setup Wizard E2E", () => {
       }) as typeof fetch;
 
       try {
+        process.env.FRIDAY_DISCORD_BOT_TOKEN = "fake-discord-token";
         const unverifiedRes = await fetch(`${baseUrl}/v1/setup/channels`, {
           method: "POST",
           headers: authHeaders(accessToken),
@@ -618,6 +620,51 @@ describe("Setup Wizard E2E", () => {
         });
         expect(unconfirmedRes.status).toBe(400);
 
+        const envRefRes = await fetch(`${baseUrl}/v1/setup/channels`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "discord",
+                enabled: true,
+                config: {
+                  token: "$FRIDAY_DISCORD_BOT_TOKEN",
+                  setupVerificationId: beginJson.data.verificationId,
+                  setupUserId: "10001",
+                  guildId: "guild-1",
+                },
+              },
+            ],
+          }),
+        });
+        expect(envRefRes.status).toBe(200);
+        const envRefJson = (await envRefRes.json()) as {
+          ok: boolean;
+          data: { savedKinds: string[] };
+        };
+        expect(envRefJson.ok).toBe(true);
+
+        const dbPath = path.join(stateDir, "friday.db");
+        const envRefDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+        try {
+          const setupRow = envRefDb
+            .prepare("SELECT channels_json FROM friday_setup_state WHERE id = 'singleton'")
+            .get() as { channels_json: string } | undefined;
+          expect(setupRow).toBeDefined();
+          expect(setupRow!.channels_json).toContain("$FRIDAY_DISCORD_BOT_TOKEN");
+          expect(setupRow!.channels_json).not.toContain("fake-discord-token");
+          const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
+            kind: string;
+            config?: Record<string, unknown>;
+          }>;
+          const discordEntry = storedChannels.find((entry) => entry.kind === "discord");
+          expect(discordEntry?.config?.token).toBe("$FRIDAY_DISCORD_BOT_TOKEN");
+        } finally {
+          envRefDb.close();
+        }
+
         const res = await fetch(`${baseUrl}/v1/setup/channels`, {
           method: "POST",
           headers: authHeaders(accessToken),
@@ -645,7 +692,6 @@ describe("Setup Wizard E2E", () => {
         expect(json.ok).toBe(true);
         expect(json.data.savedKinds).toContain("discord");
 
-        const dbPath = path.join(stateDir, "friday.db");
         const db = new Database(dbPath, { readonly: true, fileMustExist: true });
         try {
           const setupRow = db
@@ -680,6 +726,11 @@ describe("Setup Wizard E2E", () => {
         }
       } finally {
         globalThis.fetch = originalFetch;
+        if (originalDiscordBotToken === undefined) {
+          delete process.env.FRIDAY_DISCORD_BOT_TOKEN;
+        } else {
+          process.env.FRIDAY_DISCORD_BOT_TOKEN = originalDiscordBotToken;
+        }
       }
     });
 

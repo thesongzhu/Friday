@@ -1072,6 +1072,28 @@ function applyTelegramVerificationToConfig(config: Record<string, unknown>, enab
   delete config.setupVerificationId;
 }
 
+function normalizeDiscordTokenForVerification(raw: string): string {
+  return raw.trim().replace(/^Bot\s+/i, "");
+}
+
+function resolveDiscordTokenForVerification(raw: unknown): { comparisonToken: string; persistedToken: string } {
+  const tokenInput = typeof raw === "string" ? raw.trim() : "";
+  const parsed = parseFridaySecretInput(tokenInput, {
+    secretRefPrefixes: ["secret://channel/", "secret://"],
+  });
+  if (parsed.kind === "env-ref") {
+    return {
+      comparisonToken: normalizeDiscordTokenForVerification(process.env[parsed.envVar] ?? ""),
+      persistedToken: tokenInput,
+    };
+  }
+  const token = normalizeDiscordTokenForVerification(tokenInput);
+  return {
+    comparisonToken: token,
+    persistedToken: token,
+  };
+}
+
 function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabled: boolean): void {
   const verificationId = typeof config.setupVerificationId === "string" ? config.setupVerificationId.trim() : "";
   if (!verificationId) {
@@ -1094,8 +1116,8 @@ function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabl
       { httpStatus: 400 },
     );
   }
-  const token = typeof config.token === "string" ? config.token.trim().replace(/^Bot\s+/i, "") : "";
-  if (token !== session.token) {
+  const { comparisonToken, persistedToken } = resolveDiscordTokenForVerification(config.token);
+  if (comparisonToken !== session.token) {
     throw new FridayDomainError(
       "DISCORD_VERIFICATION_TOKEN_MISMATCH",
       "Discord token changed after verification. Verify this bot again before saving.",
@@ -1103,7 +1125,7 @@ function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabl
     );
   }
 
-  config.token = token;
+  config.token = persistedToken;
   config.botUserId = session.botUserId;
   delete config.setupVerificationId;
   delete config.setupUserId;
