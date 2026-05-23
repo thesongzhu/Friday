@@ -241,7 +241,12 @@ This document is the current architecture reference for steady-state Friday runt
 - `npm run check:architecture-boundaries` is the canonical repo-level import guard for core infrastructure layers (`state`, `security`, `channels`, `providers`) and must stay green before merge.
 - `npm run check:security-doctor` is the canonical repo-level guard for secret refs, capability-grant evidence, provider/channel doctor surfaces, and their targeted safety tests.
 - `npm run check:audit-integrity` is the canonical repo-level audit integrity guard for JSONL audit writer invariants, wrapper coverage, and audit-path documentation.
-- `npm run check:desktop-release-pipeline` is the canonical repo-level release completeness check for the current macOS desktop pipeline wiring. It validates required scripts, packaging inputs, runbook presence, and local-mode release environment readiness.
+- `npm run check:desktop-release-pipeline` is the canonical repo-level
+  pipeline-wiring completeness check for the current macOS desktop release path.
+  It validates required scripts, packaging inputs, runbook presence, and
+  local-mode release environment readiness. It does not prove signed/notarized
+  release readiness, Sparkle/Homebrew publication, or clean-machine smoke
+  evidence.
 
 ## Canonical semantics
 

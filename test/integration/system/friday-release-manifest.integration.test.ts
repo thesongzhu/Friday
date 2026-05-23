@@ -52,7 +52,7 @@ describe("Friday release manifest generator", () => {
         notarizationStatus: "completed",
         runtimeKind: "swift_app",
         downloadUrl: "https://example.test/releases/FridayCompanion-9.9.9-macos-arm64.dmg",
-        notes: ["macOS shipping artifact"],
+        notes: ["macOS notarized artifact fixture"],
       }, null, 2),
       "utf8",
     );
@@ -133,7 +133,7 @@ describe("Friday release manifest generator", () => {
     const manifestPath = stdout.trim();
     const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as {
       version: string;
-      platforms: Array<{ platform: string; availability: string; artifacts: Array<{ kind: string }> }>;
+      platforms: Array<{ platform: string; availability: string; milestone: string; notes: string[]; artifacts: Array<{ kind: string }> }>;
       channels: Record<string, { availability: string; installCommand?: string; tapRepo?: string; appcastUrl?: string }>;
       developerFallbacks: Array<{ fileName: string }>;
       currentMilestone: string;
@@ -152,7 +152,10 @@ describe("Friday release manifest generator", () => {
     expect(manifest.channels.npm.installCommand).toBe("npm install -g @thesongzhu/friday");
     expect(manifest.channels.testflight.availability).toBe("planned");
     expect(manifest.channels.playInternal.availability).toBe("planned");
-    expect(manifest.platforms.find((entry) => entry.platform === "macos")?.availability).toBe("shipping");
+    const macosPlatform = manifest.platforms.find((entry) => entry.platform === "macos");
+    expect(macosPlatform?.availability).toBe("local_ci_packaging_baseline");
+    expect(macosPlatform?.milestone).toBe("macos_beta_release_baseline_target");
+    expect(macosPlatform?.notes.join("\n")).toContain("DMG/zip presence alone does not prove signed/notarized release readiness.");
     expect(manifest.platforms.find((entry) => entry.platform === "ios")?.availability).toBe("planned");
     expect(manifest.platforms.find((entry) => entry.platform === "android")?.availability).toBe("planned");
     expect(manifest.platforms.find((entry) => entry.platform === "windows")?.availability).toBe("scaffolded");
