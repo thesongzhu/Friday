@@ -258,6 +258,37 @@ describe("N8nNodeConverter", () => {
       expect(draft.manifest.requirements.env).toContain("N8N_CRED_HTTPBASICAUTH");
     });
 
+    it("sanitizes credential env names and uses bracket access in generated code", async () => {
+      const filePath = join(testDir, "node.json");
+      writeFileSync(filePath, JSON.stringify(makeN8nDescriptor({
+        credentials: [{ name: "api-key.v2" }],
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const draft = result.drafts[0]!;
+      const indexFile = draft.files.find((f) => f.path === "index.mjs")!;
+
+      expect(draft.manifest.requirements.env).toContain("N8N_CRED_API_KEY_V2");
+      expect(indexFile.content).toContain('env["N8N_CRED_API_KEY_V2"]');
+      expect(indexFile.content).not.toContain("env.N8N_CRED_API-KEY.V2");
+    });
+
+    it("escapes generated block comments for descriptor names", async () => {
+      const filePath = join(testDir, "node.json");
+      writeFileSync(filePath, JSON.stringify(makeN8nDescriptor({
+        displayName: 'HTTP */\nthrow new Error("pwned")\n/*',
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexFile = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexFile.content).toContain("*\\/");
+      expect(indexFile.content).not.toContain('*/\nthrow new Error("pwned")');
+      expect(() =>
+        new Function(indexFile.content.replace("export default async function execute", "async function execute")),
+      ).not.toThrow();
+    });
+
     it("detects HTTP capability and adds network.connect permission", async () => {
       const filePath = join(testDir, "node.json");
       writeFileSync(filePath, JSON.stringify(makeN8nDescriptor()));
@@ -373,6 +404,19 @@ describe("N8nNodeConverter", () => {
 
       // Should map credentials from env vars
       expect(indexFile.content).toContain("N8N_CRED_HTTPBASICAUTH");
+    });
+
+    it("does not generate dynamic imports for unsafe node specifiers", async () => {
+      const filePath = join(testDir, "node.json");
+      writeFileSync(filePath, JSON.stringify(makeN8nDescriptor({
+        name: "../evil",
+      })));
+
+      const result = await converter.convert({ uri: filePath }, makeCtx());
+      const indexFile = result.drafts[0]!.files.find((f) => f.path === "index.mjs")!;
+
+      expect(indexFile.content).toContain("n8n node import specifier was not safe");
+      expect(indexFile.content).not.toContain('await import("../evil")');
     });
 
     it("generates index.mjs with proper parameter mapping", async () => {

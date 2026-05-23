@@ -17,7 +17,7 @@ import { createFridayApiRuntime, hashPasswordScrypt } from "#api";
 import type { FridayApiRuntime } from "#api";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
-import { createFridayProviderService } from "#providers";
+import { createFridayProviderService, resetMasterKeyCache } from "#providers";
 import type { FridayProviderService } from "#providers";
 import { createFridayMemoryService } from "#memory";
 import type { FridayMemoryService } from "#memory";
@@ -44,6 +44,7 @@ import { createFridayUixSurfaceService } from "../../../../src/uix/services/frid
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const TOKEN_SECRET = "test-secret-key-for-e2e-tests";
+const TEST_API_MASTER_KEY = "17".repeat(32);
 const ACCESS_TTL = 900;
 const REFRESH_TTL = 604_800;
 const NOW = "2025-06-15T10:00:00.000Z";
@@ -143,6 +144,12 @@ export interface CreateFridayApiTestEnvOptions {
 export async function createFridayApiTestEnv(
   options: CreateFridayApiTestEnvOptions = {},
 ): Promise<FridayApiTestEnv> {
+  const originalMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const originalMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+  process.env.FRIDAY_MASTER_KEY = TEST_API_MASTER_KEY;
+  delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+  resetMasterKeyCache();
+
   const db = createTestDb();
   const idGenerator = createIdGenerator();
 
@@ -239,6 +246,20 @@ export async function createFridayApiTestEnv(
 
   const baseUrl = `http://127.0.0.1:${port}`;
 
+  const restoreMasterKey = (): void => {
+    if (originalMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = originalMasterKey;
+    }
+    if (originalMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = originalMasterKeySource;
+    }
+    resetMasterKeyCache();
+  };
+
   return {
     baseUrl,
     apiRuntime,
@@ -246,8 +267,12 @@ export async function createFridayApiTestEnv(
     providerService,
     selfHealingService,
     async close() {
-      await httpServer.close();
-      db.close();
+      try {
+        await httpServer.close();
+        db.close();
+      } finally {
+        restoreMasterKey();
+      }
     },
   };
 }

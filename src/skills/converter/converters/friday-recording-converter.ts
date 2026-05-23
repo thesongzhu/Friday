@@ -405,14 +405,18 @@ function buildFiles(rec: RecordingPayload): FridayConvertedSkillFile[] {
   ];
 }
 
+function escapeGeneratedBlockCommentText(raw: string): string {
+  return raw.replace(/\*\//g, "*\\/").replace(/[\r\n]+/g, " ");
+}
+
 function buildEntrypoint(rec: RecordingPayload): string {
   const paramKeys = Object.keys(rec.parameters ?? {});
   const hasParams = paramKeys.length > 0;
 
   return `/**
- * Auto-generated entrypoint for desktop recording: ${rec.name}
- * Recording ID: ${rec.id}
- * Platform: ${rec.platform}
+ * Auto-generated entrypoint for desktop recording: ${escapeGeneratedBlockCommentText(rec.name)}
+ * Recording ID: ${escapeGeneratedBlockCommentText(rec.id)}
+ * Platform: ${escapeGeneratedBlockCommentText(rec.platform)}
  * Steps: ${rec.steps.length}
  *
  * This file replays the captured desktop actions with parameter substitution.
@@ -420,10 +424,22 @@ function buildEntrypoint(rec: RecordingPayload): string {
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+
+class FridayDomainError extends Error {
+  constructor(code, message, options = {}) {
+    super(message);
+    this.name = "FridayDomainError";
+    this.code = code;
+    this.httpStatus = options.httpStatus;
+  }
+}
 
 export default async function execute(input, ctx) {
-  const stepsRaw = readFileSync(join(__dirname, "recording-steps.json"), "utf-8");
+  const stepsRaw = readFileSync(join(moduleDir, "recording-steps.json"), "utf-8");
   const steps = JSON.parse(stepsRaw);
 
   const desktop = ctx.desktop;
@@ -472,8 +488,8 @@ export default async function execute(input, ctx) {
       stepsExecuted: stepResults.length,
       totalSteps: steps.length,
       error: lastError,
-      recordingId: "${rec.id}",
-      platform: "${rec.platform}",
+      recordingId: ${JSON.stringify(rec.id)},
+      platform: ${JSON.stringify(rec.platform)},
     },
     stepResults,
   };

@@ -153,6 +153,30 @@ export function createFridayPluginLoader(
     }
   }
 
+  function assertLoadAllowedByLifecycle(entity: FridayPluginEntity, plan: FridayPluginLoadPlan): void {
+    if (FRIDAY_CORE_CHANNEL_PLUGIN_IDS.includes(entity.id as typeof FRIDAY_CORE_CHANNEL_PLUGIN_IDS[number]) || entity.source === "bundled") {
+      return;
+    }
+    if (plan.lifecycleBypass === "canary" || plan.lifecycleBypass === "promote") {
+      return;
+    }
+    if (entity.promotionChannel === "active" && entity.compatibilityStatus === "compatible") {
+      return;
+    }
+    throw new FridayDomainError(
+      "PLUGIN_LIFECYCLE_PROMOTION_REQUIRED",
+      `Plugin "${entity.id}" must complete the external plugin lifecycle before it can be loaded.`,
+      {
+        httpStatus: 403,
+        details: {
+          pluginId: entity.id,
+          promotionChannel: entity.promotionChannel,
+          compatibilityStatus: entity.compatibilityStatus,
+        },
+      },
+    );
+  }
+
   async function loadSinglePlugin(entity: FridayPluginEntity): Promise<FridayLoadedPlugin> {
     const modules = new Map<FridayPluginKind, FridayPluginEntrypointModule>();
 
@@ -220,6 +244,7 @@ export function createFridayPluginLoader(
             );
           }
 
+          assertLoadAllowedByLifecycle(entity, plan);
           verifyTrustOnInstallFingerprint(entity);
 
           // Transition to enabled if currently configured

@@ -95,7 +95,7 @@ describe("real-world Discord roundtrip executor", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     let outboundIndex = 1;
-    const apiMock = vi.fn(async (method: string, routePath: string, body?: { text?: string }) => {
+    const apiMock = vi.fn(async (method: string, routePath: string, body?: Record<string, unknown>) => {
       if (method === "POST" && routePath === "/v1/setup/channels/discord/verification/begin") {
         return { data: { verificationId: "verify-1" } };
       }
@@ -111,7 +111,7 @@ describe("real-world Discord roundtrip executor", () => {
       if (method === "POST" && routePath.endsWith("/outbound")) {
         const id = `msg-${String(outboundIndex)}`;
         outboundIndex += 1;
-        messages.set(id, String(body?.text ?? ""));
+        messages.set(id, typeof body?.text === "string" ? body.text : "");
         return { data: { delivery: { messageId: id } } };
       }
       throw new Error(`unexpected API call ${method} ${routePath}`);
@@ -136,6 +136,21 @@ describe("real-world Discord roundtrip executor", () => {
       expect.stringContaining("/outbound"),
       expect.objectContaining({ text: expect.stringContaining("Friday F-008 live Discord proof") }),
     );
+    const setupCall = apiMock.mock.calls.find(
+      ([method, routePath]) => method === "POST" && routePath === "/v1/setup/channels",
+    );
+    expect(setupCall?.[2]).toMatchObject({
+      controlConfirmed: true,
+      channels: [
+        expect.objectContaining({
+          kind: "discord",
+          config: expect.objectContaining({
+            token: "$FRIDAY_DISCORD_BOT_TOKEN",
+          }),
+        }),
+      ],
+    });
+    expect(JSON.stringify(setupCall?.[2])).not.toContain("test-discord-token");
     const raw = JSON.stringify(artifact.raw);
     expect(raw).not.toContain("test-discord-token");
     expect(raw).not.toContain("Friday F-008 live Discord proof");

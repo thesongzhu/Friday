@@ -366,6 +366,7 @@ export interface FridayPluginInstallPlan {
 export interface FridayPluginLoadPlan {
   order: string[];
   warnings: string[];
+  lifecycleBypass?: "canary" | "promote";
 }
 
 // ─── Loaded Plugin Types ───

@@ -791,6 +791,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
       const CHANNEL_SIGNATURE: ReadonlySet<string> = new Set([
         "channels.webhooks.line",
         "channels.webhooks.whatsapp",
+        "channels.webhooks.telegram",
         "channels.webhooks.lark",
       ]);
       // bound_principal (Phase 14.5A + Phase 14.5B module_28b explicit bound-principal gate)
@@ -894,7 +895,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
 
       // Every known Phase 14.5A gate family must have at least one route covered.
       expect(counts.hmac_or_bearer_opt_in).toBe(1);
-      expect(counts.channel_signature).toBe(3);
+      expect(counts.channel_signature).toBe(4);
       expect(counts.bound_principal).toBe(BOUND_PRINCIPAL.size);
       expect(counts.rate_limited_pending).toBeGreaterThan(0);
 

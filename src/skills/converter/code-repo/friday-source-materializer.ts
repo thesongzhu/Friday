@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createReadStream, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { createGunzip } from "node:zlib";
@@ -22,6 +22,7 @@ const DEFAULT_MAX_DEPTH = 8;
 const DEFAULT_MAX_TOTAL_BYTES = 50_000_000; // 50 MB
 const GIT_CLONE_TIMEOUT_MS = 60_000;
 const EXTRACT_TIMEOUT_MS = 30_000;
+const SUBPROCESS_TIMEOUT_KILL_SIGNAL = "SIGKILL";
 
 const IGNORED_DIRS = new Set([
   ".git",
@@ -250,6 +251,7 @@ function materializeGitSource(
       {
         encoding: "utf-8",
         timeout: GIT_CLONE_TIMEOUT_MS,
+        killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -315,18 +317,30 @@ function materializeArchiveSource(
   }
 
   const tempDir = createTempWorkspace("friday-archive-");
+  const snapshotDir = createTempWorkspace("friday-archive-snapshot-");
   const lower = normalizedSourcePathForProtocol(sourceUri);
+  const snapshotArchivePath = join(snapshotDir, `source${archiveSuffixForSource(lower)}`);
 
   try {
+    copyFileSync(archivePath, snapshotArchivePath);
+    const snapshotSize = statSync(snapshotArchivePath).size;
+    if (snapshotSize > maxTotal) {
+      throw new FridayDomainError(
+        "CONVERTER_SIZE_LIMIT_EXCEEDED",
+        `Archive file exceeds size limit (${snapshotSize} bytes)`,
+        { httpStatus: 422, details: { archiveSize: snapshotSize, limit: maxTotal } },
+      );
+    }
+
     if (lower.endsWith(".zip")) {
-      validateZipArchiveEntries(archivePath);
-      extractZip(archivePath, tempDir);
+      validateZipArchiveEntries(snapshotArchivePath);
+      extractZip(snapshotArchivePath, tempDir);
     } else if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-      validateTarArchiveEntries(archivePath, true);
-      extractTarGz(archivePath, tempDir);
+      validateTarArchiveEntries(snapshotArchivePath, true);
+      extractTarGz(snapshotArchivePath, tempDir);
     } else if (lower.endsWith(".tar")) {
-      validateTarArchiveEntries(archivePath, false);
-      extractTar(archivePath, tempDir);
+      validateTarArchiveEntries(snapshotArchivePath, false);
+      extractTar(snapshotArchivePath, tempDir);
     } else {
       throw new FridayDomainError(
         "VALIDATION_ERROR",
@@ -336,9 +350,11 @@ function materializeArchiveSource(
     }
   } catch (err) {
     if (err instanceof FridayDomainError) {
+      cleanupTempWorkspace(snapshotDir);
       cleanupTempWorkspace(tempDir);
       throw err;
     }
+    cleanupTempWorkspace(snapshotDir);
     cleanupTempWorkspace(tempDir);
     throw new FridayDomainError(
       "CONVERTER_ARCHIVE_EXTRACT_FAILED",
@@ -352,6 +368,7 @@ function materializeArchiveSource(
       },
     );
   }
+  cleanupTempWorkspace(snapshotDir);
 
   // Verify path safety: no extracted file escapes the temp dir
   validateExtractedPaths(tempDir);
@@ -368,6 +385,13 @@ function materializeArchiveSource(
   }
 }
 
+function archiveSuffixForSource(lowerSource: string): string {
+  if (lowerSource.endsWith(".tar.gz")) return ".tar.gz";
+  if (lowerSource.endsWith(".tgz")) return ".tgz";
+  if (lowerSource.endsWith(".tar")) return ".tar";
+  return ".zip";
+}
+
 // ─── Archive Extraction Helpers ───
 
 function extractZip(archivePath: string, destDir: string): void {
@@ -377,6 +401,7 @@ function extractZip(archivePath: string, destDir: string): void {
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
+      killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -396,6 +421,7 @@ function extractTarGz(archivePath: string, destDir: string): void {
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
+      killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -408,6 +434,7 @@ function extractTar(archivePath: string, destDir: string): void {
     {
       encoding: "utf-8",
       timeout: EXTRACT_TIMEOUT_MS,
+      killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -418,7 +445,9 @@ function extractTar(archivePath: string, destDir: string): void {
 function validateZipArchiveEntries(archivePath: string): void {
   const listing = execFileSync("unzip", ["-Z1", archivePath], {
     encoding: "utf8",
-    stdio: "pipe",
+    timeout: EXTRACT_TIMEOUT_MS,
+    killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
+    stdio: ["ignore", "pipe", "pipe"],
   });
   for (const rawEntry of listing.split(/\r?\n/)) {
     const entry = rawEntry.trim();
@@ -430,8 +459,18 @@ function validateZipArchiveEntries(archivePath: string): void {
 function validateTarArchiveEntries(archivePath: string, gzipped: boolean): void {
   const listArgs = gzipped ? ["-tzf", archivePath] : ["-tf", archivePath];
   const verboseArgs = gzipped ? ["-tvzf", archivePath] : ["-tvf", archivePath];
-  const listing = execFileSync("tar", listArgs, { encoding: "utf8", stdio: "pipe" });
-  const verboseListing = execFileSync("tar", verboseArgs, { encoding: "utf8", stdio: "pipe" });
+  const listing = execFileSync("tar", listArgs, {
+    encoding: "utf8",
+    timeout: EXTRACT_TIMEOUT_MS,
+    killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const verboseListing = execFileSync("tar", verboseArgs, {
+    encoding: "utf8",
+    timeout: EXTRACT_TIMEOUT_MS,
+    killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const unsupportedEntryLine = verboseListing
     .split(/\r?\n/)
     .find((line) => {

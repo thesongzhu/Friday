@@ -7,7 +7,7 @@ import {
   createFridaySecretRepository,
   decryptSecret,
   encryptSecret,
-  getMasterKey,
+  getStrictMasterKey,
 } from "#providers";
 import type {
   FridayAcknowledgeAlertRequest,
@@ -1017,7 +1017,7 @@ export function createFridayObservabilityApiService(
     if (!envelope) {
       return null;
     }
-    return decryptSecret(envelope, getMasterKey());
+    return decryptSecret(envelope, getStrictMasterKey());
   }
 
   function storeSecret(refKey: string, value: string): void {
@@ -1031,7 +1031,7 @@ export function createFridayObservabilityApiService(
         id: `${refKey}-secret`,
         scope: ALERT_DESTINATION_CREDENTIAL_SCOPE,
         refKey,
-        encryptedValue: JSON.stringify(encryptSecret(value, getMasterKey())),
+        encryptedValue: JSON.stringify(encryptSecret(value, getStrictMasterKey())),
         keyId: "master-v1",
         nowIso: now,
       });

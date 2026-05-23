@@ -53,7 +53,7 @@ import {
   createFridaySecretRepository,
   decryptSecret,
   getFridayProviderPreset,
-  getMasterKey,
+  getStrictMasterKey,
   normalizeFridayProviderSupportedModels,
   resolveFridayRoutingStabilityWarning,
 } from "#providers";
@@ -1553,7 +1553,7 @@ export async function createFridayHub(
         );
         if (!entity) continue;
         const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, getMasterKey());
+        return decryptSecret(envelope, getStrictMasterKey());
       }
       return null;
     } catch (error) {
@@ -5049,6 +5049,7 @@ export async function createFridayHub(
   const lineWebhookRelay = createLineWebhookListenerService();
   const whatsappWebhookRelay = createWhatsappWebhookService();
   const larkWebhookRelay = createLarkWebhookRelayService();
+  const telegramWebhookRelay = createTelegramWebhookService();
 
   const updateConversationFocus = (
     sessionKey: string,
@@ -5135,7 +5136,7 @@ export async function createFridayHub(
         return null;
       }
       const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-      return decryptSecret(envelope, getMasterKey());
+      return decryptSecret(envelope, getStrictMasterKey());
     } catch (err) {
       warnHubBootstrapOperationFailureOnce(err);
       return null;
@@ -5152,7 +5153,7 @@ export async function createFridayHub(
       }),
       telegram: () => createFridayTelegramChannel({
         polling: createTelegramPollingService(),
-        webhook: createTelegramWebhookService(),
+        webhook: telegramWebhookRelay,
         api: createTelegramApiService(),
       }),
       whatsapp: () => createFridayWhatsappChannel({
@@ -6572,6 +6573,7 @@ export async function createFridayHub(
       lineWebhookRelay: lineWebhookRelay,
       whatsappWebhookRelay: whatsappWebhookRelay,
       larkWebhookRelay: larkWebhookRelay,
+      telegramWebhookRelay: telegramWebhookRelay,
     },
     resolveSkill: (skillId) => {
       const skill = registry.get(skillId);

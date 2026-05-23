@@ -140,6 +140,7 @@ export interface WhatsappWebhookRelayResult {
   statusCode: number;
   code?:
     | "WHATSAPP_LISTENER_INACTIVE"
+    | "WHATSAPP_SIGNATURE_UNCONFIGURED"
     | "WHATSAPP_SIGNATURE_MISSING"
     | "WHATSAPP_SIGNATURE_INVALID"
     | "WHATSAPP_PAYLOAD_INVALID";
@@ -250,21 +251,26 @@ export function createWhatsappWebhookService(): WhatsappWebhookService {
         };
       }
 
-      if (appSecret.length > 0) {
-        if (!signature) {
-          return {
-            accepted: false,
-            statusCode: 401,
-            code: "WHATSAPP_SIGNATURE_MISSING",
-          };
-        }
-        if (!validateWhatsappWebhookSignature(rawBody, signature, appSecret)) {
-          return {
-            accepted: false,
-            statusCode: 403,
-            code: "WHATSAPP_SIGNATURE_INVALID",
-          };
-        }
+      if (appSecret.length === 0) {
+        return {
+          accepted: false,
+          statusCode: 503,
+          code: "WHATSAPP_SIGNATURE_UNCONFIGURED",
+        };
+      }
+      if (!signature) {
+        return {
+          accepted: false,
+          statusCode: 401,
+          code: "WHATSAPP_SIGNATURE_MISSING",
+        };
+      }
+      if (!validateWhatsappWebhookSignature(rawBody, signature, appSecret)) {
+        return {
+          accepted: false,
+          statusCode: 403,
+          code: "WHATSAPP_SIGNATURE_INVALID",
+        };
       }
 
       try {

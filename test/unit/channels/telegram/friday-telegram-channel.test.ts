@@ -16,6 +16,8 @@ import type {
 } from "../../../../src/channels/telegram/telegram-service.js";
 import { FridayTelegramChannelConfigSchema } from "../../../../src/channels/telegram/telegram-config.schema.js";
 
+const WEBHOOK_MARKER = "telegram-webhook-marker";
+
 // ─── Mock Services ───
 
 function createMockPolling(): TelegramPollingService & {
@@ -41,25 +43,46 @@ function createMockPolling(): TelegramPollingService & {
 function createMockWebhook(): TelegramWebhookService & {
   _onUpdate: ((update: TelegramUpdate) => void) | null;
   _webhookUrl: string | null;
+  _webhookSecretToken: string | null;
 } {
   let listening = false;
   let onUpdateFn: ((update: TelegramUpdate) => void) | null = null;
   let webhookUrl: string | null = null;
+  let webhookSecretToken: string | null = null;
 
   return {
     get _onUpdate() { return onUpdateFn; },
     get _webhookUrl() { return webhookUrl; },
-    async startWebhook(_token, url, onUpdate) {
+    get _webhookSecretToken() { return webhookSecretToken; },
+    async startWebhook(_token, url, secretToken, onUpdate) {
       listening = true;
       onUpdateFn = onUpdate;
       webhookUrl = url;
+      webhookSecretToken = secretToken;
     },
     async stopWebhook() {
       listening = false;
       onUpdateFn = null;
       webhookUrl = null;
+      webhookSecretToken = null;
     },
     isListening() { return listening; },
+    handleHttpWebhook(rawBody, secretTokenHeader) {
+      if (!listening || !onUpdateFn) {
+        return { accepted: false, statusCode: 503, code: "TELEGRAM_LISTENER_INACTIVE" };
+      }
+      if (!webhookSecretToken) {
+        return { accepted: false, statusCode: 503, code: "TELEGRAM_SECRET_UNCONFIGURED" };
+      }
+      if (!secretTokenHeader) {
+        return { accepted: false, statusCode: 401, code: "TELEGRAM_SECRET_MISSING" };
+      }
+      if (secretTokenHeader !== webhookSecretToken) {
+        return { accepted: false, statusCode: 403, code: "TELEGRAM_SECRET_INVALID" };
+      }
+      onUpdateFn(JSON.parse(rawBody) as TelegramUpdate);
+      return { accepted: true, statusCode: 200 };
+    },
   };
 }
 
@@ -121,8 +144,10 @@ describe("FridayTelegramChannel", () => {
         botToken: "123:ABC",
         mode: "webhook",
         webhookUrl: "https://example.com/hook",
+        webhookSecretToken: WEBHOOK_MARKER,
       });
       expect(result.mode).toBe("webhook");
+      expect(result.webhookSecretToken).toBe(WEBHOOK_MARKER);
     });
   });
 
@@ -298,12 +323,14 @@ describe("FridayTelegramChannel", () => {
         botToken: "test-token",
         mode: "webhook",
         webhookUrl: "https://example.com/webhook",
+        webhookSecretToken: WEBHOOK_MARKER,
       });
       const messages: FridayChannelMessage[] = [];
       await webhookPlugin.start((msg) => messages.push(msg));
 
       expect(webhookSvc.isListening()).toBe(true);
       expect(webhookSvc._webhookUrl).toBe("https://example.com/webhook");
+      expect(webhookSvc._webhookSecretToken).toBe(WEBHOOK_MARKER);
       expect(polling.isPolling()).toBe(false);
 
       // Deliver a message via webhook
@@ -321,12 +348,23 @@ describe("FridayTelegramChannel", () => {
       await expect(webhookPlugin.start(() => {})).rejects.toThrow("webhookUrl");
     });
 
+    it("throws when webhook mode lacks webhookSecretToken", async () => {
+      await webhookPlugin.init({
+        kind: "telegram",
+        botToken: "test-token",
+        mode: "webhook",
+        webhookUrl: "https://example.com/webhook",
+      });
+      await expect(webhookPlugin.start(() => {})).rejects.toThrow("webhookSecretToken");
+    });
+
     it("stops webhook service on stop", async () => {
       await webhookPlugin.init({
         kind: "telegram",
         botToken: "test-token",
         mode: "webhook",
         webhookUrl: "https://example.com/webhook",
+        webhookSecretToken: WEBHOOK_MARKER,
       });
       await webhookPlugin.start(() => {});
       expect(webhookSvc.isListening()).toBe(true);
@@ -352,6 +390,7 @@ describe("FridayTelegramChannel", () => {
         botToken: "test-token",
         mode: "webhook",
         webhookUrl: "https://example.com/hook",
+        webhookSecretToken: WEBHOOK_MARKER,
       });
       const diag = webhookPlugin.adapters!.status!.diagnostics!();
       expect(diag).toHaveProperty("webhook");

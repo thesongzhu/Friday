@@ -75,4 +75,19 @@ describe("FridaySecretAdminService", () => {
       }),
     ).toThrow("Secret already exists");
   });
+
+  it("fails closed when FRIDAY_MASTER_KEY is not configured", () => {
+    delete process.env.FRIDAY_MASTER_KEY;
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
+
+    const service = createService();
+    expect(() =>
+      service.createSecret({
+        scope: "provider",
+        refKey: "provider:openai:key",
+        value: "top-secret-value",
+      }),
+    ).toThrow(/FRIDAY_MASTER_KEY is not configured/);
+  });
 });

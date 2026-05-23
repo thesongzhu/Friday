@@ -70,6 +70,12 @@ export function validateLarkWebhookSignature(
   }
 }
 
+function constantTimeStringEqual(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left, "utf8").digest();
+  const rightDigest = createHash("sha256").update(right, "utf8").digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
 export function createLarkWebhookRelayService(): LarkWebhookRelayService {
   let listening = false;
   let onEvent: ((event: Record<string, unknown>) => void) | null = null;
@@ -142,7 +148,7 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
             code: "LARK_TOKEN_MISSING",
           };
         }
-        if (payloadToken !== verificationToken) {
+        if (!constantTimeStringEqual(payloadToken, verificationToken)) {
           return {
             accepted: false,
             statusCode: 403,
@@ -170,7 +176,7 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
           code: "LARK_TOKEN_MISSING",
         };
       }
-      if (payloadToken !== verificationToken) {
+      if (!constantTimeStringEqual(payloadToken, verificationToken)) {
         return {
           accepted: false,
           statusCode: 403,

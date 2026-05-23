@@ -40,7 +40,18 @@ describe("Friday channel security policy helpers", () => {
   it("returns dynamic secret requirements for whatsapp cloud-api mode", () => {
     const fields = getFridayChannelSecretFieldDescriptors("whatsapp", { provider: "cloud-api" });
     const accessToken = fields.find((item) => item.field === "accessToken");
+    const appSecret = fields.find((item) => item.field === "appSecret");
     expect(accessToken?.required).toBe(true);
+    expect(appSecret?.required).toBe(true);
+  });
+
+  it("requires Telegram webhook secret token only in webhook mode", () => {
+    const pollingFields = getFridayChannelSecretFieldDescriptors("telegram", { mode: "polling" });
+    expect(pollingFields.find((item) => item.field === "webhookSecretToken")).toBeUndefined();
+
+    const webhookFields = getFridayChannelSecretFieldDescriptors("telegram", { mode: "webhook" });
+    const webhookSecret = webhookFields.find((item) => item.field === "webhookSecretToken");
+    expect(webhookSecret?.required).toBe(true);
   });
 
   it("exposes capability matrix entries for supported kinds", () => {

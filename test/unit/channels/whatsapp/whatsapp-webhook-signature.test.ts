@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
-import { validateWhatsappWebhookSignature } from "../../../../src/channels/whatsapp/whatsapp-service.js";
+import {
+  createWhatsappWebhookService,
+  validateWhatsappWebhookSignature,
+} from "../../../../src/channels/whatsapp/whatsapp-service.js";
 
 describe("validateWhatsappWebhookSignature", () => {
   const appSecret = "test-app-secret-12345";
@@ -56,5 +59,21 @@ describe("validateWhatsappWebhookSignature", () => {
   it("handles empty payload", () => {
     const signature = computeValidSignature("", appSecret);
     expect(validateWhatsappWebhookSignature("", signature, appSecret)).toBe(true);
+  });
+
+  it("fails closed for webhook POST when app secret is not configured", async () => {
+    const relay = createWhatsappWebhookService();
+    await relay.startWebhook("verify-token", () => {});
+
+    const result = relay.handleHttpWebhook(
+      payload,
+      computeValidSignature(payload, appSecret),
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      statusCode: 503,
+      code: "WHATSAPP_SIGNATURE_UNCONFIGURED",
+    });
   });
 });

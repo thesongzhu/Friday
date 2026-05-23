@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -183,6 +183,50 @@ describe("FridaySkillPackageArchiver", () => {
       expect(() => archiver.unpackSkill(archivePath, join(testDir, "extracted"))).toThrow(
         "unsupported entry type",
       );
+    });
+
+    it("validates and extracts a snapshot with tar timeout kill signals", async () => {
+      type TarCall = {
+        cmd: string;
+        args: string[];
+        timeout?: number;
+        killSignal?: NodeJS.Signals | number;
+      };
+      const calls: TarCall[] = [];
+      const archivePath = join(testDir, "source.friday.tgz");
+      const outputDir = join(testDir, "extracted");
+      writeFileSync(archivePath, "placeholder archive");
+
+      vi.resetModules();
+      vi.doMock("node:child_process", () => ({
+        execFileSync: vi.fn((cmd: string, args: string[], options: { timeout?: number; killSignal?: NodeJS.Signals | number }) => {
+          calls.push({ cmd, args, timeout: options.timeout, killSignal: options.killSignal });
+          if (args[0] === "-tzf") {
+            return "skill/\nskill/skill.manifest.json\n";
+          }
+          if (args[0] === "-tvzf") {
+            return "drwxr-xr-x  0 user group 0 Jan 1 00:00 skill/\n-rw-r--r--  0 user group 2 Jan 1 00:00 skill/skill.manifest.json\n";
+          }
+          return "";
+        }),
+      }));
+
+      try {
+        const imported = await import("../../../../src/skills/converter/services/friday-skill-package-archive.js");
+        imported.createFridaySkillPackageArchiver().unpackSkill(archivePath, outputDir);
+
+        expect(calls).toHaveLength(3);
+        const sourceArgs = calls.map((call) => call.args[1]);
+        expect(sourceArgs.every((arg) => arg && arg !== archivePath)).toBe(true);
+        expect(new Set(sourceArgs).size).toBe(1);
+        for (const call of calls) {
+          expect(call.timeout).toBe(30_000);
+          expect(call.killSignal).toBe("SIGKILL");
+        }
+      } finally {
+        vi.doUnmock("node:child_process");
+        vi.resetModules();
+      }
     });
   });
 

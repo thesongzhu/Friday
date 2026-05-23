@@ -3206,6 +3206,7 @@ async function executeDiscordRoundtrip({ artifact, scenario, client }) {
   const setupUserId = readRequiredEnv(setupUserIdEnv);
   const guildId = readRequiredEnv(guildIdEnv);
   const channelId = readRequiredEnv(channelIdEnv);
+  const setupTokenRef = `$${tokenEnv}`;
   const proofNonce = `${artifact.runId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
   const baseMessage = `Friday F-008 live Discord proof ${proofNonce}`;
   const replyMessage = `Friday F-008 live Discord reply ${proofNonce}`;
@@ -3311,7 +3312,7 @@ async function executeDiscordRoundtrip({ artifact, scenario, client }) {
         kind: "discord",
         enabled: true,
         config: {
-          token,
+          token: setupTokenRef,
           intents: 0,
           botUserId: me.id,
           allowedChannels: [channelId],

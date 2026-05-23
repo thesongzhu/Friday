@@ -135,6 +135,7 @@ export type { TelegramChannelDeps } from "./telegram/friday-telegram-channel.js"
 export { FridayTelegramChannelConfigSchema } from "./telegram/telegram-config.schema.js";
 export type { FridayTelegramChannelConfig } from "./telegram/telegram-config.schema.js";
 export { createTelegramPollingService, createTelegramWebhookService, createTelegramApiService } from "./telegram/telegram-service.js";
+export type { TelegramWebhookRelayResult, TelegramWebhookService } from "./telegram/telegram-service.js";
 
 // WhatsApp
 export { createFridayWhatsappChannel, normalizeWhatsappWebhook } from "./whatsapp/friday-whatsapp-channel.js";

@@ -6,7 +6,8 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { FridayDomainError } from "#errors";
@@ -22,6 +23,9 @@ export interface FridaySkillPackageArchiver {
   packSkill(skillDir: string, outputFile: string): FridaySkillPackResult;
   unpackSkill(archivePath: string, outputDir: string): void;
 }
+
+const ARCHIVE_TAR_TIMEOUT_MS = 30_000;
+const ARCHIVE_TAR_KILL_SIGNAL = "SIGKILL";
 
 // ─── Implementation ───
 
@@ -53,7 +57,11 @@ export function createFridaySkillPackageArchiver(): FridaySkillPackageArchiver {
         "-czf", finalOutputFile,
         "-C", parentDir,
         skillDirName,
-      ], { stdio: "pipe" });
+      ], {
+        stdio: "pipe",
+        timeout: ARCHIVE_TAR_TIMEOUT_MS,
+        killSignal: ARCHIVE_TAR_KILL_SIGNAL,
+      });
 
       // Compute SHA-256 checksum
       const archiveContent = readFileSync(finalOutputFile);
@@ -71,15 +79,27 @@ export function createFridaySkillPackageArchiver(): FridaySkillPackageArchiver {
       }
 
       mkdirSync(outputDir, { recursive: true });
-      validateArchiveEntries(archivePath);
+      const snapshotDir = mkdtempSync(join(tmpdir(), "friday-skill-archive-"));
+      const snapshotPath = join(snapshotDir, "source.friday.tgz");
+      copyFileSync(archivePath, snapshotPath);
 
-      // Extract the archive into the output directory
-      // Use --strip-components=1 to remove the top-level directory
-      execFileSync("tar", [
-        "-xzf", archivePath,
-        "-C", outputDir,
-        "--strip-components=1",
-      ], { stdio: "pipe" });
+      try {
+        validateArchiveEntries(snapshotPath);
+
+        // Extract the archive into the output directory
+        // Use --strip-components=1 to remove the top-level directory
+        execFileSync("tar", [
+          "-xzf", snapshotPath,
+          "-C", outputDir,
+          "--strip-components=1",
+        ], {
+          stdio: "pipe",
+          timeout: ARCHIVE_TAR_TIMEOUT_MS,
+          killSignal: ARCHIVE_TAR_KILL_SIGNAL,
+        });
+      } finally {
+        rmSync(snapshotDir, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -112,8 +132,18 @@ function validateSkillDirectoryForArchive(skillDir: string): void {
 }
 
 function validateArchiveEntries(archivePath: string): void {
-  const listing = execFileSync("tar", ["-tzf", archivePath], { encoding: "utf8", stdio: "pipe" });
-  const verboseListing = execFileSync("tar", ["-tvzf", archivePath], { encoding: "utf8", stdio: "pipe" });
+  const listing = execFileSync("tar", ["-tzf", archivePath], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: ARCHIVE_TAR_TIMEOUT_MS,
+    killSignal: ARCHIVE_TAR_KILL_SIGNAL,
+  });
+  const verboseListing = execFileSync("tar", ["-tvzf", archivePath], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: ARCHIVE_TAR_TIMEOUT_MS,
+    killSignal: ARCHIVE_TAR_KILL_SIGNAL,
+  });
   const unsupportedEntryLine = verboseListing
     .split(/\r?\n/)
     .find((line) => {

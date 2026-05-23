@@ -8,7 +8,9 @@ describe("FridayOAuthCredentialStore", () => {
   let db: FridaySqliteLayer;
   let idGen: () => string;
   let store: FridayOAuthCredentialStore;
+  let originalMasterKey: string | undefined;
   const NOW = "2026-02-18T10:00:00.000Z";
+  const TEST_MASTER_KEY = Buffer.alloc(32, 11).toString("hex");
 
   function insertTestProvider(id: string): void {
     db.withWriteTransaction((conn) => {
@@ -22,6 +24,8 @@ describe("FridayOAuthCredentialStore", () => {
   beforeEach(() => {
     db = createTestDb();
     idGen = createTestIdGenerator();
+    originalMasterKey = process.env.FRIDAY_MASTER_KEY;
+    process.env.FRIDAY_MASTER_KEY = TEST_MASTER_KEY;
     resetMasterKeyCache();
     store = createFridayOAuthCredentialStore({
       db,
@@ -34,6 +38,11 @@ describe("FridayOAuthCredentialStore", () => {
 
   afterEach(() => {
     db.close();
+    if (originalMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = originalMasterKey;
+    }
     resetMasterKeyCache();
   });
 

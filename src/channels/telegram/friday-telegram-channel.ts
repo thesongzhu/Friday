@@ -148,10 +148,10 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
       connectionStatus = "connecting";
 
       if (config.mode === "webhook") {
-        if (!config.webhookUrl) {
-          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl in config", { httpStatus: 400 });
+        if (!config.webhookUrl || !config.webhookSecretToken) {
+          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl and webhookSecretToken in config", { httpStatus: 400 });
         }
-        await webhookService.startWebhook(config.botToken, config.webhookUrl, (update) => {
+        await webhookService.startWebhook(config.botToken, config.webhookUrl, config.webhookSecretToken, (update) => {
           eventHandler(update);
         });
       } else {
@@ -223,10 +223,10 @@ export function createFridayTelegramChannel(deps: TelegramChannelDeps = {}): Fri
       };
 
       if (config.mode === "webhook") {
-        if (!config.webhookUrl) {
-          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl in config", { httpStatus: 400 });
+        if (!config.webhookUrl || !config.webhookSecretToken) {
+          throw new FridayDomainError("VALIDATION_ERROR", "Telegram webhook mode requires webhookUrl and webhookSecretToken in config", { httpStatus: 400 });
         }
-        await webhookService.startWebhook(config.botToken, config.webhookUrl, updateHandler);
+        await webhookService.startWebhook(config.botToken, config.webhookUrl, config.webhookSecretToken, updateHandler);
       } else {
         await polling.startPolling(config.botToken, updateHandler);
       }

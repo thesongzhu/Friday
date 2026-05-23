@@ -4,6 +4,31 @@ import { createFridayProviderService, resetMasterKeyCache } from "#providers";
 import type { FridayProviderService } from "#providers";
 import { createTestDb, createTestIdGenerator } from "../../helpers/friday-test-db.helper.js";
 
+const TEST_MASTER_KEY = "23".repeat(32);
+
+async function withTestMasterKey<T>(fn: () => Promise<T>): Promise<T> {
+  const previousMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const previousMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+  process.env.FRIDAY_MASTER_KEY = TEST_MASTER_KEY;
+  delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+  resetMasterKeyCache();
+  try {
+    return await fn();
+  } finally {
+    if (previousMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = previousMasterKey;
+    }
+    if (previousMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = previousMasterKeySource;
+    }
+    resetMasterKeyCache();
+  }
+}
+
 describe("FridayProviderService Lifecycle (Integration)", () => {
   let db: FridaySqliteLayer;
   let service: FridayProviderService;
@@ -58,16 +83,18 @@ describe("FridayProviderService Lifecycle (Integration)", () => {
     });
 
     it("creates a provider with raw key (encrypted secret)", async () => {
-      const profile = await service.createProvider({
-        kind: "openai",
-        name: "OpenAI Raw",
-        baseUrl: "https://api.openai.com",
-        authMode: "api-key",
-        api: "openai-completions",
-        apiKey: "sk-real-key-123",
-        supportedModels: ["gpt-4o"],
-        validateOnSave: false,
-      });
+      const profile = await withTestMasterKey(() =>
+        service.createProvider({
+          kind: "openai",
+          name: "OpenAI Raw",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "sk-real-key-123",
+          supportedModels: ["gpt-4o"],
+          validateOnSave: false,
+        }),
+      );
 
       expect(profile.config.keySource.kind).toBe("secret-ref");
     });

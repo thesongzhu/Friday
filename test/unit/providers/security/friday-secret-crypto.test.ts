@@ -4,6 +4,7 @@ import {
   encryptSecret,
   decryptSecret,
   getMasterKey,
+  getStrictMasterKey,
   resetMasterKeyCache,
 } from "#providers";
 
@@ -130,6 +131,15 @@ describe("FridaySecretCrypto", () => {
       const key = getMasterKey();
       expect(key).toBeInstanceOf(Buffer);
       expect(key.length).toBe(32);
+    });
+
+    it("does not let fail-open cached keys satisfy strict runtime resolution", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      const key = getMasterKey();
+      expect(key.length).toBe(32);
+
+      expect(() => getStrictMasterKey()).toThrow(/FRIDAY_MASTER_KEY is not configured/);
     });
 
     it("caches the key across calls", () => {

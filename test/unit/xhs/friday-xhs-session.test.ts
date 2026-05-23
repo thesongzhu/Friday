@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createXhsSessionManager,
   XHS_SESSION_CONSTANTS,
 } from "#xhs";
 import type { XhsCookie, XhsSessionManager } from "#xhs";
 import type { FridaySqliteLayer } from "#state";
+import { resetMasterKeyCache } from "#providers";
 
 // ─── Mock SQLite layer ───
 
@@ -83,13 +84,32 @@ describe("XhsSessionManager", () => {
   let sqlite: FridaySqliteLayer;
   let manager: XhsSessionManager;
   const NOW = "2026-02-20T09:00:00.000Z";
+  const previousMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const previousMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
 
   beforeEach(() => {
+    process.env.FRIDAY_MASTER_KEY = "15".repeat(32);
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
     sqlite = createMockSqliteLayer();
     manager = createXhsSessionManager({
       sqlite,
       nowIso: () => NOW,
     });
+  });
+
+  afterEach(() => {
+    if (previousMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = previousMasterKey;
+    }
+    if (previousMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = previousMasterKeySource;
+    }
+    resetMasterKeyCache();
   });
 
   // ─── saveCookies + loadCookies roundtrip ───
@@ -109,6 +129,16 @@ describe("XhsSessionManager", () => {
 
       const loaded = manager.loadCookies("session-1");
       expect(loaded).toEqual(cookies);
+    });
+
+    it("fails closed when FRIDAY_MASTER_KEY is not configured", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      resetMasterKeyCache();
+
+      expect(() =>
+        manager.saveCookies("session-1", "test-account", validCookies()),
+      ).toThrow(/FRIDAY_MASTER_KEY is not configured/);
     });
 
     it("does not store plaintext cookie payload in cookies_json", () => {

@@ -189,16 +189,21 @@ export function getFridayChannelSecretFieldDescriptors(
         { field: "token", required: true },
       ];
     case "telegram":
-      return [
-        { field: "botToken", required: true },
-      ];
+      return config.mode === "webhook"
+        ? [
+          { field: "botToken", required: true },
+          { field: "webhookSecretToken", required: true },
+        ]
+        : [
+          { field: "botToken", required: true },
+        ];
     case "whatsapp": {
       const provider = String(config.provider ?? "cloud-api").trim().toLowerCase();
       if (provider === "cloud-api") {
         return [
           { field: "accessToken", required: true },
           { field: "webhookVerifyToken", required: false },
-          { field: "appSecret", required: false },
+          { field: "appSecret", required: true },
         ];
       }
       return [

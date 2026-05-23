@@ -2,6 +2,7 @@ import { FridayDomainError } from "#errors";
 import type {
   LarkWebhookRelayService,
   LineWebhookListenerService,
+  TelegramWebhookService,
   WhatsappWebhookService,
 } from "#channels";
 import { createFridayHttpRawTextResponse } from "../friday-http-raw-response.js";
@@ -12,6 +13,7 @@ export interface FridayChannelWebhookRoutesDeps {
   lineWebhookRelay?: LineWebhookListenerService;
   whatsappWebhookRelay?: WhatsappWebhookService;
   larkWebhookRelay?: LarkWebhookRelayService;
+  telegramWebhookRelay?: TelegramWebhookService;
 }
 
 function asString(value: unknown): string | undefined {
@@ -157,6 +159,13 @@ export function createFridayChannelWebhookRoutes(
               400,
             );
           }
+          if (result.code === "WHATSAPP_SIGNATURE_UNCONFIGURED") {
+            throwChannelWebhookError(
+              result.code,
+              "WhatsApp webhook app secret is not configured",
+              503,
+            );
+          }
           throwChannelWebhookError(
             result.code ?? "WHATSAPP_LISTENER_INACTIVE",
             "WhatsApp webhook listener is not active",
@@ -164,6 +173,64 @@ export function createFridayChannelWebhookRoutes(
           );
         }
         return { received: true };
+      },
+    },
+    {
+      operationId: "channels.webhooks.telegram",
+      method: "POST",
+      path: "/v1/channel-webhooks/telegram",
+      auth: { public: true },
+      rateLimitPolicyId: "channel.webhook",
+      async handler(ctx) {
+        const relay = deps.telegramWebhookRelay;
+        if (!relay?.handleHttpWebhook || relay.isListening() !== true) {
+          throwFridayCapabilityDisabled({
+            capability: "channel_webhook_listener",
+            surface: "/v1/channel-webhooks/telegram",
+            message: "Telegram webhook listener is disabled in this runtime",
+            details: { channel: "telegram" },
+          });
+        }
+        const result = relay.handleHttpWebhook(
+          ctx.rawBody ?? "",
+          ctx.headers["x-telegram-bot-api-secret-token"],
+        );
+        if (!result.accepted) {
+          if (result.statusCode === 401) {
+            throwChannelWebhookError(
+              result.code ?? "TELEGRAM_SECRET_MISSING",
+              "Telegram webhook secret token header is missing",
+              401,
+            );
+          }
+          if (result.statusCode === 403) {
+            throwChannelWebhookError(
+              result.code ?? "TELEGRAM_SECRET_INVALID",
+              "Telegram webhook secret token verification failed",
+              403,
+            );
+          }
+          if (result.statusCode === 400) {
+            throwChannelWebhookError(
+              result.code ?? "TELEGRAM_PAYLOAD_INVALID",
+              "Telegram webhook payload is invalid JSON",
+              400,
+            );
+          }
+          if (result.code === "TELEGRAM_SECRET_UNCONFIGURED") {
+            throwChannelWebhookError(
+              result.code,
+              "Telegram webhook secret token is not configured",
+              503,
+            );
+          }
+          throwChannelWebhookError(
+            result.code ?? "TELEGRAM_LISTENER_INACTIVE",
+            "Telegram webhook listener is not active",
+            503,
+          );
+        }
+        return { accepted: true };
       },
     },
     {

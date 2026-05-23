@@ -276,6 +276,45 @@ describe("materializeFridayCodeRepoSource (archive)", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("applies timeout to archive validation listing commands", async () => {
+    type ExecCall = { cmd: string; args: string[]; timeout?: number; killSignal?: NodeJS.Signals | number };
+    const calls: ExecCall[] = [];
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-test-archive-timeout-"));
+    const archivePath = join(tempDir, "source.zip");
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[], options: { timeout?: number; killSignal?: NodeJS.Signals | number }) => {
+        calls.push({ cmd, args, timeout: options.timeout, killSignal: options.killSignal });
+        if (cmd === "unzip" && args[0] === "-Z1") {
+          return "index.ts\n";
+        }
+        if (cmd === "unzip" && args.includes("-d")) {
+          const destDir = args[args.indexOf("-d") + 1]!;
+          writeFileSync(join(destDir, "index.ts"), "export const ok = true;");
+          return "";
+        }
+        return "";
+      }),
+    }));
+
+    try {
+      writeFileSync(archivePath, "placeholder zip content");
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+      const result = imported.materializeFridayCodeRepoSource(archivePath);
+
+      expect(result.files.some((file) => file.relativePath === "index.ts")).toBe(true);
+      expect(calls.find((call) => call.cmd === "unzip" && call.args[0] === "-Z1")?.timeout).toBe(30_000);
+      expect(calls.find((call) => call.cmd === "unzip" && call.args.includes("-d"))?.timeout).toBe(30_000);
+      expect(calls.find((call) => call.cmd === "unzip" && call.args[0] === "-Z1")?.killSignal).toBe("SIGKILL");
+      expect(calls.find((call) => call.cmd === "unzip" && call.args.includes("-d"))?.killSignal).toBe("SIGKILL");
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── Code Repo Converter Integration ───

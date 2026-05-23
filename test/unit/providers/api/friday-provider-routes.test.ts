@@ -356,7 +356,9 @@ describe("FridayProviderRoutes", () => {
       completeOAuthLogin: vi.fn(async () => ({
         providerId: "anth-001",
         oauthProvider: "anthropic" as const,
-        connected: true as const,
+        connected: true,
+        runtimeReady: true,
+        validation: { status: "ok" as const, checkedAt: NOW },
         expiresAt: NOW,
         tokenType: "Bearer",
         scope: "org:create_api_key user:profile user:inference",
@@ -374,7 +376,9 @@ describe("FridayProviderRoutes", () => {
       completeOAuthDeviceAuthorization: vi.fn(async () => ({
         providerId: "codex-001",
         oauthProvider: "openai-codex" as const,
-        connected: true as const,
+        connected: true,
+        runtimeReady: true,
+        validation: { status: "ok" as const, checkedAt: NOW },
         expiresAt: NOW,
         tokenType: "Bearer",
         scope: "openid profile email",

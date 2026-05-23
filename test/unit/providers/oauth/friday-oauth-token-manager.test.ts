@@ -50,7 +50,7 @@ function createMockStore(initial?: FridayOAuthCredential | null): FridayOAuthCre
       };
       return storedCredential;
     }),
-    deleteByProviderProfileId: vi.fn((_providerProfileId: string) => {
+    deleteByProviderProfileId: vi.fn((_providerProfileId: string, _ownerUserId?: string) => {
       const had = storedCredential !== null;
       storedCredential = null;
       return had;
@@ -248,7 +248,37 @@ describe("FridayOAuthTokenManager", () => {
         },
       });
 
-      const result = manager.clear("prov-1");
+      const result = manager.clear({
+        providerProfileId: "prov-1",
+        ownerUserId: "user-1",
+      });
+      expect(result).toBe(true);
+      expect(store.deleteByProviderProfileId).toHaveBeenCalledWith("prov-1", "user-1");
+    });
+
+    it("requires ownerUserId for scoped credential clearing", () => {
+      expect(() =>
+        manager.clear({
+          providerProfileId: "prov-1",
+        } as Parameters<FridayOAuthTokenManager["clear"]>[0]),
+      ).toThrow("ownerUserId is required");
+      expect(store.deleteByProviderProfileId).not.toHaveBeenCalled();
+    });
+
+    it("can explicitly clear every credential for a provider profile", () => {
+      manager.saveTokenSet({
+        providerProfileId: "prov-1",
+        oauthProvider: "anthropic",
+        tokenSet: {
+          accessToken: "at",
+          refreshToken: "rt",
+          expiresAt: "2026-02-18T11:00:00.000Z",
+          tokenType: "Bearer",
+          scope: "test",
+        },
+      });
+
+      const result = manager.clearProviderProfile("prov-1");
       expect(result).toBe(true);
       expect(store.deleteByProviderProfileId).toHaveBeenCalledWith("prov-1");
     });

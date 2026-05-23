@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import {
@@ -15,6 +18,7 @@ import type {
   FridayPluginManifest,
 } from "#plugins";
 import { FridayDomainError } from "#errors";
+import { buildPluginLocalPackageBytes } from "../../../../src/plugins/services/friday-plugin-package-bytes.js";
 
 function makeManifest(id: string, overrides?: Partial<FridayPluginManifest>): FridayPluginManifest {
   return {
@@ -42,6 +46,8 @@ function makeInput(id: string, overrides?: Partial<FridayUpsertPluginInput>): Fr
     enabled: false,
     trustMode: "trust_on_install",
     trustedFingerprintSha256: "fingerprint-123",
+    compatibilityStatus: "compatible",
+    promotionChannel: "active",
     installPath: `/plugins/${id}`,
     kinds: ["skill"],
     manifest: makeManifest(id, overrides?.manifest ? overrides.manifest : undefined),
@@ -260,6 +266,59 @@ describe("FridayPluginLoader", () => {
 
     await expect(changedLoader.load({ order: ["friday.test.changed"], warnings: [] }))
       .rejects.toMatchObject({ code: "PLUGIN_TRUST_FINGERPRINT_MISMATCH" });
+  });
+
+  it("fails closed when a local plugin is loaded before lifecycle promotion", async () => {
+    registry.upsert(makeInput("friday.test.unpromoted", {
+      compatibilityStatus: "unknown",
+      promotionChannel: "none",
+    }));
+
+    await expect(loader.load({ order: ["friday.test.unpromoted"], warnings: [] }))
+      .rejects.toMatchObject({ code: "PLUGIN_LIFECYCLE_PROMOTION_REQUIRED" });
+  });
+
+  it("preserves explicit canary lifecycle bypass for loader plans", async () => {
+    registry.upsert(makeInput("friday.test.canary", {
+      compatibilityStatus: "unknown",
+      promotionChannel: "none",
+    }));
+
+    const loaded = await loader.load({
+      order: ["friday.test.canary"],
+      warnings: [],
+      lifecycleBypass: "canary",
+    });
+
+    expect(loaded).toHaveLength(1);
+  });
+
+  it("fingerprints every regular file in the install directory and rejects symlinks", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-plugin-bytes-"));
+    try {
+      mkdirSync(join(tempDir, "dist"));
+      writeFileSync(join(tempDir, "friday.plugin.json"), JSON.stringify(makeManifest("friday.test.bytes")), "utf8");
+      writeFileSync(join(tempDir, "dist", "skill.js"), "export default {};", "utf8");
+      writeFileSync(join(tempDir, "extra.txt"), "extra package material", "utf8");
+
+      const bytes = buildPluginLocalPackageBytes(
+        tempDir,
+        makeManifest("friday.test.bytes"),
+        (filePath) => Buffer.from(filePath.endsWith("extra.txt") ? "extra package material" : "file", "utf8"),
+      );
+      expect(bytes.toString("utf8")).toContain("extra.txt");
+
+      symlinkSync(join(tempDir, "extra.txt"), join(tempDir, "dist", "link.txt"));
+      expect(() =>
+        buildPluginLocalPackageBytes(
+          tempDir,
+          makeManifest("friday.test.bytes"),
+          (filePath) => Buffer.from(filePath, "utf8"),
+        ),
+      ).toThrow(FridayDomainError);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("allows unloading core plugin (disable is permitted per design)", async () => {

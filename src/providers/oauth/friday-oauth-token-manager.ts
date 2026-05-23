@@ -62,8 +62,13 @@ export interface FridayOAuthTokenManager {
     ownerUserId?: string;
     oauthProvider: FridayOAuthProviderId;
   }): Promise<string | null>;
-  /** Deletes stored OAuth credentials for provider profile. */
-  clear(providerProfileId: string): boolean;
+  /** Deletes stored OAuth credentials for one provider profile owner. */
+  clear(input: {
+    providerProfileId: string;
+    ownerUserId: string;
+  }): boolean;
+  /** Deletes every stored OAuth credential for a provider profile. */
+  clearProviderProfile(providerProfileId: string): boolean;
 }
 
 export interface CreateFridayOAuthTokenManagerDeps {
@@ -171,7 +176,17 @@ export function createFridayOAuthTokenManager(
       return refreshPromise;
     },
 
-    clear(providerProfileId) {
+    clear(input) {
+      if (typeof input.ownerUserId !== "string" || input.ownerUserId.trim().length === 0) {
+        throw new Error("ownerUserId is required when clearing scoped OAuth credentials");
+      }
+      return deps.credentialStore.deleteByProviderProfileId(
+        input.providerProfileId,
+        input.ownerUserId,
+      );
+    },
+
+    clearProviderProfile(providerProfileId) {
       return deps.credentialStore.deleteByProviderProfileId(providerProfileId);
     },
   };
