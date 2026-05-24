@@ -554,4 +554,96 @@ describe("FridayPluginService", () => {
     expect(service.getPlugin("friday.test.base")).toBeNull();
   });
 
+  // ─── B1 truth-labeling: plugin signature is advisory-only / proof_pending ───
+  //
+  // FridayPluginManifest accepts an ed25519 signature shape, but the install
+  // path in friday-plugin-service.ts:280-313 does NOT verify it
+  // cryptographically — it always falls into `evaluateLocalTrustOnInstall`
+  // (user-approval / fingerprint trust-on-install). The slice adds:
+  //   1. A docstring on FridayPluginSignature labeling it advisory-only.
+  //   2. A one-time `console.info` advisory at install time when a manifest
+  //      declares `signature` (so the operator knows the field is not a
+  //      cryptographic guarantee).
+  //   3. Inline comments on the related declarations.
+  //
+  // These tests lock in the advisory + the unchanged trust-on-install path.
+
+  describe("B1 plugin signature truth-labeling", () => {
+    let infoSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      infoSpy.mockRestore();
+    });
+
+    it("emits a one-time INFO advisory at installPlugin when manifest declares a signature", () => {
+      const manifest = makeManifest("friday.test.signed", {
+        signature: {
+          algorithm: "ed25519",
+          keyId: "test-publisher-key-1",
+          value: "deadbeefcafef00d",
+        },
+      });
+
+      service.installPlugin({
+        manifest,
+        installPath: "/plugins/friday.test.signed",
+        source: "local",
+        userApproved: true,
+      });
+
+      const signatureAdvisories = infoSpy.mock.calls.filter(([msg]) =>
+        typeof msg === "string" && msg.includes("signature verification is proof_pending"),
+      );
+      expect(signatureAdvisories).toHaveLength(1);
+      const [message] = signatureAdvisories[0]!;
+      expect(message).toContain("friday.test.signed");
+      expect(message).toContain("test-publisher-key-1");
+      expect(message).toContain("trust-on-install");
+    });
+
+    it("does NOT emit the signature advisory when manifest has no signature field", () => {
+      const manifest = makeManifest("friday.test.unsigned"); // no signature
+
+      service.installPlugin({
+        manifest,
+        installPath: "/plugins/friday.test.unsigned",
+        source: "local",
+        userApproved: true,
+      });
+
+      const signatureAdvisories = infoSpy.mock.calls.filter(([msg]) =>
+        typeof msg === "string" && msg.includes("signature verification is proof_pending"),
+      );
+      expect(signatureAdvisories).toHaveLength(0);
+    });
+
+    it("installs the plugin under trust_on_install mode regardless of whether a signature is present (signature is not verified)", () => {
+      const manifest = makeManifest("friday.test.advisory", {
+        signature: {
+          algorithm: "ed25519",
+          keyId: "any-key-id",
+          value: "any-value",
+        },
+      });
+
+      const entity = service.installPlugin({
+        manifest,
+        installPath: "/plugins/friday.test.advisory",
+        source: "local",
+        userApproved: true,
+      });
+
+      // Truth-labeling property: regardless of whether `signature` is present
+      // and well-formed, the install path always uses `trust_on_install` —
+      // the signature field is NOT a path to a "signed" trustMode in this
+      // build. If a future slice wires real verification, that path must
+      // also flip trustMode to "signed".
+      expect(entity.trustMode).toBe("trust_on_install");
+    });
+  });
+
 });

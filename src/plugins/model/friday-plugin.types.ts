@@ -180,6 +180,24 @@ export interface FridayPluginPermissionPolicy {
 }
 
 // ─── Signature Types ───
+//
+// B1 truth-labeling: this signature shape is **advisory-only / proof_pending**
+// in the current build. The plugin install path
+// (src/plugins/services/friday-plugin-service.ts:280-313) DOES NOT verify
+// `signature.value` against `signature.keyId` using ed25519 or any other
+// algorithm — it always falls through to `evaluateLocalTrustOnInstall(...)`
+// which is a user-approval / fingerprint-based trust-on-install model, not
+// cryptographic signature verification.
+//
+// Adding real signature verification requires:
+//   - a trusted-publisher keyring (key distribution policy, revocation list)
+//   - ed25519 verify over canonicalized manifest+package bytes
+//   - clear errors when the key is unknown / revoked / signature invalid
+//
+// Until those land, callers that present a `signature` field on the
+// manifest get NO cryptographic guarantee beyond what trust-on-install
+// already provides. Per AUTO_DECISION_POLICY ("prefer truthful unsupported"),
+// publishers should treat this field as advisory metadata only.
 
 export interface FridayPluginSignature {
   algorithm: "ed25519";
