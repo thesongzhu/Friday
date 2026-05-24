@@ -81,7 +81,24 @@ export interface FridayRouteDefinition<TParams, TQuery, TBody, TResponse> {
   method: FridayHttpMethod;
   path: string;
   auth:
-    | { public: true }
+    | {
+        public: true;
+        /**
+         * Per-route opt-out from the server-level public-mutation gate.
+         *
+         * The gate (friday-http-server) rejects POST/PUT/PATCH/DELETE on
+         * `auth:{public:true}` routes when the request resolves to the
+         * synthetic default-public principal (no/invalid Authorization
+         * header). Setting `allowUnauthenticatedMutation: true` opts a single
+         * route out of that floor. It MUST only be set when the handler
+         * enforces an alternative trust boundary BEFORE any side effect
+         * (HMAC/signature verifier, one-time bootstrap token, setup-session
+         * challenge, WebAuthn challenge, etc.) AND a negative test exercises
+         * that boundary. It is never a generic "make-public-writes-work"
+         * convenience flag. See B0 batch spec for the per-route review bar.
+         */
+        allowUnauthenticatedMutation?: true;
+      }
     | { public: false; anyOfScopes: FridayScope[]; anyOfRoles?: FridayRole[] };
   rateLimitPolicyId?: FridayRateLimitPolicyId;
   handler: FridayRouteHandler<TParams, TQuery, TBody, TResponse>;

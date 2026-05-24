@@ -168,7 +168,12 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
       operationId: "test.userscoped.run",
       method: "POST",
       path: "/v1/test/userscoped/run",
-      auth: { public: true },
+      // Test focus: synthetic-public principal injection feeds requireUserId
+      // correctly. The new server-level public-mutation gate is orthogonal to
+      // this test's subject; opt the test route out via
+      // allowUnauthenticatedMutation:true so the handler runs and we observe
+      // the synthetic userId flow.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         // Mirrors the requireUserId helper used in cross-border-pack, auto-fix,
         // diagnosis, agent-loop, reflex, skill-generator, uix, autonomy routes.
@@ -202,7 +207,9 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
       operationId: "test.realtime.subscribe",
       method: "POST",
       path: "/v1/test/realtime/subscribe",
-      auth: { public: true },
+      // Test focus: synthetic principalId flows into handlers as the
+      // subscription key. Orthogonal to the new public-mutation gate; opt out.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         // Mirrors friday-realtime-routes.ts:43/144 — ctx.principal!.principalId
         // used as the subscription key.
@@ -237,7 +244,12 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
       operationId: "test.provider.create",
       method: "POST",
       path: "/v1/test/provider/create",
-      auth: { public: true },
+      // Test focus: synthetic principal feeds actor/tenant audit stamping.
+      // Orthogonal to the new public-mutation gate; opt out. (Real
+      // /v1/providers* mutating routes do NOT opt out and are gated by the
+      // server-level floor — covered by friday-http-server-public-mutation-gate
+      // tests.)
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         // Mirrors provider/skill/workflow routes that stamp the actor + tenant
         // on a created/mutated resource for audit.
@@ -283,7 +295,9 @@ describe("FridayHttpServer default-public principal (auth-boundary)", () => {
       operationId: "test.idempotency.create",
       method: "POST",
       path: "/v1/test/idempotency/create",
-      auth: { public: true },
+      // Test focus: idempotency-key derivation uses principalId on public
+      // routes. Orthogonal to the public-mutation gate; opt out.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         handlerCalls += 1;
         return { principalId: ctx.principal!.principalId, callCount: handlerCalls };

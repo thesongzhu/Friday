@@ -36,7 +36,13 @@ export function createFridayChannelWebhookRoutes(
       operationId: "channels.webhooks.line",
       method: "POST",
       path: "/v1/channel-webhooks/line",
-      auth: { public: true },
+      // External-platform delivery: LINE signs each request with x-line-signature
+      // (HMAC-SHA256 over the raw body). The relay verifies the signature before
+      // accepting the payload (handler line 51-54 → 401 LINE_SIGNATURE_MISSING /
+      // 403 LINE_SIGNATURE_INVALID). Synthetic public principal cannot satisfy
+      // the alternative trust boundary. Negative tests:
+      // test/unit/api/http/routes/friday-channel-webhook-routes.test.ts:140.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.lineWebhookRelay;
@@ -121,7 +127,13 @@ export function createFridayChannelWebhookRoutes(
       operationId: "channels.webhooks.whatsapp",
       method: "POST",
       path: "/v1/channel-webhooks/whatsapp",
-      auth: { public: true },
+      // External-platform delivery: WhatsApp/Meta signs each request with
+      // x-hub-signature-256 (HMAC-SHA256). The relay verifies the signature
+      // before accepting the payload (handler line 136-139 → 401
+      // WHATSAPP_SIGNATURE_MISSING / 403 WHATSAPP_SIGNATURE_INVALID). Synthetic
+      // public principal cannot satisfy the alternative trust boundary.
+      // Negative tests: test/unit/api/http/routes/friday-channel-webhook-routes.test.ts:392,415.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.whatsappWebhookRelay;
@@ -179,7 +191,13 @@ export function createFridayChannelWebhookRoutes(
       operationId: "channels.webhooks.telegram",
       method: "POST",
       path: "/v1/channel-webhooks/telegram",
-      auth: { public: true },
+      // External-platform delivery: Telegram authenticates each request with
+      // x-telegram-bot-api-secret-token. The relay verifies the header before
+      // accepting the payload (handler line 194-197 → 401 TELEGRAM_SECRET_MISSING
+      // / 403 TELEGRAM_SECRET_INVALID). Synthetic public principal cannot
+      // satisfy the alternative trust boundary. Negative test:
+      // test/unit/api/http/routes/friday-channel-webhook-routes.test.ts:289.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.telegramWebhookRelay;
@@ -237,7 +255,14 @@ export function createFridayChannelWebhookRoutes(
       operationId: "channels.webhooks.lark",
       method: "POST",
       path: "/v1/channel-webhooks/lark",
-      auth: { public: true },
+      // External-platform delivery: Lark/Feishu signs each request with
+      // x-lark-signature (HMAC + timestamp + nonce + verification token). The
+      // relay verifies the signature and token before accepting the payload
+      // (handler line 252-257 → 401 LARK_SIGNATURE_MISSING / 403
+      // LARK_SIGNATURE_INVALID / 403 LARK_TOKEN_INVALID). Synthetic public
+      // principal cannot satisfy the alternative trust boundary. Negative tests:
+      // test/unit/api/http/routes/friday-channel-webhook-routes.test.ts:367,441.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "channel.webhook",
       async handler(ctx) {
         const relay = deps.larkWebhookRelay;
