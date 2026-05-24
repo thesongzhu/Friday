@@ -1195,12 +1195,7 @@ describe("Setup Wizard E2E", () => {
       expect(typeof json.data.setupCompletedAt).toBe("string");
     });
 
-    it("A11: complete setup after A10 should fail closed via the B0 Slice A3 bootstrap boundary (409 SETUP_ALREADY_COMPLETED)", async () => {
-      // B0 Slice A3: setup mutations are fail-closed after setup.complete. The
-      // bootstrap boundary fires before body validation, so even a request with
-      // an invalid step ID is rejected as SETUP_ALREADY_COMPLETED (not 400).
-      // Pre-A3 behavior was a 400 validation error; the new boundary is strictly
-      // tighter (no setup mutation succeeds after setup.complete).
+    it("A11: complete setup with invalid step ID should return 400", async () => {
       const res = await fetch(`${baseUrl}/v1/setup/complete`, {
         method: "POST",
         headers: authHeaders(accessToken),
@@ -1209,10 +1204,9 @@ describe("Setup Wizard E2E", () => {
           skippedSteps: [],
         }),
       });
-      expect(res.status).toBe(409);
-      const json = (await res.json()) as { ok: boolean; error: { code: string } };
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { ok: boolean };
       expect(json.ok).toBe(false);
-      expect(json.error.code).toBe("SETUP_ALREADY_COMPLETED");
     });
 
     it("A12: setup status after completion should not require setup", async () => {
@@ -1275,70 +1269,130 @@ describe("Setup Wizard E2E", () => {
       }
     }, 45_000);
 
-    it("A13: B0 Slice A3 — full wizard API flow is fail-closed after setup.complete (boundary verifier)", async () => {
-      // Pre-A3, this test exercised the wizard end-to-end on an already-completed
-      // hub (re-run semantics). B0 Slice A3 explicitly closes the bootstrap
-      // boundary after setup.complete: any subsequent mutation must return 409
-      // SETUP_ALREADY_COMPLETED. This test now verifies that boundary closure
-      // at the HTTP entrypoint for each route family touched in the old flow.
+    it("A13: full wizard API flow should pass end-to-end", async () => {
+      // NOTE: This is a re-run flow test, not a fresh-state test. The hub was already
+      // set up by earlier tests (A10 marked setup as complete). This test exercises the
+      // full API sequence on an already-configured instance. True fresh-state testing
+      // would require spinning up a separate hub instance with a clean stateDir, which
+      // is acceptable to defer for now.
       //
-      // Fresh-state wizard re-run, if ever needed, requires a separate hub
-      // instance with a clean stateDir (see test comment in pre-A3 history).
+      // B0 Slice A3 note: setup mutations carry a bootstrap-boundary verifier
+      // that fails closed for unauthenticated requests post-setup. Authenticated
+      // bound principals (as used in this test via `authHeaders(accessToken)`)
+      // bypass the boundary — the legitimate authenticated reconfiguration
+      // flow continues to work. See `assertSetupBootstrapBoundary` in
+      // `src/api/http/routes/friday-setup-routes.ts`.
 
-      // 1. setup.status remains a read (GET — not gated by the boundary)
+      // 1. Status — shows needsSetup: false from A10, but the flow still works
       const statusRes = await fetch(`${baseUrl}/v1/setup/status`, {
         headers: authHeaders(accessToken),
       });
       expect(statusRes.status).toBe(200);
       const statusJson = (await statusRes.json()) as {
         ok: boolean;
-        data: { needsSetup: boolean; setupCompletedAt: string | null };
+        data: { needsSetup: boolean };
       };
       expect(statusJson.ok).toBe(true);
-      expect(statusJson.data.needsSetup).toBe(false);
-      expect(statusJson.data.setupCompletedAt).not.toBeNull();
 
-      // 2. providers.detect — boundary closes (was idempotent-OK pre-A3)
-      const detectRes = await fetch(`${baseUrl}/v1/providers/detect`, {
-        method: "POST",
-        headers: authHeaders(accessToken),
-        body: JSON.stringify({ kind: "ollama" }),
-      });
-      expect(detectRes.status).toBe(409);
-      const detectJson = (await detectRes.json()) as { ok: boolean; error: { code: string } };
-      expect(detectJson.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      // 2. Detect (ollama) — graceful skip if not running
+      try {
+        const detectRes = await fetch(`${baseUrl}/v1/providers/detect`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ kind: "ollama" }),
+        });
+        if (detectRes.status === 200) {
+          const detectJson = (await detectRes.json()) as {
+            ok: boolean;
+            data: { kind: string };
+          };
+          expect(detectJson.data.kind).toBe("ollama");
+        }
+      } catch {
+        console.log("[A13] Ollama detect skipped (not reachable)");
+      }
 
-      // 3. setup.network.save — boundary closes
+      // 3. Network config
       const networkRes = await fetch(`${baseUrl}/v1/setup/network`, {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({ mode: "local", port: 3141 }),
       });
-      expect(networkRes.status).toBe(409);
-      const networkJson = (await networkRes.json()) as { ok: boolean; error: { code: string } };
-      expect(networkJson.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      expect(networkRes.status).toBe(200);
 
-      // 4. setup.channels.discord.verification.begin — boundary closes
-      const beginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
-        method: "POST",
-        headers: authHeaders(accessToken),
-        body: JSON.stringify({ token: "test-token" }),
-      });
-      expect(beginRes.status).toBe(409);
-      const beginJson = (await beginRes.json()) as { ok: boolean; error: { code: string } };
-      expect(beginJson.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      // 4. Channels
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://discord.com/api/v10/users/@me") {
+          return new Response(JSON.stringify({ id: "bot-a13", username: "FridayBot", bot: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/oauth2/applications/@me") {
+          return new Response(JSON.stringify({ id: "app-a13", bot: { id: "bot-a13", username: "FridayBot" } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/users/@me/channels") {
+          return new Response(JSON.stringify({ id: "dm-a13" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://discord.com/api/v10/channels/dm-a13/messages") {
+          return new Response(JSON.stringify({ id: "msg-a13" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return originalFetch(input, init);
+      }) as typeof fetch;
 
-      // 5. setup.channels.save — boundary closes
+      let setupVerificationId = "";
+      try {
+        const beginRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/begin`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ token: "test-token" }),
+        });
+        expect(beginRes.status).toBe(200);
+        const beginJson = (await beginRes.json()) as { ok: boolean; data: { verificationId: string } };
+        setupVerificationId = beginJson.data.verificationId;
+
+        const completeRes = await fetch(`${baseUrl}/v1/setup/channels/discord/verification/complete`, {
+          method: "POST",
+          headers: authHeaders(accessToken),
+          body: JSON.stringify({ verificationId: setupVerificationId, userId: "10002" }),
+        });
+        expect(completeRes.status).toBe(200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
       const channelsRes = await fetch(`${baseUrl}/v1/setup/channels`, {
         method: "POST",
         headers: authHeaders(accessToken),
-        body: JSON.stringify({ controlConfirmed: true, channels: [] }),
+        body: JSON.stringify({
+          controlConfirmed: true,
+          channels: [
+            {
+              kind: "discord",
+              enabled: true,
+              config: {
+                token: "test-token",
+                setupVerificationId,
+                setupUserId: "10002",
+              },
+            },
+          ],
+        }),
       });
-      expect(channelsRes.status).toBe(409);
-      const channelsJson = (await channelsRes.json()) as { ok: boolean; error: { code: string } };
-      expect(channelsJson.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      expect(channelsRes.status).toBe(200);
 
-      // 6. setup.complete — boundary closes (no idempotent re-success)
+      // 5. Complete
       const completeRes = await fetch(`${baseUrl}/v1/setup/complete`, {
         method: "POST",
         headers: authHeaders(accessToken),
@@ -1347,21 +1401,19 @@ describe("Setup Wizard E2E", () => {
           skippedSteps: [],
         }),
       });
-      expect(completeRes.status).toBe(409);
-      const completeJson = (await completeRes.json()) as { ok: boolean; error: { code: string } };
-      expect(completeJson.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      expect(completeRes.status).toBe(200);
 
-      // 7. Status still reads OK; setup_completed_at unchanged
+      // 6. Verify status
       const finalStatusRes = await fetch(`${baseUrl}/v1/setup/status`, {
         headers: authHeaders(accessToken),
       });
       expect(finalStatusRes.status).toBe(200);
       const finalStatusJson = (await finalStatusRes.json()) as {
         ok: boolean;
-        data: { needsSetup: boolean; setupCompletedAt: string | null };
+        data: { needsSetup: boolean };
       };
+      expect(finalStatusJson.ok).toBe(true);
       expect(finalStatusJson.data.needsSetup).toBe(false);
-      expect(finalStatusJson.data.setupCompletedAt).toBe(statusJson.data.setupCompletedAt);
     });
   });
 
@@ -1370,29 +1422,31 @@ describe("Setup Wizard E2E", () => {
   // ────────────────────────────────────────────────────────────────────────
 
   describe("B. Provider Detection (needs Ollama)", () => {
-    it("B14: ollama detect after setup.complete fails closed (B0 Slice A3 boundary)", async () => {
-      // Pre-A3, this test (gated on `itOllama` = E2E_OLLAMA=1) asserted that
-      // `/v1/providers/detect` would return 200 + ollama models when Ollama was
-      // running locally. Post-A3, the bootstrap boundary fires after A10's
-      // `setup.complete` — every detect call from this shared hub returns 409
-      // regardless of whether Ollama is reachable. The `itOllama` gate is no
-      // longer required; the test now exercises the boundary closure axis on
-      // every CI run. Positive coverage of fresh-state ollama detection lives
-      // in `test/e2e/mock/friday-mock-journeys.e2e.test.ts` (Scenario 1) where
-      // the hub is fresh and setup.complete has not yet run.
+    itOllama("B14: ollama detect should return real installed local models", async () => {
       const res = await fetch(`${baseUrl}/v1/providers/detect`, {
         method: "POST",
         headers: authHeaders(accessToken),
         body: JSON.stringify({ kind: "ollama" }),
       });
-      expect(res.status).toBe(409);
-      const json = (await res.json()) as { ok: boolean; error: { code: string } };
-      expect(json.ok).toBe(false);
-      expect(json.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        ok: boolean;
+        data: {
+          kind: string;
+          availableModels: string[];
+          validated: boolean;
+          confidence: string;
+        };
+      };
+      expect(json.ok).toBe(true);
+      expect(json.data.kind).toBe("ollama");
+      expect(json.data.validated).toBe(true);
+      expect(json.data.availableModels.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("B15: explicit kind detect after setup.complete fails closed (B0 Slice A3 boundary)", async () => {
-      // See B14 rationale.
+    itOllama("B15: explicit kind should override key-pattern inference", async () => {
+      // Passing an API key that looks like Anthropic but overriding kind to ollama —
+      // the explicit kind should take precedence over key-pattern inference
       const res = await fetch(`${baseUrl}/v1/providers/detect`, {
         method: "POST",
         headers: authHeaders(accessToken),
@@ -1402,18 +1456,20 @@ describe("Setup Wizard E2E", () => {
           apiKey: "sk-ant-intentionally-mismatched",
         }),
       });
-      expect(res.status).toBe(409);
-      const json = (await res.json()) as { ok: boolean; error: { code: string } };
-      expect(json.ok).toBe(false);
-      expect(json.error.code).toBe("SETUP_ALREADY_COMPLETED");
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        ok: boolean;
+        data: {
+          kind: string;
+          confidence: string;
+        };
+      };
+      expect(json.ok).toBe(true);
+      expect(json.data.kind).toBe("ollama");
+      expect(json.data.confidence).toBe("high");
     });
 
-    it("B16: openai-compatible detect after setup.complete fails closed (B0 Slice A3 boundary)", async () => {
-      // Pre-A3: this test asserted the body-level validation (400/422 for
-      // openai-compatible without baseUrl). Post-A3: the bootstrap boundary
-      // fires first because setup.complete already ran in A10, so the response
-      // is 409 SETUP_ALREADY_COMPLETED before any body-level check. Tighter
-      // failure mode; no test weakening.
+    it("B16: openai-compatible detect should require baseUrl", async () => {
       const res = await fetch(`${baseUrl}/v1/providers/detect`, {
         method: "POST",
         headers: authHeaders(accessToken),
@@ -1422,10 +1478,9 @@ describe("Setup Wizard E2E", () => {
           apiKey: "sk-compatible-test",
         }),
       });
-      expect(res.status).toBe(409);
-      const json = (await res.json()) as { ok: boolean; error: { code: string } };
+      expect([400, 422]).toContain(res.status);
+      const json = (await res.json()) as { ok: boolean };
       expect(json.ok).toBe(false);
-      expect(json.error.code).toBe("SETUP_ALREADY_COMPLETED");
     });
   });
 
@@ -1434,16 +1489,7 @@ describe("Setup Wizard E2E", () => {
   // ────────────────────────────────────────────────────────────────────────
 
   describe("C. Real Scenarios (needs Ollama + LLM)", () => {
-    // B0 Slice A3 deferred: C17's first step is `/v1/providers/detect`, which now
-    // fails closed after A10's `setup.complete` (boundary returns 409
-    // SETUP_ALREADY_COMPLETED). The remaining steps (create provider, set routing,
-    // create session, run agent) require the detect result to bootstrap a model
-    // name. Restoring this end-to-end Ollama flow requires a separate fresh-state
-    // harness (new hub instance with a clean stateDir, setup wizard run from the
-    // test, no shared beforeAll). Skipping until that harness exists; positive
-    // coverage of the detect→create→route→session→run flow lives in
-    // `test/e2e/mock/friday-mock-journeys.e2e.test.ts` (Scenario 1).
-    it.skip("C17: full E2E setup → create Ollama provider → run agent task (deferred to fresh-state harness — B0 Slice A3)", async () => {
+    itRealOllama("C17: full E2E setup → create Ollama provider → run agent task", async () => {
       // 1. Detect Ollama
       const detectRes = await fetch(`${baseUrl}/v1/providers/detect`, {
         method: "POST",

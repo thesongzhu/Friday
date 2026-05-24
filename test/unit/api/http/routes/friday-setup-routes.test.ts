@@ -239,6 +239,71 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
     expect(writeTxn).toHaveBeenCalled();
   });
 
+  it("authenticated bypass: bound principal can re-run setup mutations post-setup from any IP", async () => {
+    // The boundary is a fallback for UNauthenticated requests (synthetic public
+    // principal). An authenticated bound principal already provides
+    // authorization, so the assertion bypasses — this preserves the legitimate
+    // post-setup reconfiguration flow (e.g. release-proof Discord roundtrip
+    // scenario, admin swapping bot tokens after first boot).
+    const { deps, writeTxn } = makeDeps({ setupCompletedAt: "2026-05-24T10:00:00.000Z" });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.network.save");
+
+    const result = await route.handler(
+      makeCtx({
+        ip: "10.0.0.5", // explicitly non-localhost — does not matter for authenticated principal
+        body: { mode: "local", port: 3141 },
+        principal: {
+          principalId: "user-admin-001",
+          principalType: "user",
+          userId: "11111111-1111-1111-1111-111111111111",
+          tenantId: "22222222-2222-2222-2222-222222222222",
+          role: "admin",
+          scopes: ["session.read", "session.write", "hub.admin"],
+          tokenId: "33333333-3333-3333-3333-333333333333",
+          tokenKind: "access",
+          issuedAt: NOW,
+        },
+      }),
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({ mode: "local", port: 3141 }),
+    );
+    expect(writeTxn).toHaveBeenCalled();
+  });
+
+  it("authenticated bypass: synthetic-public principalId is NOT treated as authenticated even with other fields populated", async () => {
+    // Defense-in-depth: a partial fake principal whose principalId matches the
+    // synthetic-public id must still hit the boundary, even if other auth
+    // fields are spoofed.
+    const { deps, writeTxn } = makeDeps({ setupCompletedAt: "2026-05-24T10:00:00.000Z" });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.network.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: { mode: "local", port: 3141 },
+          principal: {
+            principalId: "public:default",
+            principalType: "user",
+            userId: "fake",
+            tenantId: "fake",
+            role: "admin", // intentionally spoofed
+            scopes: ["hub.admin"], // intentionally spoofed
+            tokenId: "fake",
+            tokenKind: "access",
+            issuedAt: NOW,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "SETUP_ALREADY_COMPLETED",
+      httpStatus: 409,
+    });
+    expect(writeTxn).not.toHaveBeenCalled();
+  });
+
   it("bypass: forged x-forwarded-for header on a non-loopback ctx.ip is still rejected", async () => {
     // The boundary reads ONLY ctx.ip — the server's trust-proxy policy is the
     // sole authority for populating ctx.ip from forwarded headers

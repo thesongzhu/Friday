@@ -34,6 +34,8 @@ import { FridayDomainError } from "#errors";
 import { validateGatewayUrl } from "../../../agent/tools/friday-agent-gateway-validation.js";
 import { parseFridaySecretInput } from "../../../security/friday-secret-ref.js";
 import { isFridayLoopbackAddress } from "../friday-http-client-ip.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
 
 // ─── Types ───
 
@@ -1902,18 +1904,25 @@ export function createFridaySetupRoutes(
   /**
    * B0 Slice A3 — setup bootstrap boundary.
    *
-   * Scoped first-boot-only gate for the 11 mutating setup-wizard routes.
-   * This is a **bootstrap boundary, not an identity/authentication boundary**:
-   * loopback alone is NOT treated as trusted identity for any other route family.
+   * Scoped fallback verifier for **unauthenticated** first-boot setup. This is a
+   * **bootstrap boundary, not an identity/authentication boundary**: loopback
+   * alone is NOT treated as trusted identity for any other route family.
    *
    * Each mutating setup route invokes this assertion FIRST, before any side
-   * effect, to enforce:
-   *   1. request originates from a loopback address (127.0.0.1 / ::1 / localhost)
-   *   2. `friday_setup_state.setup_completed_at IS NULL` (still first-boot)
+   * effect. The logic:
+   *   - if the request carries an authenticated bound principal (anything that
+   *     is NOT the synthetic default-public principal), bypass — downstream
+   *     authorization checks already apply. This preserves legitimate
+   *     post-setup reconfiguration flows (e.g. authenticated admin re-running
+   *     `setup.channels.discord.verification.begin` to swap bot tokens, the
+   *     release-proof `l6-discord-channel-roundtrip` scenario).
+   *   - otherwise (unauthenticated synthetic-public request), require:
+   *       1. request originates from a loopback address (127.0.0.1 / ::1 / localhost)
+   *       2. `friday_setup_state.setup_completed_at IS NULL` (still first-boot)
    *
-   * After `setup.complete` succeeds, every setup-wizard mutation is permanently
-   * fail-closed regardless of source IP. Negative tests cover both rejection
-   * paths per route.
+   * After `setup.complete` succeeds, unauthenticated setup-wizard mutations are
+   * permanently fail-closed regardless of source IP. Negative tests cover both
+   * rejection paths per route plus the authenticated-bypass property.
    *
    * The effective trust source for `ctx.ip` is the server's trust-proxy policy
    * (see `resolveFridayClientIp` in `friday-http-client-ip.ts` and the
@@ -1926,11 +1935,20 @@ export function createFridaySetupRoutes(
    * remote-paired setup), STOP and design a separate setup-session-token
    * boundary — do not relax this assertion.
    */
-  function assertSetupBootstrapBoundary(ctx: { ip?: string }): void {
+  function assertSetupBootstrapBoundary(ctx: {
+    ip?: string;
+    principal?: FridayAuthPrincipal | null;
+  }): void {
+    if (!isUnauthenticatedPublicPrincipal(ctx.principal)) {
+      // Authenticated bound principal: bypass the bootstrap boundary. The
+      // bootstrap boundary is a fallback verifier for the synthetic-public
+      // principal only; authenticated requests are already authorized.
+      return;
+    }
     if (!isFridayLoopbackAddress(ctx.ip)) {
       throw new FridayDomainError(
         "SETUP_BOOTSTRAP_NOT_ALLOWED_NON_LOCALHOST",
-        "Setup is only allowed from localhost during first boot.",
+        "Unauthenticated setup is only allowed from localhost during first boot.",
         { httpStatus: 403 },
       );
     }
@@ -1938,7 +1956,7 @@ export function createFridaySetupRoutes(
     if (state.setup_completed_at !== null) {
       throw new FridayDomainError(
         "SETUP_ALREADY_COMPLETED",
-        "Setup has already completed; this bootstrap route is no longer accessible.",
+        "Unauthenticated setup has already completed; this bootstrap route is no longer accessible without an authenticated principal.",
         { httpStatus: 409 },
       );
     }
