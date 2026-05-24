@@ -1275,6 +1275,13 @@ describe("Setup Wizard E2E", () => {
       // full API sequence on an already-configured instance. True fresh-state testing
       // would require spinning up a separate hub instance with a clean stateDir, which
       // is acceptable to defer for now.
+      //
+      // B0 Slice A3 note: setup mutations carry a bootstrap-boundary verifier
+      // that fails closed for unauthenticated requests post-setup. Authenticated
+      // bound principals (as used in this test via `authHeaders(accessToken)`)
+      // bypass the boundary — the legitimate authenticated reconfiguration
+      // flow continues to work. See `assertSetupBootstrapBoundary` in
+      // `src/api/http/routes/friday-setup-routes.ts`.
 
       // 1. Status — shows needsSetup: false from A10, but the flow still works
       const statusRes = await fetch(`${baseUrl}/v1/setup/status`, {
