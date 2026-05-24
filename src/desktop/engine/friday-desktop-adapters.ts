@@ -937,11 +937,24 @@ export async function createWin32Adapter(
       return [...WIN32_CAPABILITIES];
     },
 
+    // B1 truth-labeling: previously every win32 permission was reported as
+    // `"granted"` without any actual platform check. That's a fake-capability —
+    // the adapter has no UIAutomation/COM probe wired up yet, so the truthful
+    // state is `"not_determined"` until a real probe lands. Each permission
+    // carries an actionable instruction so an operator can verify in Windows
+    // Settings.
     async checkPermissions(): Promise<FridayDesktopPermission[]> {
       const now = config.nowIso();
-      return WIN32_PERMISSIONS.map(perm =>
-        makePermission(perm, "granted", "win32", now,
-          perm === "accessibility" ? "Windows → Settings → Accessibility → Enable UI Automation" : undefined),
+      const winInstructions: Readonly<Record<FridayDesktopOsPermissionType, string | undefined>> = {
+        accessibility: "Windows → Settings → Accessibility → Enable UI Automation",
+        automation: "Windows → Settings → Privacy & security → App permissions → Automation tools",
+        input_monitoring: "Windows → Settings → Privacy & security → Input monitoring (no per-app gate; runtime input hooks may still fail)",
+        // Permission types not used by win32 — fields kept for the Record completeness.
+        screen_recording: undefined,
+        file_access: undefined,
+      };
+      return WIN32_PERMISSIONS.map((perm) =>
+        makePermission(perm, "not_determined", "win32", now, winInstructions[perm]),
       );
     },
   };

@@ -348,12 +348,31 @@ describe("C-001 FridayDesktopAdapters", () => {
       expect(caps).not.toContain("scripting_bridge"); // macOS only
     });
 
-    it("checks Windows permissions (generally granted)", async () => {
+    it("B1 truth-labeling: Windows permissions all report 'not_determined' until a real platform probe is wired", async () => {
+      // Previously the win32 adapter returned `"granted"` for every permission
+      // without any actual UIAutomation/COM check. Per AUTO_DECISION_POLICY
+      // ("prefer truthful unsupported over pretending"), the adapter now
+      // returns `"not_determined"` with actionable instructions until a real
+      // probe lands.
       const permissions = await adapter.checkPermissions();
       expect(permissions.length).toBe(3);
       for (const perm of permissions) {
         expect(perm.platform).toBe("win32");
-        expect(perm.status).toBe("granted");
+        expect(perm.status).toBe("not_determined");
+      }
+      // Each permission has an instruction so operators can act on the
+      // not_determined verdict.
+      for (const perm of permissions) {
+        if (perm.permissionType === "accessibility") {
+          expect(perm.grantInstructions).toBeDefined();
+          expect(perm.grantInstructions).toContain("Accessibility");
+        } else if (perm.permissionType === "automation") {
+          expect(perm.grantInstructions).toBeDefined();
+          expect(perm.grantInstructions).toContain("Automation");
+        } else if (perm.permissionType === "input_monitoring") {
+          expect(perm.grantInstructions).toBeDefined();
+          expect(perm.grantInstructions).toContain("Input monitoring");
+        }
       }
     });
 
