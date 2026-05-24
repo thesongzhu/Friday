@@ -26,8 +26,10 @@ import {
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
   FRIDAY_UNSUPPORTED_CHANNEL_KINDS,
+  FRIDAY_UNSUPPORTED_CHANNEL_MODES,
   getFridayChannelSecretFieldDescriptors,
   isFridayChannelKindSupported,
+  isFridayChannelModeSupported,
   parseFridayChannelsConfig,
   parseFridayChannelSecretRef,
 } from "#channels";
@@ -2458,6 +2460,20 @@ export function createFridaySetupRoutes(
         const kind = body.kind as FridaySupportedChannelKind;
         const config = normalizeSetupChannelConfig(kind, { ...(body.config ?? {}) } as Record<string, unknown>);
 
+        // B1 unsupported-channel-mode boundary: refuse kind+mode combinations
+        // labeled unsupported (currently slack+http — the listener is an
+        // unwired stub). See FRIDAY_UNSUPPORTED_CHANNEL_MODES in
+        // friday-channel-config.ts. Check after normalize so the inspected
+        // `mode` field reflects schema defaults rather than raw request input.
+        const candidateMode = typeof config.mode === "string" ? config.mode : undefined;
+        if (!isFridayChannelModeSupported(kind, candidateMode)) {
+          throw new FridayDomainError(
+            "CHANNEL_MODE_UNSUPPORTED",
+            `Channel kind "${kind}" with mode "${candidateMode}" is currently unsupported. See product release notes for status.`,
+            { httpStatus: 409, details: { kind, mode: candidateMode, status: "unsupported" } },
+          );
+        }
+
         if (kind === "lark" || kind === "feishu") {
           return testLarkLikeChannelConnection(kind, config);
         }
@@ -2525,6 +2541,21 @@ export function createFridaySetupRoutes(
           const kind = ch.kind as FridaySupportedChannelKind;
           const slot = nextChannelSlot(kind);
           const config = normalizeSetupChannelConfig(kind, { ...(ch.config ?? {}) } as Record<string, unknown>);
+
+          // B1 unsupported-channel-mode boundary: refuse to save channels with
+          // an unsupported kind+mode combination (currently slack+http — the
+          // listener is an unwired stub). See FRIDAY_UNSUPPORTED_CHANNEL_MODES.
+          // Check after normalize so the inspected `mode` reflects schema
+          // defaults rather than raw request input.
+          const candidateMode = typeof config.mode === "string" ? config.mode : undefined;
+          if (!isFridayChannelModeSupported(kind, candidateMode)) {
+            throw new FridayDomainError(
+              "CHANNEL_MODE_UNSUPPORTED",
+              `Channel kind "${kind}" with mode "${candidateMode}" is currently unsupported. See product release notes for status.`,
+              { httpStatus: 409, details: { kind, mode: candidateMode, status: "unsupported" } },
+            );
+          }
+
           if (kind === "telegram") {
             applyTelegramVerificationToConfig(config, ch.enabled);
           }

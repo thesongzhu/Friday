@@ -68,6 +68,44 @@ export function isFridayChannelKindSupported(kind: string): boolean {
     && !UNSUPPORTED_CHANNEL_KIND_SET.has(kind);
 }
 
+/**
+ * Channel kind+mode combinations that are recognized by the schema but MUST
+ * NOT be activated at runtime because the listener is not actually wired.
+ *
+ * B1 / AUTO_DECISION_POLICY ("prefer truthful unsupported over pretending"):
+ * Slack `mode: "http"` is an unwired stub — `createSlackHttpEventService`'s
+ * `start()` just flips an internal flag without binding an HTTP server, and
+ * `verifySlackSignature` has zero callers. A user who configures slack-http
+ * would see no inbound messages at all (no listener) while the channel reports
+ * `httpListening: true`. Truth-label this as unsupported until the listener
+ * AND signature verifier (including timestamp freshness) are wired together
+ * and proven end-to-end.
+ *
+ * Slack `mode: "socket"` is fully functional and remains supported.
+ */
+export const FRIDAY_UNSUPPORTED_CHANNEL_MODES: Readonly<
+  Partial<Record<FridaySupportedChannelKind, readonly string[]>>
+> = {
+  slack: ["http"],
+} as const;
+
+/**
+ * Returns `true` if the channel kind/mode combination is supported at runtime.
+ *
+ * `mode` may be undefined (caller hasn't normalized it yet). When undefined,
+ * the combination is considered supported — the channel schema's default mode
+ * is the supported path.
+ */
+export function isFridayChannelModeSupported(
+  kind: string,
+  mode: string | undefined,
+): boolean {
+  if (mode === undefined) return true;
+  const unsupportedModes = FRIDAY_UNSUPPORTED_CHANNEL_MODES[kind as FridaySupportedChannelKind];
+  if (!unsupportedModes) return true;
+  return !unsupportedModes.includes(mode);
+}
+
 export const FridayChannelInstanceConfigSchema = z.discriminatedUnion("kind", [
   FridayQqChannelConfigSchema,
   FridayLarkChannelConfigSchema,

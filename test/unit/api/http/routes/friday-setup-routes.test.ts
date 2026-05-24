@@ -451,4 +451,130 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
     expect(activateSavedChannels).not.toHaveBeenCalled();
     expect(onChannelsSaved).not.toHaveBeenCalled();
   });
+
+  // ─── B1 Slice 11: Slack HTTP mode labeled unsupported ───
+  //
+  // AUTO_DECISION_POLICY ("prefer truthful unsupported over pretending"):
+  // Slack HTTP mode is an unwired stub — createSlackHttpEventService.start()
+  // flips an internal flag without binding an HTTP server, and
+  // verifySlackSignature has zero callers. A user configuring slack+http would
+  // see no inbound messages at all. Truth-label this mode as unsupported until
+  // the listener AND signature verifier (including timestamp freshness) are
+  // wired together and proven end-to-end. Slack socket mode remains supported.
+
+  it("B1: setup.channels.test refuses kind='slack' + mode='http' with CHANNEL_MODE_UNSUPPORTED 409", async () => {
+    const { deps, writeTxn } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.test");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            kind: "slack",
+            config: {
+              botToken: "xoxb-stub",
+              mode: "http",
+              signingSecret: "stub-secret", // pragma: allowlist secret
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_MODE_UNSUPPORTED",
+      httpStatus: 409,
+      details: { kind: "slack", mode: "http", status: "unsupported" },
+    });
+
+    // Verifier-side proof: no credential validation, no test connection, no DB write.
+    expect(writeTxn).not.toHaveBeenCalled();
+  });
+
+  it("B1: setup.channels.test accepts kind='slack' + mode='socket' (regression: socket mode still works)", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.test");
+
+    const result = await route.handler(
+      makeCtx({
+        ip: "127.0.0.1",
+        body: {
+          kind: "slack",
+          config: { botToken: "xoxb-stub", mode: "socket", appToken: "xapp-stub" },
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({ kind: "slack", validated: true });
+  });
+
+  it("B1: setup.channels.save refuses any channels[].kind='slack' + mode='http' with CHANNEL_MODE_UNSUPPORTED 409", async () => {
+    const { deps, writeTxn, activateSavedChannels, onChannelsSaved } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            controlConfirmed: true,
+            channels: [
+              {
+                kind: "slack",
+                enabled: true,
+                config: {
+                  botToken: "xoxb-stub",
+                  mode: "http",
+                  signingSecret: "stub-secret", // pragma: allowlist secret
+                },
+              },
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_MODE_UNSUPPORTED",
+      httpStatus: 409,
+      details: { kind: "slack", mode: "http", status: "unsupported" },
+    });
+
+    // Verifier-side proof: no channel persisted, no activation, no callback fired.
+    expect(writeTxn).not.toHaveBeenCalled();
+    expect(activateSavedChannels).not.toHaveBeenCalled();
+    expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
+
+  it("B1: setup.channels.save order-independent: slack+http after disabled discord still gets CHANNEL_MODE_UNSUPPORTED", async () => {
+    const { deps, writeTxn, activateSavedChannels, onChannelsSaved } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            controlConfirmed: true,
+            channels: [
+              { kind: "discord", enabled: false, config: {} },
+              {
+                kind: "slack",
+                enabled: true,
+                config: {
+                  botToken: "xoxb-stub",
+                  mode: "http",
+                  signingSecret: "stub-secret", // pragma: allowlist secret
+                },
+              },
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_MODE_UNSUPPORTED",
+      httpStatus: 409,
+    });
+
+    expect(writeTxn).not.toHaveBeenCalled();
+    expect(activateSavedChannels).not.toHaveBeenCalled();
+    expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
 });
