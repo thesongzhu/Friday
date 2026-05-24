@@ -9,7 +9,7 @@ export interface FridayRouteEntry {
   method: FridayHttpMethod;
   path: string;
   auth:
-    | { public: true }
+    | { public: true; allowUnauthenticatedMutation?: true }
     | { public: false; anyOfScopes: string[]; anyOfRoles?: string[] };
   rateLimitPolicyId?: string;
   handler: FridayRouteHandler<unknown, unknown, unknown, unknown>;

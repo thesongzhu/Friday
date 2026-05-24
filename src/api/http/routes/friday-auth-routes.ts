@@ -38,7 +38,13 @@ export function createFridayAuthRoutes(
       operationId: "auth.bootstrap.local.passphrase",
       method: "POST",
       path: "/v1/auth/bootstrap/local-passphrase",
-      auth: { public: true },
+      // First-boot only: authService.bootstrapLocalPassphrase enforces (a)
+      // caller IP is loopback/private and (b) no prior local passphrase exists
+      // (first-boot). Synthetic public principal alone is insufficient because
+      // both boundaries are enforced before any side effect. Negative tests:
+      // test/unit/api/http/routes/friday-auth-routes.test.ts:117 (non-localhost
+      // rejected) and :92-112 ("already been completed" / first-boot exclusion).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "auth.login",
       async handler(ctx): Promise<FridayAuthBootstrapResponse> {
         const body = ctx.body as Record<string, unknown> | null;
@@ -67,7 +73,13 @@ export function createFridayAuthRoutes(
       operationId: "auth.login",
       method: "POST",
       path: "/v1/auth/login",
-      auth: { public: true },
+      // Pre-auth surface: a user without a valid bearer cannot satisfy the
+      // public-mutation gate by definition (they call /v1/auth/login to GET a
+      // bearer). authService.login validates email/password or localPassphrase
+      // and throws INVALID_CREDENTIALS without minting a session. Negative test:
+      // test/unit/api/http/routes/friday-auth-routes.test.ts (login rejects bad
+      // credentials without minting a session).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "auth.login",
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;
@@ -91,7 +103,13 @@ export function createFridayAuthRoutes(
       operationId: "auth.refresh",
       method: "POST",
       path: "/v1/auth/refresh",
-      auth: { public: true },
+      // Pre-auth surface: refresh exchanges a refreshToken for a new access
+      // token; callers typically do not hold a valid access token bearer.
+      // authService.refresh validates the refresh token and throws
+      // INVALID_REFRESH_TOKEN without issuing a new access token. Negative test:
+      // test/unit/api/http/routes/friday-auth-routes.test.ts (refresh rejects
+      // an invalid refresh token without minting a new access token).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "auth.refresh",
       async handler(ctx) {
         const body = ctx.body as Record<string, unknown> | null;

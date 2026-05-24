@@ -165,7 +165,10 @@ describe("FridayHttpServer — HEAD body suppression", () => {
       operationId: "test.delete.body",
       method: "DELETE",
       path: "/v1/delete-body-test",
-      auth: { public: true },
+      // Test focus: HTTP-server DELETE body parsing. Orthogonal to the new
+      // public-mutation gate; opt the test route out so the body-parsing
+      // assertion is what we are actually testing.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         return {
           seenBody: ctx.body,

@@ -2277,7 +2277,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     operationId: "workflows.webhooks.invoke",
     method: "POST",
     path: "/v1/workflow-webhooks/:pathToken",
-    auth: { public: true },
+    // External-platform delivery: workflow webhooks are signed by the upstream
+    // caller with an HMAC over the raw body. workflowRuntime.triggers
+    // .handleWebhook verifies the signature against the per-trigger secret
+    // before accepting the payload and throws WORKFLOW_WEBHOOK_HMAC_REQUIRED
+    // (401) when missing or WEBHOOK_SIGNATURE_INVALID (403) when wrong.
+    // Synthetic public principal cannot forge that signature. Negative test:
+    // test/e2e/api/friday-api-workflows-routes.test.ts
+    // (workflow_trigger_webhook_default_rejects_unsigned_invocation).
+    auth: { public: true, allowUnauthenticatedMutation: true },
     rateLimitPolicyId: "workflow.webhook",
     async handler(ctx) {
       const { pathToken } = ctx.params as { pathToken: string };
