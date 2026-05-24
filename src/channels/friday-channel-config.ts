@@ -39,6 +39,35 @@ export const FRIDAY_SUPPORTED_CHANNEL_KINDS = [
 
 export type FridaySupportedChannelKind = (typeof FRIDAY_SUPPORTED_CHANNEL_KINDS)[number];
 
+/**
+ * Channel kinds that are recognized by the type system (still appear in
+ * `FRIDAY_SUPPORTED_CHANNEL_KINDS` for backward-compat schema validation) but
+ * MUST NOT be activated at runtime.
+ *
+ * B1 / GLOBAL_DECISIONS_LOCKED.md: "QQ is unsupported/proof_pending unless
+ * fixed and proven." QQ inbound is currently silently dropped by the channel
+ * registry's lifecycle/start arbitration (see `friday-channel-registry.ts`
+ * `buildStartPromise`). Until that root cause is fixed and end-to-end inbound
+ * delivery is proved, QQ must be labeled `unsupported` at every user-facing
+ * boundary: setup config validation, channel-registry activation, agent
+ * routing, UI.
+ *
+ * Adding a kind here does NOT delete its schema or types — the underlying
+ * source files remain so a future "support QQ" slice can re-enable cleanly
+ * once the lifecycle bug is fixed and live proof exists.
+ */
+export const FRIDAY_UNSUPPORTED_CHANNEL_KINDS: readonly FridaySupportedChannelKind[] = ["qq"] as const;
+
+const UNSUPPORTED_CHANNEL_KIND_SET = new Set<string>(FRIDAY_UNSUPPORTED_CHANNEL_KINDS);
+
+/**
+ * Returns `true` if the channel kind is recognized AND not labeled unsupported.
+ */
+export function isFridayChannelKindSupported(kind: string): boolean {
+  return (FRIDAY_SUPPORTED_CHANNEL_KINDS as readonly string[]).includes(kind)
+    && !UNSUPPORTED_CHANNEL_KIND_SET.has(kind);
+}
+
 export const FridayChannelInstanceConfigSchema = z.discriminatedUnion("kind", [
   FridayQqChannelConfigSchema,
   FridayLarkChannelConfigSchema,
