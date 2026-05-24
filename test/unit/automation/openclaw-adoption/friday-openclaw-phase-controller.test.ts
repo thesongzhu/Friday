@@ -606,4 +606,87 @@ describe("createFridayOpenClawPhaseController", () => {
     expect(result.ok).toBe(false);
     expect(result.blockers).toContain("phase0 merged PR violates the committed taskpack boundary.");
   });
+
+  // ─── B2 Slice 3: atomic state-file writes ───
+  //
+  // saveStateToDisk previously called writeFileSync(statePath) followed by
+  // writeFileSync(programPath). A crash between the two left programPath
+  // holding stale content, and an interruption mid-byte left either file
+  // partially written — silent data loss because loadStateFromDisk would
+  // JSON.parse-throw and fall back to createEmptyState. The fix writes each
+  // file via tmp + rename so the on-disk view of each path only flips when
+  // the full content is durable, and a stale read of one path can still
+  // recover via the existing programPath -> statePath fallback chain.
+
+  it("B2 atomic writes: saveStateToDisk leaves both state files valid and no tmp files behind", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const controller = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({ hasChanges: true }),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: () => "run-atomic",
+    });
+
+    const result = controller.runNextPhase({ prepareNext: true });
+    expect("run" in result).toBe(true);
+
+    const runtimeRoot = path.join(repoDir, ".friday", "automation", "openclaw-adoption");
+    const statePath = path.join(runtimeRoot, "state.json");
+    const programPath = path.join(runtimeRoot, "program.json");
+
+    // Both files exist and are valid JSON with the expected shape.
+    expect(fs.existsSync(statePath)).toBe(true);
+    expect(fs.existsSync(programPath)).toBe(true);
+    const stateContent = JSON.parse(fs.readFileSync(statePath, "utf-8")) as { schemaVersion: string; programId: string; phases: Record<string, unknown> };
+    const programContent = JSON.parse(fs.readFileSync(programPath, "utf-8")) as { schemaVersion: string; programId: string };
+    expect(stateContent.schemaVersion).toBe("1.0");
+    expect(programContent.schemaVersion).toBe("1.0");
+    expect(stateContent.programId).toBe("openclaw-adoption");
+    expect(stateContent.phases.phase0).toBeDefined();
+
+    // No tmp files lingering after a successful save.
+    const tmpLeftovers = fs.readdirSync(runtimeRoot).filter((name) => name.includes(".tmp-"));
+    expect(tmpLeftovers).toEqual([]);
+  });
+
+  it("B2 atomic writes: loadStateFromDisk recovers via programPath fallback when statePath is corrupted mid-byte (simulated torn write)", () => {
+    const repoDir = createTempGitRepo();
+    const manifestPath = writeManifest(repoDir);
+    const seedController = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform({ hasChanges: true }),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+      runIdFactory: () => "run-seed",
+    });
+    seedController.runNextPhase({ prepareNext: true });
+
+    const runtimeRoot = path.join(repoDir, ".friday", "automation", "openclaw-adoption");
+    const statePath = path.join(runtimeRoot, "state.json");
+    const programPath = path.join(runtimeRoot, "program.json");
+
+    // Simulate a torn write on statePath: truncate it to a non-JSON prefix.
+    // Both files were just-written atomically so we know programPath is fine.
+    fs.writeFileSync(statePath, "{\"schemaVersion\": \"1.0\", \"programId\": \"openclaw", "utf-8");
+
+    // A fresh controller must recover from programPath rather than silently
+    // returning an empty state.
+    const recoveredController = createFridayOpenClawPhaseController({
+      cwd: repoDir,
+      manifestPath,
+      platform: createFakePlatform(),
+      nowIso: () => "2026-03-24T00:01:00.000Z",
+      runIdFactory: () => "run-recovered",
+    });
+    const recovered = recoveredController.loadState();
+    expect(recovered.programId).toBe("openclaw-adoption");
+    expect(recovered.phases.phase0).toBeDefined();
+
+    // Sanity: programPath was the source of recovery (its content matches the
+    // expected schema; statePath does not).
+    expect(() => JSON.parse(fs.readFileSync(programPath, "utf-8"))).not.toThrow();
+    expect(() => JSON.parse(fs.readFileSync(statePath, "utf-8"))).toThrow();
+  });
 });
