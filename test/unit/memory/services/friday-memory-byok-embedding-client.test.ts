@@ -171,4 +171,56 @@ describe("FridayMemoryByokEmbeddingClient", () => {
 
     await expect(client.embed("Hello")).rejects.toThrow(FridayDomainError);
   });
+
+  // ─── B3 hanging-fetch boundary ───
+
+  it("B3 hanging-fetch: embedding fetch aborts via AbortSignal.timeout and surfaces EMBEDDING_UNAVAILABLE 504", async () => {
+    const route = makeRoute("openai-completions");
+
+    // Mock fetch to honor the AbortSignal — when it fires, throw the
+    // TimeoutError shape that AbortSignal.timeout actually produces.
+    globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          const err = new Error("The operation was aborted due to timeout");
+          err.name = "TimeoutError";
+          reject(err);
+          return;
+        }
+        signal?.addEventListener("abort", () => {
+          const err = new Error("The operation was aborted due to timeout");
+          err.name = "TimeoutError";
+          reject(err);
+        });
+        // Otherwise hang forever — the timeout must be what unblocks the test.
+      });
+    }) as typeof fetch;
+
+    const providerService: FridayProviderService = {
+      runWithFallback: vi.fn().mockImplementation(async (params) => {
+        const result = await params.run(route, "sk-test");
+        return {
+          result,
+          route,
+          attempts: [],
+          routingDecision: {
+            strategy: "direct",
+            reason: "test",
+            budget: { withinBudget: true, remainingUsd: 100, monthlyLimitUsd: 100, spentUsd: 0 },
+          },
+        };
+      }),
+    } as unknown as FridayProviderService;
+
+    client = createFridayMemoryByokEmbeddingClient({ providerService, fetchTimeoutMs: 60 });
+
+    const start = Date.now();
+    await expect(client.embed("Hello")).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.EMBEDDING_UNAVAILABLE,
+      httpStatus: 504,
+    });
+    const duration = Date.now() - start;
+    expect(duration).toBeLessThan(5_000); // fail-fast proof
+  });
 });

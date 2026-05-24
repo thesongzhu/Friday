@@ -18,7 +18,20 @@ export interface FridayMemoryEmbeddingResponse {
 export interface CreateFridayMemoryByokEmbeddingClientDeps {
   providerService: FridayProviderService;
   embeddingModel?: string;
+  /**
+   * Per-attempt timeout (ms) for the outbound BYOK embedding fetch.
+   *
+   * B3 hanging-fetch boundary: without this, a hung embedding endpoint
+   * blocks every memory store/search/dedup operation that needs an
+   * embedding, propagating the hang up the cognition stack. Default 30s
+   * matches the typical embedding-call upper bound (shorter than full
+   * LLM completions because embeddings should be fast).
+   */
+  fetchTimeoutMs?: number;
 }
+
+/** Default per-attempt timeout for the BYOK embedding fetch. */
+const FRIDAY_DEFAULT_MEMORY_EMBEDDING_TIMEOUT_MS = 30_000;
 
 // ─── Supported API embedding endpoints ───
 
@@ -105,14 +118,32 @@ export function createFridayMemoryByokEmbeddingClient(
 
           const model = deps.embeddingModel ?? FRIDAY_MEMORY_DEFAULT_EMBEDDING_MODEL;
 
-          const response = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              input: text,
-              model,
-            }),
-          });
+          const fetchTimeoutMs = deps.fetchTimeoutMs ?? FRIDAY_DEFAULT_MEMORY_EMBEDDING_TIMEOUT_MS;
+          let response: Response;
+          try {
+            response = await fetch(url, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                input: text,
+                model,
+              }),
+              signal: AbortSignal.timeout(fetchTimeoutMs),
+            });
+          } catch (fetchError) {
+            // B3 hanging-fetch boundary: translate AbortSignal.timeout into
+            // the existing EMBEDDING_UNAVAILABLE shape so the upstream
+            // fallback chain can advance instead of blocking the memory
+            // store/search/dedup pipeline indefinitely.
+            if (fetchError instanceof Error && (fetchError.name === "TimeoutError" || fetchError.name === "AbortError")) {
+              throw new FridayDomainError(
+                FRIDAY_MEMORY_ERROR_CODES.EMBEDDING_UNAVAILABLE,
+                `Embedding request timed out after ${fetchTimeoutMs}ms`,
+                { httpStatus: 504, retryable: true, details: { timeoutMs: fetchTimeoutMs } },
+              );
+            }
+            throw fetchError;
+          }
 
           if (!response.ok) {
             const body = await response.text().catch(() => "");
