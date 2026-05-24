@@ -277,9 +277,27 @@ export function createFridayPluginService(
         );
       }
 
+      // B1 truth-labeling: even when `manifest.signature` is present
+      // (ed25519 keyId+value), the install path below DOES NOT verify it
+      // cryptographically. The downstream `evaluateLocalTrustOnInstall` is a
+      // user-approval / fingerprint trust-on-install model. The
+      // `trustMode = "signed"` literal in this declaration is reserved for a
+      // future signature-verifying path; the runtime here always falls into
+      // the trust-on-install branch. Advise operators once at install time so
+      // they don't interpret a manifest with a signature field as evidence
+      // of cryptographic provenance.
+      if (manifest.signature) {
+        console.info(
+          `[friday][plugins] Plugin "${manifest.id}" manifest declares an ed25519 signature (keyId=${JSON.stringify(manifest.signature.keyId)}), but signature verification is proof_pending in this build — installation will fall back to trust-on-install (user-approval + fingerprint). See FridayPluginSignature docstring for the B1 follow-up that adds real verification.`,
+        );
+      }
       let trustMode: "signed" | "trust_on_install" = "trust_on_install";
       let signatureVerified = false;
       let trustedFingerprint: string | undefined;
+      // B1 truth-labeling: these signature-result fields exist in the entity
+      // schema for forward-compat with a future signature-verifying path. They
+      // stay undefined under the current trust-on-install model — see the
+      // advisory log above and FridayPluginSignature docstring.
       let signatureAlgorithm: string | undefined;
       let signatureKeyId: string | undefined;
       let signatureValue: string | undefined;
