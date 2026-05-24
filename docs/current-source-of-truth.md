@@ -193,7 +193,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 ## Quality gates, retry, and rules
 
-- Acceptance custom checks execute in a sandboxed runtime; in-process execution is no longer the steady-state path for arbitrary custom assertions.
+- Acceptance custom checks must use a registered in-process handler installed via `registerCustomHandler()`. Ad-hoc inline scripts in `handlerConfig.script` are disabled by policy per locked decision GEC-007 (untrusted code does not run in-process); the deterministic pipeline returns a `fail`/`critical` verdict with `metadata.policy = "inline_scripts_disabled"` when an inline script is supplied for an unregistered `handlerRef`. The historical `node:vm`-backed in-process sandbox has been removed because `vm` is explicitly not a security mechanism; out-of-process custom verifiers would be a future hardening route if inline script execution ever becomes a product requirement.
 - Acceptance test definitions maintain version history and artifact history, and those records are part of the operator-facing quality surface.
 - Provider-level retry circuit breakers, retry replay evidence, cost summaries, and escalation acknowledgement are active product surfaces, not deferred architecture notes.
 - Rules simulation, rule version history, and audit-log visibility are part of the active steady-state operator surface and must stay explainable through `/observability` and the deterministic pipeline APIs.

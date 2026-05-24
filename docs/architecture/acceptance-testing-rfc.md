@@ -386,7 +386,7 @@ Stores per-check results within an acceptance run.
 ## 10. Out of Scope Boundaries
 
 - **Artifact content storage** — The acceptance layer receives artifact URIs; it does not manage artifact storage.
-- **Custom check isolation hardening beyond the current sandbox** — Custom checks already execute in a sandboxed runtime; deeper OS-level isolation remains a future hardening phase.
+- **Custom check execution beyond registered handlers** — Custom checks execute only through handlers registered via `registerCustomHandler()`; ad-hoc inline scripts in `handlerConfig.script` are disabled by policy per locked decision GEC-007 (the historical `node:vm`-backed in-process sandbox has been removed because `vm` is not a security mechanism). Out-of-process or OS-isolated execution of caller-supplied scripts is not implemented; if a product requirement for inline scripts ever appears, it must be designed as a separate isolation surface and not as a `vm`-backed in-process path.
 - **Distributed acceptance** — All checks run locally; distributed execution across workers is not supported in v1.
 - **Acceptance marketplace and cross-hub sharing** — Versioned test definitions already exist locally; marketplace-style sharing remains a future phase.
 

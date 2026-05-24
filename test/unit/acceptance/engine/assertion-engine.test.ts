@@ -589,7 +589,15 @@ describe("evaluateAssertion — custom", () => {
     expect(result.verdict).toBe("fail");
   });
 
-  it("executes sandboxed scripts with JSON-isolated content and config", () => {
+  // Locked decision GEC-007 — untrusted code does not execute in-process.
+  // Inline handlerConfig.script values are denied by policy regardless of
+  // whether the script would have passed, blocked, or run away. The previous
+  // `node:vm`-based in-process sandbox was removed because `vm` is not a
+  // security mechanism. Each of these tests asserts that the new policy fires
+  // a fail/critical verdict before any code is interpreted — replacing the
+  // prior "sandbox enforces X" assertions that relied on the now-deleted path.
+
+  it("denies an inline handlerConfig.script even when the script would have returned pass (no in-process execution)", () => {
     const config: FridayAcceptanceCustomCheckConfig = {
       checkType: "custom",
       handlerRef: "scripted",
@@ -607,11 +615,14 @@ describe("evaluateAssertion — custom", () => {
 
     const result = evaluateAssertion("c-script", { count: 3 }, config);
 
-    expect(result.verdict).toBe("pass");
-    expect(result.evidence[0].metadata?.sandboxed).toBe(true);
+    expect(result.verdict).toBe("fail");
+    expect(result.severity).toBe("critical");
+    expect(result.evidence[0].message).toMatch(/Inline handlerConfig\.script is disabled by policy/);
+    expect(result.evidence[0].message).toMatch(/GEC-007/);
+    expect(result.evidence[0].metadata?.policy).toBe("inline_scripts_disabled");
   });
 
-  it("blocks dynamic code generation inside sandboxed scripts", () => {
+  it("denies an inline script that previously attempted dynamic-code-generation escape (policy stops it before interpretation)", () => {
     const config: FridayAcceptanceCustomCheckConfig = {
       checkType: "custom",
       handlerRef: "scripted",
@@ -627,10 +638,11 @@ describe("evaluateAssertion — custom", () => {
 
     expect(result.verdict).toBe("fail");
     expect(result.severity).toBe("critical");
-    expect(result.evidence[0].message).toContain("Sandboxed custom check failed");
+    expect(result.evidence[0].message).toMatch(/Inline handlerConfig\.script is disabled by policy/);
+    expect(result.evidence[0].metadata?.policy).toBe("inline_scripts_disabled");
   });
 
-  it("terminates runaway sandboxed scripts", () => {
+  it("denies an inline script that previously caused a runaway timeout (no execution path remains)", () => {
     const config: FridayAcceptanceCustomCheckConfig = {
       checkType: "custom",
       handlerRef: "scripted",
@@ -643,6 +655,27 @@ describe("evaluateAssertion — custom", () => {
 
     expect(result.verdict).toBe("fail");
     expect(result.severity).toBe("critical");
-    expect(result.evidence[0].message).toContain("timed out");
+    expect(result.evidence[0].message).toMatch(/Inline handlerConfig\.script is disabled by policy/);
+    expect(result.evidence[0].metadata?.policy).toBe("inline_scripts_disabled");
+  });
+
+  it("registered handlers still execute normally (regression — policy only blocks ad-hoc inline scripts)", () => {
+    const handlerRef = "policy-regression-handler";
+    registerCustomHandler(handlerRef, (content) => ({
+      verdict: "pass",
+      severity: "info",
+      evidence: [{ checkId: "c-handler", checkType: "custom", message: "registered handler ran", expected: handlerRef, actual: content }],
+    }));
+    try {
+      const config: FridayAcceptanceCustomCheckConfig = {
+        checkType: "custom",
+        handlerRef,
+      };
+      const result = evaluateAssertion("c-handler", { ok: true }, config);
+      expect(result.verdict).toBe("pass");
+      expect(result.evidence[0].message).toBe("registered handler ran");
+    } finally {
+      unregisterCustomHandler(handlerRef);
+    }
   });
 });
