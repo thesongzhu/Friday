@@ -140,12 +140,13 @@ function makeMockAdapter(options: MockAdapterOptions = {}): FridayDesktopAdapter
   };
 }
 
-function makeGuard(): PermissionGuard {
+function makeGuard(overrides: { promptResolver?: Parameters<typeof createPermissionGuard>[0]["promptResolver"] } = {}): PermissionGuard {
   return createPermissionGuard({
     generateId: () => `id-${++idCounter}`,
     nowIso: () => NOW,
     permissionPromptTimeoutMs: 5000,
     principalId: "user-1",
+    ...overrides,
   });
 }
 
@@ -304,6 +305,14 @@ describe("ActionExecutor", () => {
           },
         });
         const constrainedExecutor = makeExecutor({ sandboxAllowedRoots: [tempRoot] });
+        // B1 medium-severity sweep: file_operation defaults to "high" risk in
+        // DEFAULT_RISK_MAP, and "high" now requires confirmation per the
+        // locked product direction ("high-risk work requires approval"). Use a
+        // guard with an approving prompt resolver to keep this test focused on
+        // sandbox behavior rather than confirmation behavior.
+        const approvingGuard = makeGuard({
+          promptResolver: async () => ({ decision: "approved" as const }),
+        });
         const result = await constrainedExecutor.execute(
           {
             type: "file_operation",
@@ -311,7 +320,7 @@ describe("ActionExecutor", () => {
             path: path.join(tempRoot, "inside.txt"),
           },
           sandboxAwareAdapter,
-          guard,
+          approvingGuard,
           inspector,
           { actionId: "inside-path" },
         );

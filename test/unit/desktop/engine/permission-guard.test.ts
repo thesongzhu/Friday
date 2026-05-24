@@ -574,4 +574,103 @@ describe("PermissionGuard", () => {
       expect(guardWithResolver.getDecisions()).toHaveLength(1);
     });
   });
+
+  // ─── B1 medium-severity sweep: "high"-risk also requires confirmation ───
+  //
+  // GLOBAL_DECISIONS_LOCKED.md: "Autonomy is risk-tiered: low-risk work can
+  // run proactively; medium-risk work plans or asks; high-risk work requires
+  // approval; dangerous or non-reversible work fails closed." Before the fix,
+  // confirmation only fired for `riskLevel === "critical"` — but
+  // `DEFAULT_RISK_MAP` never assigns "critical" to any action (close_app and
+  // file_operation top out at "high"), so the human-confirmation Layer 3 was
+  // unreachable for default-risk actions. Now both "high" AND "critical"
+  // trigger confirmation.
+
+  describe('B1: "high"-risk actions also require confirmation', () => {
+    it("denies a policy-set 'high'-risk action when no prompt resolver is configured", async () => {
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        { actionType: "click", appFilter: "*", decision: "allow", riskLevel: "high" },
+      ]);
+      guard.loadPolicies([policy]);
+
+      const result = await guard.check({ type: "click" }, adapter);
+      expect(result.allowed).toBe(false);
+      expect(result.denialCode).toBe("DESKTOP_PERMISSION_DENIED_USER");
+      expect(result.prompt).toBeDefined();
+    });
+
+    it("allows a policy-set 'high'-risk action when the prompt resolver approves", async () => {
+      const guardWithResolver = createPermissionGuard(makeConfig({
+        promptResolver: async () => ({ decision: "approved" as const, rationale: "User approved" }),
+      }));
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        { actionType: "click", appFilter: "*", decision: "allow", riskLevel: "high" },
+      ]);
+      guardWithResolver.loadPolicies([policy]);
+
+      const result = await guardWithResolver.check({ type: "click" }, adapter);
+      expect(result.allowed).toBe(true);
+      expect(result.decision?.decision).toBe("approved");
+    });
+
+    it("default 'close_app' action triggers confirmation (DEFAULT_RISK_MAP[close_app]='high')", async () => {
+      const guardWithResolver = createPermissionGuard(makeConfig({
+        promptResolver: async () => ({ decision: "approved" as const }),
+      }));
+      const adapter = makeMockAdapter();
+      // No policy loaded — falls back to DEFAULT_RISK_MAP["close_app"] === "high"
+      const result = await guardWithResolver.check(
+        { type: "close_app", appIdentifier: "com.example.app" } as never,
+        adapter,
+      );
+      // Confirmation was requested AND approved => allowed
+      expect(result.decision).toBeDefined();
+      expect(result.decision!.decision).toBe("approved");
+    });
+
+    it("default 'file_operation' action triggers confirmation (DEFAULT_RISK_MAP[file_operation]='high')", async () => {
+      const guardWithResolver = createPermissionGuard(makeConfig({
+        promptResolver: async () => ({ decision: "approved" as const }),
+      }));
+      const adapter = makeMockAdapter();
+      const result = await guardWithResolver.check(
+        {
+          type: "file_operation",
+          operation: "read",
+          filePath: "/tmp/test.txt",
+        } as never,
+        adapter,
+      );
+      expect(result.decision).toBeDefined();
+      expect(result.decision!.decision).toBe("approved");
+    });
+
+    it("regression: 'medium'-risk policy does NOT trigger confirmation", async () => {
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        { actionType: "click", appFilter: "*", decision: "allow", riskLevel: "medium" },
+      ]);
+      guard.loadPolicies([policy]);
+
+      const result = await guard.check({ type: "click" }, adapter);
+      // Medium proceeds without prompting; either allowed or denied by policy,
+      // but never asks the user.
+      expect(result.prompt).toBeUndefined();
+      expect(result.decision).toBeUndefined();
+    });
+
+    it("regression: 'low'-risk policy does NOT trigger confirmation", async () => {
+      const adapter = makeMockAdapter();
+      const policy = makePolicy([
+        { actionType: "click", appFilter: "*", decision: "allow", riskLevel: "low" },
+      ]);
+      guard.loadPolicies([policy]);
+
+      const result = await guard.check({ type: "click" }, adapter);
+      expect(result.prompt).toBeUndefined();
+      expect(result.decision).toBeUndefined();
+    });
+  });
 });

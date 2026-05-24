@@ -318,8 +318,17 @@ function buildRulesEngineContext(
   };
 }
 
+// B1 medium-severity sweep — match the locked product direction
+// (GLOBAL_DECISIONS_LOCKED.md): "high-risk work requires approval; dangerous
+// or non-reversible work fails closed." Before this fix, confirmation only
+// fired for `"critical"` — but `DEFAULT_RISK_MAP` never assigns `"critical"`
+// to any default action (max default is `"high"` for close_app / file_operation),
+// so the human-confirmation Layer 3 was effectively unreachable through default
+// risk levels and only fired when a policy explicitly set `riskLevel: "critical"`.
+// Now `"high"` AND `"critical"` both require confirmation; `"none"` / `"low"`
+// / `"medium"` proceed without prompting.
 function riskRequiresConfirmation(riskLevel: FridayDesktopRiskLevel): boolean {
-  return riskLevel === "critical";
+  return riskLevel === "high" || riskLevel === "critical";
 }
 
 function assertNever(value: never): never {
