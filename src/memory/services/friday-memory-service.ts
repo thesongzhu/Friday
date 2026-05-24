@@ -36,15 +36,20 @@ function warnOnce(warn: FridayWarnSink, key: string, message: string): void {
   warn(message);
 }
 
-function normalizeWarningKey(kind: "embedding" | "semantic", message: string): string {
+function normalizeWarningKey(kind: "embedding" | "semantic" | "access-counter", message: string): string {
   return `${kind}:${message}`;
 }
 
-function warnMemoryFallback(kind: "embedding" | "semantic", message: string): void {
+function warnMemoryFallback(kind: "embedding" | "semantic" | "access-counter", message: string): void {
   if (message.startsWith("No enabled providers available for routing")) {
     return;
   }
-  const label = kind === "embedding" ? "embedding failed" : "semantic search unavailable";
+  const label =
+    kind === "embedding"
+      ? "embedding failed"
+      : kind === "semantic"
+        ? "semantic search unavailable"
+        : "access-counter update failed (counter may lag)";
   warnOnce(
     console.warn as FridayWarnSink,
     normalizeWarningKey(kind, message),
@@ -277,10 +282,33 @@ export function createFridayMemoryService(
         }
       }
 
+      // B3 cognition policy (conservative): record access ONLY for items that
+      // were actually returned through this intentional search path. We do not
+      // increment on raw `get()` / `list()` reads — the counter is meant to
+      // mean "served to the agent as part of recall," not "row was fetched by
+      // some internal lookup."
+      if (results.length > 0) {
+        try {
+          deps.db.withWriteTransaction((db) =>
+            itemRepo.recordAccess(db, {
+              itemIds: results.map((r) => r.item.id),
+              nowIso: now,
+            }),
+          );
+        } catch (err) {
+          // Best-effort telemetry — a failed access-counter write must NOT
+          // break the search. Log and continue with the already-merged
+          // results.
+          warnMemoryFallback("access-counter", err instanceof Error ? err.message : String(err));
+        }
+      }
+
       return results;
     },
 
     async get(itemId) {
+      // B3 cognition policy: raw `get()` does NOT increment access_count.
+      // Only intentional recall via `search()` is a counted access.
       return deps.db.withReadConnection((db) => itemRepo.getById(db, itemId));
     },
 
