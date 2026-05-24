@@ -5,7 +5,7 @@ import { scanShellScript } from "../safety/friday-shell-safety-scanner.js";
 import semver from "semver";
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
-import { safeDirName } from "#utilities";
+import { resolveSafeInstallDir, safeDirName } from "#utilities";
 import type { FridaySelfHealingApiService } from "#learning";
 import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.js";
 import { safeParseFridaySkillManifestV2 } from "../manifest/friday-skill-manifest.schema.js";
@@ -1548,10 +1548,22 @@ export function createFridaySkillLifecycleService(
         && (!packageIntegrity.available || packageIntegrity.ok)
         && runtimeDryRun.ok
         && trustSummary.verdict !== "blocked";
-      // Shell safety scan: check entry point for dangerous patterns (shell/python skills)
+      // Shell safety scan: check entry point for dangerous patterns (shell/python skills).
+      //
+      // B1 path-traversal hardening: use `resolveSafeInstallDir` (which combines
+      // `safeDirName` sanitization with a `path.relative`-based containment
+      // check, throws INSTALL_PATH_ESCAPE on traversal) instead of the prior
+      // unguarded `join(deps.managedSkillsDir, input.skillId)`. This matches the
+      // pattern used by `skills.content.update` at
+      // src/api/http/routes/friday-skill-routes.ts:658. The runtime-dry-run
+      // path above (lines ~1466-1469) uses the weaker `safeDirName`-only
+      // variant; both are safe against ".." / null-byte / leading-dot inputs,
+      // but `resolveSafeInstallDir` adds the relative-path containment guarantee
+      // that catches future escape vectors. Errors fall into the existing
+      // best-effort try/catch (scan is informational; not a hard gate).
       let shellSafety: { verdict: "safe" | "needs_review" | "dangerous"; findingCount: number; blockingCount: number } | undefined;
       try {
-        const skillDir = join(deps.managedSkillsDir, input.skillId);
+        const skillDir = resolveSafeInstallDir(deps.managedSkillsDir, input.skillId);
         // Find the entry point — try common names
         const candidates = ["index.sh", "index.bash", "run.sh", "main.sh", "index.mjs", "index.js"];
         for (const candidate of candidates) {
@@ -1568,7 +1580,13 @@ export function createFridaySkillLifecycleService(
           }
         }
       } catch {
-        // Shell safety scan is best-effort; don't block verification on scanner errors
+        // Shell safety scan is best-effort; don't block verification on scanner errors.
+        // INSTALL_PATH_ESCAPE thrown by resolveSafeInstallDir for traversal-attempt
+        // skillIds also falls here — the scan is correctly skipped without
+        // touching any out-of-base file. The upstream `getSkill` lookup at the
+        // top of verifySkill already returns null for unknown skillIds, so a
+        // traversal-attempt skillId would have failed with SKILL_NOT_FOUND long
+        // before this block; this is defense-in-depth.
       }
 
       const preflight = buildSkillPreflightSummary({
