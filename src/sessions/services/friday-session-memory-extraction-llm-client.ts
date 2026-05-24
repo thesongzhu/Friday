@@ -25,7 +25,19 @@ import type { FridaySessionMessageRecord } from "../model/friday-session.types.j
 
 export interface CreateFridaySessionMemoryExtractionLlmClientDeps {
   providerService: FridayProviderService;
+  /**
+   * Per-attempt timeout (ms) for the outbound LLM extraction fetch.
+   *
+   * B3 hanging-fetch boundary: without this, a hung provider blocks the
+   * memory-extraction batch queue indefinitely. Default 60s matches typical
+   * upper bounds for LLM completion latency; longer than the slack/SMTP
+   * webhook defaults because LLM calls legitimately take longer.
+   */
+  fetchTimeoutMs?: number;
 }
+
+/** Default per-attempt timeout for the LLM extraction fetch. */
+const FRIDAY_DEFAULT_MEMORY_EXTRACTION_TIMEOUT_MS = 60_000;
 
 // ─── Client interface ───
 
@@ -378,11 +390,29 @@ export function createFridaySessionMemoryExtractionLlmClient(
             provider.config.authMode,
           );
 
-          const response = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(body),
-          });
+          const fetchTimeoutMs = deps.fetchTimeoutMs ?? FRIDAY_DEFAULT_MEMORY_EXTRACTION_TIMEOUT_MS;
+          let response: Response;
+          try {
+            response = await fetch(url, {
+              method: "POST",
+              headers,
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(fetchTimeoutMs),
+            });
+          } catch (fetchError) {
+            // B3 hanging-fetch boundary: translate AbortSignal.timeout
+            // AbortError/TimeoutError into the existing PROVIDER_ERROR shape
+            // so the upstream fallback chain can advance to the next provider
+            // instead of blocking on a hung endpoint indefinitely.
+            if (fetchError instanceof Error && (fetchError.name === "TimeoutError" || fetchError.name === "AbortError")) {
+              throw new FridayDomainError(
+                FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.PROVIDER_ERROR,
+                `Provider ${provider.name} extraction timed out after ${fetchTimeoutMs}ms`,
+                { httpStatus: 504, retryable: true, details: { providerId: provider.id, timeoutMs: fetchTimeoutMs } },
+              );
+            }
+            throw fetchError;
+          }
 
           if (!response.ok) {
             const errorText = await response.text();
