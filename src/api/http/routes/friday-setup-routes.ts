@@ -33,6 +33,7 @@ import type { FridaySupportedChannelKind } from "#channels";
 import { FridayDomainError } from "#errors";
 import { validateGatewayUrl } from "../../../agent/tools/friday-agent-gateway-validation.js";
 import { parseFridaySecretInput } from "../../../security/friday-secret-ref.js";
+import { isFridayLoopbackAddress } from "../friday-http-client-ip.js";
 
 // ─── Types ───
 
@@ -1898,6 +1899,51 @@ export function createFridaySetupRoutes(
   deps: FridaySetupRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
 
+  /**
+   * B0 Slice A3 — setup bootstrap boundary.
+   *
+   * Scoped first-boot-only gate for the 11 mutating setup-wizard routes.
+   * This is a **bootstrap boundary, not an identity/authentication boundary**:
+   * loopback alone is NOT treated as trusted identity for any other route family.
+   *
+   * Each mutating setup route invokes this assertion FIRST, before any side
+   * effect, to enforce:
+   *   1. request originates from a loopback address (127.0.0.1 / ::1 / localhost)
+   *   2. `friday_setup_state.setup_completed_at IS NULL` (still first-boot)
+   *
+   * After `setup.complete` succeeds, every setup-wizard mutation is permanently
+   * fail-closed regardless of source IP. Negative tests cover both rejection
+   * paths per route.
+   *
+   * The effective trust source for `ctx.ip` is the server's trust-proxy policy
+   * (see `resolveFridayClientIp` in `friday-http-client-ip.ts` and the
+   * `FRIDAY_HTTP_TRUST_PROXY` env var, which defaults to "off"). Operators who
+   * set `FRIDAY_HTTP_TRUST_PROXY=private_network` widen this bootstrap window
+   * to private-network reachable first-boot — that is an operator-explicit
+   * choice, not a default capability of this boundary.
+   *
+   * If a future setup flow needs to run from a non-localhost client (e.g.
+   * remote-paired setup), STOP and design a separate setup-session-token
+   * boundary — do not relax this assertion.
+   */
+  function assertSetupBootstrapBoundary(ctx: { ip?: string }): void {
+    if (!isFridayLoopbackAddress(ctx.ip)) {
+      throw new FridayDomainError(
+        "SETUP_BOOTSTRAP_NOT_ALLOWED_NON_LOCALHOST",
+        "Setup is only allowed from localhost during first boot.",
+        { httpStatus: 403 },
+      );
+    }
+    const state = getSetupState();
+    if (state.setup_completed_at !== null) {
+      throw new FridayDomainError(
+        "SETUP_ALREADY_COMPLETED",
+        "Setup has already completed; this bootstrap route is no longer accessible.",
+        { httpStatus: 409 },
+      );
+    }
+  }
+
   function getSetupState(): SetupStateRow {
     return deps.db.withReadConnection((db) => {
       const row = db.prepare("SELECT * FROM friday_setup_state WHERE id = 'singleton'").get() as SetupStateRow | undefined;
@@ -1995,13 +2041,17 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/providers/detect ───
+    // B0 Slice A3 carve-out: bootstrap boundary (localhost + setup_completed_at IS NULL).
+    // See assertSetupBootstrapBoundary above and negative tests in
+    // test/unit/api/http/routes/friday-setup-routes.test.ts.
     {
       operationId: "providers.detect",
       method: "POST",
       path: "/v1/providers/detect",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "provider.validate",
       async handler(ctx): Promise<DetectProviderResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as DetectProviderRequest | null;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
@@ -2191,12 +2241,14 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/network ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.network.save",
       method: "POST",
       path: "/v1/setup/network",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupNetworkResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupNetworkRequest | null;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
@@ -2256,23 +2308,27 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/channels/feishu/registration/begin ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.feishu.registration.begin",
       method: "POST",
       path: "/v1/setup/channels/feishu/registration/begin",
-      auth: { public: true },
-      async handler(): Promise<SetupFeishuRegistrationBeginResponse> {
+      auth: { public: true, allowUnauthenticatedMutation: true },
+      async handler(ctx): Promise<SetupFeishuRegistrationBeginResponse> {
+        assertSetupBootstrapBoundary(ctx);
         return beginFeishuAppRegistration();
       },
     },
 
     // ─── POST /v1/setup/channels/feishu/registration/poll ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.feishu.registration.poll",
       method: "POST",
       path: "/v1/setup/channels/feishu/registration/poll",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupFeishuRegistrationPollResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupFeishuRegistrationPollRequest | null;
         const registrationId = typeof body?.registrationId === "string" ? body.registrationId.trim() : "";
         if (!registrationId) {
@@ -2287,23 +2343,27 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/channels/telegram/verification/begin ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.telegram.verification.begin",
       method: "POST",
       path: "/v1/setup/channels/telegram/verification/begin",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupTelegramVerificationBeginResponse> {
+        assertSetupBootstrapBoundary(ctx);
         return beginTelegramVerification(ctx.body as SetupTelegramVerificationBeginRequest | null);
       },
     },
 
     // ─── POST /v1/setup/channels/telegram/verification/poll ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.telegram.verification.poll",
       method: "POST",
       path: "/v1/setup/channels/telegram/verification/poll",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupTelegramVerificationPollResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupTelegramVerificationPollRequest | null;
         const verificationId = typeof body?.verificationId === "string" ? body.verificationId.trim() : "";
         if (!verificationId) {
@@ -2318,34 +2378,40 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/channels/discord/verification/begin ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.discord.verification.begin",
       method: "POST",
       path: "/v1/setup/channels/discord/verification/begin",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupDiscordVerificationBeginResponse> {
+        assertSetupBootstrapBoundary(ctx);
         return beginDiscordVerification(ctx.body as SetupDiscordVerificationBeginRequest | null);
       },
     },
 
     // ─── POST /v1/setup/channels/discord/verification/complete ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.discord.verification.complete",
       method: "POST",
       path: "/v1/setup/channels/discord/verification/complete",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupDiscordVerificationCompleteResponse> {
+        assertSetupBootstrapBoundary(ctx);
         return completeDiscordVerification(ctx.body as SetupDiscordVerificationCompleteRequest | null);
       },
     },
 
     // ─── POST /v1/setup/channels/test ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.test",
       method: "POST",
       path: "/v1/setup/channels/test",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupChannelTestResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupChannelTestRequest | null;
         if (!body || typeof body !== "object" || typeof body.kind !== "string") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body must contain a channel kind", { httpStatus: 400 });
@@ -2373,12 +2439,14 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/channels ───
+    // B0 Slice A3 carve-out: bootstrap boundary.
     {
       operationId: "setup.channels.save",
       method: "POST",
       path: "/v1/setup/channels",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupChannelsResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupChannelsRequest | null;
         if (!body || typeof body !== "object" || !Array.isArray(body.channels)) {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body must contain a channels array", { httpStatus: 400 });
@@ -2562,12 +2630,18 @@ export function createFridaySetupRoutes(
     },
 
     // ─── POST /v1/setup/complete ───
+    // B0 Slice A3 carve-out: bootstrap boundary. After this route succeeds and
+    // setup_completed_at is set, all 11 setup-wizard mutations (including this
+    // one) become permanently fail-closed. A second call returns 409
+    // SETUP_ALREADY_COMPLETED — clients should check setup.status to confirm
+    // outcome rather than rely on idempotent retries here.
     {
       operationId: "setup.complete",
       method: "POST",
       path: "/v1/setup/complete",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx): Promise<SetupCompleteResponse> {
+        assertSetupBootstrapBoundary(ctx);
         const body = ctx.body as SetupCompleteRequest | null;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
