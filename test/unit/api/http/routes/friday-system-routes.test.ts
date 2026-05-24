@@ -118,15 +118,27 @@ describe("createFridaySystemRoutes", () => {
   it("returns authenticated system route definitions", () => {
     const routes = createFridaySystemRoutes(makeDeps());
     expect(routes.length).toBeGreaterThan(0);
-    // Three pre-auth carve-outs require allowUnauthenticatedMutation:true
-    // because their handler delegates to a WebAuthn / one-time-token verifier
-    // that fails closed without a side effect when the input is bad. All other
-    // routes remain {public:true} only and rely on the server-level
-    // public-mutation gate.
+    // Pre-auth carve-outs require allowUnauthenticatedMutation:true. Slice A
+    // (PR #298) carved out the three .verify / sessions.create routes whose
+    // handlers consume a one-time WebAuthn challenge or assertion token. B0
+    // Slice A4 adds four more: the .options challenge issuance pair (challenge
+    // is single-use, server-bound, device-bound, time-limited; downstream
+    // .verify is the trust handle), and the sessions.heartbeat / sessions.delete
+    // pair (sessionId is a high-entropy server-issued UUID bearer, verified by
+    // the underlying remote-session service before any mutation). All other
+    // routes remain {public:true} only and rely on the Slice A server-level
+    // public-mutation gate; device-management routes intentionally stay
+    // default-blocked because their handlers have no in-process verifier.
     const carveOutOps = new Set([
+      // Slice A:
       "system.remote.auth.register.verify",
       "system.remote.auth.assert.verify",
       "system.remote.sessions.create",
+      // Slice A4:
+      "system.remote.auth.register.options",
+      "system.remote.auth.assert.options",
+      "system.remote.sessions.heartbeat",
+      "system.remote.sessions.delete",
     ]);
     for (const route of routes) {
       expect(route.path).toMatch(/^\/v1\/system\//);
@@ -555,5 +567,185 @@ describe("createFridaySystemRoutes", () => {
     // No downstream heartbeat or close on rejected open.
     expect(deps.remote.heartbeatSession).not.toHaveBeenCalled();
     expect(deps.remote.closeSession).not.toHaveBeenCalled();
+  });
+
+  // ─── B0 Slice A4: WebAuthn challenge-issuance + session-bearer carve-outs ───
+
+  it("A4: register.options + assert.options + sessions.heartbeat + sessions.delete declare the carve-out flag; devices.* routes do NOT", () => {
+    const routes = createFridaySystemRoutes(makeDeps());
+    const flagged = new Map<string, boolean>();
+    for (const r of routes) {
+      if (typeof r.auth === "object" && r.auth.public === true) {
+        flagged.set(
+          r.operationId,
+          (r.auth as { allowUnauthenticatedMutation?: true }).allowUnauthenticatedMutation === true,
+        );
+      }
+    }
+
+    // A4 carve-outs (this slice):
+    expect(flagged.get("system.remote.auth.register.options")).toBe(true);
+    expect(flagged.get("system.remote.auth.assert.options")).toBe(true);
+    expect(flagged.get("system.remote.sessions.heartbeat")).toBe(true);
+    expect(flagged.get("system.remote.sessions.delete")).toBe(true);
+
+    // Already carved out in Slice A (re-verified, not duplicated):
+    expect(flagged.get("system.remote.auth.register.verify")).toBe(true);
+    expect(flagged.get("system.remote.auth.assert.verify")).toBe(true);
+    expect(flagged.get("system.remote.sessions.create")).toBe(true);
+
+    // Default-blocked by Slice A's gate (NO carve-out — device-management requires
+    // an authenticated bound principal; no pre-auth use case):
+    expect(flagged.get("system.remote.devices.register")).toBe(false);
+    expect(flagged.get("system.remote.devices.delete")).toBe(false);
+    expect(flagged.get("system.remote.devices.passkey.delete")).toBe(false);
+  });
+
+  it("A4 register.options: missing deviceId rejects before challenge issued", async () => {
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.auth.register.options");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          body: { idempotencyKey: "reg-options-1" }, // deviceId omitted
+          principal: null, // synthetic-public principal (reaches the handler via carve-out)
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    // Verifier-side proof: no challenge issued, no other passkey state changed.
+    expect(deps.remoteAuth.beginRegistration).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.verifyRegistration).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.beginAssertion).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.verifyAssertion).not.toHaveBeenCalled();
+  });
+
+  it("A4 assert.options: missing deviceId rejects before challenge issued", async () => {
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.auth.assert.options");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          body: { idempotencyKey: "assert-options-1" }, // deviceId omitted
+          principal: null,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    expect(deps.remoteAuth.beginAssertion).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.verifyAssertion).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.beginRegistration).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.verifyRegistration).not.toHaveBeenCalled();
+  });
+
+  it("A4 sessions.heartbeat: unknown sessionId is verified by deps.remote and does not mutate other sessions", async () => {
+    // Simulate the underlying behavior of `systemService.touchRemoteSession`:
+    // an unknown sessionId returns null without any write
+    // (`src/system/engine/friday-system-service.ts:1746-1755`).
+    const deps = makeDeps({
+      remote: {
+        list: vi.fn(),
+        register: vi.fn(),
+        revoke: vi.fn(),
+        clearPasskey: vi.fn(),
+        listSessions: vi.fn(),
+        openSession: vi.fn(),
+        heartbeatSession: vi.fn().mockResolvedValue({ session: null }),
+        closeSession: vi.fn(),
+      },
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.sessions.heartbeat");
+
+    const result = await route.handler(
+      makeCtx({
+        params: { sessionId: "00000000-0000-4000-8000-000000000000" }, // forged but well-formed UUID
+        body: { idempotencyKey: "hb-1" },
+        principal: null, // synthetic-public reaches handler via carve-out
+      }),
+    );
+
+    // Handler returns the verifier's null verdict truthfully; no other session
+    // is touched, no session is closed, no device is registered.
+    expect(result).toEqual({ session: null });
+    expect(deps.remote.heartbeatSession).toHaveBeenCalledTimes(1);
+    expect(deps.remote.heartbeatSession).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000000",
+      expect.objectContaining({ idempotencyKey: "hb-1" }),
+      expect.any(Object),
+    );
+    expect(deps.remote.closeSession).not.toHaveBeenCalled();
+    expect(deps.remote.openSession).not.toHaveBeenCalled();
+    expect(deps.remote.register).not.toHaveBeenCalled();
+    expect(deps.remote.revoke).not.toHaveBeenCalled();
+  });
+
+  it("A4 sessions.delete: unknown sessionId yields closed=false without side effect on other sessions", async () => {
+    // Underlying `repository.closeRemoteSession` targets the row by id; an
+    // unknown id affects 0 rows. The handler returns the truthful boolean.
+    const deps = makeDeps({
+      remote: {
+        list: vi.fn(),
+        register: vi.fn(),
+        revoke: vi.fn(),
+        clearPasskey: vi.fn(),
+        listSessions: vi.fn(),
+        openSession: vi.fn(),
+        heartbeatSession: vi.fn(),
+        closeSession: vi.fn().mockResolvedValue({
+          closed: false,
+          sessionId: "00000000-0000-4000-8000-000000000001",
+        }),
+      },
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.sessions.delete");
+
+    const result = await route.handler(
+      makeCtx({
+        params: { sessionId: "00000000-0000-4000-8000-000000000001" },
+        principal: null,
+      }),
+    );
+
+    expect(result).toEqual({ closed: false, sessionId: "00000000-0000-4000-8000-000000000001" });
+    expect(deps.remote.closeSession).toHaveBeenCalledTimes(1);
+    expect(deps.remote.heartbeatSession).not.toHaveBeenCalled();
+    expect(deps.remote.openSession).not.toHaveBeenCalled();
+    expect(deps.remote.register).not.toHaveBeenCalled();
+    expect(deps.remote.revoke).not.toHaveBeenCalled();
+  });
+
+  it("A4 regression: authenticated principal can still call all 4 system.remote.* routes the slice carved out (register.options + assert.options + sessions.heartbeat + sessions.delete)", async () => {
+    // Sanity-check that A4 did not break the authenticated admin flow that was
+    // already working under Slice A. The makeCtx default principal is an
+    // authenticated admin.
+    const deps = makeDeps();
+    const routes = createFridaySystemRoutes(deps);
+
+    await findRoute(routes, "system.remote.auth.register.options").handler(
+      makeCtx({ body: { deviceId: "device-1", idempotencyKey: "reg-opt-key" } }),
+    );
+    await findRoute(routes, "system.remote.auth.assert.options").handler(
+      makeCtx({ body: { deviceId: "device-1", idempotencyKey: "assert-opt-key" } }),
+    );
+    await findRoute(routes, "system.remote.sessions.heartbeat").handler(
+      makeCtx({
+        params: { sessionId: "remote-session-1" },
+        body: { idempotencyKey: "hb-key" },
+      }),
+    );
+    await findRoute(routes, "system.remote.sessions.delete").handler(
+      makeCtx({ params: { sessionId: "remote-session-1" } }),
+    );
+
+    expect(deps.remoteAuth.beginRegistration).toHaveBeenCalledTimes(1);
+    expect(deps.remoteAuth.beginAssertion).toHaveBeenCalledTimes(1);
+    expect(deps.remote.heartbeatSession).toHaveBeenCalledTimes(1);
+    expect(deps.remote.closeSession).toHaveBeenCalledTimes(1);
   });
 });

@@ -328,7 +328,16 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.register.options",
       method: "POST",
       path: "/v1/system/remote/auth/register/options",
-      auth: { public: true },
+      // B0 Slice A4 carve-out: WebAuthn registration challenge issuance is
+      // pre-auth by protocol design — the device has no bearer yet. The challenge
+      // itself is the trust handle for the downstream .register.verify step
+      // (already carved out in Slice A): server-issued challengeId, device-bound
+      // via the supplied deviceId, single-use (consumed in .verify), time-limited
+      // via challengeTtlMs. No persistent credential or session is granted by
+      // this endpoint. Negative test:
+      // test/unit/api/http/routes/friday-system-routes.test.ts
+      // ("A4 register.options: missing deviceId rejects before challenge issued").
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const body = ctx.body as FridayBeginSystemRemotePasskeyRegistrationRequest;
         requireString(body, "deviceId");
@@ -364,7 +373,13 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.assert.options",
       method: "POST",
       path: "/v1/system/remote/auth/assert/options",
-      auth: { public: true },
+      // B0 Slice A4 carve-out: WebAuthn assertion challenge issuance is pre-auth
+      // by protocol design — same rationale as register.options. Single-use,
+      // server-bound, device-bound, time-limited challenge consumed by the
+      // already-carved-out .assert.verify route. Negative test:
+      // test/unit/api/http/routes/friday-system-routes.test.ts
+      // ("A4 assert.options: missing deviceId rejects before challenge issued").
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const body = ctx.body as FridayBeginSystemRemotePasskeyAssertionRequest;
         requireString(body, "deviceId");
@@ -437,7 +452,20 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.heartbeat",
       method: "POST",
       path: "/v1/system/remote/sessions/:sessionId/heartbeat",
-      auth: { public: true },
+      // B0 Slice A4 carve-out: the remote-session id minted by the carved-out
+      // `sessions.create` (which itself verifies the one-time assertionToken from
+      // a prior verifyAssertion step) is the trust handle here. The sessionId is
+      // a high-entropy server-issued UUIDv4, bound to a specific device row, and
+      // its lifecycle is owned by the server. Trust is verified by
+      // `deps.remote.heartbeatSession` → `systemService.touchRemoteSession`
+      // (`src/system/engine/friday-system-service.ts:1746-1794`): on unknown
+      // sessionId the lookup returns null before any write; on an inactive
+      // session the existing row is returned without touch; on a revoked device
+      // the session is auto-closed instead of touched. Negative test:
+      // test/unit/api/http/routes/friday-system-routes.test.ts
+      // ("A4 sessions.heartbeat: unknown sessionId is verified by deps.remote
+      //  and does not mutate state").
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const { sessionId } = ctx.params as { sessionId: string };
         const body = ctx.body as FridayHeartbeatSystemRemoteSessionRequest;
@@ -452,7 +480,16 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.delete",
       method: "DELETE",
       path: "/v1/system/remote/sessions/:sessionId",
-      auth: { public: true },
+      // B0 Slice A4 carve-out: same sessionId-bearer rationale as
+      // sessions.heartbeat above. `deps.remote.closeSession` ultimately calls
+      // `repository.closeRemoteSession(db, id, ...)` which targets the row by id
+      // — an unknown id affects zero rows. The handler returns
+      // `{ closed: <bool>, sessionId }` truthfully reflecting whether a row was
+      // closed; no other session state is mutated. Negative test:
+      // test/unit/api/http/routes/friday-system-routes.test.ts
+      // ("A4 sessions.delete: unknown sessionId yields closed=false without
+      //  side effect on other sessions").
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const { sessionId } = ctx.params as { sessionId: string };
         return deps.remote.closeSession(sessionId);
