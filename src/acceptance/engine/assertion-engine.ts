@@ -15,12 +15,9 @@ import { FridayDomainError } from "#errors";
  * @module acceptance/engine
  */
 
-import * as vm from "node:vm";
-
 import type {
   FridayAcceptanceCheckConfig,
   FridayAcceptanceCustomCheckConfig,
-  FridayAcceptanceEvidence,
   FridayAcceptanceQualityCheckConfig,
   FridayAcceptanceQualityDimension,
   FridayAcceptanceQuantCheckConfig,
@@ -46,7 +43,6 @@ export type CustomAssertionHandler = (
 
 /** Internal registry mapping handler references to implementations. */
 const customHandlers = new Map<string, CustomAssertionHandler>();
-const SANDBOX_TIMEOUT_MS = 250;
 
 /**
  * Register a custom assertion handler.
@@ -587,38 +583,28 @@ function evaluateCustomAssertion(
   const handler = customHandlers.get(config.handlerRef);
 
   if (!handler) {
-    const script = typeof config.handlerConfig?.script === "string"
-      ? config.handlerConfig.script
-      : undefined;
-    if (script) {
-      try {
-        return executeSandboxedCustomAssertion(checkId, content, config, script);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          verdict: "fail",
-          severity: "critical",
-          evidence: [{
-            checkId,
-            checkType: "custom",
-            message: `Sandboxed custom check failed: ${message}`,
-            expected: config.handlerRef,
-            actual: null,
-            metadata: { error: message },
-          }],
-        };
-      }
-    }
-
+    // Locked decision GEC-007 — untrusted code does not execute in-process.
+    // Custom checks must use a registered in-process handler installed via
+    // `registerCustomHandler`. Ad-hoc inline scripts supplied via
+    // `handlerConfig.script` are denied by policy regardless of source;
+    // historical `node:vm` execution has been removed because `vm` is not a
+    // security mechanism. Operators who need custom verdict logic should
+    // either register a handler at runtime construction or route the check
+    // through an out-of-process verifier.
+    const inlineScriptPresent = typeof config.handlerConfig?.script === "string";
+    const message = inlineScriptPresent
+      ? `Custom handler "${config.handlerRef}" not registered. Inline handlerConfig.script is disabled by policy (GEC-007 — untrusted code does not run in-process); register the handler via registerCustomHandler() before referencing it.`
+      : `Custom handler "${config.handlerRef}" not found`;
     return {
       verdict: "fail",
       severity: "critical",
       evidence: [{
         checkId,
         checkType: "custom",
-        message: `Custom handler "${config.handlerRef}" not found`,
+        message,
         expected: config.handlerRef,
         actual: null,
+        ...(inlineScriptPresent ? { metadata: { policy: "inline_scripts_disabled" } } : {}),
       }],
     };
   }
@@ -640,99 +626,6 @@ function evaluateCustomAssertion(
       }],
     };
   }
-}
-
-function executeSandboxedCustomAssertion(
-  checkId: UUID,
-  content: JsonValue,
-  config: FridayAcceptanceCustomCheckConfig,
-  scriptSource: string,
-): FridayAcceptanceVerdict {
-  const wrapped = [
-    "(function () {",
-    "\"use strict\";",
-    "const content = JSON.parse(__contentJson);",
-    "const config = JSON.parse(__configJson);",
-    "const result = (() => {",
-    scriptSource,
-    "})();",
-    "return result;",
-    "})()",
-  ].join("\n");
-  const sandbox = Object.create(null) as {
-    __contentJson: string;
-    __configJson: string;
-  };
-  Object.defineProperties(sandbox, {
-    __contentJson: {
-      value: JSON.stringify(content),
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    },
-    __configJson: {
-      value: JSON.stringify(config.handlerConfig ?? {}),
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    },
-  });
-  const script = new vm.Script(wrapped, {
-    filename: `friday-acceptance-custom-${config.handlerRef}.vm.js`,
-  });
-  const context = vm.createContext(sandbox, {
-    name: `friday-acceptance-custom-${config.handlerRef}`,
-    codeGeneration: {
-      strings: false,
-      wasm: false,
-    },
-  });
-  const result = script.runInContext(context, {
-    timeout: SANDBOX_TIMEOUT_MS,
-  }) as Partial<FridayAcceptanceVerdict> | undefined;
-
-  if (!result || typeof result !== "object") {
-    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check must return a verdict object", { httpStatus: 400 });
-  }
-
-  const verdict = result.verdict;
-  const severity = result.severity;
-  if (verdict !== "pass" && verdict !== "fail" && verdict !== "warn") {
-    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check returned an invalid verdict", { httpStatus: 400 });
-  }
-  if (severity !== "critical" && severity !== "major" && severity !== "minor" && severity !== "info") {
-    throw new FridayDomainError("VALIDATION_ERROR", "Sandboxed custom check returned an invalid severity", { httpStatus: 400 });
-  }
-
-  const evidence = Array.isArray(result.evidence)
-    ? result.evidence.map((entry) => ({
-      checkId,
-      checkType: "custom" as const,
-      message: typeof entry?.message === "string" ? entry.message : "Sandboxed custom check emitted evidence",
-      expected: (entry as FridayAcceptanceEvidence | undefined)?.expected,
-      actual: (entry as FridayAcceptanceEvidence | undefined)?.actual,
-      metadata: {
-        ...(typeof (entry as FridayAcceptanceEvidence | undefined)?.metadata === "object"
-          && (entry as FridayAcceptanceEvidence | undefined)?.metadata !== null
-          ? (entry as FridayAcceptanceEvidence).metadata
-          : {}),
-        sandboxed: true,
-      },
-    }))
-    : [{
-      checkId,
-      checkType: "custom" as const,
-      message: `Sandboxed custom check "${config.handlerRef}" completed`,
-      expected: config.handlerRef,
-      actual: verdict,
-      metadata: { sandboxed: true },
-    }];
-
-  return {
-    verdict,
-    severity,
-    evidence,
-  };
 }
 
 // ─── Main Assertion Engine ───
