@@ -39,6 +39,7 @@ describe("createFridayObservabilityApiService", () => {
   function createService(options?: {
     browserDiagnosticsProvider?: Parameters<typeof createFridayObservabilityApiService>[0]["browserDiagnosticsProvider"];
     webhookTimeoutMs?: number;
+    smtpTimeoutMs?: number;
   }) {
     const db = createTestDb();
     allocatedDbs.push(db);
@@ -48,6 +49,7 @@ describe("createFridayObservabilityApiService", () => {
       nowIso: () => NOW,
       browserDiagnosticsProvider: options?.browserDiagnosticsProvider,
       webhookTimeoutMs: options?.webhookTimeoutMs,
+      smtpTimeoutMs: options?.smtpTimeoutMs,
     });
   }
 
@@ -754,6 +756,82 @@ describe("createFridayObservabilityApiService", () => {
       expect(conversations.join("")).toContain("RCPT TO:<ops@example.com>");
       expect(conversations.join("")).toContain("Repeated self-healing failures");
     } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  // B2 hanging-fetch boundary (sibling to slack-webhook): an SMTP server that
+  // accepts the TCP connection but never writes the 220 greeting must NOT
+  // block the dispatch loop forever. Either the connect-deadline OR the
+  // post-connect per-operation timeout must fire and surface as a failed
+  // attempt with a clear timeout error message.
+  it("B2 hanging-fetch: SMTP dispatch fails fast when the endpoint never replies after connect", async () => {
+    // Server accepts connections but never writes a 220 greeting and never
+    // responds to commands. sendSmtpMail's first `readResponse("220")` is the
+    // one that hangs without a timeout — the socket inactivity timer must
+    // fire.
+    const heldSockets: net.Socket[] = [];
+    const server = net.createServer((socket) => {
+      heldSockets.push(socket);
+      // Intentionally never write anything.
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a bound SMTP server address");
+    }
+
+    try {
+      // 80ms keeps the test fast (3 attempts × 80ms ≈ 240ms + ~75ms backoff
+      // ≈ 315ms total) while staying above typical CI scheduler jitter.
+      const service = createService({ smtpTimeoutMs: 80 });
+      const destination = await service.routes.alertDestinations.create({
+        type: "email",
+        name: "Hanging Email",
+        recipients: ["ops@example.com"],
+        fromAddress: "alerts@example.com",
+        smtpHost: "127.0.0.1",
+        smtpPort: address.port,
+        password: "smtp-password", // pragma: allowlist secret
+      });
+
+      service.recordSelfHealingProcessResults({
+        results: [
+          {
+            incidentsCreated: [
+              { incidentId: "smtp-hang-a", userId: "user-1", category: "workflow", severity: "high", signature: "fail-a", status: "open", createdAt: NOW },
+              { incidentId: "smtp-hang-b", userId: "user-1", category: "workflow", severity: "high", signature: "fail-b", status: "open", createdAt: NOW },
+              { incidentId: "smtp-hang-c", userId: "user-1", category: "workflow", severity: "high", signature: "fail-c", status: "open", createdAt: NOW },
+            ],
+            diagnosisCreated: [],
+          },
+        ],
+      });
+      await service.drainAuditWrites();
+
+      const alert = service.routes.alerts.list({}).items[0];
+      expect(alert).toBeDefined();
+
+      const dispatchStart = Date.now();
+      const response = await service.routes.alerts.testDispatch(alert!.id, {
+        destinationId: destination.destination.id,
+      });
+      const dispatchDuration = Date.now() - dispatchStart;
+
+      // Fail-fast proof: 3 attempts each ~80ms + ~75ms backoff. Cap at 5s so
+      // the test catches a real hang, not jitter.
+      expect(dispatchDuration).toBeLessThan(5_000);
+
+      expect(response.attempts.length).toBeGreaterThanOrEqual(1);
+      for (const attempt of response.attempts) {
+        expect(attempt.status).toBe("failed");
+        expect(attempt.errorMessage).toMatch(/timed out|inactive for/i);
+        expect(attempt.errorMessage).toMatch(/80ms/);
+      }
+    } finally {
+      for (const socket of heldSockets) {
+        socket.destroy();
+      }
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });

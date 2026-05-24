@@ -317,10 +317,22 @@ export interface CreateFridayObservabilityApiServiceDeps {
    * and `src/providers/oauth/friday-anthropic-oauth.ts`).
    */
   webhookTimeoutMs?: number;
+  /**
+   * Per-attempt timeout (ms) for outbound SMTP alert-email dispatch.
+   *
+   * B2 hanging-fetch boundary (sibling to webhookTimeoutMs): without this,
+   * `sendSmtpMail` could hang indefinitely against an unresponsive SMTP
+   * endpoint — either during TCP/TLS connect or while waiting for any
+   * `readResponse` between commands. Default 10s matches the webhook timeout.
+   */
+  smtpTimeoutMs?: number;
 }
 
 /** Default per-attempt timeout for the slack-webhook fetch. */
 const FRIDAY_DEFAULT_WEBHOOK_TIMEOUT_MS = 10_000;
+
+/** Default per-attempt timeout for SMTP socket operations. */
+const FRIDAY_DEFAULT_SMTP_TIMEOUT_MS = 10_000;
 
 export const FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID = "builtin-self-healing-repeat-failures";
 const BUILT_IN_ALERT_DISPATCH_FAILURE_RULE_ID = "builtin-alert-dispatch-failures";
@@ -657,9 +669,24 @@ async function sendSmtpMail(input: {
   recipients: string[];
   subject: string;
   body: string;
+  /** Hard inactivity / connect deadline. Each read or connect attempt must
+   *  complete within this many milliseconds, or the socket is destroyed and
+   *  the operation rejects with a clear timeout error. */
+  timeoutMs: number;
 }): Promise<void> {
   const socket = await new Promise<net.Socket | tls.TLSSocket>((resolve, reject) => {
-    const onError = (error: Error) => reject(error);
+    let settled = false;
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectTimer);
+      reject(error);
+    };
+    const connectTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`SMTP connection to ${input.host}:${input.port} timed out after ${input.timeoutMs}ms`));
+    }, input.timeoutMs);
     if (input.secure) {
       const connection = tls.connect(
         {
@@ -667,13 +694,32 @@ async function sendSmtpMail(input: {
           port: input.port,
           servername: input.host,
         },
-        () => resolve(connection),
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(connectTimer);
+          resolve(connection);
+        },
       );
       connection.once("error", onError);
       return;
     }
-    const connection = net.connect({ host: input.host, port: input.port }, () => resolve(connection));
+    const connection = net.connect({ host: input.host, port: input.port }, () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(connectTimer);
+      resolve(connection);
+    });
     connection.once("error", onError);
+  });
+
+  // B2 hanging-fetch boundary: per-operation inactivity timeout. If any
+  // subsequent readResponse waits longer than `timeoutMs` for the next byte,
+  // node emits 'timeout'; destroy the socket so the pending readResponse
+  // rejects via its 'error' listener with a clear timeout message.
+  socket.setTimeout(input.timeoutMs);
+  socket.on("timeout", () => {
+    socket.destroy(new Error(`SMTP server at ${input.host}:${input.port} inactive for ${input.timeoutMs}ms`));
   });
 
   let buffer = "";
@@ -1543,17 +1589,36 @@ export function createFridayObservabilityApiService(
         if (!password && destination.config.username) {
           throw new FridayDomainError("NOT_FOUND", `Missing SMTP password secret for ${destination.id}`, { httpStatus: 404 });
         }
-        await sendSmtpMail({
-          host: destination.config.smtpHost,
-          port: destination.config.smtpPort,
-          secure: destination.config.smtpSecure,
-          username: destination.config.username,
-          password: password ?? undefined,
-          fromAddress: destination.config.fromAddress,
-          recipients: destination.config.recipients,
-          subject,
-          body,
-        });
+        const smtpTimeoutMs = deps.smtpTimeoutMs ?? FRIDAY_DEFAULT_SMTP_TIMEOUT_MS;
+        try {
+          await sendSmtpMail({
+            host: destination.config.smtpHost,
+            port: destination.config.smtpPort,
+            secure: destination.config.smtpSecure,
+            username: destination.config.username,
+            password: password ?? undefined,
+            fromAddress: destination.config.fromAddress,
+            recipients: destination.config.recipients,
+            subject,
+            body,
+            timeoutMs: smtpTimeoutMs,
+          });
+        } catch (smtpError) {
+          // B2 hanging-fetch boundary: translate SMTP connect/inactivity
+          // timeout into a domain-typed 504 so the failure is recoverable
+          // and the retry loop can advance per-attempt instead of hanging.
+          // Other SMTP failures (auth refusal, recipient rejection, real
+          // network errors) propagate via the outer catch with their
+          // original message.
+          if (smtpError instanceof Error && /timed out|inactive for/i.test(smtpError.message)) {
+            throw new FridayDomainError(
+              "OBSERVABILITY_SMTP_TIMEOUT",
+              smtpError.message,
+              { httpStatus: 504, retryable: true, details: { destinationId: destination.id, timeoutMs: smtpTimeoutMs } },
+            );
+          }
+          throw smtpError;
+        }
       }
 
       incrementCounter("friday.observability.alert_dispatches.total");
