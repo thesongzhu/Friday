@@ -157,6 +157,27 @@ export interface FridayChannelPlugin {
    * Start receiving messages.
    * Opens gateway/websocket connections and begins message ingestion.
    * Calls `onMessage` for each inbound message.
+   *
+   * **Precedence with `adapters.lifecycle`** (B1 channel-registry lifecycle):
+   * When the plugin also declares `adapters.lifecycle`, the channel registry
+   * uses `adapters.lifecycle.connect()` exclusively — `start()` is NOT called
+   * from the registry path. Plugins that ship both MUST ensure `start()` is
+   * either:
+   *   - a safe delegate to `lifecycle.connect()` with a re-entry guard so a
+   *     subsequent manual `start()` call after the registry has already
+   *     connected is a no-op (see `friday-discord-channel.ts:349-357` for the
+   *     reference idiom: `start()` delegates to `lifecycleAdapter.connect`,
+   *     and the lifecycle adapter's `connect` has a "if connected, return"
+   *     guard at the top), OR
+   *   - genuinely a no-op stub for non-registry callers.
+   *
+   * A plugin that has `adapters.lifecycle` AND a `start()` that does
+   * meaningful work distinct from `lifecycle.connect()` will silently lose
+   * the `start()` behavior under registry-managed activation. The QQ channel
+   * was such a plugin (now labeled unsupported in `FRIDAY_UNSUPPORTED_CHANNEL_KINDS`)
+   * — the fix for QQ when it is re-enabled must collapse its `start()` and
+   * `lifecycle.connect()` into a single source of truth before re-listing it
+   * in `FRIDAY_SUPPORTED_CHANNEL_KINDS`.
    */
   start(onMessage: (msg: FridayChannelMessage) => void): Promise<void>;
 
