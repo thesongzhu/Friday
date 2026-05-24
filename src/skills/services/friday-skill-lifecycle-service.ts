@@ -880,6 +880,28 @@ function enrichSummary(input: {
 export function createFridaySkillLifecycleService(
   deps: CreateFridaySkillLifecycleServiceDeps,
 ): FridaySkillLifecycleService {
+  // B1 truth-labeling: this lifecycle service ships without a wired catalog
+  // backend. `getCatalogCandidates` and `getSource` below are placeholders
+  // that return empty/undefined so summaries built from persisted/registry
+  // state still render. Public `listCatalog` will return an empty result and
+  // `getSkill(...).sourceDetails` / `.catalogEntry` will be undefined regardless
+  // of which skillId is asked for. Emit a one-time INFO so operators reading
+  // diagnostics can see this is a known proof_pending feature, not data loss.
+  console.info(
+    "[friday][skill-lifecycle] Catalog backend is not wired in this build — listCatalog() returns empty and getSkill() omits sourceDetails/catalogEntry. This is proof_pending per B1; persisted + registry-based summaries remain truthful.",
+  );
+
+  /**
+   * B1 catalog stub: returns `[]` for every skillId. The lifecycle service
+   * does not currently have a catalog repository wired through
+   * `CreateFridaySkillLifecycleServiceDeps`. Until a real catalog backend
+   * lands, every catalog-derived field in summaries (`catalogEntry`,
+   * `sourceDetails`, `sourceId`, `latestVersion` derived from catalog, etc.)
+   * is unavailable. Persisted DB state + in-memory registry state still
+   * power the rest of the summary.
+   *
+   * See `listCatalog` and `getSkill` below for the public surface.
+   */
   function getCatalogCandidates(skillId: string): FridaySkillCatalogItem[] {
     void skillId;
     return [];
@@ -903,6 +925,10 @@ export function createFridaySkillLifecycleService(
     );
   }
 
+  /**
+   * B1 catalog-source stub: returns `undefined` for every sourceId. Paired
+   * with `getCatalogCandidates`; see the rationale comment on that function.
+   */
   function getSource(sourceId?: string): FridaySkillSourceEntity | undefined {
     void sourceId;
     return undefined;
@@ -1244,6 +1270,19 @@ export function createFridaySkillLifecycleService(
       return [...summaries.values()].sort((left, right) => left.name.localeCompare(right.name));
     },
 
+    /**
+     * B1 truth-labeling note: this method returns `{ items: [], total: 0 }`
+     * for ALL queries because the lifecycle service ships without a wired
+     * catalog backend (see `getCatalogCandidates` stub above and the
+     * `console.info` advisory at service-creation time). An empty result is
+     * truthful — there ARE no catalog items in this build — but operators
+     * consuming the response should not interpret it as "user has not added
+     * anything"; it means "catalog feature is proof_pending."
+     *
+     * Future: wire a real catalog repository (likely a new dep slot in
+     * `CreateFridaySkillLifecycleServiceDeps`) and update this method + the
+     * `getCatalogCandidates` stub in lock-step.
+     */
     listCatalog(query) {
       void query;
       const result: FridaySkillCatalogResult = { items: [], total: 0 };
@@ -1254,6 +1293,15 @@ export function createFridaySkillLifecycleService(
       };
     },
 
+    /**
+     * B1 truth-labeling note: `sourceDetails` and `catalogEntry` will always be
+     * `undefined` in this build because the catalog backend is not wired
+     * (see `getCatalogCandidates` / `getSource` stubs and the `console.info`
+     * advisory at service-creation time). The persisted-skill + registered-skill
+     * portions of the summary are real; only the catalog-derived enrichments
+     * are unavailable. Callers should not treat the absence of `catalogEntry`
+     * as "no source available" — it means "catalog feature is proof_pending."
+     */
     getSkill(skillId) {
       const summary = buildSummary(skillId);
       if (!summary) {
