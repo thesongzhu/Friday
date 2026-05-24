@@ -179,6 +179,29 @@ function extractShellCommands(content: string): string[] {
   return commands;
 }
 
+// ─── Generator-supported runtime kinds ───
+//
+// B1 truth-labeling: `validateGeneratedCode` only implements runtime-specific
+// safety scans for `node` (UNSUPPORTED_RUNTIME_HELPER_IMPORTS,
+// UNSUPPORTED_RUNTIME_HELPER_CALLS, DANGEROUS_NODE_IMPORTS) and `shell`
+// (shebang enforcement, DANGEROUS_SHELL_PATTERNS, SHELL_COMMAND_ALLOWLIST).
+//
+// The manifest schema (`friday-skill-manifest.schema.ts:50`) accepts five
+// runtime kinds: builtin, node, python, shell, remote-http. Skills with runtime
+// `python` or `remote-http` would currently pass validation WITHOUT any
+// runtime-specific scan because the language detector returns "unknown" for
+// .py / etc, and the node/shell branches do not fire. `builtin` is never a
+// generation target (the hub ships its own builtin skills).
+//
+// Per AUTO_DECISION_POLICY ("prefer truthful unsupported over pretending"),
+// the generator refuses to validate (and therefore refuses to ship) skills
+// whose runtime is not in the safety-scan set. Adding `python` here requires
+// python-specific safety scans (dangerous imports, exec/eval/os.system,
+// subprocess.Popen with shell=True, etc.) — that is a separate slice.
+// Adding `remote-http` requires URL/auth/CORS validation — also a separate
+// slice. `builtin` would require schema changes upstream.
+const GENERATOR_SUPPORTED_RUNTIME_KINDS: ReadonlyArray<SkillManifestV2["runtime"]["kind"]> = ["node", "shell"];
+
 // ─── Main validation function ───
 
 export function validateGeneratedCode(
@@ -187,6 +210,22 @@ export function validateGeneratedCode(
 ): FridayGeneratedSkillValidationIssue[] {
   const issues: FridayGeneratedSkillValidationIssue[] = [];
   const runtimeKind = manifest.runtime.kind;
+
+  // B1 truth-labeling: refuse runtime kinds that have no runtime-specific
+  // safety scans implemented. Without this gate, a generated python skill
+  // would pass validation despite the language-specific safety checks never
+  // running. This is fail-closed against silent unsupported generation.
+  if (!GENERATOR_SUPPORTED_RUNTIME_KINDS.includes(runtimeKind)) {
+    issues.push({
+      code: "RUNTIME_KIND_NOT_GENERATABLE",
+      severity: "error",
+      message: `Generator does not yet support runtime kind "${runtimeKind}" — runtime-specific safety scans are not implemented for this runtime. Supported runtimes: ${GENERATOR_SUPPORTED_RUNTIME_KINDS.join(", ")}.`,
+    });
+    // Fall through to also run per-file checks (count, size, path traversal,
+    // entrypoint existence). Those scans are runtime-agnostic and still useful
+    // when a file list is present, but the RUNTIME_KIND_NOT_GENERATABLE error
+    // alone is sufficient to fail-close generation.
+  }
 
   // File count check
   if (files.length > MAX_FILE_COUNT) {
