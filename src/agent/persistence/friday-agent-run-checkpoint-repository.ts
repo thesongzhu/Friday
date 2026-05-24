@@ -29,6 +29,17 @@ export interface FridayAgentRunCheckpointRepository {
   hasAvailable(runId: string): boolean;
   markUnavailable(runId: string, canonicalPath: string, updatedAt: string): void;
   deleteRun(runId: string): void;
+  /**
+   * List manifest entries whose `snapshot_at` is strictly before `beforeIso`.
+   *
+   * Used by the TTL prune flow to find expired backup state. Returns entries
+   * regardless of `rollbackAvailable` so callers can clean up both rolled-back
+   * (unavailable) entries and abandoned (still-available) entries past the
+   * retention deadline. Sorted by `snapshot_at` ASC.
+   */
+  listOlderThan(beforeIso: string): FridayAgentRunCheckpointManifestEntry[];
+  /** Delete a single manifest entry by (runId, canonicalPath). */
+  deleteEntry(runId: string, canonicalPath: string): void;
 }
 
 export interface CreateFridayAgentRunCheckpointRepositoryDeps {
@@ -136,6 +147,28 @@ export function createFridayAgentRunCheckpointRepository(
     deleteRun(runId) {
       deps.db.withWriteTransaction((db) => {
         db.prepare("DELETE FROM friday_agent_run_checkpoints WHERE run_id = ?").run(runId);
+      });
+    },
+
+    listOlderThan(beforeIso) {
+      return deps.db.withReadConnection((db) => {
+        const rows = db
+          .prepare(
+            `SELECT run_id, canonical_path, original_path, existed_before, backup_path, snapshot_at, rollback_available, updated_at
+               FROM friday_agent_run_checkpoints
+              WHERE snapshot_at < ?
+              ORDER BY snapshot_at ASC`,
+          )
+          .all(beforeIso) as FridayAgentRunCheckpointRow[];
+        return rows.map(mapRow);
+      });
+    },
+
+    deleteEntry(runId, canonicalPath) {
+      deps.db.withWriteTransaction((db) => {
+        db.prepare(
+          "DELETE FROM friday_agent_run_checkpoints WHERE run_id = ? AND canonical_path = ?",
+        ).run(runId, canonicalPath);
       });
     },
   };
