@@ -329,6 +329,32 @@ describe("buildFridayAgentSystemPrompt", () => {
     expect(prompt).toContain("A read-only run still may use the current conversation history");
   });
 
+  it("B3 truth-labeling: memory_search recall instruction documents scope limits and forbids fabricated memory", () => {
+    // Prior version of the prompt promised broad auto-recall ("proactively
+    // search memory ... if relevant memories exist, incorporate them") which
+    // overstated what memory_search actually does — the tool is scoped to the
+    // current agent/session namespace and may return zero results even when a
+    // match conceptually exists. This assertion locks the truthful framing
+    // into the prompt so future edits cannot silently regress to the broad
+    // promise.
+    const prompt = buildFridayAgentSystemPrompt({
+      toolNames: ["memory_search", "memory_store", "feedback"],
+      modelIdentity: "test-model (provider: test)",
+      version: "0.0.0-test",
+    });
+
+    // Positive: the call is still instructed
+    expect(prompt).toContain("call memory_search to look up relevant items");
+    // Positive: truthful scope qualifier
+    expect(prompt).toContain("scoped to your current agent / session namespace");
+    // Positive: explicit no-global-recall disclaimer
+    expect(prompt).toContain("does NOT provide global cross-session recall");
+    // Positive: fail-honest instruction
+    expect(prompt).toContain("say so plainly rather than fabricating memory");
+    // Negative: the prior overclaim phrasing must not be present
+    expect(prompt).not.toContain("proactively search memory with memory_search. If relevant memories exist, incorporate them into your response.");
+  });
+
   it("documents the configured execution communication style", () => {
     const prompt = buildFridayAgentSystemPrompt({
       toolNames: ["capabilities", "setup_assistant", "web_search", "skill_generate"],
