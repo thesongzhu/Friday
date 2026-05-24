@@ -738,4 +738,87 @@ describe("FridayChannelRegistry", () => {
       await expect(registry.signalTyping("qq", "chat-1")).resolves.toBeUndefined();
     });
   });
+
+  // ─── B1 channel-registry lifecycle precedence ───
+  //
+  // When a plugin declares both `adapters.lifecycle` AND `plugin.start()`, the
+  // registry uses `lifecycle.connect()` exclusively. `plugin.start()` is NOT
+  // called by registry-managed activation. Plugins that ship both must keep
+  // `start()` as a safe delegate (with a re-entry guard) or a no-op.
+  //
+  // See:
+  //   - FridayChannelPlugin.start docstring in friday-channel.types.ts
+  //   - friday-channel-registry.ts buildStartPromise precedence comment
+  //   - HANDOFFS/20260524-1240-B1-slice1-qq-pr303-merged.md (QQ unsupported labeling)
+
+  describe("B1 lifecycle precedence: lifecycle.connect() is exclusive", () => {
+    it("calls only adapters.lifecycle.connect() — plugin.start() is NOT invoked when both exist", async () => {
+      const onConnect = vi.fn(async (_handler: (rawEvent: unknown) => void) => {});
+      const onStart = vi.fn(async (_handler: (msg: FridayChannelMessage) => void) => {});
+      const plugin = createMockPlugin("with-lifecycle", {
+        adapters: {
+          lifecycle: {
+            connect: onConnect,
+            disconnect: async () => {},
+          },
+        },
+        start: onStart,
+      });
+      registry.register(plugin);
+
+      await registry.startAll(() => {});
+
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(onStart).not.toHaveBeenCalled();
+    });
+
+    it("falls back to plugin.start() when no adapters.lifecycle is provided", async () => {
+      const onStart = vi.fn(async (_handler: (msg: FridayChannelMessage) => void) => {});
+      const plugin = createMockPlugin("no-lifecycle", { start: onStart });
+      // No adapters.lifecycle.
+      registry.register(plugin);
+
+      await registry.startAll(() => {});
+
+      expect(onStart).toHaveBeenCalledTimes(1);
+    });
+
+    it("emits an INFO log at register-time when a plugin declares adapters.lifecycle (advises author that start() is bypassed)", () => {
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+      try {
+        const plugin = createMockPlugin("with-lifecycle-warn", {
+          adapters: {
+            lifecycle: {
+              connect: async () => {},
+              disconnect: async () => {},
+            },
+          },
+        });
+        registry.register(plugin);
+
+        expect(infoSpy).toHaveBeenCalledTimes(1);
+        const [message] = infoSpy.mock.calls[0]!;
+        expect(message).toContain("with-lifecycle-warn");
+        expect(message).toContain("lifecycle.connect()");
+        expect(message).toContain("plugin.start()");
+      } finally {
+        infoSpy.mockRestore();
+      }
+    });
+
+    it("does NOT emit the precedence INFO log when only plugin.start() is provided", () => {
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+      try {
+        const plugin = createMockPlugin("legacy-start-only");
+        registry.register(plugin);
+        // No precedence advisory expected.
+        const precedenceLogs = infoSpy.mock.calls.filter(([msg]) =>
+          typeof msg === "string" && msg.includes("lifecycle.connect()"),
+        );
+        expect(precedenceLogs).toHaveLength(0);
+      } finally {
+        infoSpy.mockRestore();
+      }
+    });
+  });
 });

@@ -192,6 +192,14 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       }
     };
 
+    // B1 channel-registry lifecycle precedence: when `adapters.lifecycle` is
+    // provided, the registry uses `lifecycle.connect()` exclusively for
+    // connection management and event wiring. `plugin.start()` is NOT called
+    // from this path even though the plugin contract requires it to exist —
+    // see the precedence note on `FridayChannelPlugin.start` in
+    // friday-channel.types.ts. Plugins that ship both MUST keep `start()` as a
+    // safe delegate (with a re-entry guard) or a no-op. A diverged `start()`
+    // would silently lose its effects under registry-managed activation.
     if (lifecycle) {
       const wrappedEventHandler = (rawEvent: unknown) => {
         if (inbound) {
@@ -300,6 +308,16 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       }
       entries.set(plugin.kind, { plugin, allowlist, running: false });
       healthState.set(plugin.kind, { restartCount: 0 });
+      // B1 channel-registry lifecycle precedence diagnostic: when a plugin
+      // declares both adapters.lifecycle and start(), the registry will use
+      // lifecycle.connect() only. Log once at register-time so plugin authors
+      // know start() must be a safe delegate or no-op (see
+      // FridayChannelPlugin.start docstring).
+      if (plugin.adapters?.lifecycle) {
+        console.info(
+          `[friday][channel-registry] Plugin "${plugin.kind}" registered with adapters.lifecycle; registry will use lifecycle.connect() — plugin.start() will not be invoked by registry-managed activation.`,
+        );
+      }
     },
 
     async unregister(kind) {
