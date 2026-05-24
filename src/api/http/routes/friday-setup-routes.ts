@@ -25,7 +25,9 @@ import {
   buildFridayChannelSecretRefKey,
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
+  FRIDAY_UNSUPPORTED_CHANNEL_KINDS,
   getFridayChannelSecretFieldDescriptors,
+  isFridayChannelKindSupported,
   parseFridayChannelsConfig,
   parseFridayChannelSecretRef,
 } from "#channels";
@@ -2437,6 +2439,18 @@ export function createFridaySetupRoutes(
         if (!VALID_CHANNEL_KINDS.has(body.kind)) {
           throw new FridayDomainError("VALIDATION_ERROR", `Invalid channel kind: ${String(body.kind)}`, { httpStatus: 400 });
         }
+        // B1 unsupported-channel boundary: refuse channel kinds labeled
+        // unsupported (currently QQ — see FRIDAY_UNSUPPORTED_CHANNEL_KINDS in
+        // friday-channel-config.ts and GLOBAL_DECISIONS_LOCKED.md "QQ is
+        // unsupported/proof_pending unless fixed and proven"). Test before
+        // running any credential validation.
+        if (!isFridayChannelKindSupported(body.kind)) {
+          throw new FridayDomainError(
+            "CHANNEL_KIND_UNSUPPORTED",
+            `Channel kind "${body.kind}" is currently unsupported. See product release notes for status.`,
+            { httpStatus: 409, details: { kind: body.kind, status: "unsupported" } },
+          );
+        }
         if (body.config !== null && body.config !== undefined && (typeof body.config !== "object" || Array.isArray(body.config))) {
           throw new FridayDomainError("VALIDATION_ERROR", `config must be an object for channel ${body.kind}`, { httpStatus: 400 });
         }
@@ -2490,6 +2504,16 @@ export function createFridaySetupRoutes(
           }
           if (typeof ch.kind !== "string" || !VALID_CHANNEL_KINDS.has(ch.kind)) {
             throw new FridayDomainError("VALIDATION_ERROR", `Invalid channel kind: ${String(ch.kind)}`, { httpStatus: 400 });
+          }
+          // B1 unsupported-channel boundary: refuse to save channels of
+          // unsupported kind (currently QQ). The schema still accepts the
+          // shape for backward-compat, but the runtime rejects activation.
+          if (!isFridayChannelKindSupported(ch.kind)) {
+            throw new FridayDomainError(
+              "CHANNEL_KIND_UNSUPPORTED",
+              `Channel kind "${ch.kind}" is currently unsupported. See product release notes for status.`,
+              { httpStatus: 409, details: { kind: ch.kind, status: "unsupported" } },
+            );
           }
           if (typeof ch.enabled !== "boolean") {
             throw new FridayDomainError("VALIDATION_ERROR", `enabled must be a boolean for channel ${ch.kind}`, { httpStatus: 400 });

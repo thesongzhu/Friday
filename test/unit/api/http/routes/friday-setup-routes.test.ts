@@ -331,4 +331,124 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
     });
     expect(writeTxn).not.toHaveBeenCalled();
   });
+
+  // ─── B1 Slice 1: QQ channel labeled unsupported ───
+  //
+  // GLOBAL_DECISIONS_LOCKED.md: "QQ is unsupported/proof_pending unless fixed
+  // and proven." QQ inbound is currently silently dropped by the channel
+  // registry's lifecycle/start arbitration. Until that root cause is fixed and
+  // end-to-end inbound delivery is proved, setup must refuse to test or save
+  // QQ channels. The schema still recognizes `kind: "qq"` for backward-compat,
+  // but the user-facing boundary fails closed with CHANNEL_KIND_UNSUPPORTED.
+
+  it("B1: setup.channels.test refuses kind='qq' with CHANNEL_KIND_UNSUPPORTED 409 (labeled unsupported)", async () => {
+    const { deps, writeTxn } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.test");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: { kind: "qq", config: { appId: "test", appSecret: "test" } }, // pragma: allowlist secret
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_KIND_UNSUPPORTED",
+      httpStatus: 409,
+    });
+
+    // Verifier-side proof: no credential validation, no test connection, no DB write.
+    expect(writeTxn).not.toHaveBeenCalled();
+  });
+
+  it("B1: setup.channels.save refuses any channels[].kind='qq' with CHANNEL_KIND_UNSUPPORTED 409", async () => {
+    const { deps, writeTxn, activateSavedChannels, onChannelsSaved } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            controlConfirmed: true,
+            channels: [
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_KIND_UNSUPPORTED",
+      httpStatus: 409,
+    });
+
+    // Verifier-side proof: no channel persisted, no activation, no callback fired.
+    expect(writeTxn).not.toHaveBeenCalled();
+    expect(activateSavedChannels).not.toHaveBeenCalled();
+    expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
+
+  it("B1: setup.channels.save fails on QQ before checking other per-channel verification (no partial persistence)", async () => {
+    // Defense-in-depth: when QQ appears in the channel batch, the unsupported
+    // check fires per-iteration and the loop throws before any subsequent
+    // channel's verification or any DB write begins. Position QQ FIRST in the
+    // list so this test isolates the unsupported-check; A subsequent test
+    // case proves the order-independence by re-running with QQ later (under
+    // disabled flags on others so we don't fight per-channel verification).
+    const { deps, writeTxn, activateSavedChannels, onChannelsSaved } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            controlConfirmed: true,
+            channels: [
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
+              { kind: "discord", enabled: false, config: {} },
+              { kind: "telegram", enabled: false, config: {} },
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_KIND_UNSUPPORTED",
+      httpStatus: 409,
+    });
+
+    expect(writeTxn).not.toHaveBeenCalled();
+    expect(activateSavedChannels).not.toHaveBeenCalled();
+    expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
+
+  it("B1: setup.channels.save still rejects QQ when QQ appears AFTER a supported disabled channel (order-independent)", async () => {
+    // Supplementary case: when QQ is in a mid-list position, the unsupported
+    // check still fires (validation loop iterates from index 0 forward and
+    // throws on first unsupported entry).
+    const { deps, writeTxn, activateSavedChannels, onChannelsSaved } = makeDeps({ setupCompletedAt: null });
+    const route = findMutatingRoute(createFridaySetupRoutes(deps), "setup.channels.save");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            controlConfirmed: true,
+            channels: [
+              { kind: "discord", enabled: false, config: {} },
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_KIND_UNSUPPORTED",
+      httpStatus: 409,
+    });
+
+    expect(writeTxn).not.toHaveBeenCalled();
+    expect(activateSavedChannels).not.toHaveBeenCalled();
+    expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
 });
