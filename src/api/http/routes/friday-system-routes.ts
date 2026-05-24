@@ -342,7 +342,14 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.register.verify",
       method: "POST",
       path: "/v1/system/remote/auth/register/verify",
-      auth: { public: true },
+      // Pre-auth surface: WebAuthn registration verify completes a passkey
+      // enrollment for a device that has no bearer yet. deps.remoteAuth
+      // .verifyRegistration consumes the server-issued challengeId and verifies
+      // the attestation/signature before persisting the credential. Bad/missing
+      // challengeId or tampered response fails closed with no passkey persisted.
+      // Negative test: test/unit/api/http/routes/friday-system-routes.test.ts
+      // (verifyRegistration rejection does not persist a passkey).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const body = ctx.body as FridayVerifySystemRemotePasskeyRegistrationRequest;
         requireString(body, "deviceId");
@@ -371,7 +378,14 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.auth.assert.verify",
       method: "POST",
       path: "/v1/system/remote/auth/assert/verify",
-      auth: { public: true },
+      // Pre-auth surface: WebAuthn assertion verify is the device-login step
+      // that exchanges a signed challenge for an assertionToken; the caller
+      // has no bearer yet. deps.remoteAuth.verifyAssertion verifies the
+      // signature against the server-issued challengeId before issuing a
+      // token. Bad/forged response fails closed with no token minted.
+      // Negative test: test/unit/api/http/routes/friday-system-routes.test.ts
+      // (verifyAssertion rejection does not mint an assertion token).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const body = ctx.body as FridayVerifySystemRemotePasskeyAssertionRequest;
         requireString(body, "deviceId");
@@ -401,7 +415,13 @@ export function createFridaySystemRoutes(
       operationId: "system.remote.sessions.create",
       method: "POST",
       path: "/v1/system/remote/sessions",
-      auth: { public: true },
+      // Pre-auth surface: trades the one-time assertionToken from a prior
+      // verifyAssertion step for a remote session; the caller has no bearer
+      // yet. deps.remote.openSession verifies the assertionToken before
+      // minting a session. Bad/missing token fails closed with no session.
+      // Negative test: test/unit/api/http/routes/friday-system-routes.test.ts
+      // (openSession rejection does not create a remote session).
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const body = ctx.body as FridayCreateSystemRemoteSessionRequest;
         requireString(body, "deviceId");

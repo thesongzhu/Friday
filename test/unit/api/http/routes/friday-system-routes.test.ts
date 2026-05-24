@@ -118,10 +118,24 @@ describe("createFridaySystemRoutes", () => {
   it("returns authenticated system route definitions", () => {
     const routes = createFridaySystemRoutes(makeDeps());
     expect(routes.length).toBeGreaterThan(0);
+    // Three pre-auth carve-outs require allowUnauthenticatedMutation:true
+    // because their handler delegates to a WebAuthn / one-time-token verifier
+    // that fails closed without a side effect when the input is bad. All other
+    // routes remain {public:true} only and rely on the server-level
+    // public-mutation gate.
+    const carveOutOps = new Set([
+      "system.remote.auth.register.verify",
+      "system.remote.auth.assert.verify",
+      "system.remote.sessions.create",
+    ]);
     for (const route of routes) {
       expect(route.path).toMatch(/^\/v1\/system\//);
       expect(route.method).toMatch(/^(GET|POST|PATCH|DELETE)$/);
-      expect(route.auth).toEqual({ public: true });
+      expect(route.auth).toEqual(
+        carveOutOps.has(route.operationId)
+          ? { public: true, allowUnauthenticatedMutation: true }
+          : { public: true },
+      );
     }
   });
 
@@ -405,5 +419,141 @@ describe("createFridaySystemRoutes", () => {
       { deviceId: "device-1", assertionToken: "assertion-token", idempotencyKey: "create-key" },
       { ipAddress: "192.168.1.25", userAgent: "agent-os-ui" },
     );
+  });
+
+  // ─── Pre-auth carve-out negative paths ───
+  //
+  // The three remote-auth/session routes below opt in to
+  // allowUnauthenticatedMutation because their handler delegates to a
+  // verifier (WebAuthn challenge / assertion / one-time assertionToken) that
+  // fails closed when the verifier input is bad or missing. These tests prove
+  // that the rejection from the verifier propagates and that no other
+  // side-effect dep (passkey persistence on the device list, session list, or
+  // sessions.create) is invoked. They satisfy the per-route negative-test bar
+  // for opting out of the server-level public-mutation gate.
+
+  it("system.remote.auth.register.verify rejection prevents passkey persistence (no device-list mutation)", async () => {
+    const verifyError = Object.assign(new Error("WebAuthn registration challenge invalid"), {
+      code: "REMOTE_AUTH_CHALLENGE_INVALID",
+      httpStatus: 401,
+    });
+    const deps = makeDeps({
+      remoteAuth: {
+        beginRegistration: vi.fn().mockResolvedValue({
+          challengeId: "challenge-1",
+          deviceId: "device-1",
+          rpId: "localhost",
+          origin: "http://localhost:3141",
+          expiresAt: "2026-03-06T00:05:00.000Z",
+          options: { challenge: "challenge-value" },
+        }),
+        verifyRegistration: vi.fn().mockRejectedValue(verifyError),
+        beginAssertion: vi.fn(),
+        verifyAssertion: vi.fn(),
+      },
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.auth.register.verify");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          body: {
+            deviceId: "device-1",
+            challengeId: "bogus-challenge",
+            response: { id: "cred-1" },
+            idempotencyKey: "reg-verify-key",
+          },
+          headers: { origin: "http://localhost:3141" },
+          principal: null,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "REMOTE_AUTH_CHALLENGE_INVALID" });
+
+    expect(deps.remoteAuth.verifyRegistration).toHaveBeenCalledTimes(1);
+    // No downstream device-list/register mutation when verify fails.
+    expect(deps.remote.register).not.toHaveBeenCalled();
+  });
+
+  it("system.remote.auth.assert.verify rejection prevents assertion-token minting (no session opened)", async () => {
+    const verifyError = Object.assign(new Error("WebAuthn assertion verification failed"), {
+      code: "REMOTE_AUTH_ASSERTION_INVALID",
+      httpStatus: 401,
+    });
+    const deps = makeDeps({
+      remoteAuth: {
+        beginRegistration: vi.fn(),
+        verifyRegistration: vi.fn(),
+        beginAssertion: vi.fn().mockResolvedValue({
+          challengeId: "challenge-2",
+          deviceId: "device-1",
+          rpId: "localhost",
+          origin: "http://localhost:3141",
+          expiresAt: "2026-03-06T00:05:00.000Z",
+          options: { challenge: "challenge-value" },
+        }),
+        verifyAssertion: vi.fn().mockRejectedValue(verifyError),
+      },
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.auth.assert.verify");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          body: {
+            deviceId: "device-1",
+            challengeId: "bogus-challenge",
+            response: { id: "cred-1" },
+            idempotencyKey: "assert-verify-key",
+          },
+          headers: { origin: "http://localhost:3141" },
+          principal: null,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "REMOTE_AUTH_ASSERTION_INVALID" });
+
+    expect(deps.remoteAuth.verifyAssertion).toHaveBeenCalledTimes(1);
+    // No downstream session minting when assertion verify fails.
+    expect(deps.remote.openSession).not.toHaveBeenCalled();
+  });
+
+  it("system.remote.sessions.create rejection on invalid assertionToken prevents session minting", async () => {
+    const openError = Object.assign(new Error("Assertion token invalid or expired"), {
+      code: "REMOTE_SESSION_ASSERTION_INVALID",
+      httpStatus: 401,
+    });
+    const deps = makeDeps({
+      remote: {
+        list: vi.fn(),
+        register: vi.fn(),
+        revoke: vi.fn(),
+        clearPasskey: vi.fn(),
+        listSessions: vi.fn(),
+        openSession: vi.fn().mockRejectedValue(openError),
+        heartbeatSession: vi.fn(),
+        closeSession: vi.fn(),
+      },
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.remote.sessions.create");
+
+    await expect(
+      route.handler(
+        makeCtx({
+          body: {
+            deviceId: "device-1",
+            assertionToken: "forged-token",
+            idempotencyKey: "create-key",
+          },
+          principal: null,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "REMOTE_SESSION_ASSERTION_INVALID" });
+
+    expect(deps.remote.openSession).toHaveBeenCalledTimes(1);
+    // No downstream heartbeat or close on rejected open.
+    expect(deps.remote.heartbeatSession).not.toHaveBeenCalled();
+    expect(deps.remote.closeSession).not.toHaveBeenCalled();
   });
 });

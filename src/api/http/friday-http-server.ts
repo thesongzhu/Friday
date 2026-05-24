@@ -26,7 +26,11 @@ import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
 import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
-import { redactWebhookPathTokenInPath } from "../../security/friday-owner-session-channel-capability.js";
+import {
+  ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
+  isUnauthenticatedPublicPrincipal,
+  redactWebhookPathTokenInPath,
+} from "../../security/friday-owner-session-channel-capability.js";
 
 // ─── Types ───
 
@@ -708,6 +712,33 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         } else {
           ctx.principal = createFridayDefaultPublicHttpPrincipal();
         }
+      }
+
+      // Public-mutation safety floor (GEC-001/GEC-002/GEC-004/GEC-005).
+      // The synthetic default-public principal cannot authorize POST/PUT/PATCH/DELETE
+      // on `auth:{public:true}` routes. Routes that legitimately must remain reachable
+      // pre-auth (first-boot setup, auth bootstrap, externally-HMAC'd channel webhooks,
+      // WebAuthn handshakes, etc.) must opt in via `allowUnauthenticatedMutation: true`
+      // AND enforce an alternative trust boundary in the handler before any side effect.
+      if (
+        route.auth.public === true &&
+        route.auth.allowUnauthenticatedMutation !== true &&
+        (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") &&
+        isUnauthenticatedPublicPrincipal(ctx.principal)
+      ) {
+        sendMiddlewareRejection(
+          res,
+          {
+            passed: false,
+            statusCode: 401,
+            code: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
+            message: `${route.operationId} requires a bound owner/session/channel principal; the synthetic public principal cannot approve mutating operations.`,
+          },
+          requestId,
+          { ...corsHeaders, ...middlewareHeaders },
+          isHead,
+        );
+        return;
       }
 
       // Rate limit enforcement (applies to both public and authenticated routes)

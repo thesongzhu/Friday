@@ -77,7 +77,10 @@ describe("FridayAuthRoutes", () => {
     const route = findRoute("auth.bootstrap.local.passphrase");
     expect(route.method).toBe("POST");
     expect(route.path).toBe("/v1/auth/bootstrap/local-passphrase");
-    expect(route.auth).toEqual({ public: true });
+    // First-boot pre-auth surface: carries allowUnauthenticatedMutation:true
+    // because authService.bootstrapLocalPassphrase enforces a localhost-only IP
+    // gate and the first-boot/no-existing-password gate before any side effect.
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
     expect(route.rateLimitPolicyId).toBe("auth.login");
   });
 
@@ -130,7 +133,10 @@ describe("FridayAuthRoutes", () => {
     const route = findRoute("auth.login");
     expect(route.method).toBe("POST");
     expect(route.path).toBe("/v1/auth/login");
-    expect(route.auth).toEqual({ public: true });
+    // Carries allowUnauthenticatedMutation:true because callers without a
+    // bearer must be able to log in; authService.login throws
+    // INVALID_CREDENTIALS before minting a session on bad credentials.
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
   });
 
   it("login handler returns tokens", async () => {
@@ -149,13 +155,44 @@ describe("FridayAuthRoutes", () => {
     expect(route.rateLimitPolicyId).toBe("auth.login");
   });
 
+  // ─── Login negative path (proves the allowUnauthenticatedMutation carve-out's
+  // alternative trust boundary — bad credentials are rejected at the service
+  // before any session-side-effect is recorded) ───
+
+  it("login rejects bad localPassphrase without minting a session", async () => {
+    // Force the bootstrapped test user's passphrase to a known good value, then
+    // attempt login with a different one. The handler must propagate
+    // INVALID_CREDENTIALS and leave no new session row behind.
+    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
+    const bootstrapRoute = findRoute("auth.bootstrap.local.passphrase");
+    await bootstrapRoute.handler(
+      makeCtx({ ip: "127.0.0.1", body: { passphrase: "correct-horse-battery-staple" } }),
+    );
+
+    const sessionsBefore = (db.writer.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get() as { n: number }).n;
+
+    const loginRoute = findRoute("auth.login");
+    await expect(
+      loginRoute.handler(makeCtx({ body: { localPassphrase: "wrong-passphrase" } })),
+    ).rejects.toMatchObject({
+      code: "INVALID_CREDENTIALS",
+    });
+
+    const sessionsAfter = (db.writer.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get() as { n: number }).n;
+    expect(sessionsAfter).toBe(sessionsBefore);
+  });
+
   // ─── Refresh route ───
 
   it("POST /v1/auth/refresh is public", () => {
     const route = findRoute("auth.refresh");
     expect(route.method).toBe("POST");
     expect(route.path).toBe("/v1/auth/refresh");
-    expect(route.auth).toEqual({ public: true });
+    // Carries allowUnauthenticatedMutation:true because callers exchange a
+    // refresh token without holding a valid access bearer; authService.refresh
+    // throws INVALID_REFRESH_TOKEN before issuing a new access token on bad
+    // input.
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
   });
 
   it("refresh handler returns new access token", async () => {
@@ -166,6 +203,23 @@ describe("FridayAuthRoutes", () => {
     const result = await route.handler(ctx);
     expect(result).toHaveProperty("accessToken");
     expect(result).toHaveProperty("expiresInSec");
+  });
+
+  // Negative path (proves the allowUnauthenticatedMutation carve-out's
+  // alternative trust boundary — an invalid refresh token is rejected before
+  // any new access-token side effect is recorded).
+  it("refresh rejects an invalid refresh token without issuing a new access token", async () => {
+    const tokensBefore = (db.writer.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get() as { n: number }).n;
+
+    const route = findRoute("auth.refresh");
+    await expect(
+      route.handler(makeCtx({ body: { refreshToken: "not-a-real-refresh-token" } })),
+    ).rejects.toMatchObject({
+      code: "INVALID_REFRESH_TOKEN",
+    });
+
+    const tokensAfter = (db.writer.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get() as { n: number }).n;
+    expect(tokensAfter).toBe(tokensBefore);
   });
 
   // ─── Logout route ───

@@ -47,7 +47,17 @@ describe("createFridayChannelWebhookRoutes", () => {
     const routes = createFridayChannelWebhookRoutes({});
 
     for (const route of routes) {
-      expect(route.auth).toEqual({ public: true });
+      // All webhook routes are auth:{public:true}; the four mutating POST routes
+      // also carry allowUnauthenticatedMutation:true because the relay verifies
+      // each platform's HMAC/signature/secret-token before any side effect, so
+      // the server-level public-mutation gate would otherwise (correctly) reject
+      // unauthenticated calls. The GET verification challenge stays {public:true}.
+      const isMutating = route.method !== "GET";
+      expect(route.auth).toEqual(
+        isMutating
+          ? { public: true, allowUnauthenticatedMutation: true }
+          : { public: true },
+      );
       expect(route.rateLimitPolicyId).toBe("channel.webhook");
     }
   });

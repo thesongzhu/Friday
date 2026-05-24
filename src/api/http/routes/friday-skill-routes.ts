@@ -436,7 +436,13 @@ export function createFridaySkillRoutes(
         operationId: "skills.update",
         method: "POST",
         path: "/v1/skills/:skillId/update",
-        auth: { public: true },
+        // Alternative trust boundary: assertCanonicalApproval (line 451) calls
+        // canonicalMutationGate.evaluate, which requires an HMAC-signed canonical
+        // approval ticket the synthetic public principal cannot forge. The gate
+        // fails closed with 403 SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED before
+        // any lifecycle.update side effect. Negative test:
+        // test/unit/api/http/routes/friday-skill-routes.test.ts:366.
+        auth: { public: true, allowUnauthenticatedMutation: true },
         async handler(ctx) {
           const body = asRecord(ctx.body);
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
@@ -484,7 +490,13 @@ export function createFridaySkillRoutes(
         operationId: "skills.delete",
         method: "DELETE",
         path: "/v1/skills/:skillId",
-        auth: { public: true },
+        // Alternative trust boundary: assertCanonicalApproval (line 495) calls
+        // canonicalMutationGate.evaluate, which requires an HMAC-signed canonical
+        // approval ticket the synthetic public principal cannot forge. The gate
+        // fails closed with 403 SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED before
+        // any lifecycle.deleteSkill side effect. Negative test:
+        // test/unit/api/http/routes/friday-skill-routes.test.ts:372.
+        auth: { public: true, allowUnauthenticatedMutation: true },
         async handler(ctx) {
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const existing = deps.lifecycle!.getSkill(skillId);

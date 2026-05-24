@@ -71,7 +71,10 @@ describe("FridayHttpServer idempotency", () => {
       operationId: "test.idempotency.create",
       method: "POST",
       path: "/v1/test/idempotency",
-      auth: { public: true },
+      // Test focus: idempotency replay/conflict semantics. Orthogonal to the
+      // public-mutation gate; opt out so the test isolates idempotency
+      // behavior.
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         createCount += 1;
         return { count: createCount, body: ctx.body };
