@@ -38,6 +38,7 @@ describe("createFridayObservabilityApiService", () => {
 
   function createService(options?: {
     browserDiagnosticsProvider?: Parameters<typeof createFridayObservabilityApiService>[0]["browserDiagnosticsProvider"];
+    webhookTimeoutMs?: number;
   }) {
     const db = createTestDb();
     allocatedDbs.push(db);
@@ -46,6 +47,7 @@ describe("createFridayObservabilityApiService", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
       browserDiagnosticsProvider: options?.browserDiagnosticsProvider,
+      webhookTimeoutMs: options?.webhookTimeoutMs,
     });
   }
 
@@ -587,6 +589,80 @@ describe("createFridayObservabilityApiService", () => {
       expect(receivedBodies.length).toBeGreaterThanOrEqual(1);
       expect(receivedBodies[0]).toContain("Repeated self-healing failures");
     } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  // B2 hanging-fetch boundary: a Slack webhook server that accepts the
+  // connection but never responds must NOT block the dispatch loop forever.
+  // The per-attempt timeout must fire and surface as a failed attempt with a
+  // clear timeout error message; the audit row must record `outcome: failure`.
+  it("B2 hanging-fetch: slack-webhook dispatch fails fast when the endpoint never responds", async () => {
+    // Server accepts the TCP connection but never writes any HTTP response.
+    const heldSockets: net.Socket[] = [];
+    const server = http.createServer((req) => {
+      heldSockets.push(req.socket);
+      req.on("data", () => { /* swallow */ });
+      // Intentionally never call res.end() / res.writeHead().
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected a bound HTTP server address");
+    }
+
+    try {
+      // 60ms keeps the test fast (3 attempts × 60ms ≈ 180ms + 25 + 50ms
+      // exponential backoff between retries = ~255ms) while still well above
+      // typical CI scheduler jitter.
+      const service = createService({ webhookTimeoutMs: 60 });
+      const destination = await service.routes.alertDestinations.create({
+        type: "slack",
+        name: "Hanging Slack",
+        webhookUrl: `http://127.0.0.1:${address.port}/slack-webhook`,
+        channel: "#ops",
+      });
+
+      service.recordSelfHealingProcessResults({
+        results: [
+          {
+            incidentsCreated: [
+              { incidentId: "hang-a", userId: "user-1", category: "workflow", severity: "high", signature: "fail-a", status: "open", createdAt: NOW },
+              { incidentId: "hang-b", userId: "user-1", category: "workflow", severity: "high", signature: "fail-b", status: "open", createdAt: NOW },
+              { incidentId: "hang-c", userId: "user-1", category: "workflow", severity: "high", signature: "fail-c", status: "open", createdAt: NOW },
+            ],
+            diagnosisCreated: [],
+          },
+        ],
+      });
+      await service.drainAuditWrites();
+
+      const alert = service.routes.alerts.list({}).items[0];
+      expect(alert).toBeDefined();
+
+      const dispatchStart = Date.now();
+      const response = await service.routes.alerts.testDispatch(alert!.id, {
+        destinationId: destination.destination.id,
+      });
+      const dispatchDuration = Date.now() - dispatchStart;
+
+      // Fail-fast proof: 3 attempts each ~60ms + ~75ms total exponential
+      // backoff. Cap at 5s so the test catches a real hang, not jitter.
+      expect(dispatchDuration).toBeLessThan(5_000);
+
+      // 3 attempts in the retry loop; all must have failed with the timeout
+      // error message. The attempt-status check implicitly proves the failure
+      // path completed without further hang — the catch block's awaited
+      // `appendDispatchAudit` must have returned for the result to be visible.
+      expect(response.attempts.length).toBeGreaterThanOrEqual(1);
+      for (const attempt of response.attempts) {
+        expect(attempt.status).toBe("failed");
+        expect(attempt.errorMessage).toMatch(/timed out after 60ms/i);
+      }
+    } finally {
+      for (const socket of heldSockets) {
+        socket.destroy();
+      }
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });

@@ -307,7 +307,20 @@ export interface CreateFridayObservabilityApiServiceDeps {
   browserDiagnosticsProvider?: () => FridayObservabilityBrowserRuntimeSummary | undefined;
   heartbeatStateGetter?: () => { lastRunAt: string | null; result: string; intervalMs: number | null; nextRunAt: string | null } | null;
   heartbeatTrigger?: () => unknown | Promise<unknown>;
+  /**
+   * Per-attempt timeout (ms) for outbound Slack alert-webhook dispatch.
+   *
+   * B2 hanging-fetch boundary: without this, `deliverToDestination` could hang
+   * indefinitely against an unresponsive Slack endpoint, blocking the per-
+   * dedupeKey retry loop forever. Default 10s matches the project convention
+   * for short-lived webhook calls (see `src/studio/friday-studio-service.ts`
+   * and `src/providers/oauth/friday-anthropic-oauth.ts`).
+   */
+  webhookTimeoutMs?: number;
 }
+
+/** Default per-attempt timeout for the slack-webhook fetch. */
+const FRIDAY_DEFAULT_WEBHOOK_TIMEOUT_MS = 10_000;
 
 export const FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID = "builtin-self-healing-repeat-failures";
 const BUILT_IN_ALERT_DISPATCH_FAILURE_RULE_ID = "builtin-alert-dispatch-failures";
@@ -1495,14 +1508,33 @@ export function createFridayObservabilityApiService(
         if (!webhookUrl) {
           throw new FridayDomainError("NOT_FOUND", `Missing Slack webhook secret for ${destination.id}`, { httpStatus: 404 });
         }
-        const response = await fetch(webhookUrl, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            text: `${subject}\n${body}`,
-            channel: destination.config.channel,
-          }),
-        });
+        const webhookTimeoutMs = deps.webhookTimeoutMs ?? FRIDAY_DEFAULT_WEBHOOK_TIMEOUT_MS;
+        let response: Response;
+        try {
+          response = await fetch(webhookUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              text: `${subject}\n${body}`,
+              channel: destination.config.channel,
+            }),
+            signal: AbortSignal.timeout(webhookTimeoutMs),
+          });
+        } catch (fetchError) {
+          // B2 hanging-fetch boundary: translate AbortSignal.timeout AbortError
+          // into a domain-typed 504 so the failure is recoverable (clear error,
+          // no hang) and the retry loop at the call site can advance per-
+          // attempt. Other fetch failures (DNS, refused) propagate via the
+          // outer catch with their original message.
+          if (fetchError instanceof Error && (fetchError.name === "TimeoutError" || fetchError.name === "AbortError")) {
+            throw new FridayDomainError(
+              "OBSERVABILITY_WEBHOOK_TIMEOUT",
+              `Slack webhook timed out after ${webhookTimeoutMs}ms`,
+              { httpStatus: 504, retryable: true, details: { destinationId: destination.id, timeoutMs: webhookTimeoutMs } },
+            );
+          }
+          throw fetchError;
+        }
         if (!response.ok) {
           throw new FridayDomainError("INTERNAL_ERROR", `Slack webhook responded with ${response.status}`, { httpStatus: 500 });
         }
