@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createRegistryManager } from "../../../../src/packaging/engine/registry-manager.js";
+import { createRegistryManager, RegistryVersionConflictError } from "../../../../src/packaging/engine/registry-manager.js";
 import type { RegistryManager, PublishOptions } from "../../../../src/packaging/engine/registry-manager.js";
 import type {
   FridayPackageManifest,
   FridayPackageSignature,
 } from "../../../../src/packaging/model/friday-packaging.types.js";
+import { FridayDomainError } from "../../../../src/errors/friday-domain-error.js";
+import { buildErrorResponse, mapErrorToStatusCode } from "../../../../src/api/http/friday-http-error-mapper.js";
 
 // ─── Fixtures ───
 
@@ -105,6 +107,36 @@ describe("RegistryManager", () => {
       expect(() =>
         registry.publish(makePublishOptions({ archiveDigest: "sha256:other" })),
       ).toThrow(/different content/i);
+    });
+
+    it("B1 truth-labeling: duplicate-version conflict surfaces as a 409 FridayDomainError, not a 500", () => {
+      registry.publish(makePublishOptions({ tenantId: "tenant-7" }));
+      let captured: unknown;
+      try {
+        registry.publish(
+          makePublishOptions({ tenantId: "tenant-7", archiveDigest: "sha256:other" }),
+        );
+      } catch (err) {
+        captured = err;
+      }
+      expect(captured).toBeInstanceOf(RegistryVersionConflictError);
+      expect(captured).toBeInstanceOf(FridayDomainError);
+      const err = captured as RegistryVersionConflictError;
+      expect(err.code).toBe("PACKAGING_VERSION_ALREADY_EXISTS");
+      expect(err.httpStatus).toBe(409);
+      expect(err.retryable).toBe(false);
+      expect(err.details).toMatchObject({
+        name: "@friday/test-pkg",
+        version: "1.0.0",
+        tenantId: "tenant-7",
+      });
+
+      // Prove the HTTP boundary actually returns 409 — this is the user-facing fix.
+      expect(mapErrorToStatusCode(err)).toBe(409);
+      const response = buildErrorResponse(err, "req-test-1");
+      expect(response.statusCode).toBe(409);
+      expect(response.body.error.code).toBe("PACKAGING_VERSION_ALREADY_EXISTS");
+      expect(response.body.error.retryable).toBe(false);
     });
 
     it("allows same name+version for different tenants", () => {

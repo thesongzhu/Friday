@@ -8,6 +8,7 @@
  * @module packaging/engine/registry-manager
  */
 
+import { FridayDomainError } from "#errors";
 import type {
   FridayPackageEngineConfig,
   FridayPackageManifest,
@@ -16,6 +17,7 @@ import type {
   ISODateTime,
   UUID,
 } from "../model/friday-packaging.types.js";
+import { FRIDAY_PACKAGING_ERROR_CODES } from "../api/friday-packaging-api.types.js";
 import { compareSemverStr, maxSatisfying } from "./semver.js";
 
 // ─── Registry Types ───
@@ -62,14 +64,27 @@ export interface RegistryPage<T> {
   readonly nextCursor?: string;
 }
 
-/** Conflict raised when publishing an existing version with different content. */
-export class RegistryVersionConflictError extends Error {
-  readonly code: string;
+/**
+ * Conflict raised when publishing an existing version with different content.
+ *
+ * Inherits from FridayDomainError so the HTTP error mapper surfaces this as
+ * a real 409 to clients instead of falling through to a generic 500. Before
+ * this, the class extended `Error` directly and the mapper masked it as
+ * INTERNAL_ERROR — a published-twice conflict appeared as a server fault.
+ */
+export class RegistryVersionConflictError extends FridayDomainError {
+  override readonly name = "RegistryVersionConflictError";
 
   constructor(name: string, version: string, tenantId?: string) {
-    super(`Package "${name}@${version}" already exists${tenantId ? ` for tenant "${tenantId}"` : ""} with different content`);
-    this.name = "RegistryVersionConflictError";
-    this.code = "PACKAGING_VERSION_ALREADY_EXISTS";
+    super(
+      FRIDAY_PACKAGING_ERROR_CODES.VERSION_ALREADY_EXISTS,
+      `Package "${name}@${version}" already exists${tenantId ? ` for tenant "${tenantId}"` : ""} with different content`,
+      {
+        httpStatus: 409,
+        retryable: false,
+        details: tenantId !== undefined ? { name, version, tenantId } : { name, version },
+      },
+    );
   }
 }
 
