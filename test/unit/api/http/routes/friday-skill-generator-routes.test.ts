@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFridaySkillGeneratorRoutes } from "#api";
+import { FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID } from "../../../../../src/api/http/friday-default-public-principal.js";
 import {
   createFridaySkillGeneratorStageMutatingActionRequest,
   type FridaySkillGeneratorService,
@@ -507,6 +508,32 @@ describe("FridaySkillGeneratorRoutes", () => {
           }),
         ),
       ).rejects.toThrow("requires canonical approval");
+      expect(generatorService.approveAndSave).not.toHaveBeenCalled();
+    });
+
+    it("B0 Slice A5: synthetic default-public principal cannot bypass generator candidate verifier — missing canonical approval rejects before approveAndSave", async () => {
+      const { routes, generatorService } = createRoutes();
+      const route = routes.find(
+        (r) => r.operationId === "skills.generator.sessions.approve",
+      )!;
+
+      await expect(
+        route.handler(
+          makeCtx({
+            params: { sessionId: "sess-1" },
+            principal: {
+              principalType: "user",
+              principalId: FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
+              scopes: [],
+              tokenId: "synthetic",
+              tokenKind: "access",
+              issuedAt: NOW,
+            },
+          }),
+        ),
+      ).rejects.toThrow("requires canonical approval");
+
+      // Verifier must block before any candidate is staged.
       expect(generatorService.approveAndSave).not.toHaveBeenCalled();
     });
 

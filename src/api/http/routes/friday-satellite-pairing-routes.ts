@@ -239,11 +239,16 @@ export function createFridaySatellitePairingRoutes(
     },
 
     // ─── Handshake (public — token-based auth) ───
+    // B0 Slice A5 carve-out: handshake authenticates via the body's
+    // `token + signedChallenge + challengeNonce + clientEphemeralPublicKey`,
+    // verified by `deps.completeHandshake` before any persistent stream/epoch is
+    // returned. Negative test: see test/unit/api/routes/friday-satellite-pairing-routes.test.ts
+    // "B0 Slice A5: synthetic default-public principal cannot bypass handshake verifier".
     {
       operationId: "satellites.handshake",
       method: "POST",
       path: "/v1/satellites/:satelliteId/handshake",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "satellite.handshake",
       async handler(ctx: Ctx) {
         const params = ctx.params as Record<string, string>;
