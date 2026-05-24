@@ -508,4 +508,53 @@ describe("FridayMemoryItemRepository", () => {
     expect(hits.length).toBeGreaterThanOrEqual(1);
     expect(hits[0].itemId).toBe("legacy-1");
   });
+
+  // ─── B3 access-counter ───
+
+  describe("recordAccess (B3 conservative increment semantics)", () => {
+    it("increments access_count by 1 and sets last_accessed_at for every id", () => {
+      const itemA = makeItem({ id: "a", key: "a", accessCount: 0, lastAccessedAt: undefined });
+      const itemB = makeItem({ id: "b", key: "b", accessCount: 5, lastAccessedAt: "2026-02-10T00:00:00.000Z" });
+      const itemC = makeItem({ id: "c", key: "c", accessCount: 0 });
+      db.writer.transaction(() => {
+        repo.insert(db.writer, itemA);
+        repo.insert(db.writer, itemB);
+        repo.insert(db.writer, itemC);
+      })();
+
+      const accessedAt = "2026-02-17T11:00:00.000Z";
+      const changed = repo.recordAccess(db.writer, { itemIds: ["a", "b"], nowIso: accessedAt });
+      expect(changed).toBe(2);
+
+      const a = repo.getById(db.writer, "a")!;
+      const b = repo.getById(db.writer, "b")!;
+      const c = repo.getById(db.writer, "c")!;
+      expect(a.accessCount).toBe(1);
+      expect(a.lastAccessedAt).toBe(accessedAt);
+      expect(b.accessCount).toBe(6);
+      expect(b.lastAccessedAt).toBe(accessedAt);
+      // c was NOT in the recordAccess set — counter must stay at 0.
+      expect(c.accessCount).toBe(0);
+      expect(c.lastAccessedAt).toBeUndefined();
+    });
+
+    it("returns 0 and is a no-op when itemIds is empty", () => {
+      const item = makeItem({ accessCount: 4 });
+      db.writer.transaction(() => repo.insert(db.writer, item))();
+      const changed = repo.recordAccess(db.writer, { itemIds: [], nowIso: NOW });
+      expect(changed).toBe(0);
+      expect(repo.getById(db.writer, "item-1")!.accessCount).toBe(4);
+    });
+
+    it("multiple sequential calls accumulate the counter monotonically", () => {
+      const item = makeItem({ accessCount: 0 });
+      db.writer.transaction(() => repo.insert(db.writer, item))();
+      repo.recordAccess(db.writer, { itemIds: ["item-1"], nowIso: "2026-02-17T10:01:00.000Z" });
+      repo.recordAccess(db.writer, { itemIds: ["item-1"], nowIso: "2026-02-17T10:02:00.000Z" });
+      repo.recordAccess(db.writer, { itemIds: ["item-1"], nowIso: "2026-02-17T10:03:00.000Z" });
+      const final = repo.getById(db.writer, "item-1")!;
+      expect(final.accessCount).toBe(3);
+      expect(final.lastAccessedAt).toBe("2026-02-17T10:03:00.000Z");
+    });
+  });
 });

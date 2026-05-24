@@ -448,4 +448,57 @@ describe("FridayMemoryService", () => {
       expect(results).toHaveLength(0);
     });
   });
+
+  // ─── B3 access-counter (conservative semantics) ───
+
+  describe("B3 access-counter: search increments, get/list do NOT", () => {
+    it("search() increments access_count + sets last_accessed_at only for items in the returned result set", async () => {
+      const recorded = await service.store("access-ns", "The quick brown fox jumps");
+      // Unrelated item lives in a DIFFERENT namespace so namespace-scoped search
+      // excludes it deterministically (independent of mock embedding noise).
+      const unrelated = await service.store("other-ns", "Unrelated content");
+      expect(recorded.accessCount === 0 || recorded.accessCount === undefined).toBe(true);
+
+      const results = await service.search("fox jumps", { namespace: "access-ns" });
+      const returnedIds = new Set(results.map((r) => r.item.id));
+      expect(returnedIds.has(recorded.id)).toBe(true);
+      expect(returnedIds.has(unrelated.id)).toBe(false);
+
+      const fetchedReturned = await service.get(recorded.id);
+      const fetchedUnrelated = await service.get(unrelated.id);
+
+      expect(fetchedReturned!.accessCount).toBe(1);
+      expect(fetchedReturned!.lastAccessedAt).toBeDefined();
+      // unrelated item was in a different namespace → not in result set →
+      // counter must stay 0/undef.
+      expect(fetchedUnrelated!.accessCount === 0 || fetchedUnrelated!.accessCount === undefined).toBe(true);
+      expect(fetchedUnrelated!.lastAccessedAt).toBeUndefined();
+    });
+
+    it("get() does NOT increment access_count (raw repository read)", async () => {
+      const stored = await service.store("raw-ns", "Raw read test");
+
+      // Multiple raw gets must not change the counter.
+      await service.get(stored.id);
+      await service.get(stored.id);
+      await service.get(stored.id);
+
+      const final = await service.get(stored.id);
+      // accessCount stays at the inserted value (0 / undefined).
+      expect(final!.accessCount === 0 || final!.accessCount === undefined).toBe(true);
+      expect(final!.lastAccessedAt).toBeUndefined();
+    });
+
+    it("repeated search hits accumulate the counter monotonically", async () => {
+      const stored = await service.store("monotonic-ns", "monotonic alpha beta gamma");
+
+      await service.search("monotonic", { namespace: "monotonic-ns" });
+      await service.search("monotonic", { namespace: "monotonic-ns" });
+      await service.search("monotonic", { namespace: "monotonic-ns" });
+
+      const final = await service.get(stored.id);
+      expect(final!.accessCount).toBe(3);
+      expect(final!.lastAccessedAt).toBeDefined();
+    });
+  });
 });

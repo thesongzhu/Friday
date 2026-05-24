@@ -64,6 +64,23 @@ export interface FridayMemoryItemRepository {
     db: Database.Database,
     input: FridayMemorySearchQuery & { nowIso: string; limit: number },
   ): FridayMemoryFtsHit[];
+  /**
+   * Increment access_count by 1 and set last_accessed_at = nowIso for every
+   * id in `itemIds`.
+   *
+   * B3 cognition policy (conservative): callers should invoke this ONLY when
+   * an item is actually returned through an intentional memory search/recall
+   * path used by the agent (e.g. `memoryService.search()` after merge),
+   * NOT on every raw repository read (`getById`, `list`). This makes the
+   * counter mean "served to the agent as part of recall," not "row was
+   * fetched by some internal lookup."
+   *
+   * Returns the number of rows actually updated.
+   */
+  recordAccess(
+    db: Database.Database,
+    input: { itemIds: readonly string[]; nowIso: string },
+  ): number;
 }
 
 // ─── Helpers ───
@@ -241,6 +258,20 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
     deleteById(db, id) {
       const result = db.prepare("DELETE FROM memory_items WHERE id = ?").run(id);
       return result.changes > 0;
+    },
+
+    recordAccess(db, input) {
+      if (input.itemIds.length === 0) return 0;
+      const placeholders = input.itemIds.map(() => "?").join(",");
+      const result = db
+        .prepare(
+          `UPDATE memory_items
+              SET access_count = access_count + 1,
+                  last_accessed_at = ?
+            WHERE id IN (${placeholders})`,
+        )
+        .run(input.nowIso, ...input.itemIds);
+      return result.changes;
     },
 
     prune(db, options) {
