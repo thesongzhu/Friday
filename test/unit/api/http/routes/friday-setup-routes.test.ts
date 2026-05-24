@@ -349,7 +349,7 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
       route.handler(
         makeCtx({
           ip: "127.0.0.1",
-          body: { kind: "qq", config: { appId: "test", appSecret: "test" } },
+          body: { kind: "qq", config: { appId: "test", appSecret: "test" } }, // pragma: allowlist secret
         }),
       ),
     ).rejects.toMatchObject({
@@ -372,7 +372,7 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
           body: {
             controlConfirmed: true,
             channels: [
-              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } },
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
             ],
           },
         }),
@@ -405,7 +405,7 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
           body: {
             controlConfirmed: true,
             channels: [
-              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } },
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
               { kind: "discord", enabled: false, config: {} },
               { kind: "telegram", enabled: false, config: {} },
             ],
@@ -437,7 +437,7 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
             controlConfirmed: true,
             channels: [
               { kind: "discord", enabled: false, config: {} },
-              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } },
+              { kind: "qq", enabled: true, config: { appId: "a", appSecret: "s" } }, // pragma: allowlist secret
             ],
           },
         }),
