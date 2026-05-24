@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { FridayDomainError } from "#errors";
 import { loadFridayOpenClawPhaseManifest } from "./friday-openclaw-phase-manifest.js";
@@ -133,11 +133,43 @@ function loadStateFromDisk(paths: FridayOpenClawPhaseControllerPaths, nowIso: st
   return createEmptyState(nowIso);
 }
 
+/**
+ * Atomic-write helper: write `contents` to `path` such that a partial write
+ * cannot leave `path` in a half-written state.
+ *
+ * Pattern: write to a sibling tmp path, then `rename` onto the target. On
+ * POSIX, `rename` is atomic with respect to other readers — `path` either
+ * resolves to the prior content or the new content, never a torn middle.
+ *
+ * On any write/rename failure the tmp path is best-effort unlinked so a
+ * crash partway through does not litter the directory with orphans.
+ */
+function writeStateFileAtomicSync(path: string, contents: string): void {
+  const tmpPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    writeFileSync(tmpPath, contents, "utf-8");
+    renameSync(tmpPath, path);
+  } catch (err) {
+    try {
+      if (existsSync(tmpPath)) unlinkSync(tmpPath);
+    } catch {
+      // best-effort cleanup; surface the original error
+    }
+    throw err;
+  }
+}
+
 function saveStateToDisk(paths: FridayOpenClawPhaseControllerPaths, state: FridayPhaseControllerState): void {
   ensureDirectory(paths.runtimeRoot);
   const json = `${JSON.stringify(state, null, 2)}\n`;
-  writeFileSync(paths.statePath, json, "utf-8");
-  writeFileSync(paths.programPath, json, "utf-8");
+  // B2 torn-write boundary: write each file atomically (tmp + rename). The
+  // existing `loadStateFromDisk` reads programPath first then falls back to
+  // statePath, so write statePath BEFORE programPath — a crash between the
+  // two writes leaves programPath holding the prior-good content while
+  // statePath holds the new content. Either path on its own remains a
+  // valid JSON document after this change.
+  writeStateFileAtomicSync(paths.statePath, json);
+  writeStateFileAtomicSync(paths.programPath, json);
 }
 
 function phaseRuntimePaths(paths: FridayOpenClawPhaseControllerPaths, phase: FridayPhaseDefinition) {
