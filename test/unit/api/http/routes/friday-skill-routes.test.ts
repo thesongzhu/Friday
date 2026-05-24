@@ -12,6 +12,7 @@ import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
 } from "../../../../../src/security/friday-mutating-action-gate.js";
+import { FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 const NOW = "2026-03-07T00:00:00.000Z";
 
@@ -775,5 +776,114 @@ describe("createFridaySkillRoutes", () => {
     } finally {
       rmSync(managedSkillsDir, { recursive: true, force: true });
     }
+  });
+
+  it("B0 Slice A5: synthetic default-public principal cannot bypass content-update verifier — missing canonical approval rejects before any file write", async () => {
+    const managedSkillsDir = join(tmpdir(), `friday-skill-route-a5-content-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const skillDir = join(managedSkillsDir, "skill.workspace");
+    mkdirSync(skillDir, { recursive: true });
+    const originalSkillMd = "# Original Workspace Skill\n";
+    const originalManifest = {
+      id: "skill.workspace",
+      name: "Original",
+      version: "1.0.0",
+      runtime: { kind: "shell" },
+    };
+    writeFileSync(join(skillDir, "SKILL.md"), originalSkillMd, "utf8");
+    writeFileSync(join(skillDir, "skill.manifest.json"), JSON.stringify(originalManifest, null, 2), "utf8");
+    try {
+      const routes = createFridaySkillRoutes({
+        managedSkillsDir,
+        skillRegistry: {
+          list: () => [],
+          // Workspace artifact (managed:false) bypasses SKILL_CONTENT_UPDATE_REQUIRES_LIFECYCLE
+          // so the canonical-approval verifier is the next gate.
+          get: vi.fn(() => ({
+            source: "workspace",
+            origin: "workspace",
+            status: "installed",
+            managed: false,
+            manifest: {
+              id: "skill.workspace",
+              name: "Original",
+              kind: "conversation",
+              runtime: { kind: "shell" },
+            },
+          })),
+        } as never,
+        canonicalMutationGate: makeCanonicalMutationGate(),
+      });
+
+      const synthethicPublicCtx = makeCtx({
+        params: { skillId: "skill.workspace" },
+        body: {
+          name: "Attacker-Renamed",
+          description: "Mutated by unauthenticated request",
+          tags: ["compromised"],
+        },
+        principal: {
+          principalId: FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
+          principalType: "user",
+          role: "viewer",
+          scopes: [],
+          tokenId: "synthetic",
+          tokenKind: "access",
+          issuedAt: NOW,
+        },
+      });
+
+      await expect(
+        routes.find((item) => item.operationId === "skills.content.update")!.handler(synthethicPublicCtx),
+      ).rejects.toMatchObject({
+        code: "SKILL_CONTENT_UPDATE_APPROVAL_REQUIRED",
+        httpStatus: 403,
+      });
+
+      // Files must be untouched: the verifier blocks before any writeFileSync runs.
+      expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toBe(originalSkillMd);
+      expect(JSON.parse(readFileSync(join(skillDir, "skill.manifest.json"), "utf8"))).toEqual(originalManifest);
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("B0 Slice A5: synthetic default-public principal cannot bypass upgrade-decide verifier — missing canonical approval rejects before applyDecision", async () => {
+    const analyze = vi.fn(() => ({
+      analysisDigest: "digest-a5-1",
+      recommendation: "replace",
+      regressionProof: { overallVerdict: "ok" },
+    }));
+    const applyDecision = vi.fn(() => ({ record: { id: "decision-1" } }));
+    const upgradeAnalysis = { analyze, applyDecision } as never;
+
+    const routes = createFridaySkillRoutes({
+      skillRegistry: { list: () => [] } as never,
+      lifecycle: makeLifecycle() as never,
+      canonicalMutationGate: makeCanonicalMutationGate(),
+      upgradeAnalysis,
+    });
+    const decide = routes.find((item) => item.operationId === "skills.upgrade.decide")!;
+
+    await expect(decide.handler(makeCtx({
+      params: { skillId: "skill.workspace" },
+      body: {
+        candidateId: "candidate-1",
+        decision: "replace",
+      },
+      principal: {
+        principalId: FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
+        principalType: "user",
+        role: "viewer",
+        scopes: [],
+        tokenId: "synthetic",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+    }))).rejects.toMatchObject({
+      code: "SKILL_UPGRADE_DECIDE_APPROVAL_REQUIRED",
+      httpStatus: 403,
+    });
+
+    expect(applyDecision).not.toHaveBeenCalled();
   });
 });

@@ -601,11 +601,16 @@ export function createFridaySkillRoutes(
 	  }
 
   if (deps.managedSkillsDir) {
+    // B0 Slice A5 carve-out: content updates are gated by `assertCanonicalApproval`
+    // (HMAC-signed canonical approval ticket) before any file write. The handler
+    // also rejects managed-external artifacts with SKILL_CONTENT_UPDATE_REQUIRES_LIFECYCLE
+    // before any I/O. Negative test: see test/unit/api/http/routes/friday-skill-routes.test.ts
+    // "B0 Slice A5: synthetic default-public principal cannot bypass content-update verifier".
     routes.push({
       operationId: "skills.content.update",
       method: "PATCH",
       path: "/v1/skills/:skillId/content",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const skillId = normalizeRouteInstallId(String((ctx.params as Record<string, unknown>).skillId ?? ""));
         const body = asRecord(ctx.body);
@@ -714,11 +719,16 @@ export function createFridaySkillRoutes(
           return { analysis };
         },
       },
+      // B0 Slice A5 carve-out: upgrade decisions are gated by `assertCanonicalApproval`
+      // (HMAC-signed canonical approval ticket bound to the analysis digest) before
+      // `deps.upgradeAnalysis.applyDecision` is called. Negative test: see
+      // test/unit/api/http/routes/friday-skill-routes.test.ts
+      // "B0 Slice A5: synthetic default-public principal cannot bypass upgrade-decide verifier".
       {
         operationId: "skills.upgrade.decide",
         method: "POST",
         path: "/v1/skills/:skillId/upgrade/decide",
-        auth: { public: true },
+        auth: { public: true, allowUnauthenticatedMutation: true },
         async handler(ctx) {
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const body = asRecord(ctx.body);

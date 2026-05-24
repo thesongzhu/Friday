@@ -991,11 +991,18 @@ export function createFridaySkillGeneratorRoutes(
     },
 
     // ─── Approve and save ───
+    // B0 Slice A5 carve-out: candidate approval is gated by
+    // `assertSkillGeneratorCandidateApproval` (canonical approval gate evaluated
+    // against the generated draft) before `deps.skillGenerator.approveAndSave` is
+    // called. Negative test: see test/unit/api/http/routes/friday-skill-generator-routes.test.ts
+    // "requires canonical approval before staging the generated skill candidate"
+    // (existing) and the new "B0 Slice A5: synthetic default-public principal
+    // cannot bypass generator candidate verifier".
     {
       operationId: "skills.generator.sessions.approve",
       method: "POST",
       path: "/v1/skills/generator/sessions/:sessionId/approve",
-      auth: { public: true },
+      auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
         const { sessionId } = ctx.params as { sessionId: string };

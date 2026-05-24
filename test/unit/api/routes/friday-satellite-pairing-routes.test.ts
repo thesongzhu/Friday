@@ -3,6 +3,7 @@ import {
   createFridaySatellitePairingRoutes,
   type FridaySatellitePairingRoutesDeps,
 } from "../../../../src/api/http/routes/friday-satellite-pairing-routes.js";
+import { FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID } from "../../../../src/api/http/friday-default-public-principal.js";
 
 // ─── Helpers ───
 
@@ -336,7 +337,7 @@ describe("createFridaySatellitePairingRoutes", () => {
 
       expect(route.method).toBe("POST");
       expect(route.path).toBe("/v1/satellites/:satelliteId/handshake");
-      expect(route.auth).toEqual({ public: true });
+      expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
       expect(route.rateLimitPolicyId).toBe("satellite.handshake");
 
       const result = await route.handler(makeCtx({
@@ -363,6 +364,32 @@ describe("createFridaySatellitePairingRoutes", () => {
       }) as any);
 
       expect(result).toEqual({ error: expect.objectContaining({ code: "VALIDATION_FAILED" }) });
+      expect(deps.completeHandshake).not.toHaveBeenCalled();
+    });
+
+    it("B0 Slice A5: synthetic default-public principal cannot bypass handshake verifier — bad token/signature is rejected by deps.completeHandshake with no stream issued", async () => {
+      const failingHandshake = vi.fn().mockRejectedValue(
+        new Error("SATELLITE_HANDSHAKE_INVALID_SIGNATURE"),
+      );
+      const localDeps = makeDeps({ completeHandshake: failingHandshake });
+      const routes = createFridaySatellitePairingRoutes(localDeps);
+      const route = findRoute(routes, "satellites.handshake");
+
+      // Carve-out reaches the handler under the synthetic default-public principal,
+      // but the handler's verifier (deps.completeHandshake) is the trust boundary.
+      // A bad signed challenge must be rejected and no stream/epoch may be returned.
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {
+          token: "forged-token",
+          signedChallenge: "forged-signature",
+          challengeNonce: "nonce-xyz",
+          clientEphemeralPublicKey: "client-pub-key",
+        },
+        principal: { principalId: FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID },
+      }) as any)).rejects.toThrow(/SATELLITE_HANDSHAKE_INVALID_SIGNATURE/);
+
+      expect(failingHandshake).toHaveBeenCalledTimes(1);
     });
   });
 
