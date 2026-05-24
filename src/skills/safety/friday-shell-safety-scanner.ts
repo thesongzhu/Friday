@@ -45,6 +45,27 @@ const BLOCKING_PATTERNS: ReadonlyArray<PatternRule> = [
     regex: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~(?:\/|\s|$|;)/,
     summary: "Recursive force-delete from home directory",
   },
+  // B1 medium-severity sweep — close long-form-flag bypass of rm -rf.
+  // The short-form patterns above match `-r` / `-f` / `-rf` / `-rR`, but a
+  // crafty author could write `rm --recursive --force /` and avoid every
+  // existing pattern. These two patterns match any `rm` invocation where a
+  // `--recursive` (long-form) flag appears anywhere in the flag list and the
+  // target is `/` or `~`. The intervening `[^\n;]*?` allows arbitrary
+  // additional flags (e.g. `--force`, `--no-preserve-root`, `-v`) between
+  // `--recursive` and the path. We anchor on `--recursive` only (not also
+  // `--force`) because `rm --recursive /` is already destructive on its own.
+  {
+    id: "rm-recursive-longform-root",
+    level: "blocking",
+    regex: /\brm\s+(?:[^\n;]*?\s+)?--recursive(?:\s+[^\n;]*?)?\s+\/(?:\s|$|;)/,
+    summary: "Recursive delete from root filesystem (long-form --recursive)",
+  },
+  {
+    id: "rm-recursive-longform-home",
+    level: "blocking",
+    regex: /\brm\s+(?:[^\n;]*?\s+)?--recursive(?:\s+[^\n;]*?)?\s+~(?:\/|\s|$|;)/,
+    summary: "Recursive delete from home directory (long-form --recursive)",
+  },
   {
     id: "chmod-777",
     level: "blocking",

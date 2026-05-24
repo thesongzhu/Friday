@@ -63,6 +63,60 @@ describe("scanShellScript", () => {
     expect(rmHome).toBeDefined();
   });
 
+  // ─── B1: long-form-flag bypass for rm -rf ───
+
+  it("B1: detects 'rm --recursive --force /' (long-form bypass) as blocking", () => {
+    const script = "rm --recursive --force /";
+    const result = scanShellScript(script);
+
+    expect(result.verdict).toBe("dangerous");
+    const blocking = result.findings.filter((f) => f.level === "blocking");
+    expect(blocking.some((f) => f.id === "rm-recursive-longform-root")).toBe(true);
+  });
+
+  it("B1: detects 'rm --recursive /' (no force flag, still recursive to root) as blocking", () => {
+    const script = "rm --recursive /";
+    const result = scanShellScript(script);
+
+    expect(result.verdict).toBe("dangerous");
+    expect(result.findings.some((f) => f.id === "rm-recursive-longform-root")).toBe(true);
+  });
+
+  it("B1: detects 'rm --recursive ~/' (long-form home) as blocking", () => {
+    const script = "rm --recursive ~/";
+    const result = scanShellScript(script);
+
+    expect(result.verdict).toBe("dangerous");
+    expect(result.findings.some((f) => f.id === "rm-recursive-longform-home")).toBe(true);
+  });
+
+  it("B1: detects 'rm --force --recursive /' (flag order swapped) as blocking", () => {
+    const script = "rm --force --recursive /";
+    const result = scanShellScript(script);
+
+    expect(result.verdict).toBe("dangerous");
+    expect(result.findings.some((f) => f.id === "rm-recursive-longform-root")).toBe(true);
+  });
+
+  it("B1: detects 'rm -v --recursive --no-preserve-root /' (extra flags between) as blocking", () => {
+    const script = "rm -v --recursive --no-preserve-root /";
+    const result = scanShellScript(script);
+
+    expect(result.verdict).toBe("dangerous");
+    expect(result.findings.some((f) => f.id === "rm-recursive-longform-root")).toBe(true);
+  });
+
+  it("B1: does NOT falsely match 'rm --recursive ./local/safe' (not root or home)", () => {
+    const script = "rm --recursive ./local/safe";
+    const result = scanShellScript(script);
+
+    // The script should not trigger the long-form patterns because target is not / or ~
+    const matched = result.findings.filter(
+      (f) => f.id === "rm-recursive-longform-root" || f.id === "rm-recursive-longform-home",
+    );
+    expect(matched).toHaveLength(0);
+  });
+
   // ─── Blocking: sudo ───
 
   it("detects sudo apt install as blocking", () => {
