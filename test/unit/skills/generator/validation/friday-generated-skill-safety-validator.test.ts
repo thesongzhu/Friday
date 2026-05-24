@@ -328,4 +328,110 @@ describe("validateGeneratedCode", () => {
     // Should not detect shell patterns because runtime.kind is "node"
     expect(issues.some((i) => i.code === "DANGEROUS_SHELL_PATTERN")).toBe(false);
   });
+
+  // ─── B1 truth-labeling: refuse runtime kinds without safety scans ───
+
+  it("B1: refuses runtime.kind='python' with RUNTIME_KIND_NOT_GENERATABLE", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "python",
+        entrypoint: "main.py",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [
+        makeFile({
+          path: "main.py",
+          language: "python",
+          content: "def execute(input):\n    return {}\n",
+        }),
+      ],
+      manifest,
+    );
+    const runtimeIssue = issues.find((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE");
+    expect(runtimeIssue).toBeDefined();
+    expect(runtimeIssue?.severity).toBe("error");
+    expect(runtimeIssue?.message).toContain("python");
+    expect(runtimeIssue?.message).toContain("node, shell");
+  });
+
+  it("B1: refuses runtime.kind='remote-http' with RUNTIME_KIND_NOT_GENERATABLE", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "remote-http",
+        entrypoint: "config.json",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [makeFile({ path: "config.json", language: "json", content: '{"url":"https://example.com"}' })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE" && i.severity === "error")).toBe(true);
+  });
+
+  it("B1: refuses runtime.kind='builtin' with RUNTIME_KIND_NOT_GENERATABLE", () => {
+    // 'builtin' is reserved for hub-shipped skills; the generator should not
+    // emit drafts for this kind.
+    const manifest = makeManifest({
+      runtime: {
+        kind: "builtin",
+        entrypoint: "builtin.json",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [makeFile({ path: "builtin.json", language: "json", content: "{}" })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE" && i.severity === "error")).toBe(true);
+  });
+
+  it("B1: still emits RUNTIME_KIND_NOT_GENERATABLE even when other validation issues are present (no error suppression)", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "python",
+        entrypoint: "main.py",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    // Provide files that ALSO trigger PATH_TRAVERSAL — both issues should appear.
+    const issues = validateGeneratedCode(
+      [makeFile({ path: "../escape.py", language: "python", content: "" })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE")).toBe(true);
+    expect(issues.some((i) => i.code === "PATH_TRAVERSAL")).toBe(true);
+  });
+
+  it("B1: does NOT emit RUNTIME_KIND_NOT_GENERATABLE for runtime.kind='node' (regression)", () => {
+    const issues = validateGeneratedCode([makeFile()], makeManifest());
+    expect(issues.some((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE")).toBe(false);
+  });
+
+  it("B1: does NOT emit RUNTIME_KIND_NOT_GENERATABLE for runtime.kind='shell' (regression)", () => {
+    const manifest = makeManifest({
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "0.1.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+    });
+    const issues = validateGeneratedCode(
+      [makeFile({ path: "run.sh", language: "bash", content: '#!/usr/bin/env bash\necho "{}"' })],
+      manifest,
+    );
+    expect(issues.some((i) => i.code === "RUNTIME_KIND_NOT_GENERATABLE")).toBe(false);
+  });
 });
