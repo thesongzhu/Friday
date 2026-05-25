@@ -11,6 +11,23 @@ import { createFridayTuiController } from "../tui/friday-tui-controller.js";
 import { DEFAULT_TUI_CONFIG } from "../tui/friday-tui.types.js";
 import type { FridayTuiConfig, FridayTuiEvent } from "../tui/friday-tui.types.js";
 
+// ─── B4 truth-labeling: realtime advisory ───
+
+let fridayCliTuiRealtimeAdvisoryEmitted = false;
+
+/**
+ * Emit a one-time advisory when `realtimeEnabled: true` is requested but
+ * the TUI has no actual realtime transport wired. Replaces the prior
+ * silent no-op subscription that delivered zero events.
+ */
+function emitFridayCliTuiRealtimeAdvisoryOnce(): void {
+  if (fridayCliTuiRealtimeAdvisoryEmitted) return;
+  fridayCliTuiRealtimeAdvisoryEmitted = true;
+  console.info(
+    "[friday][cli-tui] advisory: realtimeEnabled=true was set, but no realtime transport (SSE/WebSocket) is wired in the TUI as of the B4 capability inventory. onRealtimeEvent is intentionally unset; the TUI will fall back to refresh-interval polling. Wiring realtime is proof_pending.",
+  );
+}
+
 // ─── Types ───
 
 export interface FridayCliTuiOptions {
@@ -203,13 +220,21 @@ export async function runFridayCliTui(options: FridayCliTuiOptions = {}): Promis
       rl.on("line", cb);
       return () => rl.removeListener("line", cb);
     },
-    onRealtimeEvent: config.realtimeEnabled
-      ? (cb: (event: FridayTuiEvent) => void) => {
-        // Placeholder — would connect to SSE/WebSocket endpoint
-        void cb;
-        return () => {};
+    // B4 truth-labeling: when `config.realtimeEnabled` is true, the prior
+    // behavior installed a no-op `onRealtimeEvent` subscription that NEVER
+    // delivered events (the body was `void cb; return () => {}`). That hid
+    // the proof_pending state — the TUI promised realtime but no SSE/
+    // WebSocket transport is wired. We now return `undefined` either way
+    // and emit a one-time advisory when the flag is set so the operator
+    // sees the gap instead of believing realtime events are live. A
+    // future "wire-TUI-realtime-transport" slice can hook a real
+    // subscription source through this.
+    onRealtimeEvent: (() => {
+      if (config.realtimeEnabled) {
+        emitFridayCliTuiRealtimeAdvisoryOnce();
       }
-      : undefined,
+      return undefined;
+    })(),
   });
 
   // Graceful shutdown

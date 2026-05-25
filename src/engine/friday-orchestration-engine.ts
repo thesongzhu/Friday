@@ -118,12 +118,29 @@ export function createFridayOrchestrationEngine(
     return executeRun(mergedInput);
   }
 
+  /**
+   * Cancel a run by `runId`.
+   *
+   * **B4 truth-labeling note (this is an intentional no-op for interface
+   * completeness):** the orchestration engine does NOT itself maintain an
+   * abort-controller registry for in-flight runs. The actual cancellation
+   * is handled upstream by:
+   * - `src/api/runtime/friday-api-runtime.ts` — request-scoped
+   *   AbortController per agent run
+   * - `src/agent/runtime/friday-agent-runtime.ts` — internal abort
+   *   propagation through tool calls
+   *
+   * Calling this method has no observable side effect on the run unless
+   * one of those upstream layers wires through. The method exists so the
+   * `FridayOrchestrationEngine` shape matches the consumer expectation
+   * (callers may check for the method's presence). A future
+   * "centralize-cancellation" slice could wire this through a registry;
+   * until then it remains a documented no-op.
+   */
   async function cancelRun(runId: string): Promise<void> {
-    // Cancel is a no-op if resume deps are absent — the caller (API runtime)
-    // manages abort controllers externally.
+    void runId;
     if (!runResume) return;
-    // The existing agent runtime abort controller mechanism handles actual
-    // cancellation; this method exists for interface completeness.
+    // No-op by design — see JSDoc above.
   }
 
   function resumeStaleRunsOnBoot(): number {
