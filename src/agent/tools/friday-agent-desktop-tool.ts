@@ -64,6 +64,68 @@ const VALID_MODIFIERS = new Set<FridayDesktopModifierKey>([
   "command",
 ]);
 
+/**
+ * POSIX absolute-path prefixes that desktop file_operation MUST NOT touch
+ * at parse-time. Defense-in-depth — the action-executor's sandbox boundary
+ * is the authoritative protection. This list is intentionally conservative
+ * (only the most obviously-system locations); broader allow-listing
+ * happens via the sandbox config.
+ */
+const FRIDAY_DESKTOP_SENSITIVE_POSIX_PREFIXES: readonly string[] = [
+  "/etc/",
+  "/proc/",
+  "/sys/",
+  "/dev/",
+  "/boot/",
+  "/root/",
+];
+
+/**
+ * Windows-equivalent sensitive prefixes (lowercased for case-insensitive
+ * compare; Windows paths are normalized to lowercase before matching).
+ */
+const FRIDAY_DESKTOP_SENSITIVE_WIN32_PREFIXES: readonly string[] = [
+  "c:\\windows\\",
+  "c:\\program files\\",
+  "c:\\program files (x86)\\",
+  "c:\\programdata\\",
+];
+
+/**
+ * Parse-time fast-reject for desktop file_operation paths.
+ *
+ * Catches:
+ * - `..` directory-traversal segments (any platform)
+ * - null bytes
+ * - absolute paths under well-known OS-system locations (POSIX `/etc/`,
+ *   `/proc/`, `/sys/`, `/dev/`, `/boot/`, `/root/`; Windows `C:\Windows\`,
+ *   `C:\Program Files\`, `C:\Program Files (x86)\`, `C:\ProgramData\`)
+ *
+ * Does NOT replace the sandbox boundary at `action-executor.ts`'s
+ * `evaluateSandboxBoundary`, which is the authoritative protection.
+ */
+function isUnsafeFileOperationPath(rawPath: string): boolean {
+  if (typeof rawPath !== "string" || rawPath.length === 0) return true;
+  // Null bytes can be used to truncate paths in some downstream consumers.
+  if (rawPath.includes("\0")) return true;
+  // P1-SEC-003: directory-traversal segments (preserved).
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(rawPath)) return true;
+  // POSIX absolute path under a sensitive prefix.
+  if (rawPath.startsWith("/")) {
+    for (const prefix of FRIDAY_DESKTOP_SENSITIVE_POSIX_PREFIXES) {
+      if (rawPath === prefix.slice(0, -1) || rawPath.startsWith(prefix)) return true;
+    }
+  }
+  // Windows absolute path under a sensitive prefix (case-insensitive).
+  if (/^[a-zA-Z]:[\\/]/.test(rawPath)) {
+    const normalized = rawPath.replace(/\//g, "\\").toLowerCase();
+    for (const prefix of FRIDAY_DESKTOP_SENSITIVE_WIN32_PREFIXES) {
+      if (normalized.startsWith(prefix)) return true;
+    }
+  }
+  return false;
+}
+
 function serializeDesktopActionResult(result: FridayDesktopActionResult): Record<string, unknown> {
   return {
     actionId: result.id,
@@ -483,11 +545,30 @@ export function createFridayAgentDesktopTool(
       }
       case "file_operation": {
         const filePath = readStringParam(args, "path", { required: true });
-        // P1-SEC-003: Reject paths with directory traversal segments
-        if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(filePath)) {
+        // B4 defense-in-depth: parse-time fast-reject for known-attack paths.
+        // The action-executor's sandbox boundary (evaluateSandboxBoundary)
+        // is the authoritative protection — it normalizes, resolves real
+        // paths via realpath, and rejects anything outside configured
+        // sandbox roots. This parse-time check is a quick reject for the
+        // most obvious attack shapes so the action never even reaches the
+        // permission-guard / sandbox layer.
+        if (isUnsafeFileOperationPath(filePath)) {
           return null;
         }
         const operation = readStringParam(args, "operation") ?? "read";
+        // For move/copy, destinationPath gets the same check at parse-time.
+        if (operation === "move" || operation === "copy") {
+          const destinationPath = readStringParam(args, "destinationPath", { required: true });
+          if (isUnsafeFileOperationPath(destinationPath)) {
+            return null;
+          }
+          return {
+            type: "file_operation",
+            operation: operation as "move" | "copy",
+            path: filePath,
+            destinationPath,
+          };
+        }
         switch (operation) {
           case "write":
             return {
@@ -495,20 +576,6 @@ export function createFridayAgentDesktopTool(
               operation: "write" as const,
               path: filePath,
               content: readStringParam(args, "content") ?? "",
-            };
-          case "move":
-            return {
-              type: "file_operation",
-              operation: "move" as const,
-              path: filePath,
-              destinationPath: readStringParam(args, "destinationPath", { required: true }),
-            };
-          case "copy":
-            return {
-              type: "file_operation",
-              operation: "copy" as const,
-              path: filePath,
-              destinationPath: readStringParam(args, "destinationPath", { required: true }),
             };
           case "delete":
             return { type: "file_operation", operation: "delete" as const, path: filePath };
