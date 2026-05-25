@@ -7,6 +7,21 @@
  * and budget management. Can be injected into the workflow runtime
  * alongside or in place of the legacy retry manager.
  *
+ * **B4 truth-labeling note (proof_pending; NOT wired into production):**
+ * `createProductionRetryBridge` has zero production call sites as of the
+ * B4 capability inventory. The only caller is
+ * `test/integration/retry/friday-production-retry-bridge.test.ts`. The
+ * workflow runtime uses the legacy retry manager (see
+ * `friday-default-retry-policy.ts:buildDefaultRetryStrategies`); the
+ * `DEFAULT_PRODUCTION_STRATEGIES` constant below duplicates that policy
+ * verbatim. Loading this module does NOT change runtime behavior.
+ *
+ * The export is preserved via the `#retry` barrel so a future
+ * "wire-unified-retry-into-workflow-runtime" slice can hook it in
+ * without a contract break. A one-time `console.info` advisory fires
+ * at first construction so anyone wiring it in production sees the
+ * proof_pending state in logs.
+ *
  * @module retry/engine
  */
 
@@ -168,13 +183,27 @@ export interface ProductionRetryBridge {
 
 // ─── Factory ───
 
+let productionRetryBridgeAdvisoryEmitted = false;
+
+/** Warn-once advisory at first construction. See module header. */
+function emitProductionRetryBridgeAdvisoryOnce(): void {
+  if (productionRetryBridgeAdvisoryEmitted) return;
+  productionRetryBridgeAdvisoryEmitted = true;
+  console.info(
+    "[friday][retry][production-bridge] advisory: createProductionRetryBridge is constructed but has zero production callers in the workflow runtime as of the B4 capability inventory; the runtime still uses buildDefaultRetryStrategies from friday-default-retry-policy.ts. Wiring this bridge is proof_pending — see module header.",
+  );
+}
+
 /**
  * Create a production-configured retry bridge with the full unified
  * failure taxonomy and retry orchestration pipeline.
+ *
+ * B4 truth-labeling: proof_pending. See module header for full context.
  */
 export function createProductionRetryBridge(
   config: ProductionRetryBridgeConfig,
 ): ProductionRetryBridge {
+  emitProductionRetryBridgeAdvisoryOnce();
   const { generateId, nowIso } = config;
   const strategies = config.strategies ?? DEFAULT_PRODUCTION_STRATEGIES;
   const costBudget = config.costBudget ?? DEFAULT_PRODUCTION_COST_BUDGET;
