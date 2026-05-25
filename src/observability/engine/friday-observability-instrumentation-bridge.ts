@@ -9,6 +9,22 @@
  * - Sampling controls for high-volume events
  * - Dimension labeling for module, operation, and status
  *
+ * **B4 truth-labeling note (proof_pending; NOT wired into production):**
+ * `createObservabilityInstrumentationBridge`, `INSTRUMENTATION_METRICS`,
+ * and `INSTRUMENTATION_TRACE_NAMES` are exported via
+ * `observability/engine/index.ts` but have ZERO production import sites
+ * as of the B4 capability inventory. The workflow runtime, agent runtime,
+ * and API runtime instrument their own counters via
+ * `FridayMetricsCollector` and `FridayTraceManager` directly. The
+ * bridge's value-add (correlation propagation + sampling + dimension
+ * labeling) is real but uninvoked.
+ *
+ * The export is preserved via the parent barrel so a future
+ * "wire-instrumentation-bridge-into-runtimes" slice can hook it in
+ * without a contract break. A one-time `console.info` advisory fires
+ * at first construction so anyone wiring it in production sees the
+ * proof_pending state in logs.
+ *
  * @module observability/engine
  */
 
@@ -227,9 +243,21 @@ function getMetricCategory(kind: InstrumentationEventKind): string {
 
 // ─── Factory ───
 
+let observabilityInstrumentationBridgeAdvisoryEmitted = false;
+
+/** Warn-once advisory at first construction. See module header. */
+function emitObservabilityInstrumentationBridgeAdvisoryOnce(): void {
+  if (observabilityInstrumentationBridgeAdvisoryEmitted) return;
+  observabilityInstrumentationBridgeAdvisoryEmitted = true;
+  console.info(
+    "[friday][observability][instrumentation-bridge] advisory: createObservabilityInstrumentationBridge is constructed but has zero production import sites as of the B4 capability inventory; the workflow, agent, and API runtimes instrument via FridayMetricsCollector and FridayTraceManager directly. Wiring this bridge is proof_pending — see module header.",
+  );
+}
+
 export function createObservabilityInstrumentationBridge(
   deps: InstrumentationBridgeDeps,
 ): FridayObservabilityInstrumentationBridge {
+  emitObservabilityInstrumentationBridgeAdvisoryOnce();
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   const sampling = deps.samplingPolicy ?? DEFAULT_SAMPLING_POLICY;
   const events: InstrumentationEvent[] = [];

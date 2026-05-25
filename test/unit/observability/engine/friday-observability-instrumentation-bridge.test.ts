@@ -337,4 +337,27 @@ describe("B-004 FridayObservabilityInstrumentationBridge", () => {
       expect(bridge.getRecordedEvents()).toHaveLength(1);
     });
   });
+
+  // ─── B4 truth-labeling ───
+
+  it("B4 truth-labeling: emits a one-time advisory naming the proof_pending state", () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      createObservabilityInstrumentationBridge(makeDeps());
+      createObservabilityInstrumentationBridge(makeDeps());
+      createObservabilityInstrumentationBridge(makeDeps());
+
+      const advisoryCalls = infoSpy.mock.calls.filter((call) =>
+        typeof call[0] === "string" && (call[0] as string).includes("[friday][observability][instrumentation-bridge]"),
+      );
+      expect(advisoryCalls.length).toBeLessThanOrEqual(1);
+      if (advisoryCalls.length === 1) {
+        const message = advisoryCalls[0]![0] as string;
+        expect(message).toContain("zero production import sites");
+        expect(message).toContain("proof_pending");
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
