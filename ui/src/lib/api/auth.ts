@@ -18,7 +18,7 @@ export async function login(input: LoginInput): Promise<LoginResponse> {
     input,
   );
 
-  authStorage.setTokens(data.accessToken, data.refreshToken);
+  authStorage.setTokens(data.accessToken, data.refreshToken, data.expiresInSec);
   authStorage.setUser(data.user);
 
   return data;

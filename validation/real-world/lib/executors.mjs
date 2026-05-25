@@ -607,12 +607,32 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
     return;
   }
   const requestedPath = getUrlPath(execution.path);
+  const loginTimeoutMs = Math.max(timeoutMs, 90_000);
+  const waitForLoginExit = () => page.waitForFunction(
+    () => new URL(window.location.href).pathname !== "/login",
+    undefined,
+    { timeout: loginTimeoutMs },
+  );
+  const waitForLoginResponse = () => page.waitForResponse(
+    (response) => {
+      try {
+        const url = new URL(response.url());
+        return url.pathname === "/v1/auth/login";
+      } catch {
+        return false;
+      }
+    },
+    { timeout: loginTimeoutMs },
+  );
   if (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0) {
     await page.locator("#login-local-passphrase").fill(client.localPassphrase.trim());
-    await Promise.all([
-      page.waitForURL((url) => !isLoginPath(url.toString()), { timeout: timeoutMs }),
-      page.getByRole("button", { name: /continue locally/i }).click(),
-    ]);
+    const loginResponsePromise = waitForLoginResponse();
+    await page.getByRole("button", { name: /continue locally/i }).click();
+    const loginResponse = await loginResponsePromise;
+    if (!loginResponse.ok()) {
+      throw new Error(`Real browser local-passphrase login failed with HTTP ${String(loginResponse.status())}`);
+    }
+    await waitForLoginExit();
     artifact.observedEvidence.push(`completed real browser local-passphrase login for ${requestedPath}`);
     return;
   }
@@ -622,10 +642,13 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
   ) {
     await page.locator("#login-email").fill(client.email.trim());
     await page.locator("#login-password").fill(client.password.trim());
-    await Promise.all([
-      page.waitForURL((url) => !isLoginPath(url.toString()), { timeout: timeoutMs }),
-      page.getByRole("button", { name: /sign in/i }).click(),
-    ]);
+    const loginResponsePromise = waitForLoginResponse();
+    await page.getByRole("button", { name: /sign in/i }).click();
+    const loginResponse = await loginResponsePromise;
+    if (!loginResponse.ok()) {
+      throw new Error(`Real browser email/password login failed with HTTP ${String(loginResponse.status())}`);
+    }
+    await waitForLoginExit();
     artifact.observedEvidence.push(`completed real browser email/password login for ${requestedPath}`);
     return;
   }

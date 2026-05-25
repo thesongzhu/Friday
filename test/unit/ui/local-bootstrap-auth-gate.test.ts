@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("local bootstrap auth gate", () => {
-  it("routes first-run auth failures into local session recovery instead of passphrase setup", () => {
+  it("routes completed-bootstrap auth failures into real local login instead of seeding browser storage", () => {
     const routerSource = readFileSync("ui/src/router.tsx", "utf8");
 
     expect(routerSource).toContain("getBootstrapStatus");
+    expect(routerSource).toContain("LoginPage");
+    expect(routerSource).toContain("/login?next=");
     expect(routerSource).toContain("LocalSessionUnavailableGate");
     expect(routerSource).toContain("bootstrapStatusQuery.isError");
     expect(routerSource).toContain("正在连接本机 Friday");
@@ -20,6 +22,12 @@ describe("local bootstrap auth gate", () => {
     expect(routerSource).not.toContain("Backend said:");
     expect(routerSource).not.toContain("Local session not connected");
     expect(routerSource).not.toContain("No authentication method provided");
+
+    const loginSource = readFileSync("ui/src/routes/login-page.tsx", "utf8");
+    expect(loginSource).toContain("login({ localPassphrase: trimmed })");
+    expect(loginSource).toContain('id="login-local-passphrase"');
+    expect(loginSource).toContain("Continue locally");
+    expect(loginSource).not.toContain("localStorage.setItem");
   });
 
   it("restores a stored token without attempting local auto-login", () => {
