@@ -64,15 +64,23 @@ export function canonicalizePattern(pattern: ExecutionPattern): string {
 }
 
 /**
- * Compute a SHA-256 fingerprint of a normalized execution pattern.
- * Uses a simple but effective string hashing algorithm (FNV-1a variant)
- * since we cannot use Node crypto in pure TypeScript without external deps.
+ * Compute a stable, deterministic, NON-cryptographic fingerprint of a
+ * normalized execution pattern.
  *
- * For production use, this would use `crypto.subtle.digest('SHA-256', ...)`.
- * This implementation provides deterministic, collision-resistant hashing
- * suitable for in-memory deduplication.
+ * **B4 truth-labeling note (replaces prior "SHA-256 fingerprint" claim):**
+ * This is FNV-1a 64-bit extended to 64 hex characters via an ad-hoc
+ * mixing post-process. The 64-char hex shape resembles SHA-256 output
+ * purely for downstream type/string compatibility — it is NOT a
+ * cryptographic hash and MUST NOT be relied on for integrity, signing,
+ * adversarial-input collision resistance, or any security-bearing
+ * decision. It is suitable for in-memory deduplication of trusted
+ * pattern objects where the only concern is "same input → same string".
+ *
+ * If a cryptographic fingerprint becomes required for an integrity or
+ * signing use case, the right call is `crypto.subtle.digest('SHA-256',
+ * ...)` — and the call sites should switch to that new function.
  */
-export function computeFingerprint(pattern: ExecutionPattern): string {
+export function computeStableFingerprint(pattern: ExecutionPattern): string {
   const input = canonicalizePattern(pattern);
   // FNV-1a 64-bit hash (split into two 32-bit parts for JS number safety)
   let h1 = 0x811c9dc5;
@@ -144,7 +152,7 @@ export function createLearningEngine(deps: LearningEngineDeps): FridayPlaybookCa
       event: FridayPlaybookRunCompletionEvent,
     ): Promise<FridayPlaybookCandidate | null> {
       const pattern = extractPattern(event);
-      const fingerprint = computeFingerprint(pattern);
+      const fingerprint = computeStableFingerprint(pattern);
       const existing = store.getCandidateByFingerprint(fingerprint, event.workflowType);
 
       if (event.success) {

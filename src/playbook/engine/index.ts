@@ -24,7 +24,7 @@ export {
   createLearningEngine,
   extractPattern,
   canonicalizePattern,
-  computeFingerprint,
+  computeStableFingerprint,
 } from "./learning-engine.js";
 export type { ExecutionPattern, LearningEngineDeps } from "./learning-engine.js";
 
