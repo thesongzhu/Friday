@@ -61,7 +61,7 @@ async function doRefresh(): Promise<void> {
     throw new AuthExpiredError();
   }
 
-  authStorage.setTokens(envelope.data.accessToken, envelope.data.refreshToken);
+  authStorage.setTokens(envelope.data.accessToken, envelope.data.refreshToken, envelope.data.expiresInSec);
 }
 
 async function refreshSession(): Promise<void> {

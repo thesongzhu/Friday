@@ -24,6 +24,7 @@ const AutomationsPage = lazy(async () => import("@/routes/automations-page").the
 const FleetPage = lazy(async () => import("@/routes/fleet-page").then((module) => ({ default: module.FleetPage })));
 const GuidedFlowPage = lazy(async () => import("@/routes/guided-flow-page").then((module) => ({ default: module.GuidedFlowPage })));
 const HomePage = lazy(async () => import("@/routes/home-page").then((module) => ({ default: module.HomePage })));
+const LoginPage = lazy(async () => import("@/routes/login-page").then((module) => ({ default: module.LoginPage })));
 const ObservabilityPage = lazy(async () => import("@/routes/observability-page").then((module) => ({ default: module.ObservabilityPage })));
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
@@ -203,6 +204,7 @@ function LocalSessionUnavailableGate(props: { error?: unknown; onRetry: () => vo
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { authError, isAuthenticated, isLoading, retryLocalSession } = useAuth();
+  const location = useLocation();
   const bootstrapStatusQuery = useQuery({
     queryKey: ["auth", "bootstrap", "status"],
     queryFn: getBootstrapStatus,
@@ -249,14 +251,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
         />
       );
     }
-    return (
-      <LocalSessionUnavailableGate
-        error={authError}
-        onRetry={() => {
-          void retryLocalSession();
-        }}
-      />
-    );
+    const nextPath = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(nextPath)}`} replace />;
   }
 
   return <>{children}</>;
@@ -337,7 +333,14 @@ function RouteErrorBoundary() {
 export const router = createBrowserRouter([
   {
     path: "/login",
-    element: <Navigate to="/home" replace />,
+    element: (
+      <RouteSuspense
+        title={localizedText("加载登录", "Loading login")}
+        detail={localizedText("Friday 正在准备本机解锁。", "Friday is preparing local unlock.")}
+      >
+        <LoginPage />
+      </RouteSuspense>
+    ),
   },
   {
     path: "/",
