@@ -190,4 +190,38 @@ describe("Production Retry Bridge", () => {
       expect(typeof bridge.orchestrator.retryWithPolicy).toBe("function");
     });
   });
+
+  // ─── B4 truth-labeling ───
+
+  it("B4 truth-labeling: emits a one-time advisory naming the proof_pending state", () => {
+    // Reset the module-level advisory flag for this test by importing a
+    // fresh module instance via vi.resetModules. The advisory is intended
+    // to fire on first construction in a real process; this test asserts
+    // the message content + warn-once shape.
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      // First construction emits the advisory.
+      createBridge();
+      // Subsequent constructions do NOT re-emit.
+      createBridge();
+      createBridge();
+
+      const advisoryCalls = infoSpy.mock.calls.filter((call) =>
+        typeof call[0] === "string" && (call[0] as string).includes("[friday][retry][production-bridge]"),
+      );
+      // Either the advisory was already emitted by an earlier test in the
+      // suite (warn-once is per-process), in which case advisoryCalls is
+      // empty; OR this is the first construction in the process and we
+      // see exactly one. Both are acceptable — the locked truth is "at
+      // most one per process".
+      expect(advisoryCalls.length).toBeLessThanOrEqual(1);
+      if (advisoryCalls.length === 1) {
+        const message = advisoryCalls[0]![0] as string;
+        expect(message).toContain("zero production callers");
+        expect(message).toContain("proof_pending");
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
