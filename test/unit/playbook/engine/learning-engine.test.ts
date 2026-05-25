@@ -4,7 +4,7 @@ import {
   createLearningEngine,
   extractPattern,
   canonicalizePattern,
-  computeFingerprint,
+  computeStableFingerprint,
 } from "../../../../src/playbook/engine/learning-engine.js";
 import type { PlaybookStore } from "../../../../src/playbook/engine/playbook-store.js";
 import type {
@@ -112,30 +112,57 @@ describe("Learning Engine", () => {
     });
   });
 
-  describe("computeFingerprint", () => {
+  describe("computeStableFingerprint", () => {
     it("produces deterministic fingerprints", () => {
       const event = makeEvent();
       const p1 = extractPattern(event);
       const p2 = extractPattern(event);
 
-      expect(computeFingerprint(p1)).toBe(computeFingerprint(p2));
+      expect(computeStableFingerprint(p1)).toBe(computeStableFingerprint(p2));
     });
 
     it("produces 64-char hex strings", () => {
       const pattern = extractPattern(makeEvent());
-      const fp = computeFingerprint(pattern);
+      const fp = computeStableFingerprint(pattern);
 
       expect(fp).toHaveLength(64);
       expect(/^[0-9a-f]{64}$/.test(fp)).toBe(true);
     });
 
     it("produces different fingerprints for different patterns", () => {
-      const fp1 = computeFingerprint(extractPattern(makeEvent()));
-      const fp2 = computeFingerprint(
+      const fp1 = computeStableFingerprint(extractPattern(makeEvent()));
+      const fp2 = computeStableFingerprint(
         extractPattern(makeEvent({ nodeSequence: [{ nodeType: "different" }] })),
       );
 
       expect(fp1).not.toBe(fp2);
+    });
+
+    it("B4 truth-labeling: NOT a SHA-256 hash (output diverges from real SHA-256 of same canonical input)", async () => {
+      // The function's 64-hex-char output shape resembles SHA-256 purely
+      // for downstream type/string compatibility. This regression guard
+      // proves it is NOT a cryptographic SHA-256: comparing the output
+      // against `crypto.subtle.digest('SHA-256', ...)` of the same
+      // canonical input must NOT match. If a future slice swaps the
+      // implementation to real SHA-256, this test will fail loudly and
+      // the docstring + function name must be updated to match.
+      const pattern = extractPattern(makeEvent());
+      const canonical = canonicalizePattern(pattern);
+      const stableFp = computeStableFingerprint(pattern);
+
+      const sha256Buf = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(canonical),
+      );
+      const sha256Hex = Array.from(new Uint8Array(sha256Buf))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      expect(stableFp).toHaveLength(64);
+      expect(sha256Hex).toHaveLength(64);
+      // Both are 64 hex chars. They must NOT match — proves the stable
+      // fingerprint is not a real SHA-256.
+      expect(stableFp).not.toBe(sha256Hex);
     });
   });
 
@@ -159,7 +186,7 @@ describe("Learning Engine", () => {
       );
 
       expect(canonicalizePattern(patternA)).not.toBe(canonicalizePattern(patternB));
-      expect(computeFingerprint(patternA)).not.toBe(computeFingerprint(patternB));
+      expect(computeStableFingerprint(patternA)).not.toBe(computeStableFingerprint(patternB));
     });
   });
 
