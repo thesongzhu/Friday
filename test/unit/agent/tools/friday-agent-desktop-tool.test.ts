@@ -546,6 +546,133 @@ describe("createFridayAgentDesktopTool", () => {
       const call = (sm.executeAction as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(call.operation).toBe("read");
     });
+
+    // ─── B4 defense-in-depth: parse-time path safety ───
+    //
+    // The action-executor sandbox is the authoritative protection. This
+    // parse-time check is a quick reject for the most obvious attack
+    // shapes. These tests lock in the parse-time rejection set so future
+    // edits don't silently widen it.
+
+    it("B4 parse-time reject: '..' traversal in path returns Invalid action", async () => {
+      const sm = createMockSessionManager();
+      const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+      const result = await tool.execute(
+        { action: "execute", actionType: "file_operation", path: "../etc/passwd", operation: "read" },
+        signal(),
+      );
+      expect(result.isError).toBe(true);
+      expect(sm.executeAction).not.toHaveBeenCalled();
+    });
+
+    it("B4 parse-time reject: absolute POSIX system paths under /etc/, /proc/, /sys/, /dev/, /boot/, /root/", async () => {
+      const sensitivePaths = [
+        "/etc/passwd",
+        "/etc/shadow",
+        "/proc/self/mem",
+        "/sys/firmware/dmi/tables/smbios_entry_point",
+        "/dev/sda",
+        "/boot/grub/grub.cfg",
+        "/root/.ssh/authorized_keys",
+      ];
+      for (const p of sensitivePaths) {
+        const sm = createMockSessionManager();
+        const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+        const result = await tool.execute(
+          { action: "execute", actionType: "file_operation", path: p, operation: "read" },
+          signal(),
+        );
+        expect(result.isError, `should reject ${p}`).toBe(true);
+        expect(sm.executeAction, `should not call executeAction for ${p}`).not.toHaveBeenCalled();
+      }
+    });
+
+    it("B4 parse-time reject: Windows system paths (case-insensitive)", async () => {
+      const sensitivePaths = [
+        "C:\\Windows\\System32\\config\\SAM",
+        "c:\\windows\\system32\\config\\sam",
+        "C:\\Program Files\\Common Files\\something.exe",
+        "C:\\Program Files (x86)\\foo\\bar.dll",
+        "C:\\ProgramData\\Microsoft\\Crypto\\RSA",
+      ];
+      for (const p of sensitivePaths) {
+        const sm = createMockSessionManager();
+        const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+        const result = await tool.execute(
+          { action: "execute", actionType: "file_operation", path: p, operation: "read" },
+          signal(),
+        );
+        expect(result.isError, `should reject ${p}`).toBe(true);
+        expect(sm.executeAction, `should not call executeAction for ${p}`).not.toHaveBeenCalled();
+      }
+    });
+
+    it("B4 parse-time reject: null byte in path", async () => {
+      const sm = createMockSessionManager();
+      const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+      const result = await tool.execute(
+        { action: "execute", actionType: "file_operation", path: "/tmp/safe\0/../etc/passwd", operation: "read" },
+        signal(),
+      );
+      expect(result.isError).toBe(true);
+      expect(sm.executeAction).not.toHaveBeenCalled();
+    });
+
+    it("B4 parse-time accepts legitimate user paths (regression — no over-blocking)", async () => {
+      const legitimatePaths = [
+        "/tmp/notes.txt",
+        "/home/jarvis/project/file.md",
+        "/Users/jarvis/Desktop/document.pdf",
+        "C:\\Users\\Jarvis\\Documents\\file.txt",
+        "subdir/file.txt", // relative
+      ];
+      for (const p of legitimatePaths) {
+        const sm = createMockSessionManager();
+        const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+        const result = await tool.execute(
+          { action: "execute", actionType: "file_operation", path: p, operation: "read" },
+          signal(),
+        );
+        // Should NOT be a parse-time error — the action should reach
+        // executeAction (which the mock accepts).
+        expect(result.isError, `should NOT reject legitimate path ${p}`).toBeUndefined();
+        expect(sm.executeAction, `should call executeAction for ${p}`).toHaveBeenCalled();
+      }
+    });
+
+    it("B4 parse-time reject: move destinationPath also checked", async () => {
+      const sm = createMockSessionManager();
+      const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+      const result = await tool.execute(
+        {
+          action: "execute",
+          actionType: "file_operation",
+          path: "/tmp/safe.txt",
+          operation: "move",
+          destinationPath: "/etc/passwd",
+        },
+        signal(),
+      );
+      expect(result.isError).toBe(true);
+      expect(sm.executeAction).not.toHaveBeenCalled();
+    });
+
+    it("B4 parse-time reject: copy destinationPath also checked", async () => {
+      const sm = createMockSessionManager();
+      const tool = createFridayAgentDesktopTool({ desktopSessionManager: sm });
+      const result = await tool.execute(
+        {
+          action: "execute",
+          actionType: "file_operation",
+          path: "/tmp/safe.txt",
+          operation: "copy",
+          destinationPath: "/proc/self/mem",
+        },
+        signal(),
+      );
+      expect(result.isError).toBe(true);
+      expect(sm.executeAction).not.toHaveBeenCalled();
+    });
   });
 
   // ─── execute: read_element ───
