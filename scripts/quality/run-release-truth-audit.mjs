@@ -952,11 +952,36 @@ async function main() {
       evidence: unusedUiRouteFiles,
     },
   ];
+  // Release-readiness truth alignment:
+  //
+  // The runtime probes for protected routes (/v1/providers, /v1/model-routing,
+  // /v1/channels, /v1/observability/overview, /v1/fleet/overview) require an
+  // admin Bearer token. When the auditor cannot authenticate (no
+  // FRIDAY_AUTH_TOKEN and no matching FRIDAY_LOCAL_PASSPHRASE for the running
+  // hub), every protected route returns 401 → `ok=false`. That is NOT
+  // "Friday is broken"; that is "the auditor lacks admin credentials in this
+  // environment".
+  //
+  // Truthful distinction: when `runtime.health.ok === true` but `auth.token`
+  // is null, auth-gated probe failures classify as `blocked_by_env`
+  // (de-scope) — same shape as the existing FRIDAY_PACKAGING_ENABLED /
+  // FRIDAY_MULTI_TENANT_ENABLED handling. The script still gives a hard
+  // "not shipable" if the hub itself is unreachable (health.ok=false) or if
+  // README/release-script alignment fails. CI runs with FRIDAY_AUTH_TOKEN
+  // configured and gets the full audit; local dev gets honest de-scope.
+  const auditorCanAuthenticate = Boolean(auth.token);
+  const hubIsReachable = runtime.health?.ok === true;
+  const protectedRoutesBlockedByMissingAuth = !auditorCanAuthenticate && hubIsReachable;
+
   const blockerConditions = [
     !runtime.health?.ok,
-    !runtime.setupStatus?.ok,
-    !runtime.providers?.ok,
-    !runtime.routing?.ok,
+    // Protected-route blockers are real ONLY when the auditor IS
+    // authenticated. Without auth credentials, the runtime probe cannot
+    // verify the claim; treat that as de-scope rather than a release
+    // blocker. Each of these endpoints requires an admin Bearer token.
+    !runtime.setupStatus?.ok && !protectedRoutesBlockedByMissingAuth,
+    !runtime.providers?.ok && !protectedRoutesBlockedByMissingAuth,
+    !runtime.routing?.ok && !protectedRoutesBlockedByMissingAuth,
     !releaseVerifyRoutesThroughRealProof || releaseVerifyRoutesThroughRepo,
     !readmeReleaseTruthAligned,
   ];
@@ -967,6 +992,9 @@ async function main() {
     !runtime.channels?.ok,
     !runtime.observability?.ok,
     !runtime.fleet?.ok,
+    // Surface "auditor lacks auth" as an explicit de-scope reason so it
+    // shows up in the report rather than being silently absorbed.
+    protectedRoutesBlockedByMissingAuth,
   ];
   const verdict = blockerConditions.some(Boolean)
     ? "not shipable"

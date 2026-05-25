@@ -634,31 +634,22 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
   );
 }
 
-async function seedUiAuthStorageIfAvailable({ context, client, artifact }) {
-  const accessToken = typeof client?.accessToken === "string" ? client.accessToken.trim() : "";
-  const refreshToken = typeof client?.refreshToken === "string" ? client.refreshToken.trim() : "";
-  if (accessToken.length === 0) {
-    return false;
-  }
-  await context.addInitScript(
-    ({ accessToken: seededAccessToken, refreshToken: seededRefreshToken, user }) => {
-      window.localStorage.setItem("friday.auth.accessToken", seededAccessToken);
-      if (seededRefreshToken) {
-        window.localStorage.setItem("friday.auth.refreshToken", seededRefreshToken);
-      }
-      if (user) {
-        window.localStorage.setItem("friday.auth.user", JSON.stringify(user));
-      }
-    },
-    {
-      accessToken,
-      refreshToken,
-      user: client.user ?? null,
-    },
-  );
-  artifact.observedEvidence.push("seeded browser auth storage from validation login session");
-  return true;
-}
+// Release-readiness rule (per `check:proof:no-mock-leaks`): proof inputs MUST
+// NOT seed browser auth storage. The prior helper `seedUiAuthStorageIfAvailable`
+// used `localStorage.setItem` to push validation-acquired tokens into the
+// page context to skip the login redirect on UI probes. That is a mock-
+// contamination marker by policy — even with real tokens, seeded browser-side
+// auth is NOT the same as a real interactive login receipt, and treating the
+// seeded path as real proof would inflate live-proof claims.
+//
+// Callers that previously seeded auth must now go through the real login
+// flow via `settleAndCompleteUiLoginIfNeeded` / `completeUiLoginIfNeeded`,
+// which exercise the actual /login form against the running hub. The login
+// helpers already exist and already produce real observed evidence.
+//
+// If a future flow legitimately needs an auth seed, it MUST run outside
+// `validation/real-world/lib/` (which is in `DEFAULT_PROOF_INPUTS`) and be
+// labeled `proof_pending_blocked_by_capability` in the live proof matrix.
 
 async function settleAndCompleteUiLoginIfNeeded({ page, client, execution, artifact, timeoutMs }) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1983,7 +1974,11 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     }
 
     ({ context } = await getSharedUiProbeSession(uiBaseUrl));
-    await seedUiAuthStorageIfAvailable({ context, client, artifact });
+    // Release-readiness rule: do not seed browser auth storage from validation
+    // tokens. UI probes go through the real login form via
+    // settleAndCompleteUiLoginIfNeeded below; that produces real observed
+    // login evidence. See the deleted seedUiAuthStorageIfAvailable comment
+    // earlier in this file for the policy rationale.
     page = await context.newPage();
     page.on("request", (request) => {
       requestUrls.push(request.url());
@@ -2196,7 +2191,11 @@ async function executeUiAuthoring({ artifact, client, scenario, reportRoot, uiBa
     }
 
     ({ context } = await getSharedUiProbeSession(uiBaseUrl));
-    await seedUiAuthStorageIfAvailable({ context, client, artifact });
+    // Release-readiness rule: do not seed browser auth storage from validation
+    // tokens. UI probes go through the real login form via
+    // settleAndCompleteUiLoginIfNeeded below; that produces real observed
+    // login evidence. See the deleted seedUiAuthStorageIfAvailable comment
+    // earlier in this file for the policy rationale.
     page = await context.newPage();
 
     await page.goto(execution.path, {
