@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createFridayAgentBrowserTool } from "#agent";
-import type { FridayBrowserManager, BrowserSession } from "#browser";
+import { FRIDAY_BROWSER_ALLOW_ANY_ORIGIN, type FridayBrowserManager, type BrowserSession } from "#browser";
 
 // ─── Mock helpers ───
 
@@ -97,7 +97,9 @@ function createMockManager(overrides?: Partial<FridayBrowserManager>): FridayBro
     sessions: sessions as ReadonlyMap<string, BrowserSession>,
     options: {
       workspaceRoot: "/tmp/test-workspace",
-      allowedOrigins: [],
+      // Default-allow for tests that don't specifically test origin filtering.
+      // Origin-filtering tests override this with explicit lists below.
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
       headless: true,
       maxSessions: 3,
       maxTabsPerSession: 8,

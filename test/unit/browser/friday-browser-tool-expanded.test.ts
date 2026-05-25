@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createFridayBrowserManager, type FridayBrowserManager } from "#browser";
+import { createFridayBrowserManager, FRIDAY_BROWSER_ALLOW_ANY_ORIGIN, type FridayBrowserManager } from "#browser";
 import { createFridayAgentBrowserTool } from "../../../src/agent/tools/friday-agent-browser-tool.js";
 
 // ─── Mock Playwright objects ───
@@ -88,6 +88,7 @@ describe("Browser Tool — Expanded Actions", () => {
     manager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
     tool = createFridayAgentBrowserTool({ browserManager: manager });
   });
@@ -794,6 +795,7 @@ describe("Browser Tool — Disconnect Recovery", () => {
     const manager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: customLaunch as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     const tool = createFridayAgentBrowserTool({ browserManager: manager });
@@ -823,6 +825,7 @@ describe("Browser Tool — Disconnect Recovery", () => {
     const manager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: customLaunch as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     const tool = createFridayAgentBrowserTool({ browserManager: manager });

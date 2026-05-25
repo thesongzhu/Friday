@@ -18,6 +18,7 @@ export {
   sanitizeArtifactPathSegment,
   validateUrl,
   matchesOrigin,
+  FRIDAY_BROWSER_ALLOW_ANY_ORIGIN,
 } from "./friday-browser-manager.js";
 
 export type {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createFridayBrowserManager, validateUrl, matchesOrigin, sanitizeArtifactPathSegment } from "#browser";
+import { createFridayBrowserManager, validateUrl, matchesOrigin, sanitizeArtifactPathSegment, FRIDAY_BROWSER_ALLOW_ANY_ORIGIN } from "#browser";
 
 // ─── Mock Playwright objects ───
 
@@ -398,9 +398,15 @@ describe("FridayBrowserManager", () => {
 // ─── URL validation ───
 
 describe("validateUrl", () => {
-  it("allows valid http URLs", () => {
-    expect(validateUrl("http://localhost:3000", [])).toBeUndefined();
-    expect(validateUrl("https://example.com", [])).toBeUndefined();
+  it("allows valid http URLs when allow-any sentinel is passed (B4 explicit opt-in)", () => {
+    expect(validateUrl("http://localhost:3000", [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBeUndefined();
+    expect(validateUrl("https://example.com", [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBeUndefined();
+  });
+
+  it("B4 default-deny: rejects valid http URLs when allowedOrigins is empty", () => {
+    const error = validateUrl("https://example.com", []);
+    expect(error).toBeDefined();
+    expect(error).toContain("not in the allowed origins");
   });
 
   it("rejects file: protocol", () => {
@@ -445,8 +451,25 @@ describe("matchesOrigin", () => {
     expect(matchesOrigin("https://example.com/path", ["https://*.example.com"])).toBe(false);
   });
 
-  it("allows all when empty origin list", () => {
-    expect(matchesOrigin("https://anything.com", [])).toBe(true);
+  // B4 default-deny safety boundary: empty `allowedOrigins` is now deny-all,
+  // not allow-all. Production deployments that don't pass `allowedOrigins`
+  // (e.g. `friday-hub-bootstrap` as of this PR) must opt-in to allow-any
+  // navigation via the explicit `FRIDAY_BROWSER_ALLOW_ANY_ORIGIN` sentinel.
+  it("B4 default-deny: rejects every URL when allowedOrigins list is empty", () => {
+    expect(matchesOrigin("https://anything.com", [])).toBe(false);
+    expect(matchesOrigin("https://example.com", [])).toBe(false);
+    expect(matchesOrigin("http://localhost:8080", [])).toBe(false);
+    expect(matchesOrigin("file:///etc/passwd", [])).toBe(false);
+  });
+
+  it("B4 allow-any opt-in: FRIDAY_BROWSER_ALLOW_ANY_ORIGIN sentinel permits any URL", () => {
+    expect(matchesOrigin("https://anything.com", [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBe(true);
+    expect(matchesOrigin("https://evil.example.com", [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBe(true);
+    expect(matchesOrigin("http://internal.host", [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBe(true);
+  });
+
+  it("B4 allow-any sentinel can be combined with explicit origins (still allow-any)", () => {
+    expect(matchesOrigin("https://anything.com", ["https://example.com", FRIDAY_BROWSER_ALLOW_ANY_ORIGIN])).toBe(true);
   });
 
   it("rejects invalid URLs", () => {
