@@ -13,15 +13,25 @@
  * For each non-skipped channel:
  *   - loads the JSON artifact (the per-channel listener output)
  *   - verifies schemaVersion matches the expected stable token
- *   - verifies status === "passed"
- *   - verifies every key in `criteria` is true (no false / pending)
- *   - verifies `failures` is []
+ *   - verifies status === "passed" (the listener's authoritative verdict)
+ *   - verifies `failures` is [] (the listener's evaluated `requiredCriteria`
+ *     produced no shortfalls)
+ *   - verifies the explicit REQUIRED_NAMED_CRITERIA set is present in
+ *     `criteria` AND each named criterion === true (defense-in-depth
+ *     against tampered artifacts that drop or flip the named key)
  *   - verifies the corresponding `observed*Event` is non-null (live proof received)
  *   - verifies the artifact's serialized JSON contains NO token material
  *     (raw token, app secret, "xoxb-", "bot " or "Bearer " prefixes outside
  *     redaction labels)
  *   - when --expected-sha is provided, verifies environment.commit_sha
  *     (fallback: environment.head_sha) matches
+ *
+ * Note on diagnostic criteria: listeners write some observational criteria
+ * into `criteria` outside their authoritative `requiredCriteria` set (e.g.,
+ * `<channel>ShortReceiptObserved`, `assistantSessionReplyObserved`). The
+ * validator does NOT re-iterate every key — that would silently override
+ * the listener's pass verdict. Only the named criteria above are
+ * independently enforced; everything else is the listener's responsibility.
  *
  * Exits 0 only when every non-skipped channel is `valid: true`. Stdout always
  * carries a structured JSON object with stable token reasons. The
@@ -72,10 +82,14 @@ const REQUIRED_TOP_LEVEL_KEYS = [
   "failures",
 ];
 
-// Defense-in-depth: every channel listener writes these named criteria. The
-// generic "every criterion must be true" loop catches the `=== false` case,
-// but if a tampered artifact dropped the key entirely the loop would miss it.
-// This explicit allow-list catches that as well.
+// The validator independently enforces these named criteria regardless of
+// the listener's authoritative `requiredCriteria` evaluation. Each must be
+// (a) present in the artifact's `criteria` object, AND (b) === true. This
+// is the validator's defense-in-depth guard for criteria with security
+// consequence that must not be quietly dropped or flipped by a tampered
+// artifact — currently just `artifactHasNoToken` (the listener's own
+// pre-write redaction self-check). Add to this list only when a criterion
+// is both security-critical and not otherwise covered by Steps 7-9.
 const REQUIRED_NAMED_CRITERIA = Object.freeze(["artifactHasNoToken"]);
 
 // Conservative token-shape detectors. If any of these match outside a
@@ -218,17 +232,34 @@ function validateChannelArtifact(channelKey, artifactPath, expectedSha) {
     reasons.push(`status_not_passed:${String(parsed.status)}`);
   }
 
-  // ─── Step 5: criteria all true ───
+  // ─── Step 5: criteria — defer to the listener's authoritative verdict ───
+  //
+  // The listener writes BOTH required-for-pass criteria AND observational
+  // diagnostic criteria into the `criteria` object. Its own
+  // `requiredCriteria` list (held inside each listener and not surfaced in
+  // the artifact) is what gates `status="passed"` + `failures=[]`.
+  //
+  // The validator's job is NOT to re-evaluate every diagnostic criterion as
+  // if it were required; doing so silently overrides the listener's pass
+  // verdict (over-rejects valid artifacts).
+  //
+  // Instead the validator:
+  //   - asserts `criteria` is a plain object;
+  //   - enforces the EXPLICIT named criteria the validator guarantees to
+  //     check independently (REQUIRED_NAMED_CRITERIA must be both present
+  //     and === true regardless of the listener's required set);
+  //   - trusts `status="passed"` + `failures=[]` (Step 4 + Step 6) as the
+  //     listener's verdict on the rest.
   const criteria = parsed.criteria;
   if (!isPlainObject(criteria)) {
     reasons.push("criteria_invalid");
   } else {
-    const criteriaFailures = Object.entries(criteria)
-      .filter(([, value]) => value !== true)
-      .map(([key]) => `criterion_not_true:${key}`);
-    reasons.push(...criteriaFailures);
     for (const key of REQUIRED_NAMED_CRITERIA) {
-      if (!(key in criteria)) reasons.push(`criterion_missing:${key}`);
+      if (!(key in criteria)) {
+        reasons.push(`criterion_missing:${key}`);
+      } else if (criteria[key] !== true) {
+        reasons.push(`criterion_not_true:${key}`);
+      }
     }
   }
 

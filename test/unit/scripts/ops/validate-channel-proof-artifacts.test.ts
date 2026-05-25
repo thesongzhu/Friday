@@ -1,16 +1,22 @@
 /**
- * R1 — same-SHA channel-proof artifact validator. Locks down:
- *   - pass on a clean fixture;
- *   - reject status != passed;
- *   - reject any criterion === false (generic loop);
- *   - reject missing named criterion `artifactHasNoToken` even if loop passes;
- *   - reject token-material residue (`xoxb-`, `Bot <opaque>`, `Bearer <opaque>`);
+ * Same-SHA channel-proof artifact validator. Locks down:
+ *   - pass on a clean fixture (Step 1-9 happy path);
+ *   - reject status != passed (Step 4);
+ *   - reject the explicit named criterion `artifactHasNoToken` when === false (Step 5 named-enforcement);
+ *   - reject missing named criterion `artifactHasNoToken` even when other criteria are true (Step 5 missing-enforcement);
+ *   - PASS when listener reports status=passed + failures=[] even if
+ *     observational/diagnostic criteria (e.g. `<channel>ShortReceiptObserved`)
+ *     are false — the validator defers to the listener's authoritative
+ *     verdict for non-named criteria (regression test for the dogfood D5
+ *     over-rejection incident);
+ *   - reject token-material residue (`xoxb-`, `Bot <opaque>`, `Bearer <opaque>`) — Step 8;
  *   - tolerate free-text "the bot said" / "boto3" without false-positive;
- *   - require expected-sha match (commit_sha primary, head_sha fallback);
+ *   - require expected-sha match (commit_sha primary, head_sha fallback) — Step 9;
  *   - skip sentinel passes without inspecting;
  *   - missing artifact file produces artifact_missing_or_unreadable blocker;
  *   - invalid JSON produces artifact_missing_or_unreadable blocker;
- *   - missing required top-level key produces artifact_missing_or_unreadable blocker.
+ *   - missing required top-level key produces artifact_missing_or_unreadable blocker;
+ *   - reject failures array with entries even if status === passed (Step 6).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs/promises";
@@ -99,7 +105,7 @@ describe("validateChannelProofArtifacts", () => {
     expect(decision.results[0].reasons.some((r: string) => r === "status_not_passed:blocked")).toBe(true);
   });
 
-  it("rejects criterion === false via generic loop", async () => {
+  it("rejects when explicitly-named criterion artifactHasNoToken === false (validator enforces this one independently)", async () => {
     const { validateChannelProofArtifacts } = await loadValidator();
     const fixturePath = await writeFixture(
       "criterion-false.json",
@@ -111,6 +117,34 @@ describe("validateChannelProofArtifacts", () => {
     });
     expect(decision.valid).toBe(false);
     expect(decision.results[0].reasons).toContain("criterion_not_true:artifactHasNoToken");
+  });
+
+  it("PASSES when listener reports status=passed + failures=[] even if observational/diagnostic criteria are false (defers to listener verdict)", async () => {
+    // Regression: dogfood D5 surfaced listener artifacts that wrote optional
+    // diagnostic criteria (e.g., `<channel>ShortReceiptObserved`,
+    // `assistantSessionReplyObserved`) into `criteria` outside the
+    // listener's authoritative `requiredCriteria` set. The previous
+    // validator iterated all criteria and over-rejected those artifacts
+    // despite status=passed and failures=[]. Lock the new behavior.
+    const { validateChannelProofArtifacts } = await loadValidator();
+    const fixturePath = await writeFixture(
+      "listener-passed-with-diag-false.json",
+      passingDiscordArtifact({
+        criteria: {
+          // The validator's REQUIRED_NAMED_CRITERIA still must be true.
+          artifactHasNoToken: true,
+          // The listener owns whether these gate pass; here it said pass.
+          discordShortReceiptObserved: false,
+          assistantSessionReplyObserved: false,
+        },
+      }),
+    );
+    const decision = validateChannelProofArtifacts({
+      channels: { discord: fixturePath, telegram: "skip", "lark-feishu": "skip" },
+      expectedSha: null,
+    });
+    expect(decision.valid).toBe(true);
+    expect(decision.results[0].blockerClass).toBe("none");
   });
 
   it("rejects missing named criterion artifactHasNoToken even if other criteria are all true", async () => {
