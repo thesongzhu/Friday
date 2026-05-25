@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      phase24d_lark_feishu_trusted_inbound:
+        description: "Run the manual Phase24D Lark/Feishu trusted-user inbound listener."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -209,3 +214,46 @@ jobs:
         with:
           name: phase24c-telegram-trusted-inbound-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24c-telegram-trusted-inbound
+
+  phase24d-lark-feishu-trusted-inbound:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24d_lark_feishu_trusted_inbound == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_LARK_APP_ID: ${{ secrets.FRIDAY_LARK_APP_ID || vars.FRIDAY_LARK_APP_ID }}
+      FRIDAY_LARK_APP_SECRET: ${{ secrets.FRIDAY_LARK_APP_SECRET }}
+      FRIDAY_LARK_CHAT_ID: ${{ secrets.FRIDAY_LARK_CHAT_ID || vars.FRIDAY_LARK_CHAT_ID }}
+      FRIDAY_LARK_GROUP_CHAT_ID: ${{ secrets.FRIDAY_LARK_GROUP_CHAT_ID || vars.FRIDAY_LARK_GROUP_CHAT_ID }}
+      FRIDAY_LARK_ALLOWED_USER_ID: ${{ secrets.FRIDAY_LARK_ALLOWED_USER_ID || vars.FRIDAY_LARK_ALLOWED_USER_ID }}
+      FRIDAY_LARK_USE_FEISHU: ${{ secrets.FRIDAY_LARK_USE_FEISHU || vars.FRIDAY_LARK_USE_FEISHU }}
+      FRIDAY_LARK_RECEIVE_MODE: ${{ secrets.FRIDAY_LARK_RECEIVE_MODE || vars.FRIDAY_LARK_RECEIVE_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      PHASE24D_LARK_FEISHU_LISTENER_TIMEOUT_MS: "480000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Lark/Feishu user-origin message
+        run: PHASE24D_REPORT_ROOT="$RUNNER_TEMP/phase24d-lark-feishu-trusted-inbound" npm run ops:phase24d:lark-feishu-trusted-inbound
+
+      - name: Upload Phase24D Lark/Feishu trusted inbound artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24d-lark-feishu-trusted-inbound-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24d-lark-feishu-trusted-inbound

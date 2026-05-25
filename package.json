@@ -113,6 +113,7 @@
     "ops:check-branch-conformance": "node scripts/ops/check-branch-conformance.mjs",
     "ops:phase24b:discord-trusted-inbound": "node scripts/ops/phase24b-discord-trusted-inbound-listener.mjs",
     "ops:phase24c:telegram-trusted-inbound": "node scripts/ops/phase24c-telegram-trusted-inbound-listener.mjs",
+    "ops:phase24d:lark-feishu-trusted-inbound": "node scripts/ops/phase24d-lark-feishu-trusted-inbound-listener.mjs",
     "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs",
     "ops:harden-local-enablement": "bash scripts/ops/harden-local-enablement.sh",
     "ops:agent-adoption:doctor": "node dist/cli/friday-cli.js phases doctor",
