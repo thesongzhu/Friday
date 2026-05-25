@@ -1,13 +1,31 @@
 /**
- * Memory Dedup — Initiative D.2
+ * Memory Dedup — Initiative D.2 (proof_pending; NOT wired into store path)
  *
- * Prevents storing semantically duplicate memories within the
- * same namespace. Before storing, checks for existing items
- * with high similarity and merges if found.
+ * Provides a helper (`checkMemoryDuplicate`) that, given a candidate memory
+ * item and a search function, can detect semantically duplicate memories in
+ * the same namespace via similarity threshold. Also provides a `mergeMemoryContent`
+ * helper for downstream merge logic.
  *
- * Merge strategy:
- * - If score > threshold: update existing item's content, bump confidence
- * - If score <= threshold: store as new item
+ * **Current state (B3 truth-labeling):** the helper is NOT called from
+ * `friday-memory-service.ts`'s `store()` path. `memoryService.store()`
+ * persists every well-formed store request as a new row regardless of
+ * whether a near-duplicate already exists. This module's existence does
+ * NOT mean Friday's durable memory store de-duplicates incoming items.
+ *
+ * Wiring this helper into `store()` is a memory-policy decision that
+ * requires explicit product direction on:
+ * - similarity threshold (the 0.92 default is a placeholder, not a policy)
+ * - merge semantics (which fields take precedence: tags, metadata, TTL,
+ *   source, confidence, embedding)
+ * - confidence-bump behavior
+ * - data-loss / clobber expectations when "merging" overlapping items
+ * - audit trail when an item is merged vs. replaced vs. inserted-new
+ *
+ * Until that decision is made and the helper is wired with proof, callers
+ * MUST NOT assume dedup is active. The `assertFridayMemoryDedupNotActive`
+ * advisory is emitted once per process when this module is first imported
+ * so a future regression that silently wires this without policy review
+ * surfaces in logs.
  */
 
 import type {
@@ -48,14 +66,36 @@ export interface FridayMemoryDedupDeps {
 const DEFAULT_THRESHOLD = 0.92;
 const DEFAULT_MAX_CANDIDATES = 5;
 
+let memoryDedupAdvisoryEmitted = false;
+
+/**
+ * Emit a one-time advisory log so anyone reading runtime logs can see that
+ * this dedup machinery is loaded but not wired into the durable memory
+ * store path. Intentionally a `console.info` (not `warn`) so it's
+ * informational, not an error; warn-once semantics so it does not spam.
+ */
+function emitMemoryDedupAdvisoryOnce(): void {
+  if (memoryDedupAdvisoryEmitted) return;
+  memoryDedupAdvisoryEmitted = true;
+  console.info(
+    "[friday][memory-dedup] advisory: checkMemoryDuplicate is loaded but NOT wired into memoryService.store(). Durable memory store does not de-duplicate incoming items. Full dedup wiring is policy_pending (see file header).",
+  );
+}
+
 /**
  * Check whether a new memory is a duplicate of an existing one.
+ *
+ * B3 truth-labeling: this helper is callable but NOT invoked by the durable
+ * `memoryService.store()` path. Calling it from a caller that explicitly
+ * needs dedup is fine; do NOT assume that calling `memoryService.store()`
+ * implicitly de-duplicates incoming items.
  */
 export async function checkMemoryDuplicate(
   input: FridayMemoryStoreInput,
   deps: FridayMemoryDedupDeps,
   options?: FridayMemoryDedupOptions,
 ): Promise<FridayMemoryDedupResult> {
+  emitMemoryDedupAdvisoryOnce();
   const threshold = options?.threshold ?? DEFAULT_THRESHOLD;
   const maxCandidates = options?.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
 
