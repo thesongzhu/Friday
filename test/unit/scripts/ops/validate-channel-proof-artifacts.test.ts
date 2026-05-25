@@ -30,6 +30,11 @@ async function loadValidator(): Promise<ValidatorModule> {
 
 const SCHEMA_DISCORD = "friday.phase24b.discord_trusted_inbound_proof.v1";
 
+// Test fixture SHA only — not a real commit. Pragma needed because the
+// repo-wide detect-secrets baseline flags 40-char hex strings as
+// "Hex High Entropy String".
+const FAKE_SHA = "deadbeef00112233445566778899aabbccddeeff"; // pragma: allowlist secret
+
 function passingDiscordArtifact(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
     schemaVersion: SCHEMA_DISCORD,
@@ -39,7 +44,7 @@ function passingDiscordArtifact(overrides: Partial<Record<string, unknown>> = {}
     startedAt: "2026-05-25T00:00:00Z",
     completedAt: "2026-05-25T00:00:10Z",
     reportPath: "/tmp/phase24b/discord.json",
-    environment: { commit_sha: "deadbeef00112233445566778899aabbccddeeff", head_sha: null },
+    environment: { commit_sha: FAKE_SHA, head_sha: null },
     criteria: {
       wsClientConnected: true,
       listenerReceivedMessageReceive: true,
@@ -75,7 +80,7 @@ describe("validateChannelProofArtifacts", () => {
     const fixturePath = await writeFixture("pass.json", passingDiscordArtifact());
     const decision = validateChannelProofArtifacts({
       channels: { discord: fixturePath, telegram: "skip", "lark-feishu": "skip" },
-      expectedSha: "deadbeef00112233445566778899aabbccddeeff",
+      expectedSha: FAKE_SHA,
     });
     expect(decision.valid).toBe(true);
     const discord = decision.results.find((r) => r.channel === "discord");
@@ -168,12 +173,12 @@ describe("validateChannelProofArtifacts", () => {
     const fixturePath = await writeFixture(
       "head-sha-fallback.json",
       passingDiscordArtifact({
-        environment: { head_sha: "deadbeef00112233445566778899aabbccddeeff" },
+        environment: { head_sha: FAKE_SHA },
       }),
     );
     const decision = validateChannelProofArtifacts({
       channels: { discord: fixturePath, telegram: "skip", "lark-feishu": "skip" },
-      expectedSha: "deadbeef00112233445566778899aabbccddeeff",
+      expectedSha: FAKE_SHA,
     });
     expect(decision.valid).toBe(true);
   });
@@ -186,7 +191,7 @@ describe("validateChannelProofArtifacts", () => {
     );
     const decision = validateChannelProofArtifacts({
       channels: { discord: fixturePath, telegram: "skip", "lark-feishu": "skip" },
-      expectedSha: "deadbeef00112233445566778899aabbccddeeff",
+      expectedSha: FAKE_SHA,
     });
     expect(decision.valid).toBe(false);
     expect(decision.results[0].reasons).toContain("commit_sha_mismatch");

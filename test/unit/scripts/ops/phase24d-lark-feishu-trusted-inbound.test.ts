@@ -31,6 +31,12 @@ const REQUIRED_ENV = [
   "FRIDAY_LARK_ALLOWED_USER_ID",
 ];
 
+// Test fixtures only — not real credentials. Pragma needed because the
+// repo-wide detect-secrets baseline runs entropy checks on every file.
+const FAKE_PRIMARY_APP_SECRET = "primary-app-secret-abcdef1234567890"; // pragma: allowlist secret
+const FAKE_VERIFY_TOKEN = "verify-token-XYZ-1234567890"; // pragma: allowlist secret
+const FAKE_ENCRYPT_KEY = "encrypt-key-XYZ-1234567890"; // pragma: allowlist secret
+
 const SAVED_ENV: Record<string, string | undefined> = {};
 
 function snapshotEnv(keys: string[]) {
@@ -90,46 +96,44 @@ describe("phase24d listener exports", () => {
 
   it("scrub redacts FRIDAY_LARK_VERIFICATION_TOKEN and FRIDAY_LARK_ENCRYPT_KEY in addition to the primary appSecret", async () => {
     const listener = await loadListener();
-    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = "verify-token-XYZ-1234567890";
-    process.env.FRIDAY_LARK_ENCRYPT_KEY = "encrypt-key-XYZ-1234567890";
-    const primary = "primary-app-secret-abcdef1234567890";
+    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = FAKE_VERIFY_TOKEN;
+    process.env.FRIDAY_LARK_ENCRYPT_KEY = FAKE_ENCRYPT_KEY;
     const blob = {
-      a: `appSecret=${primary}`,
+      a: `appSecret=${FAKE_PRIMARY_APP_SECRET}`,
       b: `verifyToken=${process.env.FRIDAY_LARK_VERIFICATION_TOKEN}`,
       c: `encryptKey=${process.env.FRIDAY_LARK_ENCRYPT_KEY}`,
     };
-    const scrubbed = listener.scrub(blob, primary) as typeof blob;
-    expect(scrubbed.a).not.toContain(primary);
-    expect(scrubbed.b).not.toContain("verify-token-XYZ-1234567890");
-    expect(scrubbed.c).not.toContain("encrypt-key-XYZ-1234567890");
+    const scrubbed = listener.scrub(blob, FAKE_PRIMARY_APP_SECRET) as typeof blob;
+    expect(scrubbed.a).not.toContain(FAKE_PRIMARY_APP_SECRET);
+    expect(scrubbed.b).not.toContain(FAKE_VERIFY_TOKEN);
+    expect(scrubbed.c).not.toContain(FAKE_ENCRYPT_KEY);
   });
 
   it("scrub still redacts env-derived secrets even when called with an empty primary token (safeError early-failure path)", async () => {
     const listener = await loadListener();
-    process.env.FRIDAY_LARK_APP_SECRET = "primary-app-secret-abcdef1234567890";
-    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = "verify-token-XYZ-1234567890";
+    process.env.FRIDAY_LARK_APP_SECRET = FAKE_PRIMARY_APP_SECRET;
+    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = FAKE_VERIFY_TOKEN;
     const blob = {
       a: `appSecret=${process.env.FRIDAY_LARK_APP_SECRET}`,
       b: `verifyToken=${process.env.FRIDAY_LARK_VERIFICATION_TOKEN}`,
     };
     const scrubbed = listener.scrub(blob, "") as typeof blob;
-    expect(scrubbed.a).not.toContain("primary-app-secret-abcdef1234567890");
-    expect(scrubbed.b).not.toContain("verify-token-XYZ-1234567890");
+    expect(scrubbed.a).not.toContain(FAKE_PRIMARY_APP_SECRET);
+    expect(scrubbed.b).not.toContain(FAKE_VERIFY_TOKEN);
   });
 
   it("containsTokenMaterial detects any secret in the redaction set", async () => {
     const listener = await loadListener();
-    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = "verify-token-XYZ-1234567890";
-    const primary = "primary-app-secret-abcdef1234567890";
-    expect(listener.containsTokenMaterial(`x=${primary}`, primary)).toBe(true);
-    expect(listener.containsTokenMaterial("x=verify-token-XYZ-1234567890", primary)).toBe(true);
-    expect(listener.containsTokenMaterial("nothing leaks here", primary)).toBe(false);
+    process.env.FRIDAY_LARK_VERIFICATION_TOKEN = FAKE_VERIFY_TOKEN;
+    expect(listener.containsTokenMaterial(`x=${FAKE_PRIMARY_APP_SECRET}`, FAKE_PRIMARY_APP_SECRET)).toBe(true);
+    expect(listener.containsTokenMaterial(`x=${FAKE_VERIFY_TOKEN}`, FAKE_PRIMARY_APP_SECRET)).toBe(true);
+    expect(listener.containsTokenMaterial("nothing leaks here", FAKE_PRIMARY_APP_SECRET)).toBe(false);
   });
 
   it("initialReport carries the schemaVersion stable token and seeds artifactHasNoToken as false (required criterion)", async () => {
     const listener = await loadListener();
     process.env.FRIDAY_LARK_APP_ID = "lark-app-id-value";
-    process.env.FRIDAY_LARK_APP_SECRET = "primary-app-secret-abcdef1234567890";
+    process.env.FRIDAY_LARK_APP_SECRET = FAKE_PRIMARY_APP_SECRET;
     process.env.FRIDAY_LARK_CHAT_ID = "lark-chat-id-value";
     process.env.FRIDAY_LARK_ALLOWED_USER_ID = "lark-allowed-user-id-value";
     const config = listener.readEnvConfig();
