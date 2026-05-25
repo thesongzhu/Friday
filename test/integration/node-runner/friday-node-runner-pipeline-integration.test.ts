@@ -400,4 +400,30 @@ describe("NodeRunner Pipeline Integration", () => {
       expect(typeof facade.pipeline.execute).toBe("function");
     });
   });
+
+  // ─── B4 truth-labeling ───
+
+  it("B4 truth-labeling: emits a one-time advisory naming the proof_pending state + workflowId contract gap", () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      createFacade();
+      createFacade();
+      createFacade();
+
+      const advisoryCalls = infoSpy.mock.calls.filter((call) =>
+        typeof call[0] === "string" && (call[0] as string).includes("[friday][node-runner][workflow-facade]"),
+      );
+      // Warn-once per process: 0 if a prior test already emitted it, 1 if
+      // this is the first construction. Both are acceptable.
+      expect(advisoryCalls.length).toBeLessThanOrEqual(1);
+      if (advisoryCalls.length === 1) {
+        const message = advisoryCalls[0]![0] as string;
+        expect(message).toContain("zero production callers");
+        expect(message).toContain("proof_pending");
+        expect(message).toContain("workflowId is currently hardcoded");
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });

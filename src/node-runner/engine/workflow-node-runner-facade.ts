@@ -10,6 +10,27 @@
  * For node types without a registered adapter (e.g. unknown future types),
  * the facade falls back to the legacy direct executor if one is provided.
  *
+ * **B4 truth-labeling note (proof_pending; NOT wired into production):**
+ * `createWorkflowNodeRunnerFacade` has zero production call sites as of
+ * the B4 capability inventory. The actual workflow runtime imports
+ * `createFridayWorkflowNodeRunnerFacade` from
+ * `src/workflows/engine/friday-workflow-node-runner-facade.ts` — a
+ * different file with similar shape. The only caller of this module is
+ * the existing integration test at
+ * `test/integration/node-runner/friday-node-runner-pipeline-integration.test.ts`.
+ *
+ * Known contract gap (preserved, not fixed in this slice): the facade
+ * builds a `FridayNodeExecutionContext` with `workflowId: "" as UUID`
+ * (around line 203) because `FridayNodeExecutionInput` does not carry
+ * the workflow id. A future "wire-node-runner-into-production" slice
+ * must thread the workflow id through the input shape before this
+ * facade can replace the production path.
+ *
+ * The export is preserved via the parent barrel so the future wiring
+ * slice can hook it without a contract break. A one-time `console.info`
+ * advisory fires at first construction so anyone wiring it in
+ * production sees the proof_pending state in logs.
+ *
  * @module node-runner/engine
  */
 
@@ -115,9 +136,21 @@ const EXPRESSION_CONTEXT_KEY = "_expressionContext";
  * condition, data, ai, approval). Unknown node types fall back to the legacy
  * executor if provided.
  */
+let workflowNodeRunnerFacadeAdvisoryEmitted = false;
+
+/** Warn-once advisory at first construction. See module header. */
+function emitWorkflowNodeRunnerFacadeAdvisoryOnce(): void {
+  if (workflowNodeRunnerFacadeAdvisoryEmitted) return;
+  workflowNodeRunnerFacadeAdvisoryEmitted = true;
+  console.info(
+    "[friday][node-runner][workflow-facade] advisory: createWorkflowNodeRunnerFacade is constructed but has zero production callers in the workflow runtime as of the B4 capability inventory; the runtime uses createFridayWorkflowNodeRunnerFacade from src/workflows/engine/. Wiring this facade is proof_pending — see module header. Note: FridayNodeExecutionContext.workflowId is currently hardcoded as '' until FridayNodeExecutionInput threads workflowId through.",
+  );
+}
+
 export function createWorkflowNodeRunnerFacade(
   deps: CreateWorkflowNodeRunnerFacadeDeps,
 ): WorkflowNodeRunnerFacade {
+  emitWorkflowNodeRunnerFacadeAdvisoryOnce();
   // Create an expression evaluator wrapper that pulls the expression context
   // from the adapter's `input` parameter (where we stash it during facade bridging)
   const adaptedExpressionEvaluator = {
