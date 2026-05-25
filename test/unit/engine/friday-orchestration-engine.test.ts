@@ -98,4 +98,50 @@ describe("createFridayOrchestrationEngine", () => {
     );
     expect(prepareTurn).not.toHaveBeenCalled();
   });
+
+  // ─── B4 truth-labeling ───
+
+  it("B4 truth-labeling: cancelRun is an intentional no-op (does not throw; does not delegate)", async () => {
+    // The orchestration engine does not maintain an abort-controller
+    // registry. cancelRun exists for interface completeness; actual
+    // cancellation is handled upstream in api-runtime / agent-runtime.
+    // Lock the no-op shape so future edits don't silently wire a fake
+    // cancellation path.
+    const agentRuntime: FridayEngineRunExecutorAgentRuntime = {
+      executeRun: vi.fn(),
+    };
+    const sessionDeps = {
+      getMessages: vi.fn(async () => []),
+      addMessage: vi.fn(async () => undefined),
+      getConversationFocus: vi.fn(async () => null),
+      setConversationFocus: vi.fn(async () => undefined),
+    };
+    const engine = createFridayOrchestrationEngine({
+      turnPreparerDeps: {
+        sessionDeps,
+        historyLimit: 24,
+        nowIso: () => "2026-05-25T00:00:00.000Z",
+        prepareTurn: vi.fn(async () => ({ historyMessages: [] } as never)),
+        buildEvidenceBlocks: () => [],
+        classifyExecution: () => ({ category: "agent_exception_path" }),
+      },
+      runExecutorDeps: {
+        agentRuntime,
+        sessionDeps,
+        nowIso: () => "2026-05-25T00:00:00.000Z",
+        persistImmediateRunResult: vi.fn(async () => undefined),
+        dispatchDeterministic: vi.fn(async () => ({ handled: false })),
+        dispatchManagedAsync: vi.fn(async () => ({ handled: false })),
+        finalizeFocus: vi.fn(() => ({ currentTask: "", updatedAt: "2026-05-25T00:00:00.000Z" })),
+        deterministicDispatchDeps: {},
+        managedAsyncDispatchDeps: {},
+        resolveIdempotencyKey: ({ runId, kind }) => `${runId}:${kind}`,
+      },
+    });
+
+    // Without runResume deps, cancelRun is a no-op AND does not throw.
+    await expect(engine.cancelRun("run-noop")).resolves.toBeUndefined();
+    // agentRuntime.executeRun must NOT have been called as a side effect.
+    expect(agentRuntime.executeRun).not.toHaveBeenCalled();
+  });
 });
