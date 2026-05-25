@@ -1,9 +1,9 @@
 # Stable Workspace Facts
 
-- Friday loads runtime user/project prompt guidance from `context/AGENTS.md`, `context/BELIEFS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, `memory/YYYY-MM-DD.md`, and selected `.friday/rules/path/**.md` / `.friday/rules/ext/**.md` files. Root `AGENTS.md` is Codex repair workflow guidance and is not Friday runtime context. Exported memory under `.friday/exports/memory/` is not injected by default; durable user facts, preferences, compaction summaries, and runtime evidence stay behind explicit memory/context-replay surfaces.
+- Friday loads runtime user/project prompt guidance from optional `context/AGENTS.md`, `context/BELIEFS.md`, `context/SOUL.md`, `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, `memory/YYYY-MM-DD.md`, and selected `.friday/rules/path/**.md` / `.friday/rules/ext/**.md` files. Root `AGENTS.md`, when present, is Codex repair workflow guidance and is not Friday runtime context. Exported memory under `.friday/exports/memory/` is not injected by default; durable user facts, preferences, compaction summaries, and runtime evidence stay behind explicit memory/context-replay surfaces.
 - In this repository, `skills` are the main extensibility backbone.
 - `skill.manifest.json` is the structured source of truth for a skill package. `SKILL.md` is lightweight human/model guidance.
-- Repo-wide Friday runtime routing and behavior guidance belongs in `context/AGENTS.md`.
+- Repo-wide Friday runtime routing and behavior guidance may be provided by optional `context/AGENTS.md`.
 - Style and response defaults belong in `context/SOUL.md`.
 - Maintainer preferences belong in `context/USER.md`.
 - Durable project facts belong in `context/MEMORY.md`.

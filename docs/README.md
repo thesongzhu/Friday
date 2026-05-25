@@ -2,7 +2,7 @@
 
 This is the entrypoint for current Friday documentation.
 
-Start here when you need the product truth, setup steps, safety boundaries, extension guide, or troubleshooting path. Historical reports and archived plans are preserved for evidence, but they are not the current product contract.
+Start here when you need the product truth, setup steps, safety boundaries, extension guide, or troubleshooting path. Historical reports, archived plans, and operator evidence are not part of the public source tree.
 
 ## Start Here
 
@@ -28,7 +28,7 @@ These documents define what Friday should honestly claim today:
 6. [Closed-Loop Blueprint](BLUEPRINT-CLOSED-LOOP.md)
 7. [Feature Landscape](friday-feature-landscape.md)
 
-Use these before relying on older design or audit material.
+Use these before relying on older design material.
 
 ## Setup And Operation
 
@@ -71,13 +71,8 @@ Long-lived technical reference material lives under [reference/](reference/):
 - [Routes](reference/ROUTES.md)
 - [Code Index](reference/CODE_INDEX.md)
 
-## Reports And Archive
+## Evidence And Archive
 
-Reports are evidence and audit material. Archive documents are retained for history and permalink stability.
-
-- [Closeout Reports](reports/closeout/)
-- [Operational Reports](reports/ops/)
-- [Repository Reports](reports/repo/README.md)
-- [Archive Index](archive/README.md)
-
-When reports or archived docs conflict with current runtime behavior, prefer [Current Source Of Truth](current-source-of-truth.md) and [Capability Matrix](ops/friday-capability-matrix.md).
+Release evidence, audit snapshots, benchmark comparisons, and operator handoffs
+are private operator artifacts. Public docs should link to current product truth,
+not historical local reports.

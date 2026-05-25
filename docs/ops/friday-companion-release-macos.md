@@ -211,7 +211,7 @@ By default this writes a local smoke record to:
 For the real beta candidate, point the script at the canonical archive path:
 
 ```bash
-FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH=docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md \
+FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH=.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md \
   bash scripts/ops/run-friday-macos-beta-smoke.sh
 ```
 
@@ -223,7 +223,7 @@ bash scripts/ops/write-friday-macos-clean-machine-evidence.sh
 
 The canonical evidence file is:
 
-- `docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md`
+- `.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md`
 
 ## Upgrade Checklist
 

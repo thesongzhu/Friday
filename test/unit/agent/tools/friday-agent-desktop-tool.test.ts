@@ -622,7 +622,7 @@ describe("createFridayAgentDesktopTool", () => {
       const legitimatePaths = [
         "/tmp/notes.txt",
         "/home/jarvis/project/file.md",
-        "/Users/jarvis/Desktop/document.pdf",
+        "/Users/example/Desktop/document.pdf",
         "C:\\Users\\Jarvis\\Documents\\file.txt",
         "subdir/file.txt", // relative
       ];

@@ -15,7 +15,8 @@ rollback boundaries visible.
 ## Current Proof Anchor
 
 The public v1 local track is anchored by the Phase 18A-H and Phase 19 work on
-`origin/main`, plus the dated capability ledger under `docs/audit/`.
+`origin/main`, plus same-SHA release proof recorded in GitHub Actions and
+operator-controlled evidence storage outside the public source tree.
 
 The latest inspected GitHub Actions Real Green Gate run for the post-Phase-19
 main SHA was:
@@ -45,7 +46,7 @@ optional external claims that were explicitly out of scope.
 
 ## Not Claimed
 
-- channel control or PR #244 channel live proof
+- unrestricted channel control or PR #244 channel live proof
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - Slack/SMTP external alert dispatch as release-complete
@@ -57,6 +58,20 @@ optional external claims that were explicitly out of scope.
 - Phase 18A live UI/LLM acknowledgement plus SSE tail, while it remains
   `blocked_by_env`
 - release-complete-all
+
+## Public Download Hygiene
+
+Public release surfaces are split intentionally:
+
+- npm package: the installable runtime artifact.
+- GitHub source archive: the clean public source download.
+- development repository: source, tests, and public docs for maintainers.
+
+None of these surfaces should contain private local paths, local state, Desktop
+operator control packages, release truth-map artifacts, dogfood/release-closure
+folders, internal audit/report archives, or real secrets. Development-only tests
+can remain in the public repository for maintainers, but are excluded from GitHub
+source archives when they are not needed for end-user download.
 
 ## Proof Rules
 

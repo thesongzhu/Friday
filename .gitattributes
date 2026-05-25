@@ -1,4 +1,10 @@
 friday-static*.html linguist-generated=true
-qa-report.html linguist-generated=true
-polish-report.html linguist-generated=true
 screenshots/qa/*.html linguist-generated=true
+
+# Public source archive hygiene. The public git tree keeps product source,
+# verification code, and public docs; source downloads stay install-oriented.
+.secrets.baseline export-ignore
+test export-ignore
+test/** export-ignore
+tests export-ignore
+tests/** export-ignore

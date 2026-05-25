@@ -7,7 +7,7 @@ if [[ -z "${REPO_DIR}" ]]; then
 fi
 REPO_DIR="$(cd "${REPO_DIR}" && pwd)"
 
-EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH:-${REPO_DIR}/docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md}"
+EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH:-${REPO_DIR}/.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md}"
 RELEASE_RECORD_PATH="${FRIDAY_MACOS_SMOKE_RELEASE_RECORD_PATH:-${REPO_DIR}/dist/macos/FridayCompanion.release.json}"
 SMOKE_STATUS="${FRIDAY_MACOS_SMOKE_STATUS:-pending}"
 TARGET="${FRIDAY_CROSS_PLATFORM_MACOS_SMOKE_TARGET:-not recorded}"

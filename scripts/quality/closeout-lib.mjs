@@ -45,7 +45,7 @@ export function getGitHead() {
   }
 }
 
-const CLOSEOUT_EVIDENCE_PATH = /^docs\/reports\/closeout\/[^/]+\/latest\.(json|md)$/;
+const CLOSEOUT_EVIDENCE_PATH = /^\.friday\/evidence\/closeout\/[^/]+\/latest\.(json|md)$/;
 
 export function isCloseoutEvidencePath(path) {
   return CLOSEOUT_EVIDENCE_PATH.test(path);
@@ -109,7 +109,7 @@ export function writeEvidence(phaseId, payload) {
     throw new Error(`Unsupported phase id: ${phaseId}`);
   }
 
-  const evidenceDir = getRootPath("docs", "reports", "closeout", directoryName);
+  const evidenceDir = getRootPath(".friday", "evidence", "closeout", directoryName);
   ensureDirectory(evidenceDir);
 
   const jsonPath = join(evidenceDir, "latest.json");
@@ -162,7 +162,7 @@ export function assertEvidenceFreshness(phaseIds, expectedGitHead = getGitHead()
       continue;
     }
 
-    const evidenceDir = getRootPath("docs", "reports", "closeout", directoryName);
+    const evidenceDir = getRootPath(".friday", "evidence", "closeout", directoryName);
     const jsonPath = join(evidenceDir, "latest.json");
     const markdownPath = join(evidenceDir, "latest.md");
 

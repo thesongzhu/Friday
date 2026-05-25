@@ -18,7 +18,8 @@ const AUDIT_TIME_ZONE = process.env.FRIDAY_AUDIT_TIMEZONE ?? Intl.DateTimeFormat
 const DATE_TAG = new Intl.DateTimeFormat("en-CA", {
   timeZone: AUDIT_TIME_ZONE,
 }).format(new Date());
-const REPORT_DIR = path.join(REPO_ROOT, "docs", "reports", "repo");
+const REPORT_RELATIVE_DIR = ".friday/evidence/release-truth";
+const REPORT_DIR = path.join(REPO_ROOT, REPORT_RELATIVE_DIR);
 const BASE_URL = process.env.FRIDAY_BASE_URL ?? "http://127.0.0.1:3141";
 const THREE_DAY_REPORT_PATH = process.env.FRIDAY_3DAY_CHANGE_REPORT_PATH
   ?? path.join(os.homedir(), "Desktop", "Friday-3天变更报告-2026-04-12至15.md");
@@ -861,7 +862,7 @@ async function main() {
       severity: "P0",
       "release impact": "Closed in branch. Keep the isolated real-runtime proof and regression coverage in the release pack.",
       "fix owner": "providers",
-      "verification method": "npx vitest run test/unit/providers/services/friday-provider-service.test.ts + docs/reports/repo/FRIDAY_PROVIDER_SHAPE_RUNTIME_PROOF_2026-04-15.md",
+      "verification method": "npx vitest run test/unit/providers/services/friday-provider-service.test.ts + private operator evidence store: FRIDAY_PROVIDER_SHAPE_RUNTIME_PROOF_2026-04-15.md",
       "mock contamination": "Yes - mock fixtures always populated arrays, which masked the crash path.",
     },
     {
@@ -1036,13 +1037,13 @@ async function main() {
     verdict,
   };
 
-  const auditJsonPath = `docs/reports/repo/FRIDAY_RELEASE_TRUTH_AUDIT_${DATE_TAG}.json`;
-  const auditMdPath = `docs/reports/repo/FRIDAY_RELEASE_TRUTH_AUDIT_${DATE_TAG}.md`;
-  const defectLedgerPath = `docs/reports/repo/FRIDAY_DEFECT_LEDGER_${DATE_TAG}.json`;
-  const claimMatrixPath = `docs/reports/repo/FRIDAY_CLAIM_MATRIX_${DATE_TAG}.json`;
-  const unusedAuditPath = `docs/reports/repo/FRIDAY_UNUSED_CODE_AUDIT_${DATE_TAG}.json`;
-  const threeDayRealityCheckJsonPath = `docs/reports/repo/FRIDAY_3DAY_CHANGE_REALITY_CHECK_${DATE_TAG}.json`;
-  const threeDayRealityCheckMdPath = `docs/reports/repo/FRIDAY_3DAY_CHANGE_REALITY_CHECK_${DATE_TAG}.md`;
+  const auditJsonPath = `${REPORT_RELATIVE_DIR}/FRIDAY_RELEASE_TRUTH_AUDIT_${DATE_TAG}.json`;
+  const auditMdPath = `${REPORT_RELATIVE_DIR}/FRIDAY_RELEASE_TRUTH_AUDIT_${DATE_TAG}.md`;
+  const defectLedgerPath = `${REPORT_RELATIVE_DIR}/FRIDAY_DEFECT_LEDGER_${DATE_TAG}.json`;
+  const claimMatrixPath = `${REPORT_RELATIVE_DIR}/FRIDAY_CLAIM_MATRIX_${DATE_TAG}.json`;
+  const unusedAuditPath = `${REPORT_RELATIVE_DIR}/FRIDAY_UNUSED_CODE_AUDIT_${DATE_TAG}.json`;
+  const threeDayRealityCheckJsonPath = `${REPORT_RELATIVE_DIR}/FRIDAY_3DAY_CHANGE_REALITY_CHECK_${DATE_TAG}.json`;
+  const threeDayRealityCheckMdPath = `${REPORT_RELATIVE_DIR}/FRIDAY_3DAY_CHANGE_REALITY_CHECK_${DATE_TAG}.md`;
 
   writeJson(auditJsonPath, auditJson);
   writeJson(defectLedgerPath, defectLedger);

@@ -80,7 +80,7 @@ Round 1 does not claim:
 
 Artifacts are written under:
 
-- `./docs/reports/benchmark/openclaw-mixed-round1`
+- `.friday/evidence/openclaw-mixed-round1`
 
 Each benchmark run archives:
 

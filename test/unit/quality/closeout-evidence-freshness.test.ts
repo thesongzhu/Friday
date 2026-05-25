@@ -69,15 +69,15 @@ describe("closeout evidence freshness", () => {
   it("recognizes closeout latest files as the only allowed post-generation drift", () => {
     expect(
       hasOnlyCloseoutEvidenceChanges([
-        "docs/reports/closeout/phase1-canonical-truth/latest.json",
-        "docs/reports/closeout/phase1-canonical-truth/latest.md",
-        "docs/reports/closeout/final-non-platform/latest.json",
+        ".friday/evidence/closeout/phase1-canonical-truth/latest.json",
+        ".friday/evidence/closeout/phase1-canonical-truth/latest.md",
+        ".friday/evidence/closeout/final-non-platform/latest.json",
       ]),
     ).toBe(true);
 
     expect(
       hasOnlyCloseoutEvidenceChanges([
-        "docs/reports/closeout/final-non-platform/latest.json",
+        ".friday/evidence/closeout/final-non-platform/latest.json",
         "scripts/quality/closeout-lib.mjs",
       ]),
     ).toBe(false);

@@ -860,7 +860,7 @@
       ],
       "allowedPaths": [
         "scripts/e2e",
-        "docs/reports",
+        ".friday/evidence",
         "test/e2e",
         "test/integration",
         "test/unit"
@@ -891,7 +891,7 @@
             ],
             "allowedPaths": [
               "scripts/e2e",
-              "docs/reports",
+              ".friday/evidence",
               "test/e2e",
               "test/integration",
               "test/unit"
