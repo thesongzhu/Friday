@@ -320,7 +320,7 @@ import type {
   FridayJobSchedulerService,
   FridayScheduledJobDefinition,
 } from "#jobs";
-import { createFridayBrowserManager, type FridayBrowserManager } from "#browser";
+import { createFridayBrowserManager, FRIDAY_BROWSER_ALLOW_ANY_ORIGIN, type FridayBrowserManager } from "#browser";
 import { createXhsPageInteractions, createXhsSessionManager } from "#xhs";
 import {
   createFridayHeartbeatJob,
@@ -1756,10 +1756,19 @@ export async function createFridayHub(
   // Build browser + XHS runtime deps
   const browserHostConfig = resolveBrowserHostConfigFromEnv(process.env);
   const browserPresentationMode = resolveBrowserPresentationModeFromEnv(process.env);
+  // B4 default-deny migration: the underlying `matchesOrigin` flipped from
+  // default-allow to default-deny so the library is safe-by-default. To
+  // preserve current deployment behavior while a follow-up slice plumbs
+  // `allowedOrigins` through `friday.config.yaml`, the hub bootstrap
+  // explicitly opts into allow-any here. The library will emit a startup
+  // warning when an explicit allowlist is not configured. Future slice:
+  // remove this explicit `[FRIDAY_BROWSER_ALLOW_ANY_ORIGIN]` and source the
+  // list from config (Carry-forward Row I in B4 closure).
   browserManager = createFridayBrowserManager({
     workspaceRoot,
     presentationMode: browserPresentationMode,
     hostBrowser: browserHostConfig,
+    allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
   });
   const xhsSessionManager = createXhsSessionManager({
     sqlite: stateRuntime!.sqlite,

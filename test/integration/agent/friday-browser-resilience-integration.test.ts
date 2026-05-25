@@ -12,7 +12,7 @@ import type {
   FridayAgentEventEmitter,
   FridayAgentToolDefinition,
 } from "#agent";
-import { createFridayBrowserManager, type FridayBrowserManager } from "#browser";
+import { createFridayBrowserManager, FRIDAY_BROWSER_ALLOW_ANY_ORIGIN, type FridayBrowserManager } from "#browser";
 
 // ─── Mock Playwright objects ───
 
@@ -166,6 +166,7 @@ describe("Browser Resilience Integration", () => {
     const browserManager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     // LLM calls browser.open, then responds with text
@@ -211,6 +212,7 @@ describe("Browser Resilience Integration", () => {
     const browserManager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     // Pre-launch a session, then kill the browser
@@ -251,6 +253,7 @@ describe("Browser Resilience Integration", () => {
     const browserManager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     // LLM opens google, then navigates to facebook
@@ -299,6 +302,7 @@ describe("Browser Resilience Integration", () => {
     const browserManager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     // LLM opens url then takes a screenshot
@@ -360,6 +364,7 @@ describe("Browser Resilience Integration", () => {
     const browserManager = createFridayBrowserManager({
       workspaceRoot: "/tmp/test",
       launchImpl: launchImpl as never,
+      allowedOrigins: [FRIDAY_BROWSER_ALLOW_ANY_ORIGIN],
     });
 
     const runtime = buildRuntime({

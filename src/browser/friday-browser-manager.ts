@@ -159,8 +159,24 @@ export interface FridayBrowserManager {
 
 // ─── Origin matching ───
 
+/**
+ * Explicit opt-in sentinel: passing this single entry in `allowedOrigins`
+ * permits ANY origin. Use only when the deployment cannot enumerate a
+ * trusted-origin allowlist (e.g. open research workspaces). For any
+ * production deployment, prefer an explicit list of origins.
+ */
+export const FRIDAY_BROWSER_ALLOW_ANY_ORIGIN = "*" as const;
+
 function matchesOrigin(url: string, allowedOrigins: string[]): boolean {
-  if (allowedOrigins.length === 0) return true;
+  // B4 default-deny safety boundary: previously, an empty `allowedOrigins`
+  // list returned `true` for every URL, meaning a deployment that did not
+  // explicitly configure an allowlist permitted the browser tool to navigate
+  // to ANY origin. This was a misconfiguration trap — `friday-hub-bootstrap`
+  // does not pass `allowedOrigins`, so production deployments fell into the
+  // default-allow path. Now, empty → deny. Opt-in to allow-all requires the
+  // explicit `FRIDAY_BROWSER_ALLOW_ANY_ORIGIN` sentinel ("*").
+  if (allowedOrigins.length === 0) return false;
+  if (allowedOrigins.length === 1 && allowedOrigins[0] === FRIDAY_BROWSER_ALLOW_ANY_ORIGIN) return true;
 
   let parsed: URL;
   try {
@@ -173,6 +189,7 @@ function matchesOrigin(url: string, allowedOrigins: string[]): boolean {
   const origin = parsed.origin;
 
   for (const pattern of allowedOrigins) {
+    if (pattern === FRIDAY_BROWSER_ALLOW_ANY_ORIGIN) return true;
     // Wildcard subdomain: "https://*.example.com"
     // Security note: The character class [a-zA-Z0-9-]+ intentionally excludes
     // dots, so "*.example.com" cannot match "evil.com.example.com" — the
@@ -451,6 +468,17 @@ export function createFridayBrowserManager(
   const navigationTimeoutMs = opts.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS;
   const actionTimeoutMs = opts.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
   const allowedOrigins = opts.allowedOrigins ?? [];
+  // B4 default-deny: surface a single startup warning when no allowlist is
+  // configured. Pre-fix behavior was silent allow-all; now the warning makes
+  // the deny-by-default state visible. Operators who genuinely want
+  // allow-all must pass `FRIDAY_BROWSER_ALLOW_ANY_ORIGIN` explicitly.
+  if (allowedOrigins.length === 0) {
+    console.warn(
+      `[friday][browser-manager] No allowedOrigins configured — the browser tool will reject every navigation. ` +
+      `Configure a list of trusted origins (e.g. ["https://example.com"]) or, only for trusted research workspaces, ` +
+      `pass FRIDAY_BROWSER_ALLOW_ANY_ORIGIN ("*") to opt into allow-all explicitly.`,
+    );
+  }
   const workspaceRoot = opts.workspaceRoot;
   const platform = opts.platform ?? process.platform;
   const isCi = opts.isCi ?? process.env.CI === "true";
