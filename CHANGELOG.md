@@ -7,6 +7,32 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.1] — Release Closure Infrastructure — 2026-05-25
+
+`1.0.1` is the first patch on top of `1.0.0`. Public claim is **public v1 local candidate, npm/source distribution** — no desktop, Homebrew, notarized macOS, mobile, or "all integrations live" claim is added. This patch ships the release infrastructure that makes a same-SHA Discord/Telegram/Lark+Feishu live channel proof verifiable as a publish precondition, plus a source/npm-only release mode that does not require macOS distribution artifacts.
+
+### Added
+
+- Source/npm-only release mode in `.github/workflows/release.yml`: `workflow_dispatch.inputs.release_mode` with enum `source-only | source-and-macos` (default `source-only`); push-tag triggers are forced to `source-only`. `macos-distribution` skips in source-only mode; `create-release` fails closed unless it can satisfy the source-and-macos path or the explicit source-only carve-out.
+- Lark/Feishu trusted-inbound proof harness (`scripts/ops/phase24d-lark-feishu-trusted-inbound-listener.mjs`) modeled after the Discord/Telegram phase24b/c harnesses. Same lifecycle (createFridayHub → createFridayLarkChannel → wrap adapters.lifecycle.connect → in-process HTTP server → wait for trusted-user nonce probe → assert unified-task-state awaiting human). Same artifact shape with the stable token `friday.phase24d.lark_feishu_trusted_inbound_proof.v1`. Strict freshForRun semantics matching phase24c (no null-timestamp acceptance). Fail-closed `serializeScrubbedJson` rejects writes if any redacted token escaped.
+- Same-SHA channel proof validator (`scripts/ops/validate-channel-proof-artifacts.mjs`): verifies schemaVersion, `status=passed`, every criterion `true` (including explicit `artifactHasNoToken` named criterion), `failures=[]`, observed-event non-null, no token residue (`xoxb-`, `Bot <opaque>`, `Bearer <opaque>`), and `commit_sha`/`head_sha` match against `--expected-sha`.
+- Shared token-redaction helper (`scripts/ops/lib/token-redaction.mjs`) used by all phase24 trusted-inbound listeners. Cyclic-throw `[REDACTED_UNSERIALIZABLE]` sentinel prevents secrets escaping when `JSON.stringify` throws.
+- `phase24d_lark_feishu_trusted_inbound` workflow_dispatch input + job in `.github/workflows/real-green-gate.yml` mirroring phase24b/c structure.
+- `write-friday-release-manifest.mjs` honors `FRIDAY_RELEASE_MODE=source-only`: marks every platform/channel as `not_in_this_release`, emits a `releaseClaim.boundary` block with the required RELEASE_CLAIM paragraph, skips Homebrew cask generation.
+- 5 focused R1 test files covering token-redaction (cyclic-throw + redaction contract), validate-channel-proof-artifacts (13 negative cases including residue scan + commit_sha fallback + named-criterion enforcement), phase24d listener (env validation, nonce sanitisation, redaction round-trip, defense-in-depth env-secret coverage), run-friday-release-preflight source-only mode, write-friday-release-manifest source-only mode.
+
+### Changed
+
+- `scripts/ops/phase24b-discord-trusted-inbound-listener.mjs` and `scripts/ops/phase24c-telegram-trusted-inbound-listener.mjs` migrated to the shared `lib/token-redaction.mjs`. Both gained `environment.commit_sha` alongside the existing `githubSha` for same-SHA validation. Redaction labels and 12-char prefix logic preserved exactly.
+- `scripts/ops/run-friday-release-preflight.mjs` reads `FRIDAY_RELEASE_MODE`; when `source-only` the cross-platform release inputs check is skipped (`crossPlatformReleaseInputs.status=skipped_source_only`) because the npm/source release does not promise iOS/Android/Windows/macOS distribution.
+- `scripts/quality/release-truth-lib.mjs` `DEFAULT_PROOF_INPUTS` extended to include the new phase24b/c/d listeners, the channel-proof validator, and the shared token-redaction lib so `npm run check:proof:no-mock-leaks` scans them.
+
+### Notes
+
+- npm publish remains blocked by the repo variable `RELEASE_PUBLISH_NPM=false`. Same-SHA **provider lane + Discord/Telegram/Lark+Feishu** live proof on the release SHA at R5 is required before the variable is flipped and `1.0.1` is published.
+- Real Green Gate's `phase24b/c/d` trusted-inbound jobs only run on `workflow_dispatch` with the corresponding `phase24X_*_trusted_inbound=true` input; they remain `SKIPPED` on routine PR/push runs by design.
+- This release does not claim desktop, Homebrew, notarized macOS, mobile, or "all integrations live". Capabilities without same-SHA live proof remain labeled `setup_needed`, `proof_pending`, `blocked_by_env`, `unsupported`, or `not_configured`.
+
 ### Docs
 
 - Phase 18B governance-truth reconciliation only. Recorded the 2026-05-19 live `main` branch-protection readback as strict required status checks with `required_approving_review_count=0`, required conversation resolution enabled, force-push/delete disabled, and `enforce_admins.enabled=false`, preserving the PR-side gate record requirement and not changing branch protection, GitHub settings, release proof standards, approval semantics, or runtime behavior.
@@ -16,7 +42,7 @@ and this project follows Semantic Versioning.
 - Documented that `FRIDAY_MASTER_KEY` and `FRIDAY_TOKEN_SECRET` are internal runtime secrets generated and stored by the local or user-owned cloud runtime; ordinary user setup must not require pasting them.
 - Added `docs/audit/CAPABILITY_PROOF_MATRIX_2026-05-17_POST_243.md` anchored to `origin/main` `42fac20f` (PR #243). Snapshot built from per-phase completion reports and `REPORTS_INDEX.csv`; honest about `blocked_by_env` not being pass.
 
-This entry is docs-truth reconciliation hygiene only and is not a product release-complete claim. No product code, tests, runtime behavior, API contract snapshots, generated code, branch protection, GitHub state, credentials, release-proof standards, or governance semantics changed in this entry.
+These `### Docs` entries are docs-truth reconciliations from work that landed between `1.0.0` and `1.0.1`; they do not by themselves change product code, tests, runtime behavior, API contract snapshots, generated code, branch protection, GitHub state, credentials, release-proof standards, or governance semantics. The product-code/test/workflow surfaces that DO change in `1.0.1` are enumerated in the `### Added` and `### Changed` sections above.
 
 ## [1.0.0] — Initial Release — 2026-04-18
 

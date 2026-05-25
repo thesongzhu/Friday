@@ -34,7 +34,7 @@ automatic access to systems the user has not configured.
 
 - Repository license: MIT.
 - npm package: `@thesongzhu/friday`.
-- Current package version: `1.0.0`.
+- Current published npm version: `1.0.0`. Repo `package.json` version: `1.0.1` (next release in progress; publish blocked until R5 same-SHA provider + Discord/Telegram/Lark+Feishu channel proof passes).
 - The unscoped `friday` npm package is unrelated.
 
 README, package metadata, GitHub metadata, and release docs should all use the
