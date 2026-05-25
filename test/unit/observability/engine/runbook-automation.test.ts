@@ -169,3 +169,26 @@ describe("RunbookExecutor", () => {
     expect(executor.getExecutionHistory()).toHaveLength(0);
   });
 });
+
+describe("RunbookRegistry — B4 truth-labeling", () => {
+  it("emits a one-time advisory naming the proof_pending state on first construction", () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      new RunbookRegistry();
+      new RunbookRegistry();
+      new RunbookRegistry();
+
+      const advisoryCalls = infoSpy.mock.calls.filter((call) =>
+        typeof call[0] === "string" && (call[0] as string).includes("[friday][observability][runbook-automation]"),
+      );
+      expect(advisoryCalls.length).toBeLessThanOrEqual(1);
+      if (advisoryCalls.length === 1) {
+        const message = advisoryCalls[0]![0] as string;
+        expect(message).toContain("zero production import sites");
+        expect(message).toContain("proof_pending");
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+});

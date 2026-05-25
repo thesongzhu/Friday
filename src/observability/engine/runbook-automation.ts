@@ -4,6 +4,23 @@
  * Provides a lightweight in-memory registry and executor for automating
  * operational runbooks when alert events escalate.
  *
+ * **B4 truth-labeling note (proof_pending; NOT wired into production):**
+ * `RunbookRegistry`, `RunbookExecutor`, `RunbookDefinition`,
+ * `RunbookExecutionContext`, and `RunbookExecutionResult` are exported
+ * via the parent barrel but have ZERO production import sites as of
+ * the B4 capability inventory. The observability `createService` path
+ * constructs the alert evaluation scheduler WITHOUT a runbook registry
+ * — escalating alerts notify destinations (Slack/SMTP) but do not
+ * trigger any automated runbook. Only the existing scheduler unit
+ * test (`friday-alert-evaluation-scheduler.test.ts`) and this
+ * module's own tests instantiate the registry.
+ *
+ * The exports are preserved via the parent barrel so a future
+ * "wire-runbook-automation-into-alert-engine" slice can hook them in
+ * without a contract break. A one-time `console.info` advisory fires
+ * at first `RunbookRegistry` construction so anyone wiring it in
+ * production sees the proof_pending state in logs.
+ *
  * @module observability/engine
  */
 
@@ -59,10 +76,25 @@ export interface RunbookExecutionResult {
   readonly errorMessage?: string;
 }
 
+let runbookRegistryAdvisoryEmitted = false;
+
+/** Warn-once advisory at first RunbookRegistry construction. See file header. */
+function emitRunbookRegistryAdvisoryOnce(): void {
+  if (runbookRegistryAdvisoryEmitted) return;
+  runbookRegistryAdvisoryEmitted = true;
+  console.info(
+    "[friday][observability][runbook-automation] advisory: RunbookRegistry is constructed but has zero production import sites as of the B4 capability inventory; the observability alert evaluation scheduler runs WITHOUT runbook automation. Wiring runbook escalation is proof_pending — see file header.",
+  );
+}
+
 /** Registry of runbooks keyed by rule. */
 export class RunbookRegistry {
   private readonly runbooks = new Map<UUID, RunbookDefinition>();
   private readonly runbookIdsByRule = new Map<UUID, Set<UUID>>();
+
+  constructor() {
+    emitRunbookRegistryAdvisoryOnce();
+  }
 
   /** Register or replace a runbook definition. */
   registerRunbook(runbook: RunbookDefinition): void {
