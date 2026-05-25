@@ -73,7 +73,7 @@ Report paths:
 Runtime truth:
 
 - Base URL: `http://127.0.0.1:62550`
-- Original state copied from `/Users/wenxindou/Library/Application Support/Friday/state`; original state was not modified.
+- Original state copied from `/Users/example/Library/Application Support/Friday/state`; original state was not modified.
 - Auth source: `local_passphrase_login`
 - Setup status: `needsSetup=false`
 - Setup/profile truth mismatch: `false`

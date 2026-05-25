@@ -119,7 +119,7 @@ Row: not a capability surface; this is a test-harness hygiene observation that a
 
 | Field | Value |
 |---|---|
-| Hygiene observation | `test/e2e/live/friday-self-healing-live.e2e.test.ts:37` declares `BUNDLED_SKILLS_DIR = path.join(process.cwd(), "skills")`. `/Users/jarvis/Projects/Friday/skills/` contains 177 git-tracked files; `.gitignore` does not exclude `skills/`. The drift `it` writes a broken manifest at line ~1007 **before** entering the `try` block at line ~1010. If the test process is killed between line 1007 and line 1010 (timeout, SIGTERM, or `env.hub!.skills.refresh()` hangs), the bundled production directory is left with a tampered manifest and no restoration, plus a leftover `e2e-skill-drift-<timestamp>` subdir under `<repo>/skills/`. |
+| Hygiene observation | `test/e2e/live/friday-self-healing-live.e2e.test.ts:37` declares `BUNDLED_SKILLS_DIR = path.join(process.cwd(), "skills")`. `/Users/example/Projects/Friday/skills/` contains 177 git-tracked files; `.gitignore` does not exclude `skills/`. The drift `it` writes a broken manifest at line ~1007 **before** entering the `try` block at line ~1010. If the test process is killed between line 1007 and line 1010 (timeout, SIGTERM, or `env.hub!.skills.refresh()` hangs), the bundled production directory is left with a tampered manifest and no restoration, plus a leftover `e2e-skill-drift-<timestamp>` subdir under `<repo>/skills/`. |
 | Risk classification | Test hygiene / workspace pollution; not release-proof eligible at any tier; independent of F-017 wiring. |
 | Reference | [Finding F-020 in `10_FINDINGS_REGISTER.md`](10_FINDINGS_REGISTER.md). |
 | Release-proof claim | None. |
@@ -190,6 +190,6 @@ Plus:
 - `gh run view 25698110492 --json …` (post-merge main CI run; 10/10 jobs `success`).
 - `git ls-files skills/ | wc -l` = 177 (tracked production starter skills).
 - `grep -nE "^skills\|/skills" .gitignore` returns zero matches.
-- `find /Users/jarvis/Projects/Friday -name "*2026-05-01T21-2*"` returns zero matches (F-007 report files not present in current workspace).
+- `find /Users/example/Projects/Friday -name "*2026-05-01T21-2*"` returns zero matches (F-007 report files not present in current workspace).
 
 This refresh is **not** a full repo line-by-line audit. The rows enumerated in §3.A–§3.E were re-verified at file:line evidence depth; predecessor rows §3.1–§3.8 not listed in §3.A–§3.E were not re-verified by this slice and inherit their tier from `CAPABILITY_PROOF_MATRIX_2026-05-11.md` (anchor `edaadf7a`).

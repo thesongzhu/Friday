@@ -1,7 +1,7 @@
 # Phase 0 - Audit Baseline
 
 Date: 2026-04-30 / post-PR #171 follow-up
-Repository root: `/Users/wenxindou/Desktop/Friday`
+Repository root: `/Users/example/Desktop/Friday`
 Branch: `codex/audit-followup-production-verification`
 Base commit: `e244899a`
 

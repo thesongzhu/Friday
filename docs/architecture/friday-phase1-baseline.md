@@ -12,19 +12,19 @@ Phase 1 已按“先备份、再固定测试、再真实闭环、最后文档化
 
 执行前已创建备份副本：
 
-- 备份目录：`/Users/wenxindou/Desktop/Friday/.phase1-backups/20260503-122916`
-- 清单文件：`/Users/wenxindou/Desktop/Friday/.phase1-backups/20260503-122916/manifest.md`
+- 备份目录：`/Users/example/Desktop/Friday/.phase1-backups/20260503-122916`
+- 清单文件：`/Users/example/Desktop/Friday/.phase1-backups/20260503-122916/manifest.md`
 - SQLite 在线备份 integrity check：`ok`
 - 备份目录已加入本地 `.git/info/exclude`，避免 token、DB、runtime 备份被误提交；未修改仓库 `.gitignore`。
 
 已备份范围：
 
-- `/Users/wenxindou/Desktop/Friday/.friday`：1620 files，198M，含 SQLite 和 memory/context/state 指示文件
-- `/Users/wenxindou/Desktop/Friday/memory`：1 file，4.0K
-- `/Users/wenxindou/Desktop/Friday/context`：5 files，20K
-- `/Users/wenxindou/Desktop/Friday/artifacts`：41 files，160K
-- `/Users/wenxindou/.friday`：9 files，100K
-- `/Users/wenxindou/Library/Application Support/Friday/state`：5 files，7.5M，含 `friday.db`
+- `/Users/example/Desktop/Friday/.friday`：1620 files，198M，含 SQLite 和 memory/context/state 指示文件
+- `/Users/example/Desktop/Friday/memory`：1 file，4.0K
+- `/Users/example/Desktop/Friday/context`：5 files，20K
+- `/Users/example/Desktop/Friday/artifacts`：41 files，160K
+- `/Users/example/.friday`：9 files，100K
+- `/Users/example/Library/Application Support/Friday/state`：5 files，7.5M，含 `friday.db`
 
 ## 固定命令基线
 
@@ -42,7 +42,7 @@ Phase 1 已按“先备份、再固定测试、再真实闭环、最后文档化
 
 最初失败集中在：
 
-- `/Users/wenxindou/Desktop/Friday/test/integration/system/friday-system-companion-release.integration.test.ts`
+- `/Users/example/Desktop/Friday/test/integration/system/friday-system-companion-release.integration.test.ts`
 
 失败用例：
 
@@ -53,7 +53,7 @@ Phase 1 已按“先备份、再固定测试、再真实闭环、最后文档化
 直接错误：
 
 ```text
-[friday-companion-release] timed out waiting for release lock at /Users/wenxindou/Desktop/Friday/.friday/locks/macos-release.lock
+[friday-companion-release] timed out waiting for release lock at /Users/example/Desktop/Friday/.friday/locks/macos-release.lock
 ```
 
 修复方式：只修改上述集成测试文件，为 release 用例提供隔离的 release lock、隔离的 macOS release 输出、隔离的 release record 输出，以及进程组级超时清理；release workflow 用例中的 source artifact 扫描也指向隔离 runtime，避免测试产物重新进入主仓库 manifest 扫描路径。独立 source distribution 用例仍验证默认真实输出行为。

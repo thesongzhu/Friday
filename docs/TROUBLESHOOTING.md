@@ -188,7 +188,7 @@ Fix from source:
 
 ```bash
 npm run build
-FRIDAY_UI_DIST_DIR=/Users/you/Projects/Friday/dist/ui NODE_ENV=development friday start --host 127.0.0.1 --port 3141
+FRIDAY_UI_DIST_DIR=/Users/example/Projects/Friday/dist/ui NODE_ENV=development friday start --host 127.0.0.1 --port 3141
 ```
 
 Open:

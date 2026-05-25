@@ -45,7 +45,7 @@ optional external claims that were explicitly out of scope.
 
 ## Not Claimed
 
-- channel control or PR #244 channel live proof
+- unrestricted channel control or PR #244 channel live proof
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - Slack/SMTP external alert dispatch as release-complete
@@ -57,6 +57,20 @@ optional external claims that were explicitly out of scope.
 - Phase 18A live UI/LLM acknowledgement plus SSE tail, while it remains
   `blocked_by_env`
 - release-complete-all
+
+## Public Download Hygiene
+
+Public release surfaces are split intentionally:
+
+- npm package: the installable runtime artifact.
+- GitHub source archive: the clean public source download.
+- development repository: source, tests, and public docs for maintainers.
+
+None of these surfaces should contain private local paths, local state, Desktop
+operator control packages, release truth-map artifacts, dogfood/release-closure
+folders, or real secrets. Development-only tests and historical audit files can remain in
+the repository, but are excluded from GitHub source archives when they are not
+needed for end-user download.
 
 ## Proof Rules
 

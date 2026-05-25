@@ -6,17 +6,17 @@
 
 Friday 是一个本地优先、可自托管的全栈 Agent OS：
 
-- CLI / runtime：`/Users/wenxindou/Desktop/Friday/src/cli/friday-cli.ts`
-- Hub composition root：`/Users/wenxindou/Desktop/Friday/src/hub/friday-hub-bootstrap.ts`
-- HTTP/API：`/Users/wenxindou/Desktop/Friday/src/api`
-- UI：`/Users/wenxindou/Desktop/Friday/ui/src`
-- State/SQLite：`/Users/wenxindou/Desktop/Friday/src/state`
-- Agent runtime/tools：`/Users/wenxindou/Desktop/Friday/src/agent`
-- Skills：`/Users/wenxindou/Desktop/Friday/src/skills`、`/Users/wenxindou/Desktop/Friday/skills`、`/Users/wenxindou/Desktop/Friday/managed-skills`
-- Workflows：`/Users/wenxindou/Desktop/Friday/src/workflows`
-- Memory：`/Users/wenxindou/Desktop/Friday/src/memory`
-- Providers：`/Users/wenxindou/Desktop/Friday/src/providers`
-- Channels：`/Users/wenxindou/Desktop/Friday/src/channels`
+- CLI / runtime：`/Users/example/Desktop/Friday/src/cli/friday-cli.ts`
+- Hub composition root：`/Users/example/Desktop/Friday/src/hub/friday-hub-bootstrap.ts`
+- HTTP/API：`/Users/example/Desktop/Friday/src/api`
+- UI：`/Users/example/Desktop/Friday/ui/src`
+- State/SQLite：`/Users/example/Desktop/Friday/src/state`
+- Agent runtime/tools：`/Users/example/Desktop/Friday/src/agent`
+- Skills：`/Users/example/Desktop/Friday/src/skills`、`/Users/example/Desktop/Friday/skills`、`/Users/example/Desktop/Friday/managed-skills`
+- Workflows：`/Users/example/Desktop/Friday/src/workflows`
+- Memory：`/Users/example/Desktop/Friday/src/memory`
+- Providers：`/Users/example/Desktop/Friday/src/providers`
+- Channels：`/Users/example/Desktop/Friday/src/channels`
 
 ## 当前执行流
 
@@ -31,17 +31,17 @@ Friday 是一个本地优先、可自托管的全栈 Agent OS：
 
 | 模块 | 主要路径 | 当前边界评价 | Phase 1 判断 |
 | --- | --- | --- | --- |
-| Hub | `/Users/wenxindou/Desktop/Friday/src/hub/friday-hub-bootstrap.ts` | 过大，承担总装配和大量业务判断 | Phase 2/3 应优先收敛为模块注册器 |
-| Agent | `/Users/wenxindou/Desktop/Friday/src/agent/runtime/friday-agent-runtime.ts` | 过大，混合 prompt、tool loop、memory、guard、输出校验 | 先补 characterization，再拆内部策略 |
-| API | `/Users/wenxindou/Desktop/Friday/src/api/runtime/friday-api-runtime.ts` | route 文件较模块化，runtime 注册器过大 | 引入 feature route installer |
-| State | `/Users/wenxindou/Desktop/Friday/src/state` | 边界较清晰，migration 纪律好 | 保持为 core platform |
-| Memory | `/Users/wenxindou/Desktop/Friday/src/memory` | core service 较清楚，session/orchestrator 耦合较深 | 保护数据优先，后续拆 policy |
-| Skills | `/Users/wenxindou/Desktop/Friday/src/skills` | 已接近插件/乐高式 | 可作为未来模块化模板 |
-| Workflows | `/Users/wenxindou/Desktop/Friday/src/workflows` | 领域边界清楚但 runtime/execution 较大 | 适合拆 node executor/run lifecycle |
-| Providers | `/Users/wenxindou/Desktop/Friday/src/providers/services/friday-provider-service.ts` | 过大，混合 secret/OAuth/doctor/routing/usage | 优先拆分 |
-| Channels | `/Users/wenxindou/Desktop/Friday/src/channels` | adapter 模式不错，但 readiness 不均 | 增加 live/stub/experimental 标记 |
-| UI | `/Users/wenxindou/Desktop/Friday/ui/src` | API client 较集中，但 types/setup page 偏大 | 拆页面 panels，建立 contract 生成 |
-| Config | `/Users/wenxindou/Desktop/Friday/src/config` + scattered env | schema 很小，env 读取分散 | 建议统一 `FridayRuntimeConfig` |
+| Hub | `/Users/example/Desktop/Friday/src/hub/friday-hub-bootstrap.ts` | 过大，承担总装配和大量业务判断 | Phase 2/3 应优先收敛为模块注册器 |
+| Agent | `/Users/example/Desktop/Friday/src/agent/runtime/friday-agent-runtime.ts` | 过大，混合 prompt、tool loop、memory、guard、输出校验 | 先补 characterization，再拆内部策略 |
+| API | `/Users/example/Desktop/Friday/src/api/runtime/friday-api-runtime.ts` | route 文件较模块化，runtime 注册器过大 | 引入 feature route installer |
+| State | `/Users/example/Desktop/Friday/src/state` | 边界较清晰，migration 纪律好 | 保持为 core platform |
+| Memory | `/Users/example/Desktop/Friday/src/memory` | core service 较清楚，session/orchestrator 耦合较深 | 保护数据优先，后续拆 policy |
+| Skills | `/Users/example/Desktop/Friday/src/skills` | 已接近插件/乐高式 | 可作为未来模块化模板 |
+| Workflows | `/Users/example/Desktop/Friday/src/workflows` | 领域边界清楚但 runtime/execution 较大 | 适合拆 node executor/run lifecycle |
+| Providers | `/Users/example/Desktop/Friday/src/providers/services/friday-provider-service.ts` | 过大，混合 secret/OAuth/doctor/routing/usage | 优先拆分 |
+| Channels | `/Users/example/Desktop/Friday/src/channels` | adapter 模式不错，但 readiness 不均 | 增加 live/stub/experimental 标记 |
+| UI | `/Users/example/Desktop/Friday/ui/src` | API client 较集中，但 types/setup page 偏大 | 拆页面 panels，建立 contract 生成 |
+| Config | `/Users/example/Desktop/Friday/src/config` + scattered env | schema 很小，env 读取分散 | 建议统一 `FridayRuntimeConfig` |
 
 ## 依赖方向现状
 

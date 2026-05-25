@@ -101,11 +101,29 @@ Historical reports may remain for audit history, but current docs must point
 users to `docs/current-source-of-truth.md`, `docs/release-evidence-policy.md`,
 and `docs/public-v1-local-candidate.md` when facts conflict.
 
+## Public Download Hygiene
+
+The npm package is the installable runtime artifact. The GitHub source archive
+is the public source download. Both surfaces must stay free of private local
+paths, local state, internal operator control folders, and real secrets.
+
+The development repository may retain tests and historical public audit context
+for maintainers. Files that are useful for development but noisy or internal for
+end-user downloads are excluded from GitHub source archives with
+`.gitattributes export-ignore`.
+
+Internal release truth-map folders, dogfood reports, release-closure control
+packages, local evidence, and operator handoffs are not release artifacts. Channel
+features remain bounded by identity, permission, approval, evidence, and
+rollback gates; the public v1 local candidate does not claim unrestricted
+channel control or all capabilities live.
+
 ## Final Checks
 
 Before presenting the repository as a public v1 local candidate, run:
 
 ```bash
+npm run check:public-source-hygiene
 npm run check:secret-patterns
 npm run audit:release-truth
 npm run release:check

@@ -14,23 +14,23 @@
 
 仓库内：
 
-- `/Users/wenxindou/Desktop/Friday/.friday`
-- `/Users/wenxindou/Desktop/Friday/memory`
-- `/Users/wenxindou/Desktop/Friday/context`
-- `/Users/wenxindou/Desktop/Friday/artifacts`
+- `/Users/example/Desktop/Friday/.friday`
+- `/Users/example/Desktop/Friday/memory`
+- `/Users/example/Desktop/Friday/context`
+- `/Users/example/Desktop/Friday/artifacts`
 
 用户级 runtime：
 
-- `/Users/wenxindou/.friday`
+- `/Users/example/.friday`
 
 平台 state：
 
-- `/Users/wenxindou/Library/Application Support/Friday/state`
-- SQLite DB：`/Users/wenxindou/Library/Application Support/Friday/state/friday.db`
+- `/Users/example/Library/Application Support/Friday/state`
+- SQLite DB：`/Users/example/Library/Application Support/Friday/state/friday.db`
 
 State resolver 规则来自：
 
-- `/Users/wenxindou/Desktop/Friday/src/state/paths/friday-state-dir-resolver.ts`
+- `/Users/example/Desktop/Friday/src/state/paths/friday-state-dir-resolver.ts`
 
 优先级：
 
@@ -43,15 +43,15 @@ State resolver 规则来自：
 
 备份目录：
 
-- `/Users/wenxindou/Desktop/Friday/.phase1-backups/20260503-122916`
+- `/Users/example/Desktop/Friday/.phase1-backups/20260503-122916`
 
 清单：
 
-- `/Users/wenxindou/Desktop/Friday/.phase1-backups/20260503-122916/manifest.md`
+- `/Users/example/Desktop/Friday/.phase1-backups/20260503-122916/manifest.md`
 
 SQLite 在线备份：
 
-- `/Users/wenxindou/Desktop/Friday/.phase1-backups/20260503-122916/platform-state-sqlite-backup/friday.db`
+- `/Users/example/Desktop/Friday/.phase1-backups/20260503-122916/platform-state-sqlite-backup/friday.db`
 - `PRAGMA integrity_check`：`ok`
 
 安全处理：
