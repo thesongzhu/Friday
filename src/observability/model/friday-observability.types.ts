@@ -935,7 +935,18 @@ export interface FridayAlertEvent {
 // PERSISTENCE ROW TYPES (SQLite)
 // ═══════════════════════════════════════════════════════════════════════
 
-/** SQLite row shape for the `obs_traces` table. */
+/**
+ * SQLite row shape for the `obs_traces` table.
+ *
+ * **B4 truth-labeling note (future/no_claim):** As of the B4 capability
+ * inventory there is NO migration that creates the `obs_traces` table
+ * (none of `src/state/sqlite/migrations/*.ts` declares it) and no
+ * production caller reads or writes this shape. The type is preserved
+ * for forward-compat — if a future "traces persistence" slice lands the
+ * migration and writer, callers can adopt this row shape without a type
+ * contract break. Until then, do NOT assume an `obs_traces` table
+ * exists.
+ */
 export interface FridayTraceRow {
   trace_id: string;
   name: string;
@@ -948,7 +959,13 @@ export interface FridayTraceRow {
   ended_at: string | null;
 }
 
-/** SQLite row shape for the `obs_spans` table. */
+/**
+ * SQLite row shape for the `obs_spans` table.
+ *
+ * **B4 truth-labeling note (future/no_claim):** Same status as
+ * `FridayTraceRow` — no migration declares `obs_spans`; no production
+ * caller reads/writes this shape. Preserved for forward-compat.
+ */
 export interface FridaySpanRow {
   span_id: string;
   trace_id: string;
@@ -1015,7 +1032,17 @@ export interface FridaySloDefinitionRow {
   updated_at: string;
 }
 
-/** SQLite row shape for the `obs_alert_rules` table. */
+/**
+ * SQLite row shape for the `obs_alert_rules` table.
+ *
+ * **B4 truth-labeling note (future/no_claim):** Alert RULES are
+ * currently held in-memory by `FridayAlertEngine` (see
+ * `observability/engine/alerts.ts`). No migration declares
+ * `obs_alert_rules`; no production caller persists rule definitions
+ * with this shape. The `obs_alert_channels` table DOES exist (see
+ * `FridayAlertChannelRow` below). This row type is preserved for
+ * forward-compat with a future "persistent alert rules" slice.
+ */
 export interface FridayAlertRuleRow {
   id: string;
   name: string;
@@ -1045,7 +1072,14 @@ export interface FridayAlertChannelRow {
   updated_at: string;
 }
 
-/** SQLite row shape for the `obs_alert_events` table. */
+/**
+ * SQLite row shape for the `obs_alert_events` table.
+ *
+ * **B4 truth-labeling note (future/no_claim):** Same status as
+ * `FridayAlertRuleRow` — no migration declares `obs_alert_events`; no
+ * production caller persists alert events with this shape (events are
+ * live in `FridayAlertEngine`). Preserved for forward-compat.
+ */
 export interface FridayAlertEventRow {
   id: string;
   rule_id: string;

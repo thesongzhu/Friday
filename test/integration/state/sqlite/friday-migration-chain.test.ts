@@ -329,6 +329,30 @@ describe("Friday Migration Chain (V001–V024)", () => {
     expect(tableNames).toContain("obs_alert_channels");
   });
 
+  // ─── B4 truth-labeling: declared-but-not-created tables ───
+  //
+  // FridayTraceRow / FridaySpanRow / FridayAlertRuleRow / FridayAlertEventRow
+  // are declared as SQLite row shapes in `src/observability/model/friday-observability.types.ts`
+  // but the corresponding tables (`obs_traces`, `obs_spans`, `obs_alert_rules`,
+  // `obs_alert_events`) are NOT created by any migration. The row types are
+  // preserved as `future/no_claim` for forward-compat. This regression
+  // guard locks in the truth: if a future migration adds any of these
+  // tables, this test fails loudly and the row-type JSDoc must be updated
+  // to reflect the new wired state.
+
+  it("B4 truth-labeling: obs_traces / obs_spans / obs_alert_rules / obs_alert_events tables are NOT created by any migration (declared row types are future/no_claim)", () => {
+    const db = freshDb();
+    runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS });
+
+    const rows = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('obs_traces', 'obs_spans', 'obs_alert_rules', 'obs_alert_events')",
+      )
+      .all() as { name: string }[];
+
+    expect(rows).toHaveLength(0);
+  });
+
   it("adds V017-V022 columns to friday_agent_runs", () => {
     const db = freshDb();
     runFridayMigrations({ db, migrations: FRIDAY_SQLITE_MIGRATIONS });
