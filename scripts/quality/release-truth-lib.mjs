@@ -46,6 +46,11 @@ export const EVIDENCE_KINDS = {
 export const DEFAULT_PROOF_INPUTS = [
   "package.json",
   "scripts/ops/run-real-green-gate.mjs",
+  "scripts/ops/lib/token-redaction.mjs",
+  "scripts/ops/phase24b-discord-trusted-inbound-listener.mjs",
+  "scripts/ops/phase24c-telegram-trusted-inbound-listener.mjs",
+  "scripts/ops/phase24d-lark-feishu-trusted-inbound-listener.mjs",
+  "scripts/ops/validate-channel-proof-artifacts.mjs",
   "validation/real-world/lib",
   "test/e2e/live",
   "test/e2e/ui/_helpers/browser-env.ts",

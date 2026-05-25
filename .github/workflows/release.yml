@@ -10,6 +10,14 @@ on:
         description: "Existing tag to release (for example: v0.3.1)"
         required: true
         type: string
+      release_mode:
+        description: "Release mode: 'source-only' (npm + source tarball; no macOS build) or 'source-and-macos' (also produce notarized DMG / Homebrew cask). Push-tag triggers always behave as 'source-only'."
+        required: false
+        type: choice
+        default: "source-only"
+        options:
+          - source-only
+          - source-and-macos
 
 permissions:
   contents: write
@@ -137,6 +145,7 @@ jobs:
     outputs:
       tag_name: ${{ steps.resolve_tag.outputs.tag_name }}
       tag_sha: ${{ steps.resolve_tag_sha.outputs.tag_sha }}
+      release_mode: ${{ steps.resolve_release_mode.outputs.release_mode }}
 
     steps:
       - name: Checkout
@@ -163,6 +172,34 @@ jobs:
             echo "::error::Tag must match v<semver> (for example: v0.3.1)"
             exit 1
           fi
+
+      - name: Resolve release mode
+        id: resolve_release_mode
+        run: |
+          set -euo pipefail
+          # Push-tag triggers (e.g. `git push origin v1.0.1`) always behave as
+          # source-only because there is no UI to choose otherwise and the
+          # default v1.0.1 release boundary forbids claiming notarized macOS
+          # / Homebrew distribution. Manual workflow_dispatch honors the
+          # operator's input (default: source-only).
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.release_mode }}"
+            if [ -z "${MODE}" ]; then
+              MODE="source-only"
+            fi
+          else
+            MODE="source-only"
+          fi
+          case "${MODE}" in
+            source-only|source-and-macos)
+              echo "release_mode=${MODE}" >> "${GITHUB_OUTPUT}"
+              echo "Release mode: ${MODE}"
+              ;;
+            *)
+              echo "::error::Unknown release_mode '${MODE}'. Allowed: source-only, source-and-macos."
+              exit 1
+              ;;
+          esac
 
       - name: Resolve tag SHA
         id: resolve_tag_sha
@@ -195,6 +232,7 @@ jobs:
       - name: Public release preflight
         env:
           FRIDAY_RELEASE_TAG: ${{ env.TAG_NAME }}
+          FRIDAY_RELEASE_MODE: ${{ steps.resolve_release_mode.outputs.release_mode }}
           FRIDAY_MACOS_CODESIGN_IDENTITY: ${{ vars.FRIDAY_MACOS_CODESIGN_IDENTITY }}
           FRIDAY_MACOS_NOTARY_PROFILE: ${{ vars.FRIDAY_MACOS_NOTARY_PROFILE }}
           FRIDAY_MACOS_SPARKLE_PRIVATE_KEY: ${{ secrets.FRIDAY_MACOS_SPARKLE_PRIVATE_KEY }}
@@ -236,6 +274,7 @@ jobs:
     timeout-minutes: 90
     outputs:
       tag_name: ${{ needs.public-preflight.outputs.tag_name }}
+      release_mode: ${{ needs.public-preflight.outputs.release_mode }}
 
     steps:
       - name: Checkout
@@ -326,6 +365,60 @@ jobs:
           # prints its own structured rejection JSON to stdout on failure.
           node scripts/ops/validate-real-green-gate-result.mjs --path "${ARTIFACT_PATH}" --expected-sha "${TAG_SHA}"
 
+      - name: Assert RGG run was workflow_dispatch (channel phase24X jobs only run on manual dispatch)
+        env:
+          RUN_ID: ${{ steps.find_run.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          EVENT="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.event')"
+          echo "Real Green Gate run ${RUN_ID} event=${EVENT}"
+          if [ "${EVENT}" != "workflow_dispatch" ]; then
+            echo "::error::Channel live-proof gate requires the same-SHA Real Green Gate run to have been dispatched manually with phase24b/c/d inputs set true and nonces sent. Re-run: gh workflow run real-green-gate.yml -r ${TAG_NAME} -f phase24b_discord_trusted_inbound=true -f phase24c_telegram_trusted_inbound=true -f phase24d_lark_feishu_trusted_inbound=true"
+            exit 1
+          fi
+
+      - name: Download Phase24B Discord trusted-inbound artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24b-discord-trusted-inbound-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24b-discord-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Phase24C Telegram trusted-inbound artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24c-telegram-trusted-inbound-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24c-telegram-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Phase24D Lark/Feishu trusted-inbound artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24d-lark-feishu-trusted-inbound-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24d-lark-feishu-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate channel proof artifacts
+        run: |
+          set -euo pipefail
+          DISCORD="./phase24b-discord-download/phase24b-discord-trusted-inbound-proof.json"
+          TELEGRAM="./phase24c-telegram-download/phase24c-telegram-trusted-inbound-proof.json"
+          LARK="./phase24d-lark-feishu-download/phase24d-lark-feishu-trusted-inbound-proof.json"
+          for path in "${DISCORD}" "${TELEGRAM}" "${LARK}"; do
+            if [ ! -f "${path}" ]; then
+              echo "::error::Expected channel-proof artifact ${path} is missing. Re-run real-green-gate.yml on ${TAG_SHA} with phase24b_discord_trusted_inbound, phase24c_telegram_trusted_inbound, and phase24d_lark_feishu_trusted_inbound all set true, and complete the trusted-user message probes."
+              exit 1
+            fi
+          done
+          node scripts/ops/validate-channel-proof-artifacts.mjs \
+            --discord "${DISCORD}" \
+            --telegram "${TELEGRAM}" \
+            --lark-feishu "${LARK}" \
+            --expected-sha "${TAG_SHA}"
+
   source-distribution:
     needs:
       - verify
@@ -367,6 +460,7 @@ jobs:
     needs:
       - verify
       - live-proof-gate
+    if: needs.verify.outputs.release_mode != 'source-only'
     runs-on: macos-latest
     timeout-minutes: 45
 
@@ -475,6 +569,21 @@ jobs:
       - source-distribution
       - macos-distribution
       - publish-npm
+    # `macos-distribution` skips in source-only mode. Without an explicit `if:`,
+    # GitHub Actions would cascade-skip `create-release` and the GitHub Release
+    # would never be published. Require all required deps to have succeeded,
+    # and tolerate `macos-distribution` being skipped iff release_mode is
+    # source-only. This intentionally fails closed: any other dep skipping or
+    # failing blocks the release.
+    if: |
+      always()
+      && needs.verify.result == 'success'
+      && needs.live-proof-gate.result == 'success'
+      && needs.source-distribution.result == 'success'
+      && needs.publish-npm.result == 'success'
+      && (needs.macos-distribution.result == 'success'
+          || (needs.macos-distribution.result == 'skipped'
+              && needs.verify.outputs.release_mode == 'source-only'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -497,6 +606,7 @@ jobs:
           path: .
 
       - name: Download macOS distribution
+        if: needs.verify.outputs.release_mode != 'source-only'
         uses: actions/download-artifact@v4
         with:
           name: friday-macos-release
@@ -506,14 +616,29 @@ jobs:
         env:
           FRIDAY_RELEASE_TAG: ${{ needs.verify.outputs.tag_name }}
           FRIDAY_RELEASE_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
+          FRIDAY_RELEASE_MODE: ${{ needs.verify.outputs.release_mode }}
         run: npm run release:manifest
+
+      - name: Resolve release files
+        id: release_files
+        env:
+          RELEASE_MODE: ${{ needs.verify.outputs.release_mode }}
+        run: |
+          set -euo pipefail
+          if [ "${RELEASE_MODE}" = "source-only" ]; then
+            FILES=$'dist/releases/**/*\n'
+          else
+            FILES=$'dist/releases/**/*\ndist/macos/FridayCompanion.release.json\ndist/macos/FridayCompanion.release.md\n'
+          fi
+          {
+            echo "files<<EOF"
+            printf '%s' "${FILES}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.verify.outputs.tag_name }}
           generate_release_notes: true
-          files: |
-            dist/releases/**/*
-            dist/macos/FridayCompanion.release.json
-            dist/macos/FridayCompanion.release.md
+          files: ${{ steps.release_files.outputs.files }}

@@ -90,11 +90,34 @@ for (const [relativePath, label] of [
   requireFile(path.join(repoRoot, relativePath), label, failures);
 }
 
-const crossPlatform = runCrossPlatformInputs(repoRoot);
-if (crossPlatform.status !== 0) {
-  // Cross-platform inputs are advisory — missing iOS/Android/Windows
-  // credentials should not block npm + source releases.
-  console.warn(`[preflight] cross-platform release inputs check returned code ${String(crossPlatform.status)} (advisory, not blocking)`);
+// R1 release-closure: `FRIDAY_RELEASE_MODE=source-only` skips the iOS/Android/
+// Windows/macOS cross-platform input check because a source/npm-only release
+// (e.g. 1.0.1) does not promise any of those distribution surfaces. The
+// default mode (unset or "source-and-macos") keeps the existing behavior.
+const releaseMode = (process.env.FRIDAY_RELEASE_MODE ?? "").trim() || "source-and-macos";
+const skipCrossPlatform = releaseMode === "source-only";
+
+let crossPlatformCheck;
+if (skipCrossPlatform) {
+  crossPlatformCheck = {
+    status: "skipped_source_only",
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+  };
+} else {
+  const crossPlatform = runCrossPlatformInputs(repoRoot);
+  if (crossPlatform.status !== 0) {
+    // Cross-platform inputs are advisory — missing iOS/Android/Windows
+    // credentials should not block npm + source releases.
+    console.warn(`[preflight] cross-platform release inputs check returned code ${String(crossPlatform.status)} (advisory, not blocking)`);
+  }
+  crossPlatformCheck = {
+    status: crossPlatform.status === 0 ? "passed" : "failed",
+    exitCode: crossPlatform.status,
+    stdout: crossPlatform.stdout.trim(),
+    stderr: crossPlatform.stderr.trim(),
+  };
 }
 
 const report = {
@@ -102,15 +125,11 @@ const report = {
   repoRoot,
   tag,
   packageVersion,
+  releaseMode,
   status: failures.length === 0 ? "passed" : "failed",
   failures,
   checks: {
-    crossPlatformReleaseInputs: {
-      status: crossPlatform.status === 0 ? "passed" : "failed",
-      exitCode: crossPlatform.status,
-      stdout: crossPlatform.stdout.trim(),
-      stderr: crossPlatform.stderr.trim(),
-    },
+    crossPlatformReleaseInputs: crossPlatformCheck,
   },
 };
 
@@ -118,7 +137,9 @@ writeReport(reportPath, report);
 
 if (failures.length > 0) {
   console.error(JSON.stringify(report, null, 2));
-  process.exit(crossPlatform.status === 78 ? 78 : 1);
+  // crossPlatformCheck.exitCode is null when the check was skipped; treat
+  // that as a non-78 exit so the workflow does not see "neutral".
+  process.exit(crossPlatformCheck.exitCode === 78 ? 78 : 1);
 }
 
 console.log(JSON.stringify(report, null, 2));

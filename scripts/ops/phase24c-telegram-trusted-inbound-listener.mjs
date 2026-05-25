@@ -14,7 +14,16 @@ import {
 } from "#channels";
 import { createFridayHub } from "#hub";
 
+import {
+  containsTokenMaterial as containsTokenMaterialShared,
+  scrub as scrubShared,
+} from "./lib/token-redaction.mjs";
+
 const PROBE_BODY_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
+const TELEGRAM_REDACTION_LABELS = Object.freeze({
+  tokenLabel: "[REDACTED_TELEGRAM_BOT_TOKEN]",
+  prefixLabel: "[REDACTED_TELEGRAM_BOT_TOKEN_PREFIX]",
+});
 const DEFAULT_TIMEOUT_MS = 8 * 60 * 1000;
 const AWAITING_STATES = new Set(["awaiting_clarification", "awaiting_plan_approval"]);
 const UNIFIED_TASK_STATE_SCHEMA_VERSION = "friday.agent.unified_task_state.v1";
@@ -52,28 +61,11 @@ function tail(value) {
 }
 
 function scrub(value, token) {
-  const replacer = (_key, current) => {
-    if (typeof current !== "string") return current;
-    let next = current;
-    if (token) {
-      next = next.split(token).join("[REDACTED_TELEGRAM_BOT_TOKEN]");
-      if (token.length > 12) {
-        next = next.split(token.slice(0, 12)).join("[REDACTED_TELEGRAM_BOT_TOKEN_PREFIX]");
-      }
-    }
-    return next;
-  };
-  return JSON.parse(JSON.stringify(value, replacer));
+  return scrubShared(value, token, TELEGRAM_REDACTION_LABELS);
 }
 
 function containsTokenMaterial(serialized, token) {
-  return Boolean(
-    token
-    && (
-      serialized.includes(token)
-      || (token.length > 12 && serialized.includes(token.slice(0, 12)))
-    ),
-  );
+  return containsTokenMaterialShared(serialized, token);
 }
 
 function serializeScrubbedJson(value, token) {
@@ -283,6 +275,7 @@ function initialReport(config, reportPath) {
     completedAt: null,
     reportPath,
     environment: {
+      commit_sha: process.env.GITHUB_SHA ?? null,
       githubSha: process.env.GITHUB_SHA ?? null,
       githubRunId: process.env.GITHUB_RUN_ID ?? null,
       githubRefName: process.env.GITHUB_REF_NAME ?? null,

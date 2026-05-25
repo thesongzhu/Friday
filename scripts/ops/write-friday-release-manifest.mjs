@@ -5,6 +5,23 @@ import path from "node:path";
 
 const PLATFORM_ORDER = ["macos", "ios", "android", "windows"];
 
+const SOURCE_ONLY_RELEASE_CLAIM_BOUNDARY =
+  "This release is npm/source-only. Desktop, Homebrew, notarized macOS, mobile, "
+  + "and unproven external integrations remain outside this release claim. "
+  + "Capabilities without same-SHA live proof are labeled setup_needed, "
+  + "proof_pending, blocked_by_env, unsupported, or not_configured.";
+
+const SOURCE_ONLY_PLATFORM_OVERRIDE = Object.freeze({
+  availability: "not_in_this_release",
+  milestone: "npm_source_only_public_v1_local_candidate",
+  notes: [
+    "This platform is not part of the current npm/source-only release.",
+    "See releaseClaim.boundary for the exact boundary text.",
+  ],
+});
+
+const SOURCE_ONLY_CHANNEL_AVAILABILITY = "not_in_this_release";
+
 const PLATFORM_DEFAULTS = {
   macos: {
     availability: "release_baseline_target",
@@ -204,8 +221,19 @@ function renderMarkdown(manifest) {
     `- Version: \`${manifest.version}\``,
     `- Tag: \`${manifest.tag}\``,
     `- Download Base URL: \`${manifest.downloadBaseUrl}\``,
+    `- Release Mode: \`${manifest.releaseMode}\``,
     `- Current Milestone: \`${manifest.currentMilestone}\``,
     "",
+  ];
+  if (manifest.releaseClaim) {
+    lines.push("## Release Claim Boundary");
+    lines.push("");
+    lines.push(`- Allowed claim: ${manifest.releaseClaim.allowed}`);
+    lines.push("");
+    lines.push(`> ${manifest.releaseClaim.boundary}`);
+    lines.push("");
+  }
+  lines.push(
     "## Distribution Channels",
     "",
     "| Channel | Availability | Summary |",
@@ -220,7 +248,7 @@ function renderMarkdown(manifest) {
     ...manifest.platforms.map((platform) =>
       `| \`${platform.platform}\` | \`${platform.availability}\` | \`${platform.milestone}\` | \`${platform.nativeCompanion}\` | ${platform.artifacts.length} |`),
     "",
-  ];
+  );
 
   for (const platform of manifest.platforms) {
     lines.push(`## ${platform.platform}`);
@@ -274,6 +302,8 @@ async function main() {
   const tag = process.env.FRIDAY_RELEASE_TAG?.trim() || `v${version}`;
   const downloadBaseUrl = process.env.FRIDAY_RELEASE_DOWNLOAD_BASE_URL?.trim()
     || `https://github.com/thesongzhu/Friday/releases/download/${tag}`;
+  const releaseMode = (process.env.FRIDAY_RELEASE_MODE ?? "").trim() || "source-and-macos";
+  const sourceOnly = releaseMode === "source-only";
   const generatedAt = new Date().toISOString();
   const releasesRoot = path.join(repoRoot, "dist", "releases");
   const channelsRoot = path.join(releasesRoot, "channels");
@@ -299,10 +329,23 @@ async function main() {
   }
 
   const sourceArtifacts = sortArtifacts(artifacts.filter((artifact) => artifact.platform === "source"));
-  const macosCleanMachineEvidenceComplete = await hasCompleteMacosCleanMachineEvidence(repoRoot);
+  const macosCleanMachineEvidenceComplete = sourceOnly
+    ? false
+    : await hasCompleteMacosCleanMachineEvidence(repoRoot);
   const platformEntries = PLATFORM_ORDER.map((platform) => {
     const defaults = PLATFORM_DEFAULTS[platform];
     const platformArtifacts = sortArtifacts(artifacts.filter((artifact) => artifact.platform === platform));
+    if (sourceOnly) {
+      return {
+        platform,
+        availability: SOURCE_ONLY_PLATFORM_OVERRIDE.availability,
+        milestone: SOURCE_ONLY_PLATFORM_OVERRIDE.milestone,
+        nativeCompanion: defaults.nativeCompanion,
+        scaffolds: defaults.scaffolds,
+        notes: SOURCE_ONLY_PLATFORM_OVERRIDE.notes,
+        artifacts: platformArtifacts,
+      };
+    }
     const macosStatus = platform === "macos"
       ? resolveMacosPlatformStatus(platformArtifacts, channelMetadata, macosCleanMachineEvidenceComplete)
       : null;
@@ -317,20 +360,63 @@ async function main() {
     };
   });
 
+  const channels = sourceOnly
+    ? {
+        githubReleases: {
+          availability: channelAvailability(channelMetadata, "githubReleases", "available"),
+          summary: "Primary release entry for tagged builds and attached install assets.",
+        },
+        sparkle: {
+          availability: SOURCE_ONLY_CHANNEL_AVAILABILITY,
+          appcastUrl: null,
+          summary: "Required macOS auto-update channel for the native Agent OS baseline.",
+        },
+        homebrew: {
+          availability: SOURCE_ONLY_CHANNEL_AVAILABILITY,
+          caskTemplatePath: "packaging/homebrew/Casks/friday.rb.template",
+          tapRepo: null,
+          rawUrl: null,
+          summary: "Required macOS install and upgrade channel generated from the DMG metadata.",
+        },
+        npm: {
+          availability: channelAvailability(channelMetadata, "npm", "available"),
+          installCommand: "npm install -g @thesongzhu/friday",
+          summary: "Scoped npm package fallback while native platform installers remain phased.",
+        },
+        testflight: {
+          availability: SOURCE_ONLY_CHANNEL_AVAILABILITY,
+          summary: "Intended iOS beta distribution channel for the trusted-device remote console.",
+        },
+        playInternal: {
+          availability: SOURCE_ONLY_CHANNEL_AVAILABILITY,
+          summary: "Intended Android beta distribution channel for the trusted-device remote console.",
+        },
+      }
+    : buildChannels({
+        macosArtifacts: platformEntries[0].artifacts,
+        iosArtifacts: platformEntries[1].artifacts,
+        androidArtifacts: platformEntries[2].artifacts,
+        sourceArtifacts,
+        channelMetadata,
+      });
+
   const manifest = {
     generatedAt,
     version,
     tag,
     downloadBaseUrl,
-    currentMilestone: "macos_ios_android_windows_agent_os_rollout",
+    releaseMode,
+    currentMilestone: sourceOnly
+      ? "npm_source_only_public_v1_local_candidate"
+      : "macos_ios_android_windows_agent_os_rollout",
     longTermVision: "downloadable_cross_platform_ai_automation_employee",
-    channels: buildChannels({
-      macosArtifacts: platformEntries[0].artifacts,
-      iosArtifacts: platformEntries[1].artifacts,
-      androidArtifacts: platformEntries[2].artifacts,
-      sourceArtifacts,
-      channelMetadata,
-    }),
+    releaseClaim: sourceOnly
+      ? {
+          allowed: "public v1 local candidate, npm/source distribution",
+          boundary: SOURCE_ONLY_RELEASE_CLAIM_BOUNDARY,
+        }
+      : null,
+    channels,
     platforms: platformEntries,
     developerFallbacks: sourceArtifacts,
   };
@@ -343,7 +429,7 @@ async function main() {
   await fs.writeFile(mdPath, renderMarkdown(manifest), "utf8");
 
   const caskTemplatePath = path.join(repoRoot, "packaging", "homebrew", "Casks", "friday.rb.template");
-  if (await fileExists(caskTemplatePath)) {
+  if (!sourceOnly && await fileExists(caskTemplatePath)) {
     const macosDmg = platformEntries[0].artifacts.find((artifact) => artifact.kind === "dmg");
     if (macosDmg) {
       const template = await fs.readFile(caskTemplatePath, "utf8");
