@@ -155,7 +155,7 @@ describe("LarkWsClient lifecycle", () => {
     const onError = vi.fn();
     const client = new LarkWsClient({
       appId: "not-a-valid-appid",
-      appSecret: "secret",
+      appSecret: "secret-test",
       domain: LarkDomain.Feishu,
       onError,
     });
@@ -191,7 +191,7 @@ describe("LarkWsClient lifecycle", () => {
     });
     const client = new LarkWsClient({
       appId: "cli_0123456789abcdef",
-      appSecret: "REDACTED",
+      appSecret: "secret-test",
       domain: LarkDomain.Feishu,
       autoReconnect: false,
       onReady,
