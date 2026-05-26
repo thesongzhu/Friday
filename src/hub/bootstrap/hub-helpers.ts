@@ -858,7 +858,17 @@ function mapConfigValidationError(error: unknown): {
   }];
 }
 
-export function createStubConfigManager(
+/**
+ * B9 / FRI-AUD-021 truth-label rename (2026-05-26): renamed from the prior
+ * misleading "stub" name. This implementation actually persists config
+ * snapshots + revisions in SQLite (via `stateRuntime.sqlite.withWrite-
+ * Transaction` against the `hub_settings` table) and the `/v1/config/*`
+ * HTTP routes are wired into the API runtime. Mutations are NOT no-ops.
+ * The truthful "Persistent" name matches runtime behavior so future
+ * inventories + grep readers do not confuse this with the still-partially-
+ * stub `createStubMemoryState`.
+ */
+export function createPersistentConfigManager(
   config: { stateDir?: string; workspaceRoot?: string; skillDirs: string[] },
   stateRuntime: FridayStateRuntime,
 ): FridayHubConfigManagerService {

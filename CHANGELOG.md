@@ -77,6 +77,20 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
   directive. The dedup helper's file-header JSDoc + one-time
   module-level advisory log updated to reflect the new advisory-wired
   state.
+- **B9 / FRI-AUD-021** Renamed `createStubConfigManager` →
+  `createPersistentConfigManager` in `src/hub/bootstrap/hub-helpers.ts`
+  (+ re-export in `src/hub/bootstrap/index.ts` + call site in
+  `src/hub/friday-hub-bootstrap.ts`). The "stub" name was stale: the
+  implementation actually persists config snapshots + revisions in
+  SQLite via `hub_settings` and the `/v1/config/*` HTTP routes are
+  wired into the API runtime. The hub-bootstrap comment block was
+  updated to drop the stale "intentionally stubbed for v0.4.x" and
+  "Config mutations via API silently no-ops" wording and to explicitly
+  distinguish the now-truthfully-named persistent configManager from
+  the still-partial-stub `createStubMemoryState` (which has 4 real
+  methods + 4 no-op methods with zero production consumers; interface
+  narrowing is a carry-forward code-hygiene item documented in
+  `B5_B6_B8_VERIFIED.md` § "FRI-AUD-022"). No runtime behavior change.
 
 ### Removed
 

@@ -372,7 +372,7 @@ import {
   canResolveFridayChannelApprovalFromMessage,
   createFridayChannelToolApprovalShortId,
   createFridayHubAutoFixExecutionSupport,
-  createStubConfigManager,
+  createPersistentConfigManager,
   createStubMemoryState,
   evaluateFridayChannelApprovalExpiry,
   loadChannelsConfigFromSetupState,
@@ -1038,11 +1038,22 @@ export async function createFridayHub(
     }
   }
 
-  // 2. Create stub services for standalone operation.
-  // P2: configManager and memoryState are intentionally stubbed for v0.4.x standalone mode.
-  // Full implementations with persistence are planned for the multi-node milestone.
-  // Config mutations via API are silently no-ops; use env vars and friday.config.yaml instead.
-  const configManager = createStubConfigManager({ ...config, workspaceRoot }, stateRuntime);
+  // 2. Create hub adapter services for standalone operation.
+  //
+  // B9 / FRI-AUD-021 truth-label (2026-05-26):
+  //   - configManager (now `createPersistentConfigManager`) persists
+  //     snapshots/revisions in SQLite via `hub_settings`; `/v1/config/*`
+  //     HTTP routes are wired into the API runtime; mutations are NOT
+  //     silently dropped.
+  //   - memoryState (`createStubMemoryState`) remains partial-stub: 4 of
+  //     its 10 interface methods (skill statuses + audit log) are real and
+  //     production-used; the 4 session/memory-item methods remain no-ops
+  //     and currently have ZERO production consumers (interface narrowing
+  //     is a carry-forward code-hygiene item; see B5_B6_B8_VERIFIED.md
+  //     §"FRI-AUD-022").
+  // Use env vars and `friday.config.yaml` for first-boot configuration;
+  // `/v1/config/*` for live mutations.
+  const configManager = createPersistentConfigManager({ ...config, workspaceRoot }, stateRuntime);
   const auditLogPath = resolveFridayAuditLogPath(stateRuntime.stateDir);
   const memoryState = createStubMemoryState(auditLogPath);
 
