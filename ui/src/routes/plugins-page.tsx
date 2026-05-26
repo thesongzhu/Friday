@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, EmptyState, FieldLabel, ShellCard, SkeletonCard, StatusPill } from "@/components/core/primitives";
 import { healthApi } from "@/lib/api/health";
 import { pluginsApi, type FridayPluginEntity, type FridayPluginLifecycleEvidence } from "@/lib/api/plugins";
-import { localize } from "@/lib/i18n/localized-text";
+import { localize, type AppLocale } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
 function formatTimestamp(value?: string | null): string {
@@ -53,6 +53,35 @@ function lifecycleTone(plugin: FridayPluginEntity): "neutral" | "success" | "war
   return "neutral";
 }
 
+/**
+ * B2 / FRI-AUD-004 truth-label: trust-on-install must never render as a
+ * cryptographically verified marketplace signature. Marketplace Ed25519
+ * verification is not wired (no
+ * trusted-keyring infrastructure exists in this release); the verifier only
+ * computes SHA-256 fingerprints + user-approval for local trust-on-install
+ * (see src/plugins/security/friday-plugin-signature-verifier.ts).
+ *
+ * Rules per POST_RELEASE_DEFAULT_DECISIONS.md B2:
+ *   - signatureVerified=false → "unsigned or unverified" (neutral)
+ *   - signatureVerified=true && trustMode="trust_on_install" →
+ *     "locally trusted (trust-on-install)" (neutral — NOT success/green)
+ *   - signatureVerified=true && trustMode="signed" →
+ *     "signature proof_pending (no trusted keyring)" (neutral — until real
+ *     marketplace keyring lands)
+ *
+ * Tone never returns "success" for the v1 release because no path produces
+ * a cryptographically verified marketplace signature yet.
+ */
+function pluginTrustLabel(plugin: FridayPluginEntity, locale: AppLocale): string {
+  if (!plugin.signatureVerified) {
+    return localize(locale, "未验证签名", "unsigned or unverified");
+  }
+  if (plugin.trustMode === "trust_on_install") {
+    return localize(locale, "本地信任（trust-on-install）", "locally trusted (trust-on-install)");
+  }
+  return localize(locale, "签名待验证（暂无可信密钥环）", "signature proof_pending (no trusted keyring)");
+}
+
 function PluginInventoryCard(props: {
   plugin: FridayPluginEntity;
   lifecycleEvidence?: FridayPluginLifecycleEvidence;
@@ -78,8 +107,8 @@ function PluginInventoryCard(props: {
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-base font-semibold text-[color:var(--color-text-primary)]">{plugin.name}</p>
             <StatusPill tone={pluginTone(plugin.status)}>{plugin.status}</StatusPill>
-            <StatusPill tone={plugin.signatureVerified ? "success" : "neutral"}>
-              {plugin.signatureVerified ? localize(locale, "签名已验证", "signature verified") : localize(locale, "未验证签名", "unsigned or unverified")}
+            <StatusPill tone="neutral">
+              {pluginTrustLabel(plugin, locale)}
             </StatusPill>
             <StatusPill tone={lifecycleTone(plugin)}>
               {lifecycleLabel}

@@ -7,20 +7,22 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
-## [1.0.2] — Public Install Audit Hotfix — 2026-05-26
+## [1.0.2] — Post-Release Hardening Wave — 2026-05-26
 
-`1.0.2` is a security/hygiene patch on top of `1.0.1`. It does not change
-the `1.0.1` release claim (public v1 local candidate, npm/source-only,
-`dogfood_partial_pass`, nine `proof_pending` headlines carried forward,
-Slack HTTP / QQ / desktop / Homebrew / notarized macOS / mobile / "all
-integrations live" exclusions). Public install behavior changes ONLY in
-that `npm install @thesongzhu/friday@1.0.2 && npm audit --omit=dev` now
+`1.0.2` accumulates the post-release hardening queue from
+`/Users/jarvis/Desktop/Friday-post-release-hardening-plan-20260526` on
+top of `1.0.1`. It does not change the `1.0.1` release claim (public v1
+local candidate, npm/source-only, `dogfood_partial_pass`, nine
+`proof_pending` headlines carried forward, Slack HTTP / QQ / desktop /
+Homebrew / notarized macOS / mobile / "all integrations live"
+exclusions). Public install behavior changes ONLY in that
+`npm install @thesongzhu/friday@1.0.2 && npm audit --omit=dev` now
 reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
 
 ### Changed
 
-- Lark/Feishu long-connection (WebSocket) event subscription is now
-  served by a native client under `src/channels/lark/internal/`
+- **B0.5** Lark/Feishu long-connection (WebSocket) event subscription is
+  now served by a native client under `src/channels/lark/internal/`
   (`lark-ws-client.ts`, `lark-ws-frame.ts`, `lark-event-dispatcher.ts`,
   `lark-domain.ts`, `lark-logger.ts`) instead of via
   `@larksuiteoapi/node-sdk`. The native client vendor-adapts the MIT-
@@ -32,6 +34,18 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
   and status semantics; downstream `parseMessageEventBase` and
   `parseCardApprovalActionEvent` consume the same flattened envelope
   the SDK was producing.
+- **B2 / FRI-AUD-004** Plugins page (`ui/src/routes/plugins-page.tsx`)
+  no longer renders trust-on-install as cryptographic "signature
+  verified". The badge now uses a `pluginTrustLabel` helper that maps
+  `signatureVerified=false` → "unsigned or unverified",
+  `signatureVerified=true && trustMode="trust_on_install"` → "locally
+  trusted (trust-on-install)", and
+  `signatureVerified=true && trustMode="signed"` → "signature
+  proof_pending (no trusted keyring)". Tone is always `neutral` for v1
+  because no path produces a cryptographically verified marketplace
+  signature yet. PR #308 already added the runtime advisory + JSDoc
+  truth-label; this slice closes the user-facing UI overclaim. No
+  runtime behavior change to plugin install/enable/disable.
 
 ### Removed
 
