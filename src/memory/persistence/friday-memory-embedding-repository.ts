@@ -2,8 +2,8 @@ import type Database from "better-sqlite3";
 import type {
   FridayMemoryEmbedding,
   FridayMemoryNamespace,
-  FridayMemoryType,
   FridayMemorySemanticHit,
+  FridayMemoryType,
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
