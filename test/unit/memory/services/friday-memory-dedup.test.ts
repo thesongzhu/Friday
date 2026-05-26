@@ -10,7 +10,7 @@ import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js
 
 const NOW = "2026-02-17T10:00:00.000Z";
 
-describe("friday-memory-dedup (B3 truth-labeling)", () => {
+describe("friday-memory-dedup (B4 advisory wire-in; destructive merge/block policy_pending)", () => {
   let db: FridaySqliteLayer;
   let consoleInfoSpy: ReturnType<typeof vi.spyOn>;
 
@@ -24,7 +24,7 @@ describe("friday-memory-dedup (B3 truth-labeling)", () => {
     consoleInfoSpy.mockRestore();
   });
 
-  it("checkMemoryDuplicate emits a one-time advisory naming the proof_pending wiring", async () => {
+  it("checkMemoryDuplicate emits a one-time advisory naming the advisory-only wiring", async () => {
     const searchSpy = vi.fn<
       (
         query: string,
@@ -50,17 +50,22 @@ describe("friday-memory-dedup (B3 truth-labeling)", () => {
     expect(consoleInfoSpy).toHaveBeenCalledTimes(1);
     const advisoryMessage = consoleInfoSpy.mock.calls[0]![0] as string;
     expect(advisoryMessage).toContain("checkMemoryDuplicate");
-    expect(advisoryMessage).toContain("NOT wired");
-    expect(advisoryMessage).toContain("memoryService.store()");
+    // B4 wire-in: the one-time log now names the advisory-only wiring and
+    // explicitly preserves the policy_pending boundary for destructive
+    // merge/block semantics.
+    expect(advisoryMessage).toContain("wired into memoryService.store()");
+    expect(advisoryMessage).toContain("advisory-only");
+    expect(advisoryMessage).toContain("non-destructive");
     expect(advisoryMessage).toContain("policy_pending");
   });
 
-  it("memoryService.store() does NOT call dedup (durable store path bypass)", async () => {
-    // The current truth: memoryService.store() persists every well-formed
-    // store request as a new row regardless of whether a near-duplicate
-    // already exists. This test will START FAILING the moment a future
-    // slice wires checkMemoryDuplicate into store() — that's intentional,
-    // it forces explicit policy review before the wiring lands.
+  it("memoryService.store() calls dedup AFTER persist (advisory only; never blocks)", async () => {
+    // B4 (2026-05-26): store() now invokes checkMemoryDuplicate AFTER a
+    // successful persist. Distinct rows are still stored regardless of
+    // whether a near-duplicate exists; the dedup result is informational.
+    // This test guards: (a) the wire-in fires, (b) NO row is overwritten
+    // or merged, (c) the candidate is in the durable store even when
+    // duplicate-like.
     const service: FridayMemoryService = createFridayMemoryService({
       db,
       providerService: {
@@ -77,17 +82,17 @@ describe("friday-memory-dedup (B3 truth-labeling)", () => {
     const second = await service.store("dedup-ns", "The quick brown fox");
     const third = await service.store("dedup-ns", "The quick brown fox");
 
-    // 3 distinct rows persisted with 3 distinct ids — proof that dedup
-    // is NOT being applied at the store boundary.
+    // 3 distinct rows persisted with 3 distinct ids — proof that the dedup
+    // advisory does NOT block, overwrite, or merge.
     expect(first.id).toBe("dedup-test-1");
     expect(second.id).toBe("dedup-test-2");
     expect(third.id).toBe("dedup-test-3");
     expect(new Set([first.id, second.id, third.id]).size).toBe(3);
 
-    // The dedup advisory must NOT have fired — store() does not call into
-    // the dedup helper at all.
-    expect(consoleInfoSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("[friday][memory-dedup]"),
-    );
+    // Detailed advisory-event coverage (sink shape, threshold,
+    // candidate/existing ids, no-mutation invariant) lives in
+    // `friday-memory-dedup-advisory-wire-in.test.ts`. This test focuses
+    // on the load-bearing invariant: store() never blocks, overwrites,
+    // or merges when duplicates are present.
   });
 });

@@ -60,6 +60,23 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
   `desktopSessionManager.checkPermissions`) is preserved as live. No
   desktop risk-tier changes; no UI consumer of the policy routes
   existed under `ui/`, so no user-facing flow regresses.
+- **B4 / FRI-AUD-006** `memoryService.store()` now invokes
+  `checkMemoryDuplicate` AFTER a successful persist in
+  **advisory-only, non-destructive** mode. When a near-duplicate is
+  detected above the configured threshold (default `0.92` placeholder,
+  operator-tunable via `CreateFridayMemoryServiceDeps.dedupThreshold`),
+  the service emits a `FridayMemoryDedupAdvisoryEvent` via
+  `console.info` and the optional `deps.dedupAdvisorySink`. The
+  advisory is purely additive — the candidate is already in the durable
+  store by the time it fires. Friday NEVER deletes, overwrites, merges,
+  or blocks any user memory based on this signal. `mergeMemoryContent`
+  / `mergeMemoryConfidence` helpers remain available for future callers
+  but are NOT invoked from `store()` — destructive merge/block
+  semantics remain `policy_pending` per
+  `POST_RELEASE_DEFAULT_DECISIONS.md` B4 + the 2026-05-26 operator
+  directive. The dedup helper's file-header JSDoc + one-time
+  module-level advisory log updated to reflect the new advisory-wired
+  state.
 
 ### Removed
 

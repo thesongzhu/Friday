@@ -1,5 +1,6 @@
 import type {
   CreateFridayMemoryServiceDeps,
+  FridayMemoryDedupAdvisoryEvent,
   FridayMemoryService,
 } from "./friday-memory-service.types.js";
 
@@ -25,6 +26,14 @@ import { createFridayMemoryEmbeddingRepository } from "../persistence/friday-mem
 import { createFridayMemoryByokEmbeddingClient } from "./friday-memory-byok-embedding-client.js";
 import { assertFridayDurableMemoryBoundaryAllowed } from "./friday-memory-boundary-policy.js";
 import { mergeHybridResults } from "../search/friday-memory-hybrid.js";
+import { checkMemoryDuplicate } from "./friday-memory-dedup.js";
+
+/**
+ * B4 / FRI-AUD-006 dedup-advisory default threshold. Placeholder until
+ * product policy decides the production value. Operator can override per
+ * service via `CreateFridayMemoryServiceDeps.dedupThreshold`.
+ */
+const FRIDAY_MEMORY_DEDUP_ADVISORY_DEFAULT_THRESHOLD = 0.92;
 
 // P2-06: Module-level Set avoids WeakMap edge cases with replaced warn sinks.
 type FridayWarnSink = (message: string) => void;
@@ -36,11 +45,17 @@ function warnOnce(warn: FridayWarnSink, key: string, message: string): void {
   warn(message);
 }
 
-function normalizeWarningKey(kind: "embedding" | "semantic" | "access-counter", message: string): string {
+function normalizeWarningKey(
+  kind: "embedding" | "semantic" | "access-counter" | "dedup-advisory",
+  message: string,
+): string {
   return `${kind}:${message}`;
 }
 
-function warnMemoryFallback(kind: "embedding" | "semantic" | "access-counter", message: string): void {
+function warnMemoryFallback(
+  kind: "embedding" | "semantic" | "access-counter" | "dedup-advisory",
+  message: string,
+): void {
   if (message.startsWith("No enabled providers available for routing")) {
     return;
   }
@@ -49,7 +64,9 @@ function warnMemoryFallback(kind: "embedding" | "semantic" | "access-counter", m
       ? "embedding failed"
       : kind === "semantic"
         ? "semantic search unavailable"
-        : "access-counter update failed (counter may lag)";
+        : kind === "access-counter"
+          ? "access-counter update failed (counter may lag)"
+          : "dedup advisory failed (no policy effect; store still succeeded)";
   warnOnce(
     console.warn as FridayWarnSink,
     normalizeWarningKey(kind, message),
@@ -71,7 +88,20 @@ export function createFridayMemoryService(
   // Key format: alphanumeric, hyphens, underscores, dots, colons
   const KEY_FORMAT_RE = /^[a-zA-Z0-9._:@\-]+$/;
 
-  return {
+  // B4 / FRI-AUD-006: resolve advisory dedup threshold once per service
+  // instance. Placeholder default; operator-tunable via deps.dedupThreshold.
+  const resolvedDedupThreshold =
+    typeof deps.dedupThreshold === "number" && deps.dedupThreshold > 0 && deps.dedupThreshold <= 1
+      ? deps.dedupThreshold
+      : FRIDAY_MEMORY_DEDUP_ADVISORY_DEFAULT_THRESHOLD;
+
+  // B4 / FRI-AUD-006: forward-ref so `store()` can call `service.search()`
+  // for advisory-only dedup checks AFTER successful persist. The advisory
+  // is purely additive — it never deletes, overwrites, merges, or blocks
+  // any user memory (per POST_RELEASE_DEFAULT_DECISIONS.md B4 + the
+  // 2026-05-26 operator directive). Destructive merge/block semantics
+  // remain `policy_pending`.
+  const service: FridayMemoryService = {
     async store(namespace, content, metadata) {
       // Service-level validation (Fix #5)
       if (!namespace || typeof namespace !== "string" || !namespace.trim()) {
@@ -157,6 +187,57 @@ export function createFridayMemoryService(
       } catch (err) {
         // Embedding failed — item was stored successfully, just no vector
         warnMemoryFallback("embedding", err instanceof Error ? err.message : String(err));
+      }
+
+      // B4 / FRI-AUD-006 advisory-only dedup (non-destructive).
+      // The candidate is already persisted at this point. If the new item
+      // matches a pre-existing memory in the same namespace above the
+      // configured threshold, we emit an informational advisory event
+      // (console.info + optional deps.dedupAdvisorySink). We NEVER delete,
+      // overwrite, merge, or block any user memory. Destructive merge/block
+      // semantics remain `policy_pending` per the operator directive.
+      try {
+        const dedupResult = await checkMemoryDuplicate(
+          { namespace, content, metadata },
+          { search: (q, opts) => service.search(q, opts) },
+          { threshold: resolvedDedupThreshold },
+        );
+        if (
+          dedupResult.deduplicated
+          && dedupResult.existingItem
+          && dedupResult.existingItem.id !== item.id
+        ) {
+          const advisory: FridayMemoryDedupAdvisoryEvent = {
+            kind: "memory.dedup.advisory",
+            candidateItemId: item.id,
+            existingItemId: dedupResult.existingItem.id,
+            namespace,
+            bestScore: dedupResult.bestScore ?? 1.0,
+            threshold: resolvedDedupThreshold,
+            timestamp: now,
+          };
+          console.info(
+            `[friday][memory-service] dedup advisory: candidate ${advisory.candidateItemId} `
+              + `(namespace=${namespace}) similar to existing ${advisory.existingItemId} `
+              + `(score=${advisory.bestScore.toFixed(3)} >= threshold=${advisory.threshold.toFixed(3)}); `
+              + "candidate stored as-is; no merge/block (policy_pending).",
+          );
+          if (deps.dedupAdvisorySink) {
+            try {
+              deps.dedupAdvisorySink(advisory);
+            } catch (sinkErr) {
+              warnMemoryFallback(
+                "dedup-advisory",
+                `sink threw: ${sinkErr instanceof Error ? sinkErr.message : String(sinkErr)}`,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        warnMemoryFallback(
+          "dedup-advisory",
+          err instanceof Error ? err.message : String(err),
+        );
       }
 
       return item;
@@ -357,4 +438,6 @@ export function createFridayMemoryService(
       return result;
     },
   };
+
+  return service;
 }
