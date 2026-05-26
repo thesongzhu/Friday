@@ -1,6 +1,6 @@
 {
   "name": "@thesongzhu/friday",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Trusted local-first AI agent application layer for supervised automation",
   "license": "MIT",
@@ -187,7 +187,6 @@
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/noto-serif-sc": "^5.2.9",
-    "@larksuiteoapi/node-sdk": "^1.62.0",
     "@mozilla/readability": "^0.6.0",
     "@simplewebauthn/browser": "^13.2.2",
     "@simplewebauthn/server": "^13.2.3",
@@ -200,8 +199,10 @@
     "linkedom": "^0.18.12",
     "pdfjs-dist": "^5.6.205",
     "playwright": "^1.58.2",
+    "protobufjs": "^7.6.1",
     "qrcode": "^1.5.4",
     "semver": "^7.7.4",
+    "ws": "^8.19.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
@@ -220,6 +221,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.56.0",
     "@typescript-eslint/parser": "^8.56.0",
     "@vitejs/plugin-react": "^5.1.4",
@@ -245,9 +247,6 @@
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
-  },
-  "overrides": {
-    "axios": "^1.15.2"
   },
   "imports": {
     "#utilities": "./dist/utilities/index.js",

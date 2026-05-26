@@ -22,7 +22,7 @@
  * We do the same so equality checks (e.g. SeqID echo on ACK) match the SDK.
  */
 
-import protobuf from "protobufjs/minimal.js";
+import protobuf from "protobufjs";
 
 // Force protobufjs to decode 64-bit ints as plain numbers (not `Long`).
 // Must run before any encode/decode call. Mirrors SDK lines 88105–88106.
