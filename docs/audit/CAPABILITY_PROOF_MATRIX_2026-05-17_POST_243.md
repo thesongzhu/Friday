@@ -3,7 +3,7 @@
 This file is a dated post-#243 ledger refresh for current `origin/main`.
 It supersedes [`CAPABILITY_PROOF_MATRIX_2026-05-12_POST_216.md`](CAPABILITY_PROOF_MATRIX_2026-05-12_POST_216.md) for current-state reading, but does not rewrite earlier historical snapshots.
 
-This is not a full repo line-by-line audit and it is not product release proof. It is a Phase 15 docs-truth reconciliation snapshot built from the per-phase completion reports under `/Users/jarvis/Desktop/friday_vertical_closure_phase_reports_2026-05-12/` and the live source under `src/`. The authoritative product surface remains [`../current-source-of-truth.md`](../current-source-of-truth.md) and the authoritative evidence taxonomy remains [`../release-evidence-policy.md`](../release-evidence-policy.md).
+This is not a full repo line-by-line audit and it is not product release proof. It is a Phase 15 docs-truth reconciliation snapshot built from the per-phase completion reports under `/Users/example/Desktop/friday_vertical_closure_phase_reports_2026-05-12/` and the live source under `src/`. The authoritative product surface remains [`../current-source-of-truth.md`](../current-source-of-truth.md) and the authoritative evidence taxonomy remains [`../release-evidence-policy.md`](../release-evidence-policy.md).
 
 ## 1. Snapshot anchor
 
@@ -71,7 +71,7 @@ This snapshot does not say:
 This refresh was assembled from:
 
 - `git log --oneline --max-count=20 origin/main` at SHA `42fac20fa5f5bfd33e23addc400d9fb98bb35ee8`.
-- Per-phase completion reports under `/Users/jarvis/Desktop/friday_vertical_closure_phase_reports_2026-05-12/`.
+- Per-phase completion reports under `/Users/example/Desktop/friday_vertical_closure_phase_reports_2026-05-12/`.
 - `REPORTS_INDEX.csv` rows for `phase_02a`, `phase_02b`, `phase_03`, `phase_04`, `phase_05`, `phase_06`, `phase_07`, `phase_08`, `phase_09`, `phase_10`, `phase_11`, `phase_12`, `phase_13`, `phase_13_5`, `phase_13_6`, `phase_14`, `phase_14_5`, `phase_15`, `phase_16`, `phase_17`.
 - Current source references for `src/packaging/persistence/friday-package-sqlite-store.ts`, `src/security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.ts`, `src/media-understanding/providers/friday-openai-vision-provider.ts`, and the related env gates in `src/hub/friday-hub-bootstrap.ts`.
 - [`./10_FINDINGS_REGISTER.md`](10_FINDINGS_REGISTER.md).

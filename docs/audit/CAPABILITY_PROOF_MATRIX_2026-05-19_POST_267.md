@@ -3,7 +3,7 @@
 This file is a dated post-#267 ledger refresh for current `origin/main`.
 It supersedes [`CAPABILITY_PROOF_MATRIX_2026-05-17_POST_243.md`](CAPABILITY_PROOF_MATRIX_2026-05-17_POST_243.md) for public v1 local claim reading, but does not rewrite earlier historical snapshots.
 
-This is not a full repo line-by-line audit and it is not product release proof by itself. It is a Phase 19 release-proof-debt reconciliation snapshot built from the Phase 18B-H issue ledgers under `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/`, the Phase 18A completion report, the public v1 workflow package under `/Users/jarvis/Desktop/friday_public_v1_workflow_2026-05-18/`, and the live source under `docs/` and `validation/real-world/`. The authoritative product surface remains [`../current-source-of-truth.md`](../current-source-of-truth.md) and the authoritative evidence taxonomy remains [`../release-evidence-policy.md`](../release-evidence-policy.md).
+This is not a full repo line-by-line audit and it is not product release proof by itself. It is a Phase 19 release-proof-debt reconciliation snapshot built from the Phase 18B-H issue ledgers under `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/`, the Phase 18A completion report, the public v1 workflow package under `/Users/example/Desktop/friday_public_v1_workflow_2026-05-18/`, and the live source under `docs/` and `validation/real-world/`. The authoritative product surface remains [`../current-source-of-truth.md`](../current-source-of-truth.md) and the authoritative evidence taxonomy remains [`../release-evidence-policy.md`](../release-evidence-policy.md).
 
 ## 1. Snapshot Anchor
 
@@ -63,15 +63,15 @@ Phase 18A-H PR-head RGG artifacts provide merge-hygiene and same-SHA proof for t
 This refresh was assembled from:
 
 - `git log --oneline --max-count=30 origin/main` at SHA `be7d31d4b8651c41494770e8e562cd2bd35c20d8`.
-- `/Users/jarvis/Desktop/friday_public_v1_workflow_2026-05-18/PUBLIC_V1_OFFICIAL_PHASE_MAP.md`.
-- `/Users/jarvis/Desktop/friday_public_v1_workflow_2026-05-18/PUBLIC_V1_PHASE_ISSUE_MAP.csv`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18b_safety_false_success_secret_data_loss_closure.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18c_setup_first_run_ux.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18d_skeptical_mode_user_constitution.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18e_frugal_mode_productization.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18f_api_ui_sdk_contract_reconciliation.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18g_desktop_system_boundary.json`.
-- `/Users/jarvis/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18h_product_truth_package_hygiene.json`.
+- `/Users/example/Desktop/friday_public_v1_workflow_2026-05-18/PUBLIC_V1_OFFICIAL_PHASE_MAP.md`.
+- `/Users/example/Desktop/friday_public_v1_workflow_2026-05-18/PUBLIC_V1_PHASE_ISSUE_MAP.csv`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18b_safety_false_success_secret_data_loss_closure.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18c_setup_first_run_ux.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18d_skeptical_mode_user_constitution.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18e_frugal_mode_productization.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18f_api_ui_sdk_contract_reconciliation.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18g_desktop_system_boundary.json`.
+- `/Users/example/Desktop/READ/friday-conveyor-handoffs/issue-ledger/phase_18h_product_truth_package_hygiene.json`.
 - [`./10_FINDINGS_REGISTER.md`](10_FINDINGS_REGISTER.md).
 - [`../current-source-of-truth.md`](../current-source-of-truth.md).
 - [`../release-evidence-policy.md`](../release-evidence-policy.md).

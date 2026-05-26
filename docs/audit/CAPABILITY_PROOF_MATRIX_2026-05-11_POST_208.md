@@ -157,8 +157,8 @@ This refresh was assembled from:
 - `test/e2e/live/friday-self-healing-live.e2e.test.ts` at `origin/main@ce27d96f`.
 - `test/e2e/live/friday-autonomous-restart.e2e.test.ts` at `origin/main@ce27d96f`.
 - `/tmp/friday-deepseek-queue-20260511/`.
-- `/Users/jarvis/.zsh_history` (redacted command-history check; no test output there).
-- `/Users/jarvis/.claude/projects/-Users-jarvis-Projects-Friday/c417ec56-46b8-409e-81c3-9164de83bfe6.jsonl` (local transcript evidence for DeepSeek #1/#6).
+- `/Users/example/.zsh_history` (redacted command-history check; no test output there).
+- `/Users/example/.claude/projects/-Users-jarvis-Projects-Friday/c417ec56-46b8-409e-81c3-9164de83bfe6.jsonl` (local transcript evidence for DeepSeek #1/#6).
 - GitHub Actions logs for PR #200/#201 test jobs, which showed the relevant live tests skipped in CI.
 
 This refresh is intentionally narrow. Rows from the predecessor matrices that are not mentioned here retain their previous classification until a future full matrix pass re-verifies them.

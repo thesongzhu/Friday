@@ -41,7 +41,7 @@ Duration    167.23s
 
 历史失败文件：
 
-- `/Users/wenxindou/Desktop/Friday/test/integration/system/friday-system-companion-release.integration.test.ts`
+- `/Users/example/Desktop/Friday/test/integration/system/friday-system-companion-release.integration.test.ts`
 
 历史失败类型：
 

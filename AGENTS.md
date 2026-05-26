@@ -9,11 +9,11 @@ resume. Do not rely on session memory, handoff summaries, screenshots, or anothe
 agent's report as a substitute for fresh reads.
 
 The repo-external master prompt pointer at
-`/Users/jarvis/Desktop/READ/friday_master_workflow_prompt.md` is non-canonical
+`/Users/example/Desktop/READ/friday_master_workflow_prompt.md` is non-canonical
 operator context. Desktop-root governance files such as
-`/Users/jarvis/Desktop/friday_master_workflow_prompt.md`,
-`/Users/jarvis/Desktop/AGENTS.md`, and
-`/Users/jarvis/Desktop/friday_AGENTS.md` are retired routes. If any
+`/Users/example/Desktop/friday_master_workflow_prompt.md`,
+`/Users/example/Desktop/AGENTS.md`, and
+`/Users/example/Desktop/friday_AGENTS.md` are retired routes. If any
 repo-external prompt, snapshot, screenshot, or handoff conflicts with this file,
 follow this file and stop before changing governance behavior.
 
@@ -39,7 +39,7 @@ Never claim a fresh full-repo line-by-line reread unless it actually happened in
 These rules merge:
 
 - Friday workspace rules formerly carried in `context/AGENTS.md`, now incorporated here.
-- Repo-external operator pointers under `/Users/jarvis/Desktop/READ/`, read only when a route-map or governance task calls for them.
+- Repo-external operator pointers under `/Users/example/Desktop/READ/`, read only when a route-map or governance task calls for them.
 - The user's hard rules in this thread.
 - The Karpathy-inspired guideline repo `https://github.com/forrestchang/andrej-karpathy-skills`, read at commit `2c606141936f1eeef17fa3043a72095b4765b9c2`.
 - The Matt Pocock skills repo `https://github.com/mattpocock/skills`, read at commit `9fecab929abb904c68ce3366a1781df31ab22832`, absorbed as workflow principles only.
@@ -346,7 +346,7 @@ current `context/AGENTS.md` file is a non-canonical pointer only.
 - Prefer existing Friday skills/workflows before creating new ones.
 - Keep destructive or high-risk actions approval-gated and summarize evidence before execution.
 - When docs conflict, prefer `docs/current-source-of-truth.md` and current runtime behavior.
-- The master prompt pointer at `/Users/jarvis/Desktop/READ/friday_master_workflow_prompt.md` is repo-external local operator context; it is not release proof and is not visible to GitHub reviewers from the repo alone. Governance / hard-rule changes must land in repo-tracked docs for durable audit visibility. `context/AGENTS.md` is non-canonical and should remain a pointer to this file, not a duplicate rule source.
+- The master prompt pointer at `/Users/example/Desktop/READ/friday_master_workflow_prompt.md` is repo-external local operator context; it is not release proof and is not visible to GitHub reviewers from the repo alone. Governance / hard-rule changes must land in repo-tracked docs for durable audit visibility. `context/AGENTS.md` is non-canonical and should remain a pointer to this file, not a duplicate rule source.
 
 ## Karpathy Guideline Mapping For Friday
 

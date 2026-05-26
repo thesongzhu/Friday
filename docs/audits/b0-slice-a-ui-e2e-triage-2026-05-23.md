@@ -2,7 +2,7 @@
 
 Generated: 2026-05-23
 Slice: `B0_security_approval_secrets_system_boundary` Slice A (public-mutation gate)
-Worktree: `/Users/jarvis/Projects/Friday-b0-public-mutation-gate`
+Worktree: `/Users/example/Projects/Friday-b0-public-mutation-gate`
 Base SHA: `dd3686c9600a55b602f4b2fc611f58e13844272d`
 
 ## Context

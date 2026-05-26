@@ -154,8 +154,8 @@ describe("FridayDiscoveryIntegrationConverter", () => {
     });
 
     it("rejects direct payloads with path-like program or skill identifiers", async () => {
-      const badProgramId = makePayload({ programId: "/Users/jarvis/Applications/TestApp.app" });
-      const badSkillId = makePayload({ skillId: "discovery-/Users/jarvis/Applications/TestApp.app" });
+      const badProgramId = makePayload({ programId: "/Users/example/Applications/TestApp.app" });
+      const badSkillId = makePayload({ skillId: "discovery-/Users/example/Applications/TestApp.app" });
       const badShellId = makePayload({ programId: "testapp'; rm -rf / #" });
 
       await expect(converter.detect({ contentBase64: encodePayload(badProgramId) }))
@@ -169,7 +169,7 @@ describe("FridayDiscoveryIntegrationConverter", () => {
     });
 
     it("rejects direct payloads with raw path-like integration paths", async () => {
-      const bad = makePayload({ integrationPath: "/Users/jarvis/secret/integration" as never });
+      const bad = makePayload({ integrationPath: "/Users/example/secret/integration" as never });
 
       await expect(converter.detect({ contentBase64: encodePayload(bad) }))
         .resolves.toBeNull();
@@ -258,8 +258,8 @@ describe("buildDiscoveryIntegrationSource", () => {
 
   it("does not include raw executable paths or path-like program ids in the payload", () => {
     const program = makeProgram({
-      id: "/Users/jarvis/Applications/TestApp.app",
-      executablePath: "/Users/jarvis/secret/path/bin",
+      id: "/Users/example/Applications/TestApp.app",
+      executablePath: "/Users/example/secret/path/bin",
     });
     const recommendation = makeRecommendation();
     const result = buildDiscoveryIntegrationSource({ program, recommendation });
@@ -268,7 +268,7 @@ describe("buildDiscoveryIntegrationSource", () => {
       Buffer.from(result.source.contentBase64!, "base64").toString("utf8"),
     );
     const serialized = JSON.stringify(decoded);
-    expect(serialized).not.toContain("/Users/jarvis");
+    expect(serialized).not.toContain("/Users/example");
     expect(serialized).not.toContain("secret/path");
     expect(decoded.programId).toMatch(/^local-[a-f0-9]{16}$/);
     expect(decoded.skillId).toMatch(/^discovery-local-[a-f0-9]{16}$/);
@@ -426,8 +426,8 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
 
   it("redacts path-like program ids from canonical approval error details", async () => {
     const program = makeProgram({
-      id: "/Users/jarvis/Applications/TestApp.app",
-      executablePath: "/Users/jarvis/secret/bin/app",
+      id: "/Users/example/Applications/TestApp.app",
+      executablePath: "/Users/example/secret/bin/app",
     });
     const recommendation = makeRecommendation({ programId: program.id });
     const deps: FridayDiscoveryIntegrationRoutesDeps = {
@@ -453,7 +453,7 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
       }),
     });
     const details = (thrown as { details?: unknown }).details;
-    expect(JSON.stringify(details)).not.toContain("/Users/jarvis");
+    expect(JSON.stringify(details)).not.toContain("/Users/example");
     expect(JSON.stringify(details)).not.toContain("secret/bin");
   });
 
@@ -519,8 +519,8 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
     const gate = makeGate();
     const converterService = makeConverterService();
     const program = makeProgram({
-      id: "/Users/jarvis/Applications/TestApp.app",
-      executablePath: "/Users/jarvis/secret/bin/app",
+      id: "/Users/example/Applications/TestApp.app",
+      executablePath: "/Users/example/secret/bin/app",
     });
     const recommendation = makeRecommendation({ programId: program.id });
 
@@ -563,12 +563,12 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
     );
 
     const result = await route.handler(makeCtx({
-      programId: "/Users/jarvis/Applications/TestApp.app",
+      programId: "/Users/example/Applications/TestApp.app",
       canonicalApproval: approval,
     }));
 
     const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain("/Users/jarvis");
+    expect(serialized).not.toContain("/Users/example");
     expect(serialized).not.toContain("secret/bin");
     expect(serialized).toContain("local-");
   });
