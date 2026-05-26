@@ -451,6 +451,35 @@ import type {
 
 // ─── Constants ───
 
+/**
+ * B3 / FRI-AUD-005 fail-closed error builders for desktop policy + permission
+ * decision deps. Desktop policy persistence is `proof_pending` in this
+ * release (no durable storage, no policy evaluator, no audit/rollback wiring).
+ * Routes stay registered for contract stability but live calls must surface a
+ * typed 503 so callers (UI/agents) can render the truthful state instead of
+ * accepting a synthetic-echo response as enforced.
+ *
+ * See POST_RELEASE_DEFAULT_DECISIONS.md B3:
+ *   "Desktop policy routes must either persist/enforce real policy with audit
+ *    and rollback, or be hidden/gated/labeled proof_pending. Synthetic IDs,
+ *    echoed policy, empty reads, or no-op permissions must not look enforced."
+ */
+function createDesktopPolicyNotPersistedError(operation: string): FridayDomainError {
+  return new FridayDomainError(
+    "DESKTOP_POLICY_NOT_PERSISTED",
+    `Desktop policy "${operation}" is proof_pending in this release: no durable storage, evaluator, or audit/rollback wiring exists. Routes remain registered for contract stability but no policy is persisted or enforced. See release notes.`,
+    { httpStatus: 503, details: { operation, status: "proof_pending" } },
+  );
+}
+
+function createDesktopPermissionDecisionNotPersistedError(operation: string): FridayDomainError {
+  return new FridayDomainError(
+    "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED",
+    `Desktop permission decision "${operation}" is proof_pending in this release: prompt decisions are not durably stored and a decisions log is not yet wired. permissions.list (OS capability check) remains live. See release notes.`,
+    { httpStatus: 503, details: { operation, status: "proof_pending" } },
+  );
+}
+
 /** Default server version reported by the API runtime. */
 const FRIDAY_HUB_DEFAULT_SERVER_VERSION = FRIDAY_VERSION;
 const FRIDAY_AGENT_ROUTE_DEFAULT_MODEL = "default";
@@ -6351,18 +6380,33 @@ export async function createFridayHub(
         delete(recordingId, _req) { desktopSessionManager!.deleteRecording(recordingId); return { deleted: true } as never; },
       },
       policies: {
-        create(req) { return { policy: req, policyId: idGenerator() } as never; },
-        get(_policyId) { return { policy: null } as never; },
-        list(_query) { return { policies: [] } as never; },
-        update(_policyId, req) { return { policy: req } as never; },
-        delete(_policyId, _req) { return { deleted: true } as never; },
-        addRule(_policyId, req) { return { rule: req } as never; },
-        removeRule(_policyId, _ruleId, _req) { return { removed: true } as never; },
+        // B3 / FRI-AUD-005 fail-closed: desktop policy persistence is
+        // proof_pending in this release. Previous implementations of these
+        // deps echoed the request back with a synthetic id and returned
+        // empty/null reads, which let synthetic responses look enforced.
+        // Per POST_RELEASE_DEFAULT_DECISIONS.md B3 ("Desktop policy routes
+        // must either persist/enforce real policy with audit and rollback,
+        // or be hidden/gated/labeled proof_pending"), routes stay
+        // registered for contract stability (FridayCreateDesktopPolicyRequest
+        // / FridayUpdateDesktopPolicyRequest types remain unchanged) but
+        // call sites get a typed 503 they can render truthfully.
+        create(_req): never { throw createDesktopPolicyNotPersistedError("create"); },
+        get(_policyId): never { throw createDesktopPolicyNotPersistedError("get"); },
+        list(_query): never { throw createDesktopPolicyNotPersistedError("list"); },
+        update(_policyId, _req): never { throw createDesktopPolicyNotPersistedError("update"); },
+        delete(_policyId, _req): never { throw createDesktopPolicyNotPersistedError("delete"); },
+        addRule(_policyId, _req): never { throw createDesktopPolicyNotPersistedError("addRule"); },
+        removeRule(_policyId, _ruleId, _req): never { throw createDesktopPolicyNotPersistedError("removeRule"); },
       },
       permissions: {
+        // permissions.list reads real OS permissions via the session manager —
+        // this is a true read (no persistence required). Kept as real.
         async list() { const perms = await desktopSessionManager!.checkPermissions(); return { permissions: [...perms] } as never; },
-        respond(_promptId, req) { return { decision: (req as unknown as Record<string, unknown>).decision } as never; },
-        listDecisions(_query) { return { decisions: [] } as never; },
+        // B3 / FRI-AUD-005 fail-closed: the previous implementations echoed
+        // the decision and returned an always-empty decision log without
+        // persisting anything. Synthetic responses must not look enforced.
+        respond(_promptId, _req): never { throw createDesktopPermissionDecisionNotPersistedError("respond"); },
+        listDecisions(_query): never { throw createDesktopPermissionDecisionNotPersistedError("listDecisions"); },
       },
       platform: {
         async get() {
