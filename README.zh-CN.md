@@ -37,7 +37,7 @@ Friday 现在更诚实的状态是：**public v1 local candidate**，仅通过 *
 - Slack HTTP Events-API inbound 和 QQ 在本次发布中保持 **`unsupported`**。
 - Real Green Gate 只有在 artifact 属于同一个 SHA、scenarios 非零、全部通过、blockers 为空时才算 release-proof eligible。
 - `blocked_by_env`、mock-only、workflow success alone、stale artifact、wrong-SHA artifact 都不能算通过。
-- `1.0.1` 的 dogfood gate 收口为 **`dogfood_partial_pass`**（UX 加权 7.78/10），并显式记录 `proof_pending` 头条项目（详见 [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)）：self-repair execute→rollback 端到端、self-upgrade 真实 mutation、skill install/update/delete 的 canonical-approval 流程、端到端 link-to-skill candidate→run、queue/retry 在 retry-eligible incident 上的 receipt loop、可丢弃 ledger 上的审计 tamper-negative、R1 Lark phase24d listener-shutdown bug、speed/cost 的 near_limit/over_limit UI 暴露、memory 单条目 `confidence`/`last_accessed` 暴露。
+- `1.0.1` 的 dogfood gate 收口为 **`dogfood_partial_pass`**（UX 加权 7.78/10），同样 9 个 `proof_pending` 头条项目在 `1.0.2` 中继续 carry forward（详见 [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)）：self-repair execute→rollback 端到端、self-upgrade 真实 mutation、skill install/update/delete 的 canonical-approval 流程、端到端 link-to-skill candidate→run、queue/retry 在 retry-eligible incident 上的 receipt loop、可丢弃 ledger 上的审计 tamper-negative、R1 Lark phase24d listener-shutdown bug、speed/cost 的 near_limit/over_limit UI 暴露、memory 单条目 `confidence`/`last_accessed` 暴露。
 
 ## 核心闭环
 
@@ -177,12 +177,12 @@ Friday 的原则很简单：重复、低风险、可验证的事情尽量自动�
 
 | 平台 | 方式 | 状态 |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | 当前 npm 已发布版本为 `1.0.0`；`1.0.1` candidate 已准备就绪（npm/source-only 发布），release SHA 上已完成 R5 同 SHA Real Green Gate 证明；npm 发布等待运营方显式授权 |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | 当前 npm 已发布版本为 `1.0.2`；仅 npm/source 发布；`1.0.2` release SHA 上已完成 R5 同 SHA Real Green Gate 证明；全新隔离 public install audit 为 `0` vulnerabilities |
 | 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
 
 官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
-Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。`1.0.1` 不 claim 桌面、Homebrew、公证 macOS 或移动端发布。
+Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。`1.0.2` 不 claim 桌面、Homebrew、公证 macOS 或移动端发布。
 
 ## 社区
 

@@ -69,7 +69,7 @@ Setup should guide you through:
 1. **Local session:** Friday establishes a local browser session for this machine.
 2. **Provider:** choose or auto-detect a model provider, enter credentials, and verify the lane.
 3. **Capabilities:** review text, vision, OCR, embedding, web search, PDF, browser, files, skills, workflows, memory, TTS, and optional channel support.
-4. **Channels:** connect optional chat/control channels such as Discord, Telegram, Feishu/Lark, Signal, WhatsApp, QQ, or webhooks only when you want that surface and can verify it.
+4. **Channels:** connect optional chat/control channels such as Discord, Telegram, Feishu/Lark, Signal, WhatsApp, or webhooks only when you want that surface and can verify it. QQ and Slack HTTP Events-API inbound are explicitly unsupported in the public `1.0.x` local-candidate line.
 5. **Home:** after setup completes, opening Friday should go directly to Home.
 
 If setup cannot verify a capability, it should say what is missing, where to configure it, and how to test it after configuration.
@@ -179,7 +179,7 @@ Expected shape:
   "ok": true,
   "data": {
     "status": "ok",
-    "version": "1.0.0"
+    "version": "1.0.2"
   }
 }
 ```

@@ -37,7 +37,7 @@ Friday is a **public v1 local candidate** distributed via **npm/source only**, n
 - Slack HTTP Events-API inbound and QQ remain **`unsupported`** in this release.
 - Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
 - `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
-- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted) with explicit `proof_pending` headlines carried forward (see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)): self-repair execute→rollback end-to-end, self-upgrade actual mutation, skill install/update/delete canonical-approval workflow, end-to-end link-to-skill candidate→run, queue/retry receipt loop on retry-eligible incident, audit tamper-negative on disposable ledger, R1 Lark phase24d listener-shutdown bug, speed/cost near_limit/over_limit UI surfacing, memory per-item `confidence`/`last_accessed` surfacing.
+- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted), and the same nine `proof_pending` headlines are still carried forward in `1.0.2` (see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)): self-repair execute→rollback end-to-end, self-upgrade actual mutation, skill install/update/delete canonical-approval workflow, end-to-end link-to-skill candidate→run, queue/retry receipt loop on retry-eligible incident, audit tamper-negative on disposable ledger, R1 Lark phase24d listener-shutdown bug, speed/cost near_limit/over_limit UI surfacing, memory per-item `confidence`/`last_accessed` surfacing.
 
 ## The Product Loop
 
@@ -177,12 +177,12 @@ Friday follows a simple rule: automate the boring parts, keep the user in contro
 
 | Platform | Method | Status |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Currently published on npm as `1.0.0`; `1.0.1` candidate prepared (npm/source-only distribution) with R5 same-SHA Real Green Gate proof on the release SHA; npm publication pending explicit operator authorization |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Currently published on npm as `1.0.2`; npm/source-only distribution; R5 same-SHA Real Green Gate proof passed on the `1.0.2` release SHA; fresh isolated public install audit reports `0` vulnerabilities |
 | Source | `git clone` + `npm install` + `npm run build` | Available |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
 
 The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
-Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim. Desktop, Homebrew, notarized macOS, and mobile distribution are not claimed in `1.0.1`.
+Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim. Desktop, Homebrew, notarized macOS, and mobile distribution are not claimed in `1.0.2`.
 
 ## Community
 
