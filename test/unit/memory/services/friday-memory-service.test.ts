@@ -276,6 +276,48 @@ describe("FridayMemoryService", () => {
     expect(results[0].matchedBy).toContain("fts");
   });
 
+  it("filters FTS results by memoryType", async () => {
+    const failService = createMockProviderService({ embedFails: true });
+    const svc = createFridayMemoryService({
+      db,
+      providerService: failService,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    await svc.store("typed-ns", "alpha typed memory", { memoryType: "fact" });
+    await svc.store("typed-ns", "alpha typed memory", { memoryType: "preference" });
+
+    const results = await svc.search("alpha typed", {
+      namespace: "typed-ns",
+      memoryType: "preference",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].item.memoryType).toBe("preference");
+  });
+
+  it("filters semantic results by memoryType", async () => {
+    await service.store("semantic-typed-ns", "The user prefers short summaries", {
+      memoryType: "preference",
+    });
+    await service.store("semantic-typed-ns", "The API endpoint returns JSON", {
+      memoryType: "fact",
+    });
+
+    // No lexical overlap with either memory; mock embeddings make semantic
+    // retrieval deterministic and the repository-level memoryType filter must
+    // exclude the fact row before scoring.
+    const results = await service.search("compressed response style", {
+      namespace: "semantic-typed-ns",
+      memoryType: "preference",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].matchedBy).toContain("semantic");
+    expect(results[0].item.memoryType).toBe("preference");
+  });
+
   it("does not warn when search falls back to FTS because no embedding route is configured", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const svc = createFridayMemoryService({
@@ -426,6 +468,32 @@ describe("FridayMemoryService", () => {
       expect(results.length).toBeGreaterThanOrEqual(1);
       expect(results[0].item.content).toContain("configuration");
       expect(results[0].score).toBeCloseTo(0.1);
+    });
+
+    it("namespace substring fallback honors memoryType filtering", async () => {
+      const failService = createMockProviderService({ embedFails: true });
+      const svc = createFridayMemoryService({
+        db,
+        providerService: failService,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+      });
+
+      await svc.store("fallback-type-ns", "server configuration details here", {
+        memoryType: "fact",
+      });
+      await svc.store("fallback-type-ns", "server configuration preference note", {
+        memoryType: "preference",
+      });
+
+      const results = await svc.search("figurat", {
+        namespace: "fallback-type-ns",
+        memoryType: "preference",
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].item.memoryType).toBe("preference");
+      expect(results[0].item.content).toContain("preference note");
     });
 
     it("substring fallback honors minScore cutoff", async () => {

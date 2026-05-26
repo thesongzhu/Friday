@@ -261,6 +261,7 @@ export function createFridayMemoryService(
           text: query,
           namespace: options?.namespace,
           source: options?.source,
+          memoryType: options?.memoryType,
           tagsAny: options?.tagsAny,
           tagsAll: options?.tagsAll,
           includeExpired: options?.includeExpired,
@@ -283,6 +284,7 @@ export function createFridayMemoryService(
             nowIso: now,
             namespace: options?.namespace,
             source: options?.source,
+            memoryType: options?.memoryType,
             tagsAny: options?.tagsAny,
             includeExpired: options?.includeExpired,
             limit: FRIDAY_MEMORY_DEFAULT_CANDIDATE_LIMIT,
@@ -316,6 +318,7 @@ export function createFridayMemoryService(
         weights: options?.weights,
         limit,
         minScore: options?.minScore,
+        boostByConfidence: options?.boostByConfidence,
       });
 
       // Fallback: if FTS and semantic both returned nothing, try a namespace-filtered
@@ -329,6 +332,7 @@ export function createFridayMemoryService(
           itemRepo.list(db, {
             namespace: options.namespace,
             source: options.source,
+            memoryType: options.memoryType,
             tagsAny: options.tagsAny,
             includeExpired: options.includeExpired,
             limit: FRIDAY_MEMORY_DEFAULT_CANDIDATE_LIMIT,
@@ -353,7 +357,9 @@ export function createFridayMemoryService(
             if (options?.minScore != null && 0.1 < options.minScore) continue;
             results.push({
               item,
-              score: 0.1, // low confidence substring match
+              score: 0.1 + (options?.boostByConfidence && typeof item.confidence === "number"
+                ? Math.max(0, Math.min(1, item.confidence)) * 0.05
+                : 0), // low confidence substring match, optionally confidence-adjusted
               ftsScore: 0,
               semanticScore: 0,
               matchedBy: ["substring"],

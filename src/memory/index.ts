@@ -18,6 +18,7 @@ export {
 // Model types
 export type {
   FridayMemoryNamespace,
+  FridayMemoryType,
   FridayMemoryItem,
   FridayMemoryEmbedding,
   FridayMemorySearchQuery,

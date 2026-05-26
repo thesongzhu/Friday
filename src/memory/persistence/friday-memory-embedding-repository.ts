@@ -3,6 +3,7 @@ import type {
   FridayMemoryEmbedding,
   FridayMemoryNamespace,
   FridayMemorySemanticHit,
+  FridayMemoryType,
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
@@ -39,6 +40,7 @@ export interface FridayMemoryEmbeddingRepository {
       nowIso: string;
       namespace?: FridayMemoryNamespace | FridayMemoryNamespace[];
       source?: string | string[];
+      memoryType?: FridayMemoryType | FridayMemoryType[];
       tagsAny?: string[];
       includeExpired?: boolean;
       limit: number;
@@ -86,6 +88,17 @@ function rowToEmbedding(row: EmbeddingRow): FridayMemoryEmbedding {
 function toArray(val: string | string[] | undefined): string[] | undefined {
   if (val === undefined) return undefined;
   return Array.isArray(val) ? val : [val];
+}
+
+function addInCondition(
+  conditions: string[],
+  params: unknown[],
+  column: string,
+  values: string[] | undefined,
+): void {
+  if (!values || values.length === 0) return;
+  conditions.push(`${column} IN (${values.map(() => "?").join(",")})`);
+  params.push(...values);
 }
 
 function buildTagExactConditions(tags: string[], params: unknown[]): string {
@@ -170,17 +183,9 @@ export function createFridayMemoryEmbeddingRepository(): FridayMemoryEmbeddingRe
       const conditions: string[] = ["e.model = ?"];
       const params: unknown[] = [input.model];
 
-      const namespaces = toArray(input.namespace);
-      if (namespaces && namespaces.length > 0) {
-        conditions.push(`mi.namespace IN (${namespaces.map(() => "?").join(",")})`);
-        params.push(...namespaces);
-      }
-
-      const sources = toArray(input.source);
-      if (sources && sources.length > 0) {
-        conditions.push(`mi.source IN (${sources.map(() => "?").join(",")})`);
-        params.push(...sources);
-      }
+      addInCondition(conditions, params, "mi.namespace", toArray(input.namespace));
+      addInCondition(conditions, params, "mi.source", toArray(input.source));
+      addInCondition(conditions, params, "mi.memory_type", toArray(input.memoryType));
 
       if (input.tagsAny && input.tagsAny.length > 0) {
         conditions.push(buildTagExactConditions(input.tagsAny, params));

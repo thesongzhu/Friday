@@ -4,7 +4,7 @@ import type { FridayMemoryItem } from "../../../../src/memory/model/friday-memor
 
 describe("mergeHybridResults", () => {
   /** Helper to build a minimal FridayMemoryItem for merge tests. */
-  function makeItem(id: string, content = `content for ${id}`): FridayMemoryItem {
+  function makeItem(id: string, content = `content for ${id}`, confidence?: number): FridayMemoryItem {
     return {
       id,
       namespace: "test",
@@ -15,6 +15,7 @@ describe("mergeHybridResults", () => {
       metadata: {},
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
+      confidence,
     };
   }
 
@@ -97,5 +98,39 @@ describe("mergeHybridResults", () => {
 
     // Combined weighted score: 0.7 * 0.45 + 0.9 * 0.55 = 0.315 + 0.495 = 0.81
     expect(hit.score).toBeCloseTo(0.81);
+  });
+
+  it("optionally boosts ordering with bounded confidence scores", () => {
+    const items = new Map<string, FridayMemoryItem>([
+      ["low", makeItem("low", "low confidence", 0.1)],
+      ["high", makeItem("high", "high confidence", 0.9)],
+    ]);
+
+    const unboosted = mergeHybridResults({
+      ftsHits: [
+        { itemId: "low", score: 0.5, snippet: "low" },
+        { itemId: "high", score: 0.48, snippet: "high" },
+      ],
+      semanticHits: [],
+      resolveItem: (id) => items.get(id) ?? null,
+      weights: { fts: 1, semantic: 0 },
+      limit: 10,
+    });
+
+    const boosted = mergeHybridResults({
+      ftsHits: [
+        { itemId: "low", score: 0.5, snippet: "low" },
+        { itemId: "high", score: 0.48, snippet: "high" },
+      ],
+      semanticHits: [],
+      resolveItem: (id) => items.get(id) ?? null,
+      weights: { fts: 1, semantic: 0 },
+      limit: 10,
+      boostByConfidence: true,
+    });
+
+    expect(unboosted[0].item.id).toBe("low");
+    expect(boosted[0].item.id).toBe("high");
+    expect(boosted.find((entry) => entry.item.id === "high")!.score).toBeCloseTo(0.525);
   });
 });

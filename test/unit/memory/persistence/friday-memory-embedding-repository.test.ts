@@ -17,11 +17,12 @@ describe("FridayMemoryEmbeddingRepository", () => {
     key?: string,
     expiresAt?: string,
     tags: string[] = [],
+    memoryType?: string,
   ) {
     db.writer
       .prepare(
-        `INSERT INTO memory_items (id, namespace, key, value_json, content_text, source, tags_json, tags_text, metadata_json, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memory_items (id, namespace, key, value_json, content_text, source, tags_json, tags_text, metadata_json, expires_at, created_at, updated_at, memory_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -36,6 +37,7 @@ describe("FridayMemoryEmbeddingRepository", () => {
         expiresAt ?? null,
         NOW,
         NOW,
+        memoryType ?? null,
       );
   }
 
@@ -203,6 +205,27 @@ describe("FridayMemoryEmbeddingRepository", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].itemId).toBe("mi-1");
+  });
+
+  it("filters by memoryType", () => {
+    insertMemoryItem("mi-1", "test", "mi-1", undefined, [], "fact");
+    insertMemoryItem("mi-2", "test", "mi-2", undefined, [], "preference");
+
+    db.writer.transaction(() => {
+      repo.upsert(db.writer, makeEmbedding({ id: "e1", itemId: "mi-1", vector: [1.0, 0.0, 0.0] }));
+      repo.upsert(db.writer, makeEmbedding({ id: "e2", itemId: "mi-2", providerId: "prov-1", vector: [1.0, 0.0, 0.0] }));
+    })();
+
+    const results = repo.querySimilar(db.writer, {
+      queryVector: [1.0, 0.0, 0.0],
+      model: "text-embedding-3-small",
+      nowIso: NOW,
+      memoryType: "preference",
+      limit: 10,
+      candidateLimit: 100,
+    });
+
+    expect(results.map((result) => result.itemId)).toEqual(["mi-2"]);
   });
 
   it("respects candidate limit", () => {

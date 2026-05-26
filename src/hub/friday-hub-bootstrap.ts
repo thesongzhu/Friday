@@ -265,6 +265,8 @@ import {
   createWhatsappWebhookService,
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
+  isFridayChannelKindSupported,
+  isFridayChannelModeSupported,
   parseFridayChannelsConfig,
   resolveFridayChannelSecretPolicy,
 } from "#channels";
@@ -272,7 +274,6 @@ import type {
   FridayChannelMessage,
   FridayChannelMessageHandler,
   FridayChannelRegistry,
-  FridaySupportedChannelKind,
 } from "#channels";
 import { createFridayChannelInboundDebouncer, createFridayChannelTypingController, sanitizeChannelInput } from "#channels";
 import { createFridayChannelSlowTaskNotifier } from "../channels/friday-channel-slow-task-notifier.js";
@@ -5317,10 +5318,23 @@ export async function createFridayHub(
     const registeredKinds: string[] = [];
     const warnings: string[] = [];
     const desiredKinds = new Set<string>();
+    const isRuntimeSupportedChannel = (instance: { kind: string; mode?: unknown }): boolean => {
+      if (!isFridayChannelKindSupported(instance.kind)) return false;
+      const mode = typeof instance.mode === "string" ? instance.mode : undefined;
+      return isFridayChannelModeSupported(instance.kind, mode);
+    };
+    const warnUnsupportedChannel = (instance: { kind: string; mode?: unknown }): void => {
+      const mode = typeof instance.mode === "string" ? instance.mode : undefined;
+      const message = mode === undefined
+        ? `Channel ${instance.kind} disabled: kind is unsupported in this release.`
+        : `Channel ${instance.kind} disabled: mode ${mode} is unsupported in this release.`;
+      warnings.push(message);
+      console.warn(`[friday] ${message}`);
+    };
 
     if (parsedChannelsConfig.enabled) {
       for (const instance of parsedChannelsConfig.instances) {
-        if (instance.enabled) {
+        if (instance.enabled && isRuntimeSupportedChannel(instance)) {
           desiredKinds.add(instance.kind);
         }
       }
@@ -5340,6 +5354,11 @@ export async function createFridayHub(
 
     for (const instance of parsedChannelsConfig.instances) {
       if (!instance.enabled) continue;
+
+      if (!isRuntimeSupportedChannel(instance)) {
+        warnUnsupportedChannel(instance);
+        continue;
+      }
 
       if (options.replaceExisting && channelRegistry.get(instance.kind)) {
         await channelRegistry.unregister(instance.kind);
@@ -6450,7 +6469,7 @@ export async function createFridayHub(
 
     const personas: Record<string, FridayChannelPersonaConfig> = {};
     for (const [kind, value] of Object.entries(parsed)) {
-      if (!channelRegistry.describe(kind) && !FRIDAY_SUPPORTED_CHANNEL_KINDS.includes(kind as FridaySupportedChannelKind)) {
+      if (!channelRegistry.describe(kind) && !isFridayChannelKindSupported(kind)) {
         continue;
       }
       if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -6497,6 +6516,8 @@ export async function createFridayHub(
   hydrateChannelPersonaStore(persistedChannelPersonas);
   savePersistedChannelPersonas(persistedChannelPersonas);
 
+  const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
+
   const apiRuntime = createFridayApiRuntime({
     db: stateRuntime!.sqlite,
     idGenerator,
@@ -6512,7 +6533,7 @@ export async function createFridayHub(
     updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
     tokenSecret,
     pluginRuntimeMode,
-    supportedChannelKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
+    supportedChannelKinds: [...runtimeSupportedChannelKinds],
     enabledChannelKinds: getEnabledChannelKinds,
     activateSavedChannels: activateSavedChannelsFromSetupState,
     onSetupChannelsSaved: startReflexOnboardingAfterChannelBind,
@@ -6547,7 +6568,7 @@ export async function createFridayHub(
     observabilityService,
     channels: {
       registry: channelRegistry,
-      supportedKinds: [...FRIDAY_SUPPORTED_CHANNEL_KINDS],
+      supportedKinds: [...runtimeSupportedChannelKinds],
       nowIso,
       persistPersona(kind, config) {
         const personas = loadPersistedChannelPersonas();

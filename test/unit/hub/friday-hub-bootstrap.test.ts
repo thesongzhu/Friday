@@ -51,7 +51,9 @@ describe("createFridayHub", () => {
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
   const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
 
-  async function createIsolatedHub(): Promise<FridayHub> {
+  async function createIsolatedHub(
+    overrides: Partial<Parameters<typeof createFridayHub>[0]> = {},
+  ): Promise<FridayHub> {
     stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-hub-bootstrap-"));
     bundledSkillsDir = path.join(stateDir, "skills-empty");
     managedSkillsDir = path.join(stateDir, "managed-skills-empty");
@@ -60,6 +62,7 @@ describe("createFridayHub", () => {
     hub = await createFridayHub({
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       stateDir,
+      ...overrides,
     });
     return hub;
   }
@@ -118,6 +121,119 @@ describe("createFridayHub", () => {
     expect(hub).toBeDefined();
     expect(hub.skills).toBeDefined();
     expect(hub.executor).toBeDefined();
+  });
+
+  it("fails closed for unsupported QQ in explicit startup channel config", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      hub = await createIsolatedHub({
+        channels: {
+          enabled: true,
+          instances: [
+            {
+              kind: "qq",
+              enabled: true,
+              appId: "qq-app",
+              appSecret: "qq-secret", // pragma: allowlist secret
+            },
+          ],
+        },
+      });
+
+      expect(hub.channelRegistry.list()).not.toContain("qq");
+      expect(warnSpy.mock.calls.some(([message]) =>
+        String(message).includes("Channel qq disabled: kind is unsupported in this release."),
+      )).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("fails closed for unsupported slack http mode in explicit startup channel config", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      hub = await createIsolatedHub({
+        channels: {
+          enabled: true,
+          instances: [
+            {
+              kind: "slack",
+              enabled: true,
+              botToken: "xoxb-stub",
+              mode: "http",
+              signingSecret: "stub-signing-secret", // pragma: allowlist secret
+            },
+          ],
+        },
+      });
+
+      expect(hub.channelRegistry.list()).not.toContain("slack");
+      expect(warnSpy.mock.calls.some(([message]) =>
+        String(message).includes("Channel slack disabled: mode http is unsupported in this release."),
+      )).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("still registers supported slack socket mode from explicit startup channel config", async () => {
+    process.env.FRIDAY_TEST_SLACK_BOT_TOKEN = "xoxb-stub";
+    process.env.FRIDAY_TEST_SLACK_APP_TOKEN = "xapp-stub";
+    try {
+      hub = await createIsolatedHub({
+        channels: {
+          enabled: true,
+          instances: [
+            {
+              kind: "slack",
+              enabled: true,
+              botToken: "env:FRIDAY_TEST_SLACK_BOT_TOKEN",
+              appToken: "env:FRIDAY_TEST_SLACK_APP_TOKEN",
+              mode: "socket",
+            },
+          ],
+        },
+      });
+
+      expect(hub.channelRegistry.list()).toContain("slack");
+    } finally {
+      delete process.env.FRIDAY_TEST_SLACK_BOT_TOKEN;
+      delete process.env.FRIDAY_TEST_SLACK_APP_TOKEN;
+    }
+  });
+
+  it("does not expose unsupported QQ as a runtime-supported channel kind", async () => {
+    hub = await createIsolatedHub();
+    const routes = hub.apiRuntime.routes.getRoutes();
+    const healthRoute = routes.find((route) => route.operationId === "health.capabilities");
+    const personaRoute = routes.find((route) => route.operationId === "channels.persona.get");
+
+    const health = await healthRoute!.handler({} as never) as {
+      capabilities: { channels: { supportedKinds: string[] } };
+    };
+
+    expect(health.capabilities.channels.supportedKinds).not.toContain("qq");
+    expect(health.capabilities.channels.supportedKinds).toContain("telegram");
+
+    await expect(personaRoute!.handler({
+      requestId: "req-channel-persona-qq",
+      receivedAt: "2026-05-26T00:00:00.000Z",
+      params: { kind: "qq" },
+      query: {},
+      body: null,
+      headers: {},
+      principal: null,
+    } as never)).rejects.toMatchObject({ code: "CHANNEL_NOT_FOUND" });
+
+    await expect(personaRoute!.handler({
+      requestId: "req-channel-persona-telegram",
+      receivedAt: "2026-05-26T00:00:00.000Z",
+      params: { kind: "telegram" },
+      query: {},
+      body: null,
+      headers: {},
+      principal: null,
+    } as never)).resolves.toMatchObject({ kind: "telegram", persona: null });
   });
 
   it("starts in stopped state", async () => {

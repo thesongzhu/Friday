@@ -23,13 +23,13 @@ export function createFridayAgentMessageTool(
   return {
     name: "message",
     description:
-      "Send a message through a channel (e.g. QQ, Lark, Discord). " +
+      "Send a message through a configured supported channel (e.g. Lark, Discord, Telegram). " +
       "Validates channel availability before sending. Returns message ID on success.",
     parameters: {
       properties: {
         channel: {
           type: "string",
-          description: "Channel kind to send through (e.g. 'qq', 'lark', 'discord').",
+          description: "Channel kind to send through (e.g. 'lark', 'discord', 'telegram').",
         },
         chatId: {
           type: "string",

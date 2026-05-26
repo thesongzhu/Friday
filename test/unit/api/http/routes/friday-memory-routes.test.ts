@@ -117,6 +117,8 @@ describe("FridayMemoryRoutes", () => {
         content: "Hello world",
         source: "agent",
         tags: ["t1"],
+        memoryType: "fact",
+        confidence: 0.85,
       },
     });
 
@@ -125,9 +127,49 @@ describe("FridayMemoryRoutes", () => {
     expect(memoryService.store).toHaveBeenCalledWith(
       "test-ns",
       "Hello world",
-      expect.objectContaining({ source: "agent", tags: ["t1"] }),
+      expect.objectContaining({
+        source: "agent",
+        tags: ["t1"],
+        memoryType: "fact",
+        confidence: 0.85,
+      }),
     );
   });
+
+  it("store handler rejects invalid memory cognition fields", async () => {
+    const route = findRoute("memory.store");
+
+    await expect(route.handler(makeCtx({
+      body: {
+        namespace: "test",
+        content: "Hello world",
+        memoryType: "mood",
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await expect(route.handler(makeCtx({
+      body: {
+        namespace: "test",
+        content: "Hello world",
+        confidence: 1.5,
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it.each([null, false, true, "", "0.5"])(
+    "store handler rejects non-number confidence value %j",
+    async (confidence) => {
+      const route = findRoute("memory.store");
+
+      await expect(route.handler(makeCtx({
+        body: {
+          namespace: "test",
+          content: "Hello world",
+          confidence,
+        },
+      }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    },
+  );
 
   it("store handler defaults namespace to 'default' when omitted", async () => {
     const route = findRoute("memory.store");
@@ -270,10 +312,41 @@ describe("FridayMemoryRoutes", () => {
     vi.mocked(memoryService.search).mockResolvedValue([searchResult]);
 
     const route = findRoute("memory.search");
-    const ctx = makeCtx({ body: { query: "hello" } });
+    const ctx = makeCtx({
+      body: {
+        query: "hello",
+        memoryType: ["preference", "correction"],
+        boostByConfidence: true,
+      },
+    });
     const result = await route.handler(ctx) as { items: FridayMemorySearchResult[] };
     expect(result.items).toHaveLength(1);
     expect(result.items[0].score).toBe(0.9);
+    expect(memoryService.search).toHaveBeenCalledWith(
+      "hello",
+      expect.objectContaining({
+        memoryType: ["preference", "correction"],
+        boostByConfidence: true,
+      }),
+    );
+  });
+
+  it("search handler rejects invalid memory cognition filters", async () => {
+    const route = findRoute("memory.search");
+
+    await expect(route.handler(makeCtx({
+      body: {
+        query: "hello",
+        memoryType: ["preference", "unknown"],
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await expect(route.handler(makeCtx({
+      body: {
+        query: "hello",
+        boostByConfidence: "yes",
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("search handler validates query is required", async () => {
@@ -307,6 +380,28 @@ describe("FridayMemoryRoutes", () => {
       reviewBoundary: "not_review_center_confirmed",
       revocationBoundary: "clear_delete_or_synthetic_memory_delete",
     });
+  });
+
+  it("search handler excludes learned facts when memoryType excludes preference", async () => {
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      listLearnedFacts: () => [{
+        key: "pref:display_name",
+        value: "Captain Friday",
+        confidence: 0.8,
+        evidenceCount: 1,
+        lastConfirmedAt: NOW,
+      }],
+    });
+    const route = findRoute("memory.search");
+    const result = await route.handler(makeCtx({
+      body: {
+        query: "call me",
+        memoryType: "fact",
+      },
+    })) as { items: FridayMemorySearchResult[] };
+
+    expect(result.items.some((entry) => entry.item.source === "learned_fact")).toBe(false);
   });
 
   // ─── Get handler ───

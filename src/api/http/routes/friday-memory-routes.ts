@@ -10,7 +10,7 @@ import type {
   FridayMemoryStoreRequest,
   FridayMemoryStoreResponse,
 } from "../../model/friday-api-memory.types.js";
-import type { FridayMemoryGuardServiceFactory, FridayMemoryItem } from "#memory";
+import type { FridayMemoryGuardServiceFactory, FridayMemoryItem, FridayMemoryType } from "#memory";
 import type { FridayLearnedFactView } from "../../../learning/services/friday-learned-fact-memory-view.js";
 import {
   FRIDAY_LEARNED_FACT_SOURCE,
@@ -41,6 +41,23 @@ export interface FridayMemoryRoutesDeps {
 
 // ─── Validation helpers ───
 
+const FRIDAY_MEMORY_TYPES: readonly FridayMemoryType[] = [
+  "fact",
+  "preference",
+  "procedure",
+  "episode",
+  "correction",
+];
+
+function isFridayMemoryType(value: unknown): value is FridayMemoryType {
+  return typeof value === "string" && FRIDAY_MEMORY_TYPES.includes(value as FridayMemoryType);
+}
+
+function isFridayMemoryTypeOrArray(value: unknown): value is FridayMemoryType | FridayMemoryType[] {
+  return isFridayMemoryType(value)
+    || (Array.isArray(value) && value.length > 0 && value.every(isFridayMemoryType));
+}
+
 function validateStoreBody(body: unknown): asserts body is FridayMemoryStoreRequest {
   if (body == null || typeof body !== "object") {
     throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
@@ -53,6 +70,14 @@ function validateStoreBody(body: unknown): asserts body is FridayMemoryStoreRequ
   }
   if (typeof b.content !== "string" || !b.content) {
     errors.push("content is required and must be a non-empty string");
+  }
+  if (b.memoryType !== undefined && !isFridayMemoryType(b.memoryType)) {
+    errors.push(`memoryType must be one of: ${FRIDAY_MEMORY_TYPES.join(", ")}`);
+  }
+  if (b.confidence !== undefined) {
+    if (typeof b.confidence !== "number" || !Number.isFinite(b.confidence) || b.confidence < 0 || b.confidence > 1) {
+      errors.push("confidence must be a number between 0 and 1");
+    }
   }
 
   if (errors.length > 0) {
@@ -102,6 +127,18 @@ function validateSearchBody(body: unknown): asserts body is FridayMemorySearchRe
     }
     w.fts = fts;
     w.semantic = semantic;
+  }
+
+  if (b.memoryType !== undefined && !isFridayMemoryTypeOrArray(b.memoryType)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `memoryType must be one of: ${FRIDAY_MEMORY_TYPES.join(", ")} or a non-empty array of those values`,
+      { httpStatus: 400 },
+    );
+  }
+
+  if (b.boostByConfidence !== undefined && typeof b.boostByConfidence !== "boolean") {
+    throw new FridayDomainError("VALIDATION_ERROR", "boostByConfidence must be a boolean", { httpStatus: 400 });
   }
 }
 
@@ -213,6 +250,7 @@ function enforceMemoryStoreApprovalBoundary(body: FridayMemoryStoreRequest): voi
 function shouldIncludeLearnedFacts(input: {
   namespace?: string | string[];
   source?: string | string[];
+  memoryType?: FridayMemoryType | FridayMemoryType[];
 }): boolean {
   const namespaces = Array.isArray(input.namespace)
     ? input.namespace
@@ -225,6 +263,14 @@ function shouldIncludeLearnedFacts(input: {
       ? [input.source]
       : [];
   if (sources.length > 0 && !sources.includes(FRIDAY_LEARNED_FACT_SOURCE)) {
+    return false;
+  }
+  const memoryTypes = Array.isArray(input.memoryType)
+    ? input.memoryType
+    : input.memoryType
+      ? [input.memoryType]
+      : [];
+  if (memoryTypes.length > 0 && !memoryTypes.includes("preference")) {
     return false;
   }
   if (namespaces.length === 0) {
@@ -318,6 +364,8 @@ export function createFridayMemoryRoutes(
             metadata: body.metadata,
             ttlSeconds: body.ttlSeconds,
             expiresAt: body.expiresAt,
+            memoryType: body.memoryType,
+            confidence: body.confidence,
           });
           const replay = deps.findStoreReplay?.({ principalId, idempotencyKey });
           if (replay) {
@@ -347,6 +395,8 @@ export function createFridayMemoryRoutes(
           metadata: body.metadata,
           ttlSeconds: body.ttlSeconds,
           expiresAt: body.expiresAt,
+          memoryType: body.memoryType,
+          confidence: body.confidence,
         });
         return { item };
       },
@@ -385,6 +435,8 @@ export function createFridayMemoryRoutes(
             metadata: body.metadata,
             ttlSeconds: body.ttlSeconds,
             expiresAt: body.expiresAt,
+            memoryType: body.memoryType,
+            confidence: body.confidence,
           });
           const replay = deps.findStoreReplay?.({ principalId, idempotencyKey });
           if (replay) {
@@ -415,6 +467,8 @@ export function createFridayMemoryRoutes(
           metadata: body.metadata,
           ttlSeconds: body.ttlSeconds,
           expiresAt: body.expiresAt,
+          memoryType: body.memoryType,
+          confidence: body.confidence,
         });
         return { item };
       },
@@ -440,10 +494,13 @@ export function createFridayMemoryRoutes(
           limit: body.limit,
           minScore: body.minScore,
           weights: body.weights,
+          memoryType: body.memoryType,
+          boostByConfidence: body.boostByConfidence,
         });
         const learnedItems = deps.listLearnedFacts && shouldIncludeLearnedFacts({
           namespace: body.namespace,
           source: body.source,
+          memoryType: body.memoryType,
         })
           ? deps.listLearnedFacts({ userId, limit: body.limit ?? FRIDAY_MEMORY_MAX_LIMIT })
             .filter((fact) => matchesLearnedFactQuery(fact, body.query))
