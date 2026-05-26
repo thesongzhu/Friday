@@ -90,6 +90,17 @@ Required safety properties:
 - no secret leakage into docs, logs, screenshots, or public issues
 - no route that treats missing external credentials as success
 
+## What Friday Is And Is Not (Boundary And Not Claimed)
+
+Friday's current product truth is a **supervised, bounded automation system**: capabilities run inside configured boundaries, sensitive or high-risk steps go through human approval, and self-improvement is auditable and reversible. The following items are explicitly **not** claimed in `1.0.1` and must not be implied by docs, UI copy, or release notes:
+
+- Friday is not an **unrestricted autonomous agent loop beyond the supervised self-healing surface**. The active autonomy lane is the supervised self-healing surface (incident → diagnosis → bounded auto-fix → verification → rollback / pause-on-repeat-failure). Open-ended autonomous task decomposition or goal invention is not part of the released runtime; end-to-end autonomy proof is `proof_pending`.
+- Friday does not claim trusted-device passkey remote access in `1.0.1`. The current authentication surfaces are local bootstrap, local passphrase, and operator session tokens; remote passkey-bound device trust is `not_in_this_release`.
+- Friday does not ship a real fleet control plane in `1.0.1`. Current fleet primitives are limited to satellite registration, capability advertisement, distributed execution dispatch with hub-side routing, the offline sweeper, and operator-visible loop state; a full multi-tenant fleet control plane (orchestration, policy distribution, identity federation, rolling updates) is `not_in_this_release`.
+- Friday does not provide deeper fleet-triggered remediation beyond the current satellite degradation/offline ingestion, cooldown sweep, and operator loop visibility in `1.0.1`. Fleet-side remediation today is bounded to those primitives; broader fleet-coordinated repair, scale-up/down, and cross-satellite policy enforcement are out of scope for `1.0.1`.
+
+These boundary statements align with the `1.0.1` dogfood closure (`dogfood_partial_pass`), which carried forward an explicit list of `proof_pending` headlines including autonomous self-repair end-to-end execute → rollback, autonomous self-upgrade actual mutation, skill install/update/delete canonical-approval workflow, and end-to-end link-to-skill candidate → run.
+
 ## Product Tone
 
 Friday should sound like a calm private execution assistant:
