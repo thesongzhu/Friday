@@ -77,6 +77,27 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
   directive. The dedup helper's file-header JSDoc + one-time
   module-level advisory log updated to reflect the new advisory-wired
   state.
+- **B7 / FRI-AUD-012/013/014/017** Settings page now surfaces per-
+  provider per-capability lane-failure advisories inline in each
+  provider card after a `Run capability doctor` probe. Previously the
+  probe's `capabilityResults` were only summarized as a toast count
+  ("N probes checked") and the per-lane status messages were thrown
+  away. The new render groups the latest results by `providerId` in a
+  React state map and shows a `data-testid="provider-capability-lane-
+  advisory"` block listing the capabilities whose `status !==
+  "verified"` (so `failed`, `unsupported`, or `declared-only` lanes
+  surface; `verified` lanes do not). Backend doctor-probe already
+  returned the lane-specific truth-labels for the audit's named
+  failures (Ollama embeddings "not wired", Codex subscription "has no
+  embeddings", Google Generative AI runtime "does not yet execute",
+  media-understanding env-gate 503); this slice stops the UI from
+  hiding them behind a count. The advisory copy explicitly disclaims
+  global provider-availability (`"this advisory is per-lane truth-
+  label, not a provider-global availability claim"`). No new backend
+  route, no snapshot model restructure, no change to the existing
+  `enabled / disabled` global provider pill. A full capability-health
+  dashboard remains carry-forward per the 2026-05-26 operator
+  directive.
 - **B9 / FRI-AUD-021** Renamed `createStubConfigManager` →
   `createPersistentConfigManager` in `src/hub/bootstrap/hub-helpers.ts`
   (+ re-export in `src/hub/bootstrap/index.ts` + call site in

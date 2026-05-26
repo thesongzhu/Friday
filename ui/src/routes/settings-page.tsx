@@ -17,7 +17,7 @@ import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
-import { type FridayModelRoutingConfig, type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
+import { type FridayModelRoutingConfig, type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityId, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -704,6 +704,27 @@ export function SettingsPage() {
     },
   });
 
+  // B7 / FRI-AUD-012/013/014/017 minimal UI lane-truth surface: after the
+  // operator runs a capability doctor probe, surface per-provider per-lane
+  // failure advisories in the provider settings card. Backend doctor-probe
+  // already returns lane-specific truth-labels (Ollama embeddings not wired,
+  // Codex subscription has no embeddings, Google Generative AI runtime not
+  // wired, etc.) — we just stop throwing that data away in favor of a
+  // toast count. The global provider pill semantics are unchanged. The
+  // advisory only appears for lanes whose status !== "verified".
+  // Per the 2026-05-26 operator directive: full capability-health dashboard
+  // remains carry-forward; this slice does NOT add a new backend route or
+  // restructure the snapshot model.
+  type ProviderLaneAdvisory = {
+    capability: FridayRuntimeCapabilityId;
+    status: "verified" | "declared" | "failed" | "unsupported";
+    message: string;
+    checkedAt: string;
+  };
+  const [capabilityLaneResultsByProvider, setCapabilityLaneResultsByProvider] = useState<
+    Record<string, ProviderLaneAdvisory[]>
+  >({});
+
   const capabilityDoctorMutation = useMutation({
     mutationFn: () => providersApi.runCapabilityDoctor(),
     onSuccess: async (result) => {
@@ -712,6 +733,20 @@ export function SettingsPage() {
         `能力检查完成：${result.providerValidations.length} 个提供方、${result.capabilityResults.length} 项能力已检查`,
         `Capability doctor completed: ${result.providerValidations.length} provider(s), ${result.capabilityResults.length} capability probe(s) checked`,
       ));
+      // B7 capture: group per-provider so the provider card can render
+      // lane-specific advisories. Replace any prior result for a probed
+      // provider; leave unprobed providers' prior results untouched.
+      const grouped: Record<string, ProviderLaneAdvisory[]> = {};
+      for (const r of result.capabilityResults) {
+        if (!grouped[r.providerId]) grouped[r.providerId] = [];
+        grouped[r.providerId]!.push({
+          capability: r.capability,
+          status: r.status,
+          message: r.message,
+          checkedAt: r.checkedAt,
+        });
+      }
+      setCapabilityLaneResultsByProvider((prev) => ({ ...prev, ...grouped }));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings", "health"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
@@ -1256,6 +1291,51 @@ export function SettingsPage() {
                   {healthItem?.suggestedAction ? (
                     <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">{healthItem.suggestedAction}</p>
                   ) : null}
+                  {/*
+                   * B7 / FRI-AUD-012/013/014/017 minimal lane-truth surface:
+                   * after a Run-capability-doctor probe, show per-lane
+                   * (text/embedding/vision/auth/media) advisories for THIS
+                   * provider whose status !== "verified". Hidden until the
+                   * operator runs the doctor; hidden for providers whose
+                   * every probed lane verified. Does NOT change the
+                   * "enabled" pill above.
+                   */}
+                  {(() => {
+                    const laneAdvisories = (capabilityLaneResultsByProvider[provider.id] ?? [])
+                      .filter((r) => r.status !== "verified");
+                    if (laneAdvisories.length === 0) return null;
+                    return (
+                      <div
+                        data-testid="provider-capability-lane-advisory"
+                        className="mt-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3"
+                      >
+                        <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                          {localize(
+                            locale,
+                            "能力 lane 提示（B7 / FRI-AUD-012/013/014/017）",
+                            "Capability-lane advisory (B7 / FRI-AUD-012/013/014/017)",
+                          )}
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {laneAdvisories.map((r) => (
+                            <li key={`${r.capability}-${r.checkedAt}`} className="flex items-start gap-2 text-xs">
+                              <StatusPill tone={r.status === "failed" ? "danger" : "warning"}>
+                                {r.capability} · {r.status}
+                              </StatusPill>
+                              <span className="text-[color:var(--color-text-secondary)]">{r.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-[10px] text-[color:var(--color-text-faint)]">
+                          {localize(
+                            locale,
+                            "来自最近一次 'Run capability doctor' 探针；其他 lane 已验证或未探测；此提示仅为 per-lane 真相披露，并不代表 provider 整体不可用。",
+                            "From the latest 'Run capability doctor' probe; other lanes verified or unprobed; this advisory is per-lane truth-label, not a provider-global availability claim.",
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })()}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <ActionButton
                       tone="secondary"
