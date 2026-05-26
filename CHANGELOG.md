@@ -46,6 +46,20 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
   signature yet. PR #308 already added the runtime advisory + JSDoc
   truth-label; this slice closes the user-facing UI overclaim. No
   runtime behavior change to plugin install/enable/disable.
+- **B3 / FRI-AUD-005** Desktop policy + permission decision routes
+  (`/v1/desktop/policies/*`, `/v1/desktop/permissions/respond`,
+  `/v1/desktop/permissions/decisions`) now fail closed with typed 503
+  errors (`DESKTOP_POLICY_NOT_PERSISTED` /
+  `DESKTOP_PERMISSION_DECISION_NOT_PERSISTED`) when invoked. The
+  previous hub-bootstrap dep wiring echoed requests back with synthetic
+  ids and returned empty/null reads, which let synthetic responses look
+  enforced even though no durable storage / evaluator / audit / rollback
+  wiring exists. Routes stay registered for contract stability so the
+  OpenAPI surface and `friday-http-route-contract` are unchanged.
+  `desktop.permissions.list` (real OS capability check via
+  `desktopSessionManager.checkPermissions`) is preserved as live. No
+  desktop risk-tier changes; no UI consumer of the policy routes
+  existed under `ui/`, so no user-facing flow regresses.
 
 ### Removed
 
