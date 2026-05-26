@@ -34,7 +34,7 @@ automatic access to systems the user has not configured.
 
 - Repository license: MIT.
 - npm package: `@thesongzhu/friday`.
-- Current published npm version: `1.0.0`. Repo `package.json` version: `1.0.1` (next release in progress; same-SHA R5 provider lane + Discord/Telegram/Lark+Feishu trusted-inbound channel proof PASSED on the release SHA via Real Green Gate `workflow_dispatch`; npm publication still blocked pending explicit operator authorization for R6 publish-timing).
+- Current published npm version: `1.0.1` (R6 published 2026-05-26T06:54:20Z). Repo `package.json` version: `1.0.2` (public-install-audit hotfix in progress; replaces `@larksuiteoapi/node-sdk` — which pulled `axios ~1.13.3` with three HIGH-severity CVEs flagged by the post-R6 isolated `npm audit --omit=dev` — with a native Lark WebSocket client under `src/channels/lark/internal/`. Same-SHA Real Green Gate `phase24d` Lark/Feishu trusted-inbound proof is required on the `1.0.2` release SHA before any R5/R6 redo).
 - The unscoped `friday` npm package is unrelated.
 
 README, package metadata, GitHub metadata, and release docs should all use the
