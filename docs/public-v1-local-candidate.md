@@ -17,38 +17,62 @@ artifacts on the release SHA.
 
 ## Current Proof Anchor
 
-The public v1 local track for `1.0.1` is anchored by the same-SHA release proof
-on the release SHA recorded in GitHub Actions and operator-controlled evidence
-storage outside the public source tree.
+The public v1 local track for every published `1.0.x` release is anchored by
+**same-SHA Real Green Gate proof on the final release SHA**, captured via
+GitHub Actions and operator-controlled evidence storage outside the public
+source tree.
 
-The R5 same-SHA live proof on the `1.0.1` release SHA passed in:
+### Release rule (must hold for every published release)
 
-- workflow: `Real Green Gate`
-- run: `26427579738`
-- SHA: `ec69ea97d435a80edeff89279c20aab937540cdb`
-- main artifact (`real-green-gate-result.json`):
-  `status=passed`, `scenarios_total=94`, `scenarios_run=94`,
-  `scenarios_passed=94`, `blocked_reasons=[]`,
-  `evidence_kinds_observed=[real-runtime, real-provider, real-browser,
-  manual-external]`
-- channel artifacts: `phase24b-trusted-inbound-proof.json` (Discord),
-  `phase24c-trusted-inbound-proof.json` (Telegram), and
-  `phase24d-trusted-inbound-proof.json` (Lark/Feishu), all with `status=passed`,
-  `failures=[]`, and `commit_sha=ec69ea97...`
-- channel validator (`scripts/ops/validate-channel-proof-artifacts.mjs
-  --expected-sha ec69ea97d435a80edeff89279c20aab937540cdb`): `valid:true,
-  blockerClass:none, reasons:[]` for Discord, Telegram, and Lark/Feishu
+A published release requires same-SHA R5 proof on its final release SHA
+covering all of the following:
 
-That set of artifacts supports the public v1 local candidate wording for the
-local track and the configured trusted-inbound channel track at that SHA. It
-does not supersede the repo-tracked capability matrix, does not close any entry
-still recorded as `blocked_by_env`, and does not prove optional external claims
-that were explicitly out of scope.
+- **Scenario lane**: Real Green Gate `real-green-gate-result.json` with
+  `status=passed`, `blocked_reasons=[]`, and `evidence_kinds_observed`
+  including `real-runtime`, `real-provider`, `real-browser`, and
+  `manual-external`.
+- **Trusted-inbound channel artifacts**: all three `phase24b` (Discord),
+  `phase24c` (Telegram), and `phase24d` (Lark/Feishu) listener artifacts
+  with `status=passed`, `failures=[]`, and
+  `environment.commit_sha` matching the release SHA.
+- **Validator check**:
+  `scripts/ops/validate-channel-proof-artifacts.mjs --expected-sha
+  <release-sha>` reports `valid:true, blockerClass:none, reasons:[]` for
+  every channel.
 
-The 8-hour soak runtime evidence for the dogfood gate was captured on
-`88c2cb7f6d8848b19115f2055ed130e1e12a9f98`. The runtime delta from `88c2cb7f`
-to the release SHA is zero (release-hygiene commits only), so the soak evidence
-is transferable; this is documented in the release-closure plan reports.
+### Where to find the concrete proof for a specific release
+
+The concrete run ids, release SHA, and artifact paths for any published
+`1.0.x` release are recorded in the public release surfaces:
+
+- the **GitHub release notes** for the `v1.0.x` tag at
+  [github.com/thesongzhu/Friday/releases](https://github.com/thesongzhu/Friday/releases);
+- the **release manifest** emitted by `.github/workflows/release.yml`
+  during publish (source-only mode) and attached to the GitHub release.
+
+Operator-controlled evidence storage holds the per-release proof receipts
+in private form for the maintainer; that storage is intentionally not in
+the public source tree.
+
+Run ids and release SHAs are deliberately not hardcoded in this tracked
+document, so that release-hygiene doc updates do not require a follow-up
+doc patch for every new release SHA.
+
+### Scope of the same-SHA proof
+
+The same-SHA R5 proof above is the authoritative release gate. It supports
+the public v1 local candidate wording for the local track and the
+configured trusted-inbound channel track at the release SHA. It does not
+supersede the repo-tracked capability matrix, does not close any entry
+still recorded as `blocked_by_env`, and does not prove optional external
+claims that were explicitly out of scope.
+
+The dogfood runtime evidence for `1.0.1` was captured under an 8-hour soak
+run; the soak SHA, run id, and report paths are recorded in
+operator-controlled evidence and referenced from the release-closure plan.
+When the runtime delta from the soak SHA to the published release SHA is
+zero, the soak evidence is transferable; this is verified per release in
+the release-closure plan's runtime-delta classification report.
 
 ## In Scope For Public V1 Local
 
