@@ -334,5 +334,5 @@ Every contract-affecting cleanup batch must pass:
 
 ## Historical materials
 
-- Historical audits, plans, reviews, reports, and one-off tasklists are catalogued in `docs/archive/README.md`.
+- Historical audits, plans, reviews, reports, and one-off tasklists are not part of the public source tree. Keep them in operator-controlled evidence storage when needed, and keep this document focused on the current public runtime contract.
 - When a historical document conflicts with current behavior, this document wins.

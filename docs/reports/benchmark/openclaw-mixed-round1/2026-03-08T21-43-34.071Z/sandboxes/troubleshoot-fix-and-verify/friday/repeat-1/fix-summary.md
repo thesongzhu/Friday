@@ -1,1 +1,0 @@
-The function in `calc.js` was modified from `return a - b;` to `return a + b;` in order to ensure the correctness of the addition operation. The verification command `node check.mjs` has passed successfully.

@@ -1,1 +1,0 @@
-Tool "desktop" is unavailable because desktop runtime is not enabled. Set FRIDAY_DESKTOP_ENABLED=true and restart Friday.

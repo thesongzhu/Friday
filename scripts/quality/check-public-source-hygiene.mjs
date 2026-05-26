@@ -67,6 +67,15 @@ const CONTENT_PATTERNS = [
 ];
 
 const FORBIDDEN_PATH_PATTERNS = [
+  { name: "internal agent governance file", regex: /^(?:AGENTS\.md|context\/AGENTS\.md)$/ },
+  {
+    name: "internal audit/report/task source artifact",
+    regex: /^(?:AUDIT-REPORT\.md|OVERNIGHT-TASK-SUMMARY\.csv|qa-report\.html|polish-report\.html)$/,
+  },
+  {
+    name: "internal audit/report/task source directory",
+    regex: /^docs\/(?:archive|audit|audits|task|reports)(?:\/|$)|^(?:reports|tests-overnight)(?:\/|$)/,
+  },
   { name: "non-example env file", regex: /(^|\/)\.env($|\.(?!example$))/ },
   { name: "local Friday state directory", regex: /(^|\/)\.friday\// },
   { name: "database artifact", regex: /\.(?:db|sqlite)(?:$|-)|\.(?:db|sqlite)-(?:wal|shm)$/ },

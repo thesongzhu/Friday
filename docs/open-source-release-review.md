@@ -97,9 +97,10 @@ Avoid committing or publishing as ordinary product docs:
 - raw branch/preflight dumps
 - stale audit snapshots that conflict with the current source of truth
 
-Historical reports may remain for audit history, but current docs must point
-users to `docs/current-source-of-truth.md`, `docs/release-evidence-policy.md`,
-and `docs/public-v1-local-candidate.md` when facts conflict.
+Historical reports, audit snapshots, comparison matrices, and operator handoffs
+must stay out of the public source tree. Current public docs must point users to
+`docs/current-source-of-truth.md`, `docs/release-evidence-policy.md`, and
+`docs/public-v1-local-candidate.md`.
 
 ## Public Download Hygiene
 
@@ -107,10 +108,11 @@ The npm package is the installable runtime artifact. The GitHub source archive
 is the public source download. Both surfaces must stay free of private local
 paths, local state, internal operator control folders, and real secrets.
 
-The development repository may retain tests and historical public audit context
-for maintainers. Files that are useful for development but noisy or internal for
-end-user downloads are excluded from GitHub source archives with
-`.gitattributes export-ignore`.
+The development repository may retain tests and public maintainer docs. Internal
+audit reports, benchmark comparisons, handoffs, release-control packages, local
+evidence, and operator-only maps do not belong in the public source tree.
+Development tests are excluded from GitHub source archives with `.gitattributes
+export-ignore` so source downloads stay install-oriented.
 
 Internal release truth-map folders, dogfood reports, release-closure control
 packages, local evidence, and operator handoffs are not release artifacts. Channel

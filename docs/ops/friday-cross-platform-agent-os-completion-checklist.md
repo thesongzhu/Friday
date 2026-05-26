@@ -94,10 +94,10 @@ The program is not complete until all of the following are available and validat
 
 Clean-machine smoke evidence is tracked in:
 
-- `docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md`
-- `docs/reports/ops/cross-platform-agent-os-beta-evidence/ios-latest-device-smoke.md`
-- `docs/reports/ops/cross-platform-agent-os-beta-evidence/android-latest-device-smoke.md`
-- `docs/reports/ops/cross-platform-agent-os-beta-evidence/windows-11-clean-machine.md`
+- `.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md`
+- `.friday/evidence/cross-platform-agent-os-beta/ios-latest-device-smoke.md`
+- `.friday/evidence/cross-platform-agent-os-beta/android-latest-device-smoke.md`
+- `.friday/evidence/cross-platform-agent-os-beta/windows-11-clean-machine.md`
 
 Each evidence file must be marked `Status: complete` before the corresponding platform is considered finished.
 

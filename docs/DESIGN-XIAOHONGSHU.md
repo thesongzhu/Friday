@@ -1,18 +1,4 @@
-I’ll design the `xhs` tool architecture on top of the browser plugin spec and keep it scoped to the facts you provided. First I’m loading your required session context files (`SOUL.md`, `USER.md`, recent memory files, `MEMORY.md`) and then `docs/DESIGN-BROWSER-PLUGIN.md` before drafting the design.
-
-I found `SOUL.md` and `USER.md` in this workspace; `MEMORY.md`, daily memory files, and `docs/DESIGN-BROWSER-PLUGIN.md` weren’t found at this path yet. I’m now reading the available context files and then locating the browser plugin design file.
-
-I’ve confirmed the browser plugin design exists at `./docs/DESIGN-BROWSER-PLUGIN.md`; the memory files (`MEMORY.md`, `memory/2026-02-20.md`, `memory/2026-02-19.md`) don’t exist in either `Desktop/Friday` or `Projects/Friday`. I’m reading the browser-plugin design next and then drafting the `xhs` tool spec against that interface.
-
-I finished reviewing the browser plugin design doc and it already contains concrete interfaces and constraints I can build on. I’ll do a very targeted read of the current tool registry and cron/workflow entry points so the `xhs` module layout and scheduling hooks line up with Friday’s existing wiring.
-
-I’ve confirmed the tool registry insertion point and I’m now reading only the workflow trigger/cron interfaces to anchor the `schedule` operation in existing runtime contracts.
-
-I’ve got the workflow trigger contracts (`schedule` cron/timezone) and tool helper patterns. I’m pulling SQLite schema/migration conventions next so the XHS session table design matches the project’s persistence style.
-
-I now have enough runtime context to make the schedule design precise against Friday’s trigger model. I’m doing one quick pass over `<wom-repo>/` to align XHS result schemas with existing MediaCrawler data fields for `search` and `comments`.
-
-I’ve gathered enough context from the browser design, tool registry, workflow trigger services, and WOM’s MediaCrawler data shape. I’m now drafting the final `xhs` tool design with concrete module layout, action schema, browser interaction sequences, SQLite schema, cron queue integration, and test plan.
+# Xiaohongshu Tool Design
 
 ## 1) `src/xhs/` Module Layout
 

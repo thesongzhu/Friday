@@ -15,7 +15,8 @@ rollback boundaries visible.
 ## Current Proof Anchor
 
 The public v1 local track is anchored by the Phase 18A-H and Phase 19 work on
-`origin/main`, plus the dated capability ledger under `docs/audit/`.
+`origin/main`, plus same-SHA release proof recorded in GitHub Actions and
+operator-controlled evidence storage outside the public source tree.
 
 The latest inspected GitHub Actions Real Green Gate run for the post-Phase-19
 main SHA was:
@@ -68,9 +69,9 @@ Public release surfaces are split intentionally:
 
 None of these surfaces should contain private local paths, local state, Desktop
 operator control packages, release truth-map artifacts, dogfood/release-closure
-folders, or real secrets. Development-only tests and historical audit files can remain in
-the repository, but are excluded from GitHub source archives when they are not
-needed for end-user download.
+folders, internal audit/report archives, or real secrets. Development-only tests
+can remain in the public repository for maintainers, but are excluded from GitHub
+source archives when they are not needed for end-user download.
 
 ## Proof Rules
 

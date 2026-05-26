@@ -80,9 +80,9 @@ These flags intentionally declare truth for prerequisites that cannot be inferre
 
 ## Outputs
 
-Each run writes to:
+Each run writes to the local operator evidence store outside the public source package:
 
-- `docs/reports/ops/real-world-validation/<runId>/`
+- `.friday/evidence/ops/real-world-validation/<runId>/`
 
 Artifacts include:
 
@@ -98,7 +98,7 @@ Artifacts include:
 - `attempts/**`
 - `screenshots/**`
 
-`docs/reports/ops/real-world-validation/latest.json` is updated to point at the latest run.
+`.friday/evidence/ops/real-world-validation/latest.json` is updated to point at the latest run.
 
 ## Current Classification Notes
 

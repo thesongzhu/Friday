@@ -1,37 +1,10 @@
 friday-static*.html linguist-generated=true
-qa-report.html linguist-generated=true
-polish-report.html linguist-generated=true
 screenshots/qa/*.html linguist-generated=true
 
-# Public source archive hygiene. These files remain available in the
-# development repository, but should not ship in GitHub source downloads.
-AGENTS.md export-ignore
-context/AGENTS.md export-ignore
+# Public source archive hygiene. The public git tree keeps product source,
+# verification code, and public docs; source downloads stay install-oriented.
 .secrets.baseline export-ignore
-AUDIT-REPORT.md export-ignore
-OVERNIGHT-TASK-SUMMARY.csv export-ignore
-qa-report.html export-ignore
-docs/archive export-ignore
-docs/archive/** export-ignore
-docs/audit export-ignore
-docs/audit/** export-ignore
-docs/task export-ignore
-docs/task/** export-ignore
-docs/reports/benchmark export-ignore
-docs/reports/benchmark/** export-ignore
-reports export-ignore
-reports/** export-ignore
 test export-ignore
 test/** export-ignore
 tests export-ignore
 tests/** export-ignore
-tests-overnight export-ignore
-tests-overnight/** export-ignore
-
-# Guard against accidentally exporting local control packages or audit inputs.
-*Friday-real-user-dogfood* export-ignore
-*Friday-release-closure* export-ignore
-*Friday-global-execution* export-ignore
-"*Friday Map*" export-ignore
-*Finding* export-ignore
-*finding/_master* export-ignore
