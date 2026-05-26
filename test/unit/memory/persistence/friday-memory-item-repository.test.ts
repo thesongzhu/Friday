@@ -147,6 +147,17 @@ describe("FridayMemoryItemRepository", () => {
     expect(items[0].source).toBe("agent");
   });
 
+  it("lists items filtered by memoryType", () => {
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", memoryType: "fact" }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", memoryType: "preference" }));
+      repo.insert(db.writer, makeItem({ id: "i3", key: "k3", memoryType: "correction" }));
+    })();
+
+    const items = repo.list(db.writer, { memoryType: ["preference", "correction"], nowIso: NOW });
+    expect(items.map((item) => item.id).sort()).toEqual(["i2", "i3"]);
+  });
+
   it("lists items filtered by tagsAny", () => {
     db.writer.transaction(() => {
       repo.insert(db.writer, makeItem({ id: "i1", key: "k1", tags: ["python", "ai"] }));
@@ -287,6 +298,22 @@ describe("FridayMemoryItemRepository", () => {
     });
     expect(hits).toHaveLength(1);
     expect(hits[0].itemId).toBe("i1");
+  });
+
+  it("FTS respects memoryType filter", () => {
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", content: "machine learning preference", memoryType: "preference" }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", content: "machine learning fact", memoryType: "fact" }));
+    })();
+
+    const hits = repo.searchFts(db.writer, {
+      text: "machine learning",
+      memoryType: "fact",
+      nowIso: NOW,
+      limit: 10,
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].itemId).toBe("i2");
   });
 
   it("FTS excludes expired items", () => {

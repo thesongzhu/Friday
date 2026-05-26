@@ -17,6 +17,7 @@ export interface MergeHybridResultsInput {
   weights?: { fts: number; semantic: number };
   limit: number;
   minScore?: number;
+  boostByConfidence?: boolean;
 }
 
 /**
@@ -79,9 +80,13 @@ export function mergeHybridResults(input: MergeHybridResultsInput): FridayMemory
     const item = input.resolveItem(itemId);
     if (!item) continue;
 
+    const confidenceBoost = input.boostByConfidence && typeof item.confidence === "number"
+      ? Math.max(0, Math.min(1, item.confidence)) * 0.05
+      : 0;
+
     results.push({
       item,
-      score,
+      score: score + confidenceBoost,
       ftsScore: entry.ftsScore,
       semanticScore: entry.semanticScore,
       matchedBy: [...entry.matchedBy],

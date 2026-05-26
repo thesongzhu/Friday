@@ -4,6 +4,7 @@ import type {
   FridayMemoryPruneResult,
   FridayMemorySearchResult,
   FridayMemoryStoreInput,
+  FridayMemoryType,
 } from "#memory";
 
 export interface FridayMemoryStoreRequest extends FridayMemoryStoreInput {}
@@ -21,6 +22,8 @@ export interface FridayMemorySearchRequest {
   limit?: number;
   minScore?: number;
   weights?: { fts: number; semantic: number };
+  memoryType?: FridayMemoryType | FridayMemoryType[];
+  boostByConfidence?: boolean;
 }
 export interface FridayMemorySearchResponse {
   items: FridayMemorySearchResult[];

@@ -5,6 +5,7 @@ import type {
   FridayMemoryNamespace,
   FridayMemoryPruneOptions,
   FridayMemorySearchQuery,
+  FridayMemoryType,
 } from "../model/friday-memory.types.js";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
@@ -49,6 +50,7 @@ export interface FridayMemoryItemRepository {
     input?: {
       namespace?: FridayMemoryNamespace | FridayMemoryNamespace[];
       source?: string | string[];
+      memoryType?: FridayMemoryType | FridayMemoryType[];
       tagsAny?: string[];
       includeExpired?: boolean;
       limit?: number;
@@ -113,6 +115,17 @@ function rowToItem(row: MemoryItemRow): FridayMemoryItem {
 function toArray(val: string | string[] | undefined): string[] | undefined {
   if (val === undefined) return undefined;
   return Array.isArray(val) ? val : [val];
+}
+
+function addInCondition(
+  conditions: string[],
+  params: unknown[],
+  column: string,
+  values: string[] | undefined,
+): void {
+  if (!values || values.length === 0) return;
+  conditions.push(`${column} IN (${values.map(() => "?").join(",")})`);
+  params.push(...values);
 }
 
 function shouldPruneExpiredByDefault(options: FridayMemoryPruneOptions): boolean {
@@ -222,17 +235,9 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       const conditions: string[] = [];
       const params: unknown[] = [];
 
-      const namespaces = toArray(input?.namespace);
-      if (namespaces && namespaces.length > 0) {
-        conditions.push(`namespace IN (${namespaces.map(() => "?").join(",")})`);
-        params.push(...namespaces);
-      }
-
-      const sources = toArray(input?.source);
-      if (sources && sources.length > 0) {
-        conditions.push(`source IN (${sources.map(() => "?").join(",")})`);
-        params.push(...sources);
-      }
+      addInCondition(conditions, params, "namespace", toArray(input?.namespace));
+      addInCondition(conditions, params, "source", toArray(input?.source));
+      addInCondition(conditions, params, "memory_type", toArray(input?.memoryType));
 
       if (input?.tagsAny && input.tagsAny.length > 0) {
         conditions.push(buildTagExactConditions("memory_items", input.tagsAny, "any", params));
@@ -339,18 +344,9 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
       mainParams.push(matchExpr);
 
       // Namespace filter
-      const namespaces = toArray(input.namespace);
-      if (namespaces && namespaces.length > 0) {
-        filterConditions.push(`fts.namespace IN (${namespaces.map(() => "?").join(",")})`);
-        filterParams.push(...namespaces);
-      }
-
-      // Source filter
-      const sources = toArray(input.source);
-      if (sources && sources.length > 0) {
-        filterConditions.push(`fts.source IN (${sources.map(() => "?").join(",")})`);
-        filterParams.push(...sources);
-      }
+      addInCondition(filterConditions, filterParams, "fts.namespace", toArray(input.namespace));
+      addInCondition(filterConditions, filterParams, "fts.source", toArray(input.source));
+      addInCondition(filterConditions, filterParams, "mi.memory_type", toArray(input.memoryType));
 
       // Tag filtering (Fix #1: tagsAny / tagsAll)
       if (input.tagsAny && input.tagsAny.length > 0) {
