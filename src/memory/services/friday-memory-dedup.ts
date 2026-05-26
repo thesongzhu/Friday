@@ -1,19 +1,26 @@
 /**
- * Memory Dedup — Initiative D.2 (proof_pending; NOT wired into store path)
+ * Memory Dedup — Initiative D.2 (advisory-wired; destructive merge/block remains policy_pending)
  *
  * Provides a helper (`checkMemoryDuplicate`) that, given a candidate memory
  * item and a search function, can detect semantically duplicate memories in
- * the same namespace via similarity threshold. Also provides a `mergeMemoryContent`
- * helper for downstream merge logic.
+ * the same namespace via similarity threshold. Also provides
+ * `mergeMemoryContent` + `mergeMemoryConfidence` helpers reserved for future
+ * merge logic.
  *
- * **Current state (B3 truth-labeling):** the helper is NOT called from
- * `friday-memory-service.ts`'s `store()` path. `memoryService.store()`
- * persists every well-formed store request as a new row regardless of
- * whether a near-duplicate already exists. This module's existence does
- * NOT mean Friday's durable memory store de-duplicates incoming items.
+ * **Current state (B4 advisory wire-in, 2026-05-26):** `checkMemoryDuplicate`
+ * is now called from `friday-memory-service.ts`'s `store()` path AFTER a
+ * successful persist. When a duplicate is detected above
+ * `deps.dedupThreshold` (default 0.92 placeholder), the service emits a
+ * `FridayMemoryDedupAdvisoryEvent` via `console.info` and the optional
+ * `deps.dedupAdvisorySink`. The advisory is purely additive — the
+ * candidate is already in the durable store by the time it fires.
  *
- * Wiring this helper into `store()` is a memory-policy decision that
- * requires explicit product direction on:
+ * Per POST_RELEASE_DEFAULT_DECISIONS.md B4 + the 2026-05-26 operator
+ * directive: Friday MUST NEVER delete, overwrite, merge, or block any user
+ * memory based on this signal. `mergeMemoryContent` /
+ * `mergeMemoryConfidence` remain available for future callers but are NOT
+ * invoked from `store()` — destructive merge/block semantics need explicit
+ * product direction on:
  * - similarity threshold (the 0.92 default is a placeholder, not a policy)
  * - merge semantics (which fields take precedence: tags, metadata, TTL,
  *   source, confidence, embedding)
@@ -21,11 +28,8 @@
  * - data-loss / clobber expectations when "merging" overlapping items
  * - audit trail when an item is merged vs. replaced vs. inserted-new
  *
- * Until that decision is made and the helper is wired with proof, callers
- * MUST NOT assume dedup is active. The `assertFridayMemoryDedupNotActive`
- * advisory is emitted once per process when this module is first imported
- * so a future regression that silently wires this without policy review
- * surfaces in logs.
+ * Until that decision is made, callers MUST NOT assume `memoryService.store()`
+ * de-duplicates incoming items. It does not. It only emits an advisory.
  */
 
 import type {
@@ -69,26 +73,29 @@ const DEFAULT_MAX_CANDIDATES = 5;
 let memoryDedupAdvisoryEmitted = false;
 
 /**
- * Emit a one-time advisory log so anyone reading runtime logs can see that
- * this dedup machinery is loaded but not wired into the durable memory
- * store path. Intentionally a `console.info` (not `warn`) so it's
- * informational, not an error; warn-once semantics so it does not spam.
+ * Emit a one-time advisory log on first `checkMemoryDuplicate()` call so
+ * anyone reading runtime logs can see that this dedup machinery is wired
+ * advisory-only — destructive merge/block semantics remain policy_pending.
+ * Intentionally a `console.info` (not `warn`) so it's informational, not an
+ * error; warn-once semantics so it does not spam.
  */
 function emitMemoryDedupAdvisoryOnce(): void {
   if (memoryDedupAdvisoryEmitted) return;
   memoryDedupAdvisoryEmitted = true;
   console.info(
-    "[friday][memory-dedup] advisory: checkMemoryDuplicate is loaded but NOT wired into memoryService.store(). Durable memory store does not de-duplicate incoming items. Full dedup wiring is policy_pending (see file header).",
+    "[friday][memory-dedup] advisory: checkMemoryDuplicate is wired into memoryService.store() in advisory-only mode (non-destructive). Duplicate detection emits an audit event; no memory is deleted, overwritten, merged, or blocked. Destructive merge/block semantics remain policy_pending (see file header).",
   );
 }
 
 /**
  * Check whether a new memory is a duplicate of an existing one.
  *
- * B3 truth-labeling: this helper is callable but NOT invoked by the durable
- * `memoryService.store()` path. Calling it from a caller that explicitly
- * needs dedup is fine; do NOT assume that calling `memoryService.store()`
- * implicitly de-duplicates incoming items.
+ * B4 advisory wire-in (2026-05-26): this helper IS now invoked by
+ * `memoryService.store()` AFTER persist, in advisory-only mode. A positive
+ * result triggers an audit event (`FridayMemoryDedupAdvisoryEvent`) but
+ * never causes deletion, overwrite, merge, or blocking of any user memory.
+ * Callers that need destructive dedup must implement their own policy on
+ * top of this signal — `memoryService.store()` will not.
  */
 export async function checkMemoryDuplicate(
   input: FridayMemoryStoreInput,
