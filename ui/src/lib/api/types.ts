@@ -1913,6 +1913,13 @@ export interface FridaySessionMemoryRetryResult {
 
 // ─── Memory types ───
 
+export type FridayMemoryType =
+  | "fact"
+  | "preference"
+  | "procedure"
+  | "episode"
+  | "correction";
+
 export interface FridayMemoryItem {
   id: string;
   namespace: string;
@@ -1925,6 +1932,10 @@ export interface FridayMemoryItem {
   expiresAt?: string;
   createdAt: string;
   updatedAt: string;
+  memoryType?: FridayMemoryType;
+  confidence?: number;
+  accessCount?: number;
+  lastAccessedAt?: string;
 }
 
 export interface FridayMemorySearchResult {
@@ -1932,7 +1943,7 @@ export interface FridayMemorySearchResult {
   score: number;
   ftsScore: number;
   semanticScore: number;
-  matchedBy: Array<"fts" | "semantic">;
+  matchedBy: Array<"fts" | "semantic" | "substring">;
   snippet: string;
 }
 

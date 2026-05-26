@@ -587,9 +587,17 @@ export function HomePage() {
                   <Wrench className="mr-2 h-4 w-4" />
                   {selfRepairMutation.isPending
                     ? localize(locale, "修复中", "Repairing")
-                    : localize(locale, "自我修复", "Self-repair")}
+                    : localize(locale, "监督修复", "Supervised repair")}
                 </ActionButton>
               </div>
+
+              <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)] xl:text-right">
+                {localize(
+                  locale,
+                  "只运行已审批、低风险且可验证的修复动作；完整自主事故修复仍需要单独证明。",
+                  "Runs only approved, low-risk, verifiable repair actions; full autonomous incident repair still needs separate proof.",
+                )}
+              </p>
 
               {selfRepairNotice ? (
                 <div

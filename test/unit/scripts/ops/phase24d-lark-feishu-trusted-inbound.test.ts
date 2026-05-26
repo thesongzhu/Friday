@@ -60,6 +60,7 @@ describe("phase24d listener exports", () => {
       "FRIDAY_LARK_ENCRYPT_KEY",
       "FRIDAY_LARK_GROUP_CHAT_ID",
       "PHASE24D_LARK_FEISHU_PROBE_NONCE",
+      "PHASE24D_DISABLE_FORCE_EXIT",
       "GITHUB_RUN_ID",
       "GITHUB_SHA",
     ]);
@@ -141,5 +142,13 @@ describe("phase24d listener exports", () => {
     expect(report.schemaVersion).toBe("friday.phase24d.lark_feishu_trusted_inbound_proof.v1");
     expect((report.criteria as { artifactHasNoToken: boolean }).artifactHasNoToken).toBe(false);
     expect(report.status).toBe("running");
+  });
+
+  it("direct CLI listener force-exits after cleanup by default, with an explicit debug opt-out", async () => {
+    const listener = await loadListener();
+    delete process.env.PHASE24D_DISABLE_FORCE_EXIT;
+    expect(listener.shouldForceProcessExitAfterCleanup()).toBe(true);
+    process.env.PHASE24D_DISABLE_FORCE_EXIT = "true";
+    expect(listener.shouldForceProcessExitAfterCleanup()).toBe(false);
   });
 });

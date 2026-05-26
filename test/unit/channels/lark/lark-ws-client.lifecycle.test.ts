@@ -71,7 +71,7 @@ vi.mock("ws", () => ({
   WebSocket: FakeWebSocket,
 }));
 
-import { LarkWsClient } from "../../../../src/channels/lark/internal/lark-ws-client.js";
+import { LarkWsClient, unrefTimer } from "../../../../src/channels/lark/internal/lark-ws-client.js";
 import { LarkDomain } from "../../../../src/channels/lark/internal/lark-domain.js";
 import { LarkEventDispatcher } from "../../../../src/channels/lark/internal/lark-event-dispatcher.js";
 
@@ -148,6 +148,13 @@ describe("LarkWsClient lifecycle", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.useRealTimers();
+  });
+
+  it("unrefs lifecycle timers so cleanup timers cannot hold the listener process open", () => {
+    const unref = vi.fn();
+    unrefTimer({ unref } as unknown as NodeJS.Timeout);
+    expect(unref).toHaveBeenCalledOnce();
+    expect(() => unrefTimer(undefined)).not.toThrow();
   });
 
   it("rejects malformed appId without opening any WebSocket", async () => {

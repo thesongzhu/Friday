@@ -157,6 +157,10 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
+function shouldForceProcessExitAfterCleanup(env = process.env) {
+  return env.PHASE24D_DISABLE_FORCE_EXIT !== "true";
+}
+
 async function apiFetch(baseUrl, method, pathname, body) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
@@ -919,7 +923,7 @@ async function main() {
       await writeReport(report, config?.appSecret ?? "").catch(() => {});
       if (process.exitCode === 0 || process.exitCode === undefined) process.exitCode = 1;
     }
-    if (process.env.GITHUB_ACTIONS === "true") {
+    if (shouldForceProcessExitAfterCleanup()) {
       process.exit(process.exitCode ?? 0);
     }
   }
@@ -933,6 +937,7 @@ export {
   missingRequiredEnv,
   readEnvConfig,
   resolveReportPath,
+  shouldForceProcessExitAfterCleanup,
   scrub,
 };
 

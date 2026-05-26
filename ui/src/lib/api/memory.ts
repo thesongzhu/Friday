@@ -3,6 +3,7 @@ import type {
   FridayMemoryItem,
   FridayMemorySearchResult,
   FridayMemoryPruneResult,
+  FridayMemoryType,
 } from "./types";
 
 // ─── Response wrappers ───
@@ -43,6 +44,8 @@ export const memoryApi = {
     metadata?: Record<string, unknown>;
     ttlSeconds?: number;
     expiresAt?: string;
+    memoryType?: FridayMemoryType;
+    confidence?: number;
   }): Promise<FridayMemoryItem> {
     const data = await apiClient.post<typeof input, StoreMemoryResponse>(
       "/v1/memory/store",
@@ -61,6 +64,8 @@ export const memoryApi = {
     limit?: number;
     minScore?: number;
     weights?: { fts: number; semantic: number };
+    memoryType?: FridayMemoryType | FridayMemoryType[];
+    boostByConfidence?: boolean;
   }): Promise<FridayMemorySearchResult[]> {
     const data = await apiClient.post<typeof input, SearchMemoryResponse>(
       "/v1/memory/search",
