@@ -30,12 +30,14 @@ Friday is not a magic fully autonomous system. It will not create accounts for y
 
 ## Current Release Posture
 
-Friday is a **public v1 local candidate**, not a release-complete claim for every integration in the repository.
+Friday is a **public v1 local candidate** distributed via **npm/source only**, not a release-complete claim for every integration in the repository.
 
-- Current public claims focus on the local UI, local runtime, BYOK setup, supervised operator workflows, memory, evidence, and approval-gated tool use.
-- The current proof track does not claim channel control, cloud live certification, external OTEL/Grafana export, or release-complete-all.
+- Current public claims focus on the local UI, local runtime, BYOK setup, supervised operator workflows, memory, evidence, approval-gated tool use, and configured trusted-channel inbound on Discord, Telegram, and Lark/Feishu (proven by same-SHA Real Green Gate channel artifacts).
+- The current proof track does not claim outbound channel control automation, cloud live certification, external OTEL/Grafana export, desktop / Homebrew / notarized macOS / mobile distribution, "all integrations live", or release-complete-all.
+- Slack HTTP Events-API inbound and QQ remain **`unsupported`** in this release.
 - Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
 - `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
+- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted) with explicit `proof_pending` headlines carried forward (see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)): self-repair execute→rollback end-to-end, self-upgrade actual mutation, skill install/update/delete canonical-approval workflow, end-to-end link-to-skill candidate→run, queue/retry receipt loop on retry-eligible incident, audit tamper-negative on disposable ledger, R1 Lark phase24d listener-shutdown bug, speed/cost near_limit/over_limit UI surfacing, memory per-item `confidence`/`last_accessed` surfacing.
 
 ## The Product Loop
 
@@ -56,7 +58,7 @@ Friday is a **public v1 local candidate**, not a release-complete claim for ever
 | Skills and workflows | Import, validate, stage, promote, run, verify, update, and roll back reusable skills/workflows where the lifecycle is closed | Generated or imported skills are candidates until review, canary, and promotion gates pass; workflow upgrade proof is not identical to skill lifecycle proof |
 | Memory and self-improvement | Store explicit preferences, learned facts, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; learned signals are not hidden model training, unquestioned truth, or guaranteed prompt behavior |
 | Self-healing | Detect failures, propose fixes, and run low-risk repairs only where the path is wired, configured, and evidence-backed | Dispatcher-style auto-fix is default-off; high-risk or data-changing repairs require approval, receipts, and rollback or an explicit non-reversible record |
-| Optional channel adapters | Connect channels such as Discord, Telegram, Feishu/Lark, Slack-style webhooks, Signal, WhatsApp, and QQ where configured | Channels are configured-only surfaces and are not part of the public v1 local release claim; sensitive actions still require confirmation |
+| Optional channel adapters | Connect Discord, Telegram, and Feishu/Lark trusted-inbound (proven via same-SHA Real Green Gate channel artifacts on the release SHA) where configured; other configured channels remain optional surfaces | Channels are configured-only surfaces; outbound channel control automation is not part of the public v1 local release claim; Slack HTTP Events-API inbound and QQ are `unsupported`; sensitive actions still require confirmation |
 | Long-running goals | Run user-authorized standing goals, create agenda items, gather evidence, and report outcomes | Friday is goal-driven by the user; it does not invent unrelated long-term agendas |
 
 ## Setup
@@ -175,12 +177,12 @@ Friday follows a simple rule: automate the boring parts, keep the user in contro
 
 | Platform | Method | Status |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Core/source package published on npm as `1.0.0`; native desktop companion parity remains platform-specific |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Currently published on npm as `1.0.0`; `1.0.1` candidate prepared (npm/source-only distribution) with R5 same-SHA Real Green Gate proof on the release SHA; npm publication pending explicit operator authorization |
 | Source | `git clone` + `npm install` + `npm run build` | Available |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
 
 The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
-Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim.
+Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim. Desktop, Homebrew, notarized macOS, and mobile distribution are not claimed in `1.0.1`.
 
 ## Community
 

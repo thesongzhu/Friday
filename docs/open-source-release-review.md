@@ -1,6 +1,6 @@
 # Open Source Release Review
 
-Last reviewed: 2026-05-19
+Last reviewed: 2026-05-26
 
 ## Verdict
 
@@ -34,7 +34,7 @@ automatic access to systems the user has not configured.
 
 - Repository license: MIT.
 - npm package: `@thesongzhu/friday`.
-- Current published npm version: `1.0.0`. Repo `package.json` version: `1.0.1` (next release in progress; publish blocked until R5 same-SHA provider + Discord/Telegram/Lark+Feishu channel proof passes).
+- Current published npm version: `1.0.0`. Repo `package.json` version: `1.0.1` (next release in progress; same-SHA R5 provider lane + Discord/Telegram/Lark+Feishu trusted-inbound channel proof PASSED on the release SHA via Real Green Gate `workflow_dispatch`; npm publication still blocked pending explicit operator authorization for R6 publish-timing).
 - The unscoped `friday` npm package is unrelated.
 
 README, package metadata, GitHub metadata, and release docs should all use the
@@ -51,14 +51,33 @@ The public v1 local track covers:
 - approval-gated tool use
 - evidence and rollback summaries
 
+The public v1 local track also covers, for `1.0.1`, configured trusted-channel
+inbound on Discord, Telegram, and Lark/Feishu, proven via same-SHA Real Green
+Gate channel artifacts (`scripts/ops/validate-channel-proof-artifacts.mjs`) on
+the release SHA. The full bidirectional channel-control automation lane is not
+covered.
+
 The public v1 local track does not cover:
 
-- Discord/Lark/Telegram/channel control live proof
-- PR #244 channel closure
+- outbound channel-control automation (only trusted-user inbound receipt is
+  proven on Discord/Telegram/Lark+Feishu)
+- Slack HTTP Events-API inbound (permanently `unsupported` in `1.0.1`)
+- QQ (permanently `unsupported` in `1.0.1`)
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
+- desktop, Homebrew, notarized macOS, or mobile distribution
+- "all integrations live"
 - release-complete-all
 - `blocked_by_env` scenarios
+
+The `1.0.1` dogfood gate closed as `dogfood_partial_pass` (weighted UX 7.78/10).
+Nine explicit `proof_pending` headlines (self-repair end-to-end execute →
+rollback, self-upgrade actual mutation, skill install/update/delete canonical
+approval, end-to-end link-to-skill, queue/retry retry-eligible receipt loop,
+audit tamper-negative on disposable ledger, R1 Lark phase24d listener-shutdown
+bug, speed/cost near_limit/over_limit UI surfacing, memory per-item
+`confidence`/`last_accessed` surfacing) are carried forward. See
+`docs/public-v1-local-candidate.md` for the full list.
 
 ## Repository Metadata Recommendation
 
