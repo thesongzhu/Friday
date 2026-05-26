@@ -14,6 +14,7 @@
   <img src="https://img.shields.io/badge/Node-%E2%89%A522-brightgreen?style=flat-square" alt="Node >=22">
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT">
   <img src="https://img.shields.io/badge/npm-%40thesongzhu%2Ffriday-red?style=flat-square" alt="@thesongzhu/friday">
+  <img src="https://img.shields.io/badge/Release%20Truth-public%20v1%20local%20candidate-blue?style=flat-square" alt="Release Truth: public v1 local candidate">
   <img src="https://github.com/thesongzhu/Friday/actions/workflows/ci.yml/badge.svg" alt="CI">
 </p>
 
@@ -29,12 +30,14 @@ Friday 不是万能自动机。它不会替你注册账号、绕过验证码、�
 
 ## 当前发布状态
 
-Friday 现在更诚实的状态是：**public v1 local candidate**，不是“所有集成都 release-complete”。
+Friday 现在更诚实的状态是：**public v1 local candidate**，仅通过 **npm/source** 发布，不是「所有集成都 release-complete」。
 
-- 当前 public claim 聚焦本地 UI、本地 runtime、BYOK setup、受监督 operator workflow、memory、evidence、approval-gated tool use。
-- 当前证明链不 claim 渠道控制、云端 live certification、外部 OTEL/Grafana export，或 release-complete-all。
+- 当前 public claim 聚焦本地 UI、本地 runtime、BYOK setup、受监督 operator workflow、memory、evidence、approval-gated tool use，以及已配置的 Discord / Telegram / Lark+飞书 trusted-inbound（由 release SHA 的同 SHA Real Green Gate channel artifact 证明）。
+- 当前证明链不 claim 出站渠道控制自动化、云端 live certification、外部 OTEL/Grafana export、桌面 / Homebrew / 公证 macOS / 移动端分发、"所有集成 live"、或 release-complete-all。
+- Slack HTTP Events-API inbound 和 QQ 在本次发布中保持 **`unsupported`**。
 - Real Green Gate 只有在 artifact 属于同一个 SHA、scenarios 非零、全部通过、blockers 为空时才算 release-proof eligible。
 - `blocked_by_env`、mock-only、workflow success alone、stale artifact、wrong-SHA artifact 都不能算通过。
+- `1.0.1` 的 dogfood gate 收口为 **`dogfood_partial_pass`**（UX 加权 7.78/10），并显式记录 `proof_pending` 头条项目（详见 [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)）：self-repair execute→rollback 端到端、self-upgrade 真实 mutation、skill install/update/delete 的 canonical-approval 流程、端到端 link-to-skill candidate→run、queue/retry 在 retry-eligible incident 上的 receipt loop、可丢弃 ledger 上的审计 tamper-negative、R1 Lark phase24d listener-shutdown bug、speed/cost 的 near_limit/over_limit UI 暴露、memory 单条目 `confidence`/`last_accessed` 暴露。
 
 ## 核心闭环
 
@@ -55,7 +58,7 @@ Friday 现在更诚实的状态是：**public v1 local candidate**，不是“�
 | Skills 和 workflows | 在 lifecycle 闭合的路径上导入、验证、暂存、promote、运行、更新、回滚可复用能力 | 生成或导入的 skill 先是 candidate；必须通过 review、canary、promotion gate 才能变成可用能力；workflow upgrade proof 不等同于 skill lifecycle proof |
 | 记忆与自我改进 | 沉淀显式偏好、learned facts、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；learned signals 不是隐藏模型训练、不经确认的真理，也不保证都会进入 prompt 并改变行为 |
 | 自我修复 | 发现失败、诊断、提出修复，并且只在已接通、已配置、有证据的路径上执行低风险修复 | dispatcher 式 auto-fix 默认关闭；高风险或改数据的修复需要审批、receipt、rollback 或明确不可逆记录 |
-| 可选渠道适配器 | 接入 Discord、Telegram、飞书/Lark、Slack 类 webhook、Signal、WhatsApp、QQ 等已配置渠道 | 渠道是配置后才可用的能力，不属于 public v1 local release claim；敏感动作仍要确认 |
+| 可选渠道适配器 | 在 release SHA 上由同 SHA Real Green Gate channel artifact 证明的 Discord、Telegram、飞书/Lark trusted-inbound 已配置可用；其它已配置渠道作为可选 surface | 渠道是配置后才可用的能力；出站渠道控制自动化不属于 public v1 local release claim；Slack HTTP Events-API inbound 和 QQ 为 `unsupported`；敏感动作仍要确认 |
 | 长期目标 | 对用户授权的 standing goals 生成 agenda、执行低风险事项、汇报证据 | Friday 接收用户目标，不主动发明无关长期议程 |
 
 ## 安装与启动
@@ -174,12 +177,12 @@ Friday 的原则很简单：重复、低风险、可验证的事情尽量自动�
 
 | 平台 | 方式 | 状态 |
 | --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | core/source 包已在 npm 发布 `1.0.0`；原生桌面 companion parity 仍按平台能力与证据判断 |
+| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | 当前 npm 已发布版本为 `1.0.0`；`1.0.1` candidate 已准备就绪（npm/source-only 发布），release SHA 上已完成 R5 同 SHA Real Green Gate 证明；npm 发布等待运营方显式授权 |
 | 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
 
 官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
-Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。
+Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。`1.0.1` 不 claim 桌面、Homebrew、公证 macOS 或移动端发布。
 
 ## 社区
 
