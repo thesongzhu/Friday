@@ -55,8 +55,11 @@ describe("setup provider regressions", () => {
     expect(hubSource).toContain("activateSavedChannelsFromSetupState");
     expect(hubSource).toContain("liveChannelMessageHandler");
     expect(hubSource).toContain("channelRegistry.startAllBestEffort(liveChannelMessageHandler)");
-    expect(larkSource).toContain("@larksuiteoapi/node-sdk");
-    expect(larkSource).toContain("new Lark.WSClient");
+    // B0.5: native Lark WS client replaces @larksuiteoapi/node-sdk so the
+    // public install no longer pulls the SDK's vulnerable axios chain.
+    expect(larkSource).not.toContain("@larksuiteoapi/node-sdk");
+    expect(larkSource).toContain("new LarkWsClient");
+    expect(larkSource).toContain("./internal/lark-ws-client");
     expect(larkSource).toContain("im.message.receive_v1");
     expect(larkSource).not.toContain("/open-apis/callback/ws/endpoint");
   });

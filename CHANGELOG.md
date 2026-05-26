@@ -7,6 +7,71 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.2] — Public Install Audit Hotfix — 2026-05-26
+
+`1.0.2` is a security/hygiene patch on top of `1.0.1`. It does not change
+the `1.0.1` release claim (public v1 local candidate, npm/source-only,
+`dogfood_partial_pass`, nine `proof_pending` headlines carried forward,
+Slack HTTP / QQ / desktop / Homebrew / notarized macOS / mobile / "all
+integrations live" exclusions). Public install behavior changes ONLY in
+that `npm install @thesongzhu/friday@1.0.2 && npm audit --omit=dev` now
+reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
+
+### Changed
+
+- Lark/Feishu long-connection (WebSocket) event subscription is now
+  served by a native client under `src/channels/lark/internal/`
+  (`lark-ws-client.ts`, `lark-ws-frame.ts`, `lark-event-dispatcher.ts`,
+  `lark-domain.ts`, `lark-logger.ts`) instead of via
+  `@larksuiteoapi/node-sdk`. The native client vendor-adapts the MIT-
+  licensed SDK's `WSClient` + `EventDispatcher` + `pbbp2.Frame` protobuf
+  schema verbatim so the wire protocol, heartbeat timing, ACK shape,
+  reconnect-with-jitter loop, and lifecycle callbacks
+  (`onReady`/`onReconnecting`/`onReconnected`/`onError`) are unchanged
+  from `1.0.1`. `friday-lark-channel.ts` preserves all callback shapes
+  and status semantics; downstream `parseMessageEventBase` and
+  `parseCardApprovalActionEvent` consume the same flattened envelope
+  the SDK was producing.
+
+### Removed
+
+- `@larksuiteoapi/node-sdk` is no longer a runtime dependency. The SDK
+  pinned `axios ~1.13.3`, pulling 15+ axios CVEs (SSRF via NO_PROXY
+  bypass, prototype pollution, header injection, XSRF leak, CRLF
+  injection — three of these at HIGH severity per the post-R6
+  isolated-install audit recorded in
+  `HANDOFFS/R6_RECONCILE_public_install_audit_omit_dev_20260526.json`).
+- The `package.json` `overrides.axios=^1.15.2` block is removed because
+  no remaining dependency in the install graph pulls axios; `npm ls
+  axios` after `npm install` on `1.0.2` returns empty.
+
+### Added
+
+- `ws ^8.19.0` and `protobufjs ^7.6.1` are now direct dependencies (both
+  were previously transitive via the SDK; both audit clean). `@types/ws
+  ^8.18.1` is added as a devDependency for strict-mode typecheck.
+
+### Docs
+
+- `docs/open-source-release-review.md` updated to reflect the post-R6
+  state (`1.0.1` published 2026-05-26T06:54:20Z) and that `1.0.2` is
+  the public-install-audit hotfix.
+- `CHANGELOG.md` `[1.0.1] ### Notes` records the R6 publish timestamp.
+
+### Notes
+
+- Behaviour-parity proof of the native Lark WS client against a real
+  Lark/Feishu account is operator-driven and runs as phase24d
+  (`scripts/ops/phase24d-lark-feishu-trusted-inbound-listener.mjs`) on
+  the `1.0.2` release SHA via Real Green Gate `workflow_dispatch`
+  (same protocol as `1.0.1` R5). Local verification on the `1.0.2`
+  branch: full typecheck pass, focused `src/channels/lark` lint pass,
+  45/45 lark unit tests pass (existing 27 + 18 new across frame /
+  dispatcher / lifecycle), 390/390 channel-suite blast-radius pass,
+  isolated `npm pack` + `npm install` + `npm audit --omit=dev` against
+  the `1.0.2` tarball reports `0 vulnerabilities`. The `1.0.1` claim
+  surface is unchanged.
+
 ## [1.0.1] — Release Closure Infrastructure — 2026-05-25
 
 `1.0.1` is the first patch on top of `1.0.0`. Public claim is **public v1 local candidate, npm/source distribution** — no desktop, Homebrew, notarized macOS, mobile, or "all integrations live" claim is added. This patch ships the release infrastructure that makes a same-SHA Discord/Telegram/Lark+Feishu live channel proof verifiable as a publish precondition, plus a source/npm-only release mode that does not require macOS distribution artifacts.
@@ -29,7 +94,7 @@ and this project follows Semantic Versioning.
 
 ### Notes
 
-- npm publish remains blocked by the repo variable `RELEASE_PUBLISH_NPM=false`. Same-SHA **provider lane + Discord/Telegram/Lark+Feishu** trusted-inbound live proof on the release SHA at R5 was the publish precondition; that gate PASSED on the release SHA via Real Green Gate `workflow_dispatch` (`status=passed`, 94/94 scenarios, `blocked_reasons=[]`, `evidence_kinds_observed=[real-runtime, real-provider, real-browser, manual-external]`; all three `phase24X` channel artifacts validated `valid:true, blockerClass:none`). Publication still requires explicit operator authorization for R6 publish-timing.
+- npm publish remains blocked by the repo variable `RELEASE_PUBLISH_NPM=false`. Same-SHA **provider lane + Discord/Telegram/Lark+Feishu** trusted-inbound live proof on the release SHA at R5 was the publish precondition; that gate PASSED on the release SHA via Real Green Gate `workflow_dispatch` (`status=passed`, 94/94 scenarios, `blocked_reasons=[]`, `evidence_kinds_observed=[real-runtime, real-provider, real-browser, manual-external]`; all three `phase24X` channel artifacts validated `valid:true, blockerClass:none`). R6 published `1.0.1` to npm at 2026-05-26T06:54:20Z. The post-R6 isolated `npm install @thesongzhu/friday@1.0.1 && npm audit --omit=dev` surfaced 3 HIGH severity findings (15+ axios CVEs via `@larksuiteoapi/node-sdk > axios ~1.13.3`); see the `[1.0.2]` entry above for the public-install-audit hotfix that closes those.
 - Real Green Gate's `phase24b/c/d` trusted-inbound jobs only run on `workflow_dispatch` with the corresponding `phase24X_*_trusted_inbound=true` input; they remain `SKIPPED` on routine PR/push runs by design.
 - The `1.0.1` dogfood gate closed as **`dogfood_partial_pass`** (weighted UX 7.78/10; below the 8.0 `dogfood_pass` threshold) with explicit operator authorization to proceed under a trimmed release claim. Nine `proof_pending` headlines are carried forward to a subsequent dogfood pass: (1) autonomous self-repair end-to-end execute → rollback, (2) autonomous self-upgrade actual mutation, (3) skill install/update/delete through the canonical-approval workflow, (4) end-to-end link-to-skill candidate → tests → approval → run, (5) queue/retry end-to-end receipt loop with a retry-eligible incident, (6) audit tamper-negative on a disposable ledger, (7) R1 Lark `phase24d` listener-shutdown bug (artifact correct, WebSocket holds event loop), (8) speed/cost end-to-end `near_limit`/`over_limit` UI surfacing, (9) memory per-item `confidence`/`last_accessed` field surfacing. See [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md) for details.
 - This release does not claim desktop, Homebrew, notarized macOS, mobile, or "all integrations live". Outbound channel-control automation is not claimed; only configured trusted-user inbound receipt on Discord/Telegram/Lark+Feishu is proven on the release SHA. **Slack HTTP Events-API inbound and QQ remain permanently `unsupported` in `1.0.1`.** Capabilities without same-SHA live proof remain labeled `setup_needed`, `proof_pending`, `blocked_by_env`, `unsupported`, or `not_configured`.

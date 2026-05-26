@@ -15,9 +15,11 @@
  *   - https://open.larksuite.com/document/server-docs/overview
  */
 
-import * as Lark from "@larksuiteoapi/node-sdk";
-import type { WSClient as LarkWsClient } from "@larksuiteoapi/node-sdk";
 import { createHash } from "node:crypto";
+import { LarkDomain } from "./internal/lark-domain.js";
+import { LarkEventDispatcher } from "./internal/lark-event-dispatcher.js";
+import type { LarkEventHandler } from "./internal/lark-event-dispatcher.js";
+import { LarkWsClient } from "./internal/lark-ws-client.js";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -729,11 +731,11 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
         );
       }, readyTimeoutMs);
 
-      const client = new Lark.WSClient({
+      const client = new LarkWsClient({
         appId: larkConfig.appId,
         appSecret: larkConfig.appSecret,
-        domain: larkConfig.useFeishu ? Lark.Domain.Feishu : Lark.Domain.Lark,
-        loggerLevel: Lark.LoggerLevel.warn,
+        domain: larkConfig.useFeishu ? LarkDomain.Feishu : LarkDomain.Lark,
+        loggerLevel: "warn",
         source: "friday",
         autoReconnect: true,
         onReady: () => {
@@ -748,31 +750,35 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
           connectionStatus = "connected";
           lastConnectionError = undefined;
         },
-        onError: (error) => {
-          fail(`Lark SDK WebSocket failed: ${error.message}`);
+        onError: (error: Error) => {
+          fail(`Lark WebSocket failed: ${error.message}`);
         },
       });
 
       wsClient = client;
 
-      const eventHandlers = {
-        "im.message.receive_v1": async (data: unknown) => {
+      // Preserve the SDK's handler-shape contract: each registered handler
+      // receives the parsed (flattened) event envelope, then re-wraps it as
+      // `{ event: data, ... }` so the downstream parseMessageEventBase /
+      // parseCardApprovalActionEvent code paths stay unchanged.
+      const eventHandlers: Record<string, LarkEventHandler> = {
+        "im.message.receive_v1": async (data) => {
           eventHandler({ event: data });
         },
-        "card.action.trigger": async (data: unknown) => {
+        "card.action.trigger": async (data) => {
           eventHandler({ event: data, eventType: "card.action.trigger" });
         },
-      } as Parameters<Lark.EventDispatcher["register"]>[0];
+      };
 
-      const eventDispatcher = new Lark.EventDispatcher({
+      const eventDispatcher = new LarkEventDispatcher({
         verificationToken: larkConfig.verificationToken,
         encryptKey: larkConfig.encryptKey,
-        loggerLevel: Lark.LoggerLevel.warn,
+        loggerLevel: "warn",
       }).register(eventHandlers);
 
       void client.start({ eventDispatcher }).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        fail(`Lark SDK WebSocket failed: ${message}`);
+        fail(`Lark WebSocket failed: ${message}`);
       });
     });
   }
