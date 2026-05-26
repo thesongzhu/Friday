@@ -2,7 +2,9 @@
 
 Last reviewed: 2026-05-26
 
-This document summarizes the public v1 local candidate claim for `1.0.1`. It is
+This document summarizes the public v1 local candidate claim for the published
+`1.0.x` local-candidate line. The current public npm/source release is `1.0.2`.
+It is
 a release truth summary, not a universal product promise. Distribution mode is
 **npm/source only**.
 
@@ -67,8 +69,8 @@ supersede the repo-tracked capability matrix, does not close any entry
 still recorded as `blocked_by_env`, and does not prove optional external
 claims that were explicitly out of scope.
 
-The dogfood runtime evidence for `1.0.1` was captured under an 8-hour soak
-run; the soak SHA, run id, and report paths are recorded in
+The dogfood runtime evidence baseline was captured during the `1.0.1` release
+closure under an 8-hour soak run; the soak SHA, run id, and report paths are recorded in
 operator-controlled evidence and referenced from the release-closure plan.
 When the runtime delta from the soak SHA to the published release SHA is
 zero, the soak evidence is transferable; this is verified per release in
@@ -93,14 +95,15 @@ the release-closure plan's runtime-delta classification report.
 - outbound channel-control automation (Discord/Telegram/Lark/Feishu inbound
   trusted-user receipt is proven; full bidirectional channel control is not
   claimed)
-- Slack HTTP Events-API inbound (permanently `unsupported` in `1.0.1`)
-- QQ (permanently `unsupported` in `1.0.1`)
+- Slack HTTP Events-API inbound (permanently `unsupported` in the public
+  `1.0.x` local-candidate line)
+- QQ (permanently `unsupported` in the public `1.0.x` local-candidate line)
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - Slack/SMTP external alert dispatch as release-complete
 - default-on packaging or multi-tenant release proof
 - full native desktop parity across every operating system
-- desktop, Homebrew, notarized macOS, or mobile distribution in `1.0.1`
+- desktop, Homebrew, notarized macOS, or mobile distribution in `1.0.2`
 - generated or imported skills becoming immediately runnable without lifecycle gates
 - every learned preference automatically changing future prompt behavior
 - verified repair status from action counts alone
@@ -112,7 +115,8 @@ the release-closure plan's runtime-delta classification report.
 ## Dogfood Closure And Proof-Pending Headlines
 
 The dogfood gate for `1.0.1` closed as `dogfood_partial_pass` with weighted UX
-score 7.78/10 (below the 8.0 `dogfood_pass` threshold). The following
+score 7.78/10 (below the 8.0 `dogfood_pass` threshold), and these headlines
+remain carried forward in `1.0.2`. The following
 capabilities are wired with fail-closed lifecycle gates but end-to-end execution
 is `proof_pending` and explicitly carried forward for a subsequent dogfood pass:
 
@@ -124,7 +128,7 @@ is `proof_pending` and explicitly carried forward for a subsequent dogfood pass:
    (gates fail-closed at `SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED`,
    `SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED`,
    `SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED`; canonical-approval flow setup
-   is out of scope for the `1.0.1` dogfood)
+   remains out of scope for the current dogfood evidence)
 4. End-to-end link-to-skill candidate → tests → approval → run (scan-local
    works; install gate prevents URL trust bypass; full end-to-end run is
    carried forward)

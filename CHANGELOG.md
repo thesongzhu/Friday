@@ -9,9 +9,8 @@ and this project follows Semantic Versioning.
 
 ## [1.0.2] — Post-Release Hardening Wave — 2026-05-26
 
-`1.0.2` accumulates the post-release hardening queue from
-`/Users/jarvis/Desktop/Friday-post-release-hardening-plan-20260526` on
-top of `1.0.1`. It does not change the `1.0.1` release claim (public v1
+`1.0.2` accumulates the post-release hardening queue on top of `1.0.1`.
+It does not change the `1.0.1` release claim (public v1
 local candidate, npm/source-only, `dogfood_partial_pass`, nine
 `proof_pending` headlines carried forward, Slack HTTP / QQ / desktop /
 Homebrew / notarized macOS / mobile / "all integrations live"
@@ -133,9 +132,10 @@ reports `0` vulnerabilities, down from `3 high` on `1.0.1`.
 
 ### Docs
 
-- `docs/open-source-release-review.md` updated to reflect the post-R6
-  state (`1.0.1` published 2026-05-26T06:54:20Z) and that `1.0.2` is
-  the public-install-audit hotfix.
+- Public README, release-truth, capability-matrix, and getting-started
+  docs updated to reflect that `1.0.2` is now the current published
+  npm/source release and that QQ / Slack HTTP Events-API inbound remain
+  unsupported.
 - `CHANGELOG.md` `[1.0.1] ### Notes` records the R6 publish timestamp.
 
 ### Notes

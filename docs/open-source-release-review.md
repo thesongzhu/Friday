@@ -34,7 +34,7 @@ automatic access to systems the user has not configured.
 
 - Repository license: MIT.
 - npm package: `@thesongzhu/friday`.
-- Current published npm version: `1.0.1` (R6 published 2026-05-26T06:54:20Z). Repo `package.json` version: `1.0.2` (public-install-audit hotfix in progress; replaces `@larksuiteoapi/node-sdk` — which pulled `axios ~1.13.3` with three HIGH-severity CVEs flagged by the post-R6 isolated `npm audit --omit=dev` — with a native Lark WebSocket client under `src/channels/lark/internal/`. Same-SHA Real Green Gate `phase24d` Lark/Feishu trusted-inbound proof is required on the `1.0.2` release SHA before any R5/R6 redo).
+- Current published npm version: `1.0.2` (R6 published 2026-05-26T19:45Z). Repo `package.json` version: `1.0.2`. This public-install-audit hotfix replaced `@larksuiteoapi/node-sdk` — which pulled `axios ~1.13.3` with three HIGH-severity findings in the post-`1.0.1` isolated `npm audit --omit=dev` — with Friday's native Lark WebSocket client under `src/channels/lark/internal/`. Same-SHA Real Green Gate proof and Discord / Telegram / Lark+Feishu trusted-inbound artifacts passed on the `1.0.2` release SHA before publish.
 - The unscoped `friday` npm package is unrelated.
 
 README, package metadata, GitHub metadata, and release docs should all use the
@@ -51,7 +51,7 @@ The public v1 local track covers:
 - approval-gated tool use
 - evidence and rollback summaries
 
-The public v1 local track also covers, for `1.0.1`, configured trusted-channel
+The public v1 local track also covers, for `1.0.2`, configured trusted-channel
 inbound on Discord, Telegram, and Lark/Feishu, proven via same-SHA Real Green
 Gate channel artifacts (`scripts/ops/validate-channel-proof-artifacts.mjs`) on
 the release SHA. The full bidirectional channel-control automation lane is not
@@ -61,8 +61,8 @@ The public v1 local track does not cover:
 
 - outbound channel-control automation (only trusted-user inbound receipt is
   proven on Discord/Telegram/Lark+Feishu)
-- Slack HTTP Events-API inbound (permanently `unsupported` in `1.0.1`)
-- QQ (permanently `unsupported` in `1.0.1`)
+- Slack HTTP Events-API inbound (permanently `unsupported` in the public `1.0.x` local-candidate line)
+- QQ (permanently `unsupported` in the public `1.0.x` local-candidate line)
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - desktop, Homebrew, notarized macOS, or mobile distribution
