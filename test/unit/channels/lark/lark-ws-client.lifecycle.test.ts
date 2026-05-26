@@ -237,6 +237,13 @@ describe("LarkWsClient lifecycle", () => {
 
     // ACK should have been queued (second send after the initial ping).
     expect(ws.sent.length).toBeGreaterThanOrEqual(2);
+    // Decode the ACK payload — must be {code:200, data:base64(JSON(handlerResult))}.
+    const ackBytes = ws.sent[ws.sent.length - 1]!;
+    const ackText = new TextDecoder("utf-8").decode(ackBytes);
+    expect(ackText).toContain('"code":200');
+    // base64(JSON.stringify({status:"ok"})) for the handler return value.
+    const expectedB64 = Buffer.from(JSON.stringify({ status: "ok" })).toString("base64");
+    expect(ackText).toContain(expectedB64);
 
     client.close({ force: true });
   });
