@@ -32,7 +32,7 @@ import { decodeLarkFrame, encodeLarkFrame } from "./lark-ws-frame.js";
 import type { LarkFrame, LarkFrameHeader } from "./lark-ws-frame.js";
 import { LarkLoggerProxy } from "./lark-logger.js";
 import type { LarkLogger, LarkLoggerLevelName } from "./lark-logger.js";
-import { LarkDomain, formatLarkDomain } from "./lark-domain.js";
+import { formatLarkDomain, LarkDomain } from "./lark-domain.js";
 import type { LarkEventDispatcher } from "./lark-event-dispatcher.js";
 
 // ─── Vendor enums (verbatim from SDK lines 88908–88947) ───
