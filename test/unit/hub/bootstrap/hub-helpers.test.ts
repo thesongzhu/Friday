@@ -10,7 +10,7 @@ import type { FridayHubConfigManagerService } from "../../../../src/hub/services
 import { initializeFridayState } from "#state";
 import {
   createFridayHubAutoFixExecutionSupport,
-  createStubConfigManager,
+  createPersistentConfigManager,
   createStubMemoryState,
 } from "../../../../src/hub/bootstrap/index.js";
 import {
@@ -427,7 +427,7 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
   });
 });
 
-describe("createStubConfigManager", () => {
+describe("createPersistentConfigManager", () => {
   it("hydrates currentConfig with the actual runtime state dir and launch cwd", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-state-"));
     const stateRuntime = initializeFridayState({
@@ -438,7 +438,7 @@ describe("createStubConfigManager", () => {
     });
 
     try {
-      const manager = createStubConfigManager(
+      const manager = createPersistentConfigManager(
         {
           skillDirs: ["skills", "managed-skills"],
         },

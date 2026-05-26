@@ -29,8 +29,8 @@ export {
   resolveChannelInitConfigWithSecretPolicy,
   // Token secret resolution
   resolveTokenSecret,
-  // Stub services
-  createStubConfigManager,
+  // Hub adapter services
+  createPersistentConfigManager,
   createFridayHubAutoFixExecutionSupport,
   createStubMemoryState,
 } from "./hub-helpers.js";
