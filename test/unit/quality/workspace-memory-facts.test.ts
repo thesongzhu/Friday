@@ -30,15 +30,14 @@ describe("workspace memory facts", () => {
       .find((line) => line.startsWith("- Friday loads runtime user/project prompt guidance"));
 
     expect(runtimeIdentityFileNames).toEqual(expect.arrayContaining([
-      "context/AGENTS.md",
       "context/BELIEFS.md",
       "context/SOUL.md",
     ]));
     for (const fileName of runtimeIdentityFileNames) {
       expect(workspaceContextFact).toContain(`\`${fileName}\``);
     }
-    expect(workspaceContextFact).not.toContain("from `AGENTS.md`");
-    expect(workspaceContextFact).toContain("Root `AGENTS.md` is Codex repair workflow guidance");
+    expect(workspaceContextFact).toContain("optional `context/AGENTS.md`");
+    expect(workspaceContextFact).toContain("Root `AGENTS.md`, when present, is Codex repair workflow guidance");
     expect(workspaceContextFact).toContain("Exported memory under `.friday/exports/memory/` is not injected by default");
   });
 });

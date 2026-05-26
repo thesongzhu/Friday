@@ -15,7 +15,7 @@ This RFC is **not** the primary source of truth for Friday's public marketplace 
 
 Commerce and publisher operations remain a **bounded operator/admin surface**. Public marketplace truth must not present this RFC as if all Friday deployments already ship a consumer-grade commercial store. The primary public marketplace direction is now **skills/workflows/agents first, free-first, declarative-first, creator-support oriented, and request-board capable**, with `0%` platform commission and no escrow, guarantees, or after-sales obligations.
 
-The current closeout evidence for that direction lives at [../reports/closeout/marketplace-creator-ecosystem/latest.md](./docs/reports/closeout/marketplace-creator-ecosystem/latest.md).
+Closeout evidence for that direction is maintained in operator-controlled evidence storage outside the public source tree.
 
 ## 2. Motivation
 
@@ -73,7 +73,7 @@ This RFC supports multiple commercial models, but the current product profile is
 - Successful purchase grants install + run entitlement for the buyer tenant.
 - Delivery contract is "install and run in buyer environment"; data ownership stays with buyer tenant only.
 - Sellers and other tenants do not receive data-plane access after install.
-- Execution blueprint: [`docs/task/marketplace-agent-mvp-blueprint-2026-03-01.md`](../task/marketplace-agent-mvp-blueprint-2026-03-01.md).
+- Execution blueprints for historical marketplace work are private operator evidence, not public source artifacts.
 
 ## 4. Architecture Overview
 

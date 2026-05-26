@@ -23,7 +23,7 @@ Each phase MUST complete before the next begins.
 ## Universal Rules (All Phases)
 
 ### 1. CSV AC is the Single Source of Truth
-- Every task has a row in `docs/reports/friday-vision-roadmap-2026.csv`
+- Every task has a row in `private operator roadmap evidence`
 - AC must be **module-specific checklists** (not generic sentences)
 - CX reviews PASS/FAIL against CSV AC with file:line evidence
 - 6/6 AC items PASS = APPROVED. No exceptions.

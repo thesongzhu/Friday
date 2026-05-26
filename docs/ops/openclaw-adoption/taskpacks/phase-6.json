@@ -9,7 +9,7 @@
     "docs/ops/openclaw-adoption/taskpacks",
     "scripts/ops",
     "scripts/e2e",
-    "docs/reports",
+    ".friday/evidence",
     "test/e2e",
     "test/integration",
     "test/unit/automation/openclaw-adoption"

@@ -1,24 +1,4 @@
-I’ll start by loading the required session context files (`SOUL.md`, `USER.md`, recent `memory/*.md`, and `MEMORY.md`), then I’ll inspect the current tool architecture under `src/agent/tools` so the browser design matches Friday’s existing patterns.
-
-I found the workspace files and today’s date (`2026-02-20`). Next I’m loading the required identity/memory docs, including `BOOTSTRAP.md` since it exists.
-
-Session context files are loaded; there are no existing `memory/` or `MEMORY.md` files in this workspace. I’m now inspecting `.` to map current tool interfaces and registry wiring before drafting the browser plugin design.
-
-There’s no existing `src/browser/` module yet, so this will be a net-new boundary. I’m now reading the tool registry and type definitions to align the new browser tool contract exactly with existing patterns.
-
-I confirmed the registry factory and helper patterns. Next I’m reading the core tool type file and a couple of concrete tools (`exec`, `web_fetch`) to mirror schema shape, error handling, and abort behavior in the browser design.
-
-I now have the exact tool contract and helper style. I’m checking constants and existing tool tests next so the design includes concrete limits and a test plan that fits this repo’s current testing approach.
-
-I verified there’s no `src/agent/tools/index.ts` in this repo today; integration currently happens via `friday-agent-tool-registry.ts`. I’m now checking OpenClaw reference files in `.openclaw/` plus existing tool tests to shape the action schema and lifecycle behavior.
-
-I confirmed the repository layout and that top-level exports are module-scoped (for example `src/agent/index.ts`), not a single `src/index.ts`. I’m now checking where to thread browser manager configuration from hub/bootstrap into the tool registry.
-
-I’ve gathered enough context to draft the implementation-ready design. I’m pulling exact insertion points (line references) in the registry and hub bootstrap so CC can wire the browser tool with minimal ambiguity.
-
-**Friday Browser Plugin Design (v1, OpenClaw-inspired)**
-
-`src/agent/tools/index.ts` does not exist in this repo today; the actual registry integration point is `src/agent/tools/friday-agent-tool-registry.ts:27`.
+# Browser Plugin Design
 
 ## 1) File structure and module boundaries
 

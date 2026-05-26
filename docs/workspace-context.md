@@ -21,7 +21,7 @@ prompt guidance:
 
 Current selection behavior:
 
-- Root `AGENTS.md` is not Friday runtime guidance. In this repository it is a Codex repair-workflow rule file.
+- Root `AGENTS.md`, when present in an operator checkout, is not Friday runtime guidance.
 - `context/AGENTS.md`, `context/BELIEFS.md`, and `context/SOUL.md` are identity blocks. When present, they are always injected into eligible LLM surfaces.
 - `context/BELIEFS.md` contains engineering principles and design beliefs loaded as workspace context.
 - `context/USER.md`, `context/MEMORY.md`, `context/memory.md`, and daily memory are candidate blocks. When task-aware filtering is active, Friday selects only the relevant candidates.

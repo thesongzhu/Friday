@@ -23,28 +23,12 @@ const checks = {
       ],
     },
     {
-      path: "docs/SSD-GAP-REPORT.md",
-      required: [
-        "Archived: historical audit/plan/report material.",
-        "## Canonical contract decisions already settled",
-        "/v1/ws` is a compatibility alias, not the primary transport contract.",
-        "/v1/workflow-approvals*` is canonical; `/v1/approvals*` is compatibility-only.",
-      ],
-    },
-    {
       path: "docs/distributed-architecture.md",
       required: [
         "Status:** Design reference",
         "current-source-of-truth.md",
         "Ownership model:** `[Deferred]`",
         "Current discovery baseline is: static peers, registered satellites, and the trust-scored fleet directory.",
-      ],
-    },
-    {
-      path: "docs/archive/CX15-SSD-UPDATE-PLAN.md",
-      required: [
-        "Archived and superseded",
-        "no longer an active contract source",
       ],
     },
   ],
@@ -130,16 +114,6 @@ const checks = {
         "Friday has closed the explicitly tracked OpenClaw overlap goals",
         "not full behavioral identity",
         "Why Friday Can Still Miss Expectations",
-      ],
-    },
-    {
-      path: "docs/reports/closeout/README.md",
-      required: [
-        "Phase 1",
-        "Phase 6",
-        "validated and keep",
-        "validated but temporary",
-        "deferred",
       ],
     },
   ],

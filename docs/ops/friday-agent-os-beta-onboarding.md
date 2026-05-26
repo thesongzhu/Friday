@@ -139,4 +139,4 @@ Before handing the setup to another external operator, confirm:
 - a trusted private-network remote session succeeds
 - recovery works after a companion restart
 - the local smoke record exists at `dist/macos/FridayCompanion.clean-machine-smoke.md`
-- the final clean-machine evidence file is updated at `docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md`
+- the final clean-machine evidence file is updated at `.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md`

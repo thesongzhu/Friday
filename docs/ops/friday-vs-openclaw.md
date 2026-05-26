@@ -56,7 +56,7 @@ Those boundaries are documented in:
 
 - [VISION.md](../VISION.md)
 - [current-source-of-truth.md](../current-source-of-truth.md)
-- [SSD-GAP-REPORT.md](../SSD-GAP-REPORT.md)
+- `docs/current-source-of-truth.md`
 
 ## Why Friday Can Still Miss Expectations
 

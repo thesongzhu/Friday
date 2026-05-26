@@ -69,7 +69,7 @@ SOURCE_RELEASE_PATH="$(
       }
     '
 )"
-MACOS_EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH:-${REPO_DIR}/docs/reports/ops/cross-platform-agent-os-beta-evidence/macos-15-clean-machine.md}"
+MACOS_EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH:-${REPO_DIR}/.friday/evidence/cross-platform-agent-os-beta/macos-15-clean-machine.md}"
 
 RELEASE_RECORD_JSON_PATH="${JSON_PATH}" \
 RELEASE_RECORD_MD_PATH="${MD_PATH}" \

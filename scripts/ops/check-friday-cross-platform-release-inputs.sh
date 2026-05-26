@@ -14,7 +14,7 @@ if [[ "${CHECK_MODE}" != "local" && "${CHECK_MODE}" != "ci-public" ]]; then
 fi
 
 CHECKLIST_PATH="${FRIDAY_CROSS_PLATFORM_CHECKLIST_PATH:-${REPO_DIR}/docs/ops/friday-cross-platform-agent-os-completion-checklist.md}"
-EVIDENCE_ROOT="${FRIDAY_CROSS_PLATFORM_EVIDENCE_ROOT:-${REPO_DIR}/docs/reports/ops/cross-platform-agent-os-beta-evidence}"
+EVIDENCE_ROOT="${FRIDAY_CROSS_PLATFORM_EVIDENCE_ROOT:-${REPO_DIR}/.friday/evidence/cross-platform-agent-os-beta}"
 MACOS_EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_MACOS_EVIDENCE_PATH:-${EVIDENCE_ROOT}/macos-15-clean-machine.md}"
 IOS_EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_IOS_EVIDENCE_PATH:-${EVIDENCE_ROOT}/ios-latest-device-smoke.md}"
 ANDROID_EVIDENCE_PATH="${FRIDAY_CROSS_PLATFORM_ANDROID_EVIDENCE_PATH:-${EVIDENCE_ROOT}/android-latest-device-smoke.md}"
