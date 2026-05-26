@@ -23,13 +23,13 @@ const CHANNEL_TEMPLATES: ChannelTemplate[] = [
   },
   {
     kind: "slack",
-    label: "Slack",
-    labelZh: "Slack",
+    label: "Slack Socket Mode",
+    labelZh: "Slack Socket Mode",
     fields: [
       { key: "appToken", label: "App Token", labelZh: "应用 Token", placeholder: "xapp-...", placeholderZh: "xapp-...", secret: true },
       { key: "botToken", label: "Bot Token", labelZh: "机器人 Token", placeholder: "xoxb-...", placeholderZh: "xoxb-...", secret: true },
     ],
-    envFormat: (v) => JSON.stringify({ kind: "slack", appToken: v.appToken || "<APP_TOKEN>", botToken: v.botToken || "<BOT_TOKEN>" }),
+    envFormat: (v) => JSON.stringify({ kind: "slack", mode: "socket", appToken: v.appToken || "<APP_TOKEN>", botToken: v.botToken || "<BOT_TOKEN>" }),
   },
   {
     kind: "telegram",

@@ -7,7 +7,7 @@ import { ActionButton, ConfirmDialog, ShellCard, StatusPill } from "@/components
 import { memoryApi } from "@/lib/api/memory";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-import type { FridayMemoryItem } from "@/lib/api/types";
+import type { FridayMemoryItem, FridayMemoryType } from "@/lib/api/types";
 
 function formatTimestamp(value?: string): string {
   if (!value) return "—";
@@ -20,11 +20,20 @@ function toneForNamespace(ns: string): "neutral" | "success" | "warning" {
   return "neutral";
 }
 
+const MEMORY_TYPES: FridayMemoryType[] = ["fact", "preference", "procedure", "episode", "correction"];
+
+function formatPercent(value?: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
 export function MemoryPage() {
   const queryClient = useQueryClient();
   const { locale } = useAppLocale();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
+  const [searchMemoryType, setSearchMemoryType] = useState<"all" | FridayMemoryType>("all");
+  const [boostByConfidence, setBoostByConfidence] = useState(false);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["memory", "items"],
@@ -32,8 +41,13 @@ export function MemoryPage() {
   });
 
   const { data: searchResults, isLoading: isSearching, isError: isSearchError } = useQuery({
-    queryKey: ["memory", "search", activeSearch],
-    queryFn: () => memoryApi.search({ query: activeSearch, limit: 20 }),
+    queryKey: ["memory", "search", activeSearch, searchMemoryType, boostByConfidence],
+    queryFn: () => memoryApi.search({
+      query: activeSearch,
+      limit: 20,
+      memoryType: searchMemoryType === "all" ? undefined : searchMemoryType,
+      boostByConfidence,
+    }),
     enabled: activeSearch.length > 0,
   });
 
@@ -60,7 +74,7 @@ export function MemoryPage() {
   });
 
   const storeMutation = useMutation({
-    mutationFn: (input: { namespace: string; content: string; key: string; tags: string[] }) =>
+    mutationFn: (input: { namespace: string; content: string; key: string; tags: string[]; memoryType: FridayMemoryType; confidence: number }) =>
       memoryApi.store(input),
     onSuccess: async () => {
       toast.success(localize(locale, "记忆已保存", "Memory item stored"));
@@ -82,6 +96,7 @@ export function MemoryPage() {
   const displayItems: FridayMemoryItem[] = activeSearch.length > 0
     ? (searchResults ?? []).map((r) => r.item)
     : items;
+  const searchResultById = new Map((searchResults ?? []).map((result) => [result.item.id, result]));
 
   return (
     <div className="space-y-4">
@@ -108,12 +123,12 @@ export function MemoryPage() {
           <p className="text-sm text-[color:var(--color-text-secondary)]">
             {localize(
               locale,
-              "Friday 会跨会话记住事实、偏好和上下文。这里展示的项目存储在记忆系统中，用于个性化响应。",
-              "Friday remembers facts, preferences, and context across sessions. Items shown here are stored in the memory subsystem and used to personalize responses.",
+              "这里展示 Friday 已保存的记忆、类型、置信度和访问痕迹；自动召回仍受权限、排序和上下文边界约束。",
+              "This shows saved memories, type, confidence, and access traces; automatic recall still follows permission, ranking, and context boundaries.",
             )}
           </p>
 
-          <div className="flex gap-2">
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_180px_auto_auto]">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-faint)]" aria-hidden="true" />
               <input
@@ -128,6 +143,25 @@ export function MemoryPage() {
                 className="agent-input py-2 pl-10 pr-4 text-sm"
               />
             </div>
+            <select
+              value={searchMemoryType}
+              onChange={(e) => setSearchMemoryType(e.target.value as "all" | FridayMemoryType)}
+              aria-label={localize(locale, "按记忆类型筛选", "Filter by memory type")}
+              className="agent-select px-3 py-2 text-sm"
+            >
+              <option value="all">{localize(locale, "全部类型", "All types")}</option>
+              {MEMORY_TYPES.map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+            <label className="inline-flex min-h-[40px] items-center gap-2 rounded-xl border border-[color:var(--color-border-soft)] px-3 text-sm text-[color:var(--color-text-secondary)]">
+              <input
+                type="checkbox"
+                checked={boostByConfidence}
+                onChange={(e) => setBoostByConfidence(e.target.checked)}
+              />
+              {localize(locale, "置信度排序", "Confidence boost")}
+            </label>
             <ActionButton onClick={handleSearch} disabled={searchQuery.trim().length === 0}>
               {localize(locale, "搜索", "Search")}
             </ActionButton>
@@ -202,7 +236,18 @@ export function MemoryPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusPill tone={toneForNamespace(item.namespace)}>{item.namespace}</StatusPill>
+                      {item.memoryType ? <StatusPill>{item.memoryType}</StatusPill> : null}
+                      {typeof item.confidence === "number" ? (
+                        <StatusPill tone={item.confidence >= 0.75 ? "success" : item.confidence >= 0.45 ? "warning" : "neutral"}>
+                          {localize(locale, `置信度 ${formatPercent(item.confidence)}`, `confidence ${formatPercent(item.confidence)}`)}
+                        </StatusPill>
+                      ) : null}
                       {item.source ? <StatusPill>{item.source}</StatusPill> : null}
+                      {activeSearch ? (
+                        <StatusPill tone="neutral">
+                          {localize(locale, `匹配 ${formatPercent(searchResultById.get(item.id)?.score)}`, `match ${formatPercent(searchResultById.get(item.id)?.score)}`)}
+                        </StatusPill>
+                      ) : null}
                       {item.expiresAt ? (
                         <span className="text-xs text-[color:var(--color-text-faint)]">
                           {localize(locale, "过期于", "expires")} {formatTimestamp(item.expiresAt)}
@@ -238,6 +283,8 @@ export function MemoryPage() {
                 <p className="text-xs text-[color:var(--color-text-faint)]">
                   {localize(locale, "创建于", "Created")} {formatTimestamp(item.createdAt)}
                   {item.updatedAt !== item.createdAt ? ` · ${localize(locale, "更新于", "Updated")} ${formatTimestamp(item.updatedAt)}` : ""}
+                  {typeof item.accessCount === "number" ? ` · ${localize(locale, "访问", "Accessed")} ${String(item.accessCount)}x` : ""}
+                  {item.lastAccessedAt ? ` · ${localize(locale, "最后访问", "Last accessed")} ${formatTimestamp(item.lastAccessedAt)}` : ""}
                 </p>
               </div>
             </ShellCard>
@@ -266,7 +313,7 @@ export function MemoryPage() {
 
 function AddMemoryForm(props: {
   locale: import("@/lib/i18n/localized-text").AppLocale;
-  onSubmit: (input: { namespace: string; content: string; key: string; tags: string[] }) => void;
+  onSubmit: (input: { namespace: string; content: string; key: string; tags: string[]; memoryType: FridayMemoryType; confidence: number }) => void;
   pending: boolean;
   onCancel: () => void;
 }) {
@@ -275,6 +322,8 @@ function AddMemoryForm(props: {
   const [key, setKey] = useState("");
   const [content, setContent] = useState("");
   const [tagsInput, setTagsInput] = useState("");
+  const [memoryType, setMemoryType] = useState<FridayMemoryType>("preference");
+  const [confidence, setConfidence] = useState(1);
 
   const canSubmit = key.trim().length > 0 && content.trim().length > 0;
 
@@ -303,6 +352,34 @@ function AddMemoryForm(props: {
             value={key}
             onChange={(e) => setKey(e.target.value)}
             className="agent-input px-3 py-2 text-sm"
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">{localize(locale, "类型", "Type")}</label>
+          <select
+            value={memoryType}
+            onChange={(e) => setMemoryType(e.target.value as FridayMemoryType)}
+            className="agent-select px-3 py-2 text-sm"
+          >
+            {MEMORY_TYPES.map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-[color:var(--color-text-tertiary)]">
+            {localize(locale, `置信度 ${formatPercent(confidence)}`, `Confidence ${formatPercent(confidence)}`)}
+          </label>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={confidence}
+            onChange={(e) => setConfidence(Number(e.target.value))}
+            className="w-full"
           />
         </div>
       </div>
@@ -338,6 +415,8 @@ function AddMemoryForm(props: {
                 .split(",")
                 .map((t) => t.trim())
                 .filter(Boolean),
+              memoryType,
+              confidence,
             })
           }
         >

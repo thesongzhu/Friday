@@ -28,6 +28,7 @@ export interface ChannelMeta {
     groupMessages: boolean;
     typing: boolean;
   };
+  availability?: "available" | "unsupported";
 }
 
 export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
@@ -63,8 +64,8 @@ export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
     kind: "slack",
     name: "Slack",
     nameZh: "Slack",
-    description: "Connect to Slack workspaces",
-    descriptionZh: "连接 Slack 工作区",
+    description: "Connect to Slack with Socket Mode; HTTP Events API inbound is unsupported",
+    descriptionZh: "通过 Socket Mode 连接 Slack；暂不支持 HTTP Events API 入站",
     emoji: "💼",
     color: "#4A154B",
     fields: [
@@ -106,15 +107,16 @@ export const CHANNEL_META: Record<ChannelKind, ChannelMeta> = {
     kind: "qq",
     name: "QQ",
     nameZh: "QQ",
-    description: "Connect to QQ Official Bot",
-    descriptionZh: "连接 QQ 官方机器人",
+    description: "Unsupported in this release",
+    descriptionZh: "当前版本不支持",
     emoji: "🐧",
     color: "#12B7F5",
     fields: [
       { key: "appId", label: "App ID", labelZh: "应用 ID", placeholder: "your app ID", placeholderZh: "你的应用 ID", required: true },
       { key: "appSecret", label: "App Secret", labelZh: "应用密钥", placeholder: "paste app secret", placeholderZh: "粘贴应用密钥", secret: true, required: true },
     ],
-    capabilities: { directMessages: true, groupMessages: true, typing: false },
+    capabilities: { directMessages: false, groupMessages: false, typing: false },
+    availability: "unsupported",
   },
   lark: {
     kind: "lark",
@@ -197,7 +199,6 @@ export const CHANNEL_KINDS_ORDERED: ChannelKind[] = [
   "telegram",
   "slack",
   "whatsapp",
-  "qq",
   "lark",
   "feishu",
   "line",

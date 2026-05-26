@@ -63,6 +63,12 @@ const LARK_HTTP_OK = 200;
 const LARK_HTTP_INTERNAL_ERROR = 500;
 const DEFAULT_PULL_TIMEOUT_MS = 15_000;
 
+function unrefTimer(timer: NodeJS.Timeout | undefined): void {
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
 // ─── Public types ───
 
 export interface LarkWsClientOptions {
@@ -146,9 +152,7 @@ class LarkDataCache {
       }
     }, clearIntervalMs);
     // Don't block process exit on this housekeeping timer.
-    if (typeof (this.cleanupTimer as { unref?: () => void }).unref === "function") {
-      (this.cleanupTimer as { unref: () => void }).unref();
-    }
+    unrefTimer(this.cleanupTimer);
   }
 
   mergeData(params: { message_id: string; sum: number; seq: number; trace_id: string; data: Uint8Array }): MergedLarkData | null {
@@ -283,6 +287,7 @@ export class LarkWsClient {
     const url = `${this.clientConfig.domain}/callback/ws/endpoint`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_PULL_TIMEOUT_MS);
+    unrefTimer(timeout);
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -372,6 +377,7 @@ export class LarkWsClient {
           try { wsInstance.terminate(); } catch { /* best effort */ }
           settleOnce(false);
         }, handshakeTimeoutMs);
+        unrefTimer(timer);
       }
       wsInstance.on("open", () => {
         this.logger.debug("[lark-ws]", "ws connect success");
@@ -483,9 +489,11 @@ export class LarkWsClient {
           return;
         }
         this.reconnectTimer = setTimeout(() => { void loopReConnect(count); }, reconnectInterval);
+        unrefTimer(this.reconnectTimer);
       };
       void loopReConnect(0);
     }, reconnectNonceTime);
+    unrefTimer(this.reconnectTimer);
   }
 
   private pingLoop(): void {
@@ -504,6 +512,7 @@ export class LarkWsClient {
       this.logger.trace("[lark-ws]", "ping success");
     }
     this.pingTimer = setTimeout(() => { this.pingLoop(); }, pingInterval);
+    unrefTimer(this.pingTimer);
   }
 
   private armLiveness(): void {
@@ -515,6 +524,7 @@ export class LarkWsClient {
       this.logger.warn("[lark-ws]", `no pong/inbound within ${pingTimeoutSec}s, terminating to trigger reconnect`);
       try { this.wsInstance?.terminate(); } catch { /* best effort */ }
     }, pingTimeoutSec * 1000);
+    unrefTimer(this.livenessTimer);
   }
 
   private clearLiveness(): void {
@@ -681,4 +691,4 @@ function parseQueryParams(urlString: string): Record<string, string> {
 }
 
 // Re-export for callers that need the enum.
-export { LarkDomain };
+export { LarkDomain, unrefTimer };
