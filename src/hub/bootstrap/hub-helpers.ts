@@ -1227,18 +1227,27 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
       return false;
     }
 
+    const payload = readPayloadRecord(step.payload);
     const revert = isRevertPayload(step.payload);
     if (!revert && !deps.registry.get(step.target)) {
       return false;
     }
 
+    const nextStatus = revert ? "installed" : "disabled";
+    const nowIso = deps.nowIso();
     await deps.memoryState.updateSkillStatus(
       step.target,
-      revert ? "installed" : "disabled",
+      nextStatus,
       revert
-        ? `auto-fix rollback @ ${deps.nowIso()}`
-        : `auto-fix disable_skill @ ${deps.nowIso()}`,
+        ? `auto-fix rollback @ ${nowIso}`
+        : `auto-fix disable_skill @ ${nowIso}`,
     );
+    if (payload) {
+      payload._skillDisabled = !revert;
+      payload._skillStatusAfter = nextStatus;
+      payload._skillStatusTarget = step.target;
+      payload._skillStatusAt = nowIso;
+    }
     return true;
   };
 
