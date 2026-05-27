@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      phase24e_telegram_workflow_candidate:
+        description: "Run the manual Phase24E Telegram channel-driven workflow-candidate approve/reject listener."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -257,3 +262,41 @@ jobs:
         with:
           name: phase24d-lark-feishu-trusted-inbound-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24d-lark-feishu-trusted-inbound
+
+  phase24e-telegram-workflow-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24e_telegram_workflow_candidate == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
+      FRIDAY_TELEGRAM_CHAT_ID: ${{ secrets.FRIDAY_TELEGRAM_CHAT_ID || vars.FRIDAY_TELEGRAM_CHAT_ID }}
+      FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
+      FRIDAY_TELEGRAM_MODE: ${{ secrets.FRIDAY_TELEGRAM_MODE || vars.FRIDAY_TELEGRAM_MODE }}
+      PHASE24E_TELEGRAM_LISTENER_TIMEOUT_MS: "720000"
+      PHASE24E_TELEGRAM_POLLING_TIMEOUT_SEC: "5"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Telegram operator reject + approve messages
+        run: PHASE24E_REPORT_ROOT="$RUNNER_TEMP/phase24e-telegram-workflow-candidate" npm run ops:phase24e:telegram-workflow-candidate
+
+      - name: Upload Phase24E Telegram workflow-candidate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24e-telegram-workflow-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24e-telegram-workflow-candidate
