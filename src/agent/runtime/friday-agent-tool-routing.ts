@@ -526,6 +526,9 @@ function classifyFridayToolRoutingProfile(input: {
   if (/\b(remember|memory|preference|preferences|recall|previously|past conversation|stored fact)\b|记住|记忆|偏好|之前|上次/u.test(text)) {
     return "memory";
   }
+  if (taskIsQaWithProvidedContext(text) && !taskLooksLikeCurrentOrExternalKnowledgeRequest(text)) {
+    return "general";
+  }
   if (/\b(browser|click|open page|navigate|login|interactive|screenshot|playwright|spa|reddit|twitter|x\.com)\b|浏览器|点击|打开网页|登录|截图/u.test(text)) {
     return "browser";
   }
@@ -571,6 +574,24 @@ function taskExplicitlyRequiresExecTool(task: string): boolean {
   return /\b(call|use)\s+the\s+`?exec`?\s+tool\b[\s\S]{0,200}\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b/i.test(task)
     || /\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b[\s\S]{0,200}\b(call|use)\s+the\s+`?exec`?\s+tool\b/i.test(task)
     || /`exec`\s+tool[\s\S]{0,200}\b(?:command|shell|terminal|workspace|path|file|directory|cat|find|grep|rg|sed|awk|npm|git)\b/i.test(task);
+}
+
+const QA_CONTEXT_VERBS =
+  /\b(summarize|summarise|explain|describe|overview|analyze|analyse|recap|compare|translate)\b/i;
+const QA_CONTEXT_VERBS_CN =
+  /(总结|概括|解释|描述|分析|对比|翻译|概述)/u;
+const EXPLICIT_EXTERNAL_ACTION =
+  /\b(open|visit|browse|go to|navigate|download|fetch from|look up on|search (?:the )?(?:web|internet|online))\b/i;
+
+function taskIsQaWithProvidedContext(task: string): boolean {
+  if (!QA_CONTEXT_VERBS.test(task) && !QA_CONTEXT_VERBS_CN.test(task)) return false;
+  if (EXPLICIT_EXTERNAL_ACTION.test(task)) return false;
+  if (/https?:\/\/\S+/i.test(task)) return false;
+  return true;
+}
+
+function taskLooksLikeCurrentOrExternalKnowledgeRequest(task: string): boolean {
+  return /\b(latest|current|today|news|source|sources|url|documentation|docs|release notes)\b|最新|今天|最近|新闻|资料|来源/u.test(task);
 }
 
 function buildToolRoutingIntentText(input: {

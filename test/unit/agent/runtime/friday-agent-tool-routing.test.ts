@@ -71,6 +71,35 @@ describe("resolveFridayAgentToolRouting", () => {
     expect(routing.selectedToolNames).toContain("web_search");
     expect(routing.selectedToolNames).not.toContain("read");
   });
+
+  it("keeps current-knowledge summary requests on the web profile", () => {
+    const routing = resolveFridayAgentToolRouting({
+      task: "Summarize the latest TypeScript release notes and include source URLs.",
+      tools,
+    });
+
+    expect(routing.profile).toBe("web");
+    expect(routing.selectedToolPacks).toEqual(["web"]);
+    expect(routing.selectedToolNames).toContain("web_search");
+  });
+
+  it("keeps provided-context summaries out of workflow tools even when the note mentions workflow automation", () => {
+    const routing = resolveFridayAgentToolRouting({
+      task: "Summarize this note in 3 bullet points only: Friday should answer normal summaries directly and must not enter workflow generation or approval planning mode.",
+      tools: [
+        ...tools,
+        tool("workflow_generate"),
+        tool("workflow_run"),
+        tool("cron"),
+      ],
+    });
+
+    expect(routing.profile).toBe("general");
+    expect(routing.selectedToolPacks).toEqual(["general"]);
+    expect(routing.selectedToolNames).not.toContain("workflow_generate");
+    expect(routing.selectedToolNames).not.toContain("workflow_run");
+    expect(routing.selectedToolNames).not.toContain("cron");
+  });
 });
 
 describe("searchFridayDeferredTools", () => {
