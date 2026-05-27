@@ -11,6 +11,7 @@ import type {
   FridayCreateProviderRequest,
   FridayCreateProviderResponse,
   FridayDeleteProviderResponse,
+  FridayGetProviderCapabilityHealthSnapshotResponse,
   FridayGetProviderDoctorResponse,
   FridayGetProviderHealthSnapshotResponse,
   FridayGetProviderResponse,
@@ -33,7 +34,17 @@ import type {
   FridayValidateProviderResponse,
 } from "../../model/friday-api-provider.types.js";
 
-import type { FridayModelRoutingConfig, FridayProviderLane, FridayProviderService } from "#providers";
+import type {
+  FridayModelRoutingConfig,
+  FridayProviderCapabilityHealthCapabilityItem,
+  FridayProviderCapabilityHealthSnapshotSummary,
+  FridayProviderHealthSnapshotItem,
+  FridayProviderLane,
+  FridayProviderProfile,
+  FridayProviderRuntimeCapabilityDeclaration,
+  FridayProviderService,
+  FridayRuntimeCapabilityId,
+} from "#providers";
 import {
   FRIDAY_PROVIDER_APIS,
   FRIDAY_PROVIDER_BACKEND_KINDS,
@@ -577,6 +588,149 @@ export function createFridayProviderRoutes(
     return { items };
   }
 
+  function summarizeCapabilityHealth(
+    items: FridayGetProviderCapabilityHealthSnapshotResponse["items"],
+  ): FridayProviderCapabilityHealthSnapshotSummary {
+    const summary: FridayProviderCapabilityHealthSnapshotSummary = {
+      available: 0,
+      setupNeeded: 0,
+      proofPending: 0,
+      disabled: 0,
+      unsupported: 0,
+    };
+    for (const item of items) {
+      for (const capability of item.capabilities) {
+        if (capability.state === "available") summary.available += 1;
+        if (capability.state === "setup_needed") summary.setupNeeded += 1;
+        if (capability.state === "proof_pending") summary.proofPending += 1;
+        if (capability.state === "disabled") summary.disabled += 1;
+        if (capability.state === "unsupported") summary.unsupported += 1;
+      }
+    }
+    return summary;
+  }
+
+  function providerHealthCapabilityBlock(input: {
+    provider: FridayProviderProfile;
+    healthItem: FridayProviderHealthSnapshotItem | undefined;
+  }): Pick<FridayProviderCapabilityHealthCapabilityItem, "state" | "source" | "message"> | null {
+    const { provider, healthItem } = input;
+    const validationStatus = healthItem?.validationStatus ?? provider.config.validation?.status ?? "never";
+    const backendHealth = healthItem?.backendHealth ?? "status_unknown";
+    const authHealth = healthItem?.authHealth ?? "status_unknown";
+
+    if (!provider.enabled) {
+      return {
+        state: "disabled",
+        source: "provider_health_snapshot",
+        message: "Provider is disabled; enable it before this capability can be used.",
+      };
+    }
+    if (backendHealth === "unsupported" || authHealth === "unsupported") {
+      return {
+        state: "unsupported",
+        source: "provider_health_snapshot",
+        message: "Provider backend or auth mode is unsupported for this capability.",
+      };
+    }
+    if (backendHealth === "missing" || authHealth === "missing" || validationStatus === "failed") {
+      return {
+        state: "setup_needed",
+        source: "provider_health_snapshot",
+        message: provider.config.validation?.errorMessage
+          ?? "Provider setup or validation is failing; fix credentials or connection before claiming this capability.",
+      };
+    }
+    if (validationStatus !== "ok") {
+      return {
+        state: "setup_needed",
+        source: "provider_health_snapshot",
+        message: "Provider validation has not passed; validate credentials before claiming this capability.",
+      };
+    }
+    return null;
+  }
+
+  function runtimeCapabilityHealthState(
+    declaration: FridayProviderRuntimeCapabilityDeclaration,
+  ): Pick<FridayProviderCapabilityHealthCapabilityItem, "state" | "source" | "message"> {
+    if (declaration.status === "verified" && declaration.verified === true) {
+      return {
+        state: "available",
+        source: "runtime_capability_snapshot",
+        message: declaration.notes ?? "Capability is available because it passed a persisted capability doctor proof.",
+      };
+    }
+    if (declaration.status === "failed" || declaration.verified === false) {
+      return {
+        state: "setup_needed",
+        source: "runtime_capability_snapshot",
+        message: declaration.notes ?? "Capability failed its latest persisted proof; rerun setup or validation before use.",
+      };
+    }
+    return {
+      state: "proof_pending",
+      source: "declared_configuration",
+      message: declaration.notes ?? "Capability is declared but has not passed a persisted live proof yet.",
+    };
+  }
+
+  function deriveCapabilityHealthCapability(input: {
+    provider: FridayProviderProfile;
+    healthItem: FridayProviderHealthSnapshotItem | undefined;
+    declaration: FridayProviderRuntimeCapabilityDeclaration;
+  }): FridayProviderCapabilityHealthCapabilityItem {
+    const { provider, healthItem, declaration } = input;
+    const blockerCodes = Array.from(new Set(healthItem?.reasons ?? []));
+    const checkedAt = declaration.verifiedAt ?? provider.config.validation?.checkedAt;
+    const healthBlock = providerHealthCapabilityBlock({ provider, healthItem });
+    const state = healthBlock ?? runtimeCapabilityHealthState(declaration);
+    const base = {
+      capability: declaration.capability,
+      ...(declaration.model ? { model: declaration.model } : {}),
+      blockerCodes,
+      ...(checkedAt ? { checkedAt } : {}),
+      ...(declaration.verifiedAt ? { lastVerifiedAt: declaration.verifiedAt } : {}),
+    };
+    return {
+      ...base,
+      ...state,
+    };
+  }
+
+  async function listCapabilityHealthSnapshot(): Promise<FridayGetProviderCapabilityHealthSnapshotResponse> {
+    const providers = await deps.providerService.listProviders();
+    const health = await listHealthSnapshot();
+    const healthByProviderId = new Map(health.items.map((item) => [item.providerId, item]));
+    const items = providers.map((provider) => {
+      const declarations = provider.config.runtimeCapabilities?.length
+        ? provider.config.runtimeCapabilities
+        : [{
+            capability: "text" as FridayRuntimeCapabilityId,
+            ...(provider.defaultModel ?? provider.config.supportedModels[0]
+              ? { model: provider.defaultModel ?? provider.config.supportedModels[0] }
+              : {}),
+            status: "declared" as const,
+          }];
+      const healthItem = healthByProviderId.get(provider.id);
+      return {
+        providerId: provider.id,
+        providerKind: provider.kind,
+        providerName: provider.name,
+        lane: healthItem?.lane ?? (provider.enabled ? "standby" : "disabled"),
+        enabled: provider.enabled,
+        validationStatus: healthItem?.validationStatus ?? provider.config.validation?.status ?? "never",
+        capabilities: declarations.map((declaration) =>
+          deriveCapabilityHealthCapability({ provider, healthItem, declaration }),
+        ),
+      };
+    });
+    return {
+      items,
+      summary: summarizeCapabilityHealth(items),
+    };
+  }
+
   return [
     {
       operationId: "providers.templates.list",
@@ -622,6 +776,16 @@ export function createFridayProviderRoutes(
       auth: { public: true },
       async handler(): Promise<FridayGetProviderHealthSnapshotResponse> {
         return listHealthSnapshot();
+      },
+    },
+
+    {
+      operationId: "providers.capabilityHealth.list",
+      method: "GET",
+      path: "/v1/providers/capability-health",
+      auth: { public: true },
+      async handler(): Promise<FridayGetProviderCapabilityHealthSnapshotResponse> {
+        return listCapabilityHealthSnapshot();
       },
     },
 

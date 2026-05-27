@@ -12,6 +12,7 @@ import type {
   FridayProviderBackendKind,
   FridayProviderCliConfig,
   FridayProviderDoctorReport,
+  FridayProviderCapabilityHealthSnapshotItem,
   FridayProviderHealthSnapshotItem,
   FridayProviderRuntimeCapabilityDeclaration,
   FridayProviderRoutingExplainReport,
@@ -86,6 +87,17 @@ interface GetProviderResponse {
 
 interface GetProviderHealthSnapshotResponse {
   items: FridayProviderHealthSnapshotItem[];
+}
+
+interface GetProviderCapabilityHealthSnapshotResponse {
+  items: FridayProviderCapabilityHealthSnapshotItem[];
+  summary: {
+    available: number;
+    setupNeeded: number;
+    proofPending: number;
+    disabled: number;
+    unsupported: number;
+  };
 }
 
 interface RunCapabilityDoctorResponse {
@@ -226,6 +238,13 @@ export const providersApi = {
 
   async listHealth(): Promise<FridayProviderHealthSnapshotItem[]> {
     const data = await apiClient.get<GetProviderHealthSnapshotResponse>("/v1/providers/health");
+    return data.items;
+  },
+
+  async listCapabilityHealth(): Promise<FridayProviderCapabilityHealthSnapshotItem[]> {
+    const data = await apiClient.get<GetProviderCapabilityHealthSnapshotResponse>(
+      "/v1/providers/capability-health",
+    );
     return data.items;
   },
 

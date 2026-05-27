@@ -19,17 +19,19 @@ import { describe, expect, it } from "vitest";
  *  - The settings page already calls `providersApi.runCapabilityDoctor()`
  *    but previously only surfaced a count toast — the per-provider
  *    per-capability results were thrown away.
- *  - This slice captures those results into a per-provider state map
- *    and renders failures inline. NO new backend route, NO snapshot
- *    model restructure, NO change to the global provider "enabled" pill.
- *  - A full capability-health dashboard remains carry-forward.
+ *  - The persisted dashboard is now backed by /v1/providers/capability-health,
+ *    while the just-ran doctor result still renders inline until query
+ *    invalidation completes. The global provider "enabled" pill remains only
+ *    enabled/disabled.
  */
 
 const SETTINGS_PAGE_PATH = "ui/src/routes/settings-page.tsx" as const;
+const PROVIDERS_API_PATH = "ui/src/lib/api/providers.ts" as const;
 const PROVIDER_SERVICE_PATH = "src/providers/services/friday-provider-service.ts" as const;
 
 describe("provider capability-lane truth-label surface (B7 / FRI-AUD-012/013/014/017)", () => {
   const settingsSource = readFileSync(SETTINGS_PAGE_PATH, "utf8");
+  const providersApiSource = readFileSync(PROVIDERS_API_PATH, "utf8");
   const providerServiceSource = readFileSync(PROVIDER_SERVICE_PATH, "utf8");
 
   it("Test 1: backend doctor-probe still returns lane-specific reasons for the audit's named failures", () => {
@@ -95,18 +97,20 @@ describe("provider capability-lane truth-label surface (B7 / FRI-AUD-012/013/014
     expect(settingsSource).not.toContain("fully verified across all capabilities");
   });
 
-  it("Test 6: anchored to the audit findings via comment", () => {
+  it("Test 6: persisted capability-health dashboard uses a backend snapshot route", () => {
+    expect(providersApiSource).toContain('"/v1/providers/capability-health"');
+    expect(providersApiSource).toContain("listCapabilityHealth");
+    expect(settingsSource).toContain('queryKey: ["settings", "provider-capability-health"]');
+    expect(settingsSource).toContain('data-testid="provider-capability-health-dashboard"');
+    expect(settingsSource).toContain("labelForProviderCapabilityHealthState");
+    expect(settingsSource).toContain("setup_needed");
+    expect(settingsSource).toContain("proof_pending");
+  });
+
+  it("Test 7: anchored to the audit findings via comment", () => {
     expect(settingsSource).toContain("B7 / FRI-AUD-012/013/014/017 minimal UI lane-truth surface");
     // Tolerate `// ` line continuation between adjacent comment lines.
     expect(settingsSource).toMatch(/Backend doctor-probe\s+\/\/\s+already returns lane-specific truth-labels/);
-    expect(settingsSource).toContain("full capability-health dashboard");
-    expect(settingsSource).toContain("carry-forward");
-  });
-
-  it("Test 7: no new backend aggregation route was added (constraint preservation)", () => {
-    // Asserting absence of the routes the user explicitly said NOT to add.
-    expect(settingsSource).not.toContain("/v1/providers/capability-health");
-    expect(settingsSource).not.toContain("/v1/providers/lane-health");
-    expect(settingsSource).not.toContain("capabilityHealthSnapshot");
+    expect(settingsSource).toContain("backend-snapshot");
   });
 });

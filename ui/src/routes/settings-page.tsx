@@ -17,7 +17,7 @@ import { ChannelConfigForm } from "@/components/core/channel-config-form";
 import { DiscoveryPanel } from "@/components/core/discovery-panel";
 import { CHANNEL_META } from "@/lib/channels/channel-meta";
 import type { ChannelKind } from "@/lib/setup/types";
-import { type FridayModelRoutingConfig, type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityId, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
+import { type FridayModelRoutingConfig, type FridayProviderCapabilityHealthState, type FridayProviderKind, type FridayProviderProfile, type FridayRuntimeCapabilityId, type FridayRuntimeCapabilityState, ApiError } from "@/lib/api/types";
 import { assistantDiagnosticsApi } from "@/lib/api/assistant-diagnostics";
 import { channelsApi } from "@/lib/api/channels";
 import { healthApi } from "@/lib/api/health";
@@ -272,6 +272,29 @@ function toneForCapabilityState(value: FridayRuntimeCapabilityState): "neutral" 
   return "neutral";
 }
 
+function toneForProviderCapabilityHealthState(
+  value: FridayProviderCapabilityHealthState,
+): "neutral" | "success" | "warning" | "danger" {
+  if (value === "available") return "success";
+  if (value === "proof_pending" || value === "setup_needed") return "warning";
+  if (value === "disabled" || value === "unsupported") return "neutral";
+  return "neutral";
+}
+
+function labelForProviderCapabilityHealthState(
+  locale: AppLocale,
+  value: FridayProviderCapabilityHealthState,
+): string {
+  const labels: Record<FridayProviderCapabilityHealthState, string> = {
+    available: localize(locale, "可用", "available"),
+    setup_needed: localize(locale, "需配置", "setup needed"),
+    proof_pending: localize(locale, "待证明", "proof pending"),
+    disabled: localize(locale, "已停用", "disabled"),
+    unsupported: localize(locale, "不支持", "unsupported"),
+  };
+  return labels[value];
+}
+
 function labelForCapabilityState(locale: AppLocale, value: FridayRuntimeCapabilityState): string {
   const labels: Record<FridayRuntimeCapabilityState, string> = {
     available: localize(locale, "可用", "available"),
@@ -374,6 +397,13 @@ export function SettingsPage() {
   const { data: providerHealth = [] } = useQuery({
     queryKey: ["settings", "provider-health"],
     queryFn: () => providersApi.listHealth(),
+    retry: 0,
+    refetchInterval: 15_000,
+  });
+
+  const { data: providerCapabilityHealth = [] } = useQuery({
+    queryKey: ["settings", "provider-capability-health"],
+    queryFn: () => providersApi.listCapabilityHealth(),
     retry: 0,
     refetchInterval: 15_000,
   });
@@ -506,6 +536,7 @@ export function SettingsPage() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
       queryClient.invalidateQueries({ queryKey: ["settings", "provider-health"] }),
+      queryClient.invalidateQueries({ queryKey: ["settings", "provider-capability-health"] }),
       queryClient.invalidateQueries({ queryKey: ["settings", "routing-config"] }),
       queryClient.invalidateQueries({ queryKey: ["settings", "routing-explain"] }),
       queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] }),
@@ -712,9 +743,9 @@ export function SettingsPage() {
   // wired, etc.) — we just stop throwing that data away in favor of a
   // toast count. The global provider pill semantics are unchanged. The
   // advisory only appears for lanes whose status !== "verified".
-  // Per the 2026-05-26 operator directive: full capability-health dashboard
-  // remains carry-forward; this slice does NOT add a new backend route or
-  // restructure the snapshot model.
+  // The persisted capability-health dashboard below is backend-snapshot
+  // driven; this transient map only keeps the latest just-ran doctor output
+  // visible before query invalidation completes.
   type ProviderLaneAdvisory = {
     capability: FridayRuntimeCapabilityId;
     status: "verified" | "declared" | "failed" | "unsupported";
@@ -751,6 +782,7 @@ export function SettingsPage() {
         queryClient.invalidateQueries({ queryKey: ["settings", "health"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "providers"] }),
         queryClient.invalidateQueries({ queryKey: ["settings", "provider-health"] }),
+        queryClient.invalidateQueries({ queryKey: ["settings", "provider-capability-health"] }),
       ]);
     },
     onError: (error) => {
@@ -1235,6 +1267,7 @@ export function SettingsPage() {
                   {(() => {
                     const template = providerTemplates.find((item) => item.providerKind === provider.kind);
                     const healthItem = providerHealth.find((item) => item.providerId === provider.id);
+                    const capabilityHealthItem = providerCapabilityHealth.find((item) => item.providerId === provider.id);
                     const remediationVerdict = healthItem
                       ? classifyFridayProviderDoctorRemediation({
                           enabled: provider.enabled,
@@ -1290,6 +1323,39 @@ export function SettingsPage() {
                   ) : null}
                   {healthItem?.suggestedAction ? (
                     <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">{healthItem.suggestedAction}</p>
+                  ) : null}
+                  {capabilityHealthItem?.capabilities.length ? (
+                    <div data-testid="provider-capability-health-dashboard" className="mt-3 rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+                          {localize(locale, "能力健康", "Capability health")}
+                        </p>
+                        <StatusPill tone={toneForProviderLane(capabilityHealthItem.lane)}>
+                          {capabilityHealthItem.lane}
+                        </StatusPill>
+                      </div>
+                      <ul className="mt-2 space-y-2">
+                        {capabilityHealthItem.capabilities.map((capability) => (
+                          <li key={`${capability.capability}-${capability.model ?? "any"}`} className="text-xs">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <StatusPill tone={toneForProviderCapabilityHealthState(capability.state)}>
+                                {labelForProviderCapabilityHealthState(locale, capability.state)}
+                              </StatusPill>
+                              <span className="font-medium text-[color:var(--color-text-primary)]">
+                                {capability.capability}{capability.model ? ` · ${capability.model}` : ""}
+                              </span>
+                              <span className="text-[color:var(--color-text-faint)]">{capability.source}</span>
+                            </div>
+                            <p className="mt-1 leading-5 text-[color:var(--color-text-secondary)]">{capability.message}</p>
+                            {capability.lastVerifiedAt ? (
+                              <p className="mt-1 text-[10px] text-[color:var(--color-text-faint)]">
+                                {localize(locale, "上次证明：", "Last proof: ")}{formatTimestamp(capability.lastVerifiedAt)}
+                              </p>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ) : null}
                   {/*
                    * B7 / FRI-AUD-012/013/014/017 minimal lane-truth surface:

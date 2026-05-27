@@ -391,7 +391,7 @@ describe("FridayProviderRoutes", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(22);
+    expect(routes).toHaveLength(23);
   });
 
   it("has correct operation ids", () => {
@@ -1266,6 +1266,90 @@ describe("FridayProviderRoutes", () => {
       });
     });
 
+    it("lists capability health from persisted snapshots without running live probes", async () => {
+      const mockService = makeMockService();
+      const verifiedProfile: FridayProviderProfile = {
+        ...sampleProfile,
+        config: {
+          ...sampleProfile.config,
+          runtimeCapabilities: [
+            {
+              capability: "text",
+              model: "gpt-4o",
+              status: "verified",
+              verified: true,
+              verifiedAt: NOW,
+              notes: "Capability passed a live standardized probe.",
+            },
+          ],
+        },
+      };
+      const pendingProfile: FridayProviderProfile = {
+        ...anthropicOauthProfile,
+        config: {
+          ...anthropicOauthProfile.config,
+          validation: { status: "ok", checkedAt: NOW },
+          runtimeCapabilities: [
+            {
+              capability: "vision",
+              model: "claude-sonnet-4-20250514",
+              status: "declared",
+            },
+          ],
+        },
+      };
+      const disabledProfile: FridayProviderProfile = {
+        ...openAICodexOauthProfile,
+        enabled: false,
+        config: {
+          ...openAICodexOauthProfile.config,
+          validation: { status: "never" },
+          runtimeCapabilities: [
+            {
+              capability: "text",
+              model: "gpt-5.4-mini",
+              status: "declared",
+            },
+          ],
+        },
+      };
+      mockService.listProviders = vi.fn(async () => [verifiedProfile, pendingProfile, disabledProfile]);
+      mockService.doctorProvider = vi.fn(async (providerId: string) => ({
+        providerId,
+        providerKind: providerId === "anth-001" ? "anthropic" as const : providerId === "codex-001" ? "openai-codex" as const : "openai" as const,
+        backendKind: providerId === "codex-001" ? "cli" as const : "http" as const,
+        authMode: providerId === "prov-001" ? "api-key" as const : "oauth" as const,
+        checkedAt: NOW,
+        backendHealth: "healthy" as const,
+        authHealth: providerId === "codex-001" ? "missing" as const : "healthy" as const,
+        routingEligible: providerId !== "codex-001",
+        reasons: providerId === "codex-001" ? ["validation_unverified"] : [],
+      }));
+      const routes = createFridayProviderRoutes({ providerService: mockService });
+      const route = routes.find((entry) => entry.operationId === "providers.capabilityHealth.list")!;
+
+      const result = await route.handler(makeCtx());
+      const items = (result as { items: Array<{ providerId: string; capabilities: Array<{ state: string; source: string }> }>; summary: Record<string, number> }).items;
+
+      expect(mockService.runCapabilityDoctor).not.toHaveBeenCalled();
+      expect(items.find((item) => item.providerId === "prov-001")?.capabilities[0]).toMatchObject({
+        state: "available",
+        source: "runtime_capability_snapshot",
+      });
+      expect(items.find((item) => item.providerId === "anth-001")?.capabilities[0]).toMatchObject({
+        state: "proof_pending",
+        source: "declared_configuration",
+      });
+      expect(items.find((item) => item.providerId === "codex-001")?.capabilities[0]).toMatchObject({
+        state: "disabled",
+      });
+      expect((result as { summary: { available: number; proofPending: number; disabled: number } }).summary).toMatchObject({
+        available: 1,
+        proofPending: 1,
+        disabled: 1,
+      });
+    });
+
     it("includes OAuth route operation ids", () => {
       const routes = createFridayProviderRoutes({
         providerService: makeMockService(),
@@ -1273,6 +1357,7 @@ describe("FridayProviderRoutes", () => {
       const operationIds = routes.map((r) => r.operationId);
       expect(operationIds).toContain("providers.templates.list");
       expect(operationIds).toContain("providers.health.list");
+      expect(operationIds).toContain("providers.capabilityHealth.list");
       expect(operationIds).toContain("auth.oauth.anthropic.initiate");
       expect(operationIds).toContain("auth.oauth.anthropic.callback");
       expect(operationIds).toContain("auth.oauth.openai.codex.device.initiate");
