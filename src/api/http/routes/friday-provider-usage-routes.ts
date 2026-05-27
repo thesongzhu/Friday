@@ -1,4 +1,4 @@
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 
 import type {
   FridayGetBudgetStatusResponse,
@@ -9,12 +9,27 @@ import type {
 
 import type { FridayProviderService } from "#providers";
 import { FridayDomainError } from "#errors";
+import {
+  type FridayCanonicalApprovalResolution,
+  type FridayMutatingActionActor,
+  type FridayMutatingActionGate,
+  type FridayMutatingActionTicket,
+} from "../../../security/friday-mutating-action-gate.js";
+import { createFridayProviderSetupMutatingActionRequest } from "./friday-provider-routes.js";
 
 // ─── Dependencies ───
 
 export interface FridayProviderUsageRoutesDeps {
   providerService: FridayProviderService;
+  canonicalMutationGate?: FridayMutatingActionGate;
+  providerMutationGateRequired?: boolean;
 }
+
+type BudgetMutationBody = FridaySetBudgetConfigRequest & {
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
+};
 
 // ─── Budget validation ───
 
@@ -44,6 +59,116 @@ function getDefaultUtcUsageRange(receivedAt: string | undefined): { from: string
     from: `${to.slice(0, 7)}-01`,
     to,
   };
+}
+
+function createActorFromPrincipal(
+  principal: FridayAuthPrincipal | null,
+  fallbackId: string,
+): FridayMutatingActionActor {
+  if (!principal) {
+    return {
+      kind: "api",
+      id: fallbackId,
+      principalId: fallbackId,
+    };
+  }
+  return {
+    kind: principal.principalType,
+    id: principal.principalId,
+    principalId: principal.principalId,
+  };
+}
+
+function readCanonicalApproval(value: unknown): FridayCanonicalApprovalResolution | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as FridayCanonicalApprovalResolution;
+  }
+  throw new FridayDomainError("VALIDATION_ERROR", "canonicalApproval must be an object", { httpStatus: 400 });
+}
+
+function canonicalGateEvidence(ticket: FridayMutatingActionTicket | undefined): {
+  ticketId: string;
+  actionDigest: string;
+  approvalId: string;
+  planDigest?: string;
+} | undefined {
+  if (!ticket) {
+    return undefined;
+  }
+  return {
+    ticketId: ticket.ticketId,
+    actionDigest: ticket.actionDigest,
+    approvalId: ticket.approvalId,
+    planDigest: ticket.planDigest,
+  };
+}
+
+function withCanonicalGate<T extends object>(
+  payload: T,
+  ticket: FridayMutatingActionTicket | undefined,
+): T & { canonicalGate?: NonNullable<ReturnType<typeof canonicalGateEvidence>> } {
+  const evidence = canonicalGateEvidence(ticket);
+  return evidence ? { ...payload, canonicalGate: evidence } : payload;
+}
+
+function maybeRequireBudgetMutationTicket(input: {
+  deps: FridayProviderUsageRoutesDeps;
+  ctx: { requestId: string; principal: FridayAuthPrincipal | null };
+  body: BudgetMutationBody;
+}): FridayMutatingActionTicket | undefined {
+  if (!input.deps.providerMutationGateRequired) {
+    return undefined;
+  }
+  if (!input.deps.canonicalMutationGate) {
+    throw new FridayDomainError(
+      "PROVIDER_MUTATION_CANONICAL_GATE_UNAVAILABLE",
+      "Provider budget mutations require the canonical approval gate in this profile.",
+      { httpStatus: 503 },
+    );
+  }
+  if (!input.body.planDigest) {
+    throw new FridayDomainError(
+      "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED",
+      "Provider budget mutations require an approved plan digest in this profile.",
+      { httpStatus: 403, details: { action: "providers.budget.set", resourceId: "llm.budget.v1" } },
+    );
+  }
+
+  const parameters = { monthlyLimitUsd: input.body.monthlyLimitUsd };
+  const request = createFridayProviderSetupMutatingActionRequest({
+    action: "providers.budget.set",
+    actor: createActorFromPrincipal(input.ctx.principal, `api:${input.ctx.requestId}`),
+    surface: "api:/v1/providers/budget",
+    resourceId: "llm.budget.v1",
+    parameters,
+    planDigest: input.body.planDigest,
+    idempotencyKey: input.body.idempotencyKey,
+  });
+  const gateResult = input.deps.canonicalMutationGate.evaluate({
+    ...request,
+    canonicalApproval: readCanonicalApproval(input.body.canonicalApproval),
+  });
+  if (gateResult.decision !== "allow" || !gateResult.ticket) {
+    throw new FridayDomainError(
+      gateResult.decision === "requires_approval"
+        ? "CANONICAL_APPROVAL_REQUIRED"
+        : "CANONICAL_APPROVAL_DENIED",
+      gateResult.decision === "requires_approval"
+        ? "Provider budget mutation requires canonical approval before any budget setting is changed."
+        : `Provider budget mutation was blocked by the canonical approval gate: ${gateResult.reason}`,
+      {
+        httpStatus: 403,
+        details: {
+          canonicalGate: gateResult.evidenceRecord,
+          actionDigest: gateResult.actionDigest,
+        },
+      },
+    );
+  }
+  return gateResult.ticket;
 }
 
 // ─── Factory ───
@@ -124,9 +249,12 @@ export function createFridayProviderUsageRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridaySetBudgetConfigResponse> {
         validateBudgetBody(ctx.body);
-        const body = ctx.body;
-        const budget = await deps.providerService.setBudgetConfig(body);
-        return { budget };
+        const body = ctx.body as BudgetMutationBody;
+        const ticket = maybeRequireBudgetMutationTicket({ deps, ctx, body });
+        const budget = await deps.providerService.setBudgetConfig({
+          monthlyLimitUsd: body.monthlyLimitUsd,
+        });
+        return withCanonicalGate({ budget }, ticket);
       },
     },
   ];

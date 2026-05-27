@@ -90,6 +90,14 @@ Configure it in Setup -> Capabilities -> OCR. After that I will run a sample ima
 
 The matrix above is the structured contract. The following three plain-language headlines summarize the current public `1.0.2` npm/source boundary in operator-readable terms and are the canonical wording the rest of the product surface (UI copy, release notes, docs) must align with:
 
+Source-truth delta after the immutable npm `1.0.2` package: GitHub-visible main
+has subsequently closed deterministic DP-10 personal-secretary loop proof
+(PR #352), skill/link lifecycle proof (PR #353), repair/upgrade/retry-audit
+proof (PR #354), and Memory cognition v1 proof (PR #355). Current source also
+gates provider budget changes through canonical mutation approval in protected
+profiles and keeps package/npm truth separate. Do not read these source closures
+as already published npm `1.0.2` behavior.
+
 ### What Friday Can Do Today
 
 In `1.0.2`, Friday can run the local-first runtime described in the matrix above: configured chat and task execution, BYOK provider routing for text / vision / OCR / embeddings / web search where the lane is provider-configured and verified, PDF and file work inside scoped paths, browser/desktop control inside the operator-approved boundary, MCP server discovery against connected servers, skill and workflow lifecycle through the candidate → sandbox → approval → register → doctor-verify path, supervised self-healing with bounded auto-fix and rollback, configured trusted-channel inbound on Discord/Telegram/Lark+Feishu (proven on the `1.0.2` release SHA via same-SHA Real Green Gate channel artifacts), memory and learned-preference surfaces, and operator-visible audit/evidence/observability. "Today" means available in the released runtime; "should be able to" is not the same as "today" and stays in the matrix or roadmap.

@@ -174,17 +174,34 @@ function providerStatusBadge(item: ProviderHealthItem, locale: import("@/lib/i18
   return <StatusPill tone="warning">{localize(locale, "需关注", "Needs attention")}</StatusPill>;
 }
 
-function budgetStatusBadge(status: FridayLlmBudgetStatus["state"], locale: import("@/lib/i18n/localized-text").AppLocale) {
+export function budgetStatusTone(status: FridayLlmBudgetStatus["state"]): "success" | "warning" | "danger" | undefined {
   switch (status) {
     case "ok":
-      return <StatusPill tone="success">{localize(locale, "预算正常", "Budget OK")}</StatusPill>;
+      return "success";
     case "near_limit":
-      return <StatusPill tone="warning">{localize(locale, "接近上限", "Near limit")}</StatusPill>;
+      return "warning";
     case "over_limit":
-      return <StatusPill tone="danger">{localize(locale, "超出上限", "Over limit")}</StatusPill>;
+      return "danger";
     default:
-      return <StatusPill>{localize(locale, "未知", "Unknown")}</StatusPill>;
+      return undefined;
   }
+}
+
+export function budgetStatusLabel(status: FridayLlmBudgetStatus["state"], locale: import("@/lib/i18n/localized-text").AppLocale): string {
+  switch (status) {
+    case "ok":
+      return localize(locale, "预算正常", "Budget OK");
+    case "near_limit":
+      return localize(locale, "接近上限", "Near limit");
+    case "over_limit":
+      return localize(locale, "超出上限", "Over limit");
+    default:
+      return localize(locale, "未知", "Unknown");
+  }
+}
+
+function budgetStatusBadge(status: FridayLlmBudgetStatus["state"], locale: import("@/lib/i18n/localized-text").AppLocale) {
+  return <StatusPill tone={budgetStatusTone(status)}>{budgetStatusLabel(status, locale)}</StatusPill>;
 }
 
 // Re-export from extracted chart module for direct use

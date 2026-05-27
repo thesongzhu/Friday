@@ -7,6 +7,22 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+- Source truth after the immutable npm `1.0.2` package now includes deterministic
+  closures for DP-10 personal-secretary loop proof (PR #352), Skill +
+  link-to-skill lifecycle proof (PR #353), repair/self-upgrade/retry-audit proof
+  (PR #354), and Memory cognition v1 proof (PR #355). These are GitHub-main
+  closures, not npm `1.0.2` package truth.
+- Provider budget configuration writes now share the protected provider mutation
+  boundary: in canonical-gate-required profiles, `PUT /v1/providers/budget`
+  requires an approved plan digest and canonical approval before changing the
+  budget setting, returns gate evidence, and strips approval control fields
+  instead of persisting them into budget config.
+- Usage & Cost source/UI proof now keeps near-limit and over-limit budget states
+  visibly distinct. This supports cost-control truth without claiming hidden
+  spend prevention beyond the configured budget/routing policy.
+- No npm publish is included in this source change. Public npm package alignment
+  still requires an explicit operator-approved future release.
+
 ## [1.0.2] — Post-Release Hardening Wave — 2026-05-26
 
 `1.0.2` accumulates the post-release hardening queue on top of `1.0.1`.

@@ -115,35 +115,42 @@ the release-closure plan's runtime-delta classification report.
 ## Dogfood Closure And Proof-Pending Headlines
 
 The dogfood gate for `1.0.1` closed as `dogfood_partial_pass` with weighted UX
-score 7.78/10 (below the 8.0 `dogfood_pass` threshold), and these headlines
-remain carried forward in `1.0.2`. The following
-capabilities are wired with fail-closed lifecycle gates but end-to-end execution
-is `proof_pending` and explicitly carried forward for a subsequent dogfood pass:
+score 7.78/10 (below the 8.0 `dogfood_pass` threshold). The published npm
+`1.0.2` package still carries the original proof-pending headlines. GitHub-visible
+source after `1.0.2` has narrowed several of them with PR #350 through PR #355
+and the provider/cost source slice below, but those source changes are **not**
+npm package truth until a future authorized publish. Current source truth:
 
-1. Autonomous self-repair end-to-end execute → rollback (lifecycle exists; no
-   autonomy-detected runtime incident occurred during the dogfood test instance)
-2. Autonomous self-upgrade actual mutation (lifecycle visible; no proposal
-   triggered during the test instance)
-3. Skill install / update / delete through the canonical-approval workflow
-   (gates fail-closed at `SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED`,
-   `SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED`,
-   `SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED`; canonical-approval flow setup
-   remains out of scope for the current dogfood evidence)
-4. End-to-end link-to-skill candidate → tests → approval → run (scan-local
-   works; install gate prevents URL trust bypass; full end-to-end run is
-   carried forward)
-5. Queue/retry end-to-end receipt loop with a retry-eligible incident (read
-   endpoints work; no retry-eligible incident was triggered)
-6. Audit tamper-negative on a disposable test ledger (read endpoints work;
-   tamper-negative round-trip carried forward)
-7. R1 Lark phase24d listener-shutdown bug (listener writes `status=passed`
-   correctly but the WebSocket holds the event loop open; non-correctness;
-   artifact is durable; roadmap follow-up)
-8. Speed/cost end-to-end `near_limit` / `over_limit` UI surfacing (primitives
-   wired; full flow not exercised end-to-end)
-9. Memory per-item `confidence` and `last_accessed` field surfacing (ranking,
-   score, and access-count work; per-item `confidence` not yet surfaced in the
-   API shape)
+1. Autonomous self-repair execute → rollback: deterministic skill-drift and
+   route rollback receipt mechanics are closed on GitHub main by PR #351 and
+   PR #354. Live-provider and UI/channel repair dogfood remain separate.
+2. Autonomous self-upgrade actual mutation: workflow lifecycle shadow/canary/
+   promote/rollback now requires canonical mutation approval by PR #354. A
+   product-discovered live mutation remains separate.
+3. Skill install / update / delete through canonical approval: deterministic
+   import/stage, promote/run, update, rollback, and Review Center candidate
+   boundaries are closed on GitHub main by PR #353. Live external-channel and
+   npm package truth remain separate.
+4. Link-to-skill candidate → tests → approval → run: controlled link staging,
+   evidence extraction, private/local URL denial, restart run, and rollback
+   cleanup are closed on GitHub main by PR #353. Arbitrary live-web/channel
+   proof and npm package truth remain separate.
+5. Queue/retry receipt loop: deterministic retry-to-audit append is closed on
+   GitHub main by PR #354. User-visible retry final-state dogfood remains
+   separate.
+6. Audit tamper-negative: disposable retry/audit tamper detection is closed on
+   GitHub main by PR #354. Broader user-visible audit UX can be proven later.
+7. R1 Lark phase24d listener shutdown: source cleanup is closed on GitHub main
+   by PR #350. npm `1.0.2` does not contain it.
+8. Speed/cost `near_limit` / `over_limit`: current source routes expose live
+   budget/usage/provider-health data, the Usage page has explicit near-limit
+   and over-limit labels, and provider budget writes require canonical mutation
+   approval in gate-required profiles. Provider/cost dashboard polish and npm
+   package truth remain separate.
+9. Memory cognition v1: guarded recall, ranking, PII redaction, non-destructive
+   sync, restart/recovery, and duplicate-row non-merge proof are closed on
+   GitHub main by PR #355. Destructive dedup merge/block policy, live external
+   memory dogfood, and npm package truth remain separate.
 
 These are truth-labeled, not silent passes. None contradict the safe claim
 above.
