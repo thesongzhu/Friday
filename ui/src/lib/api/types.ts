@@ -2128,6 +2128,34 @@ export interface FridayProviderHealthSnapshotItem {
   suggestedAction: string;
 }
 
+export type FridayProviderCapabilityHealthState =
+  | "available"
+  | "setup_needed"
+  | "proof_pending"
+  | "disabled"
+  | "unsupported";
+
+export interface FridayProviderCapabilityHealthCapabilityItem {
+  capability: FridayRuntimeCapabilityId;
+  model?: string;
+  state: FridayProviderCapabilityHealthState;
+  source: "runtime_capability_snapshot" | "provider_health_snapshot" | "declared_configuration";
+  message: string;
+  blockerCodes: string[];
+  checkedAt?: string;
+  lastVerifiedAt?: string;
+}
+
+export interface FridayProviderCapabilityHealthSnapshotItem {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  providerName: string;
+  lane: "primary" | "fallback" | "standby" | "disabled";
+  enabled: boolean;
+  validationStatus: "never" | "ok" | "failed";
+  capabilities: FridayProviderCapabilityHealthCapabilityItem[];
+}
+
 export interface FridayModelRoutingConfig {
   defaultProviderId: string;
   defaultModel?: string;

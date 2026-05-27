@@ -10,6 +10,8 @@ import type {
   FridayProviderAuthMode,
   FridayProviderBackendKind,
   FridayProviderCapabilityDoctorReport,
+  FridayProviderCapabilityHealthSnapshotItem,
+  FridayProviderCapabilityHealthSnapshotSummary,
   FridayProviderCliConfig,
   FridayProviderDeploymentKind,
   FridayProviderDoctorReport,
@@ -109,6 +111,11 @@ export interface FridayGetProviderResponse {
 
 export interface FridayGetProviderHealthSnapshotResponse {
   items: FridayProviderHealthSnapshotItem[];
+}
+
+export interface FridayGetProviderCapabilityHealthSnapshotResponse {
+  items: FridayProviderCapabilityHealthSnapshotItem[];
+  summary: FridayProviderCapabilityHealthSnapshotSummary;
 }
 
 export type FridayRunCapabilityDoctorResponse = FridayProviderCapabilityDoctorReport & {

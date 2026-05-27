@@ -530,6 +530,47 @@ export interface FridayProviderCapabilityDoctorReport {
   capabilityResults: FridayProviderCapabilityDoctorProbeResult[];
 }
 
+export type FridayProviderCapabilityHealthState =
+  | "available"
+  | "setup_needed"
+  | "proof_pending"
+  | "disabled"
+  | "unsupported";
+
+export type FridayProviderCapabilityHealthSource =
+  | "runtime_capability_snapshot"
+  | "provider_health_snapshot"
+  | "declared_configuration";
+
+export interface FridayProviderCapabilityHealthCapabilityItem {
+  capability: FridayRuntimeCapabilityId;
+  model?: string;
+  state: FridayProviderCapabilityHealthState;
+  source: FridayProviderCapabilityHealthSource;
+  message: string;
+  blockerCodes: string[];
+  checkedAt?: string;
+  lastVerifiedAt?: string;
+}
+
+export interface FridayProviderCapabilityHealthSnapshotItem {
+  providerId: string;
+  providerKind: FridayProviderKind;
+  providerName: string;
+  lane: FridayProviderLane;
+  enabled: boolean;
+  validationStatus: FridayProviderValidationState["status"];
+  capabilities: FridayProviderCapabilityHealthCapabilityItem[];
+}
+
+export interface FridayProviderCapabilityHealthSnapshotSummary {
+  available: number;
+  setupNeeded: number;
+  proofPending: number;
+  disabled: number;
+  unsupported: number;
+}
+
 export type FridayProviderLane =
   | "primary"
   | "fallback"
