@@ -2624,6 +2624,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // stays readable without being correctness-critical for dispatch.
   for (const route of createFridayProviderUsageRoutes({
     providerService: deps.providerService,
+    canonicalMutationGate,
+    providerMutationGateRequired,
   })) {
     routes.register(route);
   }

@@ -73,6 +73,9 @@ export interface FridaySetRoutingConfigRequest {
 
 export interface FridaySetBudgetConfigRequest {
   monthlyLimitUsd: number;
+  planDigest?: string;
+  idempotencyKey?: string;
+  canonicalApproval?: unknown;
 }
 
 export interface FridayRunCapabilityDoctorRequest {
@@ -199,6 +202,7 @@ export interface FridayGetBudgetStatusResponse {
 
 export interface FridaySetBudgetConfigResponse {
   budget: FridayLlmBudgetConfig;
+  canonicalGate?: FridayProviderCanonicalGateEvidence;
 }
 
 // ─── OAuth types ───

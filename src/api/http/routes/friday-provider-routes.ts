@@ -403,7 +403,11 @@ export function createFridayProviderSetupMutatingActionRequest(input: {
     actor: input.actor,
     surface: input.surface,
     resource: {
-      type: input.action.startsWith("providers.routing.") ? "provider_routing" : "provider_setup",
+      type: input.action.startsWith("providers.routing.")
+        ? "provider_routing"
+        : input.action.startsWith("providers.budget.")
+          ? "provider_budget"
+          : "provider_setup",
       id: input.resourceId,
       digest: hashStableJson(sanitizedParameters),
       attributes: {
@@ -421,7 +425,7 @@ export function createFridayProviderSetupMutatingActionRequest(input: {
         guardId: "provider_setup_mutation_guard",
         decision: "requires_approval",
         risk: "high",
-        reason: "provider_setup_or_routing_mutation_requires_canonical_approval",
+        reason: "provider_setup_routing_or_budget_mutation_requires_canonical_approval",
       },
     ],
   };
