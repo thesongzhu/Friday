@@ -60,6 +60,8 @@ export {
   createFridayCodeRepoConverter,
   createFridayDiscoveryIntegrationConverter,
   FRIDAY_DEFAULT_CONVERTER_FACTORIES,
+  createFridayLinkEvidenceSkillConverter,
+  FRIDAY_LINK_EVIDENCE_SKILL_PAYLOAD_SCHEMA,
   createNativeSkillPackageConverter,
   createFridayN8nNodeConverter,
   createFridayOpenAiGptActionConverter,
@@ -69,6 +71,7 @@ export {
 
 export type {
   OpenAiGptActionConverterOptions,
+  FridayLinkEvidenceSkillPayload,
 } from "./converters/index.js";
 
 export type {

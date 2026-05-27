@@ -101,12 +101,13 @@ describe("validateFridayDeepLink", () => {
       expect(result.payload.skillSource?.url).toBe("https://example.com/skill-repo?redacted=1");
     });
 
-    it("warns on private URL", () => {
+    it("blocks private URL skill sources", () => {
       const result = validateFridayDeepLink(makePayload({
         type: "skill-source",
         skillSource: { url: "http://localhost:3000/skill" },
       }));
-      expect(result.verdict).toBe("needs_review");
+      expect(result.verdict).toBe("blocked");
+      expect(result.checks.some((c) => c.level === "blocking" && c.id === "skill-url-private")).toBe(true);
     });
   });
 
@@ -202,7 +203,8 @@ describe("validateFridayDeepLink", () => {
           type: "skill-source",
           skillSource: { url },
         }));
-        expect(result.checks.some((c) => c.level === "warning" && c.summary.toLowerCase().includes("private"))).toBe(true);
+        expect(result.verdict).toBe("blocked");
+        expect(result.checks.some((c) => c.id === "skill-url-private" && c.level === "blocking")).toBe(true);
       });
     }
 
@@ -219,8 +221,8 @@ describe("validateFridayDeepLink", () => {
         type: "skill-source",
         skillSource: { url: "not-a-url" },
       }));
-      // Should either block or warn
-      expect(result.checks.some((c) => c.level === "warning" || c.level === "blocking")).toBe(true);
+      expect(result.verdict).toBe("blocked");
+      expect(result.checks.some((c) => c.id === "skill-url-private" && c.level === "blocking")).toBe(true);
     });
   });
 

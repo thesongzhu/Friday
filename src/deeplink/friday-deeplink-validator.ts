@@ -169,7 +169,12 @@ function validateSkillSource(
   if (!source.url) {
     checks.push({ id: "skill-url", label: "Source URL", level: "blocking", summary: "Skill source URL is required." });
   } else if (isPrivateUrl(source.url)) {
-    checks.push({ id: "skill-url-private", label: "Source URL", level: "warning", summary: "Source URL points to a private/local address." });
+    checks.push({
+      id: "skill-url-private",
+      label: "Source URL",
+      level: "blocking",
+      summary: "Source URL points to a private/local address and cannot be used for skill-source deep-link staging.",
+    });
   }
   permissions.push("Will stage an external skill candidate for review.");
   permissions.push("Skill will not be installed or made available until lifecycle validation, approval, and promotion complete.");
