@@ -7,6 +7,7 @@ import {
   Clock3,
   Command,
   Pin,
+  RotateCcw,
   Sparkles,
   TriangleAlert,
   Wrench,
@@ -256,6 +257,9 @@ export function HomePage() {
     title: string;
     detail: string;
   } | null>(null);
+  const [selfRepairRollbackTarget, setSelfRepairRollbackTarget] = useState<{
+    actionId: string;
+  } | null>(null);
   const [showSetupReadiness, setShowSetupReadiness] = useState(() => {
     const state = location.state as { starterSource?: string } | null;
     return state?.starterSource === "setup" || window.sessionStorage.getItem(FRIDAY_SETUP_READINESS_SESSION_KEY) === "1";
@@ -303,6 +307,12 @@ export function HomePage() {
     mutationFn: () => learningApi.runReadyAutoFixActions({ maxRiskTier: 1, limit: 50 }),
     onSuccess: (result) => {
       const { summary } = result;
+      const rollbackCandidate = result.executed.find((item) =>
+        item.result.success && item.action.summary.rollbackPlanAvailable,
+      );
+      setSelfRepairRollbackTarget(
+        rollbackCandidate ? { actionId: rollbackCandidate.action.summary.actionId } : null,
+      );
       let title: string;
       if (summary.failed > 0) {
         title = localize(
@@ -336,9 +346,49 @@ export function HomePage() {
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : String(error);
+      setSelfRepairRollbackTarget(null);
       setSelfRepairNotice({
         tone: "danger",
         title: localize(locale, "自我修复没有启动", "Self-repair did not start"),
+        detail: message,
+      });
+    },
+  });
+  const selfRepairRollbackMutation = useMutation({
+    mutationFn: (input: { actionId: string }) =>
+      learningApi.rollbackAutoFixAction({
+        actionId: input.actionId,
+        reason: "Home supervised repair rollback",
+      }),
+    onSuccess: (result) => {
+      setSelfRepairRollbackTarget(null);
+      setSelfRepairNotice({
+        tone: result.result.rollbackSucceeded ? "success" : "warning",
+        title: result.result.rollbackSucceeded
+          ? localize(locale, "已回滚刚才的修复", "Rolled back the repair")
+          : localize(locale, "已尝试回滚，请检查证据", "Rollback attempted; review evidence"),
+        detail: result.result.rollbackSucceeded
+          ? localize(
+              locale,
+              "回滚已执行并写入证据；Friday 不会把未证明的修复标成可用。",
+              "Rollback ran and evidence was recorded; Friday will not mark unproven repairs as available.",
+            )
+          : localize(
+              locale,
+              "回滚请求已返回，但结果未证明成功。请在证据里确认当前状态。",
+              "The rollback request returned without proven success. Check the evidence before trusting the state.",
+            ),
+      });
+      void queryClient.invalidateQueries({ queryKey: ["learning"] });
+      void queryClient.invalidateQueries({ queryKey: ["home", "snapshot", "console-home"] });
+      void providerTruthQuery.refetch();
+      void systemHealthQuery.refetch();
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setSelfRepairNotice({
+        tone: "danger",
+        title: localize(locale, "回滚没有启动", "Rollback did not start"),
         detail: message,
       });
     },
@@ -581,6 +631,7 @@ export function HomePage() {
                   disabled={selfRepairMutation.isPending}
                   onClick={() => {
                     setSelfRepairNotice(null);
+                    setSelfRepairRollbackTarget(null);
                     selfRepairMutation.mutate();
                   }}
                 >
@@ -612,6 +663,21 @@ export function HomePage() {
                 >
                   <p className="font-semibold">{selfRepairNotice.title}</p>
                   <p className="mt-1 leading-6">{selfRepairNotice.detail}</p>
+                  {selfRepairRollbackTarget ? (
+                    <div className="mt-3 flex justify-start">
+                      <ActionButton
+                        data-testid="home-self-repair-rollback"
+                        tone="secondary"
+                        disabled={selfRepairRollbackMutation.isPending}
+                        onClick={() => selfRepairRollbackMutation.mutate(selfRepairRollbackTarget)}
+                      >
+                        <RotateCcw className="mr-2 h-4 w-4" />
+                        {selfRepairRollbackMutation.isPending
+                          ? localize(locale, "回滚中", "Rolling back")
+                          : localize(locale, "回滚刚才的修复", "Rollback repair")}
+                      </ActionButton>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

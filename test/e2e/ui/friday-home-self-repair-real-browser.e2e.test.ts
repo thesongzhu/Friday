@@ -44,6 +44,7 @@ interface AutoFixListResponse {
       actionId: string;
       status: string;
       outcome?: string | null;
+      rollbackPlanAvailable: boolean;
     };
     evidence: {
       executionResult?: {
@@ -51,6 +52,10 @@ interface AutoFixListResponse {
       };
       acceptanceResult?: {
         passed?: boolean;
+      };
+      rollbackResult?: {
+        rollbackAttempted?: boolean;
+        rollbackSucceeded?: boolean;
       };
     };
   }>;
@@ -65,6 +70,34 @@ interface AutoFixRunReadyResponse {
     requiresApproval: number;
     blockedByPolicy: number;
     dataProtected: boolean;
+  };
+  executed: Array<{
+    action: {
+      summary: {
+        actionId: string;
+        rollbackPlanAvailable: boolean;
+      };
+    };
+    result: {
+      success: boolean;
+      rollbackAttempted: boolean;
+      rollbackSucceeded: boolean;
+    };
+  }>;
+}
+
+interface AutoFixExecutionResponse {
+  action: {
+    summary: {
+      actionId: string;
+      status: string;
+      rollbackPlanAvailable: boolean;
+    };
+  };
+  result: {
+    success: boolean;
+    rollbackAttempted: boolean;
+    rollbackSucceeded: boolean;
   };
 }
 
@@ -145,14 +178,54 @@ async function waitForAppliedAutoFixAction(
   throw new Error(`Timed out waiting for auto-fix action ${actionId} to apply`);
 }
 
-function seedReadyLowRiskAutoFixAction(input: {
+async function waitForRolledBackAutoFixAction(
+  env: FridayRealBrowserE2eEnv,
+  actionId: string,
+): Promise<AutoFixListResponse["items"][number]> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const action = (await listAutoFixActions(env)).find((item) => item.summary.actionId === actionId);
+    if (action?.summary.status === "rolled_back") {
+      return action;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for auto-fix action ${actionId} to roll back`);
+}
+
+async function waitForSelfRepairResultText(
+  pageHandle: FridayBrowserPageHandle,
+  pattern: RegExp,
+): Promise<string> {
+  const locator = pageHandle.page.locator('[data-testid="home-self-repair-result"]');
+  const deadline = Date.now() + 20_000;
+  let lastText = "";
+  while (Date.now() < deadline) {
+    lastText = await locator.innerText().catch(() => "");
+    if (pattern.test(lastText)) {
+      return lastText;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for self-repair result text matching ${pattern}; last text: ${lastText}`);
+}
+
+async function waitForSelfRepairResultVisible(pageHandle: FridayBrowserPageHandle): Promise<string> {
+  await pageHandle.page.locator('[data-testid="home-self-repair-result"]').waitFor({
+    state: "visible",
+    timeout: 20_000,
+  });
+  return pageHandle.page.locator('[data-testid="home-self-repair-result"]').innerText();
+}
+
+function seedReadyRollbackableLowRiskAutoFixAction(input: {
   env: FridayRealBrowserE2eEnv;
   userId: string;
 }): string {
-  const actionId = "dp02-home-ready-action";
-  const incidentId = "dp02-home-ready-incident";
-  const diagnosisId = "dp02-home-ready-diagnosis";
-  const fingerprint = "dp02-home-supervised-repair-proof";
+  const actionId = "dp02-home-rollback-ready-action";
+  const incidentId = "dp02-home-rollback-ready-incident";
+  const diagnosisId = "dp02-home-rollback-ready-diagnosis";
+  const fingerprint = "dp02-home-supervised-repair-rollback-proof";
   const db = new Database(path.join(input.env.stateDir, "friday.db"));
   try {
     const incidentRepo = createFridayErrorIncidentRepository();
@@ -162,10 +235,10 @@ function seedReadyLowRiskAutoFixAction(input: {
       incidentId,
       userId: input.userId,
       ts: NOW,
-      category: "routing",
+      category: "config",
       severity: "medium",
       signature: fingerprint,
-      context: { source: "dp02-home-supervised-repair-proof" },
+      context: { source: "dp02-home-supervised-repair-rollback-proof" },
       autoFixEligible: true,
       status: "open",
       createdAt: NOW,
@@ -177,30 +250,43 @@ function seedReadyLowRiskAutoFixAction(input: {
       errorFingerprint: fingerprint,
       confidence: 0.92,
       diagnosis: {
-        summary: "Seeded low-risk routing repair for Home supervised repair proof",
-        rankedCauses: [{ cause: "Payload needed trimming", confidence: 0.92 }],
+        summary: "Seeded low-risk config repair for Home supervised repair rollback proof",
+        rankedCauses: [{ cause: "Config model fallback needed a reversible patch", confidence: 0.92 }],
       },
       createdAt: NOW,
       updatedAt: NOW,
     });
     const plan: FridayAutoFixPlan = {
-      title: "Auto-fix: trim routing payload",
-      summary: "Trim a routing payload in a low-risk, data-preserving repair",
+      title: "Auto-fix: supervised config patch",
+      summary: "Apply a reversible config patch in a low-risk, data-preserving repair",
       steps: [
         {
-          stepId: "dp02-home-trim-step",
-          kind: "trim_payload",
-          target: "routing",
+          stepId: "dp02-home-config-patch-step",
+          kind: "apply_config_patch",
+          target: "config",
           payload: {
             incidentId,
-            category: "routing",
-            signature: fingerprint,
-            message: `DP02_HOME_SUPERVISED_REPAIR_LONG_PAYLOAD:${"x".repeat(256)}`,
-            maxChars: 96,
+            patch: { provider: { defaultModel: "dp02-home-rollback-proof" } },
+            reason: "Home supervised repair rollback proof",
           },
-          verify: { method: "error_absent", timeoutMs: 5000 },
+          verify: { method: "config_reload_valid", timeoutMs: 5000 },
         },
       ],
+      rollbackPlan: {
+        summary: "Revert Home supervised repair config patch",
+        steps: [
+          {
+            stepId: "dp02-home-config-patch-rollback-step",
+            kind: "apply_config_patch",
+            target: "config",
+            payload: {
+              revert: true,
+              incidentId,
+              reason: "Home supervised repair rollback proof",
+            },
+          },
+        ],
+      },
       evidence: {
         fingerprint,
         matchedLessonIds: [],
@@ -212,9 +298,9 @@ function seedReadyLowRiskAutoFixAction(input: {
       actionId,
       incidentId,
       userId: input.userId,
-      riskTier: 0,
+      riskTier: 1,
       plan,
-      rollbackPlan: undefined,
+      rollbackPlan: plan.rollbackPlan,
       status: "planned",
       outcome: null,
       createdAt: NOW,
@@ -241,22 +327,32 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Home supervised self-repair real-br
     }
   });
 
-  it("runs only ready low-risk repair actions from Home and denies unbound run-ready execution", { timeout: 180_000 }, async () => {
+  it("runs and rolls back ready low-risk repair actions from Home and denies unbound repair mutations", { timeout: 180_000 }, async () => {
     env = await createFridayRealBrowserE2eEnv();
     await completeSetup(env);
     const userId = await readUserId(env);
-    const actionId = seedReadyLowRiskAutoFixAction({ env, userId });
+    const actionId = seedReadyRollbackableLowRiskAutoFixAction({ env, userId });
     expect(await waitForPlannedAutoFixAction(env)).toBe(actionId);
 
-    const denied = await fetch(`${env.baseUrl}/v1/auto-fix/actions/run-ready`, {
+    const runReadyDenied = await fetch(`${env.baseUrl}/v1/auto-fix/actions/run-ready`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ maxRiskTier: 1, limit: 50 }),
     });
-    expect(denied.status).toBe(401);
-    const deniedJson = await denied.json() as { ok: boolean; error?: { code?: string } };
-    expect(deniedJson.ok).toBe(false);
-    expect(deniedJson.error?.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(runReadyDenied.status).toBe(401);
+    const runReadyDeniedJson = await runReadyDenied.json() as { ok: boolean; error?: { code?: string } };
+    expect(runReadyDeniedJson.ok).toBe(false);
+    expect(runReadyDeniedJson.error?.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+
+    const rollbackDenied = await fetch(`${env.baseUrl}/v1/auto-fix/actions/${encodeURIComponent(actionId)}/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "unbound rollback should fail" }),
+    });
+    expect(rollbackDenied.status).toBe(401);
+    const rollbackDeniedJson = await rollbackDenied.json() as { ok: boolean; error?: { code?: string } };
+    expect(rollbackDeniedJson.ok).toBe(false);
+    expect(rollbackDeniedJson.error?.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
 
     pageHandle = await env.newPage();
     await seedBrowserProfile(pageHandle);
@@ -279,18 +375,44 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Home supervised self-repair real-br
     expect(runReadyJson.data.summary.executed).toBe(1);
     expect(runReadyJson.data.summary.succeeded).toBe(1);
     expect(runReadyJson.data.summary.failed).toBe(0);
+    expect(runReadyJson.data.executed[0]?.action.summary.actionId).toBe(actionId);
+    expect(runReadyJson.data.executed[0]?.action.summary.rollbackPlanAvailable).toBe(true);
+    expect(runReadyJson.data.executed[0]?.result.success).toBe(true);
 
-    await pageHandle.page.locator('[data-testid="home-self-repair-result"]').waitFor({
-      state: "visible",
-      timeout: 20_000,
-    });
-    const noticeText = await pageHandle.page.locator('[data-testid="home-self-repair-result"]').innerText();
+    const noticeText = await waitForSelfRepairResultVisible(pageHandle);
     expect(noticeText).toMatch(/已运行 1 项修复动作|Ran 1 repair action/);
     expect(noticeText).toMatch(/用户已有数据不会被清空或重置|Existing user data is not cleared or reset/);
 
     const applied = await waitForAppliedAutoFixAction(env, actionId);
     expect(applied.summary.outcome).toBe("success");
+    expect(applied.summary.rollbackPlanAvailable).toBe(true);
     expect(applied.evidence.executionResult?.repairOutcome).toBe("verified_repair");
     expect(applied.evidence.acceptanceResult?.passed).toBe(true);
+
+    await pageHandle.page.locator('[data-testid="home-self-repair-rollback"]').waitFor({
+      state: "visible",
+      timeout: 20_000,
+    });
+    const rollbackResponsePromise = pageHandle.page.waitForResponse((response) =>
+      response.url().includes(`/v1/auto-fix/actions/${actionId}/rollback`)
+      && response.request().method() === "POST",
+    );
+    await pageHandle.page.locator('[data-testid="home-self-repair-rollback"]').click();
+    const rollbackResponse = await rollbackResponsePromise;
+    expect(rollbackResponse.status()).toBe(200);
+    const rollbackJson = await rollbackResponse.json() as { ok: boolean; data: AutoFixExecutionResponse };
+    expect(rollbackJson.ok).toBe(true);
+    expect(rollbackJson.data.action.summary.actionId).toBe(actionId);
+    expect(rollbackJson.data.action.summary.status).toBe("rolled_back");
+    expect(rollbackJson.data.action.summary.rollbackPlanAvailable).toBe(true);
+    expect(rollbackJson.data.result.rollbackAttempted).toBe(true);
+    expect(rollbackJson.data.result.rollbackSucceeded).toBe(true);
+
+    await waitForSelfRepairResultText(pageHandle, /已回滚刚才的修复|Rolled back the repair/);
+
+    const rolledBack = await waitForRolledBackAutoFixAction(env, actionId);
+    expect(rolledBack.evidence.executionResult?.repairOutcome).toBe("rolled_back");
+    expect(rolledBack.evidence.rollbackResult?.rollbackAttempted).toBe(true);
+    expect(rolledBack.evidence.rollbackResult?.rollbackSucceeded).toBe(true);
   });
 });
