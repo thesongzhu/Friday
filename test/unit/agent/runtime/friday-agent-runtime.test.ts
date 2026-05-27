@@ -6525,6 +6525,43 @@ describe("FridayAgentRuntime", () => {
     expect(run?.errorCode).toBeUndefined();
   });
 
+  it("returns a cancelled receipt when a provider stream ignores the run timeout signal", async () => {
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        await new Promise<never>(() => {
+          // Intentionally left pending; the runtime must not wait for a
+          // provider client that ignores AbortSignal.
+        });
+      },
+    };
+    const repo = createFridayAgentRunRepository();
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const startedAt = Date.now();
+    const result = await runtime.executeRun({
+      task: "Read README.md and answer the H1.",
+      timeoutMs: 10,
+    });
+
+    const run = db.withReadConnection((reader) => repo.getById(reader, result.runId));
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(result.status).toBe("cancelled");
+    expect(result.response).toContain("Agent run timed out");
+    expect(run?.status).toBe("cancelled");
+    expect(run?.responseText).toContain("Agent run timed out");
+  });
+
   it("blocks provider mutations for informational guidance prompts before approval flow", async () => {
     const providerExecute = vi.fn(async () => ({ content: "provider updated" }));
     const providerTool: FridayAgentToolDefinition = {
