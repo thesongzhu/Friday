@@ -101,7 +101,7 @@ the release-closure plan's runtime-delta classification report.
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - Slack/SMTP external alert dispatch as release-complete
-- default-on packaging or multi-tenant release proof
+- default-on packaging or multi-tenant availability; current source has a deterministic env-gated package/multi-tenant proof harness, but npm `1.0.2`, default-on flips, and production multi-tenant rollout remain not claimed
 - full native desktop parity across every operating system
 - desktop, Homebrew, notarized macOS, or mobile distribution in `1.0.2`
 - generated or imported skills becoming immediately runnable without lifecycle gates

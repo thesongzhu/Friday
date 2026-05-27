@@ -1,6 +1,6 @@
 # RFC: Friday Agent Package and Publishing
 
-**Status:** Draft — SQLite-backed persistence for the package registry, install lifecycle, rollback history, lifecycle audit log, and trusted-key store shipped via Phase 11 (PR #233, merged `a5239ac7` 2026-05-15) and real `verifySignatureLogical` is invoked by the bootstrap publish handler against the trusted-key store. The surface remains gated behind `FRIDAY_PACKAGING_ENABLED=true` (default-off); Phase 11 closed as `partial` and named Phase 14 release-proof debt remains for `module_16_packaging_release_proof_roundtrip` and `module_17_full_upgrade_lifecycle_evidence_harness`. The default-on flip and end-to-end release-proof closure are not done.
+**Status:** Draft — SQLite-backed persistence for the package registry, install lifecycle, rollback history, lifecycle audit log, and trusted-key store shipped via Phase 11 (PR #233, merged `a5239ac7` 2026-05-15) and real `verifySignatureLogical` is invoked by the bootstrap publish handler against the trusted-key store. The current source tree includes deterministic env-gated release proof for `module_16_packaging_release_proof_roundtrip` and `module_17_full_upgrade_lifecycle_evidence_harness`: signed publish, tamper denial, install, upgrade, rollback, uninstall, lifecycle evidence, and restart persistence. The surface remains gated behind `FRIDAY_PACKAGING_ENABLED=true` (default-off); the default-on flip, npm package truth, and production rollout are not done.
 
 **Author:** Friday Platform Team
 **Created:** 2026-02-23
@@ -11,7 +11,7 @@
 
 ## 1. Summary
 
-> _SQLite-backed registry, install-lifecycle persistence, rollback history, lifecycle audit log, trusted-key store, and signature verification shipped under Phase 11 PR #233. Surface remains opt-in via `FRIDAY_PACKAGING_ENABLED=true`, default-off, and the Phase 11 close-out forwarded `module_16` (packaging release-proof roundtrip) and `module_17` (full upgrade lifecycle evidence harness) as named Phase 14 release-proof debt. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; this RFC does not claim release-proof closure from the docs reconciliation pass and does not authorize the default-on flip._
+> _SQLite-backed registry, install-lifecycle persistence, rollback history, lifecycle audit log, trusted-key store, and signature verification shipped under Phase 11 PR #233. The current source tree adds deterministic env-gated proof for `module_16` (packaging release-proof roundtrip) and `module_17` (full upgrade lifecycle evidence harness), including restart persistence and tamper denial. Surface remains opt-in via `FRIDAY_PACKAGING_ENABLED=true`, default-off. Friday's runtime product model remains self-hosted single-hub, single-tenant-at-runtime; this RFC does not authorize the default-on flip or claim npm package truth._
 
 The Agent Package and Publishing system provides a mechanism for packaging agent capabilities as signed, versioned, publishable units. Packages bundle manifests, assets, and metadata into a deterministic archive format with Ed25519 cryptographic signatures. The system manages the full lifecycle: build, publish, discover, install, upgrade, verify, and rollback — with tenant-scoped isolation via the Security (SEC) module.
 

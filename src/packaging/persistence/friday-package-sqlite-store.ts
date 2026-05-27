@@ -43,6 +43,7 @@ import type {
 } from "../model/friday-packaging.types.js";
 
 import { compareSemverStr, maxSatisfying } from "../engine/semver.js";
+import { resolveDependencies } from "../engine/dependency-resolver.js";
 import {
   type DuplicateCheckResult,
   type PublishOptions,
@@ -270,6 +271,31 @@ export function createSqliteRegistryManager(
              @published_by, @tenant_id, @etag, @created_at, @updated_at, @deleted_at
            )`,
         ).run(row);
+        db.prepare(
+          `INSERT INTO package_lifecycle_log (
+             id, package_name, package_version, operation, state_from, state_to,
+             principal_id, tenant_id, details_json, created_at
+           ) VALUES (
+             @id, @package_name, @package_version, @operation, @state_from, @state_to,
+             @principal_id, @tenant_id, @details_json, @created_at
+           )`,
+        ).run({
+          id: generateId(),
+          package_name: entry.name,
+          package_version: entry.version,
+          operation: "publish",
+          state_from: null,
+          state_to: "active",
+          principal_id: publishedBy,
+          tenant_id: tenantId ?? null,
+          details_json: JSON.stringify({
+            packageId: entry.id,
+            archiveDigest: entry.archiveDigest,
+            manifestDigest: entry.manifestDigest,
+            keyId: entry.signature.keyId,
+          }),
+          created_at: now,
+        });
       });
       return entry;
     },
@@ -623,6 +649,22 @@ export function createSqlitePackageInstaller(
         };
       }
 
+      const dependencyResult = resolveDependencies(packageName, targetEntry.version, {
+        registry,
+        platformVersion: options.platformVersion,
+        tenantId,
+      });
+      if (!dependencyResult.success) {
+        return {
+          success: false,
+          install: null,
+          dependencies: dependencyResult,
+          verification: null,
+          error: "Dependency resolution failed",
+          errorCode: "PACKAGING_DEPENDENCY_CONFLICT",
+        };
+      }
+
       const verifier = config.verifyPackage;
       const verification: FridayPackageVerificationResult = verifier
         ? verifier({
@@ -686,7 +728,7 @@ export function createSqlitePackageInstaller(
         return {
           success: false,
           install: failedInstall,
-          dependencies: null,
+          dependencies: dependencyResult,
           verification,
           error: verification.message,
           errorCode: failedInstall.errorCode,
@@ -715,7 +757,7 @@ export function createSqlitePackageInstaller(
       return {
         success: true,
         install: active,
-        dependencies: null,
+        dependencies: dependencyResult,
         verification,
       };
     },
@@ -924,7 +966,7 @@ export function createSqlitePackageInstaller(
         version: options.targetVersion,
         tenantId: options.tenantId,
         installedBy: options.initiatedBy,
-        platformVersion: target.fridayVersionRange,
+        platformVersion: options.platformVersion ?? "0.0.0",
       });
 
       const completedAt = nowIso();

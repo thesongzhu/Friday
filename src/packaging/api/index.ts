@@ -411,6 +411,7 @@ export function createFridayPackagingApiHandlers(deps: FridayPackagingApiDeps): 
         etag: request.etag,
         reason: request.reason,
         initiatedBy: principalId,
+        platformVersion,
       });
 
       ensureInstallSuccess(rollbackResult, "PACKAGING_NOT_ROLLBACKABLE");

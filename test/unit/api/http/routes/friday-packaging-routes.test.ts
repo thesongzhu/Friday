@@ -162,9 +162,9 @@ describe("B-008 FridayPackagingRoutes", () => {
 
       await route.handler(makeCtx({
         params: { packageName: "@friday/test" },
-        query: { includeDeprecated: true },
+        query: { tenantId: "tenant-1", includeDeprecated: true },
       }));
-      expect(deps.packages.listVersions).toHaveBeenCalledWith("@friday/test", { includeDeprecated: true });
+      expect(deps.packages.listVersions).toHaveBeenCalledWith("@friday/test", { tenantId: "tenant-1", includeDeprecated: true });
     });
 
     it("POST /v1/packages/:packageId/verify requires idempotency key", async () => {

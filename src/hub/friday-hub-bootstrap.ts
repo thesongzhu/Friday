@@ -127,12 +127,8 @@ import {
 import {
   createFridayPackagingApiHandlers,
 } from "../packaging/api/index.js";
-import { parseManifestJson } from "../packaging/engine/manifest-parser.js";
+import { decodeFridayPackageArchiveEnvelope } from "../packaging/engine/package-archive-envelope.js";
 import { verifySignatureLogical } from "../packaging/engine/package-validator.js";
-import type {
-  FridayPackageManifest,
-  FridayPackageSignature,
-} from "../packaging/model/friday-packaging.types.js";
 import {
   createFridayRulesRepository,
   FridayRuleEngine,
@@ -6045,49 +6041,14 @@ export async function createFridayHub(
       platformVersion: config.serverVersion ?? FRIDAY_HUB_DEFAULT_SERVER_VERSION,
     });
 
-    interface FridayPackageArchiveEnvelope {
-      readonly manifest: FridayPackageManifest;
-      readonly signature: FridayPackageSignature;
-      readonly files?: Record<string, string>;
-    }
-
-    function decodePackageArchive(archive: string): FridayPackageArchiveEnvelope {
-      let text: string;
-      try {
-        text = Buffer.from(archive, "base64").toString("utf8");
-      } catch (e) {
-        throw new FridayDomainError("VALIDATION_ERROR", `Archive is not valid base64: ${(e as Error).message}`);
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch (e) {
-        throw new FridayDomainError("VALIDATION_ERROR", `Archive must contain JSON envelope with manifest and signature: ${(e as Error).message}`);
-      }
-      const envelope = parsed as Partial<FridayPackageArchiveEnvelope>;
-      if (!envelope || typeof envelope !== "object" || !envelope.manifest || !envelope.signature) {
-        throw new FridayDomainError("VALIDATION_ERROR", "Archive envelope must include manifest and signature");
-      }
-      return envelope as FridayPackageArchiveEnvelope;
-    }
-
     packagingDeps = {
       packages: {
         publish(req) {
-          const archiveBuffer = Buffer.from(req.archive, "base64");
-          const envelope = decodePackageArchive(req.archive);
-          const parseResult = parseManifestJson(JSON.stringify(envelope.manifest));
-          if (!parseResult.success || !parseResult.manifest) {
-            throw new FridayDomainError("VALIDATION_ERROR", `Invalid manifest: ${parseResult.errors.map((e) => `${e.path}: ${e.message}`).join("; ")}`);
-          }
-          const manifest = parseResult.manifest;
-          const manifestDigest = "sha256:" + crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
-          const archiveDigest = "sha256:" + crypto.createHash("sha256").update(archiveBuffer).digest("hex");
-          const signature: FridayPackageSignature = envelope.signature;
+          const envelope = decodeFridayPackageArchiveEnvelope(req.archive);
           const verification = verifySignatureLogical(
-            signature,
-            manifestDigest,
-            archiveDigest,
+            envelope.signature,
+            envelope.manifestDigest,
+            envelope.archiveDigest,
             trustedKeyStore.listAll(),
             nowIso(),
           );
@@ -6095,11 +6056,11 @@ export async function createFridayHub(
             throw new FridayDomainError(`PACKAGING_${verification.outcome.toUpperCase()}`, verification.message, { httpStatus: 400 });
           }
           const entry = packagingRegistry.publish({
-            manifest,
-            signature,
-            archiveDigest,
-            manifestDigest,
-            sizeBytes: archiveBuffer.length,
+            manifest: envelope.manifest,
+            signature: envelope.signature,
+            archiveDigest: envelope.archiveDigest,
+            manifestDigest: envelope.manifestDigest,
+            sizeBytes: envelope.archiveSizeBytes,
             publishedBy: "system",
             tenantId: req.tenantId,
           });
@@ -6110,7 +6071,7 @@ export async function createFridayHub(
         },
         list(query) {
           const page = packagingRegistry.search(
-            { name: query.name, capability: query.capability, keyword: query.keyword, author: query.author, sortBy: query.sortBy, sortDir: query.sortDir },
+            { tenantId: query.tenantId, name: query.name, capability: query.capability, keyword: query.keyword, author: query.author, sortBy: query.sortBy, sortDir: query.sortDir },
             { cursor: query.cursor, limit: query.limit },
           );
           return {
@@ -6134,11 +6095,11 @@ export async function createFridayHub(
               digest: entry.archiveDigest, manifestDigest: entry.manifestDigest,
               timestamp: entry.createdAt, expiresAt: entry.createdAt, keyId: "unknown",
             },
-            versionCount: packagingRegistry.getVersionCount(entry.name),
+            versionCount: packagingRegistry.getVersionCount(entry.name, entry.tenantId),
           };
         },
         listVersions(packageName, query) {
-          const versions = packagingRegistry.getVersions(packageName);
+          const versions = packagingRegistry.getVersions(packageName, query.tenantId);
           const limit = Math.max(1, Math.min(query.limit ?? 20, 100));
           let startIndex = 0;
           if (query.cursor) {
