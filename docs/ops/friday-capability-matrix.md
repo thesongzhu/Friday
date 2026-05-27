@@ -95,8 +95,11 @@ has subsequently closed deterministic DP-10 personal-secretary loop proof
 (PR #352), skill/link lifecycle proof (PR #353), repair/upgrade/retry-audit
 proof (PR #354), and Memory cognition v1 proof (PR #355). Current source also
 gates provider budget changes through canonical mutation approval in protected
-profiles and keeps package/npm truth separate. Do not read these source closures
-as already published npm `1.0.2` behavior.
+profiles, repairs provider/cost/package source truth through PR #356/#357/#358,
+closes Home supervised low-risk self-repair UI proof by PR #359, and closes
+user-visible workflow retry receipt/final-state proof by PR #360. Package/npm
+truth stays separate. Do not read these source closures as already published
+npm `1.0.2` behavior.
 
 ### What Friday Can Do Today
 
@@ -104,7 +107,7 @@ In `1.0.2`, Friday can run the local-first runtime described in the matrix above
 
 ### What Friday Usually Does Only Under Supervision
 
-In `1.0.2`, the following surfaces exist but **usually run only under supervision** — they are wired with fail-closed approval gates and operator review, not as default-on autonomous behavior. The user, operator, or canonical approval flow is in the loop for: skill install / update / delete (canonical-approval workflow), autonomous self-repair lifecycle (the lifecycle is visible; end-to-end execute → rollback is supervised and `proof_pending` for autonomy-detected incidents), autonomous self-upgrade proposals (visible; actual mutation supervised and `proof_pending`), link-to-skill candidate → tests → approval → run (scan-local works; URL trust bypass is fail-closed; end-to-end run is supervised and `proof_pending`), queue/retry retry-eligible execution, audit-log replay, dispatcher-style auto-fix (default-off behind `FRIDAY_AUTOFIX_DISPATCHER_ENABLED`), and channel actions with sensitivity. Anything else that is irreversible, account-bound, payment-related, CAPTCHA-gated, or production-impacting follows the same supervision-by-default rule even when not explicitly listed here.
+In `1.0.2`, the following surfaces exist but **usually run only under supervision** — they are wired with fail-closed approval gates and operator review, not as default-on autonomous behavior. The user, operator, or canonical approval flow is in the loop for: skill install / update / delete (canonical-approval workflow), autonomous self-repair lifecycle (the lifecycle is visible; end-to-end execute → rollback is supervised and `proof_pending` for autonomy-detected incidents), autonomous self-upgrade proposals (visible; actual mutation supervised and `proof_pending`), link-to-skill candidate → tests → approval → run (scan-local works; URL trust bypass is fail-closed; end-to-end run is supervised and `proof_pending`), queue/retry retry-eligible execution, audit-log replay, dispatcher-style auto-fix (default-off behind `FRIDAY_AUTOFIX_DISPATCHER_ENABLED`), and channel actions with sensitivity. GitHub main after `1.0.2` additionally proves user-visible workflow retry receipts by PR #360, but that is not npm `1.0.2` package truth. Anything else that is irreversible, account-bound, payment-related, CAPTCHA-gated, or production-impacting follows the same supervision-by-default rule even when not explicitly listed here.
 
 ### What Friday does **not** reliably claim today
 

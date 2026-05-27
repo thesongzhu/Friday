@@ -136,8 +136,9 @@ npm package truth until a future authorized publish. Current source truth:
    cleanup are closed on GitHub main by PR #353. Arbitrary live-web/channel
    proof and npm package truth remain separate.
 5. Queue/retry receipt loop: deterministic retry-to-audit append is closed on
-   GitHub main by PR #354. User-visible retry final-state dogfood remains
-   separate.
+   GitHub main by PR #354, and user-visible workflow retry receipt/final-state
+   proof is closed on GitHub main by PR #360. npm package truth and live
+   external-channel/provider retry proof remain separate.
 6. Audit tamper-negative: disposable retry/audit tamper detection is closed on
    GitHub main by PR #354. Broader user-visible audit UX can be proven later.
 7. R1 Lark phase24d listener shutdown: source cleanup is closed on GitHub main
