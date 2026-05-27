@@ -714,10 +714,21 @@ async function main() {
     // reason — even though the operator did send the reject text,
     // the polling loop saw nothing.
     //
-    // `drop_pending_updates=true` clears whatever events Telegram
-    // queued while a webhook was active, so the listener starts from
-    // a clean state and the operator's NEW messages drive the run.
-    await fetch(`https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/deleteWebhook?drop_pending_updates=true`, {
+    // `drop_pending_updates=false` (default) preserves whatever updates
+    // Telegram queued before this dispatch started polling. Earlier the
+    // listener used `drop_pending_updates=true` to clear noise from any
+    // webhook-era backlog, but that turned into a coordination footgun
+    // for the live operator loop: when the operator sent the prompted
+    // text just before the next dispatch's `deleteWebhook` call (or
+    // before listener boot completed), their already-queued message
+    // got dropped. By keeping pending updates the next polling cycle
+    // drains them through the normal trusted-user / allowed-chat /
+    // command-prefix filter. Stale pending events for *previous*
+    // dispatches' candidate IDs surface as "处理失败" acks (hub
+    // responds when the candidate ID is unknown), which the listener
+    // correctly does NOT accept as `已更新为 rejected` — so dropping
+    // the flag does not lower the closure bar.
+    await fetch(`https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/deleteWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     }).then(async (response) => {
