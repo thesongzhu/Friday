@@ -35,6 +35,7 @@ export interface FridayRealBrowserE2eEnv {
   refreshToken?: string;
   apiFetch<T>(method: string, urlPath: string, body?: unknown): Promise<{ status: number; json: ApiEnvelope<T> }>;
   newPage(): Promise<FridayBrowserPageHandle>;
+  restartHubPreservingState(): Promise<void>;
   cleanup(): Promise<void>;
 }
 
@@ -66,15 +67,31 @@ export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowser
   }
 
   const browser = await chromium.launch({ headless: true });
+  const uiStaticDir = resolveUiStaticDir();
 
   return {
-    hub: runtime.hub,
-    httpServer: runtime.httpServer,
+    get hub() {
+      if (!runtime.hub) throw new Error("Local Friday hub is not available");
+      return runtime.hub;
+    },
+    get httpServer() {
+      if (!runtime.httpServer) throw new Error("Local Friday HTTP server is not available");
+      return runtime.httpServer;
+    },
     browser,
-    baseUrl: runtime.baseUrl,
-    stateDir: runtime.stateDir,
-    accessToken: runtime.accessToken,
-    refreshToken: runtime.refreshToken,
+    get baseUrl() {
+      return runtime.baseUrl;
+    },
+    get stateDir() {
+      if (!runtime.stateDir) throw new Error("Local Friday state dir is not available");
+      return runtime.stateDir;
+    },
+    get accessToken() {
+      return runtime.accessToken;
+    },
+    get refreshToken() {
+      return runtime.refreshToken;
+    },
     async apiFetch<T>(method: string, urlPath: string, body?: unknown) {
       const response = await fetch(`${runtime.baseUrl}${urlPath}`, {
         method,
@@ -113,6 +130,16 @@ export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowser
           await context.close();
         },
       };
+    },
+    async restartHubPreservingState() {
+      if (!runtime.stateDir) {
+        throw new Error("Cannot restart local Friday hub without a state dir");
+      }
+      const stateDirToPreserve = runtime.stateDir;
+      await shutdownRealHubEnv(runtime, { removeStateDir: false });
+      runtime = await createRealHubEnvFromStateDir(stateDirToPreserve, {
+        uiStaticDir,
+      });
     },
     async cleanup() {
       await browser.close();

@@ -292,8 +292,14 @@ export type { CreateFridayAgentSkillGeneratorToolDeps } from "./tools/friday-age
 export { createFridayAgentSkillGeneratorTool } from "./tools/friday-agent-skill-generator-tool.js";
 export type { CreateFridayAgentSkillImportToolDeps } from "./tools/friday-agent-skill-import-tool.js";
 export { createFridayAgentSkillImportTool } from "./tools/friday-agent-skill-import-tool.js";
-export type { CreateFridayAgentWorkflowToolDeps } from "./tools/friday-agent-workflow-tool.js";
-export { createFridayAgentWorkflowTool } from "./tools/friday-agent-workflow-tool.js";
+export type {
+  CreateFridayAgentWorkflowListToolDeps,
+  CreateFridayAgentWorkflowToolDeps,
+} from "./tools/friday-agent-workflow-tool.js";
+export {
+  createFridayAgentWorkflowListTool,
+  createFridayAgentWorkflowTool,
+} from "./tools/friday-agent-workflow-tool.js";
 export type { CreateFridayAgentWorkflowGeneratorToolDeps } from "./tools/friday-agent-workflow-generator-tool.js";
 export { createFridayAgentWorkflowGeneratorTool } from "./tools/friday-agent-workflow-generator-tool.js";
 export type { CreateFridayAgentMemoryToolsDeps } from "./tools/friday-agent-memory-tools.js";

@@ -90,6 +90,7 @@ const READ_ONLY_TOOLS = new Set([
   "memory_query",
   "memory_get",
   "echo",
+  "workflow_list",
   "spawn_subagent",
   "get_subagent",
   "list_subagents",

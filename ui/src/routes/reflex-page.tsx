@@ -197,7 +197,10 @@ function ReflexCandidateCard(props: {
   const curatorItems = curatorSummary(props.candidate, locale);
 
   return (
-    <article className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+    <article
+      className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
+      data-testid={`reflex-candidate-card-${props.candidate.id}`}
+    >
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -258,6 +261,7 @@ function ReflexCandidateCard(props: {
             <>
               <ActionButton
                 className="!min-h-[36px] !px-3 !text-xs"
+                data-testid={`reflex-candidate-approve-${props.candidate.id}`}
                 disabled={props.isPending}
                 onClick={() => props.onApprove(props.candidate.id)}
               >
@@ -267,6 +271,7 @@ function ReflexCandidateCard(props: {
               <ActionButton
                 tone="danger"
                 className="!min-h-[36px] !px-3 !text-xs"
+                data-testid={`reflex-candidate-reject-${props.candidate.id}`}
                 disabled={props.isPending}
                 onClick={() => props.onReject(props.candidate.id)}
               >
@@ -276,6 +281,7 @@ function ReflexCandidateCard(props: {
               <ActionButton
                 tone="secondary"
                 className="!min-h-[36px] !px-3 !text-xs"
+                data-testid={`reflex-candidate-dismiss-${props.candidate.id}`}
                 disabled={props.isPending}
                 onClick={() => props.onDismiss(props.candidate.id)}
               >

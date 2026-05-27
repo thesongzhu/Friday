@@ -674,7 +674,7 @@ export function createFridaySessionRoutes(
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;
         const metadata = sanitizeMetadata(body.metadata);
-        const session = await deps.sessionService.createSession({
+        let session = await deps.sessionService.createSession({
           channel: body.channel,
           chatId: body.chatId,
           userId: body.userId,
@@ -682,6 +682,8 @@ export function createFridaySessionRoutes(
           chatKind: body.chatKind,
           metadata,
         });
+        await alignSessionWithPrincipalContext(deps.sessionService, session.key, ctx.principal).catch(() => undefined);
+        session = await deps.sessionService.getSession(session.key).catch(() => session) ?? session;
         return { session };
       },
     },
@@ -1034,7 +1036,10 @@ export function createFridaySessionRoutes(
         const tenantContext: FridayProviderTenantContext | undefined = existingSession
           && !publicIsolation
           ? (() => {
-            const hubId = existingSession.accountId?.trim() || principalTenantContext?.hubId?.trim();
+            const existingHubId = existingSession.accountId?.trim();
+            const hubId = existingHubId && existingHubId !== FRIDAY_SESSION_DEFAULT_ACCOUNT_ID
+              ? existingHubId
+              : principalTenantContext?.hubId?.trim() || existingHubId;
             if (!hubId) {
               return undefined;
             }

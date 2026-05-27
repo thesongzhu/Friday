@@ -1,5 +1,5 @@
 import type { FridaySkillExecutor, FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
-import type { FridayWorkflowExecutionService } from "#workflows";
+import type { FridayWorkflowCrudService, FridayWorkflowExecutionService } from "#workflows";
 import type { FridayMemoryGuardServiceFactory, FridayMemoryService } from "#memory";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import type { FridayAgentSsrfGuard } from "../security/friday-agent-ssrf-guard.js";
@@ -11,7 +11,10 @@ import { createFridayAgentWebFetchTool } from "./friday-agent-web-fetch-tool.js"
 import { createFridayAgentWebSearchTool } from "./friday-agent-web-search-tool.js";
 import { createFridayAgentSkillTool } from "./friday-agent-skill-tool.js";
 import { createFridayAgentSkillsListTool } from "./friday-agent-skills-list-tool.js";
-import { createFridayAgentWorkflowTool } from "./friday-agent-workflow-tool.js";
+import {
+  createFridayAgentWorkflowListTool,
+  createFridayAgentWorkflowTool,
+} from "./friday-agent-workflow-tool.js";
 import { createFridayAgentMemoryTools } from "./friday-agent-memory-tools.js";
 import { createFridayAgentSubagentTools } from "./friday-agent-subagent-tools.js";
 import { createFridayAgentBrowserTool } from "./friday-agent-browser-tool.js";
@@ -72,6 +75,7 @@ export interface CreateFridayAgentToolRegistryOptions {
   skillExecutor?: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
   getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
+  workflowCrudService?: FridayWorkflowCrudService;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
   memoryGuardFactory?: FridayMemoryGuardServiceFactory;
@@ -200,6 +204,12 @@ export function createFridayAgentToolRegistry(
         listMcpServerReadiness,
         getSkillLifecycleStatus: options?.getSkillLifecycleStatus,
       }),
+    );
+  }
+
+  if (options?.workflowCrudService) {
+    tools.push(
+      createFridayAgentWorkflowListTool({ workflowCrudService: options.workflowCrudService }),
     );
   }
 
@@ -403,6 +413,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   "skill_run",
   "skill_generate",
   "skills_list",
+  "workflow_list",
   "workflow_generate",
   "memory_search",
   "memory_store",

@@ -2832,6 +2832,7 @@ export async function createFridayHub(
     skillExecutor: executor,
     skillRegistry: registry,
     getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    workflowCrudService: workflowRuntime.crud,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
     memoryGuardFactory,
@@ -4932,6 +4933,7 @@ export async function createFridayHub(
         skillExecutor: executor,
         skillRegistry: registry,
         getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+        workflowCrudService: workflowRuntime.crud,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
         memoryGuardFactory,
@@ -8404,27 +8406,42 @@ export async function createFridayHub(
               } else {
                 const command = reflexCandidateCommand;
                 try {
-                  const candidate = command.action === "test"
-                    ? await reflexService.testCandidate({
-                        userId: learningDefaultUserId,
-                        candidateId: command.candidateId,
-                      })
-                    : command.action === "approve"
-                      ? await reflexService.approveCandidate({
-                          userId: learningDefaultUserId,
+                  const senderUserId = msg.senderId?.trim() || learningDefaultUserId;
+                  const decideCandidate = async (userId: string) =>
+                    command.action === "test"
+                      ? await reflexService.testCandidate({
+                          userId,
                           candidateId: command.candidateId,
                         })
-                      : command.action === "reject"
-                        ? reflexService.rejectCandidate({
-                            userId: learningDefaultUserId,
+                      : command.action === "approve"
+                        ? await reflexService.approveCandidate({
+                            userId,
                             candidateId: command.candidateId,
-                            reason: command.reason,
                           })
-                        : reflexService.dismissCandidate({
-                            userId: learningDefaultUserId,
-                            candidateId: command.candidateId,
-                            reason: command.reason,
-                          });
+                        : command.action === "reject"
+                          ? reflexService.rejectCandidate({
+                              userId,
+                              candidateId: command.candidateId,
+                              reason: command.reason,
+                            })
+                          : reflexService.dismissCandidate({
+                              userId,
+                              candidateId: command.candidateId,
+                              reason: command.reason,
+                            });
+                  let candidate;
+                  try {
+                    candidate = await decideCandidate(senderUserId);
+                  } catch (err) {
+                    if (
+                      senderUserId === learningDefaultUserId
+                      || !(err instanceof FridayDomainError)
+                      || err.code !== "REFLEX_CANDIDATE_NOT_FOUND"
+                    ) {
+                      throw err;
+                    }
+                    candidate = await decideCandidate(learningDefaultUserId);
+                  }
                   ackText = `Reflex candidate ${candidate.id} 已更新为 ${candidate.status}。`;
                 } catch (err) {
                   ackText = `Reflex candidate ${command.candidateId} 处理失败：${err instanceof Error ? err.message : String(err)}`;

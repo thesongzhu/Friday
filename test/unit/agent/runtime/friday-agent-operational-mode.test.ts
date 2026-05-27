@@ -54,6 +54,7 @@ describe("resolveToolCategory", () => {
     expect(resolveToolCategory("memory_search")).toBe("read");
     expect(resolveToolCategory("capabilities")).toBe("read");
     expect(resolveToolCategory("task_status")).toBe("read");
+    expect(resolveToolCategory("workflow_list")).toBe("read");
     expect(resolveToolCategory("request_tool_pack")).toBe("read");
     expect(resolveToolCategory("tool_search")).toBe("read");
     expect(resolveToolCategory("image_analysis")).toBe("read");
@@ -127,7 +128,7 @@ describe("resolveToolCategory", () => {
       // read
       "read", "file_read", "file_list", "web_fetch", "web_search",
       "memory_search", "memory_query", "memory_get", "skills_list",
-      "agents_list", "capabilities", "task_status", "request_tool_pack", "tool_search", "image_analysis", "pdf_parse", "feedback",
+      "workflow_list", "agents_list", "capabilities", "task_status", "request_tool_pack", "tool_search", "image_analysis", "pdf_parse", "feedback",
       // write
       "write", "edit", "file_write", "file_delete",
       "memory_store", "memory_extract",
@@ -162,6 +163,7 @@ describe("filterToolsByMode", () => {
     { name: "read" },
     { name: "file_read" },
     { name: "web_search" },
+    { name: "workflow_list" },
     { name: "write" },
     { name: "exec" },
     { name: "browser" },
@@ -175,6 +177,7 @@ describe("filterToolsByMode", () => {
     expect(names).toContain("read");
     expect(names).toContain("file_read");
     expect(names).toContain("web_search");
+    expect(names).toContain("workflow_list");
     expect(names).not.toContain("write");
     expect(names).not.toContain("exec");
     expect(names).not.toContain("browser");

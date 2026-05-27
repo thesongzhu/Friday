@@ -58,7 +58,7 @@ const TOOL_PACKS: Record<Exclude<FridayAgentToolRoutingProfile, "trivial">, stri
   browser: ["web_search", "web_fetch", "browser", "canvas"],
   code: ["read", "write", "edit", "exec", "web_fetch", "web_search", "skills_list", "skill_run", "task_status"],
   skill: ["skills_list", "skill_run", "skill_generate", "skill_import", "read", "write", "edit", "exec"],
-  workflow: ["workflow_run", "workflow_generate", "task_status", "cron", "skills_list", "skill_run"],
+  workflow: ["workflow_list", "workflow_run", "workflow_generate", "task_status", "cron", "skills_list", "skill_run"],
   system: ["system", "desktop", "provider", "setup", "setup_assistant", "capabilities", "task_status"],
   autonomy: ["autonomous", "controlled_autonomy", "spawn_subagent", "get_subagent", "agents_list", "task_status", "system"],
   media: ["image_analysis", "pdf_parse", "tts", "browser", "web_fetch", "read"],
