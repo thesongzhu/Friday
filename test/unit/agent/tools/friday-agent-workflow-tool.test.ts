@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import { createFridayAgentWorkflowTool } from "#agent";
-import type { FridayWorkflowExecutionService, FridayWorkflowRunEntity } from "#workflows";
+import {
+  createFridayAgentWorkflowListTool,
+  createFridayAgentWorkflowTool,
+} from "#agent";
+import type {
+  FridayWorkflowCrudService,
+  FridayWorkflowEntity,
+  FridayWorkflowExecutionService,
+  FridayWorkflowRunEntity,
+} from "#workflows";
 
 function signal(): AbortSignal {
   return new AbortController().signal;
@@ -44,6 +52,53 @@ function mockExecutionService(
     sweepTimedOutRuns: vi.fn().mockResolvedValue(0),
     sweepTimedOutNodes: vi.fn().mockResolvedValue(0),
   };
+}
+
+function makeWorkflowEntity(
+  overrides?: Partial<FridayWorkflowEntity>,
+): FridayWorkflowEntity {
+  return {
+    id: "wf-1",
+    slug: "daily-cleanup",
+    name: "Daily cleanup",
+    description: "Clean old workspace files after approval",
+    tags: ["cleanup", "workspace"],
+    latestVersionNumber: 2,
+    publishedVersionNumber: 1,
+    isArchived: false,
+    revision: 1,
+    etag: "etag-1",
+    compatibilityStatus: "compatible",
+    promotionChannel: "active",
+    createdAt: "2026-02-19T00:00:00.000Z",
+    updatedAt: "2026-02-19T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function mockCrudService(
+  workflows: FridayWorkflowEntity[] = [makeWorkflowEntity()],
+  error?: Error,
+): FridayWorkflowCrudService {
+  return {
+    createWorkflow: vi.fn(),
+    getWorkflow: vi.fn(),
+    getWorkflowBySlug: vi.fn(),
+    listWorkflows: error
+      ? vi.fn().mockImplementation(() => {
+        throw error;
+      })
+      : vi.fn().mockReturnValue(workflows),
+    updateWorkflow: vi.fn(),
+    updateWorkflowWithGraph: vi.fn(),
+    archiveWorkflow: vi.fn(),
+    createWorkflowWithVersion: vi.fn(),
+    createVersion: vi.fn(),
+    publishVersion: vi.fn(),
+    getVersion: vi.fn(),
+    listVersions: vi.fn(),
+    getPublishedVersion: vi.fn(),
+  } as unknown as FridayWorkflowCrudService;
 }
 
 describe("FridayAgentWorkflowTool", () => {
@@ -164,5 +219,71 @@ describe("FridayAgentWorkflowTool", () => {
         triggerPayload: undefined,
       }),
     );
+  });
+});
+
+describe("FridayAgentWorkflowListTool", () => {
+  it("lists published non-archived workflows without starting a run", async () => {
+    const svc = mockCrudService([
+      makeWorkflowEntity({ id: "published-wf", publishedVersionNumber: 1 }),
+      makeWorkflowEntity({ id: "draft-wf", publishedVersionNumber: undefined }),
+    ]);
+    const tool = createFridayAgentWorkflowListTool({ workflowCrudService: svc });
+
+    const result = await tool.execute({ tag: "cleanup", limit: 10 }, signal());
+
+    expect(result.isError).toBeUndefined();
+    expect(svc.listWorkflows).toHaveBeenCalledWith({
+      tag: "cleanup",
+      limit: 30,
+      archived: false,
+    });
+    const parsed = JSON.parse(result.content) as {
+      count: number;
+      workflows: Array<{ id: string; publishedVersionNumber?: number }>;
+    };
+    expect(parsed.count).toBe(1);
+    expect(parsed.workflows).toEqual([
+      expect.objectContaining({
+        id: "published-wf",
+        publishedVersionNumber: 1,
+      }),
+    ]);
+  });
+
+  it("can include draft and archived workflows when explicitly requested", async () => {
+    const svc = mockCrudService([
+      makeWorkflowEntity({ id: "draft-wf", publishedVersionNumber: undefined, isArchived: true }),
+    ]);
+    const tool = createFridayAgentWorkflowListTool({ workflowCrudService: svc });
+
+    const result = await tool.execute(
+      { publishedOnly: false, includeArchived: true, limit: 2, cursor: "5" },
+      signal(),
+    );
+
+    expect(svc.listWorkflows).toHaveBeenCalledWith({
+      limit: 2,
+      archived: undefined,
+      cursor: "5",
+    });
+    const parsed = JSON.parse(result.content) as { workflows: Array<{ id: string; isArchived: boolean }> };
+    expect(parsed.workflows).toEqual([
+      expect.objectContaining({ id: "draft-wf", isArchived: true }),
+    ]);
+  });
+
+  it("caps limit and returns an error result when listing fails", async () => {
+    const svc = mockCrudService([], new Error("database unavailable"));
+    const tool = createFridayAgentWorkflowListTool({ workflowCrudService: svc });
+
+    const result = await tool.execute({ limit: 100 }, signal());
+
+    expect(svc.listWorkflows).toHaveBeenCalledWith({
+      limit: 50,
+      archived: false,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("database unavailable");
   });
 });

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentToolRegistry, partitionFridayAgentTools } from "#agent";
 import type { FridayAgentToolDefinition } from "#agent";
 import type { FridaySkillRegistry } from "#skills";
+import type { FridayWorkflowCrudService, FridayWorkflowExecutionService } from "#workflows";
 import type { FridaySessionService } from "../../../../src/sessions/services/friday-session-service.types.js";
 import type { FridayAgentRuntime } from "#agent";
 import type { FridayJobSchedulerRepository } from "../../../../src/jobs/scheduler/friday-job-scheduler-repository.js";
@@ -123,6 +124,43 @@ function stubProviderService(): FridayProviderService {
     runWithFallback: vi.fn(),
     recordUsage: vi.fn(),
   } as unknown as FridayProviderService;
+}
+
+function stubWorkflowCrudService(): FridayWorkflowCrudService {
+  return {
+    createWorkflow: vi.fn(),
+    getWorkflow: vi.fn(),
+    getWorkflowBySlug: vi.fn(),
+    listWorkflows: vi.fn().mockReturnValue([]),
+    updateWorkflow: vi.fn(),
+    updateWorkflowWithGraph: vi.fn(),
+    archiveWorkflow: vi.fn(),
+    createWorkflowWithVersion: vi.fn(),
+    createVersion: vi.fn(),
+    publishVersion: vi.fn(),
+    getVersion: vi.fn(),
+    listVersions: vi.fn(),
+    getPublishedVersion: vi.fn(),
+  } as unknown as FridayWorkflowCrudService;
+}
+
+function stubWorkflowExecutionService(): FridayWorkflowExecutionService {
+  return {
+    setDistributedDispatcher: vi.fn(),
+    startRun: vi.fn(),
+    resumeRun: vi.fn(),
+    cancelRun: vi.fn(),
+    retryRun: vi.fn(),
+    getRun: vi.fn(),
+    listRuns: vi.fn(),
+    listActiveRuns: vi.fn(),
+    getRunNodes: vi.fn(),
+    recoverActiveRuns: vi.fn(),
+    reportRemoteNodeResult: vi.fn(),
+    reapExpiredLeases: vi.fn(),
+    sweepTimedOutRuns: vi.fn(),
+    sweepTimedOutNodes: vi.fn(),
+  } as unknown as FridayWorkflowExecutionService;
 }
 
 function stubGuideLensService(): FridayGuideLensService {
@@ -322,6 +360,25 @@ describe("createFridayAgentToolRegistry", () => {
     expect(names).toContain("skill_run");
   });
 
+  it("includes read-only workflow_list when workflowCrudService is provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      workflowCrudService: stubWorkflowCrudService(),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("workflow_list");
+    expect(names).not.toContain("workflow_run");
+  });
+
+  it("includes workflow_list and workflow_run when workflow services are provided", () => {
+    const tools = createFridayAgentToolRegistry({
+      workflowCrudService: stubWorkflowCrudService(),
+      workflowExecutionService: stubWorkflowExecutionService(),
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("workflow_list");
+    expect(names).toContain("workflow_run");
+  });
+
   it("includes provider tool when providerService is provided", () => {
     const tools = createFridayAgentToolRegistry({
       providerService: stubProviderService(),
@@ -371,10 +428,16 @@ describe("createFridayAgentToolRegistry", () => {
   // ─── operationalMode filtering ───
 
   it("filters to read-only tools in plan mode", () => {
-    const tools = createFridayAgentToolRegistry({ operationalMode: "plan" });
+    const tools = createFridayAgentToolRegistry({
+      operationalMode: "plan",
+      workflowCrudService: stubWorkflowCrudService(),
+      workflowExecutionService: stubWorkflowExecutionService(),
+    });
     const names = tools.map((t) => t.name);
     expect(names).toContain("read");
     expect(names).toContain("web_fetch");
+    expect(names).toContain("workflow_list");
+    expect(names).not.toContain("workflow_run");
     expect(names).not.toContain("exec");
     expect(names).not.toContain("write");
   });
@@ -448,6 +511,7 @@ describe("partitionFridayAgentTools", () => {
     const tools = [
       mockTool("skill_run"),
       mockTool("skills_list"),
+      mockTool("workflow_list"),
       mockTool("skill_generate"),
       mockTool("workflow_generate"),
     ];
@@ -455,6 +519,7 @@ describe("partitionFridayAgentTools", () => {
     const names = result.alwaysLoad.map((t) => t.name);
     expect(names).toContain("skill_run");
     expect(names).toContain("skills_list");
+    expect(names).toContain("workflow_list");
     expect(names).toContain("skill_generate");
     expect(names).toContain("workflow_generate");
     expect(result.deferred).toHaveLength(0);

@@ -247,6 +247,51 @@ describe("FridaySessionRoutes", () => {
       });
       expect(result).toHaveProperty("session");
     });
+
+    it("aligns a newly created default session to the authenticated principal tenant", async () => {
+      const svc = createMockService();
+      const createdSession = makeMockSession({
+        key: "discord:default:user1",
+        accountId: "default",
+        userId: undefined,
+      });
+      const alignedSession = makeMockSession({
+        key: createdSession.key,
+        accountId: "tenant-acme",
+        userId: "user-1",
+      });
+      vi.mocked(svc.createSession).mockResolvedValue(createdSession);
+      vi.mocked(svc.getSession)
+        .mockResolvedValueOnce(createdSession)
+        .mockResolvedValueOnce(alignedSession);
+
+      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
+
+      const result = await createRoute.handler(
+        makeMockCtx({
+          body: { channel: "discord", chatId: "user1", chatKind: "dm" },
+          principal: {
+            principalType: "user",
+            principalId: "principal-1",
+            tenantId: "tenant-acme",
+            userId: "user-1",
+            role: "owner",
+            scopes: ["session.write"],
+            tokenId: "token-1",
+            tokenKind: "access",
+            issuedAt: "2026-01-01T00:00:00.000Z",
+            expiresAt: "2026-01-01T01:00:00.000Z",
+          },
+        }) as never,
+      );
+
+      expect(svc.alignSessionContext).toHaveBeenCalledWith(createdSession.key, {
+        accountId: "tenant-acme",
+        userId: "user-1",
+      });
+      expect(result.session).toEqual(alignedSession);
+    });
   });
 
   // ─── sessions.get ───
@@ -1323,7 +1368,7 @@ describe("FridaySessionRoutes", () => {
       expect(runSession).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantContext: {
-            hubId: "default",
+            hubId: "tenant-acme",
             userId: "user-1",
           },
         }),

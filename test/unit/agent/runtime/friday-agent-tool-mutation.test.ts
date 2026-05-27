@@ -24,6 +24,10 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("workflow_run", {})).toBe(true);
   });
 
+  it("classifies workflow_list as read-only", () => {
+    expect(isMutatingToolCall("workflow_list", {})).toBe(false);
+  });
+
   it("classifies all skill_run calls as non-mutating (skills run in sandbox)", () => {
     // skill_run is always read-only — skills execute in their own sandbox
     expect(isMutatingToolCall("skill_run", {})).toBe(false);

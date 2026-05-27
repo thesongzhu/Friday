@@ -450,6 +450,56 @@ describe("Friday Reflex service", () => {
     expect(approveAndSave).not.toHaveBeenCalled();
   });
 
+  it("approves tested workflow candidates through the generator save boundary", async () => {
+    const approveAndSave = vi.fn(async () => ({
+      workflowId: "approved-workflow-1",
+      workflowVersionId: "approved-workflow-version-1",
+      versionNumber: 1,
+      slug: "approved-workflow-1",
+      published: true,
+      publicationBoundary: {
+        stage: "published",
+        lifecyclePromotion: "workflow_published",
+        proofBoundary: "published_workflow_requires_separate_trigger_execution_proof",
+        summary: "Workflow was saved, but fresh-session trigger execution remains separate proof.",
+      },
+    }));
+    const service = createService({
+      workflowGenerator: {
+        startSession: vi.fn(),
+        submitTurn: vi.fn(),
+        getSession: vi.fn(),
+        generateDraft: vi.fn(),
+        getQaVerdict: vi.fn(),
+        getHarnessSummary: vi.fn(),
+        approveAndSave,
+        cancelSession: vi.fn(),
+      } as never,
+    });
+    const candidate = service.createCandidate({
+      userId: "user-1",
+      kind: "workflow",
+      origin: "post_run",
+      title: "Generated workflow candidate",
+      summary: "A tested workflow waiting for Review Center approval.",
+      payload: { goal: "Automate the repeated report workflow" },
+      evidence: { generatorSessionId: "workflow-session-1", validationOk: true },
+      confidence: 0.8,
+      riskTier: 3,
+    });
+
+    const approved = await service.approveCandidate({ userId: "user-1", candidateId: candidate.id });
+
+    expect(approveAndSave).toHaveBeenCalledWith("workflow-session-1");
+    expect(approved.status).toBe("approved");
+    expect(approved.evidence.savedWorkflowId).toBe("approved-workflow-1");
+    expect(approved.evidence.workflowVersionId).toBe("approved-workflow-version-1");
+    expect(approved.evidence.published).toBe(true);
+    expect(approved.evidence.publicationBoundary).toMatchObject({
+      proofBoundary: "published_workflow_requires_separate_trigger_execution_proof",
+    });
+  });
+
   it("fails closed when approving a skill candidate without canonical staging approval", async () => {
     const approveAndSave = vi.fn(async () => {
       throw new Error("Generated skill approval now stages a lifecycle candidate and requires canonical approval.");

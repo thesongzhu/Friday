@@ -58,6 +58,7 @@ const TOOL_CATEGORY_MAP: Record<string, FridayToolCategory> = {
   memory_query: "read",
   memory_get: "read",
   skills_list: "read",
+  workflow_list: "read",
   agents_list: "read",
   capabilities: "read",
   task_status: "read",
