@@ -923,6 +923,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     workflowRepo,
     workflowCrud: workflowRuntime.crud,
     nowIso: deps.nowIso,
+    canonicalMutationGate,
   });
   const skillUpgradeLifecycle = createFridaySkillUpgradeLifecycleService({
     db: deps.db,
@@ -1191,12 +1192,24 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           workflowVersionId: input.workflowVersionId,
           runtimeVersion: input.runtimeVersion,
           providerModel: input.providerModel,
+          actor: input.actor,
+          surface: input.surface,
+          planDigest: input.planDigest,
+          idempotencyKey: input.idempotencyKey,
+          canonicalApproval: input.canonicalApproval,
         }),
       recordCanary: (input) =>
         workflowUpgradeLifecycle.recordCanaryResult({
           workflowId: input.workflowId,
           success: input.success,
+          runtimeVersion: input.runtimeVersion,
+          providerModel: input.providerModel,
           evaluatedAt: input.evaluatedAt,
+          actor: input.actor,
+          surface: input.surface,
+          planDigest: input.planDigest,
+          idempotencyKey: input.idempotencyKey,
+          canonicalApproval: input.canonicalApproval,
         }),
       promote: (input) =>
         workflowUpgradeLifecycle.promote({
@@ -1204,6 +1217,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           versionNumber: input.versionNumber,
           runtimeVersion: input.runtimeVersion,
           providerModel: input.providerModel,
+          actor: input.actor,
+          surface: input.surface,
+          planDigest: input.planDigest,
+          idempotencyKey: input.idempotencyKey,
+          canonicalApproval: input.canonicalApproval,
         }),
       rollback: (input) =>
         workflowUpgradeLifecycle.rollback({
@@ -1211,6 +1229,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           targetVersionNumber: input.targetVersionNumber,
           runtimeVersion: input.runtimeVersion,
           providerModel: input.providerModel,
+          actor: input.actor,
+          surface: input.surface,
+          planDigest: input.planDigest,
+          idempotencyKey: input.idempotencyKey,
+          canonicalApproval: input.canonicalApproval,
         }),
       getStatus: (workflowId) => autonomyUpgradeStatus.get("workflow", workflowId),
     },

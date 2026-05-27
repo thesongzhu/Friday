@@ -10,6 +10,8 @@ import {
   classifyWorkflowError,
   type WorkflowRetryTrace,
 } from "../../../../src/workflows/engine/friday-workflow-unified-retry-bridge.js";
+import { FridayAuditTrail } from "../../../../src/observability/engine/audit-trail.js";
+import type { FridayAuditEntry } from "../../../../src/observability/model/friday-observability.types.js";
 
 describe("A-005 classifyWorkflowError", () => {
   it("classifies schema/validation errors as logic", () => {
@@ -299,6 +301,60 @@ describe("A-005 WorkflowUnifiedRetryBridge", () => {
 
       expect(bridge.getTraces("r-1")).toHaveLength(1);
       expect(bridge.getTraces("r-2")).toHaveLength(1);
+    });
+
+    it("records retry receipts into a tamper-evident audit trail and detects receipt tampering", async () => {
+      const auditTrail = new FridayAuditTrail();
+      const auditWrites: Array<Promise<unknown>> = [];
+      const bridge = createWorkflowUnifiedRetryBridge({
+        maxAttempts: 3,
+        baseDelayMs: 100,
+        retryBudgetMax: 5,
+        circuitBreakerThreshold: 3,
+        nowIso: () => "2026-01-01T00:00:00Z",
+        onRetryTrace: (trace) => {
+          auditWrites.push(auditTrail.append({
+            actor: { type: "system", id: "workflow-retry-bridge", displayName: "Workflow Retry Bridge" },
+            actionCategory: trace.decision.shouldRetry ? "update" : "execute",
+            action: trace.decision.shouldRetry ? "workflow.retry.scheduled" : "workflow.retry.blocked",
+            resource: { type: "workflow_run", id: trace.runId, displayName: trace.nodeId },
+            outcome: trace.decision.shouldRetry ? "success" : "denied",
+            description: trace.decision.reason,
+            module: "workflows",
+            traceId: trace.runId,
+            metadata: {
+              nodeId: trace.nodeId,
+              attempt: trace.attempt,
+              category: trace.category,
+              delayMs: trace.decision.delayMs,
+              errorCode: trace.errorCode,
+            },
+          }));
+        },
+      });
+
+      const retryable = bridge.evaluateRetry({
+        runId: "r-audit", nodeId: "n-timeout", attempt: 1, errorCode: "TIMEOUT",
+      });
+      const denied = bridge.evaluateRetry({
+        runId: "r-audit", nodeId: "n-auth", attempt: 1, errorCode: "EXECUTOR_PROVIDER_ERROR", errorMessage: "Provider returned 401",
+      });
+      await Promise.all(auditWrites);
+
+      expect(retryable.shouldRetry).toBe(true);
+      expect(denied.shouldRetry).toBe(false);
+      expect(denied.category).toBe("auth");
+      expect(auditTrail.query({ traceId: "r-audit" })).toHaveLength(2);
+      await expect(auditTrail.verifyChain()).resolves.toEqual({ valid: true });
+
+      const state = auditTrail as unknown as { entries: FridayAuditEntry[] };
+      state.entries[0] = {
+        ...state.entries[0]!,
+        description: "tampered retry receipt",
+      };
+      const tampered = await auditTrail.verifyChain();
+      expect(tampered.valid).toBe(false);
+      expect(tampered.brokenAt).toBe(0);
     });
   });
 
