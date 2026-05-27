@@ -47,6 +47,22 @@ describe("FridayMemoryPiiGuard", () => {
       expect(ccMatches).toHaveLength(0);
     });
 
+    it("does not redact Luhn-valid project codenames with alphabetic identifier prefixes", () => {
+      const result = guard.scanAndTransform(
+        "For this proof run, codename is BARB-1779879819520. marker=phase22d-rgg-1779879819520.",
+      );
+      expect(result.matches.filter((m) => m.type === "credit_card")).toHaveLength(0);
+      expect(result.distinctTypes).not.toContain("credit_card");
+      expect(result.transformedContent).toContain("BARB-1779879819520");
+      expect(result.transformedContent).toContain("phase22d-rgg-1779879819520");
+    });
+
+    it("still detects Luhn-valid credit cards with explicit payment context", () => {
+      const result = guard.scanAndTransform("Credit card number: 4111111111111111");
+      expect(result.matches.filter((m) => m.type === "credit_card")).toHaveLength(1);
+      expect(result.distinctTypes).toContain("credit_card");
+    });
+
     it("returns empty matches for clean content", () => {
       const result = guard.scanAndTransform("This is a safe message with no PII");
       expect(result.matches).toHaveLength(0);
@@ -81,6 +97,23 @@ describe("FridayMemoryPiiGuard", () => {
       const result = guard.scanAndTransform("Email: user@example.com");
       expect(result.transformedContent).toContain("[EMAIL]");
       expect(result.transformedContent).not.toContain("user@example.com");
+    });
+
+    it("preserves proof and project identifiers that look numeric but are not cards", () => {
+      const result = guard.scanAndTransform(
+        "For this proof run, the user's project codename is BARB-1779879819520. marker=phase22d-rgg-1779879819520.",
+      );
+      expect(result.transformedContent).toContain("BARB-1779879819520");
+      expect(result.transformedContent).toContain("marker=phase22d-rgg-1779879819520");
+      expect(result.transformedContent).not.toContain("[CREDIT_CARD]");
+      expect(result.tagsToAdd).not.toContain("pii.credit_card");
+    });
+
+    it("continues to redact standalone credit cards", () => {
+      const result = guard.scanAndTransform("Card: 4111111111111111");
+      expect(result.transformedContent).toContain("[CREDIT_CARD]");
+      expect(result.transformedContent).not.toContain("4111111111111111");
+      expect(result.tagsToAdd).toContain("pii.credit_card");
     });
 
     it("redacts SSN", () => {
