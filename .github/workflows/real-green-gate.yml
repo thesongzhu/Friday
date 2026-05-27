@@ -266,14 +266,14 @@ jobs:
   phase24e-telegram-workflow-candidate:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24e_telegram_workflow_candidate == true }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     environment: phase-24-live-channels
     env:
       FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
       FRIDAY_TELEGRAM_CHAT_ID: ${{ secrets.FRIDAY_TELEGRAM_CHAT_ID || vars.FRIDAY_TELEGRAM_CHAT_ID }}
       FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
       FRIDAY_TELEGRAM_MODE: ${{ secrets.FRIDAY_TELEGRAM_MODE || vars.FRIDAY_TELEGRAM_MODE }}
-      PHASE24E_TELEGRAM_LISTENER_TIMEOUT_MS: "720000"
+      PHASE24E_TELEGRAM_LISTENER_TIMEOUT_MS: "1800000"
       PHASE24E_TELEGRAM_POLLING_TIMEOUT_SEC: "5"
     steps:
       - uses: actions/checkout@v5
