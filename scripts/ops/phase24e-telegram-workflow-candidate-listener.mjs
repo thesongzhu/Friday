@@ -368,7 +368,7 @@ function initialReport(config, reportPath) {
       approveInboundObserved: false,
       approveAckDelivered: false,
       approveCandidateStatusApproved: false,
-      approveSavedWorkflow: true ? false : false, // hint
+      approveSavedWorkflow: false,
       workflowVisibleInCrud: false,
       artifactHasNoToken: false,
     },
@@ -552,17 +552,21 @@ function installWorkflowApprovalStub(hub, generatorSessionId, approvedSlot) {
   };
 }
 
-async function getCandidateStatus(baseUrl, candidateId) {
+function readCandidateFromDb(stateDir, candidateId) {
+  // Reviewer A finding: the public HTTP route `/v1/reflex/candidates/:id`
+  // hydrates the default-public principal whose userId differs from the
+  // `admin-001` userId we seeded under, so `service.getCandidate` filters
+  // it out and throws REFLEX_CANDIDATE_NOT_FOUND. Reading the candidate
+  // directly from the SQLite store via the same repository the listener
+  // already uses sidesteps the principal scoping without changing any
+  // production behavior.
+  const candidateRepo = createFridayReflexCandidateRepository();
+  const db = new Database(path.join(stateDir, "friday.db"));
   try {
-    const data = await apiFetch(baseUrl, "GET", `/v1/reflex/candidates/${encodeURIComponent(candidateId)}`);
-    if (data && typeof data === "object") {
-      if (data.candidate && typeof data.candidate === "object") return data.candidate;
-      if (typeof data.status === "string") return data;
-    }
-  } catch {
-    // Treat fetch failures as not-yet-resolved; caller will retry.
+    return candidateRepo.getById(db, { userId: LEARNING_DEFAULT_USER_ID, id: candidateId });
+  } finally {
+    db.close();
   }
-  return null;
 }
 
 async function getSessionMessages(baseUrl, chatId) {
@@ -592,11 +596,16 @@ async function waitForCandidateAck(baseUrl, chatId, candidateId, expectedStatusW
   return null;
 }
 
-async function waitForCandidateStatus(baseUrl, candidateId, expectedStatus, timeoutMs) {
+async function waitForCandidateStatus(stateDir, candidateId, expectedStatus, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastSeen = null;
   while (Date.now() < deadline) {
-    const candidate = await getCandidateStatus(baseUrl, candidateId);
+    let candidate;
+    try {
+      candidate = readCandidateFromDb(stateDir, candidateId);
+    } catch {
+      candidate = null;
+    }
     lastSeen = candidate?.status ?? lastSeen;
     if (candidate?.status === expectedStatus) return candidate;
     await delay(1500);
@@ -676,9 +685,17 @@ async function main() {
     report.criteria.fridayHubChannelConnected = telegramView?.status === "connected" && telegramView?.running === true;
     report.criteria.pollingConnected = instrumentedPolling.isPolling();
     report.diagnostics.telegramHubAdapter.pollingConnected = instrumentedPolling.isPolling();
+    // Reviewer A finding: FridayChannelRegistryView only exposes the
+    // allowlist as boolean+count summary, not the raw arrays. Use that
+    // shape (defense-in-depth: also confirm we just passed a non-empty
+    // allowlist into register() above, which the registry summary
+    // reflects).
+    const allowlistSummary = telegramView?.allowlist;
     report.criteria.channelAllowListEnforced =
-      Array.isArray(telegramView?.allowedUsers) && telegramView.allowedUsers.includes(config.allowedUserId)
-      && Array.isArray(telegramView?.allowedChats) && telegramView.allowedChats.includes(config.chatId);
+      allowlistSummary?.hasAllowedUsers === true
+      && (allowlistSummary?.allowedUsersCount ?? 0) > 0
+      && allowlistSummary?.hasAllowedChats === true
+      && (allowlistSummary?.allowedChatsCount ?? 0) > 0;
 
     const port = await findFreePort();
     server = createFridayHttpServer({
@@ -722,7 +739,7 @@ async function main() {
     report.criteria.rejectAckDelivered = true;
     report.rejectFlow.ackDelivered = true;
 
-    const rejectCandidate = await waitForCandidateStatus(baseUrl, rejectCandidateId, "rejected", 30_000);
+    const rejectCandidate = await waitForCandidateStatus(stateDir, rejectCandidateId, "rejected", 30_000);
     report.rejectFlow.candidateStatusReached = rejectCandidate?.status ?? null;
     report.criteria.rejectCandidateStatusRejected = rejectCandidate?.status === "rejected";
     const workflowsAfterReject = listWorkflowsByTag(hub);
@@ -756,7 +773,7 @@ async function main() {
     report.criteria.approveAckDelivered = true;
     report.approveFlow.ackDelivered = true;
 
-    const approveCandidate = await waitForCandidateStatus(baseUrl, approveCandidateId, "approved", 30_000);
+    const approveCandidate = await waitForCandidateStatus(stateDir, approveCandidateId, "approved", 30_000);
     report.approveFlow.candidateStatusReached = approveCandidate?.status ?? null;
     report.criteria.approveCandidateStatusApproved = approveCandidate?.status === "approved";
 

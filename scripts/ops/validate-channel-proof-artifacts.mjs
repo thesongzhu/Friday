@@ -334,7 +334,7 @@ function validateChannelArtifact(channelKey, artifactPath, expectedSha) {
  * Programmatic entry point. Returns the decision shape that the CLI emits.
  *
  * @param {object} args
- * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null }} args.channels
+ * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null, "telegram-workflow-candidate": string|null }} args.channels
  * @param {string|null} args.expectedSha
  */
 export function validateChannelProofArtifacts(args) {
