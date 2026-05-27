@@ -1,6 +1,17 @@
 import { mintLocalAdminAccessToken } from "./local-auth.mjs";
 import { safeJsonParse } from "./defs.mjs";
 
+export const FRIDAY_AGENT_RUN_DEFAULT_TIMEOUT_MS = 300_000;
+export const FRIDAY_AGENT_RUN_RECEIPT_GRACE_MS = 30_000;
+
+export function agentRunRequestTimeoutMs(runTimeoutMs) {
+  const runtimeTimeoutMs = Number(runTimeoutMs);
+  const boundedRuntimeTimeoutMs = Number.isFinite(runtimeTimeoutMs) && runtimeTimeoutMs > 0
+    ? runtimeTimeoutMs
+    : FRIDAY_AGENT_RUN_DEFAULT_TIMEOUT_MS;
+  return boundedRuntimeTimeoutMs + FRIDAY_AGENT_RUN_RECEIPT_GRACE_MS;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -179,7 +190,9 @@ export class FridayClient {
   }
 
   async startAgentRun(body) {
-    return await this.api("POST", "/v1/agent/runs", body, { timeoutMs: body.timeoutMs ?? 240_000 });
+    return await this.api("POST", "/v1/agent/runs", body, {
+      timeoutMs: agentRunRequestTimeoutMs(body.timeoutMs),
+    });
   }
 
   async getAgentRun(runId) {
