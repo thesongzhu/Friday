@@ -780,7 +780,7 @@ export function createFridayProviderRoutes(
     },
 
     {
-      operationId: "providers.capabilityHealth.list",
+      operationId: "providers.capability.health.list",
       method: "GET",
       path: "/v1/providers/capability-health",
       auth: { public: true },

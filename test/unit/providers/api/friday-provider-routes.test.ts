@@ -1326,7 +1326,7 @@ describe("FridayProviderRoutes", () => {
         reasons: providerId === "codex-001" ? ["validation_unverified"] : [],
       }));
       const routes = createFridayProviderRoutes({ providerService: mockService });
-      const route = routes.find((entry) => entry.operationId === "providers.capabilityHealth.list")!;
+      const route = routes.find((entry) => entry.operationId === "providers.capability.health.list")!;
 
       const result = await route.handler(makeCtx());
       const items = (result as { items: Array<{ providerId: string; capabilities: Array<{ state: string; source: string }> }>; summary: Record<string, number> }).items;
@@ -1357,7 +1357,7 @@ describe("FridayProviderRoutes", () => {
       const operationIds = routes.map((r) => r.operationId);
       expect(operationIds).toContain("providers.templates.list");
       expect(operationIds).toContain("providers.health.list");
-      expect(operationIds).toContain("providers.capabilityHealth.list");
+      expect(operationIds).toContain("providers.capability.health.list");
       expect(operationIds).toContain("auth.oauth.anthropic.initiate");
       expect(operationIds).toContain("auth.oauth.anthropic.callback");
       expect(operationIds).toContain("auth.oauth.openai.codex.device.initiate");
