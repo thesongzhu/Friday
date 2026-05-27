@@ -661,6 +661,50 @@ async function main() {
       },
     });
 
+    // Bot-token health check + webhook-info snapshot, both recorded
+    // to the artifact so a future "polling sees nothing" run has
+    // enough diagnostic context to root-cause in one read. Failures
+    // are non-fatal at this step (we still try to clear the webhook
+    // below); if everything is wrong, the downstream
+    // `pollingConnected` / `updateCount` criteria still gate closure.
+    await fetch(`https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/getMe`, {
+      method: "GET",
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Telegram getMe returned HTTP ${response.status}`);
+      }
+      const body = await response.json().catch(() => null);
+      if (body && body.ok === true && body.result) {
+        report.diagnostics.telegramHubAdapter.botTokenValid = true;
+        report.diagnostics.telegramHubAdapter.botUsername = body.result.username ?? null;
+        report.diagnostics.telegramHubAdapter.botIdTail = tail(body.result.id);
+        report.diagnostics.telegramHubAdapter.botCanReadAllGroupMessages = body.result.can_read_all_group_messages ?? null;
+      } else {
+        throw new Error(`Telegram getMe returned ok=false: ${body?.description ?? "unknown"}`);
+      }
+    }).catch((err) => {
+      report.diagnostics.telegramHubAdapter.botTokenValid = false;
+      report.diagnostics.telegramHubAdapter.botHealthError = safeError(err, config.botToken);
+    });
+
+    await fetch(`https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/getWebhookInfo`, {
+      method: "GET",
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Telegram getWebhookInfo returned HTTP ${response.status}`);
+      }
+      const body = await response.json().catch(() => null);
+      if (body && body.ok === true && body.result) {
+        report.diagnostics.telegramHubAdapter.webhookInfoBeforeCleanup = {
+          urlPresent: typeof body.result.url === "string" && body.result.url.length > 0,
+          pendingUpdateCount: body.result.pending_update_count ?? 0,
+          lastErrorDate: body.result.last_error_date ?? null,
+        };
+      }
+    }).catch((err) => {
+      report.diagnostics.telegramHubAdapter.webhookInfoError = safeError(err, config.botToken);
+    });
+
     // Defensive: clear any pre-existing Telegram webhook so polling
     // can see updates. If a previous run (or another agent / dev env)
     // set a webhook on this bot, getUpdates polling silently returns
