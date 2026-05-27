@@ -1,5 +1,9 @@
 import { apiClient } from "./client";
-import type { FridayAutoFixRunReadyResponse, FridayLearningOverview } from "./types";
+import type {
+  FridayAutoFixExecutionResponse,
+  FridayAutoFixRunReadyResponse,
+  FridayLearningOverview,
+} from "./types";
 
 interface GetLearningOverviewResponse extends FridayLearningOverview {}
 
@@ -54,6 +58,16 @@ export const learningApi = {
     return apiClient.post<typeof input, FridayAutoFixRunReadyResponse>(
       "/v1/auto-fix/actions/run-ready",
       input,
+    );
+  },
+
+  async rollbackAutoFixAction(input: {
+    actionId: string;
+    reason: string;
+  }): Promise<FridayAutoFixExecutionResponse> {
+    return apiClient.post<{ reason: string }, FridayAutoFixExecutionResponse>(
+      `/v1/auto-fix/actions/${encodeURIComponent(input.actionId)}/rollback`,
+      { reason: input.reason },
     );
   },
 };
