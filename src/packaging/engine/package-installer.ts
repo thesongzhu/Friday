@@ -71,6 +71,7 @@ export interface RollbackOptions {
   readonly etag: string;
   readonly reason: string;
   readonly initiatedBy: string;
+  readonly platformVersion?: string;
 }
 
 /** Query criteria for lifecycle events. */

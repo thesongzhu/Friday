@@ -451,6 +451,8 @@ export interface FridayPublishPackageResponse {
  * @openapi operationId: listPackages
  */
 export interface FridayListPackagesQuery extends FridayPackagingPaginationQuery {
+  /** Tenant scope for package visibility. Includes global packages when provided. */
+  readonly tenantId?: string;
   /** Filter by package name (prefix match). */
   readonly name?: string;
   /** Filter by capability (matches any package providing this capability). */
@@ -519,6 +521,8 @@ export interface FridayGetPackageResponse {
  * @openapi operationId: listPackageVersions
  */
 export interface FridayListPackageVersionsQuery extends FridayPackagingPaginationQuery {
+  /** Tenant scope for package visibility. Includes global versions when provided. */
+  readonly tenantId?: string;
   /** Include deprecated versions. @default false */
   readonly includeDeprecated?: boolean;
 }
