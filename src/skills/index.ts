@@ -301,6 +301,20 @@ export {
 // Converter (re-export key types for convenience; full module at #skills/converter)
 export type { FridaySkillConverterService } from "./converter/services/friday-skill-converter-service.types.js";
 
+// Link-to-skill
+export {
+  buildFridayLinkToSkillCandidateSource,
+  createFridayLinkToSkillService,
+} from "./link-to-skill/index.js";
+export type {
+  CreateFridayLinkToSkillServiceDeps,
+  FridayLinkToSkillService,
+  FridayLinkToSkillSourceBuildInput,
+  FridayLinkToSkillSourceBuildResult,
+  FridayLinkToSkillStageInput,
+  FridayLinkToSkillStageResult,
+} from "./link-to-skill/index.js";
+
 // Watcher
 export { createFridaySkillWatcher } from "./registry/friday-skill-watcher.js";
 export type { FridaySkillFileChangeEvent, FridaySkillWatcher } from "./registry/friday-skill-watcher.js";

@@ -370,6 +370,46 @@ function seedWorkflowCandidate(input: {
   }
 }
 
+function seedSkillCandidate(input: {
+  env: FridayRealBrowserE2eEnv;
+  userId: string;
+  candidateId: string;
+  generatorSessionId: string;
+  title: string;
+}): ReflexCandidate {
+  const db = new Database(path.join(input.env.stateDir, "friday.db"));
+  try {
+    return createFridayReflexCandidateRepository().insert(db, {
+      id: input.candidateId,
+      nowIso: new Date().toISOString(),
+      userId: input.userId,
+      kind: "skill",
+      origin: "post_run",
+      status: "ready_for_review",
+      sourceRunId: `run-${input.candidateId}`,
+      sessionKey: `session-${input.candidateId}`,
+      title: input.title,
+      summary: "Review Center browser proof skill candidate",
+      payload: {
+        goal: "Create a safe deterministic skill candidate for Review Center approval proof.",
+      },
+      evidence: {
+        generatorSessionId: input.generatorSessionId,
+        mode: "test_fixture",
+        draftSkillId: `draft-${input.candidateId}`,
+        draftName: input.title,
+        validationOk: true,
+        qaVerdict: { status: "passed", source: "review-center-skill-browser-proof" },
+        harness: { status: "passed", source: "review-center-skill-browser-proof" },
+      },
+      confidence: 0.9,
+      riskTier: 3,
+    });
+  } finally {
+    db.close();
+  }
+}
+
 async function requestReviewCandidate(
   env: FridayRealBrowserE2eEnv,
   key: string,
@@ -509,6 +549,121 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
     expect(rejectedCandidates.status).toBe(200);
     expect(rejectedCandidates.json.ok).toBe(true);
     expect(rejectedCandidates.json.data.items.some((item) => item.id === rejectCandidate.id)).toBe(true);
+  });
+
+  it("approves and rejects skill candidates in the real Review Center UI without making staged skills runnable", { timeout: 180_000 }, async () => {
+    env = await createFridayRealBrowserE2eEnv();
+    await completeSetup(env);
+    const userId = await readUserId(env);
+
+    const approveAndSaveCalls: string[] = [];
+    const originalApproveAndSave = env.hub.skillGenerator.approveAndSave.bind(env.hub.skillGenerator);
+
+    try {
+      env.hub.skillGenerator.approveAndSave = async (sessionId: string) => {
+        approveAndSaveCalls.push(sessionId);
+        if (sessionId !== "skill-ui-approve-session") {
+          throw new Error(`Unexpected skill generator approval session: ${sessionId}`);
+        }
+        return {
+          sessionId,
+          skillId: "review-center-approved-skill",
+          skillDir: path.join(env!.stateDir, "generated-skills", "review-center-approved-skill"),
+          candidateId: "review-center-approved-skill-candidate",
+          candidateDir: path.join(env!.stateDir, "skill-candidates", "review-center-approved-skill-candidate"),
+          savedFiles: ["skill.manifest.json", "SKILL.md", "run.sh"],
+          registryRefreshed: false,
+          promotionStage: "candidate_staged",
+          candidateManifestTags: ["skill.lifecycle.candidate"],
+          promotedManifestTags: [],
+          evidence: {
+            packageLoaded: true,
+            packageValidated: true,
+            registryRefreshed: false,
+            candidateStaged: true,
+          },
+          harness: { status: "passed", source: "review-center-skill-browser-proof" },
+          qaVerdict: { verdict: "pass", summary: "deterministic Review Center skill proof passed" },
+        };
+      };
+
+      const approveCandidate = seedSkillCandidate({
+        env,
+        userId,
+        candidateId: "skill-ui-approve-candidate",
+        generatorSessionId: "skill-ui-approve-session",
+        title: "Approve deterministic Review Center skill",
+      });
+      const rejectCandidate = seedSkillCandidate({
+        env,
+        userId,
+        candidateId: "skill-ui-reject-candidate",
+        generatorSessionId: "skill-ui-reject-session",
+        title: "Reject deterministic Review Center skill",
+      });
+
+      pageHandle = await env.newPage();
+      await seedBrowserProfile(pageHandle);
+      await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+      await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
+
+      await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${approveCandidate.id}"]`).waitFor({
+        state: "visible",
+        timeout: 60_000,
+      });
+      await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${rejectCandidate.id}"]`).waitFor({
+        state: "visible",
+        timeout: 60_000,
+      });
+
+      await pageHandle.page.locator(`[data-testid="reflex-candidate-reject-${rejectCandidate.id}"]`).click();
+      await pageHandle.page.waitForFunction(
+        (candidateId) => !document.querySelector(`[data-testid="reflex-candidate-card-${candidateId}"]`),
+        rejectCandidate.id,
+        { timeout: 20_000 },
+      );
+      expect(approveAndSaveCalls).toHaveLength(0);
+
+      await pageHandle.page.locator(`[data-testid="reflex-candidate-approve-${approveCandidate.id}"]`).click();
+      await pageHandle.page.waitForFunction(
+        (candidateId) => !document.querySelector(`[data-testid="reflex-candidate-card-${candidateId}"]`),
+        approveCandidate.id,
+        { timeout: 20_000 },
+      );
+      expect(approveAndSaveCalls).toEqual(["skill-ui-approve-session"]);
+
+      const approvedCandidates = await env.apiFetch<{ items: ReflexCandidate[] }>(
+        "GET",
+        "/v1/reflex/candidates?status=approved&kind=skill",
+      );
+      expect(approvedCandidates.status).toBe(200);
+      expect(approvedCandidates.json.ok).toBe(true);
+      const approved = approvedCandidates.json.data.items.find((item) => item.id === approveCandidate.id);
+      expect(approved?.evidence).toMatchObject({
+        savedSkillId: "review-center-approved-skill",
+        stagedCandidateId: "review-center-approved-skill-candidate",
+        registryRefreshed: false,
+        promotionStage: "candidate_staged",
+        lifecycleBoundary: "candidate_staged_not_installed_or_promoted",
+      });
+
+      const rejectedCandidates = await env.apiFetch<{ items: ReflexCandidate[] }>(
+        "GET",
+        "/v1/reflex/candidates?status=rejected&kind=skill",
+      );
+      expect(rejectedCandidates.status).toBe(200);
+      expect(rejectedCandidates.json.ok).toBe(true);
+      expect(rejectedCandidates.json.data.items.some((item) => item.id === rejectCandidate.id)).toBe(true);
+
+      const runStagedSkill = await env.apiFetch<Record<string, unknown>>(
+        "POST",
+        "/v1/skills/review-center-approved-skill/run",
+        { input: {}, channel: "api", sessionId: "review-center-staged-skill-run-denied" },
+      );
+      expect(runStagedSkill.status).not.toBe(200);
+    } finally {
+      env.hub.skillGenerator.approveAndSave = originalApproveAndSave;
+    }
   });
 
   it("approves a workflow candidate in the real Review Center UI and runs the published workflow", { timeout: 180_000 }, async () => {
