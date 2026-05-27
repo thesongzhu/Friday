@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { FridayDomainError } from "#errors";
-import { FRIDAY_MEMORY_GUARD_ERROR_CODES } from "#memory";
+import { createFridayMemoryPiiGuard, FRIDAY_MEMORY_GUARD_ERROR_CODES } from "#memory";
 import {
   createGuardTestSetup,
   createMockMemoryItem,
@@ -54,6 +54,30 @@ describe("FridayMemoryGuard — PII + Namespace + Rate Limit (Integration)", () 
         expect.anything(),
         "safe content",
         expect.anything(),
+      );
+    });
+
+    it("preserves Luhn-valid project/proof identifiers while still redacting actual cards", async () => {
+      const { guard, core, piiGuard } = createGuardTestSetup();
+      const realPiiGuard = createFridayMemoryPiiGuard("redact");
+      vi.mocked(piiGuard.scanAndTransform).mockImplementation((content) =>
+        realPiiGuard.scanAndTransform(content),
+      );
+
+      const proofContent =
+        "For this proof run, the user's project codename is BARB-1779879819520. marker=phase22d-rgg-1779879819520.";
+      await guard.store("test-ns", proofContent);
+      expect(core.store).toHaveBeenLastCalledWith(
+        expect.anything(),
+        proofContent,
+        expect.objectContaining({ tags: undefined }),
+      );
+
+      await guard.store("test-ns", "Card: 4111111111111111");
+      expect(core.store).toHaveBeenLastCalledWith(
+        expect.anything(),
+        "Card: [CREDIT_CARD]",
+        expect.objectContaining({ tags: ["pii.credit_card"] }),
       );
     });
   });

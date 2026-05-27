@@ -42,6 +42,23 @@ function luhnCheck(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+const CREDIT_CARD_CONTEXT_BEFORE =
+  /(?:credit\s*card|card(?:\s*number)?|cc|visa|mastercard|master\s*card|amex|american\s*express|discover|payment|billing|account)\s*(?:number|no\.?)?\s*[:#=-]?\s*$/i;
+
+const CREDIT_CARD_IDENTIFIER_PREFIX = /[A-Za-z][A-Za-z0-9]{1,31}[-_:]$/;
+const CREDIT_CARD_IDENTIFIER_SUFFIX = /^[-_:][A-Za-z][A-Za-z0-9]{1,31}/;
+
+function isCreditCardIdentifierFalsePositive(content: string, match: RegExpExecArray): boolean {
+  const before = content.slice(Math.max(0, match.index - 48), match.index);
+  if (CREDIT_CARD_CONTEXT_BEFORE.test(before)) {
+    return false;
+  }
+
+  const matched = match[0];
+  const after = content.slice(match.index + matched.length, match.index + matched.length + 48);
+  return CREDIT_CARD_IDENTIFIER_PREFIX.test(before) || CREDIT_CARD_IDENTIFIER_SUFFIX.test(after);
+}
+
 function findMatches(content: string): FridayMemoryGuardPiiMatch[] {
   const matches: FridayMemoryGuardPiiMatch[] = [];
 
@@ -55,6 +72,9 @@ function findMatches(content: string): FridayMemoryGuardPiiMatch[] {
       if (pattern.type === "credit_card") {
         const digits = match[0].replace(/[^0-9]/g, "");
         if (digits.length < 13 || digits.length > 19 || !luhnCheck(digits)) {
+          continue;
+        }
+        if (isCreditCardIdentifierFalsePositive(content, match)) {
           continue;
         }
       }
