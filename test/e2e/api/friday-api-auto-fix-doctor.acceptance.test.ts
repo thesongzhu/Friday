@@ -17,6 +17,9 @@
  *       against the same real wiring
  *   (d) channel "repair" canonical command returns preview only and never
  *       invokes execute / runReady / approve
+ *   (e) rollback of the verified route repair uses the real rollback route,
+ *       records rollback receipt fields, and restores through the injected
+ *       configManager rollback executor/verifier path
  *
  * No mocks of `assertBoundPrincipalForOperation`, `configManager.applyPatch`,
  * or `executeAction` are used as proof for the bound-owner acceptance path —
@@ -410,6 +413,89 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
     const payload = persisted?.plan.steps[0]?.payload as Record<string, unknown>;
     expect(payload._configPatchApplied).toBe(true);
     expect(typeof payload._configPatchRevision).toBe("number");
+  });
+
+  it("(e-route) /v1/auto-fix/actions/:id/rollback via bound owner principal executes rollback and persists receipt through the HTTP route handler", async () => {
+    const { incidentRepo, diagnosisRepo, actionRepo } = makeBaseEntities(db, "rollback-route");
+    void incidentRepo;
+    void diagnosisRepo;
+    const configManager = makeConfigManager();
+    const service = buildAcceptanceSelfHealingApiService(db, configManager);
+    const routes = createFridayAutoFixRoutes({ service });
+    const executeRoute = routes.find((r) => r.operationId === "autofix.actions.execute")!;
+    const rollbackRoute = routes.find((r) => r.operationId === "autofix.actions.rollback")!;
+
+    const plan = buildConfigPatchPlan("rollback-route", { withPatch: true });
+    const action: FridayAutoFixActionEntity = {
+      actionId: "action-rollback-route",
+      incidentId: "inc-rollback-route",
+      userId: "test-user",
+      riskTier: 1,
+      plan,
+      rollbackPlan: plan.rollbackPlan,
+      status: "planned",
+      outcome: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    actionRepo.insert(db.writer, action);
+
+    await executeRoute.handler({
+      requestId: "req-execute-before-rollback-route",
+      receivedAt: NOW,
+      params: { actionId: "action-rollback-route" },
+      query: {},
+      body: {},
+      headers: {},
+      principal: buildBoundOwnerPrincipal() as never,
+    });
+
+    const response = (await rollbackRoute.handler({
+      requestId: "req-rollback-route",
+      receivedAt: NOW,
+      params: { actionId: "action-rollback-route" },
+      query: {},
+      body: { reason: "verified repair regression" },
+      headers: {},
+      principal: buildBoundOwnerPrincipal() as never,
+    })) as {
+      action: {
+        action: {
+          status: string;
+          rollbackAttempted?: boolean;
+          rollbackSucceeded?: boolean;
+          rollbackAttemptedAt?: string;
+        };
+        evidence: {
+          rollbackResult: {
+            rollbackAttempted: boolean;
+            rollbackSucceeded: boolean;
+            rollbackAttemptedAt?: string;
+          };
+        };
+      };
+      result: { rollbackAttempted: boolean; rollbackSucceeded: boolean };
+    };
+
+    expect(response.result.rollbackAttempted).toBe(true);
+    expect(response.result.rollbackSucceeded).toBe(true);
+    expect(response.action.action.status).toBe("rolled_back");
+    expect(response.action.action.rollbackAttempted).toBe(true);
+    expect(response.action.action.rollbackSucceeded).toBe(true);
+    expect(response.action.action.rollbackAttemptedAt).toBe(NOW);
+    expect(response.action.evidence.rollbackResult.rollbackAttempted).toBe(true);
+    expect(response.action.evidence.rollbackResult.rollbackSucceeded).toBe(true);
+
+    const persisted = actionRepo.getById(db.writer, "action-rollback-route");
+    expect(persisted?.status).toBe("rolled_back");
+    expect(persisted?.rollbackAttempted).toBe(true);
+    expect(persisted?.rollbackSucceeded).toBe(true);
+    expect(persisted?.rollbackAttemptedAt).toBe(NOW);
+    expect(persisted?.rollbackErrorMessage).toBeUndefined();
+    const rollbackPayload = persisted?.rollbackPlan?.steps[0]?.payload as Record<string, unknown>;
+    expect(rollbackPayload._configPatchRolledBack).toBe(true);
+    expect(typeof rollbackPayload._configPatchRolledBackToRevision).toBe("number");
+    expect(typeof rollbackPayload._configPatchRollbackRevision).toBe("number");
   });
 
   it("(c-route) /v1/auto-fix/actions/:id/execute via bound owner principal but no real patch returns diagnostic_only / non-applied through the HTTP route handler", async () => {

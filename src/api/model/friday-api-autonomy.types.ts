@@ -62,11 +62,19 @@ export interface FridayRegisterWorkflowShadowRequest {
   workflowVersionId: string;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRecordWorkflowCanaryRequest {
   success: boolean;
+  runtimeVersion: string;
+  providerModel?: string;
   evaluatedAt?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRegisterSkillShadowRequest {
@@ -254,12 +262,18 @@ export interface FridayPromoteWorkflowUpgradeRequest {
   versionNumber: number;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayRollbackWorkflowUpgradeRequest {
   targetVersionNumber: number;
   runtimeVersion: string;
   providerModel?: string;
+  planDigest: string;
+  idempotencyKey?: string;
+  canonicalApproval?: FridayCanonicalApprovalResolution;
 }
 
 export interface FridayWorkflowUpgradeActionResponse {

@@ -60,6 +60,9 @@ import type { FridayPluginEntity } from "../../../plugins/model/friday-plugin.ty
 import type { FridayProviderProfile } from "../../../providers/model/friday-provider.types.js";
 import { FRIDAY_RUNTIME_CAPABILITY_IDS, type FridayProviderTenantContext, type FridayRuntimeCapabilityId } from "#providers";
 import {
+  type FridayWorkflowLifecycleApprovalRequestInput,
+} from "../../../autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
+import {
   type FridaySkillLifecycleApprovalRequestInput,
 } from "../../../autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import type {
@@ -100,16 +103,16 @@ export interface FridayAutonomyRoutesDeps {
   canonicalMutationGate?: FridayMutatingActionGate;
   workflowActions?: {
     registerShadow: (
-      input: { workflowId: string } & FridayRegisterWorkflowShadowRequest,
+      input: { workflowId: string; actor: FridayWorkflowLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRegisterWorkflowShadowRequest,
     ) => FridayWorkflowEntity | Promise<FridayWorkflowEntity>;
     recordCanary: (
-      input: { workflowId: string } & FridayRecordWorkflowCanaryRequest,
+      input: { workflowId: string; actor: FridayWorkflowLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRecordWorkflowCanaryRequest,
     ) => FridayWorkflowEntity | Promise<FridayWorkflowEntity>;
     promote: (
-      input: { workflowId: string } & FridayPromoteWorkflowUpgradeRequest,
+      input: { workflowId: string; actor: FridayWorkflowLifecycleApprovalRequestInput["actor"]; surface: string } & FridayPromoteWorkflowUpgradeRequest,
     ) => FridayWorkflowEntity | Promise<FridayWorkflowEntity>;
     rollback: (
-      input: { workflowId: string } & FridayRollbackWorkflowUpgradeRequest,
+      input: { workflowId: string; actor: FridayWorkflowLifecycleApprovalRequestInput["actor"]; surface: string } & FridayRollbackWorkflowUpgradeRequest,
     ) => FridayWorkflowEntity | Promise<FridayWorkflowEntity>;
     getStatus: (workflowId: string) => FridayWorkflowUpgradeActionResponse["status"];
   };
@@ -315,6 +318,20 @@ function requireSkillLifecycleCanonicalApproval(
     throw new FridayDomainError(
       "CANONICAL_APPROVAL_REQUIRED",
       `Skill lifecycle ${action} requires canonical approval before any mutation.`,
+      { httpStatus: 403 },
+    );
+  }
+  return canonicalApproval;
+}
+
+function requireWorkflowLifecycleCanonicalApproval(
+  action: FridayWorkflowLifecycleApprovalRequestInput["action"],
+  canonicalApproval: FridayCanonicalApprovalResolution | undefined,
+): FridayCanonicalApprovalResolution {
+  if (!canonicalApproval) {
+    throw new FridayDomainError(
+      "CANONICAL_APPROVAL_REQUIRED",
+      `Workflow lifecycle ${action} requires canonical approval before any mutation.`,
       { httpStatus: 403 },
     );
   }
@@ -877,11 +894,21 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const canonicalApproval = requireWorkflowLifecycleCanonicalApproval(
+            "shadow",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const workflow = await deps.workflowActions!.registerShadow({
             workflowId,
             workflowVersionId: requireNonEmptyString(body.workflowVersionId, "workflowVersionId"),
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `workflow:${workflowId}`),
+            surface: `api:/v1/autonomy/workflows/${workflowId}/shadow`,
           });
           return { workflow, status: deps.workflowActions!.getStatus(workflowId) };
         },
@@ -899,10 +926,22 @@ export function createFridayAutonomyRoutes(
               httpStatus: 400,
             });
           }
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const canonicalApproval = requireWorkflowLifecycleCanonicalApproval(
+            "canary",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const workflow = await deps.workflowActions!.recordCanary({
             workflowId,
             success: body.success,
+            runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
+            providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
             evaluatedAt: typeof body.evaluatedAt === "string" ? body.evaluatedAt : undefined,
+            planDigest,
+            idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `workflow:${workflowId}`),
+            surface: `api:/v1/autonomy/workflows/${workflowId}/canary`,
           });
           return { workflow, status: deps.workflowActions!.getStatus(workflowId) };
         },
@@ -915,11 +954,21 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const canonicalApproval = requireWorkflowLifecycleCanonicalApproval(
+            "promote",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const workflow = await deps.workflowActions!.promote({
             workflowId,
             versionNumber: requirePositiveInteger(body.versionNumber, "versionNumber"),
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `workflow:${workflowId}`),
+            surface: `api:/v1/autonomy/workflows/${workflowId}/promote`,
           });
           return { workflow, status: deps.workflowActions!.getStatus(workflowId) };
         },
@@ -932,11 +981,21 @@ export function createFridayAutonomyRoutes(
         async handler(ctx) {
           const { workflowId } = ctx.params as { workflowId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          const planDigest = requireNonEmptyString(body.planDigest, "planDigest");
+          const canonicalApproval = requireWorkflowLifecycleCanonicalApproval(
+            "rollback",
+            readCanonicalApproval(body.canonicalApproval),
+          );
           const workflow = await deps.workflowActions!.rollback({
             workflowId,
             targetVersionNumber: requirePositiveInteger(body.targetVersionNumber, "targetVersionNumber"),
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
             providerModel: typeof body.providerModel === "string" ? body.providerModel : undefined,
+            planDigest,
+            idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+            canonicalApproval,
+            actor: createActorFromPrincipal(ctx.principal, `workflow:${workflowId}`),
+            surface: `api:/v1/autonomy/workflows/${workflowId}/rollback`,
           });
           return { workflow, status: deps.workflowActions!.getStatus(workflowId) };
         },
