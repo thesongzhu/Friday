@@ -140,6 +140,19 @@ function validateSearchBody(body: unknown): asserts body is FridayMemorySearchRe
   if (b.boostByConfidence !== undefined && typeof b.boostByConfidence !== "boolean") {
     throw new FridayDomainError("VALIDATION_ERROR", "boostByConfidence must be a boolean", { httpStatus: 400 });
   }
+  if (b.boostByAccess !== undefined && typeof b.boostByAccess !== "boolean") {
+    throw new FridayDomainError("VALIDATION_ERROR", "boostByAccess must be a boolean", { httpStatus: 400 });
+  }
+  if (b.applyRetentionDecay !== undefined && typeof b.applyRetentionDecay !== "boolean") {
+    throw new FridayDomainError("VALIDATION_ERROR", "applyRetentionDecay must be a boolean", { httpStatus: 400 });
+  }
+  if (b.retentionHalfLifeDays !== undefined) {
+    const retentionHalfLifeDays = Number(b.retentionHalfLifeDays);
+    if (!Number.isFinite(retentionHalfLifeDays) || retentionHalfLifeDays <= 0) {
+      throw new FridayDomainError("VALIDATION_ERROR", "retentionHalfLifeDays must be a positive number", { httpStatus: 400 });
+    }
+    b.retentionHalfLifeDays = retentionHalfLifeDays;
+  }
 }
 
 function validateStoreNumericFields(body: unknown): void {
@@ -496,6 +509,9 @@ export function createFridayMemoryRoutes(
           weights: body.weights,
           memoryType: body.memoryType,
           boostByConfidence: body.boostByConfidence,
+          boostByAccess: body.boostByAccess,
+          applyRetentionDecay: body.applyRetentionDecay,
+          retentionHalfLifeDays: body.retentionHalfLifeDays,
         });
         const learnedItems = deps.listLearnedFacts && shouldIncludeLearnedFacts({
           namespace: body.namespace,

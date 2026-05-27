@@ -24,6 +24,9 @@ export interface FridayMemorySearchRequest {
   weights?: { fts: number; semantic: number };
   memoryType?: FridayMemoryType | FridayMemoryType[];
   boostByConfidence?: boolean;
+  boostByAccess?: boolean;
+  applyRetentionDecay?: boolean;
+  retentionHalfLifeDays?: number;
 }
 export interface FridayMemorySearchResponse {
   items: FridayMemorySearchResult[];

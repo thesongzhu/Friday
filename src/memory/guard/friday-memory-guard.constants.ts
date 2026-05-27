@@ -47,7 +47,7 @@ export const FRIDAY_MEMORY_GUARD_SCOPE_PREFIX_MAX_NAMESPACES = 1_000;
 
 // ─── PII policy (compile-time configurable) ───
 
-export const FRIDAY_MEMORY_GUARD_PII_MODE = "tag" as const; // "block" | "redact" | "tag"
+export const FRIDAY_MEMORY_GUARD_PII_MODE = "redact" as const; // "block" | "redact" | "tag"
 export const FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX = "pii";
 export const FRIDAY_MEMORY_GUARD_EMAIL_REGEX = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 export const FRIDAY_MEMORY_GUARD_US_PHONE_REGEX = /\b(?:\+1[-.\s]?)?(?:\(?[2-9]\d{2}\)?[-.\s]?)?[2-9]\d{2}[-.\s]?\d{4}\b/g;

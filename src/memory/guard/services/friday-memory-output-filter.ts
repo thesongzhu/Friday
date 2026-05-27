@@ -1,5 +1,6 @@
 import type { FridayMemoryItem, FridayMemorySearchResult } from "../../model/friday-memory.types.js";
 import type { FridayMemoryGuardOutputFilter } from "../model/friday-memory-guard.types.js";
+import { createFridayMemoryPiiGuard } from "./friday-memory-pii-guard.js";
 
 import {
   FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS,
@@ -7,9 +8,15 @@ import {
   FRIDAY_MEMORY_GUARD_MAX_SEARCH_RESULTS,
 } from "../friday-memory-guard.constants.js";
 
+const piiRedactor = createFridayMemoryPiiGuard("redact");
+
 function truncateString(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return value.slice(0, maxChars);
+}
+
+function redactAndTruncate(value: string, maxChars: number): string {
+  return truncateString(piiRedactor.scanAndTransform(value).transformedContent, maxChars);
 }
 
 export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter {
@@ -17,7 +24,7 @@ export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter 
     filterItem(item: FridayMemoryItem): FridayMemoryItem {
       return {
         ...item,
-        content: truncateString(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
+        content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
       };
     },
 
@@ -27,9 +34,9 @@ export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter 
         ...result,
         item: {
           ...result.item,
-          content: truncateString(result.item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
+          content: redactAndTruncate(result.item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
         },
-        snippet: truncateString(result.snippet, FRIDAY_MEMORY_GUARD_MAX_RESULT_SNIPPET_CHARS),
+        snippet: redactAndTruncate(result.snippet, FRIDAY_MEMORY_GUARD_MAX_RESULT_SNIPPET_CHARS),
       }));
     },
   };

@@ -1,51 +1,41 @@
 import { describe, it, expect, vi } from "vitest";
 import { FridayDomainError } from "#errors";
 import { FRIDAY_MEMORY_GUARD_ERROR_CODES } from "#memory";
-import { FRIDAY_MEMORY_GUARD_PII_MODE } from "#memory";
 import {
   createGuardTestSetup,
   createMockMemoryItem,
   createMockSearchResult,
 } from "../../../unit/memory/guard/services/_helpers/create-guard-service.helper.js";
 
-const PII_BLOCK_MODE_ENABLED = (FRIDAY_MEMORY_GUARD_PII_MODE as string) === "block";
-
 describe("FridayMemoryGuard — PII + Namespace + Rate Limit (Integration)", () => {
-  // ─── PII detection in tag mode (default) ───
+  // ─── PII detection in redact mode (default) ───
 
-  describe("PII detection (tag mode - default)", () => {
-    it.runIf(PII_BLOCK_MODE_ENABLED)("blocks store when PII is detected in block mode", async () => {
+  describe("PII detection (redact mode - default)", () => {
+    it("does not block store when PII can be redacted by default", async () => {
       const { guard, piiGuard } = createGuardTestSetup();
       vi.mocked(piiGuard.scanAndTransform).mockReturnValue({
         matches: [{ type: "email", value: "user@test.com", start: 0, end: 13 }],
         distinctTypes: ["email"],
-        transformedContent: "user@test.com",
+        transformedContent: "[EMAIL]",
         tagsToAdd: ["pii.email"],
       });
 
-      try {
-        await guard.store("test-ns", "user@test.com");
-        expect.fail("Expected FridayDomainError");
-      } catch (error) {
-        const domainError = error as FridayDomainError;
-        expect(domainError).toBeInstanceOf(FridayDomainError);
-        expect(domainError.code).toBe(FRIDAY_MEMORY_GUARD_ERROR_CODES.PII_BLOCKED);
-      }
+      await expect(guard.store("test-ns", "user@test.com")).resolves.toBeDefined();
     });
 
-    it("allows store with PII tags when in tag mode (default)", async () => {
+    it("redacts store content and adds PII tags by default", async () => {
       const { guard, core, piiGuard } = createGuardTestSetup();
       vi.mocked(piiGuard.scanAndTransform).mockReturnValue({
         matches: [{ type: "email", value: "user@test.com", start: 0, end: 13 }],
         distinctTypes: ["email"],
-        transformedContent: "user@test.com is the address",
+        transformedContent: "[EMAIL] is the address",
         tagsToAdd: ["pii.email"],
       });
 
       await guard.store("test-ns", "user@test.com is the address");
       expect(core.store).toHaveBeenCalledWith(
         expect.anything(),
-        "user@test.com is the address",
+        "[EMAIL] is the address",
         expect.objectContaining({ tags: ["pii.email"] }),
       );
     });

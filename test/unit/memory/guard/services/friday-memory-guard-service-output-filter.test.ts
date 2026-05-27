@@ -61,6 +61,15 @@ describe("FridayMemoryOutputFilter", () => {
     expect(filtered.tags).toEqual(["t1", "t2"]);
   });
 
+  it("redacts PII from item content before returning it", () => {
+    const item = makeItem({ content: "Email user@example.com and SSN 123-45-6789" });
+    const filtered = filter.filterItem(item);
+    expect(filtered.content).toContain("[EMAIL]");
+    expect(filtered.content).toContain("[SSN_US]");
+    expect(filtered.content).not.toContain("user@example.com");
+    expect(filtered.content).not.toContain("123-45-6789");
+  });
+
   // ─── filterSearchResults ───
 
   it("returns results as-is when within limits", () => {
@@ -90,6 +99,19 @@ describe("FridayMemoryOutputFilter", () => {
     const results = [makeSearchResult({ item: makeItem({ content: longContent }) })];
     const filtered = filter.filterSearchResults(results);
     expect(filtered[0].item.content.length).toBe(FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS);
+  });
+
+  it("redacts PII from search result content and snippets", () => {
+    const results = [makeSearchResult({
+      item: makeItem({ content: "Card 4111 1111 1111 1111 belongs elsewhere" }),
+      snippet: "Call 415-555-1212 about user@example.com",
+    })];
+    const filtered = filter.filterSearchResults(results);
+    expect(filtered[0].item.content).toContain("[CREDIT_CARD]");
+    expect(filtered[0].item.content).not.toContain("4111 1111 1111 1111");
+    expect(filtered[0].snippet).toContain("[PHONE_US]");
+    expect(filtered[0].snippet).toContain("[EMAIL]");
+    expect(filtered[0].snippet).not.toContain("user@example.com");
   });
 
   it("preserves score and matchedBy", () => {

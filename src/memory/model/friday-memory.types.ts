@@ -68,6 +68,12 @@ export interface FridayMemorySearchQuery {
   memoryType?: FridayMemoryType | FridayMemoryType[];
   /** Boost results by confidence score. Default: false. */
   boostByConfidence?: boolean;
+  /** Boost results by prior successful recall count. Default: false. */
+  boostByAccess?: boolean;
+  /** Apply non-destructive confidence decay during ranking. Default: false. */
+  applyRetentionDecay?: boolean;
+  /** Half-life in days used when applyRetentionDecay is true. */
+  retentionHalfLifeDays?: number;
 }
 
 export interface FridayMemorySearchResult {

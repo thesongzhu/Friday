@@ -85,7 +85,7 @@ export interface FridayMemoryFileSyncRepository {
   /** List all tracked sync state rows. */
   listAllStates(): FridayMemoryFileSyncStateRow[];
 
-  /** Upsert memory items from a parsed namespace export file. */
+  /** Non-destructively upsert memory items from a parsed namespace export file. */
   upsertMemoryItemsFromExport(
     namespace: string,
     items: Array<{
@@ -235,13 +235,6 @@ export function createFridayMemoryFileSyncRepository(deps: {
 
     upsertMemoryItemsFromExport(namespace, items) {
       return db.withWriteTransaction((conn) => {
-        // Get existing items for this namespace
-        const existingRows = conn
-          .prepare("SELECT id FROM memory_items WHERE namespace = ?")
-          .all(namespace) as Array<{ id: string }>;
-        const existingIds = new Set(existingRows.map((r) => r.id));
-
-        const importedIds = new Set<string>();
         let upserted = 0;
 
         const upsertStmt = conn.prepare(
@@ -270,21 +263,10 @@ export function createFridayMemoryFileSyncRepository(deps: {
             item.created_at,
             item.updated_at,
           );
-          importedIds.add(item.id);
           upserted++;
         }
 
-        // Delete items that exist in DB but not in the imported file
-        let deleted = 0;
-        const deleteStmt = conn.prepare("DELETE FROM memory_items WHERE id = ?");
-        for (const existingId of existingIds) {
-          if (!importedIds.has(existingId)) {
-            deleteStmt.run(existingId);
-            deleted++;
-          }
-        }
-
-        return { upserted, deleted };
+        return { upserted, deleted: 0 };
       });
     },
 

@@ -4,7 +4,12 @@ import type { FridayMemoryItem } from "../../../../src/memory/model/friday-memor
 
 describe("mergeHybridResults", () => {
   /** Helper to build a minimal FridayMemoryItem for merge tests. */
-  function makeItem(id: string, content = `content for ${id}`, confidence?: number): FridayMemoryItem {
+  function makeItem(
+    id: string,
+    content = `content for ${id}`,
+    confidence?: number,
+    overrides?: Partial<FridayMemoryItem>,
+  ): FridayMemoryItem {
     return {
       id,
       namespace: "test",
@@ -16,6 +21,7 @@ describe("mergeHybridResults", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       confidence,
+      ...overrides,
     };
   }
 
@@ -132,5 +138,56 @@ describe("mergeHybridResults", () => {
     expect(unboosted[0].item.id).toBe("low");
     expect(boosted[0].item.id).toBe("high");
     expect(boosted.find((entry) => entry.item.id === "high")!.score).toBeCloseTo(0.525);
+  });
+
+  it("optionally boosts ordering with bounded access count", () => {
+    const items = new Map<string, FridayMemoryItem>([
+      ["fresh", makeItem("fresh", "fresh", 0.5, { accessCount: 0 })],
+      ["used", makeItem("used", "used", 0.5, { accessCount: 20 })],
+    ]);
+
+    const boosted = mergeHybridResults({
+      ftsHits: [
+        { itemId: "fresh", score: 0.5, snippet: "fresh" },
+        { itemId: "used", score: 0.48, snippet: "used" },
+      ],
+      semanticHits: [],
+      resolveItem: (id) => items.get(id) ?? null,
+      weights: { fts: 1, semantic: 0 },
+      limit: 10,
+      boostByAccess: true,
+    });
+
+    expect(boosted[0].item.id).toBe("used");
+    expect(boosted.find((entry) => entry.item.id === "used")!.score).toBeCloseTo(0.51);
+  });
+
+  it("applies non-destructive confidence decay during ranking when requested", () => {
+    const items = new Map<string, FridayMemoryItem>([
+      ["old", makeItem("old", "old", 1.0, {
+        updatedAt: "2025-01-01T00:00:00.000Z",
+      })],
+      ["recent", makeItem("recent", "recent", 0.6, {
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      })],
+    ]);
+
+    const decayed = mergeHybridResults({
+      ftsHits: [
+        { itemId: "old", score: 0.5, snippet: "old" },
+        { itemId: "recent", score: 0.49, snippet: "recent" },
+      ],
+      semanticHits: [],
+      resolveItem: (id) => items.get(id) ?? null,
+      weights: { fts: 1, semantic: 0 },
+      limit: 10,
+      boostByConfidence: true,
+      applyRetentionDecay: true,
+      retentionHalfLifeDays: 30,
+      nowIso: "2026-01-02T00:00:00.000Z",
+    });
+
+    expect(decayed[0].item.id).toBe("recent");
+    expect(items.get("old")!.confidence).toBe(1.0);
   });
 });

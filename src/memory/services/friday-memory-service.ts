@@ -319,6 +319,10 @@ export function createFridayMemoryService(
         limit,
         minScore: options?.minScore,
         boostByConfidence: options?.boostByConfidence,
+        boostByAccess: options?.boostByAccess,
+        applyRetentionDecay: options?.applyRetentionDecay,
+        retentionHalfLifeDays: options?.retentionHalfLifeDays,
+        nowIso: now,
       });
 
       // Fallback: if FTS and semantic both returned nothing, try a namespace-filtered
@@ -359,7 +363,9 @@ export function createFridayMemoryService(
               item,
               score: 0.1 + (options?.boostByConfidence && typeof item.confidence === "number"
                 ? Math.max(0, Math.min(1, item.confidence)) * 0.05
-                : 0), // low confidence substring match, optionally confidence-adjusted
+                : 0) + (options?.boostByAccess && typeof item.accessCount === "number"
+                ? Math.min(Math.max(item.accessCount, 0), 20) / 20 * 0.03
+                : 0), // low confidence substring match, optionally confidence/access-adjusted
               ftsScore: 0,
               semanticScore: 0,
               matchedBy: ["substring"],
