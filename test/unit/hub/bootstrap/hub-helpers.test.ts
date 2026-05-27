@@ -224,6 +224,12 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
 
     const statuses = await memoryState.listSkillStatuses();
     expect(statuses["skill-x"]).toBe("disabled");
+    expect(step.payload).toMatchObject({
+      _skillDisabled: true,
+      _skillStatusAfter: "disabled",
+      _skillStatusTarget: "skill-x",
+      _skillStatusAt: "2026-03-13T10:00:00.000Z",
+    });
   });
 
   it("revert payload restores the installed state", async () => {
@@ -247,6 +253,12 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
 
     const statuses = await memoryState.listSkillStatuses();
     expect(statuses["skill-x"]).toBe("installed");
+    expect(step.payload).toMatchObject({
+      _skillDisabled: false,
+      _skillStatusAfter: "installed",
+      _skillStatusTarget: "skill-x",
+      _skillStatusAt: "2026-03-13T10:00:00.000Z",
+    });
   });
 
   it("Phase 14.5B module_28b: apply_config_patch is fail-closed when no real patch payload is provided", async () => {
