@@ -661,6 +661,39 @@ async function main() {
       },
     });
 
+    // Defensive: clear any pre-existing Telegram webhook so polling
+    // can see updates. If a previous run (or another agent / dev env)
+    // set a webhook on this bot, getUpdates polling silently returns
+    // zero updates (Telegram routes incoming events to the webhook
+    // instead). The first phase24E live dispatch on 2ca1c30b
+    // (run 26543400522) blocked with updateCount=0 for this exact
+    // reason — even though the operator did send the reject text,
+    // the polling loop saw nothing.
+    //
+    // `drop_pending_updates=true` clears whatever events Telegram
+    // queued while a webhook was active, so the listener starts from
+    // a clean state and the operator's NEW messages drive the run.
+    await fetch(`https://api.telegram.org/bot${encodeURIComponent(config.botToken)}/deleteWebhook?drop_pending_updates=true`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }).then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`Telegram deleteWebhook returned HTTP ${response.status}${text ? ` — ${text.slice(0, 200)}` : ""}`);
+      }
+      const body = await response.json().catch(() => null);
+      if (body && body.ok !== true) {
+        throw new Error(`Telegram deleteWebhook returned ok=false: ${body.description ?? "unknown"}`);
+      }
+      report.diagnostics.telegramHubAdapter.webhookClearedBeforePolling = true;
+    }).catch((err) => {
+      // Do not fail-closed on this defensive step; record the failure
+      // and continue. If the bot really has a webhook set the
+      // downstream updateCount=0 will surface the same blocker as
+      // before, with a clearer diagnostic.
+      report.diagnostics.telegramHubAdapter.webhookCleanupError = safeError(err, config.botToken);
+    });
+
     const instrumentedPolling = createInstrumentedTelegramPollingService(config, report, observedEventsByMessageId);
     const telegramPlugin = createFridayTelegramChannel({
       polling: instrumentedPolling,
