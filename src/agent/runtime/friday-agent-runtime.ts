@@ -378,6 +378,39 @@ function awaitToolApprovalDecision(params: {
   });
 }
 
+function rejectOnAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason instanceof Error
+      ? signal.reason
+      : new Error(describeAbortReason(signal.reason)));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+    };
+    const finishResolve = (value: T) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const finishReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => finishReject(signal.reason instanceof Error
+      ? signal.reason
+      : new Error(describeAbortReason(signal.reason)));
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(finishResolve, finishReject);
+  });
+}
+
 function resolveCanonicalAgentToolRisk(
   toolName: string,
   args: Record<string, unknown>,
@@ -2175,21 +2208,24 @@ export function createFridayAgentRuntime(
                 : routedTools;
 
             try {
-              streamResult = await streamLlmResponse({
-                llmClient,
-                providerId: requestedProviderId,
-                tenantContext: params.tenantContext,
-                model: resolvedTaskProfile.model ?? requestedModel ?? "default",
-                systemPrompt: effectiveSystemPrompt,
-                messages,
-                tools: llmTools,
-                temperature: resolvedTaskProfile.temperature,
-                routingContext: estimateRoutingContext(),
-                signal: turnTimeoutController.signal,
-                eventEmitter,
-                runId,
-                emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
-              });
+              streamResult = await rejectOnAbort(
+                streamLlmResponse({
+                  llmClient,
+                  providerId: requestedProviderId,
+                  tenantContext: params.tenantContext,
+                  model: resolvedTaskProfile.model ?? requestedModel ?? "default",
+                  systemPrompt: effectiveSystemPrompt,
+                  messages,
+                  tools: llmTools,
+                  temperature: resolvedTaskProfile.temperature,
+                  routingContext: estimateRoutingContext(),
+                  signal: turnTimeoutController.signal,
+                  eventEmitter,
+                  runId,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                }),
+                turnTimeoutController.signal,
+              );
               // Reset consecutive failure counter on success
               llmConsecutiveFailures = 0;
             } catch (llmError) {
