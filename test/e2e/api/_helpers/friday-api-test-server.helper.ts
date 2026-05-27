@@ -133,6 +133,13 @@ export interface CreateFridayApiTestEnvOptions {
   enableDefaultMemoryService?: boolean;
   enableSelfHealing?: boolean;
   channels?: FridayChannelRoutesDeps;
+  resolveSkill?: (skillId: string) => unknown | null;
+  invokeSkill?: (
+    skillId: string,
+    runId: string,
+    nodeId: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>;
 }
 
 /**
@@ -227,9 +234,9 @@ export async function createFridayApiTestEnv(
     channels: options.channels,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
-    resolveSkill: (_skillId: string) => ({ id: _skillId }),
-    invokeSkill: async (_skillId, _runId, _nodeId, payload) =>
-      ({ output: payload }),
+    resolveSkill: options.resolveSkill ?? ((_skillId: string) => ({ id: _skillId })),
+    invokeSkill: options.invokeSkill ?? (async (_skillId, _runId, _nodeId, payload) =>
+      ({ output: payload })),
   });
 
   const port = await findFreePort();

@@ -2089,13 +2089,31 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       );
       return { run };
     },
-    retryRun: async (runId, input, principal) => {
+    retryRun: async (runId, input = {}, principal) => {
       resolveAuthorizedRun(runId, principal);
+      const latestAttempts = new Map<string, { nodeId: string; status: string; attempt: number }>();
+      for (const node of workflowRuntime.execution.getRunNodes(runId)) {
+        const existing = latestAttempts.get(node.nodeId);
+        if (!existing || node.attempt > existing.attempt) {
+          latestAttempts.set(node.nodeId, {
+            nodeId: node.nodeId,
+            status: node.status,
+            attempt: node.attempt,
+          });
+        }
+      }
+      const failedNodeIds = Array.from(latestAttempts.values())
+        .filter((node) => node.status === "failed")
+        .map((node) => node.nodeId);
+      const requestedNodeIds = Array.isArray(input.nodeIds) ? input.nodeIds : undefined;
+      const retriedNodes = requestedNodeIds
+        ? failedNodeIds.filter((nodeId) => requestedNodeIds.includes(nodeId))
+        : failedNodeIds;
       const run = await workflowRuntime.execution.retryRun(
         runId,
         input.nodeIds,
       );
-      return { run, retriedNodes: input.nodeIds ?? [] };
+      return { run, retriedNodes };
     },
     resumeRun: async (runId, principal) => {
       resolveAuthorizedRun(runId, principal);
