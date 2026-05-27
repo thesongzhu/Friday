@@ -186,7 +186,7 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
     expect(result.filesProcessed).toBe(0);
   });
 
-  it("reindexNow handles deleted items from file", async () => {
+  it("reindexNow keeps local items when they are missing from an externally edited file", async () => {
     insertMemoryItem("item-d1", "del-ns", "key1", '{"val":1}');
     insertMemoryItem("item-d2", "del-ns", "key2", '{"val":2}');
 
@@ -210,12 +210,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
     // Reindex
     const result = await service.reindexNow("memory_namespace", "del-ns");
     expect(result.filesProcessed).toBe(1);
-    expect(result.itemsDeleted).toBe(1);
+    expect(result.itemsDeleted).toBe(0);
 
-    // Verify item-d2 is gone from DB
+    // External file edits are non-destructive by default: omitted local rows stay.
     const items = getMemoryItems("del-ns");
-    expect(items).toHaveLength(1);
-    expect(items[0]!.key).toBe("key1");
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.key)).toEqual(["key1", "key2"]);
   });
 
   // ─── ReindexAll ───

@@ -66,6 +66,9 @@ export const memoryApi = {
     weights?: { fts: number; semantic: number };
     memoryType?: FridayMemoryType | FridayMemoryType[];
     boostByConfidence?: boolean;
+    boostByAccess?: boolean;
+    applyRetentionDecay?: boolean;
+    retentionHalfLifeDays?: number;
   }): Promise<FridayMemorySearchResult[]> {
     const data = await apiClient.post<typeof input, SearchMemoryResponse>(
       "/v1/memory/search",

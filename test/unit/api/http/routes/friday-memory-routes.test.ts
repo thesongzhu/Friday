@@ -317,6 +317,9 @@ describe("FridayMemoryRoutes", () => {
         query: "hello",
         memoryType: ["preference", "correction"],
         boostByConfidence: true,
+        boostByAccess: true,
+        applyRetentionDecay: true,
+        retentionHalfLifeDays: 30,
       },
     });
     const result = await route.handler(ctx) as { items: FridayMemorySearchResult[] };
@@ -327,6 +330,9 @@ describe("FridayMemoryRoutes", () => {
       expect.objectContaining({
         memoryType: ["preference", "correction"],
         boostByConfidence: true,
+        boostByAccess: true,
+        applyRetentionDecay: true,
+        retentionHalfLifeDays: 30,
       }),
     );
   });
@@ -345,6 +351,27 @@ describe("FridayMemoryRoutes", () => {
       body: {
         query: "hello",
         boostByConfidence: "yes",
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await expect(route.handler(makeCtx({
+      body: {
+        query: "hello",
+        boostByAccess: "yes",
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await expect(route.handler(makeCtx({
+      body: {
+        query: "hello",
+        applyRetentionDecay: "yes",
+      },
+    }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    await expect(route.handler(makeCtx({
+      body: {
+        query: "hello",
+        retentionHalfLifeDays: 0,
       },
     }))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
