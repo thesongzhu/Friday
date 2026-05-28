@@ -118,6 +118,7 @@
     "ops:phase24e:telegram-workflow-candidate": "node scripts/ops/phase24e-telegram-workflow-candidate-listener.mjs",
     "ops:phase24f:discord-workflow-candidate": "node scripts/ops/phase24f-discord-workflow-candidate-listener.mjs",
     "ops:phase24g:lark-feishu-workflow-candidate": "node scripts/ops/phase24g-lark-feishu-workflow-candidate-listener.mjs",
+    "ops:phase24h:telegram-natural-trigger": "node scripts/ops/phase24h-telegram-natural-trigger-listener.mjs",
     "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs",
     "ops:harden-local-enablement": "bash scripts/ops/harden-local-enablement.sh",
     "ops:agent-adoption:doctor": "node dist/cli/friday-cli.js phases doctor",

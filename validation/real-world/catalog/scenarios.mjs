@@ -1428,6 +1428,11 @@ export const REAL_WORLD_SCENARIOS = [
     ],
     execution: {
       useJudge: false,
+      // The default provider lane can occasionally spend more than three
+      // minutes on the tool-planning hop in self-hosted RGG. Keep the strict
+      // file/tool oracles below, but give the run enough wall time to produce
+      // its receipt instead of failing at the validator HTTP abort boundary.
+      timeoutMs: 300_000,
       expectToolCallCountMin: 1,
       expectWorkspaceFileTopH1: "README.md",
       constraints: { readOnly: true },

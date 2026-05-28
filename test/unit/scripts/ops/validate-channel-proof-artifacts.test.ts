@@ -37,6 +37,7 @@ async function loadValidator(): Promise<ValidatorModule> {
 const SCHEMA_DISCORD = "friday.phase24b.discord_trusted_inbound_proof.v1";
 const SCHEMA_DISCORD_WORKFLOW = "friday.phase24f.discord_workflow_candidate_approval_rejection_proof.v1";
 const SCHEMA_LARK_WORKFLOW = "friday.phase24g.lark_feishu_workflow_candidate_approval_rejection_proof.v1";
+const SCHEMA_TELEGRAM_NATURAL_TRIGGER = "friday.phase24h.telegram_natural_trigger_execution_proof.v1";
 
 // Test fixture SHA only — not a real commit. Pragma needed because the
 // repo-wide detect-secrets baseline flags 40-char hex strings as
@@ -68,7 +69,7 @@ function passingDiscordArtifact(overrides: Partial<Record<string, unknown>> = {}
 
 function passingWorkflowArtifact(
   schemaVersion: string,
-  observedEventKey: "observedDiscordEvent" | "observedLarkFeishuEvent",
+  observedEventKey: "observedDiscordEvent" | "observedLarkFeishuEvent" | "observedTelegramEvent",
   overrides: Partial<Record<string, unknown>> = {},
 ): Record<string, unknown> {
   return {
@@ -160,6 +161,36 @@ describe("validateChannelProofArtifacts", () => {
     expect(decision.valid).toBe(true);
     expect(decision.results.find((r) => r.channel === "discord-workflow-candidate")?.blockerClass).toBe("none");
     expect(decision.results.find((r) => r.channel === "lark-feishu-workflow-candidate")?.blockerClass).toBe("none");
+  });
+
+  it("passes on a clean Telegram natural-trigger artifact", async () => {
+    const { validateChannelProofArtifacts } = await loadValidator();
+    const naturalTriggerPath = await writeFixture(
+      "pass-telegram-natural-trigger.json",
+      passingWorkflowArtifact(SCHEMA_TELEGRAM_NATURAL_TRIGGER, "observedTelegramEvent", {
+        phase: "Phase24H",
+        scope: "telegram_natural_trigger",
+        criteria: {
+          artifactHasNoToken: true,
+          deepseekDefaultConfigured: true,
+          memoryRecallOccurred: true,
+          workflowDiscoveryOccurred: true,
+          workflowRunTerminalSuccess: true,
+          negativeUnsafeBlocked: true,
+        },
+      }),
+    );
+    const decision = validateChannelProofArtifacts({
+      channels: {
+        discord: "skip",
+        telegram: "skip",
+        "lark-feishu": "skip",
+        "telegram-natural-trigger": naturalTriggerPath,
+      },
+      expectedSha: FAKE_SHA,
+    });
+    expect(decision.valid).toBe(true);
+    expect(decision.results.find((r) => r.channel === "telegram-natural-trigger")?.blockerClass).toBe("none");
   });
 
   it("rejects status != passed", async () => {

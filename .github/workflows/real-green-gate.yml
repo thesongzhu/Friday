@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: false
+      phase24h_telegram_natural_trigger:
+        description: "Run the manual Phase24H Telegram channel-driven natural-trigger listener with live DeepSeek."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -393,3 +398,43 @@ jobs:
         with:
           name: phase24g-lark-feishu-workflow-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24g-lark-feishu-workflow-candidate
+
+  phase24h-telegram-natural-trigger:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24h_telegram_natural_trigger == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
+      FRIDAY_TELEGRAM_CHAT_ID: ${{ secrets.FRIDAY_TELEGRAM_CHAT_ID || vars.FRIDAY_TELEGRAM_CHAT_ID }}
+      FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
+      FRIDAY_TELEGRAM_MODE: ${{ secrets.FRIDAY_TELEGRAM_MODE || vars.FRIDAY_TELEGRAM_MODE }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      PHASE24H_TELEGRAM_LISTENER_TIMEOUT_MS: "1800000"
+      PHASE24H_TELEGRAM_POLLING_TIMEOUT_SEC: "5"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Telegram natural trigger + approval + destructive check
+        run: PHASE24H_REPORT_ROOT="$RUNNER_TEMP/phase24h-telegram-natural-trigger" npm run ops:phase24h:telegram-natural-trigger
+
+      - name: Upload Phase24H Telegram natural-trigger artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24h-telegram-natural-trigger-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24h-telegram-natural-trigger
