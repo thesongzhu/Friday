@@ -18,6 +18,12 @@ function sanitizeNoncePart(value, fallback) {
   return cleaned.length > 0 ? cleaned.slice(0, 64) : fallback;
 }
 
+function buildWorkflowCandidateId(phaseKey, kind, explicitValue) {
+  const explicit = typeof explicitValue === "string" ? explicitValue.trim() : "";
+  if (explicit) return sanitizeNoncePart(explicit, `${phaseKey}-${kind}-explicit`);
+  return `${phaseKey}-${kind}-${Date.now()}`;
+}
+
 function buildWorkflowNonce(phaseKey, kind, explicitEnvVar) {
   const explicit = process.env[explicitEnvVar]?.trim();
   if (explicit) return sanitizeNoncePart(explicit, `${phaseKey}-${kind}-explicit`);
@@ -96,8 +102,8 @@ async function createCandidateRepository() {
 
 async function seedWorkflowCandidates(stateDir, config) {
   const candidateRepo = await createCandidateRepository();
-  const rejectCandidateId = `${config.phaseKey}-reject-${Date.now()}`;
-  const approveCandidateId = `${config.phaseKey}-approve-${Date.now()}`;
+  const rejectCandidateId = buildWorkflowCandidateId(config.phaseKey, "reject", config.rejectCandidateId);
+  const approveCandidateId = buildWorkflowCandidateId(config.phaseKey, "approve", config.approveCandidateId);
   const generatorSessionId = `${config.phaseKey}-approve-session-${Date.now()}`;
   const db = new Database(path.join(stateDir, "friday.db"));
   try {
@@ -276,6 +282,7 @@ function listWorkflowsByTag(hub, workflowTag) {
 export {
   LEARNING_DEFAULT_USER_ID,
   apiFetch,
+  buildWorkflowCandidateId,
   buildWorkflowNonce,
   delay,
   envInteger,

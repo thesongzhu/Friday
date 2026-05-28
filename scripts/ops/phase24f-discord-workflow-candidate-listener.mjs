@@ -108,6 +108,8 @@ function readEnvConfig() {
     acceptAfterMs: Date.now() - 5_000,
     githubRunId: process.env.GITHUB_RUN_ID?.trim() || null,
     githubSha: process.env.GITHUB_SHA?.trim() || null,
+    rejectCandidateId: process.env.PHASE24F_DISCORD_REJECT_CANDIDATE_ID?.trim() || null,
+    approveCandidateId: process.env.PHASE24F_DISCORD_APPROVE_CANDIDATE_ID?.trim() || null,
     rejectNonce: buildWorkflowNonce(PHASE_KEY, "reject", "PHASE24F_DISCORD_REJECT_NONCE"),
     approveNonce: buildWorkflowNonce(PHASE_KEY, "approve", "PHASE24F_DISCORD_APPROVE_NONCE"),
   };
@@ -277,6 +279,8 @@ function initialReport(config, reportPath) {
       configuredSetupUserIdTail: tail(config.setupUserId),
       configuredBotUserIdTail: tail(config.botUserId),
       discordTokenPresent: Boolean(config.botToken),
+      configuredRejectCandidateIdTail: tail(config.rejectCandidateId),
+      configuredApproveCandidateIdTail: tail(config.approveCandidateId),
       rejectNonce: config.rejectNonce,
       approveNonce: config.approveNonce,
       workflowGeneratorApproveAndSaveStubbed: true,
@@ -429,6 +433,8 @@ async function main() {
       workflowTag: WORKFLOW_TAG,
       rejectNonce: config.rejectNonce,
       approveNonce: config.approveNonce,
+      rejectCandidateId: config.rejectCandidateId,
+      approveCandidateId: config.approveCandidateId,
     };
     const { rejectCandidateId, approveCandidateId, generatorSessionId } = await seedWorkflowCandidates(stateDir, harnessConfig);
     report.criteria.rejectCandidateSeeded = true;
