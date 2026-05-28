@@ -148,6 +148,19 @@ const DEFAULT_MODEL_PRICING: readonly FridayProviderModelPricing[] = [
     cacheReadPer1MUsd: 0.01,
     cacheWritePer1MUsd: 0.08,
   },
+  // gemini-2.0-flash — Friday's GOOGLE_API_KEY auto-detect default (ENV_PROVIDER_MAP). It does
+  // NOT substring-match "gemini-2.0-flash-lite", so without this entry the default model fell
+  // through to the unknown/0 rate, under-reporting real cost for a model Friday routes to by
+  // default. Rates per https://ai.google.dev/gemini-api/docs/pricing (verified 2026-05-28).
+  {
+    providerKind: "google",
+    modelPattern: "gemini-2.0-flash",
+    qualityTier: "balanced",
+    inputPer1MUsd: 0.10,
+    outputPer1MUsd: 0.40,
+    cacheReadPer1MUsd: 0.025,
+    cacheWritePer1MUsd: 0.10,
+  },
   {
     providerKind: "ollama",
     modelPattern: "*",
