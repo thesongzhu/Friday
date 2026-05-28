@@ -1294,13 +1294,16 @@ export function createFridayAgentRuntime(
         testResults: FridayAgentTestResult[];
         artifacts: FridayAgentArtifact[];
         costUsd?: number;
-      }): { artifactDir?: string; artifacts: FridayAgentArtifact[] } => {
+      }): { artifactDir?: string; artifacts: FridayAgentArtifact[]; persistFailed: boolean } => {
         let artifactDir: string | undefined;
         let writtenArtifacts = input.artifacts;
         if (!artifactWriter) {
-          return { artifactDir, artifacts: writtenArtifacts };
+          // No artifact writer configured: there is no durable-receipt requirement
+          // to satisfy, so this is not an evidence-durability failure.
+          return { artifactDir, artifacts: writtenArtifacts, persistFailed: false };
         }
 
+        let persistFailed = false;
         try {
           const writerResult = artifactWriter.writeRunArtifacts({
             runId,
@@ -1320,13 +1323,14 @@ export function createFridayAgentRuntime(
           artifactDir = writerResult.artifactDir;
           writtenArtifacts = writerResult.artifacts;
         } catch (error) {
+          persistFailed = true;
           console.warn(
             `[friday][W-AG-ARTIFACT-WRITE-001] Failed to persist run artifacts for run ${runId}:`,
             error instanceof Error ? error.message : String(error),
           );
         }
 
-        return { artifactDir, artifacts: writtenArtifacts };
+        return { artifactDir, artifacts: writtenArtifacts, persistFailed };
       };
 
       const transitionToAwaitingClarification = async (input: {
@@ -3878,7 +3882,7 @@ export function createFridayAgentRuntime(
         const summaryText = deriveSummary(responseText);
 
         // 8. Finalize — success or degraded-as-failed
-        const finalStatus = llmDegraded ? "failed" as const : "completed" as const;
+        let finalStatus: "completed" | "failed" = llmDegraded ? "failed" : "completed";
         const durationMs = Date.now() - startedAt;
         const completedAt = nowIso();
         const persistedArtifacts = persistRunArtifacts({
@@ -3890,6 +3894,39 @@ export function createFridayAgentRuntime(
           artifacts: collectedArtifacts,
           costUsd: latestCostUsd,
         });
+
+        // ─── Evidence durability (locked decision: fail closed) ───
+        // If this run produced a side-effect completion claim or a successful
+        // mutating tool call, its durable replay receipt MUST persist. If the
+        // artifact write failed, the run cannot be a clean `completed` proof —
+        // downgrade to failed so we never report success without durable evidence.
+        const runRequiresDurableEvidence =
+          !llmDegraded
+          && (responseClaimsSideEffectCompleted(responseText)
+            || allToolCalls.some(
+              (call) => !call.result.isError && isMutatingToolCall(call.toolName, call.args),
+            ));
+        const evidenceDurabilityFailClosed =
+          finalStatus === "completed"
+          && persistedArtifacts.persistFailed
+          && runRequiresDurableEvidence;
+        if (evidenceDurabilityFailClosed) {
+          finalStatus = "failed";
+        }
+        const durabilityErrorMessage =
+          `${FRIDAY_AGENT_ERROR_CODES.EVIDENCE_DURABILITY_ERROR}: evidence-bearing run could not persist its `
+          + "durable replay receipt (artifact write failed); failing closed — not a clean completed proof.";
+        // On fail-closed, surface the honest durability outcome to the user
+        // instead of the model's (now-unverifiable) completion text.
+        const reportedResponse = evidenceDurabilityFailClosed
+          ? "I completed the work but could not save a durable, verifiable record of it, so I am not reporting "
+            + "this as a verified completion. Please retry; if this persists, check storage space/permissions. "
+            + `(${FRIDAY_AGENT_ERROR_CODES.EVIDENCE_DURABILITY_ERROR})`
+          : responseText;
+        const reportedSummary = evidenceDurabilityFailClosed
+          ? deriveSummary(reportedResponse)
+          : summaryText;
+
         db.withWriteTransaction((writer) =>
           repo.update(writer, {
             id: runId,
@@ -3902,7 +3939,12 @@ export function createFridayAgentRuntime(
                   errorMessage: latestLlmFailureMessage
                     ?? "LLM provider temporarily unavailable — run degraded with synthetic response",
                 }
-              : {}),
+              : evidenceDurabilityFailClosed
+                ? {
+                    errorCode: FRIDAY_AGENT_ERROR_CODES.EVIDENCE_DURABILITY_ERROR,
+                    errorMessage: durabilityErrorMessage,
+                  }
+                : {}),
             usageInput: totalInputTokens,
             usageOutput: totalOutputTokens,
             costUsd: totalCostUsd > 0 ? totalCostUsd : undefined,
@@ -3910,29 +3952,38 @@ export function createFridayAgentRuntime(
               ? buildActualExecution({
                   finalFailureReason: latestLlmFailureMessage,
                 })
-              : actualExecution,
+              : evidenceDurabilityFailClosed
+                ? buildActualExecution({ finalFailureReason: durabilityErrorMessage })
+                : actualExecution,
             testResults: testResults as unknown as FridayAgentTestResult[],
             artifacts: persistedArtifacts.artifacts,
-            responseText: responseText || undefined,
-            summary: summaryText || undefined,
+            responseText: reportedResponse || undefined,
+            summary: reportedSummary || undefined,
             artifactDir: persistedArtifacts.artifactDir,
             contextCostSummary: latestContextCostSummary,
             taskProfile: resolvedTaskProfile,
           }),
         );
 
-        await mirrorAssistantResponse(responseText, allToolCalls);
+        await mirrorAssistantResponse(reportedResponse, allToolCalls);
 
-        if (llmDegraded) {
+        if (finalStatus === "failed") {
           handleTrackedEvent("agent.run.failed", {
             runId,
-            error: {
-              code: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
-              message: latestLlmFailureMessage
-                ?? "LLM provider temporarily unavailable — run degraded with synthetic response",
-            },
+            error: llmDegraded
+              ? {
+                  code: FRIDAY_AGENT_ERROR_CODES.LLM_ERROR,
+                  message: latestLlmFailureMessage
+                    ?? "LLM provider temporarily unavailable — run degraded with synthetic response",
+                }
+              : {
+                  code: FRIDAY_AGENT_ERROR_CODES.EVIDENCE_DURABILITY_ERROR,
+                  message: durabilityErrorMessage,
+                },
             durationMs,
-            routeId: "agent.execute.run.llm_degraded",
+            routeId: llmDegraded
+              ? "agent.execute.run.llm_degraded"
+              : "agent.execute.run.evidence_durability",
             correlationId: runCorrelationId,
           });
         } else {
@@ -3948,7 +3999,7 @@ export function createFridayAgentRuntime(
         return await finalizeResult({
           runId,
           status: finalStatus,
-          response: responseText,
+          response: reportedResponse,
           toolCallCount: allToolCalls.length,
           durationMs,
           usageInput: totalInputTokens,
@@ -3956,7 +4007,7 @@ export function createFridayAgentRuntime(
           contextCostSummary: latestContextCostSummary,
           taskProfile: resolvedTaskProfile,
           images: extractedImages.length > 0 ? extractedImages : undefined,
-          summary: summaryText || undefined,
+          summary: reportedSummary || undefined,
           artifactDir: persistedArtifacts.artifactDir,
         });
         }
@@ -4115,6 +4166,10 @@ export function createFridayAgentRuntime(
         }
         runSeqCounters.delete(runId);
         droppedEventCounters.delete(runId);
+        // Prevent unbounded growth of the per-run checkpoint map on a
+        // long-lived hub process (snapshot content is persisted to disk; only
+        // this in-memory index entry needs releasing once the run is terminal).
+        runCheckpoints.delete(runId);
       }
     },
   };
