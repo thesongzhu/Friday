@@ -11,6 +11,7 @@
  *     [--telegram-workflow-candidate <path>|skip] \
  *     [--discord-workflow-candidate <path>|skip] \
  *     [--lark-feishu-workflow-candidate <path>|skip] \
+ *     [--telegram-natural-trigger <path>|skip] \
  *     [--expected-sha <40-char-hex>]
  *
  * --telegram-workflow-candidate validates the Phase24E channel-driven
@@ -90,6 +91,11 @@ const CHANNEL_DEFINITIONS = Object.freeze({
     schemaVersion: "friday.phase24g.lark_feishu_workflow_candidate_approval_rejection_proof.v1",
     observedEventKey: "observedLarkFeishuEvent",
   }),
+  "telegram-natural-trigger": Object.freeze({
+    flag: "--telegram-natural-trigger",
+    schemaVersion: "friday.phase24h.telegram_natural_trigger_execution_proof.v1",
+    observedEventKey: "observedTelegramEvent",
+  }),
 });
 
 const REQUIRED_TOP_LEVEL_KEYS = [
@@ -142,6 +148,7 @@ function parseArgs(argv) {
       "telegram-workflow-candidate": null,
       "discord-workflow-candidate": null,
       "lark-feishu-workflow-candidate": null,
+      "telegram-natural-trigger": null,
     },
     explicitChannels: [],
     expectedSha: null,
@@ -156,6 +163,7 @@ function parseArgs(argv) {
       case "--telegram-workflow-candidate":
       case "--discord-workflow-candidate":
       case "--lark-feishu-workflow-candidate":
+      case "--telegram-natural-trigger":
         if (typeof next !== "string" || next.length === 0) {
           return { args: null, error: `cli_argument_missing_value:${token}` };
         }
@@ -359,7 +367,7 @@ function validateChannelArtifact(channelKey, artifactPath, expectedSha) {
  * Programmatic entry point. Returns the decision shape that the CLI emits.
  *
  * @param {object} args
- * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null, "telegram-workflow-candidate": string|null, "discord-workflow-candidate": string|null, "lark-feishu-workflow-candidate": string|null }} args.channels
+ * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null, "telegram-workflow-candidate": string|null, "discord-workflow-candidate": string|null, "lark-feishu-workflow-candidate": string|null, "telegram-natural-trigger": string|null }} args.channels
  * @param {string|null} args.expectedSha
  */
 export function validateChannelProofArtifacts(args) {
