@@ -1713,6 +1713,67 @@ describe("FridayProviderService", () => {
       ).rejects.toThrow("No model routing configured");
     });
 
+    describe("budget enforcement (LLM_BUDGET_EXCEEDED)", () => {
+      async function setupRemoteProviderOverBudget(monthlyLimitUsd: number, spentUsd: number) {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "test-budget-key", // pragma: allowlist secret
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+        await service.setRoutingConfig({
+          defaultProviderId: "test-id-0001",
+          fallbackProviderIds: [],
+        });
+        await service.setBudgetConfig({ monthlyLimitUsd });
+        if (spentUsd > 0) {
+          await service.recordUsage({
+            providerId: "test-id-0001",
+            providerApi: "openai-completions",
+            model: "gpt-4o",
+            routeStrategy: "configured",
+            taskComplexity: "simple",
+            usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500 },
+            costUsd: spentUsd,
+          });
+        }
+      }
+
+      it("throws LLM_BUDGET_EXCEEDED (429) when over budget with no local/free candidate and no pin", async () => {
+        await setupRemoteProviderOverBudget(1, 5); // spent $5 against a $1 cap → over_limit
+        const run = vi.fn(async () => "should-not-run");
+
+        await expect(service.runWithFallback({ run })).rejects.toMatchObject({
+          code: "LLM_BUDGET_EXCEEDED",
+          httpStatus: 429,
+        });
+        expect(run).not.toHaveBeenCalled();
+      });
+
+      it("does not enforce the budget when usage is under the configured limit", async () => {
+        await setupRemoteProviderOverBudget(100, 1); // spent $1 against a $100 cap → ok
+        const { result } = await service.runWithFallback({ run: async () => "ok" });
+        expect(result).toBe("ok");
+      });
+
+      it("honors an explicit provider pin even when over budget (explicit user choice bypass)", async () => {
+        await setupRemoteProviderOverBudget(1, 5); // over_limit
+        // Pinning a provider is an explicit user choice, so the budget local-only gate is
+        // intentionally bypassed by design — see the !pinnedProvider guard in
+        // friday-provider-service.ts runWithFallback.
+        const { result } = await service.runWithFallback({
+          requestedProviderId: "test-id-0001",
+          run: async () => "ok",
+        });
+        expect(result).toBe("ok");
+      });
+    });
+
     it("fails closed before execution when automatic provider validation fails", async () => {
       globalThis.fetch = vi.fn(() =>
         Promise.resolve(new Response("{}", { status: 401 })),
