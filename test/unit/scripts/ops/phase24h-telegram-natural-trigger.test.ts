@@ -82,4 +82,14 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
       mapping: { proofMarker: "PHASE24H_WORKFLOW_EXECUTED" },
     });
   });
+
+  it("resolves the memory service from the API runtime exposed by createFridayHub", async () => {
+    const listener = await loadListener();
+    const memoryService = {
+      store: async () => ({ id: "memory-1" }),
+      get: async () => ({ id: "memory-1" }),
+    };
+
+    expect(listener.resolveHubMemoryService({ apiRuntime: { memoryService } })).toBe(memoryService);
+  });
 });
