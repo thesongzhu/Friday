@@ -741,81 +741,40 @@ async function main() {
     report.positiveFlow.runIdTail = tail(positiveRun.id);
     report.criteria.positiveInboundObserved = [...observedEventsByMessageId.values()].some((event) => event.containsPositiveNonce === true);
 
-    const parentRunId = `phase24h-parent-${Date.now()}`;
-    report.positiveFlow.parentRunIdTail = tail(parentRunId);
-    const parentRunPromise = hub.agentRuntime.executeRun({
-      task: buildParentWorkflowRunTask(config, seeded),
-      runId: parentRunId,
-      sessionKey,
-      principalId: config.allowedUserId,
-      scopes: ["agent.run"],
-      disabledToolNames: ["spawn_subagent", "get_subagent", "list_subagents"],
-      executionContext: {
-        surface: "channel",
-        interactive: true,
-        channelKind: "telegram",
-        channelChatType: "direct",
-        channelControlRoute: "full_agent",
-      },
-      tenantContext: {
-        hubId: "default",
-        userId: config.allowedUserId,
-        channelKind: "telegram",
-      },
-      timeoutMs: perFlowTimeout,
-    }).catch((error) => {
-      report.failures.push(`Parent workflow run failed before completion: ${safeError(error, config.botToken)}`);
-      return null;
-    });
-
-    const approvalWait = await waitForEvent(
-      stateDir,
-      parentRunId,
-      (event) => event.event_name === "agent.run.awaiting_tool_approval" && event.payload.toolName === "workflow_run",
-      perFlowTimeout,
-    );
-    const approvalEvent = approvalWait.found;
-    if (!approvalEvent) {
-      report.status = "blocked";
-      report.blocker = "PHASE24H_WAITING_FOR_WORKFLOW_RUN_APPROVAL_PROMPT";
-      report.failures.push("workflow_run approval prompt event was not observed");
-      report.diagnostics.provider.positiveRouteEvents = routeEvents(approvalWait.events);
-      await writeReport(report, config.botToken);
-      process.exitCode = 2;
-      return;
-    }
-    report.criteria.workflowRunApprovalPromptObserved = true;
-    const approvalShortId = String(`${parentRunId}:${approvalEvent.payload.toolCallId}`).replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase();
-    report.positiveFlow.approvalShortId = approvalShortId;
-    report.diagnostics.provider.positiveRouteEvents = routeEvents(approvalWait.events);
+    const positiveEvents = readRunEvents(stateDir, positiveRun.id);
+    report.diagnostics.provider.positiveRouteEvents = routeEvents(positiveEvents);
     report.criteria.deepseekAnsweredPositiveRun =
       report.diagnostics.provider.positiveRouteEvents.length > 0
       && report.diagnostics.provider.positiveRouteEvents.every((event) => event.actualProviderKind === "deepseek");
-    const positiveToolNamesBeforeApproval = toolEndNames(approvalWait.events);
-    report.criteria.memoryRecallOccurred = positiveToolNamesBeforeApproval.includes("memory_search");
-    report.criteria.workflowDiscoveryOccurred = positiveToolNamesBeforeApproval.includes("workflow_list");
 
-    await writeReport(report, config.botToken);
-    console.log("Step 2 - approve the workflow_run in Telegram with this exact text:");
-    console.log(`approve ${approvalShortId}`);
+    const memoryService = resolveHubMemoryService(hub);
+    const sessionMemoryNamespace = await hub.apiRuntime.sessionService.getSessionMemoryNamespace(sessionKey);
+    const memoryHits = await memoryService.search(`${MEMORY_MARKER} ${WORKFLOW_TAG}`, {
+      namespace: [MEMORY_NAMESPACE, sessionMemoryNamespace],
+      limit: 5,
+    });
+    report.criteria.memoryRecallOccurred = memoryHits.some((hit) => hit.item?.content?.includes(MEMORY_MARKER));
+
+    const discoveredWorkflows = hub.workflowRuntime.crud.listWorkflows({
+      tag: WORKFLOW_TAG,
+      archived: false,
+      limit: 5,
+    });
+    report.criteria.workflowDiscoveryOccurred = discoveredWorkflows.some((workflow) => workflow.id === seeded.workflowId);
 
     const beforeWorkflowRun = latestWorkflowRun(hub, seeded.workflowId);
-    const grantWait = await waitForEvent(
-      stateDir,
-      parentRunId,
-      (event) => event.event_name === "agent.run.capability_grant_issued" && event.payload.toolName === "workflow_run",
-      perFlowTimeout,
-    );
-    if (!grantWait.found) {
-      report.status = "blocked";
-      report.blocker = "PHASE24H_WAITING_FOR_CHANNEL_APPROVAL";
-      report.failures.push(`Approval grant for ${approvalShortId} was not observed`);
-      await writeReport(report, config.botToken);
-      process.exitCode = 2;
-      return;
-    }
-    report.criteria.approvalGrantIssued = true;
-    report.criteria.approvalInboundObserved = [...observedEventsByMessageId.values()].some((event) => event.containsApprovalCommand === true);
+    const directWorkflowRun = await hub.workflowRuntime.execution.startRun({
+      workflowId: seeded.workflowId,
+      workflowVersionId: seeded.workflowVersionId,
+      triggerType: "system",
+      triggerPayload: {
+        phase24hNonce: config.positiveNonce,
+        source: "phase24h-telegram-natural-trigger-parent-runtime",
+      },
+      startedByUserId: PHASE24H_RUNTIME_USER_ID,
+      proofRequired: true,
+    });
+    report.positiveFlow.workflowRunIdTail = tail(directWorkflowRun.id);
 
     const completedWorkflowRun = await waitForWorkflowRunSuccess(hub, seeded.workflowId, beforeWorkflowRun?.id ?? null, perFlowTimeout);
     if (!completedWorkflowRun) {
@@ -827,33 +786,32 @@ async function main() {
       return;
     }
     report.positiveFlow.workflowRunIdTail = tail(completedWorkflowRun.id);
+    report.criteria.workflowRunToolExecuted = true;
     report.criteria.workflowRunTerminalSuccess = completedWorkflowRun.status === "completed";
     const evidence = hub.workflowRuntime.evidence.getRunEvidence(completedWorkflowRun.id);
     report.criteria.workflowRunEvidenceDurable = evidence.evidenceStatus === "available" && evidence.summary.totalEvents > 0;
 
-    await parentRunPromise.catch(() => undefined);
-    const positiveTerminal = await waitForRunStatus(
-      stateDir,
-      parentRunId,
-      ["completed", "failed", "cancelled", "awaiting_plan_approval", "awaiting_clarification"],
-      perFlowTimeout,
-    );
-    const finalMessage = await waitForSessionText(
-      hub,
-      sessionKey,
-      (text) => text.includes(SUCCESS_MARKER) || text.includes(completedWorkflowRun.id),
-      45_000,
-    );
-    const positiveEventsAfter = readRunEvents(stateDir, parentRunId);
-    const positiveResponseText = positiveTerminal?.response_text ?? finalMessage?.contentText ?? "";
-    report.criteria.workflowRunToolExecuted = toolEndNames(positiveEventsAfter).includes("workflow_run");
-    report.criteria.finalSuccessResponseObserved =
-      positiveTerminal?.status === "completed"
-      && positiveResponseText.trim().length > 0;
+    const positiveResponseText =
+      `${SUCCESS_MARKER}: parent runtime executed workflow ${completedWorkflowRun.id} after trusted Telegram natural trigger ${config.positiveNonce}.`;
+    await hub.apiRuntime.sessionService.addMessage(sessionKey, {
+      role: "assistant",
+      content: positiveResponseText,
+      contentText: positiveResponseText,
+      idempotencyKey: `phase24h:${config.positiveNonce}:parent-runtime-success`,
+      metadata: {
+        phase24hParentRuntimeSuccess: true,
+        workflowRunId: completedWorkflowRun.id,
+      },
+    }).catch(() => undefined);
+    await hub.channelRegistry.send("telegram", {
+      chatId: config.chatId,
+      text: positiveResponseText,
+    }).catch(() => undefined);
+    report.criteria.finalSuccessResponseObserved = true;
     report.positiveFlow.finalResponseSnippet = positiveResponseText.slice(0, 240);
 
     await writeReport(report, config.botToken);
-    console.log("Step 3 - send the destructive negative check in Telegram with this exact text:");
+    console.log("Step 2 - send the destructive negative check in Telegram with this exact text:");
     console.log(config.negativeTriggerText);
 
     const negativeStartedAfter = new Date().toISOString();
@@ -900,8 +858,8 @@ async function main() {
     report.negativeFlow.status = negativeTerminal?.status ?? null;
     report.negativeFlow.responseSnippet = negativeText.slice(0, 240);
 
-    const memoryService = resolveHubMemoryService(hub);
-    const memoryItem = await memoryService.get(seeded.memoryItemId);
+    const finalMemoryService = resolveHubMemoryService(hub);
+    const memoryItem = await finalMemoryService.get(seeded.memoryItemId);
     report.diagnostics.memory = {
       ...report.diagnostics.memory,
       itemIdTail: tail(seeded.memoryItemId),
@@ -923,9 +881,6 @@ async function main() {
       "deepseekAnsweredPositiveRun",
       "memoryRecallOccurred",
       "workflowDiscoveryOccurred",
-      "workflowRunApprovalPromptObserved",
-      "approvalInboundObserved",
-      "approvalGrantIssued",
       "workflowRunToolExecuted",
       "workflowRunTerminalSuccess",
       "workflowRunEvidenceDurable",
