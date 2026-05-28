@@ -1,9 +1,9 @@
 # Friday Native Companion Release Guide (macOS)
 
-Use this guide when you want to build, sign, notarize, and ship the native `FridayCompanion.app` bundle for Agent OS deployments.
+Use this guide when you want to build, sign, notarize, and prepare the native `FridayCompanion.app` bundle for Agent OS deployments. This is a release-preparation guide; public desktop, Homebrew, Sparkle, or notarized macOS release readiness requires real external credentials plus archived evidence.
 
-For a full early-user setup after release, continue with [friday-agent-os-beta-onboarding.md](./docs/ops/friday-agent-os-beta-onboarding.md).
-If signing, notarization, launchd, passkey, or socket checks fail, use [friday-agent-os-troubleshooting.md](./docs/ops/friday-agent-os-troubleshooting.md).
+For a full early-user setup after release, continue with [friday-agent-os-beta-onboarding.md](./friday-agent-os-beta-onboarding.md).
+If signing, notarization, launchd, passkey, or socket checks fail, use [friday-agent-os-troubleshooting.md](./friday-agent-os-troubleshooting.md).
 
 The repo now has two release modes:
 
@@ -37,10 +37,10 @@ The distribution layer now adds release channels on top of the existing `.app` b
    - `FRIDAY_MACOS_SPARKLE_PRIVATE_KEY`
    - `FRIDAY_MACOS_SPARKLE_PUBLIC_KEY`
    - `FRIDAY_MACOS_APPCAST_BASE_URL`
-5. For Homebrew publication:
+5. For Homebrew publication, when explicitly authorized for a release:
    - `FRIDAY_HOMEBREW_TAP_REPO`
    - `FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN`
-4. Repo root available locally.
+6. Repo root available locally.
 
 ## Local Release Verification
 
@@ -66,7 +66,7 @@ This path:
 6. Writes release evidence to `dist/macos/FridayCompanion.release.json` and `dist/macos/FridayCompanion.release.md`.
 7. Stops before Gatekeeper or notarization checks, because ad-hoc signatures do not pass those checks.
 8. When Sparkle credentials are configured, also generates `dist/releases/macos/appcast.xml`.
-9. When Homebrew tap credentials are configured, also publishes the generated Cask to the tap and refreshes the manifest.
+9. When Homebrew tap credentials are configured and the release operator has explicitly authorized publication, also publishes the generated Cask to the tap and refreshes the manifest.
 
 Use this mode for local engineering acceptance and CI coverage.
 
@@ -141,7 +141,7 @@ The notarized release flow:
 8. Generates `dist/releases/Friday.release-manifest.json`, `dist/releases/Friday.release-manifest.md`, and `dist/releases/homebrew/Casks/friday.rb`.
 9. Writes release evidence to `dist/macos/FridayCompanion.release.json` and `dist/macos/FridayCompanion.release.md`.
 10. Generates `dist/releases/macos/appcast.xml` when Sparkle credentials are configured.
-11. Publishes the Homebrew cask when tap credentials are configured.
+11. Publishes the Homebrew cask only when tap credentials are configured and the release operator has explicitly authorized publication.
 
 If you need direct access to the lower-level scripts, they remain available:
 
