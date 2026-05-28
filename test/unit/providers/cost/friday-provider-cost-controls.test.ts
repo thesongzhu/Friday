@@ -63,6 +63,63 @@ describe("Friday provider cost controls", () => {
         qualityTier: "balanced",
       });
     });
+
+    it("prices the env auto-detect default models accurately instead of the generic fallback", () => {
+      const catalog = createFridayProviderPricingCatalog();
+      const GENERIC_FALLBACK = { inputPer1MUsd: 1, outputPer1MUsd: 4 };
+
+      // OPENAI_API_KEY defaults: gpt-4o-mini (default) and gpt-4o (supported).
+      expect(catalog.getPricing("openai", "gpt-4o-mini")).toMatchObject({
+        inputPer1MUsd: 0.15,
+        outputPer1MUsd: 0.6,
+        cacheReadPer1MUsd: 0.075,
+      });
+      expect(catalog.getPricing("openai", "gpt-4o")).toMatchObject({
+        inputPer1MUsd: 2.5,
+        outputPer1MUsd: 10,
+        cacheReadPer1MUsd: 1.25,
+      });
+      // gpt-4o-mini must keep the more specific pattern over gpt-4o.
+      expect(catalog.getPricing("openai", "gpt-4o-mini").inputPer1MUsd).not.toBe(
+        catalog.getPricing("openai", "gpt-4o").inputPer1MUsd,
+      );
+
+      // DEEPSEEK_API_KEY defaults: deepseek-v4-pro (default) and deepseek-v4-flash (supported),
+      // plus the deepseek-chat / deepseek-reasoner deprecation aliases.
+      expect(catalog.getPricing("deepseek", "deepseek-v4-pro")).toMatchObject({
+        inputPer1MUsd: 1.74,
+        outputPer1MUsd: 3.48,
+      });
+      expect(catalog.getPricing("deepseek", "deepseek-v4-flash")).toMatchObject({
+        inputPer1MUsd: 0.14,
+        outputPer1MUsd: 0.28,
+      });
+      expect(catalog.getPricing("deepseek", "deepseek-chat").inputPer1MUsd).toBe(0.14);
+      expect(catalog.getPricing("deepseek", "deepseek-reasoner").outputPer1MUsd).toBe(0.28);
+
+      // GOOGLE_API_KEY default: gemini-2.0-flash (must not be swallowed by gemini-2.0-flash-lite).
+      expect(catalog.getPricing("google", "gemini-2.0-flash")).toMatchObject({
+        inputPer1MUsd: 0.1,
+        outputPer1MUsd: 0.4,
+      });
+      expect(catalog.getPricing("google", "gemini-2.0-flash-lite").inputPer1MUsd).toBe(0.08);
+
+      // None of the OpenAI / DeepSeek / Google env-default models may resolve to the generic
+      // $1/$4 fallback. (xai/groq/mistral/openrouter env defaults intentionally still use the
+      // generic fallback — those provider kinds have no catalog entries; documented limitation.)
+      for (const [kind, model] of [
+        ["openai", "gpt-4o-mini"],
+        ["openai", "gpt-4o"],
+        ["deepseek", "deepseek-v4-pro"],
+        ["deepseek", "deepseek-v4-flash"],
+        ["google", "gemini-2.0-flash"],
+      ] as const) {
+        const pricing = catalog.getPricing(kind, model);
+        expect({ inputPer1MUsd: pricing.inputPer1MUsd, outputPer1MUsd: pricing.outputPer1MUsd }).not.toEqual(
+          GENERIC_FALLBACK,
+        );
+      }
+    });
   });
 
   describe("cost router", () => {

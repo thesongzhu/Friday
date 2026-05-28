@@ -34,6 +34,27 @@ const DEFAULT_MODEL_PRICING: readonly FridayProviderModelPricing[] = [
     cacheReadPer1MUsd: 0.03,
     cacheWritePer1MUsd: 0.10,
   },
+  // gpt-4o family — Friday's OPENAI_API_KEY auto-detect defaults (gpt-4o-mini default, gpt-4o
+  // supported). Source: https://openai.com/api/pricing/ (verified 2026-05-28). Without these,
+  // both env-default OpenAI models hit the generic $1/$4 fallback below.
+  {
+    providerKind: "openai",
+    modelPattern: "gpt-4o-mini",
+    qualityTier: "cheap",
+    inputPer1MUsd: 0.15,
+    outputPer1MUsd: 0.60,
+    cacheReadPer1MUsd: 0.075,
+    cacheWritePer1MUsd: 0.15,
+  },
+  {
+    providerKind: "openai",
+    modelPattern: "gpt-4o",
+    qualityTier: "best",
+    inputPer1MUsd: 2.50,
+    outputPer1MUsd: 10.00,
+    cacheReadPer1MUsd: 1.25,
+    cacheWritePer1MUsd: 2.50,
+  },
   {
     providerKind: "anthropic",
     modelPattern: "claude-opus",
@@ -87,6 +108,64 @@ const DEFAULT_MODEL_PRICING: readonly FridayProviderModelPricing[] = [
     outputPer1MUsd: 0.30,
     cacheReadPer1MUsd: 0.01,
     cacheWritePer1MUsd: 0.08,
+  },
+  // gemini-2.0-flash — Friday's GOOGLE_API_KEY auto-detect default. Source:
+  // https://ai.google.dev/gemini-api/docs/pricing (verified 2026-05-28). Note: "gemini-2.0-flash"
+  // does NOT substring-match "gemini-2.0-flash-lite", so without this entry the default model
+  // silently fell to the generic $1/$4 fallback.
+  {
+    providerKind: "google",
+    modelPattern: "gemini-2.0-flash",
+    qualityTier: "balanced",
+    inputPer1MUsd: 0.10,
+    outputPer1MUsd: 0.40,
+    cacheReadPer1MUsd: 0.025,
+    cacheWritePer1MUsd: 0.10,
+  },
+  // DeepSeek V4 — Friday's DEEPSEEK_API_KEY auto-detect defaults (deepseek-v4-pro default,
+  // deepseek-v4-flash supported) plus the deepseek-chat / deepseek-reasoner deprecation aliases
+  // (both are V4 Flash modes, priced as V4 Flash). Source: https://api-docs.deepseek.com/quick_start/pricing
+  // (verified 2026-05-28; STANDARD list prices — the 75%-off v4-pro promo expiring 2026-05-31 is
+  // intentionally NOT used so cost/budget never silently under-reports after the promo ends).
+  // Without a deepseek kind here, every DeepSeek model hit the generic $1/$4 fallback.
+  {
+    providerKind: "deepseek",
+    modelPattern: "deepseek-v4-flash",
+    qualityTier: "cheap",
+    inputPer1MUsd: 0.14,
+    outputPer1MUsd: 0.28,
+    cacheReadPer1MUsd: 0.0028,
+    cacheWritePer1MUsd: 0.14,
+  },
+  {
+    providerKind: "deepseek",
+    modelPattern: "deepseek-v4-pro",
+    qualityTier: "best",
+    inputPer1MUsd: 1.74,
+    outputPer1MUsd: 3.48,
+    cacheReadPer1MUsd: 0.0145,
+    cacheWritePer1MUsd: 1.74,
+  },
+  {
+    providerKind: "deepseek",
+    modelPattern: "deepseek-chat",
+    qualityTier: "cheap",
+    inputPer1MUsd: 0.14,
+    outputPer1MUsd: 0.28,
+    cacheReadPer1MUsd: 0.0028,
+    cacheWritePer1MUsd: 0.14,
+  },
+  {
+    // deepseek-reasoner is the V4 Flash thinking-mode alias — priced identically to
+    // deepseek-v4-flash / deepseek-chat, so it carries the same "cheap" tier to keep the
+    // cost router scoring equivalently-priced aliases of the same model equivalently.
+    providerKind: "deepseek",
+    modelPattern: "deepseek-reasoner",
+    qualityTier: "cheap",
+    inputPer1MUsd: 0.14,
+    outputPer1MUsd: 0.28,
+    cacheReadPer1MUsd: 0.0028,
+    cacheWritePer1MUsd: 0.14,
   },
   {
     providerKind: "ollama",

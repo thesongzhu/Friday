@@ -392,6 +392,10 @@ import {
   stripFridayUiActionHints,
 } from "./bootstrap/hub-helpers.js";
 import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gates.js";
+import {
+  collectFridayBootstrapRouteCandidates,
+  resolveFridayBootstrapAutoRouting,
+} from "./bootstrap/friday-bootstrap-auto-routing.js";
 
 // Re-export public API for backward compatibility with `#hub` barrel.
 export {
@@ -525,8 +529,6 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   { envVar: "XAI_API_KEY", kind: "xai", defaultModel: "grok-3-mini" },
 ];
 
-/** Routing priority: anthropic first, then openai, then detection order. */
-const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
 const STABLE_OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const STABLE_OPENAI_SUPPORTED_MODELS = [STABLE_OPENAI_DEFAULT_MODEL, "gpt-4o"] as const;
 const OPENAI_PROVIDER_NAME = "OpenAI Provider";
@@ -676,43 +678,42 @@ async function autoDetectProvidersFromEnv(
     }
   }
 
-  // Set default routing if none configured — use newly detected or existing providers
+  // Set default routing if none configured — use newly detected or existing providers.
+  // Locked decision: multiple keys/providers require explicit user choice. Friday must not
+  // silently pick a default provider or inject fallbacks. A single available provider is
+  // unambiguous and is auto-selected (single-key BYOK still boots ready); with two or more
+  // providers we leave routing unconfigured so the user chooses explicitly (resolveRoute
+  // surfaces PROVIDER_NO_ROUTING until then).
   const routing = await providerService.getRoutingConfig();
   if (!routing.defaultProviderId) {
-    // Collect candidates: newly detected first, then existing enabled providers
-    const candidates = detected.length > 0
-      ? detected
-      : existing
-          .filter((p) => p.enabled)
-          .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id }));
+    // Candidates = the UNION of newly-detected and already-enabled providers (deduped).
+    // Using only one or the other would undercount across boots and let a later single new
+    // env key silently become the default among several configured providers.
+    const candidates = collectFridayBootstrapRouteCandidates({
+      detected,
+      existingEnabled: existing
+        .filter((p) => p.enabled)
+        .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id })),
+    });
 
-    if (candidates.length > 0) {
-      // Pick best provider by priority
-      let chosen = candidates[0]!;
-      for (const priorityKind of ROUTING_PRIORITY) {
-        const match = candidates.find((d) => d.kind === priorityKind);
-        if (match) {
-          chosen = match;
-          break;
-        }
-      }
-      const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind);
-      const defaultModel = chosenEntry?.defaultModel ?? (chosen.kind === "ollama" ? "llama3.2" : "default");
+    const decision = resolveFridayBootstrapAutoRouting(candidates, (candidate) => {
+      const entry = ENV_PROVIDER_MAP.find((e) => e.kind === candidate.kind);
+      return entry?.defaultModel ?? (candidate.kind === "ollama" ? "llama3.2" : "default");
+    });
+
+    if (decision) {
       try {
-        await providerService.setRoutingConfig({
-          defaultProviderId: chosen.id,
-          defaultModel,
-          fallbackProviderIds: candidates
-            .filter((d) => d.id !== chosen.id)
-            .slice(0, 3)
-            .map((d) => d.id),
-        });
+        await providerService.setRoutingConfig(decision);
       } catch (err) {
         console.warn(
           "[friday] Auto-detect: failed to set default routing:",
           err instanceof Error ? err.message : String(err),
         );
       }
+    } else if (candidates.length > 1) {
+      console.log(
+        `[friday] Auto-detect: ${candidates.length} providers available with no default routing — leaving routing unset so you can choose explicitly (no provider auto-selected, no fallbacks injected).`,
+      );
     }
   }
 
@@ -3329,29 +3330,11 @@ export async function createFridayHub(
     ]);
     const routingWarning = resolveFridayRoutingStabilityWarning({ routing, providers });
     if (routingWarning && providers.length > 0) {
+      // Diagnostic only: surface the missing-fallback warning to the operator. Friday must
+      // NOT silently inject fallback providers on the user's behalf — configuring fallbacks
+      // is an explicit user choice (locked decision: no hidden provider behavior, no silent
+      // refill). A user who saved an empty fallback list keeps it empty.
       warnHubBootstrapOnce(`[friday][W-PROVIDER-ROUTING-001] ${routingWarning}`);
-      // Auto-configure fallback providers if none are set
-      if (
-        !canonicalMutatingActionGateEnabled &&
-        routing.defaultProviderId &&
-        (!routing.fallbackProviderIds || routing.fallbackProviderIds.length === 0)
-      ) {
-        const validatedAlternatives = providers
-          .filter((p) => p.enabled && p.id !== routing.defaultProviderId)
-          .slice(0, 3)
-          .map((p) => p.id);
-        if (validatedAlternatives.length > 0) {
-          try {
-            await providerService.setRoutingConfig({
-              ...routing,
-              fallbackProviderIds: validatedAlternatives,
-            });
-            console.log(`[friday] Auto-configured ${validatedAlternatives.length} fallback provider(s) for routing resilience.`);
-          } catch {
-            // Non-fatal: fallback auto-config failure should not block startup.
-          }
-        }
-      }
     }
   } catch (err) {
     if (!isExpectedProviderNoRouting(err)) {
