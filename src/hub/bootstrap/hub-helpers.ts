@@ -12,7 +12,7 @@ import * as os from "node:os";
 import { type FridayConfig, type LoadedFridayConfig, parseFridayConfig, writeFridayConfig } from "#config";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
-import type { FridayAgentMessage, FridaySsrfPolicy } from "#agent";
+import type { FridayAgentMessage, FridayAgentRuntime, FridaySsrfPolicy } from "#agent";
 import type {
   FridayChannelInstanceConfig,
   FridayChannelMessage,
@@ -160,10 +160,10 @@ function normalizeFridayChannelEnvSegment(raw: string): string {
 
 export function resolveFridayChannelDisabledToolNames(channelKind: string): string[] {
   const channelEnvKey = `FRIDAY_${normalizeFridayChannelEnvSegment(channelKind)}_DISABLED_TOOL_NAMES`;
-  return [
+  return [...new Set([
     ...parseFridayDisabledToolNames(process.env.FRIDAY_CHANNEL_DISABLED_TOOL_NAMES),
     ...parseFridayDisabledToolNames(process.env[channelEnvKey]),
-  ];
+  ])];
 }
 
 function normalizeFridayChannelApprovalPrincipalSegment(raw: string): string {
@@ -1752,6 +1752,7 @@ export interface FridayHub {
   workflowRuntime: FridayWorkflowRuntime;
   autonomousEngine: FridayAutonomousEngine;
   selfHealing: FridaySelfHealingApiService;
+  agentRuntime: FridayAgentRuntime;
   apiRuntime: FridayApiRuntime;
   channelRegistry: FridayChannelRegistry;
   satelliteRuntime: FridaySatelliteRuntime;

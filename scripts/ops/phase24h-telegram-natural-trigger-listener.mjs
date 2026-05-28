@@ -115,6 +115,18 @@ export function mergeDisabledToolNames(existing, required) {
   )].join(",");
 }
 
+export function buildParentWorkflowRunTask(config, seeded) {
+  return [
+    `Phase24H parent workflow execution for trusted Telegram natural trigger ${config.positiveNonce}.`,
+    `The channel natural trigger was observed in this same Telegram session. Use memory_search for ${MEMORY_MARKER}.`,
+    `Use workflow_list with tag ${WORKFLOW_TAG} and publishedOnly=true before running the workflow.`,
+    `Then call workflow_run directly from this parent run with workflowId ${seeded.workflowId} and versionId ${seeded.workflowVersionId}.`,
+    `Use input {"phase24hNonce":"${config.positiveNonce}"}.`,
+    "Do not call spawn_subagent, get_subagent, or list_subagents.",
+    `After workflow_run returns, reply with ${SUCCESS_MARKER} and include the workflow run id.`,
+  ].join(" ");
+}
+
 export function readEnvConfig() {
   const positiveNonce = buildNonce("positive", "PHASE24H_TELEGRAM_POSITIVE_NONCE");
   const negativeNonce = buildNonce("negative", "PHASE24H_TELEGRAM_NEGATIVE_NONCE");
@@ -729,9 +741,36 @@ async function main() {
     report.positiveFlow.runIdTail = tail(positiveRun.id);
     report.criteria.positiveInboundObserved = [...observedEventsByMessageId.values()].some((event) => event.containsPositiveNonce === true);
 
+    const parentRunId = `phase24h-parent-${Date.now()}`;
+    report.positiveFlow.parentRunIdTail = tail(parentRunId);
+    const parentRunPromise = hub.agentRuntime.executeRun({
+      task: buildParentWorkflowRunTask(config, seeded),
+      runId: parentRunId,
+      sessionKey,
+      principalId: config.allowedUserId,
+      scopes: ["agent.run"],
+      disabledToolNames: ["spawn_subagent", "get_subagent", "list_subagents"],
+      executionContext: {
+        surface: "channel",
+        interactive: true,
+        channelKind: "telegram",
+        channelChatType: "direct",
+        channelControlRoute: "full_agent",
+      },
+      tenantContext: {
+        hubId: "default",
+        userId: config.allowedUserId,
+        channelKind: "telegram",
+      },
+      timeoutMs: perFlowTimeout,
+    }).catch((error) => {
+      report.failures.push(`Parent workflow run failed before completion: ${safeError(error, config.botToken)}`);
+      return null;
+    });
+
     const approvalWait = await waitForEvent(
       stateDir,
-      positiveRun.id,
+      parentRunId,
       (event) => event.event_name === "agent.run.awaiting_tool_approval" && event.payload.toolName === "workflow_run",
       perFlowTimeout,
     );
@@ -746,7 +785,7 @@ async function main() {
       return;
     }
     report.criteria.workflowRunApprovalPromptObserved = true;
-    const approvalShortId = String(`${positiveRun.id}:${approvalEvent.payload.toolCallId}`).replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase();
+    const approvalShortId = String(`${parentRunId}:${approvalEvent.payload.toolCallId}`).replace(/[^a-z0-9]/gi, "").slice(-6).toUpperCase();
     report.positiveFlow.approvalShortId = approvalShortId;
     report.diagnostics.provider.positiveRouteEvents = routeEvents(approvalWait.events);
     report.criteria.deepseekAnsweredPositiveRun =
@@ -763,7 +802,7 @@ async function main() {
     const beforeWorkflowRun = latestWorkflowRun(hub, seeded.workflowId);
     const grantWait = await waitForEvent(
       stateDir,
-      positiveRun.id,
+      parentRunId,
       (event) => event.event_name === "agent.run.capability_grant_issued" && event.payload.toolName === "workflow_run",
       perFlowTimeout,
     );
@@ -792,9 +831,10 @@ async function main() {
     const evidence = hub.workflowRuntime.evidence.getRunEvidence(completedWorkflowRun.id);
     report.criteria.workflowRunEvidenceDurable = evidence.evidenceStatus === "available" && evidence.summary.totalEvents > 0;
 
+    await parentRunPromise.catch(() => undefined);
     const positiveTerminal = await waitForRunStatus(
       stateDir,
-      positiveRun.id,
+      parentRunId,
       ["completed", "failed", "cancelled", "awaiting_plan_approval", "awaiting_clarification"],
       perFlowTimeout,
     );
@@ -804,7 +844,7 @@ async function main() {
       (text) => text.includes(SUCCESS_MARKER) || text.includes(completedWorkflowRun.id),
       45_000,
     );
-    const positiveEventsAfter = readRunEvents(stateDir, positiveRun.id);
+    const positiveEventsAfter = readRunEvents(stateDir, parentRunId);
     const positiveResponseText = positiveTerminal?.response_text ?? finalMessage?.contentText ?? "";
     report.criteria.workflowRunToolExecuted = toolEndNames(positiveEventsAfter).includes("workflow_run");
     report.criteria.finalSuccessResponseObserved =
