@@ -1,11 +1,12 @@
 # Friday Public V1 Local Candidate
 
-Last reviewed: 2026-05-26
+Last reviewed: 2026-05-28
 
 This document summarizes the public v1 local candidate claim for the published
 `1.0.x` local-candidate line. The current public npm/source release is `1.0.2`.
-It is
-a release truth summary, not a universal product promise. Distribution mode is
+This source tree is staged as a `1.0.3` package candidate for a future
+operator-authorized publish, but `1.0.3` is not yet on npm. It is a release
+truth summary, not a universal product promise. Distribution mode is
 **npm/source only**.
 
 ## Safe Claim
@@ -101,9 +102,10 @@ the release-closure plan's runtime-delta classification report.
 - Alibaba/Tencent/Volcengine cloud live certification
 - external OTEL/Grafana export
 - Slack/SMTP external alert dispatch as release-complete
-- default-on packaging or multi-tenant availability; current source has a deterministic env-gated package/multi-tenant proof harness, but npm `1.0.2`, default-on flips, and production multi-tenant rollout remain not claimed
+- default-on packaging or multi-tenant availability; current source has a deterministic env-gated package/multi-tenant proof harness, but npm `1.0.2`, the unpublished `1.0.3` package candidate, default-on flips, and production multi-tenant rollout remain not claimed
 - full native desktop parity across every operating system
-- desktop, Homebrew, notarized macOS, or mobile distribution in `1.0.2`
+- desktop, Homebrew, notarized macOS, or mobile distribution in `1.0.2` or the
+  unpublished `1.0.3` package candidate
 - generated or imported skills becoming immediately runnable without lifecycle gates
 - every learned preference automatically changing future prompt behavior
 - verified repair status from action counts alone
@@ -116,10 +118,11 @@ the release-closure plan's runtime-delta classification report.
 
 The dogfood gate for `1.0.1` closed as `dogfood_partial_pass` with weighted UX
 score 7.78/10 (below the 8.0 `dogfood_pass` threshold). The published npm
-`1.0.2` package still carries the original proof-pending headlines. GitHub-visible
-source after `1.0.2` has narrowed several of them with PR #350 through PR #355
-and the provider/cost source slice below, but those source changes are **not**
-npm package truth until a future authorized publish. Current source truth:
+`1.0.2` package still carries the original proof-pending headlines.
+GitHub-visible source after `1.0.2` has narrowed several of them through PR
+#379 and is staged as an unpublished `1.0.3` package candidate, but those source
+changes are **not** npm package truth until a future authorized publish. Current
+source truth:
 
 1. Autonomous self-repair execute → rollback: deterministic skill-drift and
    route rollback receipt mechanics are closed on GitHub main by PR #351 and
@@ -152,6 +155,19 @@ npm package truth until a future authorized publish. Current source truth:
    sync, restart/recovery, and duplicate-row non-merge proof are closed on
    GitHub main by PR #355. Destructive dedup merge/block policy, live external
    memory dogfood, and npm package truth remain separate.
+
+Additional source-only closure after the nine dogfood headlines:
+
+- C2.4 Telegram natural-trigger source repair is closed on GitHub main by PR
+  #377 as trusted channel trigger -> conservative approved resolver -> parent
+  runtime execution -> sanitized reply. It remains `source_closed_live_pending`
+  / `proof_pending` until the deferred exact-SHA Telegram live stress window
+  passes.
+- C3/C4 live-provider routing, fallback, and spend proof is closed on GitHub
+  main by PR #378.
+- C4.5 direct synthetic real-user intelligence proof is closed on GitHub main
+  by PR #379. C4.5 live external-channel proof remains deferred with the C2.4
+  Telegram live stress window.
 
 These are truth-labeled, not silent passes. None contradict the safe claim
 above.

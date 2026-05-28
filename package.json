@@ -1,6 +1,6 @@
 {
   "name": "@thesongzhu/friday",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "Trusted local-first AI agent application layer for supervised automation",
   "license": "MIT",

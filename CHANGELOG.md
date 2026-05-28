@@ -7,11 +7,21 @@ and this project follows Semantic Versioning.
 
 ## [Unreleased]
 
+- Package metadata is staged as `1.0.3` for a future operator-authorized npm
+  publish. This is prepare-only: no tag, GitHub release, or npm publish is
+  included.
 - Source truth after the immutable npm `1.0.2` package now includes deterministic
   closures for DP-10 personal-secretary loop proof (PR #352), Skill +
   link-to-skill lifecycle proof (PR #353), repair/self-upgrade/retry-audit proof
-  (PR #354), and Memory cognition v1 proof (PR #355). These are GitHub-main
+  (PR #354), Memory cognition v1 proof (PR #355), provider/cost truth and retry
+  receipt repairs (PR #356 through PR #360), C2.4 parent-runtime natural-trigger
+  source repair (PR #377), C3/C4 live-provider routing proof (PR #378), and C4.5
+  direct synthetic real-user intelligence proof (PR #379). These are GitHub-main
   closures, not npm `1.0.2` package truth.
+- C2.4 remains `source_closed_live_pending` / `proof_pending` until the deferred
+  exact-SHA Telegram natural-trigger stress window passes. C4.5 live external-
+  channel proof, npm publish, tag, and GitHub release remain deferred operator
+  actions.
 - Provider budget configuration writes now share the protected provider mutation
   boundary: in canonical-gate-required profiles, `PUT /v1/providers/budget`
   requires an approved plan digest and canonical approval before changing the
