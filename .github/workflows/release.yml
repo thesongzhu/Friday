@@ -373,7 +373,7 @@ jobs:
           EVENT="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.event')"
           echo "Real Green Gate run ${RUN_ID} event=${EVENT}"
           if [ "${EVENT}" != "workflow_dispatch" ]; then
-            echo "::error::Channel live-proof gate requires the same-SHA Real Green Gate run to have been dispatched manually with phase24b/c/d inputs set true and nonces sent. Re-run: gh workflow run real-green-gate.yml -r ${TAG_NAME} -f phase24b_discord_trusted_inbound=true -f phase24c_telegram_trusted_inbound=true -f phase24d_lark_feishu_trusted_inbound=true"
+            echo "::error::Channel live-proof gate requires the same-SHA Real Green Gate run to have been dispatched manually with phase24b/c/d trusted-inbound plus phase24e/f/g workflow-candidate inputs set true and operator messages sent. Re-run: gh workflow run real-green-gate.yml -r ${TAG_NAME} -f phase24b_discord_trusted_inbound=true -f phase24c_telegram_trusted_inbound=true -f phase24d_lark_feishu_trusted_inbound=true -f phase24e_telegram_workflow_candidate=true -f phase24f_discord_workflow_candidate=true -f phase24g_lark_feishu_workflow_candidate=true"
             exit 1
           fi
 
@@ -401,15 +401,42 @@ jobs:
           run-id: ${{ steps.find_run.outputs.run_id }}
           github-token: ${{ github.token }}
 
+      - name: Download Phase24E Telegram workflow-candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24e-telegram-workflow-candidate-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24e-telegram-workflow-candidate-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Phase24F Discord workflow-candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24f-discord-workflow-candidate-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24f-discord-workflow-candidate-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Download Phase24G Lark/Feishu workflow-candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phase24g-lark-feishu-workflow-candidate-${{ steps.find_run.outputs.run_id }}
+          path: ./phase24g-lark-feishu-workflow-candidate-download
+          run-id: ${{ steps.find_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
       - name: Validate channel proof artifacts
         run: |
           set -euo pipefail
           DISCORD="./phase24b-discord-download/phase24b-discord-trusted-inbound-proof.json"
           TELEGRAM="./phase24c-telegram-download/phase24c-telegram-trusted-inbound-proof.json"
           LARK="./phase24d-lark-feishu-download/phase24d-lark-feishu-trusted-inbound-proof.json"
-          for path in "${DISCORD}" "${TELEGRAM}" "${LARK}"; do
+          TELEGRAM_WORKFLOW="./phase24e-telegram-workflow-candidate-download/phase24e-telegram-workflow-candidate-proof.json"
+          DISCORD_WORKFLOW="./phase24f-discord-workflow-candidate-download/phase24f-discord-workflow-candidate-proof.json"
+          LARK_WORKFLOW="./phase24g-lark-feishu-workflow-candidate-download/phase24g-lark-feishu-workflow-candidate-proof.json"
+          for path in "${DISCORD}" "${TELEGRAM}" "${LARK}" "${TELEGRAM_WORKFLOW}" "${DISCORD_WORKFLOW}" "${LARK_WORKFLOW}"; do
             if [ ! -f "${path}" ]; then
-              echo "::error::Expected channel-proof artifact ${path} is missing. Re-run real-green-gate.yml on ${TAG_SHA} with phase24b_discord_trusted_inbound, phase24c_telegram_trusted_inbound, and phase24d_lark_feishu_trusted_inbound all set true, and complete the trusted-user message probes."
+              echo "::error::Expected channel-proof artifact ${path} is missing. Re-run real-green-gate.yml on ${TAG_SHA} with phase24b/c/d trusted-inbound and phase24e/f/g workflow-candidate inputs all set true, then complete the trusted-user/operator message probes."
               exit 1
             fi
           done
@@ -417,6 +444,9 @@ jobs:
             --discord "${DISCORD}" \
             --telegram "${TELEGRAM}" \
             --lark-feishu "${LARK}" \
+            --telegram-workflow-candidate "${TELEGRAM_WORKFLOW}" \
+            --discord-workflow-candidate "${DISCORD_WORKFLOW}" \
+            --lark-feishu-workflow-candidate "${LARK_WORKFLOW}" \
             --expected-sha "${TAG_SHA}"
 
   source-distribution:
