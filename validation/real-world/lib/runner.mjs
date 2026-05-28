@@ -52,6 +52,9 @@ function matchesFilter(scenario, options) {
   if (options.tags?.length && !options.tags.some((tag) => scenario.tags?.includes(tag))) {
     return false;
   }
+  if (options.excludeProviderScenarios === true && scenario.providerLane !== "none") {
+    return false;
+  }
   return true;
 }
 
