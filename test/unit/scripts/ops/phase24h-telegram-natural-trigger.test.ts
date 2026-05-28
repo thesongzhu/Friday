@@ -22,7 +22,7 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
   it("builds deterministic operator prompts from GitHub run metadata", async () => {
     process.env.GITHUB_RUN_ID = "12345";
     process.env.GITHUB_SHA = "phase24hsha-for-test";
-    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "test-telegram-token";
     process.env.FRIDAY_TELEGRAM_ALLOWED_USER_ID = "user-1";
     process.env.FRIDAY_TELEGRAM_CHAT_ID = "chat-1";
     process.env.FRIDAY_DEEPSEEK_API_KEY = "deepseek-test-key"; // pragma: allowlist secret
@@ -36,13 +36,15 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(config.positiveTriggerText).toContain("phase24h-natural-trigger");
     expect(config.positiveTriggerText).toContain("PHASE24H_WORKFLOW_EXECUTED");
     expect(config.positiveTriggerText).toContain("Use memory first");
+    expect(config.positiveTriggerText).toContain("parent runtime will execute the workflow");
+    expect(config.positiveTriggerText).toContain("Do not spawn a sub-agent");
     expect(config.negativeTriggerText).toContain("PHASE24H_DESTRUCTIVE_CHECK");
     expect(config.deepseekEnvVar).toBe("FRIDAY_DEEPSEEK_API_KEY");
     expect(listener.missingRequiredEnv(config)).toEqual([]);
   });
 
   it("reports missing DeepSeek env without exposing secret values", async () => {
-    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "test-telegram-token";
     process.env.FRIDAY_TELEGRAM_ALLOWED_USER_ID = "user-1";
     process.env.FRIDAY_TELEGRAM_CHAT_ID = "chat-1";
     delete process.env.FRIDAY_DEEPSEEK_API_KEY;
@@ -54,7 +56,7 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(listener.missingRequiredEnv(config)).toContain("FRIDAY_DEEPSEEK_API_KEY or DEEPSEEK_API_KEY");
   });
 
-  it("initial report records live-provider intent and no OpenAI fallback", async () => {
+  it("initial report records provider configuration diagnostics and no OpenAI fallback", async () => {
     process.env.FRIDAY_DEEPSEEK_API_KEY = "deepseek-test-key"; // pragma: allowlist secret
     const listener = await loadListener();
     const config = listener.readEnvConfig();
@@ -63,6 +65,8 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(report.schemaVersion).toBe("friday.phase24h.telegram_natural_trigger_execution_proof.v1");
     expect(report.environment.liveProviderSpendIntent).toMatchObject({
       expectedProvider: "deepseek",
+      routeUsage: "configuration_diagnostic_only_no_llm_tool_selection_expected",
+      expectedSpendUsd: "0 for parent-runtime resolver path",
       noSensitiveData: true,
     });
     expect(report.environment.openAiFallbackConfigured).toBe(false);

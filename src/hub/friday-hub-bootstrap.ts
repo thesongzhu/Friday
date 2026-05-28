@@ -360,6 +360,7 @@ import {
 import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/friday-hub-audit-log-writer.js";
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
 import { createFridayProviderBackedTtsService } from "../media/friday-provider-backed-tts-service.js";
+import { createFridayChannelNaturalTriggerResolver } from "./bootstrap/friday-channel-natural-trigger-resolver.js";
 
 // ─── Extracted helpers, types, and stubs ───
 
@@ -387,6 +388,7 @@ import {
   resolveFridayChannelSessionKey,
   resolveFridayChannelTerminalText,
   resolveTokenSecret,
+  sanitizeFridayChannelVisibleReply,
   stripFridayUiActionHints,
 } from "./bootstrap/hub-helpers.js";
 import { resolveFridayCapabilityGates } from "./bootstrap/friday-capability-gates.js";
@@ -400,8 +402,10 @@ export {
   resolveFridayChannelApprovalPrincipalId,
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
+  sanitizeFridayChannelVisibleReply,
   resolveTokenSecret,
 } from "./bootstrap/hub-helpers.js";
+export { createFridayChannelNaturalTriggerResolver } from "./bootstrap/friday-channel-natural-trigger-resolver.js";
 
 type FridayWarnSink = (message: string) => void;
 
@@ -7975,6 +7979,16 @@ export async function createFridayHub(
           resolveIdempotencyKey: resolveAgentMirrorIdempotencyKey,
         },
       });
+      const channelNaturalTriggerResolver = memoryService
+        ? createFridayChannelNaturalTriggerResolver({
+            memoryService,
+            workflowCrudService: workflowRuntime.crud,
+            workflowExecutionService: workflowRuntime.execution,
+            getSessionMemoryNamespace: (key) => hubSessionService.getSessionMemoryNamespace(key),
+            startedByUserId: learningDefaultUserId,
+            nowIso,
+          })
+        : undefined;
       {
         let lastChannelUiWakeAt = 0;
         const channelUiWakeCooldownMs = Math.max(
@@ -8752,6 +8766,54 @@ export async function createFridayHub(
                 return undefined;
               });
 
+              if (channelNaturalTriggerResolver) {
+                const naturalTriggerResolution = await channelNaturalTriggerResolver.resolve({
+                  text: taskText,
+                  sessionKey,
+                  channelKind: msg.channelKind,
+                  chatId: msg.chatId,
+                  senderId: msg.senderId,
+                });
+                if (naturalTriggerResolution.handled) {
+                  const outboundText = sanitizeFridayChannelVisibleReply(naturalTriggerResolution.replyText);
+                  const delivery = await progressReceipt.deliverFinal({
+                    text: outboundText,
+                    runId,
+                  });
+                  await hubSessionService.addMessage(sessionKey, {
+                    role: "assistant",
+                    content: outboundText,
+                    contentText: outboundText,
+                    idempotencyKey: `channel:${msg.channelKind}:${msg.chatId}:${msg.id}:natural-trigger-${naturalTriggerResolution.action}`,
+                    metadata: {
+                      sourceMessageId: delivery.messageId,
+                      replyToMessageId: msg.id,
+                      channelKind: msg.channelKind,
+                      channelNaturalTrigger: true,
+                      action: naturalTriggerResolution.action,
+                      diagnostics: naturalTriggerResolution.diagnostics,
+                      ...(naturalTriggerResolution.action === "executed"
+                        ? {
+                            workflowId: naturalTriggerResolution.workflowId,
+                            workflowVersionId: naturalTriggerResolution.workflowVersionId,
+                            workflowRunId: naturalTriggerResolution.workflowRun.id,
+                            memoryItemId: naturalTriggerResolution.memoryItemId,
+                          }
+                        : {}),
+                    },
+                  }).catch((err) => {
+                    logChannelIssue({
+                      level: "warn",
+                      code: "W-CH-SESSION-MIRROR-001",
+                      routeId: "hub.channel.session.mirror.natural_trigger",
+                      runId,
+                      error: err,
+                    });
+                  });
+                  return;
+                }
+              }
+
               // ── Engine delegation (Initiative A-WIRE) ──
               // The engine handles: focus loading, history, turn preparation,
               // evidence blocks, deterministic dispatch, planning gate,
@@ -8790,7 +8852,7 @@ export async function createFridayHub(
                 : undefined;
 
               const outboundText = result.status === "awaiting_clarification" || result.status === "awaiting_plan_approval"
-                ? stripFridayUiActionHints(result.response)
+                ? sanitizeFridayChannelVisibleReply(stripFridayUiActionHints(result.response))
                 : resolveFridayChannelTerminalText({
                   status: result.status === "completed"
                     ? "completed"

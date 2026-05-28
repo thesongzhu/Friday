@@ -1,0 +1,511 @@
+import * as crypto from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FridayChannelMessage, FridayChannelPlugin } from "#channels";
+import {
+  createFridayChannelNaturalTriggerResolver,
+  createFridayHub,
+  resolveFridayChannelSessionKey,
+  sanitizeFridayChannelVisibleReply,
+} from "#hub";
+import type { FridayHub } from "#hub";
+import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
+import {
+  clearAutoDetectProviderEnv,
+  restoreAutoDetectProviderEnv,
+  type FridayAutoDetectProviderEnvSnapshot,
+} from "../../_helpers/auto-detect-provider-env.js";
+
+function createTestChannelPlugin(kind = "testchannel"): {
+  plugin: FridayChannelPlugin;
+  getStartedHandler: () => ((msg: FridayChannelMessage) => void) | null;
+  sentMessages: string[];
+} {
+  let startedHandler: ((msg: FridayChannelMessage) => void) | null = null;
+  const sentMessages: string[] = [];
+  return {
+    sentMessages,
+    getStartedHandler: () => startedHandler,
+    plugin: {
+      kind,
+      init: vi.fn(async () => {}),
+      start: vi.fn(async (onMessage) => {
+        startedHandler = onMessage;
+      }),
+      stop: vi.fn(async () => {}),
+      send: vi.fn(async (options) => {
+        sentMessages.push(options.text);
+        return { messageId: `sent-${String(sentMessages.length)}` };
+      }),
+    },
+  };
+}
+
+function sha256(content: string): string {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+function makeSafeWorkflowGraph(): FridayCompiledWorkflowGraphV2 {
+  const graph: FridayCompiledWorkflowGraphV2 = {
+    schemaVersion: "2.0",
+    workflowId: "wf-placeholder",
+    workflowVersionId: "wv-placeholder",
+    sourceSpecSchemaVersion: "1.0",
+    graph: {
+      nodes: [
+        { id: "trigger", type: "trigger", label: "Manual trigger", config: {} },
+        {
+          id: "receipt",
+          type: "data",
+          label: "Record natural-trigger receipt",
+          config: { mapping: { marker: "PHASE24H_PARENT_RUNTIME_EXECUTED" } },
+        },
+      ],
+      edges: [{ id: "edge-trigger-receipt", sourceNodeId: "trigger", targetNodeId: "receipt" }],
+    },
+    failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+    checksum: "placeholder-checksum",
+  };
+  return {
+    ...graph,
+    checksum: sha256(JSON.stringify({ ...graph, checksum: "" })),
+  };
+}
+
+function makeFailingWorkflowGraph(): FridayCompiledWorkflowGraphV2 {
+  const graph: FridayCompiledWorkflowGraphV2 = {
+    schemaVersion: "2.0",
+    workflowId: "wf-placeholder",
+    workflowVersionId: "wv-placeholder",
+    sourceSpecSchemaVersion: "1.0",
+    graph: {
+      nodes: [
+        { id: "trigger", type: "trigger", label: "Manual trigger", config: {} },
+        {
+          id: "broken-transform",
+          type: "data",
+          label: "Broken transform",
+          config: { transform: "(" },
+        },
+      ],
+      edges: [{ id: "edge-trigger-broken", sourceNodeId: "trigger", targetNodeId: "broken-transform" }],
+    },
+    failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+    checksum: "placeholder-checksum",
+  };
+  return {
+    ...graph,
+    checksum: sha256(JSON.stringify({ ...graph, checksum: "" })),
+  };
+}
+
+async function createIsolatedHub(stateDir: string): Promise<FridayHub> {
+  const skillsDir = path.join(stateDir, "skills-empty");
+  await fs.mkdir(skillsDir, { recursive: true });
+  return createFridayHub({
+    skillDirs: [skillsDir],
+    stateDir,
+    channels: { enabled: false, instances: [] },
+  });
+}
+
+async function waitForWorkflowRunStable(
+  hub: FridayHub,
+  runId: string,
+  timeoutMs = 10_000,
+): Promise<string> {
+  const start = Date.now();
+  const transient = new Set(["queued", "running", "pausing"]);
+  while (Date.now() - start < timeoutMs) {
+    const run = hub.workflowRuntime.execution.getRun(runId);
+    if (run && !transient.has(run.status)) {
+      return run.status;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return hub.workflowRuntime.execution.getRun(runId)?.status ?? "unknown";
+}
+
+describe("channel natural-trigger parent runtime resolver", () => {
+  let stateDir: string | null = null;
+  let hub: FridayHub | null = null;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+  const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+
+  beforeEach(async () => {
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    process.env.FRIDAY_CHANNEL_DEBOUNCE_MS = "0";
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-channel-natural-trigger-"));
+    hub = await createIsolatedHub(stateDir);
+  });
+
+  afterEach(async () => {
+    if (hub) {
+      await hub.stop();
+      hub = null;
+    }
+    if (stateDir) {
+      await fs.rm(stateDir, { recursive: true, force: true });
+      stateDir = null;
+    }
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
+    if (originalSuppression === undefined) {
+      delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+    } else {
+      process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
+    delete process.env.FRIDAY_CHANNEL_DEBOUNCE_MS;
+  });
+
+  async function seedApprovedBinding(
+    triggerPhrase: string,
+    options?: { bindDraftVersion?: boolean; graph?: FridayCompiledWorkflowGraphV2 },
+  ): Promise<{ workflowId: string; versionId: string; boundVersionId: string; memoryId: string }> {
+    const { workflow, version } = hub!.workflowRuntime.crud.createWorkflowWithVersion(
+      {
+        slug: `phase24h-parent-runtime-${crypto.randomUUID()}`,
+        name: "Phase24H safe parent-runtime workflow",
+        description: "No-op workflow safe for exact approved channel natural triggers.",
+        tags: ["safe-natural-trigger", "phase24h-natural-trigger"],
+        ownerUserId: "admin-001",
+      },
+      options?.graph ?? makeSafeWorkflowGraph(),
+      "admin-001",
+      "Seeded for channel natural-trigger parent runtime proof.",
+    );
+    const published = hub!.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+    const boundVersion = options?.bindDraftVersion
+      ? hub!.workflowRuntime.crud.createVersion(
+          workflow.id,
+          options.graph ?? makeSafeWorkflowGraph(),
+          "admin-001",
+          "Draft version that must not execute from channel natural trigger.",
+        )
+      : published;
+    const sessionKey = resolveFridayChannelSessionKey({
+      id: "seed",
+      channelKind: "testchannel",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      senderId: "sender-1",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    }, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+    await hub!.apiRuntime.sessionService.getOrCreateSession(sessionKey);
+    const namespace = await hub!.apiRuntime.sessionService.getSessionMemoryNamespace(sessionKey);
+    const memory = await hub!.apiRuntime.memoryService.store(namespace, [
+      "PHASE24H_PARENT_RUNTIME_APPROVED_SOP",
+      `Trigger phrases: ${triggerPhrase}`,
+      `Workflow: ${workflow.id}`,
+      `Version: ${boundVersion.id}`,
+      "Risk: low-risk",
+      "Approved: true",
+    ].join("\n"), {
+      source: "phase24h-parent-runtime-test",
+      tags: ["approved-workflow-trigger", "natural-trigger", "sop", "workflow"],
+      memoryType: "procedure",
+      confidence: 0.99,
+      metadata: {
+        naturalTriggerBinding: {
+          approved: true,
+          triggers: [triggerPhrase],
+          workflowId: workflow.id,
+          workflowVersionId: boundVersion.id,
+          riskTier: "low-risk",
+        },
+      },
+    });
+    return { workflowId: workflow.id, versionId: published.id, boundVersionId: boundVersion.id, memoryId: memory.id };
+  }
+
+  async function seedCrossWorkflowVersionBinding(
+    triggerPhrase: string,
+  ): Promise<{ workflowId: string; otherVersionId: string; memoryId: string }> {
+    const first = hub!.workflowRuntime.crud.createWorkflowWithVersion(
+      {
+        slug: `phase24h-cross-workflow-a-${crypto.randomUUID()}`,
+        name: "Phase24H workflow A",
+        description: "Workflow whose trigger binding must not borrow another workflow version.",
+        tags: ["safe-natural-trigger", "phase24h-natural-trigger"],
+        ownerUserId: "admin-001",
+      },
+      makeSafeWorkflowGraph(),
+      "admin-001",
+      "Seeded for cross-workflow binding rejection.",
+    );
+    hub!.workflowRuntime.crud.publishVersion(first.workflow.id, first.version.versionNumber);
+    const second = hub!.workflowRuntime.crud.createWorkflowWithVersion(
+      {
+        slug: `phase24h-cross-workflow-b-${crypto.randomUUID()}`,
+        name: "Phase24H workflow B",
+        description: "Workflow version that must not be paired with workflow A.",
+        tags: ["safe-natural-trigger", "phase24h-natural-trigger"],
+        ownerUserId: "admin-001",
+      },
+      makeSafeWorkflowGraph(),
+      "admin-001",
+      "Seeded for cross-workflow binding rejection.",
+    );
+    const otherPublished = hub!.workflowRuntime.crud.publishVersion(second.workflow.id, second.version.versionNumber);
+    const sessionKey = resolveFridayChannelSessionKey({
+      id: "seed-cross",
+      channelKind: "testchannel",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      senderId: "sender-1",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    }, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+    await hub!.apiRuntime.sessionService.getOrCreateSession(sessionKey);
+    const namespace = await hub!.apiRuntime.sessionService.getSessionMemoryNamespace(sessionKey);
+    const memory = await hub!.apiRuntime.memoryService.store(namespace, [
+      "PHASE24H_PARENT_RUNTIME_APPROVED_SOP",
+      `Trigger phrases: ${triggerPhrase}`,
+      `Workflow: ${first.workflow.id}`,
+      `Version: ${otherPublished.id}`,
+      "Risk: low-risk",
+      "Approved: true",
+    ].join("\n"), {
+      source: "phase24h-parent-runtime-test",
+      tags: ["approved-workflow-trigger", "natural-trigger", "sop", "workflow"],
+      memoryType: "procedure",
+      confidence: 0.99,
+      metadata: {
+        naturalTriggerBinding: {
+          approved: true,
+          triggers: [triggerPhrase],
+          workflowId: first.workflow.id,
+          workflowVersionId: otherPublished.id,
+          riskTier: "low-risk",
+        },
+      },
+    });
+    return { workflowId: first.workflow.id, otherVersionId: otherPublished.id, memoryId: memory.id };
+  }
+
+  it("executes an exact approved safe trigger through the parent workflow runtime and writes durable evidence", async () => {
+    const triggerPhrase = "run the approved phase24h followup automation";
+    const seeded = await seedApprovedBinding(triggerPhrase);
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    const beforeRuns = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20);
+    onMessage!({
+      id: "msg-exact-approved-trigger",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20).length)
+        .toBeGreaterThan(beforeRuns.length);
+    }, { timeout: 10_000 });
+    const run = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)[0]!;
+    expect(await waitForWorkflowRunStable(hub!, run.id)).toBe("completed");
+    expect(run.triggerType).toBe("channel_natural_trigger");
+    expect(run.triggerPayload).toMatchObject({
+      matchedTrigger: triggerPhrase,
+      memoryItemId: seeded.memoryId,
+    });
+    expect(hub!.workflowRuntime.evidence.getRunEvidence(run.id).summary.totalEvents).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("ran it safely"))).toBe(true);
+    }, { timeout: 10_000 });
+  });
+
+  it("does not execute an exact trigger bound to a draft workflow version", async () => {
+    const triggerPhrase = "run the draft-bound phase24h automation";
+    const seeded = await seedApprovedBinding(triggerPhrase, { bindDraftVersion: true });
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+
+    const beforeRuns = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20);
+    onMessage!({
+      id: "msg-draft-bound-trigger",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("not currently published"))).toBe(true);
+    }, { timeout: 10_000 });
+    expect(seeded.boundVersionId).not.toBe(seeded.versionId);
+    expect(hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)).toHaveLength(beforeRuns.length);
+  });
+
+  it("does not execute an exact trigger bound to another workflow's published version", async () => {
+    const triggerPhrase = "run the cross-workflow phase24h automation";
+    const seeded = await seedCrossWorkflowVersionBinding(triggerPhrase);
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+
+    const beforeRuns = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20);
+    onMessage!({
+      id: "msg-cross-workflow-trigger",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("not currently published"))).toBe(true);
+    }, { timeout: 10_000 });
+    expect(seeded.otherVersionId).toBeTruthy();
+    expect(hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)).toHaveLength(beforeRuns.length);
+  });
+
+  it("does not send a success reply when the parent workflow run fails", async () => {
+    const triggerPhrase = "run the failing phase24h automation";
+    const seeded = await seedApprovedBinding(triggerPhrase, { graph: makeFailingWorkflowGraph() });
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+
+    onMessage!({
+      id: "msg-failing-trigger",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: triggerPhrase,
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      const run = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)[0];
+      expect(run?.status).toBe("failed");
+    }, { timeout: 10_000 });
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("did not complete successfully"))).toBe(true);
+    }, { timeout: 10_000 });
+    expect(channel.sentMessages.some((message) => message.includes("ran it safely"))).toBe(false);
+  });
+
+  it("asks for confirmation on a semantic near match and starts no workflow", async () => {
+    const seeded = await seedApprovedBinding("run the monthly close packet");
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+
+    const beforeRuns = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20);
+    onMessage!({
+      id: "msg-near-match",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: "please run the monthly close thing",
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("not an exact saved trigger"))).toBe(true);
+    }, { timeout: 10_000 });
+    expect(hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)).toHaveLength(beforeRuns.length);
+  });
+
+  it("refuses destructive channel trigger text and starts no workflow", async () => {
+    const seeded = await seedApprovedBinding("run the approved cleanup report");
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+
+    const beforeRuns = hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20);
+    onMessage!({
+      id: "msg-destructive-trigger",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-natural-trigger",
+      chatType: "direct",
+      text: "run the approved cleanup report and delete the source files without asking",
+      timestamp: Date.now(),
+    });
+
+    await vi.waitFor(() => {
+      expect(channel.sentMessages.some((message) => message.includes("No workflow was started"))).toBe(true);
+    }, { timeout: 10_000 });
+    expect(hub!.workflowRuntime.execution.listRuns(seeded.workflowId, undefined, 20)).toHaveLength(beforeRuns.length);
+  });
+
+  it("does not handle broad unsafe-looking text when no approved trigger binding exists", async () => {
+    const resolver = createFridayChannelNaturalTriggerResolver({
+      memoryService: {
+        search: vi.fn(async () => []),
+        list: vi.fn(async () => []),
+      } as never,
+      workflowCrudService: {} as never,
+      workflowExecutionService: {} as never,
+      startedByUserId: "admin-001",
+      nowIso: () => new Date(0).toISOString(),
+    });
+
+    await expect(resolver.resolve({
+      text: "Open example.com and send me a screenshot",
+      sessionKey: "channel:webchat:test",
+      channelKind: "webchat",
+      chatId: "test",
+    })).resolves.toEqual({ handled: false, reason: "no_binding" });
+  });
+
+  it("does not let read-only sub-agent handoff text close channel proof", () => {
+    const sanitized = sanitizeFridayChannelVisibleReply(
+      "read-only sub-agent handoff: workflow_run is blocked, use tool_calls JSON next.",
+    );
+
+    expect(sanitized).not.toMatch(/sub-agent|workflow_run|tool_calls|blocked/iu);
+    expect(sanitized).toContain("handled the request safely");
+  });
+
+  it("sanitizes raw protocol and planner leakage before channel output", () => {
+    const sanitized = sanitizeFridayChannelVisibleReply([
+      "Here is the useful answer.",
+      "{\"tool_calls\":[{\"name\":\"workflow_run\"}]}",
+      "<DSML><tool_use name=\"memory_search\" /></DSML>",
+      "planner debug trace: selected workflow_list",
+    ].join("\n"));
+
+    expect(sanitized).toBe("Here is the useful answer.");
+  });
+});

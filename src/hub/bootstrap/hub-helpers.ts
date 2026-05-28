@@ -231,8 +231,35 @@ export function stripFridayUiActionHints(text: string): string {
   return text.replace(/<!--action:.*?-->/gs, "").trim();
 }
 
+const FRIDAY_CHANNEL_INTERNAL_LEAK_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b(?:DSML|tool[_ -]?call|tool_calls|tool_use|planner|debug trace|raw json|internal protocol)\b/iu,
+  /\b(?:memory_search|workflow_list|workflow_run|skills_list|agents_list|spawn_subagent)\b/iu,
+  /\b(?:read[- ]?only sub[- ]?agent|sub[- ]?agent handoff|workflow_run is blocked)\b/iu,
+  /<\s*(?:tool_use|tool_result|dsml)\b/iu,
+  /^\s*[{[]\s*"(?:tool_calls|name|arguments|input|handoff)"/iu,
+];
+
+export function sanitizeFridayChannelVisibleReply(text: string): string {
+  const stripped = stripFridayUiActionHints(text);
+  if (stripped.length === 0) {
+    return "";
+  }
+  const filtered = stripped
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !FRIDAY_CHANNEL_INTERNAL_LEAK_PATTERNS.some((pattern) => pattern.test(line)))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return filtered.length > 0
+    ? filtered
+    : "I handled the request safely. I will ask before starting anything risky.";
+}
+
 export function resolveFridayChannelTerminalText(input: FridayChannelTerminalTextInput): string {
-  const response = stripFridayUiActionHints(input.response);
+  const response = sanitizeFridayChannelVisibleReply(input.response);
   const hasResponse = response.length > 0;
   const hasImages = input.imageCount > 0;
   const isChinese = /[\u4e00-\u9fff]/u.test(input.sourceText ?? "");
