@@ -3797,6 +3797,10 @@ export function createFridayAgentRuntime(
           task: params.task,
           responseText,
           toolCalls: allToolCalls,
+        }) ?? detectSideEffectEvidenceGap({
+          task: params.task,
+          responseText,
+          toolCalls: allToolCalls,
         });
 
         if (outputClosureGap) {
@@ -4489,6 +4493,66 @@ interface OutputClosureGap {
   attemptedImageToolCalls: number;
   failedImageToolCalls: number;
   retryable?: boolean;
+}
+
+// ─── Side-effect completion-truth gate (locked decision: side-effect claims
+// require real tool evidence) ───
+// The discriminator is the model's COMPLETION CLAIM, not the task text: a run
+// may only assert it performed a side-effect (send/post/save/schedule/pay/…) if
+// a successful *mutating* tool call backs it. This intentionally does NOT gate
+// on task keywords (which saturate benign Q&A like "explain how to send email").
+
+const SIDE_EFFECT_REFUSAL_EN =
+  /\b(i (?:can(?:'|no)t|cannot|am unable to|was unable to|won'?t|will not|do(?:n'?t| not) have|couldn'?t|could not|am not able to))\b/i;
+const SIDE_EFFECT_REFUSAL_CN = /(无法|不能|没有权限|我不会|尚不支持|暂不支持|抱歉[，,].{0,12}(不能|无法))/u;
+
+const SIDE_EFFECT_COMPLETION_CLAIM_EN =
+  /\b(?:i(?:'ve| have)?\s+(?:sent|emailed|e-mailed|messaged|texted|posted|published|shared|scheduled|booked|paid|ordered|submitted|transferred|deleted|removed|cancell?ed|created|added|updated|installed|configured|uploaded|filed|saved|stored|wrote|written|moved|renamed|recorded|set\s+up)\b|(?:your |the )?(?:email|message|payment|order|post|event|booking|file|invite|reservation)\s+(?:has been|was|is now)\s+(?:sent|posted|created|scheduled|booked|made|placed|published|cancell?ed|deleted|saved|uploaded)\b|successfully\s+(?:sent|posted|created|updated|deleted|scheduled|booked|paid|published|installed|configured|submitted|transferred|uploaded|saved))/i;
+const SIDE_EFFECT_COMPLETION_CLAIM_CN =
+  /(已(?:成功)?(?:发送|发出|发了|发布|分享|预订|安排|支付|付款|下单|提交|转账|删除|移除|取消|创建|新建|更新|安装|配置|上传)|我(?:已(?:经)?)?(?:发送了|发了|发出了|发布了|创建了|新建了|更新了|删除了|取消了|安排好了|安排了|预订了|提交了|支付了|安装了|配置了|上传了))/u;
+
+function responseClaimsSideEffectCompleted(responseText: string): boolean {
+  const t = responseText.trim();
+  if (t.length === 0) return false;
+  // Explicit refusal / inability is not a completion claim.
+  if (SIDE_EFFECT_REFUSAL_EN.test(t) || SIDE_EFFECT_REFUSAL_CN.test(t)) return false;
+  return SIDE_EFFECT_COMPLETION_CLAIM_EN.test(t) || SIDE_EFFECT_COMPLETION_CLAIM_CN.test(t);
+}
+
+function detectSideEffectEvidenceGap(params: {
+  task: string;
+  responseText: string;
+  toolCalls: FridayAgentToolCallRecord[];
+}): OutputClosureGap | null {
+  if (!responseClaimsSideEffectCompleted(params.responseText)) {
+    return null;
+  }
+  // A successful *mutating* tool call is the evidence floor. isMutatingToolCall
+  // treats unknown/side-effect tools (message, write, edit, exec, provider, …)
+  // as mutating, so a real send/save/mutation satisfies this.
+  const hasMutatingEvidence = params.toolCalls.some(
+    (call) => !call.result.isError && isMutatingToolCall(call.toolName, call.args),
+  );
+  if (hasMutatingEvidence) {
+    return null;
+  }
+  const failedCalls = params.toolCalls.filter((call) => call.result.isError);
+  const responseSummary = params.responseText.trim().slice(0, 200);
+  return {
+    errorCode: FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR,
+    userMessage:
+      "This run claimed a side-effect action (e.g. send/post/save/schedule) was completed, " +
+      "but no successful tool action backs that claim, so it cannot be marked completed. " +
+      "Retry once the required tool/integration is available, or I can confirm the action is unsupported.",
+    developerMessage:
+      `${FRIDAY_AGENT_ERROR_CODES.OUTPUT_CLOSURE_ERROR}: ` +
+      `Side-effect completion claim without successful mutating tool evidence for task "${params.task.slice(0, 120)}": ` +
+      `${String(params.toolCalls.length)} tool call(s), 0 successful mutating, ${String(failedCalls.length)} failed. ` +
+      `Final response: ${responseSummary}`,
+    attemptedImageToolCalls: params.toolCalls.length,
+    failedImageToolCalls: failedCalls.length,
+    retryable: false,
+  };
 }
 
 const READ_ONLY_DIAGNOSTIC_SKILL_IDS = new Set([
