@@ -93,6 +93,20 @@ describe("Friday provider cost controls", () => {
       expect(catalog.getPricing("deepseek", "deepseek-reasoner").inputPer1MUsd).toBe(0.14);
     });
 
+    it("prices the gemini-2.0-flash GOOGLE default distinctly from gemini-2.0-flash-lite", () => {
+      const catalog = createFridayProviderPricingCatalog();
+
+      // gemini-2.0-flash is the GOOGLE_API_KEY auto-detect default; it must NOT fall to the
+      // unknown/0 rate, and the longer "-lite" pattern must not swallow it (nor vice-versa).
+      expect(catalog.getPricing("google", "gemini-2.0-flash")).toMatchObject({
+        inputPer1MUsd: 0.1,
+        outputPer1MUsd: 0.4,
+        qualityTier: "balanced",
+      });
+      expect(catalog.getPricing("google", "gemini-2.0-flash-lite").inputPer1MUsd).toBe(0.08);
+      expect(catalog.getPricing("google", "gemini-2.0-flash").qualityTier).not.toBe("unknown");
+    });
+
     it("records an unrecognized model as explicit unknown, not a fabricated rate", () => {
       const catalog = createFridayProviderPricingCatalog();
 
