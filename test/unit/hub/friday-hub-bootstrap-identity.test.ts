@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   canResolveFridayChannelApprovalFromMessage,
   createFridayChannelToolApprovalShortId,
@@ -9,6 +9,12 @@ import {
   resolveFridayChannelSessionKey,
 } from "#hub";
 import type { FridayChannelMessage } from "#channels";
+
+const ORIGINAL_ENV = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
 
 function makeMessage(overrides?: Partial<FridayChannelMessage>): FridayChannelMessage {
   return {
@@ -72,9 +78,25 @@ describe("cross-channel identity mapping", () => {
   });
 
   it("does not disable any tools regardless of channel kind", () => {
+    delete process.env.FRIDAY_CHANNEL_DISABLED_TOOL_NAMES;
+    delete process.env.FRIDAY_TELEGRAM_DISABLED_TOOL_NAMES;
+
     expect(resolveFridayChannelDisabledToolNames("discord")).toEqual([]);
     expect(resolveFridayChannelDisabledToolNames("webchat")).toEqual([]);
     expect(resolveFridayChannelDisabledToolNames("telegram")).toEqual([]);
+  });
+
+  it("can disable tools globally or for a specific channel via env", () => {
+    process.env.FRIDAY_CHANNEL_DISABLED_TOOL_NAMES = "browser, desktop";
+    process.env.FRIDAY_TELEGRAM_DISABLED_TOOL_NAMES = "spawn_subagent workflow_run spawn_subagent";
+
+    expect(resolveFridayChannelDisabledToolNames("discord")).toEqual(["browser", "desktop"]);
+    expect(resolveFridayChannelDisabledToolNames("telegram")).toEqual([
+      "browser",
+      "desktop",
+      "spawn_subagent",
+      "workflow_run",
+    ]);
   });
 
   it("builds channel approval principals from the actual sender", () => {

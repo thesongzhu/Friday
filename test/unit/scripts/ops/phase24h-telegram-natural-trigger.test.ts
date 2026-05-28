@@ -100,4 +100,11 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
 
     expect(listener.PHASE24H_RUNTIME_USER_ID).toBe("admin-001");
   });
+
+  it("merges required disabled tool names without dropping existing channel policy", async () => {
+    const listener = await loadListener();
+
+    expect(listener.mergeDisabledToolNames("browser, spawn_subagent", "spawn_subagent")).toBe("browser,spawn_subagent");
+    expect(listener.mergeDisabledToolNames(undefined, "spawn_subagent")).toBe("spawn_subagent");
+  });
 });

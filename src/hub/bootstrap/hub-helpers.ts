@@ -146,8 +146,24 @@ export function resolveFridayChannelSessionKey(
   return canonicalizeFridaySessionKey(`channel:${msg.channelKind}:${withThread(msg.chatId)}`);
 }
 
-export function resolveFridayChannelDisabledToolNames(_channelKind: string): string[] {
-  return [];
+function parseFridayDisabledToolNames(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return [...new Set(raw
+    .split(/[,\s]+/)
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0))];
+}
+
+function normalizeFridayChannelEnvSegment(raw: string): string {
+  return raw.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+export function resolveFridayChannelDisabledToolNames(channelKind: string): string[] {
+  const channelEnvKey = `FRIDAY_${normalizeFridayChannelEnvSegment(channelKind)}_DISABLED_TOOL_NAMES`;
+  return [
+    ...parseFridayDisabledToolNames(process.env.FRIDAY_CHANNEL_DISABLED_TOOL_NAMES),
+    ...parseFridayDisabledToolNames(process.env[channelEnvKey]),
+  ];
 }
 
 function normalizeFridayChannelApprovalPrincipalSegment(raw: string): string {

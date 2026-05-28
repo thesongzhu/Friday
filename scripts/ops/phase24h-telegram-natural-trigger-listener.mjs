@@ -105,6 +105,16 @@ function safeError(error, token) {
   return scrub(raw, token);
 }
 
+export function mergeDisabledToolNames(existing, required) {
+  return [...new Set(
+    [existing ?? "", required]
+      .join(",")
+      .split(/[,\s]+/)
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
+  )].join(",");
+}
+
 export function readEnvConfig() {
   const positiveNonce = buildNonce("positive", "PHASE24H_TELEGRAM_POSITIVE_NONCE");
   const negativeNonce = buildNonce("negative", "PHASE24H_TELEGRAM_NEGATIVE_NONCE");
@@ -646,6 +656,10 @@ async function main() {
     stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-phase24h-telegram-"));
     process.env.FRIDAY_CHANNEL_DEBOUNCE_MS = process.env.FRIDAY_CHANNEL_DEBOUNCE_MS ?? "0";
     process.env.FRIDAY_CHANNEL_PROGRESS_RECEIPT_DELAY_MS = process.env.FRIDAY_CHANNEL_PROGRESS_RECEIPT_DELAY_MS ?? "0";
+    process.env.FRIDAY_TELEGRAM_DISABLED_TOOL_NAMES = mergeDisabledToolNames(
+      process.env.FRIDAY_TELEGRAM_DISABLED_TOOL_NAMES,
+      "spawn_subagent",
+    );
 
     hub = await createFridayHub({
       stateDir,
