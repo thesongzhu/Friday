@@ -459,6 +459,37 @@ describe("FridayProviderFallback", () => {
       ).rejects.toThrow("no candidates available");
     });
 
+    it("uses only explicit DeepSeek routing and never invokes an OpenAI provider", async () => {
+      // Unconditional proof (no live/skip gate) for locked decision #1: explicit
+      // DeepSeek routing with no fallback resolves to DeepSeek alone — an
+      // also-registered OpenAI provider must NOT be auto-injected or invoked.
+      const fb = createFridayProviderFallback();
+      const deepseek = makeProvider("ds", "deepseek", true, "deepseek-v4-pro", ["deepseek-v4-pro"]);
+      const openai = makeProvider("oai", "openai", true, "gpt-4o-mini", ["gpt-4o-mini"]);
+      const routing: FridayModelRoutingConfig = {
+        defaultProviderId: "ds",
+        fallbackProviderIds: [],
+      };
+
+      const candidates = fb.resolveCandidates({ routing, providers: [openai, deepseek] });
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].provider.kind).toBe("deepseek");
+      expect(candidates.some((c) => c.provider.kind === "openai")).toBe(false);
+
+      const invokedKinds: string[] = [];
+      const result = await fb.runWithFallback({
+        candidates,
+        run: async (route) => {
+          invokedKinds.push(route.provider.kind);
+          return `ok-${route.provider.kind}`;
+        },
+      });
+
+      expect(result.result).toBe("ok-deepseek");
+      expect(invokedKinds).toEqual(["deepseek"]);
+      expect(invokedKinds).not.toContain("openai");
+    });
+
     it("records all failed attempts in order", async () => {
       const fb = createFridayProviderFallback();
       const p1 = makeProvider("p1", "openai");

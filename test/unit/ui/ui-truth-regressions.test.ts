@@ -8,9 +8,11 @@ import { CHANNEL_KINDS_ORDERED, CHANNEL_META } from "../../../ui/src/lib/channel
 import {
   SETUP_CHANNEL_KINDS_ORDERED,
   buildSetupCompletionStepState,
+  buildSetupCompletionTitle,
   getProviderBootstrapRecommendation,
   getSetupProviderKindsForRegion,
 } from "../../../ui/src/routes/setup-page";
+import { buildFridayReadinessSummary } from "../../../ui/src/components/setup/friday-readiness-summary";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../..");
@@ -51,6 +53,40 @@ describe("ui truth regressions", () => {
 
   it("keeps setup channels limited to verified first-run control routes", () => {
     expect(SETUP_CHANNEL_KINDS_ORDERED).toEqual(["telegram", "discord", "feishu"]);
+  });
+
+  it("does not claim Friday is ready when the AI provider step was skipped", () => {
+    const skipped = buildSetupCompletionTitle("en", false);
+    // Truthful: runtime-ready, not provider-ready.
+    expect(skipped.title).toBe("Setup saved");
+    expect(skipped.title).not.toBe("Friday is Ready");
+    expect(skipped.subtitle).toMatch(/Connect an AI provider/i);
+
+    const ready = buildSetupCompletionTitle("en", true);
+    expect(ready.title).toBe("Friday is Ready");
+    expect(ready.subtitle).toBeNull();
+  });
+
+  it("buckets an unverified AI text capability as needing connection, not ready", () => {
+    const summary = buildFridayReadinessSummary(
+      {
+        capabilities: {
+          runtime: {
+            items: [
+              { capability: "text", label: "Text model", state: "needs_user_auth", sources: [], blockers: [] },
+            ],
+          },
+        },
+      } as never,
+      "en",
+    );
+    const readyBucket = summary.buckets.find((b) => b.id === "ready");
+    const connectBucket = summary.buckets.find((b) => b.id === "connect");
+    // The skipped/unverified text model must NOT appear as ready.
+    expect(readyBucket?.items ?? []).not.toContain("Text model");
+    expect(connectBucket?.items ?? []).toContain("Text model");
+    // And the subline reflects an outstanding gap rather than "all ready".
+    expect(summary.subline).toMatch(/need/i);
   });
 
   it("does not present unsupported QQ as an available shared channel", () => {

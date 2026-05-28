@@ -261,6 +261,7 @@ import {
   createWhatsappWebhookService,
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
+  isControlCapableChannelKind,
   isFridayChannelKindSupported,
   isFridayChannelModeSupported,
   parseFridayChannelsConfig,
@@ -525,8 +526,6 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   { envVar: "XAI_API_KEY", kind: "xai", defaultModel: "grok-3-mini" },
 ];
 
-/** Routing priority: anthropic first, then openai, then detection order. */
-const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
 const STABLE_OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const STABLE_OPENAI_SUPPORTED_MODELS = [STABLE_OPENAI_DEFAULT_MODEL, "gpt-4o"] as const;
 const OPENAI_PROVIDER_NAME = "OpenAI Provider";
@@ -686,26 +685,16 @@ async function autoDetectProvidersFromEnv(
           .filter((p) => p.enabled)
           .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id }));
 
-    if (candidates.length > 0) {
-      // Pick best provider by priority
-      let chosen = candidates[0]!;
-      for (const priorityKind of ROUTING_PRIORITY) {
-        const match = candidates.find((d) => d.kind === priorityKind);
-        if (match) {
-          chosen = match;
-          break;
-        }
-      }
+    const distinctKinds = new Set(candidates.map((c) => c.kind));
+
+    const setDefaultRoute = async (chosen: { kind: FridayProviderKind; id: string }): Promise<void> => {
       const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind);
       const defaultModel = chosenEntry?.defaultModel ?? (chosen.kind === "ollama" ? "llama3.2" : "default");
       try {
         await providerService.setRoutingConfig({
           defaultProviderId: chosen.id,
           defaultModel,
-          fallbackProviderIds: candidates
-            .filter((d) => d.id !== chosen.id)
-            .slice(0, 3)
-            .map((d) => d.id),
+          fallbackProviderIds: [],
         });
       } catch (err) {
         console.warn(
@@ -713,6 +702,36 @@ async function autoDetectProvidersFromEnv(
           err instanceof Error ? err.message : String(err),
         );
       }
+    };
+
+    // 1) Honor an explicit provider choice recorded by setup (e.g. the CLI
+    // wizard writes FRIDAY_SETUP_DEFAULT_PROVIDER). This is a user choice, so
+    // route to it even when multiple provider keys are present — it is not a
+    // hidden auto-pick.
+    const intendedKind = (process.env.FRIDAY_SETUP_DEFAULT_PROVIDER ?? "").trim().toLowerCase();
+    const intendedCandidate = intendedKind
+      ? candidates.find((c) => c.kind === intendedKind)
+      : undefined;
+
+    if (intendedCandidate) {
+      await setDefaultRoute(intendedCandidate);
+    } else if (candidates.length > 0 && distinctKinds.size <= 1) {
+      // Exactly one provider kind is available and the user has not chosen a
+      // route. Auto-selecting the sole available provider does not usurp a user
+      // choice, so default to it with NO auto-added fallback providers.
+      await setDefaultRoute(candidates[0]!);
+    } else if (distinctKinds.size > 1) {
+      // Multiple provider kinds are available but the user has not chosen a
+      // route. Locked provider policy: never auto-pick a provider (no hidden
+      // OpenAI / DeepSeek default) and never auto-add fallback providers behind
+      // the user's back. Leave routing unset so the request-time
+      // PROVIDER_NO_ROUTING path surfaces an explicit-choice (action-required)
+      // prompt and the user makes the call.
+      console.warn(
+        `[friday] Auto-detect: ${String(distinctKinds.size)} provider kinds detected `
+          + `(${[...distinctKinds].sort().join(", ")}) but no default route is configured. `
+          + "Not auto-selecting a provider — explicit user choice required.",
+      );
     }
   }
 
@@ -5411,7 +5430,22 @@ export async function createFridayHub(
         allowlistConfig.allowedChats = (instance as Record<string, unknown>).allowedChannels as string[] | undefined;
       }
 
-      channelRegistry.register(plugin, allowlistConfig);
+      // Fail closed: a control-capable external channel with no persisted
+      // user/chat allowlist must NOT be activated (a missing allowlist would
+      // otherwise accept inbound control messages from anyone). Skip activation
+      // and surface a warning instead of silently allowing all.
+      const controlCapable = isControlCapableChannelKind(instance.kind);
+      const hasAllowlist =
+        (allowlistConfig.allowedUsers?.length ?? 0) > 0
+        || (allowlistConfig.allowedChats?.length ?? 0) > 0;
+      if (controlCapable && !hasAllowlist) {
+        const message = `Channel ${instance.kind} not activated: a verified user/chat allowlist is required for control-capable channels (fail-closed).`;
+        warnings.push(message);
+        console.warn(`[friday] ${message}`);
+        continue;
+      }
+
+      channelRegistry.register(plugin, allowlistConfig, { controlCapable });
       registeredKinds.push(plugin.kind);
     }
 

@@ -3443,7 +3443,16 @@ export function createFridayProviderService(
       const provider = deps.db.withReadConnection((db) =>
         profileRepo.getById(db, input.providerId),
       );
-      const providerKind = provider?.kind ?? "openai";
+      // Truth: never attribute usage to a real provider kind we cannot confirm.
+      // If the profile is gone (deleted/disabled between the call and this
+      // fire-and-forget write), record an explicit "unknown" kind, not OpenAI.
+      const providerKind = provider?.kind ?? "unknown";
+      if (!provider) {
+        console.warn(
+          `[friday] recordUsage: provider profile ${input.providerId} not found; `
+            + "recording providerKind=\"unknown\" (no provider attribution).",
+        );
+      }
       const now = deps.nowIso();
       const usageDay = now.slice(0, 10);
       const usageMonth = now.slice(0, 7);

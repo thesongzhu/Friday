@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PHASE24_CHANNEL_ENV_REQUIREMENTS,
+  chooseFallbackLane,
   collectEnvironmentTruth,
   resolveFallbackLaneRequirement,
   resolveScenarioLanes,
@@ -95,7 +96,11 @@ function allPhase24Env(valuePrefix: string) {
 }
 
 describe("real-world env truth fallback requirements", () => {
-  it("requires a fallback lane whenever a default lane exists", () => {
+  it("does NOT require a fallback lane when only one eligible provider exists", () => {
+    // A one-provider deployment truthfully has no fallback. Requiring one (the
+    // old default_lane_requires_fallback behavior) would force re-introducing a
+    // second provider such as OpenAI just to satisfy the gate. This run proves
+    // the single-provider DEFAULT lane only — not fallback resilience.
     const providers = [
       makeProvider({ id: "default-provider", name: "Default Provider" }),
       makeProvider({
@@ -122,8 +127,8 @@ describe("real-world env truth fallback requirements", () => {
     );
 
     expect(result).toEqual({
-      fallbackRequired: true,
-      source: "default_lane_requires_fallback",
+      fallbackRequired: false,
+      source: "single_provider_no_fallback_required",
     });
   });
 
@@ -158,6 +163,48 @@ describe("real-world env truth fallback requirements", () => {
       fallbackRequired: true,
       source: "validated_alternative_available",
     });
+  });
+
+  it("never synthesizes an OpenAI fallback when OpenAI is not a registered provider", () => {
+    // Only DeepSeek + Anthropic exist (no OpenAI). The chosen fallback must be a
+    // real registered non-default provider — never a fabricated OpenAI lane.
+    const providers = [
+      makeProvider({ id: "deepseek-default", kind: "deepseek", name: "DeepSeek" }),
+      makeProvider({ id: "anthropic-alt", kind: "anthropic", name: "Anthropic Alt" }),
+    ];
+    const providerHealthById = new Map([
+      ["deepseek-default", { providerId: "deepseek-default", routingEligible: true, validationStatus: "ok" }],
+      ["anthropic-alt", { providerId: "anthropic-alt", routingEligible: true, validationStatus: "ok" }],
+    ]);
+
+    const fallback = chooseFallbackLane(
+      providers,
+      { defaultProviderId: "deepseek-default", fallbackProviderIds: [] },
+      { providerId: "deepseek-default", providerKind: "deepseek", backendKind: "http" },
+      providerHealthById,
+    );
+
+    expect(fallback).not.toBeNull();
+    expect(fallback?.providerKind).not.toBe("openai");
+    expect(fallback?.providerKind).toBe("anthropic");
+  });
+
+  it("returns no fallback lane (never an OpenAI guess) when only one provider exists", () => {
+    const providers = [
+      makeProvider({ id: "deepseek-only", kind: "deepseek", name: "DeepSeek" }),
+    ];
+    const providerHealthById = new Map([
+      ["deepseek-only", { providerId: "deepseek-only", routingEligible: true, validationStatus: "ok" }],
+    ]);
+
+    const fallback = chooseFallbackLane(
+      providers,
+      { defaultProviderId: "deepseek-only", fallbackProviderIds: [] },
+      { providerId: "deepseek-only", providerKind: "deepseek", backendKind: "http" },
+      providerHealthById,
+    );
+
+    expect(fallback).toBeNull();
   });
 });
 

@@ -242,4 +242,59 @@ describe("FridayProviderService Lifecycle (Integration)", () => {
       expect(fetched).toBeNull();
     });
   });
+
+  // ─── Record usage truthfully ───
+
+  describe("record usage", () => {
+    function readStoredProviderKinds(providerId: string): string[] {
+      return db.withReadConnection((conn) =>
+        conn
+          .prepare("SELECT provider_kind FROM llm_usage_records WHERE provider_id = ?")
+          .all(providerId)
+          .map((row) => (row as { provider_kind: string }).provider_kind),
+      );
+    }
+
+    it("records providerKind=\"unknown\" (never OpenAI) when the provider profile is missing", async () => {
+      await service.recordUsage({
+        providerId: "ghost-provider-id",
+        providerApi: "openai-completions",
+        model: "some-model",
+        routeStrategy: "configured",
+        taskComplexity: "simple",
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+        costUsd: 0,
+      });
+
+      const kinds = readStoredProviderKinds("ghost-provider-id");
+      expect(kinds).toEqual(["unknown"]);
+      expect(kinds).not.toContain("openai");
+    });
+
+    it("records the real provider kind for an existing provider", async () => {
+      const provider = await service.createProvider({
+        kind: "deepseek",
+        name: "DeepSeek",
+        baseUrl: "https://api.deepseek.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "$DEEPSEEK_API_KEY",
+        supportedModels: ["deepseek-v4-pro"],
+        defaultModel: "deepseek-v4-pro",
+        validateOnSave: false,
+      });
+
+      await service.recordUsage({
+        providerId: provider.id,
+        providerApi: "openai-completions",
+        model: "deepseek-v4-pro",
+        routeStrategy: "configured",
+        taskComplexity: "simple",
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+        costUsd: 0.001,
+      });
+
+      expect(readStoredProviderKinds(provider.id)).toEqual(["deepseek"]);
+    });
+  });
 });

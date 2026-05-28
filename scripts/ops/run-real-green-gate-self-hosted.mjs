@@ -164,6 +164,56 @@ export async function completeSelfHostedSetup(baseUrl, localPassphrase) {
   }
 }
 
+/**
+ * Pin EXPLICIT DeepSeek routing for the default RGG proof.
+ *
+ * The runtime auto-registers provider profiles from env keys but, per the locked
+ * provider policy, no longer auto-selects a default when multiple kinds are
+ * present. RGG must therefore make an explicit, truthful choice rather than rely
+ * on a hidden default — and the default proof lane must never attempt OpenAI.
+ * We pick DeepSeek (Friday's primary) with NO fallback so the default proof
+ * exercises exactly one provider and OpenAI's providerAttemptCount stays 0.
+ *
+ * Returns { configured: boolean } so the caller can record the truth; if no
+ * DeepSeek provider is present, routing is left unset (action-required) and the
+ * gate reflects that honestly instead of falling back to another provider.
+ */
+export async function configureExplicitDeepSeekRouting(baseUrl, localPassphrase) {
+  const accessToken = await loginLocalPassphrase(baseUrl, localPassphrase);
+  const providersResponse = await fetch(`${baseUrl}/v1/providers`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const providersBody = await providersResponse.json().catch(() => ({}));
+  const items = Array.isArray(providersBody?.data?.items)
+    ? providersBody.data.items
+    : Array.isArray(providersBody?.items)
+      ? providersBody.items
+      : [];
+  const deepseek = items.find(
+    (provider) => provider?.kind === "deepseek" && provider?.enabled !== false,
+  );
+  if (!deepseek?.id) {
+    return { configured: false };
+  }
+  const routingResponse = await fetch(`${baseUrl}/v1/model-routing`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      defaultProviderId: deepseek.id,
+      defaultModel: typeof deepseek.defaultModel === "string" ? deepseek.defaultModel : "deepseek-v4-pro",
+      fallbackProviderIds: [],
+    }),
+  });
+  const routingBody = await routingResponse.json().catch(() => ({}));
+  if (!routingResponse.ok || routingBody?.ok !== true) {
+    throw new Error(`Self-hosted DeepSeek routing config failed with HTTP ${String(routingResponse.status)}`);
+  }
+  return { configured: true, providerId: deepseek.id };
+}
+
 export function createRuntimeEnv(baseEnv, paths, port, localPassphrase, tokenSecret, workspaceRoot) {
   const channelsEnv = buildExplicitChannelsEnv(baseEnv);
   return {
@@ -317,6 +367,11 @@ export async function runSelfHostedRealGreenGate(options) {
     await waitForHealth(baseUrl, options.runtimeBootTimeoutMs ?? DEFAULT_RUNTIME_BOOT_TIMEOUT_MS);
     await bootstrapLocalPassphrase(baseUrl, localPassphrase);
     await completeSelfHostedSetup(baseUrl, localPassphrase);
+    const routingConfigured = await configureExplicitDeepSeekRouting(baseUrl, localPassphrase);
+    appendLogLine(
+      path.join(reportRoot, "self-hosted-runtime-meta.txt"),
+      `deepseekRoutingConfigured=${String(routingConfigured.configured)}`,
+    );
 
     const gateEnv = createGateEnv(process.env, paths, baseUrl, localPassphrase, tokenSecret, repoRoot);
     const gateArgs = [

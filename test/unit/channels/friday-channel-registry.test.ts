@@ -294,9 +294,29 @@ describe("FridayChannelRegistry", () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
-    it("allows all messages when no allowlist is set", async () => {
-      const plugin = createMockPlugin("qq");
-      registry.register(plugin);
+    it("fails closed: a control-capable channel with no allowlist blocks all inbound", async () => {
+      // Locked channel policy: a missing allowlist must NOT mean "allow everyone"
+      // for control-capable channels (e.g. telegram/discord). Previously this
+      // returned true (allow-all) — that was the unsafe direction this flips.
+      const plugin = createMockPlugin("telegram");
+      registry.register(plugin, {}, { controlCapable: true });
+
+      const handler = vi.fn();
+      await registry.startAll(handler);
+
+      const startCall = (plugin.start as ReturnType<typeof vi.fn>).mock.calls[0];
+      const onMessage = startCall[0] as (msg: FridayChannelMessage) => void;
+
+      onMessage(createTestMessage());
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("allows all messages when no allowlist is set for a NON-control channel", async () => {
+      // Scope guard: the fail-closed rule is for control-capable channels only.
+      // A non-control channel (e.g. the first-party webchat surface) keeps the
+      // legacy allow-when-unset behavior.
+      const plugin = createMockPlugin("webchat");
+      registry.register(plugin); // controlCapable defaults to false
 
       const handler = vi.fn();
       await registry.startAll(handler);

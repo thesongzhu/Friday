@@ -69,6 +69,40 @@ export function isFridayChannelKindSupported(kind: string): boolean {
 }
 
 /**
+ * External messaging channels whose inbound messages can drive Friday to take
+ * action (i.e. "control" the agent: trigger tasks, approvals, tool calls).
+ *
+ * Locked channel policy (GLOBAL_DECISIONS_LOCKED): these MUST fail closed — a
+ * missing/empty user/chat allowlist must NOT be treated as "allow everyone".
+ * Any anonymous sender on these platforms could otherwise drive the agent.
+ *
+ * `webchat` is intentionally excluded: it is the first-party, session-
+ * authenticated Friday UI surface, not an untrusted external control channel.
+ */
+export const FRIDAY_CONTROL_CAPABLE_CHANNEL_KINDS: readonly FridaySupportedChannelKind[] = [
+  "telegram",
+  "discord",
+  "lark",
+  "feishu",
+  "whatsapp",
+  "signal",
+  "slack",
+  "irc",
+  "line",
+  "qq",
+] as const;
+
+const CONTROL_CAPABLE_CHANNEL_KIND_SET = new Set<string>(FRIDAY_CONTROL_CAPABLE_CHANNEL_KINDS);
+
+/**
+ * Returns `true` if inbound messages on this channel kind can control the agent,
+ * so the channel must fail closed without a persisted allowlist.
+ */
+export function isControlCapableChannelKind(kind: string): boolean {
+  return CONTROL_CAPABLE_CHANNEL_KIND_SET.has(kind);
+}
+
+/**
  * Channel kind+mode combinations that are recognized by the schema but MUST
  * NOT be activated at runtime because the listener is not actually wired.
  *
