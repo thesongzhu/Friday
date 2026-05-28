@@ -25,6 +25,7 @@ import {
   type FridayApiTestEnv,
   TOKEN_SECRET,
 } from "../e2e/api/_helpers/friday-api-test-server.helper.js";
+import { ERROR_CODE_BOUND_PRINCIPAL_REQUIRED } from "../../src/security/friday-owner-session-channel-capability.js";
 
 // ─── Helpers ───
 
@@ -70,14 +71,18 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
     { label: "no space", header: (t: string) => `Bearer${t}` },
   ];
 
-  // Auth-boundary product invariant: under the no-login-required HTTP posture,
-  // a malformed Authorization header MUST NOT downgrade the request to 401.
-  // The HTTP server falls back to the synthetic default-public principal so the
-  // route still responds. Function-level bearer-scheme parsing remains pinned
-  // by test/unit/api/auth/friday-auth-middleware.test.ts and
-  // test/unit/api/auth/friday-token-validator.test.ts.
+  // Auth-boundary product invariant: a malformed/non-standard Authorization header MUST NOT
+  // be accepted as a valid bearer — it falls through to the synthetic default-public
+  // principal, never the real authenticated principal. `/v1/sessions` is a sensitive-read
+  // surface (B3 sensitive-read floor), so the synthetic principal is then denied with 401
+  // BOUND_PRINCIPAL_REQUIRED — whereas a VALID bearer on the same route returns 200 (below).
+  // The 401-vs-200 contrast is the observable proof that the malformed scheme was rejected
+  // and did NOT inherit the valid token's access. (Pre-B3 both returned 200, which could not
+  // distinguish "fell through to public" from "accepted as valid".) Function-level
+  // bearer-scheme parsing remains pinned by test/unit/api/auth/friday-auth-middleware.test.ts
+  // and test/unit/api/auth/friday-token-validator.test.ts.
   it.each(caseVariants)(
-    "auth-boundary: non-standard Authorization scheme '$label' falls through to public:default and returns 200",
+    "auth-boundary: non-standard Authorization scheme '$label' is NOT accepted as a valid bearer (synthetic principal → 401 on sensitive route)",
     async ({ header }) => {
       const res = await fetch(`${env.baseUrl}/v1/sessions`, {
         headers: {
@@ -86,15 +91,15 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
         },
       });
 
-      // Non-standard Bearer formats fall back to the synthetic public:default
-      // principal; /v1/sessions GET handler runs and returns a success envelope.
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; data?: unknown; requestId?: string };
-      expect(json.ok).toBe(true);
+      // Malformed bearer → synthetic public:default principal → denied the sensitive read.
+      expect(res.status).toBe(401);
+      const json = (await res.json()) as { ok: boolean; error?: { code?: string } };
+      expect(json.ok).toBe(false);
+      expect(json.error?.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
     },
   );
 
-  it("accepts exact 'Bearer <token>' format — returns 200", async () => {
+  it("accepts exact 'Bearer <token>' format — returns 200 (valid bearer binds the real principal)", async () => {
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: {
         Authorization: `Bearer ${validToken}`,
@@ -102,10 +107,12 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
       },
     });
 
+    // Contrast with the malformed cases above: a correctly-formatted valid bearer binds the
+    // real principal, which passes the sensitive-read floor.
     expect(res.status).toBe(200);
   });
 
-  it("auth-boundary: empty authorization header falls through to public:default and returns 200", async () => {
+  it("auth-boundary: empty authorization header → synthetic principal → 401 on sensitive route", async () => {
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: {
         Authorization: "",
@@ -113,12 +120,13 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { ok: boolean };
-    expect(json.ok).toBe(true);
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { ok: boolean; error?: { code?: string } };
+    expect(json.ok).toBe(false);
+    expect(json.error?.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
   });
 
-  it("auth-boundary: 'Basic' scheme with valid token value falls through to public:default and returns 200", async () => {
+  it("auth-boundary: 'Basic' scheme with valid token value is NOT accepted as a bearer (synthetic principal → 401)", async () => {
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: {
         Authorization: `Basic ${validToken}`,
@@ -126,9 +134,10 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
       },
     });
 
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { ok: boolean };
-    expect(json.ok).toBe(true);
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { ok: boolean; error?: { code?: string } };
+    expect(json.ok).toBe(false);
+    expect(json.error?.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
   });
 });
 

@@ -209,10 +209,12 @@ describe("TEST-41: CORS Origin Validation Bypass", () => {
   });
 
   it("auth-boundary: security headers are present on no-auth-header public-route 200 responses", async () => {
-    // Under the auth-boundary product invariant, /v1/sessions is public and
-    // no-auth requests reach the handler (with synthetic public:default), which
-    // returns a 200 business envelope. Security headers must still be emitted.
-    const res = await fetch(`${env.baseUrl}/v1/sessions`);
+    // /v1/health is a minimal-public route (not a sensitive-read surface), so a no-auth
+    // request reaches the handler with the synthetic public:default principal and returns a
+    // 200 business envelope. Security headers must still be emitted on that 200 path.
+    // (Sensitive surfaces like /v1/sessions now require a bound principal — B3 sensitive-read
+    // floor — and are covered by friday-http-server-sensitive-read-gate.test.ts.)
+    const res = await fetch(`${env.baseUrl}/v1/health`);
 
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
