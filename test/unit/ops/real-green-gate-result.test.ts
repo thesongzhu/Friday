@@ -223,8 +223,33 @@ describe("buildRealGreenGateResult", () => {
     expect(result.provider_lane_scope.note).toMatch(/does NOT prove provider fallback resilience/i);
   });
 
-  it("scopes a two-lane run to default_and_fallback with fallback resilience proven", () => {
+  it("does not prove fallback resilience from lane presence alone", () => {
     const summary = passingSummary();
+    (summary.preflight as Record<string, unknown>).envTruth = {
+      providerLanes: {
+        default: { providerKind: "deepseek", model: "deepseek-v4-pro" },
+        fallback: { providerKind: "anthropic", model: "claude-sonnet-4" },
+      },
+      providerLaneRequirements: { fallbackRequired: true, source: "validated_alternative_available" },
+    };
+
+    const result = buildRealGreenGateResult({
+      summary,
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result.provider_lane_scope.scope).toBe("default_and_fallback");
+    expect(result.provider_lane_scope.fallback_resilience_proven).toBe(false);
+    expect(result.provider_lane_scope.note).toMatch(/does NOT prove fallback resilience/i);
+  });
+
+  it("marks fallback resilience proven only when an explicit fallback proof signal exists", () => {
+    const summary = {
+      ...passingSummary(),
+      providerFallbackProof: { status: "passed" },
+    };
     (summary.preflight as Record<string, unknown>).envTruth = {
       providerLanes: {
         default: { providerKind: "deepseek", model: "deepseek-v4-pro" },

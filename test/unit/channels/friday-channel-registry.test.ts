@@ -117,6 +117,54 @@ describe("FridayChannelRegistry", () => {
 
       expect(registry.listViews()).toHaveLength(1);
     });
+
+    it("infers control-capable external channels at direct registration and fails closed without an allowlist", async () => {
+      let capturedHandler: ((message: FridayChannelMessage) => void) | undefined;
+      const plugin = createMockPlugin("telegram", {
+        start: vi.fn(async (onMessage) => {
+          capturedHandler = onMessage;
+        }),
+      });
+      const handler = vi.fn();
+
+      registry.register(plugin);
+      await registry.startAll(handler);
+      capturedHandler?.(createTestMessage({ channelKind: "telegram", senderId: "u-1", chatId: "c-1" }));
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("does not allow known control-capable channels to be downgraded during direct registration", async () => {
+      let capturedHandler: ((message: FridayChannelMessage) => void) | undefined;
+      const plugin = createMockPlugin("telegram", {
+        start: vi.fn(async (onMessage) => {
+          capturedHandler = onMessage;
+        }),
+      });
+      const handler = vi.fn();
+
+      registry.register(plugin, {}, { controlCapable: false });
+      await registry.startAll(handler);
+      capturedHandler?.(createTestMessage({ channelKind: "telegram", senderId: "u-1", chatId: "c-1" }));
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("keeps non-control direct registrations on legacy allow-when-unset behavior", async () => {
+      let capturedHandler: ((message: FridayChannelMessage) => void) | undefined;
+      const plugin = createMockPlugin("webchat", {
+        start: vi.fn(async (onMessage) => {
+          capturedHandler = onMessage;
+        }),
+      });
+      const handler = vi.fn();
+
+      registry.register(plugin);
+      await registry.startAll(handler);
+      capturedHandler?.(createTestMessage({ channelKind: "webchat", senderId: "u-1", chatId: "c-1" }));
+
+      expect(handler).toHaveBeenCalledOnce();
+    });
   });
 
   // ─── Unregistration ───
@@ -241,7 +289,7 @@ describe("FridayChannelRegistry", () => {
   describe("message routing", () => {
     it("routes messages to handler", async () => {
       const plugin = createMockPlugin("qq");
-      registry.register(plugin);
+      registry.register(plugin, { allowedUsers: ["user-1"], allowedChats: ["chat-1"] });
 
       const handler = vi.fn();
       await registry.startAll(handler);

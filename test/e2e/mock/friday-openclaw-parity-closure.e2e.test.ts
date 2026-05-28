@@ -1309,7 +1309,18 @@ describe("Friday OpenClaw Parity Closure E2E — Discord Mock Transport", () => 
           token: "mock-discord-token",
           requireMention: false,
         });
-        hub.channelRegistry.register(discordPlugin);
+        hub.channelRegistry.register(discordPlugin, {
+          allowedUsers: [
+            "discord-user-1",
+            "discord-user-2",
+            "discord-user-fallback",
+          ],
+          allowedChats: [
+            "discord-channel-1",
+            "discord-channel-2",
+            "discord-channel-delivery-fallback",
+          ],
+        });
       },
     });
   }, 60_000);

@@ -242,9 +242,9 @@ describe("MCP transport parity contract", () => {
           transport: "stdio",
           command: process.execPath,
           args: ["-e", buildStdioServerScript()],
-          // Opt in so transport parity is exercised; the adapter now fails
-          // closed without an allowlist or this explicit opt-in.
-          policy: { allowAllTools: true },
+          // Opt in so transport parity is exercised; the adapter fails closed
+          // per surface without an allowlist or explicit opt-in.
+          policy: { allowAllTools: true, allowAllResources: true, allowAllPrompts: true },
         },
       ],
     });
@@ -258,7 +258,7 @@ describe("MCP transport parity contract", () => {
           id: "http",
           transport: "http",
           url: PUBLIC_HTTP_MCP_TEST_URL,
-          policy: { allowAllTools: true },
+          policy: { allowAllTools: true, allowAllResources: true, allowAllPrompts: true },
         },
       ],
     });

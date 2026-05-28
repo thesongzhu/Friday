@@ -678,12 +678,16 @@ async function autoDetectProvidersFromEnv(
   // Set default routing if none configured — use newly detected or existing providers
   const routing = await providerService.getRoutingConfig();
   if (!routing.defaultProviderId) {
-    // Collect candidates: newly detected first, then existing enabled providers
-    const candidates = detected.length > 0
-      ? detected
-      : existing
-          .filter((p) => p.enabled)
-          .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id }));
+    // Collect candidates from both newly detected and already-persisted enabled
+    // providers. Mixed state (e.g. existing OpenAI plus newly detected DeepSeek)
+    // still means multiple provider kinds are available and must require an
+    // explicit user choice; do not silently pick the newly detected provider.
+    const candidates = [
+      ...detected,
+      ...existing
+        .filter((p) => p.enabled)
+        .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id })),
+    ];
 
     const distinctKinds = new Set(candidates.map((c) => c.kind));
 

@@ -171,6 +171,128 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
     ).rejects.toMatchObject({ code: "MCP_POLICY_TOOL_FORBIDDEN" });
   });
 
+  it("fails closed: resources and prompts require explicit allowlists or allowAll opt-ins", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { id?: number; method?: string };
+      if (payload.method === "initialize") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 1, { protocolVersion: "2024-11-05" }));
+      }
+      if (payload.method === "resources/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 2, {
+          resources: [{ uri: "friday://status", name: "status" }],
+        }));
+      }
+      if (payload.method === "prompts/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 3, {
+          prompts: [{ name: "hello", description: "Greeting" }],
+        }));
+      }
+      if (payload.method === "resources/read") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 4, {
+          contents: [{ type: "text", text: "secret-ish context" }],
+        }));
+      }
+      if (payload.method === "prompts/get") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 5, {
+          messages: [{ role: "user", content: { type: "text", text: "hello" } }],
+        }));
+      }
+      return okHttpResponse("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        { id: "untrusted-context", transport: "http", url: "https://mcp.example.com/rpc" },
+      ],
+    });
+
+    await expect(adapter.listResources({ serverId: "untrusted-context" })).resolves.toEqual([]);
+    await expect(adapter.listPrompts({ serverId: "untrusted-context" })).resolves.toEqual([]);
+    await expect(adapter.readResource({
+      serverId: "untrusted-context",
+      uri: "friday://status",
+    })).rejects.toMatchObject({ code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_RESOURCE_FORBIDDEN });
+    await expect(adapter.getPrompt({
+      serverId: "untrusted-context",
+      name: "hello",
+    })).rejects.toMatchObject({ code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_PROMPT_FORBIDDEN });
+  });
+
+  it("allows only explicitly allowlisted resources and prompts", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { id?: number; method?: string; params?: Record<string, unknown> };
+      if (payload.method === "initialize") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 1, { protocolVersion: "2024-11-05" }));
+      }
+      if (payload.method === "resources/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 2, {
+          resources: [
+            { uri: "friday://allowed", name: "allowed" },
+            { uri: "friday://blocked", name: "friday://allowed" },
+          ],
+        }));
+      }
+      if (payload.method === "prompts/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 3, {
+          prompts: [
+            { name: "hello", description: "Greeting" },
+            { name: "blocked", description: "Blocked" },
+          ],
+        }));
+      }
+      if (payload.method === "resources/read") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 4, {
+          contents: [{ type: "text", text: String(payload.params?.uri ?? "") }],
+        }));
+      }
+      if (payload.method === "prompts/get") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 5, {
+          messages: [{ role: "user", content: { type: "text", text: String(payload.params?.name ?? "") } }],
+        }));
+      }
+      return okHttpResponse("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        {
+          id: "allowlisted-context",
+          transport: "http",
+          url: "https://mcp.example.com/rpc",
+          policy: {
+            resourceAllowlist: ["friday://allowed"],
+            promptAllowlist: ["hello"],
+          },
+        },
+      ],
+    });
+
+    await expect(adapter.listResources({ serverId: "allowlisted-context" })).resolves.toMatchObject([
+      { uri: "friday://allowed" },
+    ]);
+    await expect(adapter.listPrompts({ serverId: "allowlisted-context" })).resolves.toMatchObject([
+      { name: "hello" },
+    ]);
+    await expect(adapter.readResource({
+      serverId: "allowlisted-context",
+      uri: "friday://allowed",
+    })).resolves.toMatchObject({ content: "friday://allowed" });
+    await expect(adapter.getPrompt({
+      serverId: "allowlisted-context",
+      name: "hello",
+    })).resolves.toMatchObject({ content: expect.stringContaining("hello") });
+    await expect(adapter.readResource({
+      serverId: "allowlisted-context",
+      uri: "friday://blocked",
+    })).rejects.toMatchObject({ code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_RESOURCE_FORBIDDEN });
+    await expect(adapter.getPrompt({
+      serverId: "allowlisted-context",
+      name: "blocked",
+    })).rejects.toMatchObject({ code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_PROMPT_FORBIDDEN });
+  });
+
   it("enforces local rate limit policy for repeated tool calls", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {
@@ -448,6 +570,9 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
           id: "dedup-http",
           transport: "http",
           url: "https://mcp.example.com/rpc",
+          policy: {
+            allowAllResources: true,
+          },
         },
       ],
     });
