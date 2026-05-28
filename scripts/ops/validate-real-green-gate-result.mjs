@@ -25,7 +25,7 @@ import {
 } from "./lib/real-green-gate-result.mjs";
 
 function parseArgs(argv) {
-  const args = { path: null, expectedSha: null };
+  const args = { path: null, expectedSha: null, requiredEvidenceKinds: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     const next = argv[index + 1];
@@ -34,6 +34,9 @@ function parseArgs(argv) {
       index += 1;
     } else if (token === "--expected-sha" && typeof next === "string") {
       args.expectedSha = next;
+      index += 1;
+    } else if (token === "--required-evidence-kind" && typeof next === "string") {
+      args.requiredEvidenceKinds.push(next);
       index += 1;
     }
   }
@@ -83,6 +86,7 @@ function main() {
 
   const decision = validateRealGreenGateResult(parsed, {
     expectedSha: args.expectedSha ?? undefined,
+    requiredEvidenceKinds: args.requiredEvidenceKinds,
   });
 
   emit({
@@ -90,6 +94,7 @@ function main() {
     reasons: decision.reasons,
     path: args.path,
     expected_sha: args.expectedSha ?? null,
+    required_evidence_kinds: args.requiredEvidenceKinds,
     observed_sha: typeof parsed?.commit_sha === "string" ? parsed.commit_sha : null,
     observed_status: typeof parsed?.status === "string" ? parsed.status : null,
   });

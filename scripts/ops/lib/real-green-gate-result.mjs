@@ -11,8 +11,9 @@
  *    pass. The workflow may exit success for plumbing reasons; the artifact's
  *    `status` field tells the truth.
  *  - There is no escape hatch / break-glass / FAST_MODE field.
- *  - The validator does NOT enforce a specific evidence-kind policy in this
- *    subphase; tier policy stays in docs/release-evidence-policy.md.
+ *  - The validator accepts a caller-provided evidence-kind policy. Routine
+ *    push checks may validate only the structural pass, while release gates
+ *    must require the real-provider / real-browser evidence they claim.
  *  - Defense-in-depth: even if the writer ever marked `status: "passed"` while
  *    `blocked_reasons` was non-empty, the validator rejects.
  */

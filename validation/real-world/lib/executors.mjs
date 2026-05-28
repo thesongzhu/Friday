@@ -566,32 +566,23 @@ function scenarioTimeout(scenario, fallback) {
 let sharedUiProbeSession = null;
 
 async function getSharedUiProbeSession(uiBaseUrl) {
-  if (sharedUiProbeSession?.uiBaseUrl === uiBaseUrl) {
-    const context = await sharedUiProbeSession.browser.newContext({
-      baseURL: uiBaseUrl,
-      viewport: { width: 1440, height: 960 },
-    });
-    return {
-      ...sharedUiProbeSession,
-      context,
-    };
+  if (sharedUiProbeSession?.uiBaseUrl === uiBaseUrl && sharedUiProbeSession?.context) {
+    return sharedUiProbeSession;
   }
   if (sharedUiProbeSession?.browser) {
     await sharedUiProbeSession.browser.close().catch(() => undefined);
   }
   const browser = await chromium.launch({ headless: true });
-  sharedUiProbeSession = {
-    uiBaseUrl,
-    browser,
-  };
   const context = await browser.newContext({
     baseURL: uiBaseUrl,
     viewport: { width: 1440, height: 960 },
   });
-  return {
-    ...sharedUiProbeSession,
+  sharedUiProbeSession = {
+    uiBaseUrl,
+    browser,
     context,
   };
+  return sharedUiProbeSession;
 }
 
 export async function closeSharedUiProbeSession() {
@@ -608,6 +599,7 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
   }
   const requestedPath = getUrlPath(execution.path);
   const loginTimeoutMs = Math.max(timeoutMs, 90_000);
+  const maxLoginAttempts = 4;
   const waitForLoginExit = () => page.waitForFunction(
     () => new URL(window.location.href).pathname !== "/login",
     undefined,
@@ -624,32 +616,77 @@ async function completeUiLoginIfNeeded({ page, client, execution, artifact, time
     },
     { timeout: loginTimeoutMs },
   );
-  if (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0) {
-    await page.locator("#login-local-passphrase").fill(client.localPassphrase.trim());
-    const loginResponsePromise = waitForLoginResponse();
-    await page.getByRole("button", { name: /continue locally/i }).click();
-    const loginResponse = await loginResponsePromise;
-    if (!loginResponse.ok()) {
-      throw new Error(`Real browser local-passphrase login failed with HTTP ${String(loginResponse.status())}`);
+  const retryDelayFrom = async (loginResponse) => {
+    const headers = loginResponse.headers();
+    const retryAfterHeader = headers["retry-after"];
+    if (typeof retryAfterHeader === "string" && retryAfterHeader.trim().length > 0) {
+      const asSeconds = Number.parseFloat(retryAfterHeader);
+      if (Number.isFinite(asSeconds) && asSeconds > 0) {
+        return Math.ceil(asSeconds * 1_000);
+      }
+      const asDate = Date.parse(retryAfterHeader);
+      if (Number.isFinite(asDate)) {
+        return Math.max(0, asDate - Date.now());
+      }
     }
-    await waitForLoginExit();
-    artifact.observedEvidence.push(`completed real browser local-passphrase login for ${requestedPath}`);
+    try {
+      const body = await loginResponse.json();
+      const retryAfterMs = body?.error?.retryAfterMs ?? body?.retryAfterMs;
+      if (typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+        return retryAfterMs;
+      }
+    } catch {
+      // Response bodies on failed login paths are best-effort diagnostic data.
+    }
+    return 15_000;
+  };
+  const runLoginWithRateLimitRetry = async ({ label, submit }) => {
+    for (let attempt = 1; attempt <= maxLoginAttempts; attempt += 1) {
+      const loginResponsePromise = waitForLoginResponse();
+      await submit();
+      const loginResponse = await loginResponsePromise;
+      if (loginResponse.ok()) {
+        await waitForLoginExit();
+        if (attempt > 1) {
+          artifact.observedEvidence.push(`${label} login recovered after ${String(attempt - 1)} rate-limit retry attempt(s)`);
+        }
+        artifact.observedEvidence.push(`completed real browser ${label} login for ${requestedPath}`);
+        return;
+      }
+      if (loginResponse.status() === 429 && attempt < maxLoginAttempts) {
+        const retryDelayMs = await retryDelayFrom(loginResponse);
+        artifact.notes = [
+          ...(artifact.notes ?? []),
+          `real browser ${label} login hit HTTP 429; waiting ${String(retryDelayMs)}ms before retry ${String(attempt + 1)}/${String(maxLoginAttempts)}`,
+        ];
+        await page.waitForTimeout(retryDelayMs);
+        continue;
+      }
+      throw new Error(`Real browser ${label} login failed with HTTP ${String(loginResponse.status())}`);
+    }
+  };
+  if (typeof client?.localPassphrase === "string" && client.localPassphrase.trim().length > 0) {
+    await runLoginWithRateLimitRetry({
+      label: "local-passphrase",
+      submit: async () => {
+        await page.locator("#login-local-passphrase").fill(client.localPassphrase.trim());
+        await page.getByRole("button", { name: /continue locally/i }).click();
+      },
+    });
     return;
   }
   if (
     typeof client?.email === "string" && client.email.trim().length > 0
     && typeof client?.password === "string" && client.password.trim().length > 0 // pragma: allowlist secret
   ) {
-    await page.locator("#login-email").fill(client.email.trim());
-    await page.locator("#login-password").fill(client.password.trim());
-    const loginResponsePromise = waitForLoginResponse();
-    await page.getByRole("button", { name: /sign in/i }).click();
-    const loginResponse = await loginResponsePromise;
-    if (!loginResponse.ok()) {
-      throw new Error(`Real browser email/password login failed with HTTP ${String(loginResponse.status())}`);
-    }
-    await waitForLoginExit();
-    artifact.observedEvidence.push(`completed real browser email/password login for ${requestedPath}`);
+    await runLoginWithRateLimitRetry({
+      label: "email/password",
+      submit: async () => {
+        await page.locator("#login-email").fill(client.email.trim());
+        await page.locator("#login-password").fill(client.password.trim());
+        await page.getByRole("button", { name: /sign in/i }).click();
+      },
+    });
     return;
   }
   throw new Error(
@@ -2183,7 +2220,6 @@ async function executeUiProbe({ artifact, client, scenario, reportRoot, uiBaseUr
     return artifact;
   } finally {
     await page?.close().catch(() => undefined);
-    await context?.close().catch(() => undefined);
   }
 }
 
@@ -2303,7 +2339,6 @@ async function executeUiAuthoring({ artifact, client, scenario, reportRoot, uiBa
     return artifact;
   } finally {
     await page?.close().catch(() => undefined);
-    await context?.close().catch(() => undefined);
   }
 }
 
