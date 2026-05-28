@@ -707,12 +707,13 @@ async function main() {
 
     // Defensive: clear any pre-existing Telegram webhook so polling
     // can see updates. If a previous run (or another agent / dev env)
-    // set a webhook on this bot, getUpdates polling silently returns
-    // zero updates (Telegram routes incoming events to the webhook
-    // instead). The first phase24E live dispatch on 2ca1c30b
-    // (run 26543400522) blocked with updateCount=0 for this exact
-    // reason — even though the operator did send the reject text,
-    // the polling loop saw nothing.
+    // set a webhook on this bot, getUpdates polling cannot receive
+    // updates because Telegram routes incoming events to the webhook
+    // instead. Earlier phase24E live dispatches blocked with
+    // updateCount=0 after the operator sent the reject text; clearing
+    // any stale webhook makes this known Telegram polling conflict
+    // self-recovering, while the artifact still refuses to pass unless
+    // the live inbound/ack/status criteria below are observed.
     //
     // `drop_pending_updates=false` (default) preserves whatever updates
     // Telegram queued before this dispatch started polling. Earlier the
