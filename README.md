@@ -37,7 +37,7 @@ Friday is a **public v1 local candidate** distributed via **npm/source only**, n
 - Slack HTTP Events-API inbound and QQ remain **`unsupported`** in this release.
 - Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
 - `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
-- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted). The published npm `1.0.2` package still carries the original nine proof-pending headlines. GitHub-visible source after `1.0.2` has closed several deterministic slices, but those are not npm truth until a future authorized publish; see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md).
+- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted). The published npm `1.0.2` package still carries the original nine proof-pending headlines. GitHub-visible source after `1.0.2` has closed several deterministic slices and is staged as a `1.0.3` package candidate, but `1.0.3` is not published until a future authorized release; see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md).
 
 ## The Product Loop
 
@@ -182,6 +182,7 @@ Friday follows a simple rule: automate the boring parts, keep the user in contro
 | Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
 
 The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
+Repository metadata is staged as a `1.0.3` package candidate for the next operator-authorized publish; the npm registry latest remains `1.0.2`.
 Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim. Desktop, Homebrew, notarized macOS, and mobile distribution are not claimed in `1.0.2`.
 
 ## Community

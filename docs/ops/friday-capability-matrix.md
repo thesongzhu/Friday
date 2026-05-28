@@ -88,7 +88,7 @@ Configure it in Setup -> Capabilities -> OCR. After that I will run a sample ima
 
 ## Capability Headlines (Boundary Summary)
 
-The matrix above is the structured contract. The following three plain-language headlines summarize the current public `1.0.2` npm/source boundary in operator-readable terms and are the canonical wording the rest of the product surface (UI copy, release notes, docs) must align with:
+The matrix above is the structured contract. The following three plain-language headlines summarize the current public `1.0.2` npm/source boundary and the unpublished `1.0.3` package-candidate source delta in operator-readable terms. They are the canonical wording the rest of the product surface (UI copy, release notes, docs) must align with:
 
 Source-truth delta after the immutable npm `1.0.2` package: GitHub-visible main
 has subsequently closed deterministic DP-10 personal-secretary loop proof
@@ -97,9 +97,12 @@ proof (PR #354), and Memory cognition v1 proof (PR #355). Current source also
 gates provider budget changes through canonical mutation approval in protected
 profiles, repairs provider/cost/package source truth through PR #356/#357/#358,
 closes Home supervised low-risk self-repair UI proof by PR #359, and closes
-user-visible workflow retry receipt/final-state proof by PR #360. Package/npm
-truth stays separate. Do not read these source closures as already published
-npm `1.0.2` behavior.
+user-visible workflow retry receipt/final-state proof by PR #360. Later source
+also closes C2.4 parent-runtime natural-trigger source repair by PR #377, C3/C4
+live-provider routing proof by PR #378, and C4.5 direct synthetic real-user
+intelligence proof by PR #379. Package/npm truth stays separate. Do not read
+these source closures as already published npm `1.0.2` behavior or as a
+published `1.0.3` release.
 
 ### What Friday Can Do Today
 
