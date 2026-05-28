@@ -293,6 +293,9 @@ describe("createFridayHub", () => {
               botToken: "env:FRIDAY_TEST_SLACK_BOT_TOKEN",
               appToken: "env:FRIDAY_TEST_SLACK_APP_TOKEN",
               mode: "socket",
+              // Control-capable channels fail closed without a persisted
+              // allowlist; provide one so this asserts socket mode IS supported.
+              allowedUsers: ["U-allowed-user"],
             },
           ],
         },
