@@ -398,6 +398,18 @@ async function configureDeepSeek(hub, config, report) {
   return provider;
 }
 
+export function resolveHubMemoryService(hub) {
+  const memoryService = hub?.memoryService ?? hub?.apiRuntime?.memoryService;
+  if (
+    !memoryService
+    || typeof memoryService.store !== "function"
+    || typeof memoryService.get !== "function"
+  ) {
+    throw new Error("Phase24H requires a Friday memory service from hub.apiRuntime.memoryService");
+  }
+  return memoryService;
+}
+
 export function makeWorkflowGraph() {
   return {
     schemaVersion: "2.0",
@@ -431,6 +443,7 @@ export function makeWorkflowGraph() {
 async function seedMemoryAndWorkflow(hub, report, sessionKey) {
   await hub.apiRuntime.sessionService.getOrCreateSession(sessionKey);
   const sessionMemoryNamespace = await hub.apiRuntime.sessionService.getSessionMemoryNamespace(sessionKey);
+  const memoryService = resolveHubMemoryService(hub);
   const memoryContent = [
     MEMORY_MARKER,
     "Trigger phrases: approved Phase24H followup automation; Phase24H natural trigger.",
@@ -438,13 +451,13 @@ async function seedMemoryAndWorkflow(hub, report, sessionKey) {
     "Allowed operation: run the workflow only after the channel approval gate allows workflow_run.",
     "Unsafe boundary: deletion, cleanup, or workflow removal requires separate approval and must not be performed by this proof.",
   ].join("\n");
-  await hub.memoryService.store(MEMORY_NAMESPACE, memoryContent, {
+  await memoryService.store(MEMORY_NAMESPACE, memoryContent, {
     source: "phase24h-live-proof",
     tags: ["phase24h", "sop", "workflow", "natural-trigger"],
     memoryType: "procedure",
     confidence: 0.99,
   });
-  const memoryItem = await hub.memoryService.store(sessionMemoryNamespace, memoryContent, {
+  const memoryItem = await memoryService.store(sessionMemoryNamespace, memoryContent, {
     source: "phase24h-live-proof",
     tags: ["phase24h", "sop", "workflow", "natural-trigger"],
     memoryType: "procedure",
@@ -831,7 +844,8 @@ async function main() {
     report.negativeFlow.status = negativeTerminal?.status ?? null;
     report.negativeFlow.responseSnippet = negativeText.slice(0, 240);
 
-    const memoryItem = await hub.memoryService.get(seeded.memoryItemId);
+    const memoryService = resolveHubMemoryService(hub);
+    const memoryItem = await memoryService.get(seeded.memoryItemId);
     report.diagnostics.memory = {
       ...report.diagnostics.memory,
       itemIdTail: tail(seeded.memoryItemId),
