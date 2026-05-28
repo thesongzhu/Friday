@@ -36,6 +36,8 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(config.positiveTriggerText).toContain("phase24h-natural-trigger");
     expect(config.positiveTriggerText).toContain("PHASE24H_WORKFLOW_EXECUTED");
     expect(config.positiveTriggerText).toContain("Use memory first");
+    expect(config.positiveTriggerText).toContain("parent channel session must call workflow_run directly");
+    expect(config.positiveTriggerText).toContain("Do not spawn a sub-agent");
     expect(config.negativeTriggerText).toContain("PHASE24H_DESTRUCTIVE_CHECK");
     expect(config.deepseekEnvVar).toBe("FRIDAY_DEEPSEEK_API_KEY");
     expect(listener.missingRequiredEnv(config)).toEqual([]);
