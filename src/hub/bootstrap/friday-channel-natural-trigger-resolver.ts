@@ -11,6 +11,8 @@ import type {
 const DEFAULT_MEMORY_NAMESPACES = ["agent", "default"] as const;
 const SAFE_RISK_TIERS = new Set(["low", "low-risk", "noop", "no-op", "safe"]);
 const SAFE_WORKFLOW_TAGS = new Set(["safe-natural-trigger", "low-risk", "no-op", "noop", "phase24h-natural-trigger"]);
+const UNSAFE_BINDING_REFERENCE_SCORE = 0.4;
+const UNSAFE_BINDING_TRIGGER_COVERAGE = 0.7;
 const DESTRUCTIVE_OR_UNSAFE_RE =
   /\b(delete|remove|erase|destroy|drop|wipe|purge|send|email|message\s+every|charge|pay|purchase|buy|spend|credential|secret|token|api\s*key|config|settings|filesystem|file\s+system|irreversible)\b|(?:删除|清空|销毁|抹掉|发送|群发|付款|购买|花费|密钥|凭据|配置|文件系统|不可逆)/iu;
 
@@ -160,14 +162,29 @@ function readBinding(item: FridayMemoryItem): FridayNaturalTriggerBinding | null
 }
 
 function tokenSimilarity(a: string, b: string): number {
-  const aTokens = new Set(normalizeTriggerText(a).split(" ").filter(Boolean));
-  const bTokens = new Set(normalizeTriggerText(b).split(" ").filter(Boolean));
+  const aTokens = normalizedTokenSet(a);
+  const bTokens = normalizedTokenSet(b);
   if (aTokens.size === 0 || bTokens.size === 0) return 0;
   let intersection = 0;
   for (const token of aTokens) {
     if (bTokens.has(token)) intersection += 1;
   }
   return intersection / Math.max(aTokens.size, bTokens.size);
+}
+
+function normalizedTokenSet(value: string): Set<string> {
+  return new Set(normalizeTriggerText(value).split(" ").filter(Boolean));
+}
+
+function triggerCoverage(inputText: string, triggerText: string): number {
+  const inputTokens = normalizedTokenSet(inputText);
+  const triggerTokens = normalizedTokenSet(triggerText);
+  if (inputTokens.size === 0 || triggerTokens.size === 0) return 0;
+  let intersection = 0;
+  for (const token of triggerTokens) {
+    if (inputTokens.has(token)) intersection += 1;
+  }
+  return intersection / triggerTokens.size;
 }
 
 function containsNormalizedTrigger(inputText: string, triggerText: string): boolean {
@@ -270,7 +287,9 @@ export function createFridayChannelNaturalTriggerResolver(
         ...listedItems,
       ]);
 
+      const textIsUnsafe = DESTRUCTIVE_OR_UNSAFE_RE.test(input.text);
       let bestNearMatch: { item: FridayMemoryItem; binding: FridayNaturalTriggerBinding; trigger: string; score: number } | null = null;
+      let bestUnsafeBindingReference: { item: FridayMemoryItem; binding: FridayNaturalTriggerBinding; trigger: string; score: number } | null = null;
       for (const item of listedMemories) {
         const binding = readBinding(item);
         if (!binding?.approved || !binding.workflowId || binding.triggers.length === 0) {
@@ -305,7 +324,7 @@ export function createFridayChannelNaturalTriggerResolver(
                 diagnostics: { ...diagnostics, reason: "workflow_not_published" },
               };
             }
-            if (DESTRUCTIVE_OR_UNSAFE_RE.test(input.text)) {
+            if (textIsUnsafe) {
               return {
                 handled: true,
                 action: "refused",
@@ -374,11 +393,24 @@ export function createFridayChannelNaturalTriggerResolver(
           if (score >= 0.55 && (!bestNearMatch || score > bestNearMatch.score)) {
             bestNearMatch = { item, binding, trigger, score };
           }
+          const unsafeReferenceScore = textIsUnsafe
+            ? Math.max(score, triggerCoverage(input.text, trigger))
+            : 0;
+          if (
+            textIsUnsafe
+            && (
+              score >= UNSAFE_BINDING_REFERENCE_SCORE
+              || unsafeReferenceScore >= UNSAFE_BINDING_TRIGGER_COVERAGE
+            )
+            && (!bestUnsafeBindingReference || unsafeReferenceScore > bestUnsafeBindingReference.score)
+          ) {
+            bestUnsafeBindingReference = { item, binding, trigger, score: unsafeReferenceScore };
+          }
         }
       }
 
       if (bestNearMatch) {
-        if (DESTRUCTIVE_OR_UNSAFE_RE.test(input.text)) {
+        if (textIsUnsafe) {
           return {
             handled: true,
             action: "refused",
@@ -408,6 +440,24 @@ export function createFridayChannelNaturalTriggerResolver(
             workflowDiscoveryOccurred: false,
             memoryRecallOccurred: true,
             riskTier: bestNearMatch.binding.riskTier,
+          },
+        };
+      }
+
+      if (bestUnsafeBindingReference) {
+        return {
+          handled: true,
+          action: "refused",
+          replyText: buildReplyText({ action: "refused" }),
+          diagnostics: {
+            reason: "unsafe_bound_trigger_reference_refused",
+            memoryItemId: bestUnsafeBindingReference.item.id,
+            workflowId: bestUnsafeBindingReference.binding.workflowId,
+            workflowVersionId: bestUnsafeBindingReference.binding.workflowVersionId,
+            nearMatchTrigger: bestUnsafeBindingReference.trigger,
+            workflowDiscoveryOccurred: false,
+            memoryRecallOccurred: true,
+            riskTier: bestUnsafeBindingReference.binding.riskTier,
           },
         };
       }
