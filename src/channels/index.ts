@@ -127,7 +127,7 @@ export { createLarkWebhookRelayService, validateLarkWebhookSignature } from "./l
 export type { LarkWebhookRelayService, LarkWebhookRelayResult } from "./lark/lark-webhook-relay.js";
 
 // Discord
-export { createFridayDiscordChannel, normalizeDiscordMessageCreate } from "./discord/friday-discord-channel.js";
+export { createFridayDiscordChannel, normalizeDiscordMessageCreate, stripDiscordBotMention } from "./discord/friday-discord-channel.js";
 export type { DiscordChannelDeps } from "./discord/friday-discord-channel.js";
 export { FridayDiscordChannelConfigSchema } from "./discord/discord-config.schema.js";
 export type { FridayDiscordChannelConfig } from "./discord/discord-config.schema.js";

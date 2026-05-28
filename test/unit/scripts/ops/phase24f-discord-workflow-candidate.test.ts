@@ -142,6 +142,43 @@ describe("phase24f Discord workflow-candidate listener exports", () => {
     expect(listener.inspectDiscordPayload(messagePayload({ mentions: [] }), config).rawTargetMatched).toBe(false);
   });
 
+  it("diagnoses approve commands that miss the required bot mention", async () => {
+    const listener = await loadListener();
+    const config = baseConfig();
+    const inspection = listener.inspectDiscordPayload(
+      messagePayload({
+        content: "approve reflex phase24f-approve-run-123",
+        mentions: [],
+      }),
+      config,
+      Date.parse("2026-05-28T00:00:02Z"),
+    );
+
+    expect(inspection.containsApproveCommand).toBe(true);
+    expect(inspection.mentionMatched).toBe(false);
+    expect(inspection.normalizerAccepted).toBe(false);
+    expect(inspection.rawTargetMatched).toBe(false);
+  });
+
+  it("accepts approve commands when the required bot mention is placed first", async () => {
+    const listener = await loadListener();
+    const config = baseConfig();
+    const inspection = listener.inspectDiscordPayload(
+      messagePayload({
+        content: "<@bot-1> approve reflex phase24f-approve-run-123",
+        mentions: [{ id: "bot-1" }],
+      }),
+      config,
+      Date.parse("2026-05-28T00:00:02Z"),
+    );
+
+    expect(inspection.containsApproveCommand).toBe(true);
+    expect(inspection.mentionMatched).toBe(true);
+    expect(inspection.normalizerAccepted).toBe(true);
+    expect(inspection.normalized).toMatchObject({ text: "approve reflex phase24f-approve-run-123" });
+    expect(inspection.rawTargetMatched).toBe(true);
+  });
+
   it("initialReport carries the Phase24F schema and seeds artifactHasNoToken false", async () => {
     const listener = await loadListener();
     const report = listener.initialReport(baseConfig(), "/tmp/phase24f.json");

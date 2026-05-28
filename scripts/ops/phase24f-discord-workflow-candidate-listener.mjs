@@ -18,6 +18,7 @@ import {
   createDiscordRestService,
   createFridayDiscordChannel,
   normalizeDiscordMessageCreate,
+  stripDiscordBotMention,
 } from "#channels";
 import { createFridayHub } from "#hub";
 
@@ -134,8 +135,11 @@ function inspectDiscordPayload(payload, config, receivedAtMs = Date.now()) {
   const authorBotFalse = payload?.author?.bot !== true;
   const senderMatched = payload?.author?.id === config.setupUserId;
   const channelMatched = payload?.channel_id === config.channelId;
-  const containsRejectCommand = content.startsWith("reject reflex");
-  const containsApproveCommand = content.startsWith("approve reflex");
+  const commandContent = config.requireMention
+    ? stripDiscordBotMention(content, config.botUserId)
+    : content;
+  const containsRejectCommand = commandContent.startsWith("reject reflex");
+  const containsApproveCommand = commandContent.startsWith("approve reflex");
   const containsRejectNonce = content.includes(config.rejectNonce);
   let normalized = null;
   if (payload?.id && payload?.author) {
@@ -220,19 +224,21 @@ function recordDiscordMessageCreate(report, observedEventsByMessageId, payload, 
   return inspection;
 }
 
-function createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId) {
+function createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId, persistReport) {
   const gateway = createDiscordGatewayService();
   return {
     async connect(token, intents, onEvent, onStatusChange) {
       await gateway.connect(token, intents, (event) => {
         if (event?.t === "MESSAGE_CREATE") {
           recordDiscordMessageCreate(report, observedEventsByMessageId, event.d, config);
+          void persistReport("discord_message_create").catch(() => {});
         }
         onEvent(event);
       }, (status) => {
         const connected = status === "connected" || gateway.isConnected();
         report.criteria.gatewayConnected = connected;
         report.diagnostics.discordHubAdapter.gatewayConnected = connected;
+        void persistReport("discord_gateway_status").catch(() => {});
         if (onStatusChange) onStatusChange(status);
       });
       report.criteria.gatewayConnected = gateway.isConnected();
@@ -347,10 +353,23 @@ async function writeReport(report, token) {
   await fs.writeFile(report.reportPath, serialized, "utf8");
 }
 
+function createReportPersister(report, token) {
+  let writeChain = Promise.resolve();
+  return (reason) => {
+    report.diagnostics.lastReportUpdateReason = reason;
+    report.diagnostics.lastReportUpdatedAt = new Date().toISOString();
+    writeChain = writeChain
+      .catch(() => {})
+      .then(() => writeReport(report, token));
+    return writeChain;
+  };
+}
+
 async function main() {
   const config = readEnvConfig();
   const reportPath = resolveReportPath();
   const report = initialReport(config, reportPath);
+  const persistReport = createReportPersister(report, config.botToken);
   let hub;
   let server;
   let stateDir = "";
@@ -380,7 +399,7 @@ async function main() {
       channels: { enabled: false, instances: [] },
     });
 
-    const instrumentedGateway = createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId);
+    const instrumentedGateway = createInstrumentedDiscordGatewayService(config, report, observedEventsByMessageId, persistReport);
     const discordPlugin = createFridayDiscordChannel({
       gateway: instrumentedGateway,
       rest: createDiscordRestService(),
@@ -443,7 +462,7 @@ async function main() {
     report.approveFlow.candidateIdTail = tail(approveCandidateId);
     installWorkflowApprovalStub(hub, harnessConfig, generatorSessionId, approvedSlot);
 
-    await writeReport(report, config.botToken);
+    await persistReport("listener_ready");
 
     const rejectText = buildRejectOperatorMessage(rejectCandidateId, config);
     const approveText = buildApproveOperatorMessage(approveCandidateId, config);
@@ -478,6 +497,7 @@ async function main() {
     report.criteria.requireMentionSatisfied = !config.requireMention || Boolean(
       [...observedEventsByMessageId.values()].find((entry) => entry?.inspection?.mentionMatched),
     );
+    await persistReport("reject_flow_verified");
 
     if (!report.criteria.rejectCandidateStatusRejected || !report.criteria.rejectDidNotSaveWorkflow) {
       report.status = "failed";

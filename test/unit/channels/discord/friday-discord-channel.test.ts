@@ -227,6 +227,21 @@ describe("FridayDiscordChannel", () => {
       expect(result).not.toBeNull();
     });
 
+    it("strips required bot mentions at command boundaries", () => {
+      const payload: DiscordMessageCreatePayload = {
+        id: "msg-1",
+        channel_id: "ch-1",
+        guild_id: "g-1",
+        author: { id: "user-1", username: "User", bot: false },
+        content: "<@bot-id-1> approve reflex candidate-1 <@bot-id-1>",
+        timestamp: "2026-02-21T12:00:00.000Z",
+        mentions: [{ id: "bot-id-1" }],
+      };
+
+      const result = normalizeDiscordMessageCreate(payload, true, "bot-id-1");
+      expect(result?.text).toBe("approve reflex candidate-1");
+    });
+
     it("extracts image attachments", () => {
       const payload: DiscordMessageCreatePayload = {
         id: "img-msg",
