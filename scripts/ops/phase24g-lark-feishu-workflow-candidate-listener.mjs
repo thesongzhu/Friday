@@ -132,6 +132,8 @@ function readEnvConfig() {
     acceptAfterMs: Date.now() - 5_000,
     githubRunId: process.env.GITHUB_RUN_ID?.trim() || null,
     githubSha: process.env.GITHUB_SHA?.trim() || null,
+    rejectCandidateId: process.env.PHASE24G_LARK_FEISHU_REJECT_CANDIDATE_ID?.trim() || null,
+    approveCandidateId: process.env.PHASE24G_LARK_FEISHU_APPROVE_CANDIDATE_ID?.trim() || null,
     rejectNonce: buildWorkflowNonce(PHASE_KEY, "reject", "PHASE24G_LARK_FEISHU_REJECT_NONCE"),
     approveNonce: buildWorkflowNonce(PHASE_KEY, "approve", "PHASE24G_LARK_FEISHU_APPROVE_NONCE"),
   };
@@ -325,6 +327,8 @@ function initialReport(config, reportPath) {
       configuredAllowedUserIdTail: tail(config.allowedUserId),
       larkAppIdTail: tail(config.appId),
       larkAppSecretPresent: Boolean(config.appSecret),
+      configuredRejectCandidateIdTail: tail(config.rejectCandidateId),
+      configuredApproveCandidateIdTail: tail(config.approveCandidateId),
       rejectNonce: config.rejectNonce,
       approveNonce: config.approveNonce,
       workflowGeneratorApproveAndSaveStubbed: true,
@@ -482,6 +486,8 @@ async function main() {
       workflowTag: WORKFLOW_TAG,
       rejectNonce: config.rejectNonce,
       approveNonce: config.approveNonce,
+      rejectCandidateId: config.rejectCandidateId,
+      approveCandidateId: config.approveCandidateId,
     };
     const { rejectCandidateId, approveCandidateId, generatorSessionId } = await seedWorkflowCandidates(stateDir, harnessConfig);
     report.criteria.rejectCandidateSeeded = true;

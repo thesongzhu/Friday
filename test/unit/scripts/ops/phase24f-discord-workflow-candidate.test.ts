@@ -43,6 +43,8 @@ function baseConfig() {
     acceptAfterMs: Date.parse("2026-05-28T00:00:00Z") - 1000,
     githubRunId: null,
     githubSha: null,
+    rejectCandidateId: null,
+    approveCandidateId: null,
     rejectNonce: "phase24f-reject-test",
     approveNonce: "phase24f-approve-test",
   };
@@ -68,6 +70,8 @@ describe("phase24f Discord workflow-candidate listener exports", () => {
       "FRIDAY_DISCORD_REQUIRE_MENTION",
       "PHASE24F_DISCORD_REJECT_NONCE",
       "PHASE24F_DISCORD_APPROVE_NONCE",
+      "PHASE24F_DISCORD_REJECT_CANDIDATE_ID",
+      "PHASE24F_DISCORD_APPROVE_CANDIDATE_ID",
       "GITHUB_RUN_ID",
       "GITHUB_SHA",
     ]);
@@ -89,6 +93,30 @@ describe("phase24f Discord workflow-candidate listener exports", () => {
     expect(missing).toContain("FRIDAY_DISCORD_BOT_USER_ID");
     expect(missing).not.toContain("FRIDAY_DISCORD_BOT_TOKEN");
     expect(missing).not.toContain("FRIDAY_DISCORD_CHANNEL_ID");
+  });
+
+  it("reads deterministic candidate IDs from env for mention-required live operator commands", async () => {
+    const listener = await loadListener();
+    process.env.FRIDAY_DISCORD_BOT_TOKEN = "token";
+    process.env.FRIDAY_DISCORD_SETUP_USER_ID = "user-1";
+    process.env.FRIDAY_DISCORD_CHANNEL_ID = "channel-1";
+    process.env.FRIDAY_DISCORD_BOT_USER_ID = "bot-1";
+    process.env.PHASE24F_DISCORD_REJECT_CANDIDATE_ID = "phase24f-reject-run-123";
+    process.env.PHASE24F_DISCORD_APPROVE_CANDIDATE_ID = "phase24f-approve-run-123";
+    process.env.GITHUB_RUN_ID = "123";
+    process.env.GITHUB_SHA = "abcabcabcabcabcabcabcabcabcabcabcabcabca";
+
+    const config = listener.readEnvConfig();
+
+    expect(config.rejectCandidateId).toBe("phase24f-reject-run-123");
+    expect(config.approveCandidateId).toBe("phase24f-approve-run-123");
+    expect(config.requireMention).toBe(true);
+    expect(listener.buildRejectOperatorMessage(config.rejectCandidateId, config)).toBe(
+      "reject reflex phase24f-reject-run-123 phase24f-reject-run-123-abcabcab <@bot-1>",
+    );
+    expect(listener.buildApproveOperatorMessage(config.approveCandidateId, config)).toBe(
+      "approve reflex phase24f-approve-run-123 <@bot-1>",
+    );
   });
 
   it("builds mention-compatible command text with the mention at the end", async () => {

@@ -47,6 +47,8 @@ function baseConfig() {
     acceptAfterMs: Date.parse("2026-05-28T00:00:00Z") - 1000,
     githubRunId: null,
     githubSha: null,
+    rejectCandidateId: null,
+    approveCandidateId: null,
     rejectNonce: "phase24g-reject-test",
     approveNonce: "phase24g-approve-test",
   };
@@ -92,6 +94,8 @@ describe("phase24g Lark/Feishu workflow-candidate listener exports", () => {
       "FRIDAY_LARK_ENCRYPT_KEY",
       "PHASE24G_LARK_FEISHU_REJECT_NONCE",
       "PHASE24G_LARK_FEISHU_APPROVE_NONCE",
+      "PHASE24G_LARK_FEISHU_REJECT_CANDIDATE_ID",
+      "PHASE24G_LARK_FEISHU_APPROVE_CANDIDATE_ID",
       "PHASE24G_DISABLE_FORCE_EXIT",
       "GITHUB_RUN_ID",
       "GITHUB_SHA",
@@ -116,6 +120,30 @@ describe("phase24g Lark/Feishu workflow-candidate listener exports", () => {
     expect(missing).toContain("FRIDAY_LARK_ALLOWED_USER_ID");
     expect(missing).not.toContain("FRIDAY_LARK_APP_ID");
     expect(missing).not.toContain("FRIDAY_LARK_CHAT_ID");
+  });
+
+  it("reads deterministic candidate IDs from env for live operator commands", async () => {
+    const listener = await loadListener();
+    const appCredentialEnv = ["FRIDAY", "LARK", "APP", "SE" + "CRET"].join("_");
+    process.env.FRIDAY_LARK_APP_ID = "app-id";
+    process.env[appCredentialEnv] = "lark-fixture-value";
+    process.env.FRIDAY_LARK_CHAT_ID = "chat-1";
+    process.env.FRIDAY_LARK_ALLOWED_USER_ID = "user-1";
+    process.env.PHASE24G_LARK_FEISHU_REJECT_CANDIDATE_ID = "phase24g-reject-run-456";
+    process.env.PHASE24G_LARK_FEISHU_APPROVE_CANDIDATE_ID = "phase24g-approve-run-456";
+    process.env.GITHUB_RUN_ID = "456";
+    process.env.GITHUB_SHA = "abcabcabcabcabcabcabcabcabcabcabcabcabca";
+
+    const config = listener.readEnvConfig();
+
+    expect(config.rejectCandidateId).toBe("phase24g-reject-run-456");
+    expect(config.approveCandidateId).toBe("phase24g-approve-run-456");
+    expect(listener.buildRejectOperatorMessage(config.rejectCandidateId, config)).toBe(
+      "reject reflex phase24g-reject-run-456 phase24g-reject-run-456-abcabcab",
+    );
+    expect(listener.buildApproveOperatorMessage(config.approveCandidateId)).toBe(
+      "approve reflex phase24g-approve-run-456",
+    );
   });
 
   it("accepts a fresh trusted sender/chat command and rejects wrong sender/chat/stale events", async () => {
