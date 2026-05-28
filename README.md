@@ -37,7 +37,7 @@ Friday is a **public v1 local candidate** distributed via **npm/source only**, n
 - Slack HTTP Events-API inbound and QQ remain **`unsupported`** in this release.
 - Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
 - `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
-- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted). The published npm `1.0.2` package still carries the original nine proof-pending headlines. GitHub-visible source after `1.0.2` has closed several deterministic slices, but those are not npm truth until a future authorized publish; see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md).
+- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted). The published npm `1.0.2` package still carries the original nine proof-pending headlines. GitHub-visible source after `1.0.2` has closed several deterministic slices and the Telegram/Discord/Lark workflow-candidate live proof trilogy, but those are not npm truth until a future authorized publish. Phase24H natural-trigger execution remains paused / `proof_pending`; see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md).
 
 ## The Product Loop
 

@@ -1,6 +1,6 @@
 # Friday Public V1 Local Candidate
 
-Last reviewed: 2026-05-26
+Last reviewed: 2026-05-28
 
 This document summarizes the public v1 local candidate claim for the published
 `1.0.x` local-candidate line. The current public npm/source release is `1.0.2`.
@@ -117,9 +117,11 @@ the release-closure plan's runtime-delta classification report.
 The dogfood gate for `1.0.1` closed as `dogfood_partial_pass` with weighted UX
 score 7.78/10 (below the 8.0 `dogfood_pass` threshold). The published npm
 `1.0.2` package still carries the original proof-pending headlines. GitHub-visible
-source after `1.0.2` has narrowed several of them with PR #350 through PR #355
-and the provider/cost source slice below, but those source changes are **not**
-npm package truth until a future authorized publish. Current source truth:
+source after `1.0.2` has narrowed several of them with PR #350 through PR #360,
+then added Phase24E/F/G workflow-candidate approve/reject live proofs for
+Telegram, Discord, and Lark/Feishu. Those source changes are **not** npm package
+truth until a future authorized publish, and Phase24H natural-trigger execution
+remains paused / `proof_pending`. Current source truth:
 
 1. Autonomous self-repair execute → rollback: deterministic skill-drift and
    route rollback receipt mechanics are closed on GitHub main by PR #351 and
@@ -152,6 +154,19 @@ npm package truth until a future authorized publish. Current source truth:
    sync, restart/recovery, and duplicate-row non-merge proof are closed on
    GitHub main by PR #355. Destructive dedup merge/block policy, live external
    memory dogfood, and npm package truth remain separate.
+
+10. Channel workflow-candidate approve/reject: Telegram (Phase24E), Discord
+    (Phase24F), and Lark/Feishu (Phase24G) live artifacts now validate on
+    GitHub main after `1.0.2`, with reject not saving a workflow and approve
+    saving through real CRUD. These proofs intentionally use a stubbed LLM
+    bridge and remain separate from npm package truth, live LLM generation,
+    outbound channel automation, and natural-trigger execution.
+11. Phase24H Telegram natural-trigger execution: source and repair attempts are
+    present on GitHub main, but the live proof is paused / `proof_pending`.
+    Do not claim that a live LLM autonomously invoked mutating `workflow_run`.
+    The unresolved design question is whether this proof should require live
+    LLM tool autonomy or parent-runtime deterministic workflow execution after
+    a trusted natural trigger.
 
 These are truth-labeled, not silent passes. None contradict the safe claim
 above.

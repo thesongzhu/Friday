@@ -22,7 +22,7 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
   it("builds deterministic operator prompts from GitHub run metadata", async () => {
     process.env.GITHUB_RUN_ID = "12345";
     process.env.GITHUB_SHA = "phase24hsha-for-test";
-    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "test-token";
     process.env.FRIDAY_TELEGRAM_ALLOWED_USER_ID = "user-1";
     process.env.FRIDAY_TELEGRAM_CHAT_ID = "chat-1";
     process.env.FRIDAY_DEEPSEEK_API_KEY = "deepseek-test-key"; // pragma: allowlist secret
@@ -42,7 +42,7 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
   });
 
   it("reports missing DeepSeek env without exposing secret values", async () => {
-    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.FRIDAY_TELEGRAM_BOT_TOKEN = "test-token";
     process.env.FRIDAY_TELEGRAM_ALLOWED_USER_ID = "user-1";
     process.env.FRIDAY_TELEGRAM_CHAT_ID = "chat-1";
     delete process.env.FRIDAY_DEEPSEEK_API_KEY;

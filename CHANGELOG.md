@@ -20,6 +20,17 @@ and this project follows Semantic Versioning.
 - Usage & Cost source/UI proof now keeps near-limit and over-limit budget states
   visibly distinct. This supports cost-control truth without claiming hidden
   spend prevention beyond the configured budget/routing policy.
+- GitHub-visible main after npm `1.0.2` now has live Telegram, Discord, and
+  Lark/Feishu workflow-candidate approve/reject proof artifacts for Phase24E/F/G.
+  These prove the channel candidate lifecycle with the LLM bridge explicitly
+  stubbed; they do not prove live LLM generation, outbound channel automation,
+  npm package truth, or Phase24H natural-trigger execution.
+- Phase24H Telegram natural-trigger source work and repair attempts are recorded
+  as paused / `proof_pending`. The current source must not claim that a live LLM
+  autonomously invoked mutating `workflow_run`; the parent-runtime design
+  question remains separate from package alignment.
+- Push Real Green Gate runs now avoid unnecessary live DeepSeek spend unless a
+  manual workflow_dispatch live-provider lane explicitly requests it.
 - No npm publish is included in this source change. Public npm package alignment
   still requires an explicit operator-approved future release.
 
