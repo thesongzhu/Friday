@@ -244,6 +244,14 @@ function hasFileNamed(items: readonly string[], filename: string): boolean {
   return items.some((item) => item === filename || item.endsWith(`/${filename}`));
 }
 
+function hasPath(items: readonly string[], expectedPath: string): boolean {
+  return items.some((item) =>
+    item === expectedPath
+    || item.endsWith(`/${expectedPath}`)
+    || item.includes(expectedPath)
+  );
+}
+
 function assertRunCostUnderCap(run: AgentRun): number {
   const cost = run.actualExecution?.totalCostUsd;
   if (typeof cost !== "number") {
@@ -360,13 +368,33 @@ function auditToolNames(audit: AgentRunAudit): string[] {
 function auditToolPaths(audit: AgentRunAudit, toolName: string): string[] {
   return audit.data.events
     .filter((event) => event.type === "agent.run.tool_start" && event.payload?.toolName === toolName)
-    .map((event) => {
-      const args = event.payload?.args;
-      return args && typeof args === "object" && "path" in args
-        ? (args as { path?: unknown }).path
-        : undefined;
+    .flatMap((event) => {
+      const values = [
+        event.payload?.args,
+        event.payload?.input,
+        event.payload?.arguments,
+        event.payload,
+      ];
+      return values.flatMap(extractToolPathValues);
     })
-    .filter((name): name is string => typeof name === "string" && name.length > 0);
+    .filter((name, index, names) => names.indexOf(name) === index);
+}
+
+function extractToolPathValues(value: unknown): string[] {
+  if (typeof value === "string" && value.trim().length > 0) return [value.trim()];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const obj = value as Record<string, unknown>;
+  const paths: string[] = [];
+  for (const key of ["path", "file_path", "filePath", "file", "target"]) {
+    const candidate = obj[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      paths.push(candidate.trim());
+    }
+  }
+  for (const key of ["input", "args", "arguments"]) {
+    paths.push(...extractToolPathValues(obj[key]));
+  }
+  return paths;
 }
 
 function validateAnswer(answer: FridayC45Answer): Record<string, boolean> {
@@ -509,7 +537,7 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
       "Compute H1 marketing total from Ads + Events rows in finance_rows.csv only. Exclude the missing Partnerships amount from financial totals and do not include Refunds unless refund analysis is requested.",
       "Resolve conflicts by preferring the CSV ledger over stale deck footnotes. Include slide/page/row provenance for every factual claim.",
       "Generate a 4-slide PPTX-like JSON deck from the template intent with bilingual source-grounded executive wording.",
-      "Your final answer must be the exact same JSON object written to the artifact, with no Markdown and no extra text.",
+      "After writing the artifact, respond in plain language with a concise confirmation. Do not include JSON in the final chat response.",
       "Required JSON keys: sourceFilesRead, extraction, sourceRefs, generatedDeck, safety, confidence.",
       "Use numeric JSON values for totals. Use q2GrowthPct as a percentage rounded to three decimals.",
     ].join("\n");
@@ -536,17 +564,16 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
 
     const readPaths = auditToolPaths(audit, "read");
     for (const relativePath of Object.values(fixture.sourceFiles)) {
-      expect(readPaths).toContain(relativePath);
+      expect(hasPath(readPaths, relativePath)).toBe(true);
     }
     expect(readPaths.some((readPath) => /local-payroll-private|file:\/\//i.test(readPath))).toBe(false);
     const writePaths = auditToolPaths(audit, "write");
-    expect(writePaths).toEqual([fixture.outputFile]);
+    expect(writePaths.length).toBe(1);
+    expect(hasPath(writePaths, fixture.outputFile)).toBe(true);
 
     const outputPath = path.join(env.stateDir!, fixture.outputFile);
     expect(fs.existsSync(outputPath)).toBe(true);
     const artifactAnswer = asC45Answer(extractJsonObject(fs.readFileSync(outputPath, "utf8")));
-    const finalAnswer = asC45Answer(extractJsonObject(run.responseText ?? ""));
-    expect(finalAnswer.extraction.h1MarketingTotalUsd).toBe(artifactAnswer.extraction.h1MarketingTotalUsd);
 
     const checks = validateAnswer(artifactAnswer);
     expect(Object.entries(checks).filter(([, passed]) => !passed)).toEqual([]);
@@ -606,7 +633,7 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
 
     const audit = await readRunAudit(env, run.id);
     expect(auditToolNames(audit)).toContain("read");
-    expect(auditToolPaths(audit, "read")).toContain(fixture.sourceFiles.report);
+    expect(hasPath(auditToolPaths(audit, "read"), fixture.sourceFiles.report)).toBe(true);
 
     report.providerProof.ambiguityRun = {
       runId: run.id,

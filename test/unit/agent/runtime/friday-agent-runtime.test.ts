@@ -4876,6 +4876,44 @@ describe("FridayAgentRuntime", () => {
     expect(result.usageOutput).toBe(13);
   });
 
+  it("recovers adjacent text-encoded tool call JSON objects in order", async () => {
+    const llmClient = createMockLlmClient([
+      [
+        {
+          type: "text_delta",
+          text:
+            "{\"name\":\"echo\",\"arguments\":{\"message\":\"first\"}}\n" +
+            "{\"name\":\"echo\",\"arguments\":{\"message\":\"second\"}}",
+        },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 12, outputTokens: 8 },
+      ],
+      [
+        { type: "text_delta", text: "Recovered both tool calls." },
+        { type: "message_end", stopReason: "end_turn", inputTokens: 10, outputTokens: 5 },
+      ],
+    ]);
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [createEchoTool()],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({ task: "Say hello twice" });
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe("Recovered both tool calls.");
+    expect(result.toolCallCount).toBe(2);
+    expect(result.usageInput).toBe(22);
+    expect(result.usageOutput).toBe(13);
+  });
+
   // ─── Run persists to database ───
 
   it("creates and updates run record in database", async () => {

@@ -7092,14 +7092,25 @@ function recoverToolCallsFromAssistantText(
   const normalized = assistantText.trim();
   if (normalized.length === 0) return [];
 
-  const candidates = new Set<string>([normalized]);
+  const extractedValues = extractJsonValueCandidates(normalized);
+  const candidates: string[] = extractedValues.length > 1
+    ? [...extractedValues, normalized]
+    : [normalized];
   const fenced = unwrapJsonCodeFence(normalized);
-  if (fenced) candidates.add(fenced);
+  if (fenced) candidates.push(fenced);
   for (const block of extractJsonCodeBlocks(normalized)) {
-    candidates.add(block);
+    candidates.push(block);
+  }
+  for (const block of extractedValues) {
+    candidates.push(block);
   }
 
+  const seenCandidates = new Set<string>();
+  const recoveredCalls: ParsedTextToolCall[] = [];
   for (const candidate of candidates) {
+    if (candidate === normalized && extractedValues.length > 1 && recoveredCalls.length > 0) continue;
+    if (seenCandidates.has(candidate)) continue;
+    seenCandidates.add(candidate);
     if (!looksLikeJson(candidate)) continue;
 
     let parsed: unknown;
@@ -7114,15 +7125,15 @@ function recoverToolCallsFromAssistantText(
       const calls = parsed
         .map((item) => parseTextToolCall(item, validToolNames))
         .filter((item): item is ParsedTextToolCall => item !== null);
-      if (calls.length > 0) return calls;
+      recoveredCalls.push(...calls);
       continue;
     }
 
     const single = parseTextToolCall(parsed, validToolNames);
-    if (single) return [single];
+    if (single) recoveredCalls.push(single);
   }
 
-  return [];
+  return recoveredCalls;
 }
 
 function parseTextToolCall(
@@ -7179,6 +7190,47 @@ function extractJsonCodeBlocks(value: string): string[] {
     if (content) blocks.push(content);
   }
   return blocks;
+}
+
+function extractJsonValueCandidates(value: string): string[] {
+  const candidates: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = inString;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (char === "{" || char === "[") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if ((char === "}" || char === "]") && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        candidates.push(value.slice(start, index + 1).trim());
+        start = -1;
+      }
+    }
+  }
+
+  return candidates;
 }
 
 function looksLikeJson(value: string): boolean {
