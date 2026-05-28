@@ -23,12 +23,23 @@
  *   - /v1/security   security findings / posture
  *   - /v1/fleet      fleet inventory
  *   - /v1/diagnosis  diagnosis data
- *   - /v1/sessions   session details
+ *   - /v1/learning   diagnosis/incident data ALIAS of /v1/diagnosis — createFridayDiagnosisRoutes
+ *                    mounts the SAME handlers under both prefixes (e.g. /v1/learning/incidents,
+ *                    /v1/learning/overview), so gating /v1/diagnosis without /v1/learning would
+ *                    leave the identical incident data anonymously readable via the alias.
+ *   - /v1/sessions   session details (incl. conversation history; anonymous users must sign in
+ *                    to list/read sessions — an accepted trade-off of the targeted scope)
  *
  * Intentionally NOT gated here (kept anonymous): health, setup, onboarding, auth
  * bootstrap/login/refresh, version/status/capabilities, and the core no-login UX surfaces
  * (agent, chat, skills, workflows, …). Mutations on public routes are already fail-closed by
  * the public-mutation safety floor; this gate closes the read side for sensitive surfaces.
+ *
+ * Known-ungated personal/posture surfaces deliberately left OUT of this targeted scope
+ * (recorded so they are not silently dropped — candidates for a follow-up classification, NOT
+ * closed here): /v1/uix/learned-facts, /v1/uix/user-profile, /v1/audit, /v1/observability/audit,
+ * /v1/grants, /v1/system/remote/devices, /v1/providers/usage, /v1/providers/budget. Each needs
+ * its own per-handler review before gating.
  */
 export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/memory",
@@ -36,6 +47,7 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/security",
   "/v1/fleet",
   "/v1/diagnosis",
+  "/v1/learning",
   "/v1/sessions",
 ];
 

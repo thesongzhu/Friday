@@ -152,6 +152,30 @@ describe("FridayHttpServer sensitive-read floor", () => {
     expect(handlerCalls).toBe(0);
   });
 
+  it("negative: anonymous GET on /v1/learning (diagnosis-data alias of /v1/diagnosis) → 401", async () => {
+    let handlerCalls = 0;
+    await startWith((routes) => {
+      // createFridayDiagnosisRoutes mounts the same incident handlers under BOTH
+      // /v1/diagnosis and /v1/learning; the floor must gate the alias too.
+      routes.register({
+        operationId: "learning.incidents.list",
+        method: "GET",
+        path: "/v1/learning/incidents",
+        auth: { public: true },
+        async handler() {
+          handlerCalls += 1;
+          return { incidents: [] };
+        },
+      });
+    });
+
+    const response = await fetch(`${baseUrl}/v1/learning/incidents`);
+    expect(response.status).toBe(401);
+    const body = await response.json() as { ok: false; error: { code: string } };
+    expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    expect(handlerCalls).toBe(0);
+  });
+
   it("negative: anonymous HEAD on a sensitive read route → 401 (HEAD is a read)", async () => {
     await startWith((routes) => {
       routes.register({
