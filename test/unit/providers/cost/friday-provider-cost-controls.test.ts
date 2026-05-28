@@ -57,10 +57,52 @@ describe("Friday provider cost controls", () => {
       expect(catalog.getPricing("openai", "gpt-4.1-mini").inputPer1MUsd).toBe(0.4);
       expect(catalog.getPricing("openai", "gpt-4.1").inputPer1MUsd).toBe(2);
       expect(catalog.getPricing("ollama", "llama3.1").inputPer1MUsd).toBe(0);
-      expect(catalog.getPricing("openai", "unknown-model")).toMatchObject({
-        inputPer1MUsd: 1,
-        outputPer1MUsd: 4,
-        qualityTier: "balanced",
+    });
+
+    it("prices the OpenAI gpt-4o models Friday auto-detects (incl gpt-4o-mini)", () => {
+      const catalog = createFridayProviderPricingCatalog();
+
+      // gpt-4o-mini is the auto-detected OpenAI default; the longest pattern wins
+      // so gpt-4o-mini does not collapse into gpt-4o.
+      expect(catalog.getPricing("openai", "gpt-4o-mini")).toMatchObject({
+        inputPer1MUsd: 0.15,
+        outputPer1MUsd: 0.6,
+        qualityTier: "cheap",
+      });
+      expect(catalog.getPricing("openai", "gpt-4o")).toMatchObject({
+        inputPer1MUsd: 2.5,
+        outputPer1MUsd: 10,
+      });
+    });
+
+    it("prices DeepSeek (Friday's primary) v4 models and legacy aliases", () => {
+      const catalog = createFridayProviderPricingCatalog();
+
+      expect(catalog.getPricing("deepseek", "deepseek-v4-pro")).toMatchObject({
+        inputPer1MUsd: 1.74,
+        outputPer1MUsd: 3.48,
+        qualityTier: "best",
+      });
+      expect(catalog.getPricing("deepseek", "deepseek-v4-flash")).toMatchObject({
+        inputPer1MUsd: 0.14,
+        outputPer1MUsd: 0.28,
+      });
+      // Deprecated aliases map to v4-flash pricing — they are still priced, not
+      // sent through the unknown fallback.
+      expect(catalog.getPricing("deepseek", "deepseek-chat").inputPer1MUsd).toBe(0.14);
+      expect(catalog.getPricing("deepseek", "deepseek-reasoner").inputPer1MUsd).toBe(0.14);
+    });
+
+    it("records an unrecognized model as explicit unknown, not a fabricated rate", () => {
+      const catalog = createFridayProviderPricingCatalog();
+
+      // Truth over guessing: no fabricated $1/$4 "balanced" estimate.
+      expect(catalog.getPricing("openai", "unknown-model")).toEqual({
+        inputPer1MUsd: 0,
+        outputPer1MUsd: 0,
+        cacheReadPer1MUsd: 0,
+        cacheWritePer1MUsd: 0,
+        qualityTier: "unknown",
       });
     });
   });

@@ -25,7 +25,9 @@ export type FridayBudgetState = "ok" | "near_limit" | "over_limit";
 
 // ─── Model quality tier ───
 
-export type FridayModelQualityTier = "cheap" | "balanced" | "best";
+// "unknown" is used by the pricing fallback so an unpriced model is recorded as
+// an explicit unknown rather than a fabricated "balanced" rate.
+export type FridayModelQualityTier = "cheap" | "balanced" | "best" | "unknown";
 
 // ─── Normalized usage across API shapes ───
 
@@ -99,7 +101,10 @@ export interface FridayLlmUsageRecord {
   usageDay: string;
   usageMonth: string;
   providerId: string;
-  providerKind: FridayProviderKind;
+  // May be "unknown" when the provider profile was deleted/disabled between the
+  // LLM call and this (fire-and-forget) usage write. Never silently default to a
+  // real provider kind — that would record false provider attribution.
+  providerKind: FridayProviderKind | "unknown";
   providerApi: FridayProviderApi;
   model: string;
   routeStrategy: FridayProviderRouteStrategy;

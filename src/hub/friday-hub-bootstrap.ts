@@ -525,8 +525,6 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   { envVar: "XAI_API_KEY", kind: "xai", defaultModel: "grok-3-mini" },
 ];
 
-/** Routing priority: anthropic first, then openai, then detection order. */
-const ROUTING_PRIORITY: readonly FridayProviderKind[] = ["anthropic", "openai"];
 const STABLE_OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const STABLE_OPENAI_SUPPORTED_MODELS = [STABLE_OPENAI_DEFAULT_MODEL, "gpt-4o"] as const;
 const OPENAI_PROVIDER_NAME = "OpenAI Provider";
@@ -686,26 +684,20 @@ async function autoDetectProvidersFromEnv(
           .filter((p) => p.enabled)
           .map((p) => ({ kind: p.kind as FridayProviderKind, id: p.id }));
 
-    if (candidates.length > 0) {
-      // Pick best provider by priority
-      let chosen = candidates[0]!;
-      for (const priorityKind of ROUTING_PRIORITY) {
-        const match = candidates.find((d) => d.kind === priorityKind);
-        if (match) {
-          chosen = match;
-          break;
-        }
-      }
+    const distinctKinds = new Set(candidates.map((c) => c.kind));
+
+    if (candidates.length > 0 && distinctKinds.size <= 1) {
+      // Exactly one provider kind is available and the user has not chosen a
+      // route. Auto-selecting the sole available provider does not usurp a user
+      // choice, so default to it with NO auto-added fallback providers.
+      const chosen = candidates[0]!;
       const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind);
       const defaultModel = chosenEntry?.defaultModel ?? (chosen.kind === "ollama" ? "llama3.2" : "default");
       try {
         await providerService.setRoutingConfig({
           defaultProviderId: chosen.id,
           defaultModel,
-          fallbackProviderIds: candidates
-            .filter((d) => d.id !== chosen.id)
-            .slice(0, 3)
-            .map((d) => d.id),
+          fallbackProviderIds: [],
         });
       } catch (err) {
         console.warn(
@@ -713,6 +705,18 @@ async function autoDetectProvidersFromEnv(
           err instanceof Error ? err.message : String(err),
         );
       }
+    } else if (distinctKinds.size > 1) {
+      // Multiple provider kinds are available but the user has not chosen a
+      // route. Locked provider policy: never auto-pick a provider (no hidden
+      // OpenAI / DeepSeek default) and never auto-add fallback providers behind
+      // the user's back. Leave routing unset so the request-time
+      // PROVIDER_NO_ROUTING path surfaces an explicit-choice (action-required)
+      // prompt and the user makes the call.
+      console.warn(
+        `[friday] Auto-detect: ${String(distinctKinds.size)} provider kinds detected `
+          + `(${[...distinctKinds].sort().join(", ")}) but no default route is configured. `
+          + "Not auto-selecting a provider — explicit user choice required.",
+      );
     }
   }
 

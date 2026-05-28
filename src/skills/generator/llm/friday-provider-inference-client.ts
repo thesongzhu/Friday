@@ -630,6 +630,9 @@ export function createFridayProviderInferenceClient(
           taskComplexity: complexity,
           usage: result.usage,
           costUsd: result.costUsd,
+          // Distinguish this runtime path truthfully in usage artifacts
+          // (hub-agent callers tag source="agent-runtime").
+          metadata: { source: "generator-llm" },
         }).catch(() => {
           // Usage recording is best-effort; swallow errors
         });

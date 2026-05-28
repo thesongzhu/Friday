@@ -2042,4 +2042,54 @@ describe("FridayHub Bootstrap Integration", () => {
     const providers = await hub.providerService.listProviders();
     expect(providers.find((p) => p.kind === "deepseek")).toBeUndefined();
   });
+
+  it("does not auto-select a provider when multiple kinds are detected and no routing is chosen", async () => {
+    // Locked provider policy (gate OFF / dev boot): multiple LLM keys + no
+    // explicit routing must require an explicit user choice — never a hidden
+    // OpenAI / DeepSeek default and never an auto-added fallback.
+    process.env.OPENAI_API_KEY = "test-openai-key-not-validated"; // pragma: allowlist secret
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+    const hub = await createIsolatedHub();
+    await hub.start();
+
+    const providers = await hub.providerService.listProviders();
+    // Both profiles are registered so the user can choose between them.
+    expect(providers.find((p) => p.kind === "openai")).toBeDefined();
+    expect(providers.find((p) => p.kind === "deepseek")).toBeDefined();
+
+    // ...but no default route is auto-elected: this surfaces as action-required.
+    const routing = await hub.providerService.getRoutingConfig();
+    expect(routing.defaultProviderId).toBe("");
+    expect(routing.fallbackProviderIds).toEqual([]);
+  });
+
+  it("preserves a saved default with empty fallbacks on multi-key boot (no auto-added fallback)", async () => {
+    // Gate OFF (dev) path: a user who saved {default, fallbackProviderIds: []}
+    // must not have a fallback silently added when a second key appears.
+    const hub = await createIsolatedHub();
+    const primary = await hub.providerService.createProvider({
+      kind: "deepseek",
+      name: "DeepSeek Primary",
+      baseUrl: "https://api.deepseek.com",
+      authMode: "api-key",
+      api: "openai-completions",
+      apiKey: "$DEEPSEEK_API_KEY",
+      supportedModels: ["deepseek-v4-pro"],
+      defaultModel: "deepseek-v4-pro",
+      validateOnSave: false,
+    });
+    await hub.providerService.setRoutingConfig({
+      defaultProviderId: primary.id,
+      defaultModel: "deepseek-v4-pro",
+      fallbackProviderIds: [],
+    });
+    // A second provider key appears in the environment.
+    process.env.OPENAI_API_KEY = "test-openai-key-not-validated"; // pragma: allowlist secret
+
+    await hub.start();
+
+    const routing = await hub.providerService.getRoutingConfig();
+    expect(routing.defaultProviderId).toBe(primary.id);
+    expect(routing.fallbackProviderIds).toEqual([]);
+  });
 });

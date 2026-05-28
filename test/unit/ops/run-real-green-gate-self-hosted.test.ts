@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REAL_GREEN_GATE_RESULT_FILENAME } from "../../../scripts/ops/lib/real-green-gate-result.mjs";
 import {
   completeSelfHostedSetup,
+  configureExplicitDeepSeekRouting,
   createGateEnv,
   createRuntimeEnv,
 } from "../../../scripts/ops/run-real-green-gate-self-hosted.mjs";
@@ -98,6 +99,88 @@ describe("run-real-green-gate-self-hosted", () => {
       completedSteps: ["welcome", "security", "network", "skills"],
       skippedSteps: ["communication", "provider", "channels"],
     });
+  });
+
+  it("pins explicit DeepSeek routing (no fallback) and never selects OpenAI for the default proof", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/v1/auth/login")) {
+        return new Response(JSON.stringify({ ok: true, data: { accessToken: "tok" } }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/providers")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            items: [
+              { id: "oai-1", kind: "openai", enabled: true, defaultModel: "gpt-4o-mini" },
+              { id: "ds-1", kind: "deepseek", enabled: true, defaultModel: "deepseek-v4-pro" },
+            ],
+          },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/v1/model-routing")) {
+        return new Response(JSON.stringify({ ok: true, data: { routing: {} } }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 404 });
+    }));
+
+    const result = await configureExplicitDeepSeekRouting("http://127.0.0.1:31337", "pass");
+
+    expect(result).toEqual({ configured: true, providerId: "ds-1" });
+    const routingCall = calls.find((c) => c.url.endsWith("/v1/model-routing"));
+    expect(routingCall?.init?.method).toBe("PUT");
+    const body = JSON.parse(String(routingCall?.init?.body));
+    expect(body).toEqual({
+      defaultProviderId: "ds-1",
+      defaultModel: "deepseek-v4-pro",
+      fallbackProviderIds: [],
+    });
+    // OpenAI is registered but must never be selected as default or fallback.
+    expect(body.defaultProviderId).not.toBe("oai-1");
+    expect(body.fallbackProviderIds).not.toContain("oai-1");
+  });
+
+  it("leaves routing unset (configured:false) when no DeepSeek provider is present", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.endsWith("/v1/auth/login")) {
+        return new Response(JSON.stringify({ ok: true, data: { accessToken: "tok" } }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/providers")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: { items: [{ id: "oai-1", kind: "openai", enabled: true }] },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 404 });
+    }));
+
+    const result = await configureExplicitDeepSeekRouting("http://127.0.0.1:31337", "pass");
+
+    expect(result).toEqual({ configured: false });
+    // No routing PUT is made — action-required is surfaced honestly.
+    expect(calls.some((url) => url.endsWith("/v1/model-routing"))).toBe(false);
+  });
+
+  it("injects OPENAI_API_KEY only on the two explicitly gated OpenAI lanes", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/real-green-gate.yml"), "utf8");
+    const injections = workflow.match(/OPENAI_API_KEY: \$\{\{ secrets\.OPENAI_API_KEY \}\}/g) ?? [];
+    // Only c3c4-provider-routing-proof and c45-real-user-intelligence-proof.
+    expect(injections).toHaveLength(2);
+    // The default proof job must not carry an OpenAI key.
+    const mainJobSection = workflow.slice(
+      workflow.indexOf("real-green-gate:"),
+      workflow.indexOf("phase24b-discord-trusted-inbound:"),
+    );
+    expect(mainJobSection).not.toContain("OPENAI_API_KEY");
   });
 
   it("passes an explicit workspace root while keeping runtime state isolated", () => {
