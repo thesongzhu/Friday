@@ -700,7 +700,6 @@ describe("Setup Wizard E2E", () => {
           expect(setupRow).toBeDefined();
           expect(setupRow!.channels_json).not.toContain("fake-discord-token");
           expect(setupRow!.channels_json).not.toContain(beginJson.data.verificationId);
-          expect(setupRow!.channels_json).not.toContain("10001");
           expect(setupRow!.channels_json).not.toContain("guild-1");
 
           const storedChannels = JSON.parse(setupRow!.channels_json) as Array<{
@@ -712,6 +711,11 @@ describe("Setup Wizard E2E", () => {
           const discordEntry = storedChannels.find((entry) => entry.kind === "discord");
           expect(discordEntry?.controlConfirmed).toBe(true);
           expect(typeof discordEntry?.controlConfirmedAt).toBe("string");
+          // Safer truth: the DM-verified user is persisted as the allowlist so
+          // the control-capable channel fails closed (not allow-all). The
+          // transient setupUserId is still dropped.
+          expect(discordEntry?.config?.allowedUsers).toEqual(["10001"]);
+          expect(discordEntry?.config?.setupUserId).toBeUndefined();
           expect(discordEntry?.config?.botUserId).toBe("bot-1");
           expect(typeof discordEntry?.config?.token).toBe("string");
           expect(String(discordEntry?.config?.token ?? "")).toMatch(/^secret:\/\/channel\//);
@@ -734,7 +738,7 @@ describe("Setup Wizard E2E", () => {
       }
     });
 
-    it("A8a: save Telegram channel should require private DM verification without writing allowlist", async () => {
+    it("A8a: save Telegram channel should require private DM verification and persist the verified allowlist", async () => {
       const originalFetch = globalThis.fetch;
       let getUpdatesCallCount = 0;
       let setupCode = "";
@@ -870,7 +874,10 @@ describe("Setup Wizard E2E", () => {
             config?: Record<string, unknown>;
           }>;
           const telegramEntry = storedChannels.find((entry) => entry.kind === "telegram");
-          expect(telegramEntry?.config?.allowedUsers).toBeUndefined();
+          // Safer truth: the privately-verified user is persisted as the
+          // allowlist so this control-capable channel fails closed instead of
+          // accepting inbound control messages from anyone.
+          expect(telegramEntry?.config?.allowedUsers).toEqual(["2002"]);
           expect(String(telegramEntry?.config?.botToken ?? "")).toMatch(/^secret:\/\/channel\//);
         } finally {
           db.close();
@@ -1137,6 +1144,29 @@ describe("Setup Wizard E2E", () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it("A8d: enabling a control-capable channel without an allowlist fails closed", async () => {
+      // GATE: a missing user/chat allowlist must block save for control-capable
+      // channels — it must not silently activate an allow-everyone channel.
+      const res = await fetch(`${baseUrl}/v1/setup/channels`, {
+        method: "POST",
+        headers: authHeaders(accessToken),
+        body: JSON.stringify({
+          controlConfirmed: true,
+          channels: [
+            {
+              kind: "slack",
+              enabled: true,
+              config: { botToken: "xoxb-test-token", appToken: "xapp-test-token", mode: "socket" },
+            },
+          ],
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = await res.text();
+      expect(body).toContain("allowlist");
+      expect(JSON.parse(body).ok).toBe(false);
     });
 
     it("A9: save channels with invalid kind should return 400 or 422", async () => {

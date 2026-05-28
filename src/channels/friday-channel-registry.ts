@@ -32,6 +32,21 @@ export interface FridayChannelRegistryEntry {
   plugin: FridayChannelPlugin;
   allowlist: FridayChannelAllowlistConfig;
   running: boolean;
+  /**
+   * When true, inbound messages on this channel can drive the agent, so a
+   * missing/empty allowlist FAILS CLOSED (deny) instead of allowing everyone.
+   */
+  controlCapable: boolean;
+}
+
+export interface FridayChannelRegisterOptions {
+  /**
+   * Mark this channel as control-capable so the registry denies inbound when no
+   * allowlist is persisted. Set from `isControlCapableChannelKind(kind)` at the
+   * activation boundary. Defaults to false (legacy allow-when-unset behavior for
+   * non-control channels such as the first-party webchat surface).
+   */
+  controlCapable?: boolean;
 }
 
 export type FridayChannelCredentialStatus =
@@ -77,7 +92,11 @@ export interface FridayChannelStartSummary {
 
 export interface FridayChannelRegistry {
   /** Register a channel plugin with optional allowlist filtering. */
-  register(plugin: FridayChannelPlugin, allowlist?: FridayChannelAllowlistConfig): void;
+  register(
+    plugin: FridayChannelPlugin,
+    allowlist?: FridayChannelAllowlistConfig,
+    options?: FridayChannelRegisterOptions,
+  ): void;
 
   /** Unregister a channel plugin by kind. Stops it if running. */
   unregister(kind: string): Promise<void>;
@@ -157,14 +176,27 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
   function checkAllowlist(
     msg: FridayChannelMessage,
     allowlist: FridayChannelAllowlistConfig,
+    controlCapable: boolean,
   ): boolean {
-    if (allowlist.allowedUsers !== undefined) {
-      if (!allowlist.allowedUsers.includes(msg.senderId)) {
+    const hasUserAllowlist = allowlist.allowedUsers !== undefined;
+    const hasChatAllowlist = allowlist.allowedChats !== undefined;
+
+    // Fail closed for control-capable channels: an entirely-unset allowlist must
+    // NOT mean "allow everyone". Without a persisted allowlist there is no
+    // verified principal, so deny inbound (locked channel policy). Non-control
+    // channels (e.g. first-party webchat) keep the legacy allow-when-unset
+    // behavior. The empty-array case ([]) already denies below.
+    if (controlCapable && !hasUserAllowlist && !hasChatAllowlist) {
+      return false;
+    }
+
+    if (hasUserAllowlist) {
+      if (!allowlist.allowedUsers!.includes(msg.senderId)) {
         return false;
       }
     }
-    if (allowlist.allowedChats !== undefined) {
-      if (!allowlist.allowedChats.includes(msg.chatId)) {
+    if (hasChatAllowlist) {
+      if (!allowlist.allowedChats!.includes(msg.chatId)) {
         return false;
       }
     }
@@ -207,7 +239,7 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
             void inbound.normalizeAllAsync(rawEvent)
               .then((msgs) => {
                 for (const msg of msgs) {
-                  if (!checkAllowlist(msg, entry.allowlist)) continue;
+                  if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) continue;
                   handler(msg);
                 }
               })
@@ -223,7 +255,7 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
             void inbound.normalizeAsync(rawEvent)
               .then((msg) => {
                 if (!msg) return;
-                if (!checkAllowlist(msg, entry.allowlist)) return;
+                if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) return;
                 handler(msg);
               })
               .catch((err: unknown) => {
@@ -237,7 +269,7 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
           if (inbound.normalizeAll) {
             const msgs = inbound.normalizeAll(rawEvent);
             for (const msg of msgs) {
-              if (!checkAllowlist(msg, entry.allowlist)) continue;
+              if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) continue;
               handler(msg);
             }
             return;
@@ -245,13 +277,13 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
 
           const msg = inbound.normalize(rawEvent);
           if (!msg) return;
-          if (!checkAllowlist(msg, entry.allowlist)) return;
+          if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) return;
           handler(msg);
           return;
         }
 
         const msg = rawEvent as FridayChannelMessage;
-        if (!checkAllowlist(msg, entry.allowlist)) return;
+        if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) return;
         handler(msg);
       };
 
@@ -259,7 +291,7 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
     }
 
     const wrappedHandler = (msg: FridayChannelMessage) => {
-      if (!checkAllowlist(msg, entry.allowlist)) return;
+      if (!checkAllowlist(msg, entry.allowlist, entry.controlCapable)) return;
       handler(msg);
     };
 
@@ -301,12 +333,13 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
   }
 
   return {
-    register(plugin, allowlist = {}) {
+    register(plugin, allowlist = {}, registerOptions = {}) {
       options?.checkMutationGrant?.("register", plugin.kind);
       if (entries.has(plugin.kind)) {
         throw new FridayDomainError("CONFLICT", `Channel kind "${plugin.kind}" is already registered`, { httpStatus: 409 });
       }
-      entries.set(plugin.kind, { plugin, allowlist, running: false });
+      const controlCapable = registerOptions.controlCapable === true;
+      entries.set(plugin.kind, { plugin, allowlist, running: false, controlCapable });
       healthState.set(plugin.kind, { restartCount: 0 });
       // B1 channel-registry lifecycle precedence diagnostic: when a plugin
       // declares both adapters.lifecycle and start(), the registry will use

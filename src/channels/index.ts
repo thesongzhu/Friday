@@ -60,6 +60,7 @@ export {
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
   FRIDAY_UNSUPPORTED_CHANNEL_KINDS,
   FRIDAY_UNSUPPORTED_CHANNEL_MODES,
+  FRIDAY_CONTROL_CAPABLE_CHANNEL_KINDS,
   FridayQqChannelConfigSchema,
   FridayLarkChannelConfigSchema,
   FridayChannelInstanceConfigSchema,
@@ -68,6 +69,7 @@ export {
   buildDefaultChannelsConfig,
   isFridayChannelKindSupported,
   isFridayChannelModeSupported,
+  isControlCapableChannelKind,
 } from "./friday-channel-config.js";
 
 // ─── Security / Capability Matrix ───

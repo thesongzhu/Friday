@@ -28,6 +28,7 @@ import {
   FRIDAY_UNSUPPORTED_CHANNEL_KINDS,
   FRIDAY_UNSUPPORTED_CHANNEL_MODES,
   getFridayChannelSecretFieldDescriptors,
+  isControlCapableChannelKind,
   isFridayChannelKindSupported,
   isFridayChannelModeSupported,
   parseFridayChannelsConfig,
@@ -1076,6 +1077,13 @@ function applyTelegramVerificationToConfig(config: Record<string, unknown>, enab
     );
   }
 
+  // Persist the verified principal as the allowlist so this control-capable
+  // channel fails closed (the verified user, not "everyone"). Mirrors the
+  // Feishu verification-apply path.
+  if (!normalizeStringList(config.allowedUsers) && session.result.userId) {
+    config.allowedUsers = [session.result.userId];
+  }
+
   delete config.setupVerificationId;
 }
 
@@ -1134,6 +1142,12 @@ function applyDiscordVerificationToConfig(config: Record<string, unknown>, enabl
 
   config.token = persistedToken;
   config.botUserId = session.botUserId;
+  // Persist the DM-verified user as the allowlist so this control-capable
+  // channel fails closed (the verified user, not "everyone"). Mirrors the
+  // Feishu verification-apply path.
+  if (!normalizeStringList(config.allowedUsers) && session.result.userId) {
+    config.allowedUsers = [session.result.userId];
+  }
   delete config.setupVerificationId;
   delete config.setupUserId;
   delete config.guildId;
@@ -2565,6 +2579,29 @@ export function createFridaySetupRoutes(
           if (kind === "feishu") {
             applyFeishuRegistrationToConfig(config, ch.enabled);
           }
+
+          // Fail closed: an enabled control-capable channel must persist a
+          // verified user/chat allowlist. A missing allowlist must NOT be
+          // treated as "allow everyone" (locked channel policy). The
+          // verification-apply above populates this for telegram/discord/feishu;
+          // any other control-capable channel must carry an explicit allowlist.
+          if (ch.enabled && isControlCapableChannelKind(kind)) {
+            const cfg = config as Record<string, unknown>;
+            const hasAllowlist = Boolean(
+              normalizeStringList(cfg.allowedUsers)
+              || normalizeStringList(cfg.allowedChats)
+              || normalizeStringList(cfg.allowedChannels)
+              || normalizeStringList(cfg.allowedGroups),
+            );
+            if (!hasAllowlist) {
+              throw new FridayDomainError(
+                "CHANNEL_ALLOWLIST_REQUIRED",
+                `Channel ${kind} requires a verified user/chat allowlist before it can be enabled (control-capable channels fail closed).`,
+                { httpStatus: 400, details: { kind, status: "allowlist_required" } },
+              );
+            }
+          }
+
           const secretFields = getFridayChannelSecretFieldDescriptors(kind, config);
 
           for (const field of secretFields) {

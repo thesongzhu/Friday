@@ -261,6 +261,7 @@ import {
   createWhatsappWebhookService,
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
+  isControlCapableChannelKind,
   isFridayChannelKindSupported,
   isFridayChannelModeSupported,
   parseFridayChannelsConfig,
@@ -5415,7 +5416,22 @@ export async function createFridayHub(
         allowlistConfig.allowedChats = (instance as Record<string, unknown>).allowedChannels as string[] | undefined;
       }
 
-      channelRegistry.register(plugin, allowlistConfig);
+      // Fail closed: a control-capable external channel with no persisted
+      // user/chat allowlist must NOT be activated (a missing allowlist would
+      // otherwise accept inbound control messages from anyone). Skip activation
+      // and surface a warning instead of silently allowing all.
+      const controlCapable = isControlCapableChannelKind(instance.kind);
+      const hasAllowlist =
+        (allowlistConfig.allowedUsers?.length ?? 0) > 0
+        || (allowlistConfig.allowedChats?.length ?? 0) > 0;
+      if (controlCapable && !hasAllowlist) {
+        const message = `Channel ${instance.kind} not activated: a verified user/chat allowlist is required for control-capable channels (fail-closed).`;
+        warnings.push(message);
+        console.warn(`[friday] ${message}`);
+        continue;
+      }
+
+      channelRegistry.register(plugin, allowlistConfig, { controlCapable });
       registeredKinds.push(plugin.kind);
     }
 
