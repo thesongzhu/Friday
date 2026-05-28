@@ -2063,6 +2063,31 @@ describe("FridayHub Bootstrap Integration", () => {
     expect(routing.fallbackProviderIds).toEqual([]);
   });
 
+  it("does not auto-select a newly detected provider when an existing different kind is enabled", async () => {
+    const hub = await createIsolatedHub();
+    await hub.providerService.createProvider({
+      kind: "openai",
+      name: "Existing OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      authMode: "api-key",
+      api: "openai-responses",
+      apiKey: "$OPENAI_API_KEY",
+      supportedModels: ["gpt-4o-mini"],
+      defaultModel: "gpt-4o-mini",
+      validateOnSave: false,
+    });
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+
+    await hub.start();
+
+    const providers = await hub.providerService.listProviders();
+    expect(providers.find((p) => p.kind === "openai")).toBeDefined();
+    expect(providers.find((p) => p.kind === "deepseek")).toBeDefined();
+    const routing = await hub.providerService.getRoutingConfig();
+    expect(routing.defaultProviderId).toBe("");
+    expect(routing.fallbackProviderIds).toEqual([]);
+  });
+
   it("honors an explicit setup provider choice (FRIDAY_SETUP_DEFAULT_PROVIDER) even with multiple keys", async () => {
     // The CLI setup wizard records the user's explicit choice here; bootstrap
     // must route to it (a user choice, not a hidden auto-pick) even when other

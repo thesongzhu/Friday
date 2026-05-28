@@ -18,6 +18,7 @@ import type {
   FridayChannelSendOptions,
 } from "./friday-channel.types.js";
 import { formatFridayChannelOutboundSendOptions } from "./friday-channel-outbound-formatting.js";
+import { isControlCapableChannelKind } from "./friday-channel-config.js";
 
 // ─── Types ───
 
@@ -338,7 +339,8 @@ export function createFridayChannelRegistry(options?: FridayChannelRegistryOptio
       if (entries.has(plugin.kind)) {
         throw new FridayDomainError("CONFLICT", `Channel kind "${plugin.kind}" is already registered`, { httpStatus: 409 });
       }
-      const controlCapable = registerOptions.controlCapable === true;
+      const inferredControlCapable = isControlCapableChannelKind(plugin.kind);
+      const controlCapable = inferredControlCapable || registerOptions.controlCapable === true;
       entries.set(plugin.kind, { plugin, allowlist, running: false, controlCapable });
       healthState.set(plugin.kind, { restartCount: 0 });
       // B1 channel-registry lifecycle precedence diagnostic: when a plugin

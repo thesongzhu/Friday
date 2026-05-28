@@ -15,6 +15,18 @@ export interface FridayMcpServerPolicy {
    * callable. Set this only when you deliberately trust the server fully.
    */
   allowAllTools?: boolean;
+  resourceAllowlist?: string[];
+  /**
+   * Explicit high-risk opt-in to expose/read EVERY resource an external MCP
+   * server advertises. Default (false/unset) FAILS CLOSED.
+   */
+  allowAllResources?: boolean;
+  promptAllowlist?: string[];
+  /**
+   * Explicit high-risk opt-in to expose/get EVERY prompt an external MCP server
+   * advertises. Default (false/unset) FAILS CLOSED.
+   */
+  allowAllPrompts?: boolean;
   rateLimit?: FridayMcpServerRateLimitPolicy;
 }
 
@@ -123,6 +135,8 @@ export type FridayMcpErrorCode =
   | "REQUEST_FAILED"
   | "REQUEST_TIMEOUT"
   | "POLICY_TOOL_FORBIDDEN"
+  | "POLICY_RESOURCE_FORBIDDEN"
+  | "POLICY_PROMPT_FORBIDDEN"
   | "POLICY_RATE_LIMITED"
   | "DEDUP_CACHE_HIT";
 

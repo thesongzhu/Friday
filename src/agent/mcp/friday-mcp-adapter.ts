@@ -77,6 +77,8 @@ export const FRIDAY_MCP_ADAPTER_ERROR_CODES = {
   TRANSPORT_ERROR: "MCP_TRANSPORT_ERROR",
   REQUEST_FAILED: "MCP_REQUEST_FAILED",
   POLICY_TOOL_FORBIDDEN: "MCP_POLICY_TOOL_FORBIDDEN",
+  POLICY_RESOURCE_FORBIDDEN: "MCP_POLICY_RESOURCE_FORBIDDEN",
+  POLICY_PROMPT_FORBIDDEN: "MCP_POLICY_PROMPT_FORBIDDEN",
   POLICY_RATE_LIMITED: "MCP_POLICY_RATE_LIMITED",
 } as const;
 
@@ -540,11 +542,12 @@ export function createFridayMcpAdapter(
           },
         });
 
+        const filtered = applyResourceAllowlist(server.policy, resources);
         markServerState(server.id, "loaded", {
-          resourceCount: resources.length,
+          resourceCount: filtered.length,
           lastLoadedAt: new Date().toISOString(),
         });
-        collected.push(...resources);
+        collected.push(...filtered);
       }
 
       return collected;
@@ -556,6 +559,7 @@ export function createFridayMcpAdapter(
       const correlationId = nextCorrelationId(server.id, "resources.read");
 
       markServerState(server.id, "discoverable");
+      enforceResourceAllowlist(server, input.uri, routeId, correlationId);
       const cached = requestDedup.get<FridayMcpReadResourceResult>(
         server.id,
         "resources/read",
@@ -643,11 +647,12 @@ export function createFridayMcpAdapter(
           },
         });
 
+        const filtered = applyPromptAllowlist(server.policy, prompts);
         markServerState(server.id, "loaded", {
-          promptCount: prompts.length,
+          promptCount: filtered.length,
           lastLoadedAt: new Date().toISOString(),
         });
-        collected.push(...prompts);
+        collected.push(...filtered);
       }
 
       return collected;
@@ -659,6 +664,7 @@ export function createFridayMcpAdapter(
       const correlationId = nextCorrelationId(server.id, `prompts.get.${input.name}`);
 
       markServerState(server.id, "discoverable");
+      enforcePromptAllowlist(server, input.name, routeId, correlationId);
       const dedupArgs = {
         name: input.name,
         ...(input.args ?? {}),
@@ -782,9 +788,23 @@ function normalizeServerPolicy(policy: FridayMcpServerPolicy | undefined): Frida
   if (!policy) return undefined;
 
   const allowAllTools = policy.allowAllTools === true;
+  const allowAllResources = policy.allowAllResources === true;
+  const allowAllPrompts = policy.allowAllPrompts === true;
 
   const toolAllowlist = Array.isArray(policy.toolAllowlist)
     ? policy.toolAllowlist
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : undefined;
+  const resourceAllowlist = Array.isArray(policy.resourceAllowlist)
+    ? policy.resourceAllowlist
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : undefined;
+  const promptAllowlist = Array.isArray(policy.promptAllowlist)
+    ? policy.promptAllowlist
       .filter((value): value is string => typeof value === "string")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
@@ -796,13 +816,25 @@ function normalizeServerPolicy(policy: FridayMcpServerPolicy | undefined): Frida
     ? { maxCalls, windowMs }
     : undefined;
 
-  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit && !allowAllTools) {
+  if (
+    (!toolAllowlist || toolAllowlist.length === 0)
+    && (!resourceAllowlist || resourceAllowlist.length === 0)
+    && (!promptAllowlist || promptAllowlist.length === 0)
+    && !rateLimit
+    && !allowAllTools
+    && !allowAllResources
+    && !allowAllPrompts
+  ) {
     return undefined;
   }
 
   return {
     ...(toolAllowlist && toolAllowlist.length > 0 ? { toolAllowlist } : {}),
     ...(allowAllTools ? { allowAllTools: true } : {}),
+    ...(resourceAllowlist && resourceAllowlist.length > 0 ? { resourceAllowlist } : {}),
+    ...(allowAllResources ? { allowAllResources: true } : {}),
+    ...(promptAllowlist && promptAllowlist.length > 0 ? { promptAllowlist } : {}),
+    ...(allowAllPrompts ? { allowAllPrompts: true } : {}),
     ...(rateLimit ? { rateLimit } : {}),
   };
 }
@@ -818,10 +850,26 @@ function parseServerPolicy(
   }
 
   const allowAllTools = policyRow.allowAllTools === true || row.allowAllTools === true;
+  const allowAllResources = policyRow.allowAllResources === true || row.allowAllResources === true;
+  const allowAllPrompts = policyRow.allowAllPrompts === true || row.allowAllPrompts === true;
 
   const allowlistRaw = policyRow.toolAllowlist ?? row.allowTools;
   const toolAllowlist = Array.isArray(allowlistRaw)
     ? allowlistRaw
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : undefined;
+  const resourcesRaw = policyRow.resourceAllowlist ?? row.allowResources;
+  const resourceAllowlist = Array.isArray(resourcesRaw)
+    ? resourcesRaw
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : undefined;
+  const promptsRaw = policyRow.promptAllowlist ?? row.allowPrompts;
+  const promptAllowlist = Array.isArray(promptsRaw)
+    ? promptsRaw
       .filter((value): value is string => typeof value === "string")
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
@@ -844,13 +892,25 @@ function parseServerPolicy(
     }
   }
 
-  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit && !allowAllTools) {
+  if (
+    (!toolAllowlist || toolAllowlist.length === 0)
+    && (!resourceAllowlist || resourceAllowlist.length === 0)
+    && (!promptAllowlist || promptAllowlist.length === 0)
+    && !rateLimit
+    && !allowAllTools
+    && !allowAllResources
+    && !allowAllPrompts
+  ) {
     return undefined;
   }
 
   return {
     ...(toolAllowlist && toolAllowlist.length > 0 ? { toolAllowlist } : {}),
     ...(allowAllTools ? { allowAllTools: true } : {}),
+    ...(resourceAllowlist && resourceAllowlist.length > 0 ? { resourceAllowlist } : {}),
+    ...(allowAllResources ? { allowAllResources: true } : {}),
+    ...(promptAllowlist && promptAllowlist.length > 0 ? { promptAllowlist } : {}),
+    ...(allowAllPrompts ? { allowAllPrompts: true } : {}),
     ...(rateLimit ? { rateLimit } : {}),
   };
 }
@@ -978,6 +1038,88 @@ function applyToolAllowlist(
     return tools;
   }
   // Fail closed: no allowlist and no opt-in exposes nothing.
+  return [];
+}
+
+function enforceResourceAllowlist(
+  server: FridayMcpServerConfig,
+  uri: string,
+  routeId: string,
+  correlationId: string,
+): void {
+  const allowlist = server.policy?.resourceAllowlist;
+  if (allowlist && allowlist.length > 0) {
+    if (allowlist.includes(uri)) return;
+  } else if (server.policy?.allowAllResources === true) {
+    return;
+  }
+
+  throw createFridayMcpAdapterError({
+    code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_RESOURCE_FORBIDDEN,
+    message: `MCP resource '${uri}' is not allowed on server '${server.id}'`,
+    routeId,
+    correlationId,
+    details: {
+      serverId: server.id,
+      uri,
+      allowlist: allowlist ?? [],
+      allowAllResources: server.policy?.allowAllResources === true,
+    },
+  });
+}
+
+function applyResourceAllowlist(
+  policy: FridayMcpServerPolicy | undefined,
+  resources: FridayMcpResourceDescriptor[],
+): FridayMcpResourceDescriptor[] {
+  const allowlist = policy?.resourceAllowlist;
+  if (allowlist && allowlist.length > 0) {
+    return resources.filter((resource) => allowlist.includes(resource.uri));
+  }
+  if (policy?.allowAllResources === true) {
+    return resources;
+  }
+  return [];
+}
+
+function enforcePromptAllowlist(
+  server: FridayMcpServerConfig,
+  name: string,
+  routeId: string,
+  correlationId: string,
+): void {
+  const allowlist = server.policy?.promptAllowlist;
+  if (allowlist && allowlist.length > 0) {
+    if (allowlist.includes(name)) return;
+  } else if (server.policy?.allowAllPrompts === true) {
+    return;
+  }
+
+  throw createFridayMcpAdapterError({
+    code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_PROMPT_FORBIDDEN,
+    message: `MCP prompt '${name}' is not allowed on server '${server.id}'`,
+    routeId,
+    correlationId,
+    details: {
+      serverId: server.id,
+      promptName: name,
+      allowlist: allowlist ?? [],
+      allowAllPrompts: server.policy?.allowAllPrompts === true,
+    },
+  });
+}
+
+function applyPromptAllowlist(
+  policy: FridayMcpServerPolicy | undefined,
+  prompts: FridayMcpPromptDescriptor[],
+): FridayMcpPromptDescriptor[] {
+  const allowlist = policy?.promptAllowlist;
+  if (allowlist && allowlist.length > 0) {
+    return prompts.filter((prompt) => allowlist.includes(prompt.name));
+  }
+  if (policy?.allowAllPrompts === true) {
+    return prompts;
+  }
   return [];
 }
 

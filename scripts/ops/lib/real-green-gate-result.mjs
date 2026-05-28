@@ -112,6 +112,19 @@ function normalizeStringList(value) {
     .slice();
 }
 
+function hasExplicitFallbackProofSignal(summary) {
+  const candidates = [
+    summary?.providerFallbackProof,
+    summary?.fallbackProviderProof,
+    summary?.gate?.providerFallbackProof,
+    summary?.gate?.fallbackProviderProof,
+  ];
+  if (candidates.some((candidate) => candidate?.passed === true || candidate?.status === "passed")) {
+    return true;
+  }
+  return SUITE_KEYS.some((key) => safeNumber(summary?.[key]?.fallbackProviderAttemptCount) > 0);
+}
+
 /**
  * Truthfully scope what the provider lanes proved. A run with only one eligible
  * provider proves the single-provider DEFAULT lane only — it does NOT prove
@@ -123,10 +136,13 @@ function deriveProviderLaneScope(summary) {
   const lanes = envTruth.providerLanes ?? {};
   const requirements = envTruth.providerLaneRequirements ?? {};
   if (lanes.fallback) {
+    const fallbackProven = hasExplicitFallbackProofSignal(summary);
     return {
       scope: "default_and_fallback",
-      fallback_resilience_proven: true,
-      note: "Default and fallback provider lanes were resolved and exercised.",
+      fallback_resilience_proven: fallbackProven,
+      note: fallbackProven
+        ? "Default and fallback provider lanes were resolved and explicit fallback proof signals were observed."
+        : "Default and fallback provider lanes were resolved, but this artifact does NOT prove fallback resilience without an explicit fallback proof signal.",
     };
   }
   if (requirements.fallbackRequired === false) {

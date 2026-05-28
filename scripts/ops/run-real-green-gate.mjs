@@ -385,6 +385,9 @@ function renderMarkdown(summary) {
     `- Default lane: ${summary.preflight?.envTruth?.providerLanes?.default?.model ?? "missing"}`,
     `- Fallback lane: ${summary.preflight?.envTruth?.providerLanes?.fallback?.model ?? "missing"}`,
     `- Fallback required: ${String(summary.preflight?.envTruth?.providerLaneRequirements?.fallbackRequired !== false)} (source: ${summary.preflight?.envTruth?.providerLaneRequirements?.source ?? "n/a"})`,
+    ...(summary.preflight?.envTruth?.providerLanes?.fallback
+      ? ["- Provider-lane scope: fallback lane resolved; fallback resilience is NOT claimed unless a separate explicit fallback proof signal is present."]
+      : []),
     ...(summary.preflight?.envTruth?.providerLaneRequirements?.fallbackRequired === false && !summary.preflight?.envTruth?.providerLanes?.fallback
       ? ["- Provider-lane scope: single eligible provider — proves the single-provider DEFAULT lane ONLY; does NOT prove fallback resilience (see explicit gated C3/C4 lane)."]
       : []),

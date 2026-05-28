@@ -53,6 +53,8 @@ describe("parseFridayMcpServersFromEnv", () => {
           },
           policy: {
             toolAllowlist: ["search", "fetch"],
+            resourceAllowlist: ["friday://docs"],
+            promptAllowlist: ["summarize"],
             rateLimit: {
               maxCalls: 3,
               windowMs: 1000,
@@ -72,6 +74,8 @@ describe("parseFridayMcpServersFromEnv", () => {
         },
         policy: {
           toolAllowlist: ["search", "fetch"],
+          resourceAllowlist: ["friday://docs"],
+          promptAllowlist: ["summarize"],
           rateLimit: {
             maxCalls: 3,
             windowMs: 1000,
@@ -149,6 +153,33 @@ describe("parseFridayMcpServersFromEnv", () => {
     ]);
   });
 
+  it("parses explicit high-risk resource and prompt opt-ins separately from tools", () => {
+    const result = parseFridayMcpServersFromEnv({
+      FRIDAY_MCP_SERVERS: JSON.stringify([
+        {
+          id: "trusted-context",
+          command: "node",
+          policy: {
+            allowAllResources: true,
+            allowAllPrompts: true,
+          },
+        },
+      ]),
+    });
+
+    expect(result).toEqual([
+      {
+        id: "trusted-context",
+        transport: "stdio",
+        command: "node",
+        policy: {
+          allowAllResources: true,
+          allowAllPrompts: true,
+        },
+      },
+    ]);
+  });
+
   it("accepts legacy top-level allowTools/rateLimit policy fields", () => {
     const result = parseFridayMcpServersFromEnv({
       FRIDAY_MCP_SERVERS: JSON.stringify([
@@ -156,6 +187,8 @@ describe("parseFridayMcpServersFromEnv", () => {
           id: "legacy",
           command: "node",
           allowTools: ["search"],
+          allowResources: ["friday://status"],
+          allowPrompts: ["hello"],
           rateLimit: {
             maxCalls: 2,
             windowMs: 500,
@@ -171,6 +204,8 @@ describe("parseFridayMcpServersFromEnv", () => {
         command: "node",
         policy: {
           toolAllowlist: ["search"],
+          resourceAllowlist: ["friday://status"],
+          promptAllowlist: ["hello"],
           rateLimit: {
             maxCalls: 2,
             windowMs: 500,
