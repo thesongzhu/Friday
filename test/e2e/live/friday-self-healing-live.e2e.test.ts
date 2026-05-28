@@ -657,11 +657,18 @@ describe.skipIf(!SELF_HEALING_PROOF_GATED)(`Friday Self-Healing Full Matrix (${L
 
   beforeAll(async () => {
     SKILLS_TMPDIR = fs.mkdtempSync(path.join(os.tmpdir(), "friday-self-healing-skills-"));
-    BUNDLED_SKILLS_DIR = SKILLS_TMPDIR;
+    BUNDLED_SKILLS_DIR = path.join(SKILLS_TMPDIR, "bundled");
+    const managedSkillsDir = path.join(SKILLS_TMPDIR, "managed");
+    fs.mkdirSync(BUNDLED_SKILLS_DIR, { recursive: true });
+    fs.mkdirSync(managedSkillsDir, { recursive: true });
     ORIGINAL_FRIDAY_SKILLS_DIR = process.env.FRIDAY_SKILLS_DIR;
-    process.env.FRIDAY_SKILLS_DIR = SKILLS_TMPDIR;
+    process.env.FRIDAY_SKILLS_DIR = BUNDLED_SKILLS_DIR;
 
-    env = await createRealHubEnv();
+    env = await createRealHubEnv({
+      hubConfig: {
+        skillDirs: [BUNDLED_SKILLS_DIR, managedSkillsDir],
+      },
+    });
     userId = await readUserId(env);
     ({ primaryProviderId, secondaryProviderId } = await createProviderPair(env));
     learnedMessage = `Synthetic self-healing recurrence ${Date.now().toString(36)}`;
