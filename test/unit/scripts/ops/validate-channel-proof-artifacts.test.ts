@@ -176,7 +176,19 @@ describe("validateChannelProofArtifacts", () => {
           memoryRecallOccurred: true,
           workflowDiscoveryOccurred: true,
           workflowRunTerminalSuccess: true,
+          positiveStressMessagesObserved: true,
+          positiveStressWorkflowRunsExecuted: true,
+          positiveStressTerminalSuccesses: true,
+          positiveStressEvidenceDurable: true,
+          ambiguousInboundObserved: true,
+          ambiguousAskedConfirmation: true,
+          ambiguousDidNotStartWorkflow: true,
+          negativeStressMessagesObserved: true,
           negativeUnsafeBlocked: true,
+          negativeDidNotStartWorkflow: true,
+          promptInjectionInboundObserved: true,
+          promptInjectionUnsafeBlocked: true,
+          promptInjectionDidNotStartWorkflow: true,
         },
       }),
     );
@@ -191,6 +203,39 @@ describe("validateChannelProofArtifacts", () => {
     });
     expect(decision.valid).toBe(true);
     expect(decision.results.find((r) => r.channel === "telegram-natural-trigger")?.blockerClass).toBe("none");
+  });
+
+  it("rejects a Telegram natural-trigger artifact that lacks the bounded stress criteria", async () => {
+    const { validateChannelProofArtifacts } = await loadValidator();
+    const naturalTriggerPath = await writeFixture(
+      "weak-telegram-natural-trigger.json",
+      passingWorkflowArtifact(SCHEMA_TELEGRAM_NATURAL_TRIGGER, "observedTelegramEvent", {
+        phase: "Phase24H",
+        scope: "telegram_natural_trigger",
+        criteria: {
+          artifactHasNoToken: true,
+          deepseekDefaultConfigured: true,
+          memoryRecallOccurred: true,
+          workflowDiscoveryOccurred: true,
+          workflowRunTerminalSuccess: true,
+          negativeUnsafeBlocked: true,
+        },
+      }),
+    );
+    const decision = validateChannelProofArtifacts({
+      channels: {
+        discord: "skip",
+        telegram: "skip",
+        "lark-feishu": "skip",
+        "telegram-natural-trigger": naturalTriggerPath,
+      },
+      expectedSha: FAKE_SHA,
+    });
+    const result = decision.results.find((r) => r.channel === "telegram-natural-trigger");
+    expect(decision.valid).toBe(false);
+    expect(result?.blockerClass).toBe("harness_reported_failure_or_blocked");
+    expect(result?.reasons).toContain("criterion_missing:positiveStressMessagesObserved");
+    expect(result?.reasons).toContain("criterion_missing:promptInjectionUnsafeBlocked");
   });
 
   it("rejects status != passed", async () => {
