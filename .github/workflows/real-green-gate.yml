@@ -38,6 +38,11 @@ on:
         required: false
         type: boolean
         default: false
+      c3c4_provider_routing_proof:
+        description: "Run the C3/C4 live DeepSeek-primary/OpenAI-fallback provider routing and self-healing proof."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -194,6 +199,65 @@ jobs:
         with:
           name: phase24b-discord-trusted-inbound-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24b-discord-trusted-inbound
+
+  c3c4-provider-routing-proof:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.c3c4_provider_routing_proof == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: phase-24-live-channels
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      FRIDAY_E2E_LIVE_DEEPSEEK: "1"
+      FRIDAY_C3C4_DEEPSEEK_MODEL: "deepseek-v4-pro"
+      FRIDAY_C3C4_OPENAI_MODEL: "gpt-4o-mini"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Log C3/C4 provider intent
+        run: |
+          echo "C3/C4 live provider batch intent: DeepSeek primary route, explicit OpenAI fallback route, spend labels, unavailable invalid/disabled lanes, and live self-healing recovery/rollback proof."
+          echo "Expected providers/models: DeepSeek deepseek-v4-pro primary; OpenAI gpt-4o-mini fallback."
+          echo "Expected spend: bounded under the USD 50 C2.4/C3/C4 cap; proof prompts are short synthetic no-sensitive-data tasks."
+          echo "No provider secret values are printed or persisted by this job."
+
+      - name: Preflight C3/C4 provider credentials
+        run: |
+          if [ -z "${DEEPSEEK_API_KEY:-${FRIDAY_DEEPSEEK_API_KEY:-}}" ]; then
+            echo "::error::C3/C4 provider proof requires a DeepSeek credential secret."
+            exit 1
+          fi
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::C3/C4 provider proof requires an OpenAI credential secret for fallback proof."
+            exit 1
+          fi
+
+      - name: Run C3/C4 provider routing proof
+        run: FRIDAY_C3C4_PROVIDER_REPORT_ROOT="$RUNNER_TEMP/c3c4-provider-routing-proof" npx vitest run test/e2e/live/friday-provider-routing-c3c4-live.e2e.test.ts
+
+      - name: Run C3/C4 live self-healing proof
+        run: npx vitest run test/e2e/live/friday-self-healing-live.e2e.test.ts
+
+      - name: Upload C3/C4 provider routing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3c4-provider-routing-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/c3c4-provider-routing-proof
 
   phase24c-telegram-trusted-inbound:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24c_telegram_trusted_inbound == true }}
