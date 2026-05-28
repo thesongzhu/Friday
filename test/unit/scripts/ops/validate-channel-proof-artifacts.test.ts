@@ -35,6 +35,8 @@ async function loadValidator(): Promise<ValidatorModule> {
 }
 
 const SCHEMA_DISCORD = "friday.phase24b.discord_trusted_inbound_proof.v1";
+const SCHEMA_DISCORD_WORKFLOW = "friday.phase24f.discord_workflow_candidate_approval_rejection_proof.v1";
+const SCHEMA_LARK_WORKFLOW = "friday.phase24g.lark_feishu_workflow_candidate_approval_rejection_proof.v1";
 
 // Test fixture SHA only — not a real commit. Pragma needed because the
 // repo-wide detect-secrets baseline flags 40-char hex strings as
@@ -59,6 +61,32 @@ function passingDiscordArtifact(overrides: Partial<Record<string, unknown>> = {}
     },
     diagnostics: {},
     observedDiscordEvent: { type: "DISCORD_MESSAGE_CREATE_V1" },
+    failures: [],
+    ...overrides,
+  };
+}
+
+function passingWorkflowArtifact(
+  schemaVersion: string,
+  observedEventKey: "observedDiscordEvent" | "observedLarkFeishuEvent",
+  overrides: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    schemaVersion,
+    phase: "phase24-workflow-candidate",
+    scope: "workflow_candidate",
+    status: "passed",
+    startedAt: "2026-05-25T00:00:00Z",
+    completedAt: "2026-05-25T00:00:10Z",
+    reportPath: "/tmp/phase24/workflow-candidate.json",
+    environment: { commit_sha: FAKE_SHA, head_sha: null },
+    criteria: {
+      artifactHasNoToken: true,
+      rejectInboundObserved: true,
+      approveInboundObserved: true,
+    },
+    diagnostics: {},
+    [observedEventKey]: { type: "WORKFLOW_CANDIDATE_EVENT" },
     failures: [],
     ...overrides,
   };
@@ -92,6 +120,46 @@ describe("validateChannelProofArtifacts", () => {
     const discord = decision.results.find((r) => r.channel === "discord");
     expect(discord?.valid).toBe(true);
     expect(discord?.blockerClass).toBe("none");
+  });
+
+  it("CLI-style explicit-channel mode rejects omitted channel flags instead of default-skipping them", async () => {
+    const { validateChannelProofArtifacts } = await loadValidator();
+    const fixturePath = await writeFixture("explicit-mode-pass.json", passingDiscordArtifact());
+    const decision = validateChannelProofArtifacts({
+      channels: { discord: fixturePath, telegram: "skip", "lark-feishu": "skip" },
+      explicitChannels: ["discord", "telegram", "lark-feishu"],
+      requireExplicitChannels: true,
+      expectedSha: FAKE_SHA,
+    });
+    expect(decision.valid).toBe(false);
+    const missing = decision.results.find((r) => r.channel === "discord-workflow-candidate");
+    expect(missing?.valid).toBe(false);
+    expect(missing?.reasons).toContain("channel_flag_missing:--discord-workflow-candidate");
+  });
+
+  it("passes on clean Discord and Lark/Feishu workflow-candidate artifacts", async () => {
+    const { validateChannelProofArtifacts } = await loadValidator();
+    const discordPath = await writeFixture(
+      "pass-discord-workflow.json",
+      passingWorkflowArtifact(SCHEMA_DISCORD_WORKFLOW, "observedDiscordEvent"),
+    );
+    const larkPath = await writeFixture(
+      "pass-lark-workflow.json",
+      passingWorkflowArtifact(SCHEMA_LARK_WORKFLOW, "observedLarkFeishuEvent"),
+    );
+    const decision = validateChannelProofArtifacts({
+      channels: {
+        discord: "skip",
+        telegram: "skip",
+        "lark-feishu": "skip",
+        "discord-workflow-candidate": discordPath,
+        "lark-feishu-workflow-candidate": larkPath,
+      },
+      expectedSha: FAKE_SHA,
+    });
+    expect(decision.valid).toBe(true);
+    expect(decision.results.find((r) => r.channel === "discord-workflow-candidate")?.blockerClass).toBe("none");
+    expect(decision.results.find((r) => r.channel === "lark-feishu-workflow-candidate")?.blockerClass).toBe("none");
   });
 
   it("rejects status != passed", async () => {
@@ -234,7 +302,14 @@ describe("validateChannelProofArtifacts", () => {
   it("skip sentinel passes without inspecting any artifact", async () => {
     const { validateChannelProofArtifacts } = await loadValidator();
     const decision = validateChannelProofArtifacts({
-      channels: { discord: "skip", telegram: "skip", "lark-feishu": "skip" },
+      channels: {
+        discord: "skip",
+        telegram: "skip",
+        "lark-feishu": "skip",
+        "telegram-workflow-candidate": "skip",
+        "discord-workflow-candidate": "skip",
+        "lark-feishu-workflow-candidate": "skip",
+      },
       expectedSha: null,
     });
     expect(decision.valid).toBe(true);

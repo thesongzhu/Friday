@@ -23,6 +23,16 @@ on:
         required: false
         type: boolean
         default: false
+      phase24f_discord_workflow_candidate:
+        description: "Run the manual Phase24F Discord channel-driven workflow-candidate approve/reject listener."
+        required: false
+        type: boolean
+        default: false
+      phase24g_lark_feishu_workflow_candidate:
+        description: "Run the manual Phase24G Lark/Feishu channel-driven workflow-candidate approve/reject listener."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -300,3 +310,82 @@ jobs:
         with:
           name: phase24e-telegram-workflow-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/phase24e-telegram-workflow-candidate
+
+  phase24f-discord-workflow-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24f_discord_workflow_candidate == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_DISCORD_BOT_TOKEN: ${{ secrets.FRIDAY_DISCORD_BOT_TOKEN }}
+      FRIDAY_DISCORD_SETUP_USER_ID: ${{ secrets.FRIDAY_DISCORD_SETUP_USER_ID || vars.FRIDAY_DISCORD_SETUP_USER_ID }}
+      FRIDAY_DISCORD_GUILD_ID: ${{ secrets.FRIDAY_DISCORD_GUILD_ID || vars.FRIDAY_DISCORD_GUILD_ID }}
+      FRIDAY_DISCORD_CHANNEL_ID: ${{ secrets.FRIDAY_DISCORD_CHANNEL_ID || vars.FRIDAY_DISCORD_CHANNEL_ID }}
+      FRIDAY_DISCORD_BOT_USER_ID: ${{ secrets.FRIDAY_DISCORD_BOT_USER_ID || vars.FRIDAY_DISCORD_BOT_USER_ID }}
+      FRIDAY_DISCORD_REQUIRE_MENTION: ${{ secrets.FRIDAY_DISCORD_REQUIRE_MENTION || vars.FRIDAY_DISCORD_REQUIRE_MENTION }}
+      PHASE24F_DISCORD_LISTENER_TIMEOUT_MS: "1800000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Discord operator reject + approve messages
+        run: PHASE24F_REPORT_ROOT="$RUNNER_TEMP/phase24f-discord-workflow-candidate" npm run ops:phase24f:discord-workflow-candidate
+
+      - name: Upload Phase24F Discord workflow-candidate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24f-discord-workflow-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24f-discord-workflow-candidate
+
+  phase24g-lark-feishu-workflow-candidate:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24g_lark_feishu_workflow_candidate == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_LARK_APP_ID: ${{ secrets.FRIDAY_LARK_APP_ID || vars.FRIDAY_LARK_APP_ID }}
+      FRIDAY_LARK_APP_SECRET: ${{ secrets.FRIDAY_LARK_APP_SECRET }}
+      FRIDAY_LARK_CHAT_ID: ${{ secrets.FRIDAY_LARK_CHAT_ID || vars.FRIDAY_LARK_CHAT_ID }}
+      FRIDAY_LARK_GROUP_CHAT_ID: ${{ secrets.FRIDAY_LARK_GROUP_CHAT_ID || vars.FRIDAY_LARK_GROUP_CHAT_ID }}
+      FRIDAY_LARK_ALLOWED_USER_ID: ${{ secrets.FRIDAY_LARK_ALLOWED_USER_ID || vars.FRIDAY_LARK_ALLOWED_USER_ID }}
+      FRIDAY_LARK_USE_FEISHU: ${{ secrets.FRIDAY_LARK_USE_FEISHU || vars.FRIDAY_LARK_USE_FEISHU }}
+      FRIDAY_LARK_RECEIVE_MODE: ${{ secrets.FRIDAY_LARK_RECEIVE_MODE || vars.FRIDAY_LARK_RECEIVE_MODE }}
+      PHASE24G_LARK_FEISHU_LISTENER_TIMEOUT_MS: "1800000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build:api
+
+      - name: Wait for trusted Lark/Feishu operator reject + approve messages
+        run: PHASE24G_REPORT_ROOT="$RUNNER_TEMP/phase24g-lark-feishu-workflow-candidate" npm run ops:phase24g:lark-feishu-workflow-candidate
+
+      - name: Upload Phase24G Lark/Feishu workflow-candidate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase24g-lark-feishu-workflow-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase24g-lark-feishu-workflow-candidate

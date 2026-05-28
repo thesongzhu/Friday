@@ -9,11 +9,15 @@
  *     --telegram <path>|skip \
  *     --lark-feishu <path>|skip \
  *     [--telegram-workflow-candidate <path>|skip] \
+ *     [--discord-workflow-candidate <path>|skip] \
+ *     [--lark-feishu-workflow-candidate <path>|skip] \
  *     [--expected-sha <40-char-hex>]
  *
  * --telegram-workflow-candidate validates the Phase24E channel-driven
  * approve/reject artifact written by
  * scripts/ops/phase24e-telegram-workflow-candidate-listener.mjs.
+ * --discord-workflow-candidate and --lark-feishu-workflow-candidate validate
+ * the sibling Phase24F/G channel-driven approve/reject artifacts.
  *
  * For each non-skipped channel:
  *   - loads the JSON artifact (the per-channel listener output)
@@ -76,6 +80,16 @@ const CHANNEL_DEFINITIONS = Object.freeze({
     schemaVersion: "friday.phase24e.telegram_workflow_candidate_approval_rejection_proof.v1",
     observedEventKey: "observedTelegramEvent",
   }),
+  "discord-workflow-candidate": Object.freeze({
+    flag: "--discord-workflow-candidate",
+    schemaVersion: "friday.phase24f.discord_workflow_candidate_approval_rejection_proof.v1",
+    observedEventKey: "observedDiscordEvent",
+  }),
+  "lark-feishu-workflow-candidate": Object.freeze({
+    flag: "--lark-feishu-workflow-candidate",
+    schemaVersion: "friday.phase24g.lark_feishu_workflow_candidate_approval_rejection_proof.v1",
+    observedEventKey: "observedLarkFeishuEvent",
+  }),
 });
 
 const REQUIRED_TOP_LEVEL_KEYS = [
@@ -121,7 +135,15 @@ const TOKEN_PATTERNS = Object.freeze([
 
 function parseArgs(argv) {
   const args = {
-    channels: { discord: null, telegram: null, "lark-feishu": null, "telegram-workflow-candidate": null },
+    channels: {
+      discord: null,
+      telegram: null,
+      "lark-feishu": null,
+      "telegram-workflow-candidate": null,
+      "discord-workflow-candidate": null,
+      "lark-feishu-workflow-candidate": null,
+    },
+    explicitChannels: [],
     expectedSha: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -132,10 +154,13 @@ function parseArgs(argv) {
       case "--telegram":
       case "--lark-feishu":
       case "--telegram-workflow-candidate":
+      case "--discord-workflow-candidate":
+      case "--lark-feishu-workflow-candidate":
         if (typeof next !== "string" || next.length === 0) {
           return { args: null, error: `cli_argument_missing_value:${token}` };
         }
         args.channels[token.slice(2)] = next;
+        args.explicitChannels.push(token.slice(2));
         index += 1;
         break;
       case "--expected-sha":
@@ -334,13 +359,25 @@ function validateChannelArtifact(channelKey, artifactPath, expectedSha) {
  * Programmatic entry point. Returns the decision shape that the CLI emits.
  *
  * @param {object} args
- * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null, "telegram-workflow-candidate": string|null }} args.channels
+ * @param {{ discord: string|null, telegram: string|null, "lark-feishu": string|null, "telegram-workflow-candidate": string|null, "discord-workflow-candidate": string|null, "lark-feishu-workflow-candidate": string|null }} args.channels
  * @param {string|null} args.expectedSha
  */
 export function validateChannelProofArtifacts(args) {
   const results = [];
+  const requireExplicitChannels = args?.requireExplicitChannels === true;
+  const explicitChannels = Array.isArray(args?.explicitChannels) ? new Set(args.explicitChannels) : null;
   for (const channelKey of Object.keys(CHANNEL_DEFINITIONS)) {
     const value = args?.channels?.[channelKey];
+    if (requireExplicitChannels && !explicitChannels?.has(channelKey)) {
+      results.push({
+        channel: channelKey,
+        valid: false,
+        blockerClass: "artifact_missing_or_unreadable",
+        reasons: [`channel_flag_missing:${CHANNEL_DEFINITIONS[channelKey].flag}`],
+        path: null,
+      });
+      continue;
+    }
     if (value === null || value === undefined || value === "skip") {
       results.push({
         channel: channelKey,
@@ -379,7 +416,7 @@ function main() {
     process.exit(1);
   }
 
-  const decision = validateChannelProofArtifacts(args);
+  const decision = validateChannelProofArtifacts({ ...args, requireExplicitChannels: true });
   emit({ ...decision, expected_sha: args.expectedSha ?? null });
   process.exit(decision.valid ? 0 : 1);
 }
