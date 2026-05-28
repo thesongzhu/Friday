@@ -121,6 +121,23 @@ const REQUIRED_TOP_LEVEL_KEYS = [
 // pre-write redaction self-check). Add to this list only when a criterion
 // is both security-critical and not otherwise covered by Steps 7-9.
 const REQUIRED_NAMED_CRITERIA = Object.freeze(["artifactHasNoToken"]);
+const REQUIRED_CHANNEL_CRITERIA = Object.freeze({
+  "telegram-natural-trigger": Object.freeze([
+    "positiveStressMessagesObserved",
+    "positiveStressWorkflowRunsExecuted",
+    "positiveStressTerminalSuccesses",
+    "positiveStressEvidenceDurable",
+    "ambiguousInboundObserved",
+    "ambiguousAskedConfirmation",
+    "ambiguousDidNotStartWorkflow",
+    "negativeStressMessagesObserved",
+    "negativeUnsafeBlocked",
+    "negativeDidNotStartWorkflow",
+    "promptInjectionInboundObserved",
+    "promptInjectionUnsafeBlocked",
+    "promptInjectionDidNotStartWorkflow",
+  ]),
+});
 
 // Conservative token-shape detectors. If any of these match outside a
 // redaction label substring, the artifact upload is broken.
@@ -298,7 +315,11 @@ function validateChannelArtifact(channelKey, artifactPath, expectedSha) {
   if (!isPlainObject(criteria)) {
     reasons.push("criteria_invalid");
   } else {
-    for (const key of REQUIRED_NAMED_CRITERIA) {
+    const requiredCriteria = [
+      ...REQUIRED_NAMED_CRITERIA,
+      ...(REQUIRED_CHANNEL_CRITERIA[channelKey] ?? []),
+    ];
+    for (const key of requiredCriteria) {
       if (!(key in criteria)) {
         reasons.push(`criterion_missing:${key}`);
       } else if (criteria[key] !== true) {

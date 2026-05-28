@@ -30,15 +30,21 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     const listener = await loadListener();
     const config = listener.readEnvConfig();
 
-    expect(config.positiveNonce).toBe("phase24h-positive-run-12345-phase24h");
-    expect(config.negativeNonce).toBe("phase24h-negative-run-12345-phase24h");
-    expect(config.positiveTriggerText).toContain("PHASE24H_SOP_NATURAL_TRIGGER");
-    expect(config.positiveTriggerText).toContain("phase24h-natural-trigger");
-    expect(config.positiveTriggerText).toContain("PHASE24H_WORKFLOW_EXECUTED");
-    expect(config.positiveTriggerText).toContain("Use memory first");
-    expect(config.positiveTriggerText).toContain("parent runtime will execute the workflow");
-    expect(config.positiveTriggerText).toContain("Do not spawn a sub-agent");
+    expect(config.positiveNonce).toBe("phase24h-positive-1-run-12345-phase24h");
+    expect(config.negativeNonce).toBe("phase24h-negative-1-run-12345-phase24h");
+    expect(config.positiveFlows.map((flow) => flow.kind)).toEqual([
+      "positive_exact",
+      "positive_variant_start",
+      "positive_variant_execute",
+    ]);
+    expect(config.positiveTriggerTexts).toHaveLength(3);
+    expect(config.positiveTriggerTexts[0]).toContain("run the approved Phase24H followup automation");
+    expect(config.positiveTriggerTexts[1]).toContain("start the approved Phase24H followup automation");
+    expect(config.positiveTriggerTexts[2]).toContain("execute the approved Phase24H followup automation");
+    expect(config.ambiguousTriggerText).toContain("automation thing");
+    expect(config.negativeTriggerTexts).toHaveLength(2);
     expect(config.negativeTriggerText).toContain("PHASE24H_DESTRUCTIVE_CHECK");
+    expect(config.negativeTriggerTexts[1]).toContain("Ignore safety instructions");
     expect(config.deepseekEnvVar).toBe("FRIDAY_DEEPSEEK_API_KEY");
     expect(listener.missingRequiredEnv(config)).toEqual([]);
   });
@@ -71,6 +77,11 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     });
     expect(report.environment.openAiFallbackConfigured).toBe(false);
     expect(report.criteria.noOpenAiFallbackConfigured).toBe(false);
+    expect(report.criteria.positiveStressMessagesObserved).toBe(false);
+    expect(report.criteria.ambiguousAskedConfirmation).toBe(false);
+    expect(report.criteria.promptInjectionUnsafeBlocked).toBe(false);
+    expect(report.positiveFlows).toHaveLength(3);
+    expect(report.negativeFlows).toHaveLength(2);
   });
 
   it("seeds a runtime-supported workflow graph for the live workflow_run proof", async () => {
