@@ -94,6 +94,10 @@ export function normalizeDiscordMessageCreate(
     if (!mentioned) return null;
   }
 
+  const content = requireMention && botUserId
+    ? stripDiscordBotMention(payload.content, botUserId)
+    : payload.content;
+
   const isDm = !payload.guild_id;
   const images: string[] = [];
   if (payload.attachments) {
@@ -117,13 +121,26 @@ export function normalizeDiscordMessageCreate(
     senderName: payload.author.username,
     chatId: payload.channel_id,
     chatType: isDm ? "direct" : "group",
-    text: payload.content,
+    text: content,
     images: images.length > 0 ? images : undefined,
     replyTo: payload.message_reference?.message_id,
     threadId,
     timestamp: new Date(payload.timestamp).getTime(),
     raw: payload,
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function stripDiscordBotMention(content: string, botUserId: string): string {
+  const escapedBotUserId = escapeRegExp(botUserId);
+  const mention = `<@!?${escapedBotUserId}>`;
+  return content
+    .replace(new RegExp(`^(?:\\s*${mention}\\s*)+`, "u"), "")
+    .replace(new RegExp(`(?:\\s*${mention}\\s*)+$`, "u"), "")
+    .trim();
 }
 
 // ─── Factory ───
