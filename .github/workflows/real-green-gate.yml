@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      c45_real_user_intelligence_proof:
+        description: "Run the C4.5 live real-user intelligence gauntlet with synthetic fixtures."
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -258,6 +263,69 @@ jobs:
         with:
           name: c3c4-provider-routing-proof-${{ github.run_id }}
           path: ${{ runner.temp }}/c3c4-provider-routing-proof
+
+  c45-real-user-intelligence-proof:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.c45_real_user_intelligence_proof == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: phase-24-live-channels
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      FRIDAY_C45_REAL_USER_GAUNTLET: "1"
+      FRIDAY_C45_DEEPSEEK_MODEL: "deepseek-v4-pro"
+      FRIDAY_C45_OPENAI_MODEL: "gpt-4o-mini"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run --silent build:api
+
+      - name: Log C4.5 provider intent
+        run: |
+          echo "C4.5 live real-user intelligence proof: synthetic deck/report/table extraction, analysis, ambiguity handling, deck-like generation, prompt-injection denial, and source immutability."
+          echo "Primary provider/model: DeepSeek deepseek-v4-pro."
+          echo "Explicit fallback provider/model: OpenAI gpt-4o-mini if configured."
+          echo "Expected spend: bounded under the separate USD 100 C4.5 cap."
+          echo "No provider secret values, private user files, or real user data are printed or persisted by this job."
+          echo "This dispatch intentionally does not start a live Telegram/Discord/Lark channel window."
+
+      - name: Preflight C4.5 provider credentials
+        run: |
+          if [ -z "${DEEPSEEK_API_KEY:-${FRIDAY_DEEPSEEK_API_KEY:-}}" ]; then
+            echo "::error::C4.5 proof requires a DeepSeek credential secret."
+            exit 1
+          fi
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "OpenAI credential absent; C4.5 will run without fallback configured."
+          else
+            echo "OpenAI credential present; C4.5 explicit fallback route will be configured."
+          fi
+
+      - name: Run C4.5 real-user intelligence gauntlet
+        run: FRIDAY_C45_REPORT_ROOT="$RUNNER_TEMP/c45-real-user-intelligence-proof" npx vitest run test/e2e/live/friday-real-user-intelligence-c45-live.e2e.test.ts
+
+      - name: Validate C4.5 proof artifact exists
+        run: test -s "$RUNNER_TEMP/c45-real-user-intelligence-proof/c45-real-user-intelligence-proof.json"
+
+      - name: Upload C4.5 real-user intelligence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c45-real-user-intelligence-proof-${{ github.run_id }}
+          path: ${{ runner.temp }}/c45-real-user-intelligence-proof
+          if-no-files-found: error
 
   phase24c-telegram-trusted-inbound:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.phase24c_telegram_trusted_inbound == true }}
