@@ -253,6 +253,10 @@ export function parseFridayMcpServersFromEnv(
     }
 
     const transport = detectTransport(row, index, warn);
+    if (transport === null) {
+      // Unsupported transport — fail closed (detectTransport already warned).
+      continue;
+    }
     const timeoutMs = parsePositiveNumber(row.timeoutMs);
     const policy = parseServerPolicy(row, index, warn);
 
@@ -723,7 +727,17 @@ function normalizeServerConfig(server: FridayMcpServerConfig): FridayMcpServerCo
   const id = server.id.trim();
   if (!id) return null;
 
-  const transport = server.transport === "http" ? "http" : "stdio";
+  // Fail closed: only stdio/http are supported. An explicitly set but
+  // unsupported transport (e.g. "sse", "ws") must NOT be silently coerced to a
+  // local stdio child process — drop the server instead.
+  const rawTransport = server.transport === undefined || server.transport === null
+    ? "stdio"
+    : String(server.transport).trim().toLowerCase();
+  if (rawTransport !== "stdio" && rawTransport !== "http") {
+    console.warn(`[friday] WARNING: MCP server '${id}' has unsupported transport '${rawTransport}'; skipping (no stdio fallback).`);
+    return null;
+  }
+  const transport: FridayMcpTransport = rawTransport;
   const timeoutMs = parsePositiveNumber(server.timeoutMs);
   const policy = normalizeServerPolicy(server.policy);
 
@@ -767,6 +781,8 @@ function normalizeServerConfig(server: FridayMcpServerConfig): FridayMcpServerCo
 function normalizeServerPolicy(policy: FridayMcpServerPolicy | undefined): FridayMcpServerPolicy | undefined {
   if (!policy) return undefined;
 
+  const allowAllTools = policy.allowAllTools === true;
+
   const toolAllowlist = Array.isArray(policy.toolAllowlist)
     ? policy.toolAllowlist
       .filter((value): value is string => typeof value === "string")
@@ -780,12 +796,13 @@ function normalizeServerPolicy(policy: FridayMcpServerPolicy | undefined): Frida
     ? { maxCalls, windowMs }
     : undefined;
 
-  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit) {
+  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit && !allowAllTools) {
     return undefined;
   }
 
   return {
     ...(toolAllowlist && toolAllowlist.length > 0 ? { toolAllowlist } : {}),
+    ...(allowAllTools ? { allowAllTools: true } : {}),
     ...(rateLimit ? { rateLimit } : {}),
   };
 }
@@ -799,6 +816,8 @@ function parseServerPolicy(
   if (row.policy && typeof row.policy === "object" && !Array.isArray(row.policy)) {
     policyRow = row.policy as Record<string, unknown>;
   }
+
+  const allowAllTools = policyRow.allowAllTools === true || row.allowAllTools === true;
 
   const allowlistRaw = policyRow.toolAllowlist ?? row.allowTools;
   const toolAllowlist = Array.isArray(allowlistRaw)
@@ -825,12 +844,13 @@ function parseServerPolicy(
     }
   }
 
-  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit) {
+  if ((!toolAllowlist || toolAllowlist.length === 0) && !rateLimit && !allowAllTools) {
     return undefined;
   }
 
   return {
     ...(toolAllowlist && toolAllowlist.length > 0 ? { toolAllowlist } : {}),
+    ...(allowAllTools ? { allowAllTools: true } : {}),
     ...(rateLimit ? { rateLimit } : {}),
   };
 }
@@ -870,7 +890,7 @@ function detectTransport(
   row: Record<string, unknown>,
   index: number,
   warn: WarnLike,
-): FridayMcpTransport {
+): FridayMcpTransport | null {
   const rawTransport = typeof row.transport === "string"
     ? row.transport.trim().toLowerCase()
     : "";
@@ -886,8 +906,10 @@ function detectTransport(
     return rawTransport;
   }
 
-  warn(`[friday] WARNING: FRIDAY_MCP_SERVERS[${String(index)}] has unsupported transport '${rawTransport}', fallback to stdio.`);
-  return "stdio";
+  // Fail closed: an unsupported transport must NOT be silently coerced to a
+  // local stdio child process. Reject the entry (caller skips it).
+  warn(`[friday] WARNING: FRIDAY_MCP_SERVERS[${String(index)}] has unsupported transport '${rawTransport}'; skipping server (no stdio fallback).`);
+  return null;
 }
 
 function requireServer(
@@ -919,9 +941,16 @@ function enforceToolAllowlist(
   correlationId: string,
 ): void {
   const allowlist = server.policy?.toolAllowlist;
-  if (!allowlist || allowlist.length === 0) return;
-  if (allowlist.includes(toolName)) return;
+  if (allowlist && allowlist.length > 0) {
+    if (allowlist.includes(toolName)) return;
+  } else if (server.policy?.allowAllTools === true) {
+    // Explicit high-risk opt-in: caller deliberately trusts every tool.
+    return;
+  }
 
+  // Fail closed: an external MCP server with no toolAllowlist and no explicit
+  // allowAllTools opt-in exposes NO callable tools; and a configured allowlist
+  // denies anything not on it.
   throw createFridayMcpAdapterError({
     code: FRIDAY_MCP_ADAPTER_ERROR_CODES.POLICY_TOOL_FORBIDDEN,
     message: `MCP tool '${toolName}' is not allowed on server '${server.id}'`,
@@ -930,7 +959,8 @@ function enforceToolAllowlist(
     details: {
       serverId: server.id,
       toolName,
-      allowlist,
+      allowlist: allowlist ?? [],
+      allowAllTools: server.policy?.allowAllTools === true,
     },
   });
 }
@@ -940,10 +970,15 @@ function applyToolAllowlist(
   tools: FridayMcpToolDescriptor[],
 ): FridayMcpToolDescriptor[] {
   const allowlist = policy?.toolAllowlist;
-  if (!allowlist || allowlist.length === 0) {
+  if (allowlist && allowlist.length > 0) {
+    return tools.filter((tool) => allowlist.includes(tool.name));
+  }
+  if (policy?.allowAllTools === true) {
+    // Explicit high-risk opt-in: expose everything the server advertises.
     return tools;
   }
-  return tools.filter((tool) => allowlist.includes(tool.name));
+  // Fail closed: no allowlist and no opt-in exposes nothing.
+  return [];
 }
 
 function enforceRateLimit(

@@ -8,6 +8,13 @@ export interface FridayMcpServerRateLimitPolicy {
 
 export interface FridayMcpServerPolicy {
   toolAllowlist?: string[];
+  /**
+   * Explicit high-risk opt-in to expose EVERY tool an external MCP server
+   * advertises when no `toolAllowlist` is set. Default (false/unset) FAILS
+   * CLOSED: with no allowlist and no opt-in, no external tools are exposed or
+   * callable. Set this only when you deliberately trust the server fully.
+   */
+  allowAllTools?: boolean;
   rateLimit?: FridayMcpServerRateLimitPolicy;
 }
 

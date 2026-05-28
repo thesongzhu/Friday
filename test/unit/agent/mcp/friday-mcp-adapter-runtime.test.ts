@@ -120,6 +120,9 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
           id: "lazy-http",
           transport: "http",
           url: "https://mcp.example.com/rpc",
+          // Explicit high-risk opt-in so discovered tools are exposed; without
+          // it the adapter fails closed and exposes nothing.
+          policy: { allowAllTools: true },
         },
       ],
     });
@@ -128,6 +131,44 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
     await adapter.searchTools({ query: "search", serverId: "lazy-http" });
     expect(adapter.listServerStates()[0]?.state).toBe("loaded");
     expect(adapter.listServerStates()[0]?.toolCount).toBe(1);
+  });
+
+  it("fails closed: an external server with no allowlist and no opt-in exposes no tools", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { id?: number; method?: string };
+      if (payload.method === "initialize") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 1, { protocolVersion: "2024-11-05" }));
+      }
+      if (payload.method === "tools/list") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 2, {
+          tools: [{ name: "search", description: "Search docs", inputSchema: { type: "object" } }],
+        }));
+      }
+      if (payload.method === "tools/call") {
+        return okHttpResponse(jsonRpcResponse(payload.id ?? 3, {
+          content: [{ type: "text", text: "ok" }],
+          isError: false,
+        }));
+      }
+      return okHttpResponse("{}");
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = createFridayMcpAdapter({
+      servers: [
+        { id: "untrusted-http", transport: "http", url: "https://mcp.example.com/rpc" },
+      ],
+    });
+
+    // Discovery still works, but NO tools are exposed without an explicit
+    // allowlist or allowAllTools opt-in.
+    const tools = await adapter.listTools({ serverId: "untrusted-http" });
+    expect(tools).toEqual([]);
+
+    // Calling any tool is denied with a policy error (not silently allowed).
+    await expect(
+      adapter.callTool({ serverId: "untrusted-http", toolName: "search", args: {} }),
+    ).rejects.toMatchObject({ code: "MCP_POLICY_TOOL_FORBIDDEN" });
   });
 
   it("enforces local rate limit policy for repeated tool calls", async () => {
@@ -157,6 +198,7 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
           transport: "http",
           url: "https://mcp.example.com/rpc",
           policy: {
+            allowAllTools: true,
             rateLimit: {
               maxCalls: 1,
               windowMs: 60_000,
@@ -226,6 +268,9 @@ describe("createFridayMcpAdapter — runtime adversarial behavior", () => {
           id: "unstable-http",
           transport: "http",
           url: "https://unstable.example.com/mcp",
+          // Opt in so the call reaches the transport layer (the behavior under
+          // test) rather than being blocked by the fail-closed default.
+          policy: { allowAllTools: true },
         },
       ],
     });

@@ -242,6 +242,9 @@ describe("MCP transport parity contract", () => {
           transport: "stdio",
           command: process.execPath,
           args: ["-e", buildStdioServerScript()],
+          // Opt in so transport parity is exercised; the adapter now fails
+          // closed without an allowlist or this explicit opt-in.
+          policy: { allowAllTools: true },
         },
       ],
     });
@@ -255,6 +258,7 @@ describe("MCP transport parity contract", () => {
           id: "http",
           transport: "http",
           url: PUBLIC_HTTP_MCP_TEST_URL,
+          policy: { allowAllTools: true },
         },
       ],
     });
@@ -306,6 +310,9 @@ describe("MCP transport parity contract", () => {
           transport: "stdio",
           command: process.execPath,
           args: ["-e", buildStdioServerScript()],
+          // Opt in so transport parity is exercised; the adapter now fails
+          // closed without an allowlist or this explicit opt-in.
+          policy: { allowAllTools: true },
         },
       ],
     });
@@ -318,6 +325,7 @@ describe("MCP transport parity contract", () => {
           id: "http",
           transport: "http",
           url: PUBLIC_HTTP_MCP_TEST_URL,
+          policy: { allowAllTools: true },
         },
       ],
     });
