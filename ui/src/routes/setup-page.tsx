@@ -172,6 +172,29 @@ export function buildSetupCompletionStepState(input: SetupCompletionStepStateInp
   return { completedSteps, skippedSteps };
 }
 
+/**
+ * Truthful setup-completion headline. Distinguishes "runtime ready" from "AI
+ * provider ready": when the provider step was skipped (not validated) we must
+ * NOT claim Friday is ready — the runtime is up but no AI provider is connected
+ * yet. The per-capability readiness panel carries the detailed truth.
+ */
+export function buildSetupCompletionTitle(
+  locale: AppLocale,
+  providerValidated: boolean,
+): { title: string; subtitle: string | null } {
+  if (providerValidated) {
+    return { title: localize(locale, "Friday 已就绪", "Friday is Ready"), subtitle: null };
+  }
+  return {
+    title: localize(locale, "设置已保存", "Setup saved"),
+    subtitle: localize(
+      locale,
+      "运行环境已就绪。连接一个 AI 提供方后 Friday 才能开始工作——详情见下方。",
+      "The runtime is ready. Connect an AI provider before Friday can work — see the details below.",
+    ),
+  };
+}
+
 type FeishuRegistrationState = {
   status: "idle" | "starting" | "pending" | "success" | "failed";
   registrationId?: string;
@@ -2864,6 +2887,9 @@ export function SetupPage() {
   // ─── STEP 5 — Completion ───
 
   function renderStep5() {
+    // Truthful completion headline — does not claim "ready" if the AI provider
+    // step was skipped (runtime-ready vs provider-ready).
+    const completionTitle = buildSetupCompletionTitle(locale, providerValidated);
     // Build summary lines
     const summaryItems: string[] = [];
     if (providerValidated) {
@@ -2896,8 +2922,14 @@ export function SetupPage() {
         </div>
 
         <h1 className="text-4xl font-semibold tracking-tight text-[color:var(--color-text-primary)] sm:text-5xl">
-          {localize(locale, "Friday 已就绪", "Friday is Ready")}
+          {completionTitle.title}
         </h1>
+
+        {completionTitle.subtitle && (
+          <p className="mt-3 max-w-2xl text-base text-[color:var(--color-text-secondary)]">
+            {completionTitle.subtitle}
+          </p>
+        )}
 
         {summaryItems.length > 0 && (
           <p className="mt-4 text-lg text-[color:var(--color-text-secondary)]">

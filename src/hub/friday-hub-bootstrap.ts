@@ -687,11 +687,7 @@ async function autoDetectProvidersFromEnv(
 
     const distinctKinds = new Set(candidates.map((c) => c.kind));
 
-    if (candidates.length > 0 && distinctKinds.size <= 1) {
-      // Exactly one provider kind is available and the user has not chosen a
-      // route. Auto-selecting the sole available provider does not usurp a user
-      // choice, so default to it with NO auto-added fallback providers.
-      const chosen = candidates[0]!;
+    const setDefaultRoute = async (chosen: { kind: FridayProviderKind; id: string }): Promise<void> => {
       const chosenEntry = ENV_PROVIDER_MAP.find((e) => e.kind === chosen.kind);
       const defaultModel = chosenEntry?.defaultModel ?? (chosen.kind === "ollama" ? "llama3.2" : "default");
       try {
@@ -706,6 +702,24 @@ async function autoDetectProvidersFromEnv(
           err instanceof Error ? err.message : String(err),
         );
       }
+    };
+
+    // 1) Honor an explicit provider choice recorded by setup (e.g. the CLI
+    // wizard writes FRIDAY_SETUP_DEFAULT_PROVIDER). This is a user choice, so
+    // route to it even when multiple provider keys are present — it is not a
+    // hidden auto-pick.
+    const intendedKind = (process.env.FRIDAY_SETUP_DEFAULT_PROVIDER ?? "").trim().toLowerCase();
+    const intendedCandidate = intendedKind
+      ? candidates.find((c) => c.kind === intendedKind)
+      : undefined;
+
+    if (intendedCandidate) {
+      await setDefaultRoute(intendedCandidate);
+    } else if (candidates.length > 0 && distinctKinds.size <= 1) {
+      // Exactly one provider kind is available and the user has not chosen a
+      // route. Auto-selecting the sole available provider does not usurp a user
+      // choice, so default to it with NO auto-added fallback providers.
+      await setDefaultRoute(candidates[0]!);
     } else if (distinctKinds.size > 1) {
       // Multiple provider kinds are available but the user has not chosen a
       // route. Locked provider policy: never auto-pick a provider (no hidden

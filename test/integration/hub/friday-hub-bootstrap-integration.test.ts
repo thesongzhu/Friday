@@ -2063,6 +2063,34 @@ describe("FridayHub Bootstrap Integration", () => {
     expect(routing.fallbackProviderIds).toEqual([]);
   });
 
+  it("honors an explicit setup provider choice (FRIDAY_SETUP_DEFAULT_PROVIDER) even with multiple keys", async () => {
+    // The CLI setup wizard records the user's explicit choice here; bootstrap
+    // must route to it (a user choice, not a hidden auto-pick) even when other
+    // provider keys are present.
+    process.env.OPENAI_API_KEY = "test-openai-key-not-validated"; // pragma: allowlist secret
+    process.env.DEEPSEEK_API_KEY = "test-deepseek-key-not-validated"; // pragma: allowlist secret
+    const previousIntent = process.env.FRIDAY_SETUP_DEFAULT_PROVIDER;
+    process.env.FRIDAY_SETUP_DEFAULT_PROVIDER = "deepseek";
+    try {
+      const hub = await createIsolatedHub();
+      await hub.start();
+
+      const providers = await hub.providerService.listProviders();
+      const deepseek = providers.find((p) => p.kind === "deepseek");
+      expect(deepseek).toBeDefined();
+
+      const routing = await hub.providerService.getRoutingConfig();
+      expect(routing.defaultProviderId).toBe(deepseek!.id);
+      expect(routing.fallbackProviderIds).toEqual([]);
+    } finally {
+      if (previousIntent === undefined) {
+        delete process.env.FRIDAY_SETUP_DEFAULT_PROVIDER;
+      } else {
+        process.env.FRIDAY_SETUP_DEFAULT_PROVIDER = previousIntent;
+      }
+    }
+  });
+
   it("preserves a saved default with empty fallbacks on multi-key boot (no auto-added fallback)", async () => {
     // Gate OFF (dev) path: a user who saved {default, fallbackProviderIds: []}
     // must not have a fallback silently added when a second key appears.

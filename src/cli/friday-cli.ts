@@ -489,7 +489,7 @@ Backfill historical packContext metadata onto agent runs using strict session ev
 friday setup
 
 Interactive setup wizard — walks you through configuring:
-  1. LLM provider (Anthropic / OpenAI / Ollama)
+  1. LLM provider (Anthropic / DeepSeek / OpenAI / Ollama)
   2. API key (or skip for Ollama)
   3. Message channels (optional)
 
@@ -2341,7 +2341,7 @@ export function writeFridaySetupEnvFile(envPath: string, envLines: string[]): vo
   tightenFridaySetupEnvFilePermissions(envPath);
 }
 
-async function cmdSetup(): Promise<void> {
+export async function cmdSetup(): Promise<void> {
   const readline = await import("node:readline");
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
@@ -2354,13 +2354,15 @@ async function cmdSetup(): Promise<void> {
   console.log("╚══════════════════════════════════════════════════╝");
   console.log("");
 
-  // Step 1: LLM Provider
+  // Step 1: LLM Provider — present providers as explicit peer choices (no
+  // steering by omission). DeepSeek is a first-class option.
   console.log("Step 1: Choose your LLM provider");
-  console.log("  [1] Anthropic (Claude) — recommended");
-  console.log("  [2] OpenAI (GPT)");
-  console.log("  [3] Ollama (local, free, no API key needed)");
+  console.log("  [1] Anthropic (Claude)");
+  console.log("  [2] DeepSeek");
+  console.log("  [3] OpenAI (GPT)");
+  console.log("  [4] Ollama (local, free, no API key needed)");
   console.log("");
-  const providerChoice = await ask("Enter choice [1/2/3]: ");
+  const providerChoice = await ask("Enter choice [1/2/3/4]: ");
 
   let providerId: string;
   let apiKey = "";
@@ -2368,6 +2370,17 @@ async function cmdSetup(): Promise<void> {
 
   switch (providerChoice) {
     case "2":
+      providerId = "deepseek";
+      console.log("");
+      apiKey = await ask("Enter your DeepSeek API key: ");
+      if (!apiKey) {
+        console.error("API key is required for DeepSeek.");
+        rl.close();
+        process.exitCode = 1;
+        return;
+      }
+      break;
+    case "3":
       providerId = "openai";
       console.log("");
       apiKey = await ask("Enter your OpenAI API key: ");
@@ -2378,7 +2391,7 @@ async function cmdSetup(): Promise<void> {
         return;
       }
       break;
-    case "3":
+    case "4":
       providerId = "ollama";
       baseUrl = await ask("Ollama URL [http://localhost:11434]: ") || "http://localhost:11434";
       console.log("No API key needed for Ollama.");
@@ -2406,12 +2419,20 @@ async function cmdSetup(): Promise<void> {
   const envLines: string[] = [];
 
   if (apiKey) {
-    const envVarName = providerId === "openai" ? "OPENAI_API_KEY" : "FRIDAY_ANTHROPIC_API_KEY";
+    const envVarName = providerId === "openai"
+      ? "OPENAI_API_KEY"
+      : providerId === "deepseek"
+        ? "DEEPSEEK_API_KEY"
+        : "FRIDAY_ANTHROPIC_API_KEY";
     envLines.push(`${envVarName}=${apiKey}`);
   }
   if (baseUrl) {
     envLines.push(`OLLAMA_BASE_URL=${baseUrl}`);
   }
+  // Persist the user's explicit provider choice as routing intent so bootstrap
+  // routes to it as the default even when other provider keys are present in
+  // the environment (an explicit choice, never an auto-guess).
+  envLines.push(`FRIDAY_SETUP_DEFAULT_PROVIDER=${providerId}`);
 
   if (envLines.length > 0) {
     writeFridaySetupEnvFile(envPath, envLines);
