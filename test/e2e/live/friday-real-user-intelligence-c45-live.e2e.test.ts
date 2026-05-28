@@ -22,7 +22,8 @@ import {
 
 const C45_GATED = process.env.FRIDAY_C45_REAL_USER_GAUNTLET === "1"
   && process.env.FRIDAY_E2E_LIVE_DEEPSEEK === "1"
-  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"));
+  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"))
+  && hasEnvValue(OPENAI_API_KEY_ENV);
 const DEEPSEEK_MODEL = process.env.FRIDAY_C45_DEEPSEEK_MODEL ?? "deepseek-v4-pro";
 const OPENAI_MODEL = process.env.FRIDAY_C45_OPENAI_MODEL ?? "gpt-4o-mini";
 const REPORT_ROOT = process.env.FRIDAY_C45_REPORT_ROOT;
@@ -262,6 +263,13 @@ function assertRunCostUnderCap(run: AgentRun): number {
   return cost;
 }
 
+function requireOpenAiProviderId(providerId: string | undefined): string {
+  if (!providerId) {
+    throw new Error("C4.5 proof requires the OpenAI fallback provider for tool-heavy synthetic file work");
+  }
+  return providerId;
+}
+
 function extractJsonObject(text: string): unknown {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -465,6 +473,7 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     },
     notes: [
       "Synthetic fixture sources are created under the temporary Friday E2E state directory, not inside the public package.",
+      "DeepSeek live text capability remains required; the tool-heavy file/read/write proof uses the configured OpenAI fallback lane for stable structured tool execution.",
       "This closes only direct API/live-provider C4.5 synthetic analysis proof; live external-channel C4.5, actual PPTX rendering, and broad arbitrary-file quality remain pending.",
     ],
   };
@@ -487,17 +496,15 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     });
     await verifyProviderTextCapability(env.baseUrl, env.accessToken, deepseekProviderId, DEEPSEEK_MODEL);
 
-    if (hasEnvValue(OPENAI_API_KEY_ENV)) {
-      openaiProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
-        name: "C4.5 OpenAI Explicit Fallback",
-        openAiBaseUrl: OPENAI_BASE_URL,
-        models: [OPENAI_MODEL],
-        defaultModel: OPENAI_MODEL,
-        apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
-      });
-      report.models.openaiFallbackConfigured = true;
-      report.models.openai = OPENAI_MODEL;
-    }
+    openaiProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
+      name: "C4.5 OpenAI Explicit Fallback",
+      openAiBaseUrl: OPENAI_BASE_URL,
+      models: [OPENAI_MODEL],
+      defaultModel: OPENAI_MODEL,
+      apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
+    });
+    report.models.openaiFallbackConfigured = true;
+    report.models.openai = OPENAI_MODEL;
 
     await putRouting(env, {
       defaultProviderId: deepseekProviderId,
@@ -543,14 +550,14 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     ].join("\n");
 
     const run = await startAgentRun(env, task, {
-      providerId: deepseekProviderId,
-      model: DEEPSEEK_MODEL,
+      providerId: requireOpenAiProviderId(openaiProviderId),
+      model: OPENAI_MODEL,
       readOnly: false,
-      timeoutMs: 360_000,
+      timeoutMs: 240_000,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualExecution?.actualProviderKind).toBe("deepseek");
-    expect(run.actualExecution?.actualModel).toBe(DEEPSEEK_MODEL);
+    expect(run.actualExecution?.actualProviderKind).toBe("openai");
+    expect(run.actualExecution?.actualModel).toBe(OPENAI_MODEL);
     const intelligenceRunCostUsd = assertRunCostUnderCap(run);
 
     const audit = await readRunAudit(env, run.id);
@@ -619,13 +626,13 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
       "Return a short clarification question or a bounded plan. Do not provide any single final pipeline value as the answer.",
     ].join("\n");
     const run = await startAgentRun(env, task, {
-      providerId: deepseekProviderId,
-      model: DEEPSEEK_MODEL,
+      providerId: requireOpenAiProviderId(openaiProviderId),
+      model: OPENAI_MODEL,
       readOnly: true,
       timeoutMs: 240_000,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualExecution?.actualProviderKind).toBe("deepseek");
+    expect(run.actualExecution?.actualProviderKind).toBe("openai");
     const ambiguityRunCostUsd = assertRunCostUnderCap(run);
     const responseText = run.responseText ?? "";
     expect(/clarif|which|ambiguous|amount|units|pipeline/i.test(responseText)).toBe(true);

@@ -297,7 +297,7 @@ jobs:
         run: |
           echo "C4.5 live real-user intelligence proof: synthetic deck/report/table extraction, analysis, ambiguity handling, deck-like generation, prompt-injection denial, and source immutability."
           echo "Primary provider/model: DeepSeek deepseek-v4-pro."
-          echo "Explicit fallback provider/model: OpenAI gpt-4o-mini if configured."
+          echo "Tool-heavy proof provider/model: OpenAI gpt-4o-mini fallback lane."
           echo "Expected spend: bounded under the separate USD 100 C4.5 cap."
           echo "No provider secret values, private user files, or real user data are printed or persisted by this job."
           echo "This dispatch intentionally does not start a live Telegram/Discord/Lark channel window."
@@ -309,10 +309,10 @@ jobs:
             exit 1
           fi
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "OpenAI credential absent; C4.5 will run without fallback configured."
-          else
-            echo "OpenAI credential present; C4.5 explicit fallback route will be configured."
+            echo "::error::C4.5 proof requires an OpenAI credential secret for the tool-heavy fallback lane."
+            exit 1
           fi
+          echo "OpenAI credential present; C4.5 tool-heavy fallback route will be configured."
 
       - name: Run C4.5 real-user intelligence gauntlet
         run: FRIDAY_C45_REPORT_ROOT="$RUNNER_TEMP/c45-real-user-intelligence-proof" npx vitest run test/e2e/live/friday-real-user-intelligence-c45-live.e2e.test.ts
