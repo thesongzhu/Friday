@@ -9051,7 +9051,6 @@ export async function createFridayHub(
     workflowRuntime,
     autonomousEngine,
     selfHealing: selfHealingApiService,
-    agentRuntime,
     apiRuntime,
     channelRegistry,
     satelliteRuntime,

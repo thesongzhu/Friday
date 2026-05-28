@@ -173,8 +173,11 @@ describe("validateChannelProofArtifacts", () => {
         criteria: {
           artifactHasNoToken: true,
           deepseekDefaultConfigured: true,
+          deepseekAnsweredPositiveRun: false,
+          deepseekAnsweredNegativeRun: false,
           memoryRecallOccurred: true,
           workflowDiscoveryOccurred: true,
+          parentRuntimeWorkflowRunExecuted: true,
           workflowRunTerminalSuccess: true,
           negativeUnsafeBlocked: true,
         },

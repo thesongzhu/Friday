@@ -12,7 +12,7 @@ import * as os from "node:os";
 import { type FridayConfig, type LoadedFridayConfig, parseFridayConfig, writeFridayConfig } from "#config";
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
-import type { FridayAgentMessage, FridayAgentRuntime, FridaySsrfPolicy } from "#agent";
+import type { FridayAgentMessage, FridaySsrfPolicy } from "#agent";
 import type {
   FridayChannelInstanceConfig,
   FridayChannelMessage,
@@ -1752,7 +1752,6 @@ export interface FridayHub {
   workflowRuntime: FridayWorkflowRuntime;
   autonomousEngine: FridayAutonomousEngine;
   selfHealing: FridaySelfHealingApiService;
-  agentRuntime: FridayAgentRuntime;
   apiRuntime: FridayApiRuntime;
   channelRegistry: FridayChannelRegistry;
   satelliteRuntime: FridaySatelliteRuntime;

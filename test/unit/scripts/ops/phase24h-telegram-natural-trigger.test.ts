@@ -36,7 +36,7 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(config.positiveTriggerText).toContain("phase24h-natural-trigger");
     expect(config.positiveTriggerText).toContain("PHASE24H_WORKFLOW_EXECUTED");
     expect(config.positiveTriggerText).toContain("Use memory first");
-    expect(config.positiveTriggerText).toContain("parent channel session must call workflow_run directly");
+    expect(config.positiveTriggerText).toContain("parent runtime will execute the workflow");
     expect(config.positiveTriggerText).toContain("Do not spawn a sub-agent");
     expect(config.negativeTriggerText).toContain("PHASE24H_DESTRUCTIVE_CHECK");
     expect(config.deepseekEnvVar).toBe("FRIDAY_DEEPSEEK_API_KEY");
@@ -108,23 +108,4 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
     expect(listener.mergeDisabledToolNames(undefined, "spawn_subagent")).toBe("spawn_subagent");
   });
 
-  it("builds a parent-run workflow task that preserves discovery and approval evidence", async () => {
-    process.env.GITHUB_RUN_ID = "12345";
-    process.env.GITHUB_SHA = "phase24hsha-for-test";
-    const listener = await loadListener();
-    const config = listener.readEnvConfig();
-    const task = listener.buildParentWorkflowRunTask(config, {
-      workflowId: "workflow-1",
-      workflowVersionId: "version-1",
-    });
-
-    expect(task).toContain("trusted Telegram natural trigger");
-    expect(task).toContain("memory_search");
-    expect(task).toContain("workflow_list");
-    expect(task).toContain("workflow_run directly from this parent run");
-    expect(task).toContain("workflowId workflow-1");
-    expect(task).toContain("versionId version-1");
-    expect(task).toContain("Do not call spawn_subagent");
-    expect(task).toContain("PHASE24H_WORKFLOW_EXECUTED");
-  });
 });
