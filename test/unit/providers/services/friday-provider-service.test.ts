@@ -1764,7 +1764,8 @@ describe("FridayProviderService", () => {
       it("honors an explicit provider pin even when over budget (explicit user choice bypass)", async () => {
         await setupRemoteProviderOverBudget(1, 5); // over_limit
         // Pinning a provider is an explicit user choice, so the budget local-only gate is
-        // intentionally bypassed (locked decision: honor explicit user choice).
+        // intentionally bypassed by design — see the !pinnedProvider guard in
+        // friday-provider-service.ts runWithFallback.
         const { result } = await service.runWithFallback({
           requestedProviderId: "test-id-0001",
           run: async () => "ok",
