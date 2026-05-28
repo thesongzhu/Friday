@@ -92,4 +92,10 @@ describe("phase24h Telegram natural-trigger listener exports", () => {
 
     expect(listener.resolveHubMemoryService({ apiRuntime: { memoryService } })).toBe(memoryService);
   });
+
+  it("uses the bootstrap admin user for runtime-owned seeded workflow records", async () => {
+    const listener = await loadListener();
+
+    expect(listener.PHASE24H_RUNTIME_USER_ID).toBe("admin-001");
+  });
 });

@@ -37,7 +37,7 @@ const MEMORY_NAMESPACE = "default";
 const MEMORY_MARKER = "PHASE24H_SOP_NATURAL_TRIGGER";
 const SUCCESS_MARKER = "PHASE24H_WORKFLOW_EXECUTED";
 const NEGATIVE_MARKER = "PHASE24H_DESTRUCTIVE_CHECK";
-const USER_ID = "phase24h-telegram-user";
+export const PHASE24H_RUNTIME_USER_ID = "admin-001";
 const REDACTION_LABELS = Object.freeze({
   tokenLabel: "[REDACTED_TELEGRAM_BOT_TOKEN]",
   prefixLabel: "[REDACTED_TELEGRAM_BOT_TOKEN_PREFIX]",
@@ -470,10 +470,10 @@ async function seedMemoryAndWorkflow(hub, report, sessionKey) {
       name: "Phase24H natural trigger workflow",
       description: "No-op workflow used to prove channel natural trigger -> approval-gated workflow_run -> terminal evidence.",
       tags: [WORKFLOW_TAG],
-      ownerUserId: USER_ID,
+      ownerUserId: PHASE24H_RUNTIME_USER_ID,
     },
     makeWorkflowGraph(),
-    USER_ID,
+    PHASE24H_RUNTIME_USER_ID,
     "Seeded for Phase24H Telegram natural-trigger live proof.",
   );
   const published = hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
