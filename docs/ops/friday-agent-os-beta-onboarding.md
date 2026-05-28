@@ -1,6 +1,6 @@
 # Friday Agent OS Beta Onboarding
 
-Use this guide for the first external-operator setup of Friday Agent OS on a single-user Mac.
+Use this guide for the first external-operator setup of Friday Agent OS on a single-user Mac. This is beta-candidate onboarding; it does not claim public desktop, Homebrew, notarized macOS, or mobile release readiness until the required external evidence is archived.
 
 ## What you need
 
@@ -18,7 +18,7 @@ For local engineering validation:
 bash scripts/ops/release-friday-companion-app.sh
 ```
 
-For a real beta release candidate, use the notarized path described in [friday-companion-release-macos.md](./docs/ops/friday-companion-release-macos.md).
+For a real beta release candidate, use the notarized path described in [friday-companion-release-macos.md](./friday-companion-release-macos.md).
 
 Expected result:
 
@@ -28,7 +28,7 @@ Expected result:
 - `dist/releases/macos/*.dmg`
 - `dist/releases/macos/*.zip`
 - `dist/releases/Friday.release-manifest.json`
-- `dist/releases/homebrew/Casks/friday.rb`
+- `dist/releases/homebrew/Casks/friday.rb` local generated cask file; this is not Homebrew tap publication evidence
 
 ## 2. Install launchd startup
 
@@ -132,7 +132,7 @@ Before handing the setup to another external operator, confirm:
 
 - release evidence files exist in `dist/macos/`
 - packaged release artifacts exist in `dist/releases/macos/`
-- the Homebrew Cask exists in `dist/releases/homebrew/Casks/friday.rb`
+- the generated Homebrew Cask file exists locally in `dist/releases/homebrew/Casks/friday.rb`
 - launchd status is healthy
 - required macOS permissions are granted
 - passkey enrollment succeeds

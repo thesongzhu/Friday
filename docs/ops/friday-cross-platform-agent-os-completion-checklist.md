@@ -1,6 +1,6 @@
 # Friday Cross-Platform Agent OS Completion Checklist
 
-This checklist is the single completion source of truth for the current cross-platform Agent OS program.
+This checklist is the single completion source of truth for the current cross-platform Agent OS program. It tracks target beta baselines and release evidence; it is not a claim that desktop, Homebrew, iOS, Android, or Windows distribution is public-release complete.
 
 Only these status labels are allowed:
 
@@ -8,20 +8,22 @@ Only these status labels are allowed:
 - `validated but temporary`
 - `missing`
 
-## Supported Release Baselines
+## Target Release Baselines
 
 - `macOS 15+`
 - `iOS trusted-device beta`
 - `Android trusted-device beta`
 - `Windows 11`
 
-Unsupported for this milestone:
+Not targeted for this milestone:
 
 - Linux
 - iOS device-local automation
 - Android device-local automation
 
 ## Validated And Keep
+
+These are repository components or local validation surfaces to keep. They do not by themselves prove external signing, store distribution, Homebrew tap publication, or clean-machine/device release evidence.
 
 - Shared Node hub and web Operator Console
 - Stable `/v1/system/*` and `/v1/system/remote/auth/*` route families
@@ -35,6 +37,8 @@ Unsupported for this milestone:
 - macOS beta smoke and evidence-writer scripts in `scripts/ops`
 
 ## Validated But Temporary
+
+These remain transitional until the missing evidence below is archived.
 
 - Node companion daemon fallback for development
 - Source and npm install as the Windows operator fallback
