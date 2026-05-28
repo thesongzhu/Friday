@@ -91,6 +91,9 @@ describe("Friday Reflex onboarding registry", () => {
       { category: "reflex", key: "constitution.challenge_policy", value: "challenge_risky_or_inconsistent" },
       { category: "reflex", key: "constitution.plain_language_policy", value: "plain_language_for_decisions" },
     ]);
+    expect(parseFridayReflexExplicitPreferenceMessage(
+      "Phase24H natural trigger phase24h-positive-run-12345-abcdef12: use my saved SOP PHASE24H_SOP_NATURAL_TRIGGER to run the approved Phase24H followup automation. Use memory first, list the published workflow tagged phase24h-natural-trigger, request approval if needed, then after the workflow result is available reply with PHASE24H_WORKFLOW_EXECUTED.",
+    )).toEqual([]);
     expect(parseFridayReflexExplicitPreferenceMessage("不要记住这个")).toEqual([]);
   });
 });

@@ -48,7 +48,7 @@ const EXPLICIT_PREFERENCE_RULES: readonly ExplicitPreferenceRule[] = [
     write: { category: "reflex", key: "workflows.generation_policy", value: "do_not_suggest" },
   },
   {
-    pattern: /(以后|以后都|今后|默认).*(workflow|工作流).*(草稿|候选|审核)|(workflow).*(draft|review candidate|approval)/iu,
+    pattern: /(以后|以后都|今后|默认).*(workflow|工作流).*(草稿|候选|审核)|(always|from now on|default).*(workflow).*(draft|review candidate|approval)/iu,
     write: { category: "reflex", key: "workflows.generation_policy", value: "draft_workflow" },
   },
   {
@@ -56,7 +56,7 @@ const EXPLICIT_PREFERENCE_RULES: readonly ExplicitPreferenceRule[] = [
     write: { category: "reflex", key: "skills.generation_policy", value: "suggest_only" },
   },
   {
-    pattern: /(以后|以后都|今后|默认).*(skill|技能|能力包).*(草稿|候选|审核)|(skill).*(draft|review candidate|approval)/iu,
+    pattern: /(以后|以后都|今后|默认).*(skill|技能|能力包).*(草稿|候选|审核)|(always|from now on|default).*(skill).*(draft|review candidate|approval)/iu,
     write: { category: "reflex", key: "skills.generation_policy", value: "draft_for_approval" },
   },
   {
