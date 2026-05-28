@@ -113,6 +113,37 @@ function normalizeStringList(value) {
 }
 
 /**
+ * Truthfully scope what the provider lanes proved. A run with only one eligible
+ * provider proves the single-provider DEFAULT lane only — it does NOT prove
+ * provider fallback resilience (that is the explicit, gated C3/C4 lane). This
+ * must never be over-claimed as a fallback/resilience proof.
+ */
+function deriveProviderLaneScope(summary) {
+  const envTruth = summary?.preflight?.envTruth ?? {};
+  const lanes = envTruth.providerLanes ?? {};
+  const requirements = envTruth.providerLaneRequirements ?? {};
+  if (lanes.fallback) {
+    return {
+      scope: "default_and_fallback",
+      fallback_resilience_proven: true,
+      note: "Default and fallback provider lanes were resolved and exercised.",
+    };
+  }
+  if (requirements.fallbackRequired === false) {
+    return {
+      scope: "single_provider_default_only",
+      fallback_resilience_proven: false,
+      note: "Only one eligible provider was available; this run proves the single-provider default lane ONLY and does NOT prove provider fallback resilience. Multi-provider/fallback resilience is the explicit gated C3/C4 provider-routing lane.",
+    };
+  }
+  return {
+    scope: "default_only",
+    fallback_resilience_proven: false,
+    note: "No fallback provider lane was exercised in this run.",
+  };
+}
+
+/**
  * Build a result artifact from the run-real-green-gate.mjs summary object.
  *
  * @param {object} input
@@ -136,6 +167,7 @@ export function buildRealGreenGateResult({ summary, commitSha, refName, evaluate
     scenarios_run: counts.scenariosRun,
     scenarios_total: counts.scenariosTotal,
     scenarios_passed: counts.scenariosPassed,
+    provider_lane_scope: deriveProviderLaneScope(summary),
   };
 }
 

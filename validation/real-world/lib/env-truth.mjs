@@ -227,19 +227,27 @@ export function resolveFallbackLaneRequirement(providers, routing, defaultLane, 
       || isProviderValidationEligible(provider)
     ));
   if (defaultLane && !hasValidatedAlternative) {
+    // Single eligible provider: a one-provider deployment truthfully has no
+    // fallback, so the default proof must NOT require one — and must never
+    // synthesize an absent provider (e.g. OpenAI) as a fallback. This run then
+    // verifies ONLY the single-provider default lane; it does NOT prove provider
+    // fallback resilience. Multi-provider / fallback-resilience proof is the
+    // explicit, gated C3/C4 provider-routing lane.
     return {
-      fallbackRequired: true,
-      source: "default_lane_requires_fallback",
+      fallbackRequired: false,
+      source: "single_provider_no_fallback_required",
     };
   }
 
+  // Two or more eligible providers exist with no explicit fallback configured —
+  // a fallback lane is still required so resilience is exercised.
   return {
     fallbackRequired: hasValidatedAlternative,
     source: hasValidatedAlternative ? "validated_alternative_available" : "no_validated_alternative",
   };
 }
 
-function chooseFallbackLane(providers, routing, defaultLane, providerHealthById = new Map()) {
+export function chooseFallbackLane(providers, routing, defaultLane, providerHealthById = new Map()) {
   const enabled = providers.filter((provider) => provider.enabled && provider.id !== defaultLane?.providerId);
   const preferredIds = asArray(routing?.fallbackProviderIds);
   const fromPreferred = uniqueProviders(preferredIds

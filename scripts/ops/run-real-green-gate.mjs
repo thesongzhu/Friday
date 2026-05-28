@@ -384,6 +384,10 @@ function renderMarkdown(summary) {
     `- Auth ok: ${String(summary.preflight?.envTruth?.auth?.ok === true)}`,
     `- Default lane: ${summary.preflight?.envTruth?.providerLanes?.default?.model ?? "missing"}`,
     `- Fallback lane: ${summary.preflight?.envTruth?.providerLanes?.fallback?.model ?? "missing"}`,
+    `- Fallback required: ${String(summary.preflight?.envTruth?.providerLaneRequirements?.fallbackRequired !== false)} (source: ${summary.preflight?.envTruth?.providerLaneRequirements?.source ?? "n/a"})`,
+    ...(summary.preflight?.envTruth?.providerLaneRequirements?.fallbackRequired === false && !summary.preflight?.envTruth?.providerLanes?.fallback
+      ? ["- Provider-lane scope: single eligible provider — proves the single-provider DEFAULT lane ONLY; does NOT prove fallback resilience (see explicit gated C3/C4 lane)."]
+      : []),
     "",
     "## Public Surface",
     "",

@@ -106,6 +106,11 @@ describe("buildRealGreenGateResult", () => {
       scenarios_run: 47,
       scenarios_total: 47,
       scenarios_passed: 47,
+      provider_lane_scope: {
+        scope: "default_only",
+        fallback_resilience_proven: false,
+        note: "No fallback provider lane was exercised in this run.",
+      },
     });
   });
 
@@ -192,6 +197,51 @@ describe("buildRealGreenGateResult", () => {
     expect(result.commit_sha).toBe("");
     expect(result.ref_name).toBe("");
     expect(result.evaluated_at).toBe("");
+  });
+
+  it("scopes a single-provider run to default-only and does NOT overclaim fallback resilience", () => {
+    const summary = passingSummary();
+    (summary.preflight as Record<string, unknown>).envTruth = {
+      providerLanes: {
+        default: { providerKind: "deepseek", model: "deepseek-v4-pro" },
+        fallback: null,
+      },
+      providerLaneRequirements: { fallbackRequired: false, source: "single_provider_no_fallback_required" },
+    };
+
+    const result = buildRealGreenGateResult({
+      summary,
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe(REAL_GREEN_GATE_RESULT_STATUSES.PASSED);
+    expect(result.provider_lane_scope.scope).toBe("single_provider_default_only");
+    expect(result.provider_lane_scope.fallback_resilience_proven).toBe(false);
+    expect(result.provider_lane_scope.note).toMatch(/single-provider default lane ONLY/i);
+    expect(result.provider_lane_scope.note).toMatch(/does NOT prove provider fallback resilience/i);
+  });
+
+  it("scopes a two-lane run to default_and_fallback with fallback resilience proven", () => {
+    const summary = passingSummary();
+    (summary.preflight as Record<string, unknown>).envTruth = {
+      providerLanes: {
+        default: { providerKind: "deepseek", model: "deepseek-v4-pro" },
+        fallback: { providerKind: "anthropic", model: "claude-sonnet-4" },
+      },
+      providerLaneRequirements: { fallbackRequired: true, source: "validated_alternative_available" },
+    };
+
+    const result = buildRealGreenGateResult({
+      summary,
+      commitSha: SHA_A,
+      refName: "main",
+      evaluatedAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result.provider_lane_scope.scope).toBe("default_and_fallback");
+    expect(result.provider_lane_scope.fallback_resilience_proven).toBe(true);
   });
 });
 
