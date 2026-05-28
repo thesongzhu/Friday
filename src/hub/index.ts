@@ -27,6 +27,7 @@ export {
 // Hub bootstrap
 export {
   canResolveFridayChannelApprovalFromMessage,
+  createFridayChannelNaturalTriggerResolver,
   createFridayChannelToolApprovalShortId,
   createFridayHub,
   evaluateFridayChannelApprovalExpiry,
@@ -36,6 +37,7 @@ export {
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveFridayHubConfig,
+  sanitizeFridayChannelVisibleReply,
   shouldFailClosedForFridayWorkspaceContext,
   resolveTokenSecret,
   type FridayHub,

@@ -20,7 +20,7 @@
  *   reader can mistake this for a live-LLM proof.
  * - Discord or Lark+Feishu channel-driven approval/rejection. This listener
  *   covers Telegram only; the other two channels remain proof_pending under
- *   the existing C2 boundary in the Friday Map.
+ *   the existing C2 release-truth boundary.
  * - Channel-driven natural-trigger execution (memory recall + workflow_list +
  *   workflow_run via channel). That requires real agent runtime which needs
  *   either live LLM authorization or a separate deterministic-agent design
