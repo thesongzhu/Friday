@@ -378,10 +378,15 @@ describe("Friday Mock Tool Invocations E2E", () => {
       text: "I have stored the preference about dark mode.",
     });
 
+    // Task must explicitly state the user fact/preference: the memory_store tool
+    // fail-closes on "preference"-tagged stores whose backing user message does
+    // NOT explicitly state the preference (anti-fabrication guardrail). With an
+    // explicit statement the store genuinely persists, so the "I have stored"
+    // claim is backed by a successful mutating tool call (side-effect gate).
     const run1 = await startMockAgentRunAndApproveTools<AgentRunResult>(
       env,
       {
-        task: "Store this note for later: the interface should default to dark mode",
+        task: "Remember that I prefer dark mode for all interfaces.",
         providerId,
         model,
         timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS,
@@ -501,12 +506,17 @@ describe("Friday Mock Tool Invocations E2E", () => {
     const mock = env.mockFor("anthropic");
     const chainFile = path.join(env.stateDir, "chain-test.txt");
 
-    // Step 1: LLM writes a file via exec
+    // Step 1: LLM creates a file via the write tool. (The earlier version used
+    // `echo … > file` via exec, which the shell-metacharacter guard correctly
+    // blocks — so the file was never created and the "successfully created"
+    // claim was unbacked. The side-effect evidence gate now requires a real
+    // successful mutating tool call to back a completion claim, so this exercises
+    // a genuine create→read→verify loop.)
     mock.enqueue({
       type: "tool_use",
-      toolName: "exec",
-      toolCallId: "exec-chain-1",
-      toolInput: { command: `echo chain-test-data > ${JSON.stringify(chainFile)}` },
+      toolName: "write",
+      toolCallId: "write-chain-1",
+      toolInput: { path: chainFile, content: "chain-test-data" },
     });
     // Step 2: LLM reads the file it just wrote
     mock.enqueue({
@@ -523,12 +533,14 @@ describe("Friday Mock Tool Invocations E2E", () => {
     const res = await startMockAgentRunAndApproveTools<AgentRunResult>(
       env,
       { task: "Create a file and verify its contents", providerId, model, timeoutMs: MOCK_E2E_RUN_TIMEOUT_MS },
-      ["exec-chain-1"],
+      ["write-chain-1"],
     );
 
     expect(res.status).toBe(200);
     expect(res.json.data.status).toBe("completed");
     expect(res.json.data.toolCallCount).toBeGreaterThanOrEqual(2);
+    // The file was genuinely created on disk (real evidence backs the claim).
+    expect(fs.existsSync(chainFile)).toBe(true);
     expect(mock.calls.length).toBe(3);
   });
 
