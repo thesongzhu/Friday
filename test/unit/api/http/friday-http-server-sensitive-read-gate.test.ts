@@ -226,6 +226,32 @@ describe("FridayHttpServer sensitive-read floor", () => {
     expect(body.data.principalId).not.toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
   });
 
+  it("negative: malformed/invalid bearer on a sensitive route → 401 (falls back to synthetic, then gated)", async () => {
+    let handlerCalls = 0;
+    await startWith((routes) => {
+      routes.register({
+        operationId: "memory.items.list",
+        method: "GET",
+        path: "/v1/memory/items",
+        auth: { public: true },
+        async handler() {
+          handlerCalls += 1;
+          return { items: [] };
+        },
+      });
+    }); // no valid tokens registered → any bearer is invalid
+
+    // Invalid/malformed Authorization → requireAuth fails → server falls back to the synthetic
+    // public principal → the sensitive-read gate then denies. Pins the fallback→gate interaction.
+    const response = await fetch(`${baseUrl}/v1/memory/items`, {
+      headers: { Authorization: "Bearer not-a-real-token" },
+    });
+    expect(response.status).toBe(401);
+    const body = await response.json() as { ok: false; error: { code: string } };
+    expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    expect(handlerCalls).toBe(0);
+  });
+
   it("regression: anonymous GET on a core no-login UX route (non-sensitive) → 200 (unaffected)", async () => {
     let handlerCalls = 0;
     await startWith((routes) => {

@@ -76,8 +76,9 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
   // still responds. Exercised on /v1/health, a minimal-public (non-sensitive) route where the
   // fallthrough invariant holds; sensitive-read surfaces (/v1/sessions etc.) instead require a
   // bound principal — that gate is covered by friday-http-server-sensitive-read-gate.test.ts.
-  // Function-level bearer-scheme parsing remains pinned by
-  // test/unit/api/auth/friday-auth-middleware.test.ts and friday-token-validator.test.ts.
+  // The malformed-scheme → public:default (not the real principal, not 401) behavior is pinned
+  // by test/unit/api/http/friday-http-server-default-public-principal.test.ts (bearer-hydration
+  // cases), with requireAuth accept/reject in test/unit/api/auth/friday-auth-middleware.test.ts.
   it.each(caseVariants)(
     "auth-boundary: non-standard Authorization scheme '$label' falls through to public:default and returns 200",
     async ({ header }) => {
