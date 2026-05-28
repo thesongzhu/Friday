@@ -84,6 +84,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
+      FRIDAY_REAL_GREEN_GATE_LIVE_PROVIDER_MODE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'economy' }}
       FRIDAY_REAL_WORLD_CLOUD_READY: ${{ secrets.FRIDAY_REAL_WORLD_CLOUD_READY }}
       FRIDAY_REAL_WORLD_SATELLITE_READY: ${{ secrets.FRIDAY_REAL_WORLD_SATELLITE_READY }}
       FRIDAY_REAL_WORLD_MCP_READY: ${{ secrets.FRIDAY_REAL_WORLD_MCP_READY }}

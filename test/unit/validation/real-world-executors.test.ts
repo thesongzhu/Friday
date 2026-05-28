@@ -10,6 +10,7 @@ import {
   LIFECYCLE_UNIT_PROOF_TEST_FILES,
   executeScenario,
   redactLifecycleProofOutput,
+  resolveSignificantUiProbeErrors,
 } from "../../../validation/real-world/lib/executors.mjs";
 
 describe("real-world executors", () => {
@@ -20,6 +21,39 @@ describe("real-world executors", () => {
       rmSync(tempRoot, { recursive: true, force: true });
       tempRoot = null;
     }
+  });
+
+  it("does not count a recovered real-login 429 as a UI loading defect", () => {
+    const result = resolveSignificantUiProbeErrors({
+      artifact: {
+        observedEvidence: ["local-passphrase login recovered after 1 rate-limit retry attempt(s)"],
+      },
+      responseErrors: ["429 http://127.0.0.1:33641/v1/auth/login"],
+      consoleErrors: ["Failed to load resource: the server responded with a status of 429 (Too Many Requests)"],
+      requestFailures: [],
+    });
+
+    expect(result).toEqual({
+      significantRequestFailures: [],
+      significantResponseErrors: [],
+      significantConsoleErrors: [],
+    });
+  });
+
+  it("still counts non-login 429 responses as UI loading defects", () => {
+    const result = resolveSignificantUiProbeErrors({
+      artifact: {
+        observedEvidence: ["local-passphrase login recovered after 1 rate-limit retry attempt(s)"],
+      },
+      responseErrors: ["429 http://127.0.0.1:33641/v1/providers"],
+      consoleErrors: ["Failed to load resource: the server responded with a status of 429 (Too Many Requests)"],
+      requestFailures: [],
+    });
+
+    expect(result.significantResponseErrors).toEqual(["429 http://127.0.0.1:33641/v1/providers"]);
+    expect(result.significantConsoleErrors).toEqual([
+      "Failed to load resource: the server responded with a status of 429 (Too Many Requests)",
+    ]);
   });
 
   function createAgentScenarioClient({

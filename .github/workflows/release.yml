@@ -363,7 +363,12 @@ jobs:
           # release-proof pass: status=passed AND scenarios consistent AND
           # blocked_reasons empty AND commit_sha matches expected. The CLI
           # prints its own structured rejection JSON to stdout on failure.
-          node scripts/ops/validate-real-green-gate-result.mjs --path "${ARTIFACT_PATH}" --expected-sha "${TAG_SHA}"
+          node scripts/ops/validate-real-green-gate-result.mjs \
+            --path "${ARTIFACT_PATH}" \
+            --expected-sha "${TAG_SHA}" \
+            --required-evidence-kind real-runtime \
+            --required-evidence-kind real-provider \
+            --required-evidence-kind real-browser
 
       - name: Assert RGG run was workflow_dispatch (channel phase24X jobs only run on manual dispatch)
         env:

@@ -14,6 +14,8 @@ import {
   buildRealGreenGateResult,
 } from "./lib/real-green-gate-result.mjs";
 
+const LIVE_PROVIDER_MODES = new Set(["full", "economy"]);
+
 const DAILY_CORE_SCENARIOS = [
   "l0-runtime-health",
   "l0-provider-lanes-ready",
@@ -149,6 +151,7 @@ function parseArgs(argv) {
     repoRoot: process.cwd(),
     mintLocalAdminToken: false,
     dailyCoreRepetitions: 1,
+    liveProviderMode: normalizeLiveProviderMode(process.env.FRIDAY_REAL_GREEN_GATE_LIVE_PROVIDER_MODE),
     validationTimeoutMs: parseOptionalInteger(process.env.FRIDAY_REAL_GREEN_GATE_VALIDATION_TIMEOUT_MS) ?? 20 * 60 * 1000,
     skillTestTimeoutMs: parseOptionalInteger(process.env.FRIDAY_REAL_GREEN_GATE_SKILL_TIMEOUT_MS) ?? 5 * 60 * 1000,
   };
@@ -180,6 +183,10 @@ function parseArgs(argv) {
         options.dailyCoreRepetitions = Number.parseInt(next, 10) || 1;
         index += 1;
         break;
+      case "--live-provider-mode":
+        options.liveProviderMode = normalizeLiveProviderMode(next);
+        index += 1;
+        break;
       case "--validation-timeout-ms":
         options.validationTimeoutMs = parseOptionalInteger(next) ?? options.validationTimeoutMs;
         index += 1;
@@ -200,6 +207,15 @@ function parseArgs(argv) {
   }
   options.branch ??= resolveCurrentBranch(options.repoRoot);
   return options;
+}
+
+export function normalizeLiveProviderMode(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return LIVE_PROVIDER_MODES.has(normalized) ? normalized : "full";
+}
+
+export function shouldExcludeProviderScenarios(liveProviderMode) {
+  return normalizeLiveProviderMode(liveProviderMode) === "economy";
 }
 
 function parseBooleanFlag(value) {
@@ -347,6 +363,7 @@ function renderMarkdown(summary) {
     `- Daily core report: ${summary.dailyCore?.reportRoot ?? "n/a"}`,
     `- Public surface report: ${summary.publicSurface?.reportRoot ?? "n/a"}`,
     `- External channel report: ${summary.externalChannels?.reportRoot ?? "n/a"}`,
+    `- Live provider mode: ${summary.liveProviderMode ?? "full"}`,
     `- Branch conformance: ${summary.branchConformance?.recommendation ?? "n/a"}`,
     `- Skill conformance: ${summary.skillConformance?.ok === true ? "passed" : "failed"}`,
     `- Last completed phase: ${summary.lastCompletedPhase ?? "none"}`,
@@ -503,6 +520,7 @@ function buildSummary({
   runId,
   repoRoot,
   branch,
+  liveProviderMode,
   phaseStatus,
   preflight,
   smoke,
@@ -518,6 +536,7 @@ function buildSummary({
     generatedAt: new Date().toISOString(),
     repoRoot,
     branch,
+    liveProviderMode: normalizeLiveProviderMode(liveProviderMode),
     status: error ? "failed" : "completed",
     lastCompletedPhase: getLastCompletedPhase(phaseStatus),
     phaseStatus,
@@ -559,6 +578,8 @@ function flushTerminalArtifacts(reportRoot, summary) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const repoRoot = options.repoRoot;
+  const liveProviderMode = normalizeLiveProviderMode(options.liveProviderMode);
+  const excludeProviderScenarios = shouldExcludeProviderScenarios(liveProviderMode);
   const runId = createRunId();
   const reportRoot = options.reportRoot
     ?? path.join(repoRoot, "docs", "reports", "ops", "real-green-gate", runId);
@@ -637,6 +658,7 @@ async function main() {
       () => runRealWorldValidation({
         ...validationBaseOptions,
         suite: "smoke",
+        excludeProviderScenarios,
         reportRoot: resolveGateSuiteReportRoot(reportRoot, "smoke"),
       }),
       async () => {
@@ -654,6 +676,7 @@ async function main() {
         suite: "daily",
         scenarioIds: DAILY_CORE_SCENARIOS,
         repetitions: options.dailyCoreRepetitions,
+        excludeProviderScenarios,
         reportRoot: resolveGateSuiteReportRoot(reportRoot, "daily-core"),
       }),
       async () => {
@@ -671,6 +694,7 @@ async function main() {
         suite: "daily",
         scenarioIds: PUBLIC_SURFACE_SCENARIOS,
         repetitions: 1,
+        excludeProviderScenarios,
         reportRoot: resolveGateSuiteReportRoot(reportRoot, "public-surface"),
       }),
       async () => {
@@ -746,6 +770,7 @@ async function main() {
       runId,
       repoRoot,
       branch: options.branch,
+      liveProviderMode,
       phaseStatus,
       preflight,
       smoke,
