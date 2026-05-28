@@ -274,6 +274,7 @@ jobs:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
       FRIDAY_C45_REAL_USER_GAUNTLET: "1"
+      FRIDAY_E2E_LIVE_DEEPSEEK: "1"
       FRIDAY_C45_DEEPSEEK_MODEL: "deepseek-v4-pro"
       FRIDAY_C45_OPENAI_MODEL: "gpt-4o-mini"
     steps:
