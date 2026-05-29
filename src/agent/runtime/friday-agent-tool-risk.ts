@@ -341,18 +341,29 @@ function gitSubcommandStart(parts: readonly string[]): number {
   return -1;
 }
 
+// git's option parser accepts any unambiguous prefix of a long flag (verified vs git 2.39:
+// `git reset --har`/`--ha` resolve to `--hard`; `git clean --for`/`--f` resolve to `--force`),
+// so destructive flags must be matched by prefix — an exact-string match lets an abbreviated
+// form slip through the gate. A token matches when it is a `--`-prefixed prefix of the full
+// flag name (length ≥ 3, i.e. at least `--x`); this never matches a divergent flag such as
+// `--soft`, `--mixed`, or `--help`.
+function matchesLongFlag(token: string, fullFlag: string): boolean {
+  return token.length >= 3 && token.startsWith("--") && fullFlag.startsWith(token);
+}
+
 // Precise per-subcommand check: given a known subcommand and the tokens that follow it,
-// return an approval reason for a destructive flag combination, else null.
+// return an approval reason for a destructive flag combination, else null. Long destructive
+// flags are matched by prefix (see matchesLongFlag) so abbreviated forms cannot bypass.
 function gitDestructiveReason(sub: string, rest: readonly string[]): string | null {
   const s = sub.toLowerCase();
-  const hasForce = rest.some((a) => a === "-f" || a === "--force");
-  if (s === "reset" && rest.some((a) => a === "--hard")) {
+  const hasForce = rest.some((a) => a === "-f" || matchesLongFlag(a, "--force"));
+  if (s === "reset" && rest.some((a) => matchesLongFlag(a, "--hard"))) {
     return "`git reset --hard` irreversibly discards uncommitted changes and requires explicit approval in the current run context.";
   }
-  if (s === "clean" && rest.some((a) => /^-[a-z]*f[a-z]*$/i.test(a) || a === "--force")) {
+  if (s === "clean" && rest.some((a) => /^-[a-z]*f[a-z]*$/i.test(a) || matchesLongFlag(a, "--force"))) {
     return "`git clean -f…` permanently deletes untracked files and requires explicit approval in the current run context.";
   }
-  if ((s === "checkout" || s === "restore" || s === "switch") && (hasForce || rest.some((a) => a === "--hard"))) {
+  if ((s === "checkout" || s === "restore" || s === "switch") && (hasForce || rest.some((a) => matchesLongFlag(a, "--hard")))) {
     return `\`git ${s} --force\` discards local changes and requires explicit approval in the current run context.`;
   }
   return null;

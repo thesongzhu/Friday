@@ -133,6 +133,26 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("git reset HEAD file.txt")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("git clean -n")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("find . -name pattern")).toMatchObject({ level: "safe", program: "find" });
+      // prefix flag-matching must not over-block: only a prefix of `--hard` triggers reset,
+      // and `--force` (not a prefix of `--hard`) does not make a `reset`-named branch destructive.
+      expect(classifyShellRisk("git reset --soft")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git reset --mixed")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git push origin reset --force")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git checkout -b reset")).toMatchObject({ level: "safe", program: "git" });
+    });
+
+    it("detects destructive git flags given as unambiguous abbreviations (no abbreviation bypass)", () => {
+      // git resolves unambiguous long-flag prefixes (`--har` → `--hard`, `--for` → `--force`);
+      // exact-string flag matching missed these. (verified vs git 2.39)
+      expect(classifyShellRisk("git reset --har")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git reset --ha")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git clean --for")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git clean --f")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git checkout --for main")).toMatchObject({ level: "destructive", program: "git" });
+      // combined with the leading-option and wrapper paths (must still catch the abbreviation):
+      expect(classifyShellRisk("git -C repo reset --har")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git --shallow-file snap reset --har")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("sudo git reset --har")).toMatchObject({ level: "destructive", program: "git" });
     });
 
     it("identifies path-qualified programs by basename (no path-prefix bypass)", () => {
@@ -233,6 +253,9 @@ describe("friday-agent-tool-risk", () => {
       // Behind obscure / unknown global options must ALSO require approval (no default-allow).
       expect(getApprovalRequiredReasonForExecCommand("git --shallow-file snap reset --hard")).toContain("approval");
       expect(getApprovalRequiredReasonForExecCommand("git --totally-unknown-opt val reset --hard")).toContain("approval");
+      // Unambiguous flag abbreviations must also require approval (git resolves the prefix).
+      expect(getApprovalRequiredReasonForExecCommand("git reset --har")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("git clean --for")).toContain("approval");
     });
 
     it("requires approval for path-qualified destructive programs (no path-prefix bypass)", () => {
