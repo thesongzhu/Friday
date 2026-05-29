@@ -1,6 +1,6 @@
 # Open Source Release Review
 
-Last reviewed: 2026-05-26
+Last reviewed: 2026-05-29
 
 ## Verdict
 
@@ -34,7 +34,8 @@ automatic access to systems the user has not configured.
 
 - Repository license: MIT.
 - npm package: `@thesongzhu/friday`.
-- Current published npm version: `1.0.2` (R6 published 2026-05-26T19:45Z). Repo `package.json` version: `1.0.2`. This public-install-audit hotfix replaced `@larksuiteoapi/node-sdk` — which pulled `axios ~1.13.3` with three HIGH-severity findings in the post-`1.0.1` isolated `npm audit --omit=dev` — with Friday's native Lark WebSocket client under `src/channels/lark/internal/`. Same-SHA Real Green Gate proof and Discord / Telegram / Lark+Feishu trusted-inbound artifacts passed on the `1.0.2` release SHA before publish.
+- Current published npm version: `1.0.2` (R6 published 2026-05-26T19:45Z); the npm registry latest remains `1.0.2`. Repo `package.json` version: `1.0.3` — a staged, unpublished package candidate for a future operator-authorized release, not a published version. The `1.0.2` publish was a public-install-audit hotfix that replaced `@larksuiteoapi/node-sdk` — which pulled `axios ~1.13.3` with three HIGH-severity findings in the post-`1.0.1` isolated `npm audit --omit=dev` — with Friday's native Lark WebSocket client under `src/channels/lark/internal/`. Same-SHA Real Green Gate proof and Discord / Telegram / Lark+Feishu trusted-inbound artifacts passed on the `1.0.2` release SHA before publish.
+- Source truth after `1.0.2` further includes a strict-repair closure batch on GitHub `main` through PR #412 (final SHA `f1755825`) — B6 shell-risk gate, workflow completion-truth (deterministic core / filesystem-write; other side-effect classes remain `proof_pending`), receipt/idempotency/usage-ledger truth, and truth-label corrections — plus an isolated, operator-authorized local DeepSeek competence proof with a clean `verified_receipt`. These are deterministic GitHub-main closures staged as the `1.0.3` candidate, not published-release claims; see `docs/public-v1-local-candidate.md`. A same-SHA R5 live proof on the final release SHA is still required before any `1.0.3` publish.
 - The unscoped `friday` npm package is unrelated.
 
 README, package metadata, GitHub metadata, and release docs should all use the
