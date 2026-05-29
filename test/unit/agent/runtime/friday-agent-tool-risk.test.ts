@@ -105,11 +105,41 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("git -C repo status")).toMatchObject({ level: "safe", program: "git" });
     });
 
+    it("detects destructive flags behind value-taking global options (leading-option bypass)", () => {
+      // A value-taking global option given in space form (`--config-env <name>=<envvar>`)
+      // shifts the subcommand position; a position-pinned scan misses it. (verified vs git 2.39)
+      expect(classifyShellRisk("git --config-env foo.bar=MYVAR reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git --config-env=foo.bar=MYVAR reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git --namespace ns clean -fd")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git -c a=b -c c=d reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      // `--exec-path` takes no space value (prior allowlist over-consumed it, eating the subcommand)
+      expect(classifyShellRisk("git --exec-path reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+    });
+
+    it("detects destructive flags given as unambiguous abbreviations (abbreviation bypass)", () => {
+      // git resolves unambiguous long-flag prefixes (`--har` → `--hard`, `--for` → `--force`);
+      // exact-string matching missed these. (verified vs git 2.39)
+      expect(classifyShellRisk("git reset --har")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git reset --ha")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git clean --for")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git clean --f")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git checkout --for main")).toMatchObject({ level: "destructive", program: "git" });
+      // combined: leading value-option + abbreviated flag
+      expect(classifyShellRisk("git -C repo reset --har")).toMatchObject({ level: "destructive", program: "git" });
+    });
+
     it("keeps benign git/find invocations safe (no flag false-positives)", () => {
       expect(classifyShellRisk("git status")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("git reset HEAD file.txt")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("git clean -n")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("find . -name pattern")).toMatchObject({ level: "safe", program: "find" });
+      // only `--hard` (or a prefix of it) makes reset destructive — soft/mixed/quiet stay safe
+      expect(classifyShellRisk("git reset --soft")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git reset --mixed")).toMatchObject({ level: "safe", program: "git" });
+      // `reset` as a branch name with `--force` (force-push) is not local `reset --hard`
+      expect(classifyShellRisk("git push origin reset --force")).toMatchObject({ level: "safe", program: "git" });
+      // creating a branch literally named `reset` is not a destructive checkout
+      expect(classifyShellRisk("git checkout -b reset")).toMatchObject({ level: "safe", program: "git" });
     });
   });
 
@@ -143,6 +173,10 @@ describe("friday-agent-tool-risk", () => {
       // Behind git global options (the common agentic form) must also require approval.
       expect(getApprovalRequiredReasonForExecCommand("git -C repo reset --hard")).toContain("approval");
       expect(getApprovalRequiredReasonForExecCommand("git --no-pager clean -fdx")).toContain("approval");
+      // Leading value-taking global option (space form) and abbreviated flags must not bypass.
+      expect(getApprovalRequiredReasonForExecCommand("git --config-env foo.bar=MYVAR reset --hard")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("git reset --har")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("git clean --for")).toContain("approval");
     });
 
     it("allows safe read-only commands", () => {
@@ -151,6 +185,8 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForExecCommand("git status")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git reset HEAD file.txt")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git clean -n")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("git reset --soft")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("git push origin reset --force")).toBeNull();
     });
 
     it("returns null for empty command", () => {
