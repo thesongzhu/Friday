@@ -1633,6 +1633,9 @@ export async function createFridayHub(
     nowIso,
     computeChecksum,
     resolveSkill: resolveWorkflowSkill,
+    // Audit C Stage 2A: anchor the filesystem-write verifier's scope containment
+    // to the same workspace root the skill registry resolves skill dirs against.
+    workspaceDir: workspaceRoot,
     invokeSkill: invokeSkillForWorkflow,
     userRulesContextProvider: (input) =>
       buildFridayUserRulesPromptContext({

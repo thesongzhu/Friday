@@ -87,6 +87,13 @@ import {
   type FridayNodeCompletionVerification,
   resolveNodeCompletionVerification,
 } from "./friday-workflow-node-acceptance.js";
+import {
+  type FridayFilesystemWriteTarget,
+  type FridaySnapshot,
+  resolveFilesystemWriteTarget,
+  snapshotTarget,
+  verifyFsWriteEvidence,
+} from "./friday-workflow-fs-write-verifier.js";
 import { createFridayWorkflowArtifactWriter } from "../engine/friday-workflow-artifact-writer.js";
 import { createFridayWorkflowNodeRunnerFacade } from "../engine/friday-workflow-node-runner-facade.js";
 import { createFridayWorkflowAcceptanceGate } from "../engine/friday-workflow-acceptance-gate.js";
@@ -369,6 +376,71 @@ function inferArtifactType(output: unknown): FridayAcceptanceArtifactType {
   return "json";
 }
 
+/**
+ * Audit C Stage 2A: collect every URI / path the (UNTRUSTED) node execution
+ * RESULT declares as its OWN artifact / receipt. The fs-write verifier refuses
+ * to count the declared target as `verified` if it equals any of these — that
+ * is exactly the forbidden "skill self-written receipt" / returned-artifact-URI
+ * == target circular proof (the delta would be merely the skill's own serialized
+ * output, not an independent side effect).
+ *
+ * Two formal channels are collected (NOT arbitrary output string leaves — a
+ * skill legitimately echoing the path it changed, e.g. `summary` /
+ * `details.changedPath`, must NOT trip the guard, else nothing could verify):
+ *   1. `result.artifacts[].uri` — the formal artifact channel;
+ *   2. string values under receipt/artifact-NAMED output keys (`runPath`,
+ *      `receiptPath`, `artifactPath`/`artifactUri`, `evidencePath`,
+ *      `outputPath`, `uri`, `path`) — how skills like page-benchmark-report
+ *      report the evidence file they wrote and returned as their own receipt.
+ * These are used ONLY for the refusal — never to source the re-read target.
+ */
+const RETURNED_ARTIFACT_KEYS: ReadonlySet<string> = new Set([
+  "uri",
+  "path",
+  "runpath",
+  "receiptpath",
+  "artifactpath",
+  "artifacturi",
+  "evidencepath",
+  "outputpath",
+  "reportpath",
+  "baselinepath",
+]);
+
+function collectReturnedArtifactPaths(result: unknown): string[] {
+  const uris: string[] = [];
+  const r = result as { artifacts?: unknown; output?: unknown } | null | undefined;
+  if (r && typeof r === "object") {
+    if (Array.isArray(r.artifacts)) {
+      for (const a of r.artifacts) {
+        const uri = a != null && typeof a === "object" ? (a as { uri?: unknown }).uri : undefined;
+        if (typeof uri === "string" && uri.length > 0) uris.push(uri);
+      }
+    }
+    // Walk output collecting ONLY string values under receipt/artifact-named
+    // keys (bounded depth/breadth).
+    const seen = new Set<unknown>();
+    const walk = (value: unknown, depth: number): void => {
+      if (depth > 6 || uris.length > 256) return;
+      if (value == null || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item, depth + 1);
+        return;
+      }
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof v === "string" && v.length > 0 && RETURNED_ARTIFACT_KEYS.has(k.toLowerCase())) {
+          uris.push(v);
+        } else {
+          walk(v, depth + 1);
+        }
+      }
+    };
+    walk(r.output, 0);
+  }
+  return uris;
+}
+
 function normalizeAcceptanceContent(content: unknown): Record<string, unknown> {
   const base = { ...asRecord(content) };
   if (Object.keys(base).length === 0) {
@@ -421,6 +493,15 @@ export interface CreateFridayWorkflowRuntimeDeps {
   nowIso: () => string;
   computeChecksum: (content: string) => string;
   resolveSkill: (skillId: string) => unknown | null;
+  /**
+   * Workspace root used by the audit-C Stage 2A filesystem-write verifier to
+   * anchor scope containment (`${workspaceDir}` + skill-relative resolution).
+   * Wired from the hub bootstrap's `workspaceRoot` — the same root the skill
+   * registry resolves skill dirs against. Optional (defaults to `process.cwd()`)
+   * so existing callers/tests need no change; absent it only weakens fs-write
+   * containment to the process cwd, never enabling a false `verified`.
+   */
+  workspaceDir?: string;
   invokeSkill: (
     skillId: string,
     runId: string,
@@ -475,6 +556,12 @@ export function createFridayWorkflowRuntime(
   const evidenceExportRootDir = resolvedDbPath !== ":memory:"
     ? path.join(path.dirname(resolvedDbPath), "artifacts", "workflow-evidence")
     : path.join(process.cwd(), ".friday", "artifacts", "workflow-evidence");
+
+  // Audit C Stage 2A: workspace root for the filesystem-write verifier's scope
+  // containment. Defaults to the process cwd when the hub did not wire it.
+  const fsVerifierWorkspaceDir = typeof deps.workspaceDir === "string" && deps.workspaceDir.length > 0
+    ? deps.workspaceDir
+    : process.cwd();
 
   // Phase 14.5C: per-run evidence-status tracking. The legacy global
   // `evidencePersistenceAvailable` flag silently masked degraded persistence
@@ -1318,9 +1405,25 @@ export function createFridayWorkflowRuntime(
       // Applied in EVERY path — pipeline-on, output==null, and the legacy/
       // pipeline-disabled bypass — so none of them can be read as verified.
       const sideEffectClass = classifyWorkflowNodeSideEffect(input.node, deps.resolveSkill);
-      const completionVerification = resolveNodeCompletionVerification(input.node, sideEffectClass);
+      const baselineVerification = resolveNodeCompletionVerification(input.node, sideEffectClass);
+
+      // Audit C Stage 2A: is this node a filesystem-write VERIFICATION candidate
+      // — a write-class side effect (NO send/connect/capture/execute) with a
+      // resolvable binding target sourced from trusted node/manifest inputs? If
+      // so, its `proof_pending`→`verified` upgrade requires a real on-disk state
+      // delta, observed AFTER the skill runs. The Stage 1 baseline label is the
+      // worst-case (`proof_pending`); the verifier may upgrade it to `verified`.
+      const fsWriteTarget: FridayFilesystemWriteTarget | null = resolveFilesystemWriteTarget(
+        input.node,
+        deps.resolveSkill,
+      );
+
+      // The FINAL completion-verification label. For non-candidates it is the
+      // Stage 1 baseline. For candidates it starts at `proof_pending` and is only
+      // raised to `verified` after a confirmed fs delta (see below).
+      let effectiveVerification: FridayNodeCompletionVerification = baselineVerification;
       const withVerification = <T>(r: T): T => {
-        (r as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = completionVerification;
+        (r as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = effectiveVerification;
         return r;
       };
 
@@ -1336,15 +1439,81 @@ export function createFridayWorkflowRuntime(
       // clean/verified. It does NOT block the node from running (no
       // over-blocking) and is ORTHOGONAL to `evidenceStatus` — recording a
       // non-verified completion must NOT touch evidence-persistence health.
-      recordRunNodeCompletionVerification(input.runId, completionVerification);
+      //
+      // Stage 2A DEFER-AND-RECORD-ONCE: `recordRunNodeCompletionVerification` is
+      // monotonic-downward, so an up-front `proof_pending` record makes a later
+      // `verified` record a NO-OP. For an fs-write CANDIDATE we therefore DEFER
+      // the up-front record and record exactly once AFTER the re-read (verified
+      // when an fs delta is confirmed, else proof_pending). EVERY candidate exit
+      // path (success / catch / !pipelineEnabled) MUST record, or a
+      // candidate-only run would default-read `verified`. All non-candidate
+      // nodes keep the up-front record (unchanged Stage 1/2B behavior).
+      if (!fsWriteTarget) {
+        recordRunNodeCompletionVerification(input.runId, baselineVerification);
+      }
 
       if (!pipelineEnabled) {
         // Legacy / pipeline-disabled bypass must still be truth-labeled — a
-        // disabled pipeline is not a verified completion.
+        // disabled pipeline is not a verified completion. An fs-write candidate
+        // is NOT verified on the legacy path (no re-read happens there); record
+        // its deferred label as `proof_pending` so the run cannot read verified.
+        if (fsWriteTarget) {
+          recordRunNodeCompletionVerification(input.runId, baselineVerification);
+        }
         return withVerification(await legacyNodeExecutor.executeNode(input));
       }
+
+      // Stage 2A: snapshot the declared target BEFORE execution so the post-exec
+      // re-read can prove a checksum change or a newly-created file.
+      let fsSnapshot: FridaySnapshot | null = null;
+      if (fsWriteTarget) {
+        try {
+          fsSnapshot = snapshotTarget(
+            fsWriteTarget,
+            fsVerifierWorkspaceDir,
+            { computeChecksum: deps.computeChecksum },
+          );
+        } catch {
+          fsSnapshot = null; // unreadable pre-state → treat as "no snapshot"; verify still requires post-existence + delta.
+        }
+      }
+
       try {
         const result = withVerification(await nodeRunnerFacade.executeNode(input));
+
+        // Stage 2A: re-read the declared target and decide the candidate's
+        // single recorded label. `verified` ONLY on a confirmed in-scope,
+        // non-self-receipt, non-evidence-mirror fs delta; else `proof_pending`.
+        if (fsWriteTarget) {
+          let evidenceVerified = false;
+          if (fsSnapshot) {
+            try {
+              const outcome = verifyFsWriteEvidence(
+                {
+                  target: fsWriteTarget,
+                  snapshot: fsSnapshot,
+                  evidenceExportRootDir,
+                  workspaceDir: fsVerifierWorkspaceDir,
+                  returnedArtifactUris: collectReturnedArtifactPaths(result),
+                },
+                { computeChecksum: deps.computeChecksum },
+              );
+              evidenceVerified = outcome.verified;
+            } catch {
+              evidenceVerified = false; // any verifier error → fail closed.
+            }
+          }
+          effectiveVerification = resolveNodeCompletionVerification(
+            input.node,
+            "side_effect",
+            evidenceVerified,
+          );
+          // Stamp the now-final label on the result before it is returned, then
+          // record once. (`withVerification` reads `effectiveVerification` live,
+          // so the earlier stamp is overwritten here.)
+          (result as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = effectiveVerification;
+          recordRunNodeCompletionVerification(input.runId, effectiveVerification);
+        }
 
         pipelineEventEmitter.emit(
           "pipeline.node.execution.completed",
@@ -1430,6 +1599,14 @@ export function createFridayWorkflowRuntime(
 
         return result;
       } catch (error) {
+        // Stage 2A: a candidate that threw (execution error, OR an acceptance
+        // gate failure thrown AFTER a success-path `verified` record) did NOT
+        // cleanly complete — record `proof_pending`. `record...` is
+        // monotonic-downward, so this safely downgrades any earlier `verified`
+        // and guarantees the deferred candidate is always recorded on this exit.
+        if (fsWriteTarget) {
+          recordRunNodeCompletionVerification(input.runId, "proof_pending");
+        }
         pipelineEventEmitter.emit(
           "pipeline.node.execution.completed",
           {

@@ -4,6 +4,10 @@ import {
   resolveNodeCompletionVerification,
   isVerifiedCompletion,
 } from "../../../../src/workflows/runtime/friday-workflow-node-acceptance.js";
+import {
+  FRIDAY_FS_WRITE_TARGET_ARG_KEY,
+  resolveFilesystemWriteTarget,
+} from "../../../../src/workflows/runtime/friday-workflow-fs-write-verifier.js";
 import type { FridayWorkflowNode } from "../../../../src/workflows/model/friday-workflow-graph.types.js";
 
 // Audit C Stage 1: a side-effect node without deterministic evidence must be
@@ -76,5 +80,37 @@ describe("workflow node acceptance classifier (audit C)", () => {
     const n = node("action", { skillId: "s1" });
     const cls = classifyWorkflowNodeSideEffect(n, skillWith(["write"]));
     expect(resolveNodeCompletionVerification(n, cls, /* hasDeterministicEvidence */ true)).toBe("verified");
+  });
+});
+
+// Audit C Stage 2A: the fs-write candidate gate is a NARROWER subset of the
+// Stage 1 side-effect class — a write node co-declaring send/connect/capture/
+// execute is still side_effect (proof_pending) but is NOT an fs-write
+// verification candidate, so it can never be upgraded to verified.
+describe("audit C Stage 2A — fs-write candidate gate vs the Stage 1 classifier", () => {
+  const writeSkill = (extraActions: string[] = []) => () => ({
+    id: "s",
+    skillDir: "/tmp/skill",
+    manifest: {
+      permissions: {
+        grants: [
+          { resource: "filesystem", action: "read" },
+          { resource: "filesystem", action: "write", selectors: { pathPrefixes: ["out"] } },
+          ...extraActions.map((a) => ({ action: a })),
+        ],
+      },
+    },
+  });
+
+  it("pure write-class node with a binding target IS a candidate (verified-eligible)", () => {
+    const n = node("action", { skillId: "s", args: { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: "out/x.json" } });
+    expect(classifyWorkflowNodeSideEffect(n, writeSkill())).toBe("side_effect");
+    expect(resolveFilesystemWriteTarget(n, writeSkill())).not.toBeNull();
+  });
+
+  it("write+send node stays side_effect but is NOT a candidate (never verified)", () => {
+    const n = node("action", { skillId: "s", args: { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: "out/x.json" } });
+    expect(classifyWorkflowNodeSideEffect(n, writeSkill(["send"]))).toBe("side_effect");
+    expect(resolveFilesystemWriteTarget(n, writeSkill(["send"]))).toBeNull();
   });
 });
