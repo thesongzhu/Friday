@@ -5,6 +5,7 @@ import type {
   FridayExpressionEvaluator,
 } from "../model/friday-workflow-expression.types.js";
 import type { JsonValue, UUID } from "../model/friday-workflow.types.js";
+import type { FridayNodeCompletionVerification } from "../runtime/friday-workflow-node-acceptance.js";
 
 // ─── I/O types ───
 
@@ -27,6 +28,16 @@ export interface FridayNodeExecutionOutput {
     checksum?: string;
     metadata?: Record<string, unknown>;
   }>;
+  /**
+   * Orthogonal completion-verification truth label (audit C, Stage 1), set by
+   * the pipeline node executor from the node's declared capability. A
+   * side-effect node without deterministic evidence is `proof_pending` (NOT a
+   * clean/verified completion); informational nodes are `verified` (pure
+   * compute) or `model_assessed_unverified` (model-driven). Absent = unknown
+   * (legacy); release proof / UI must not treat unknown or non-`verified` as
+   * verified. Does not affect whether the node ran.
+   */
+  completionVerification?: FridayNodeCompletionVerification;
 }
 
 // ─── Interface ───

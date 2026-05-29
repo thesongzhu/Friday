@@ -25,6 +25,7 @@ export type {
   FridayWorkflowListInput,
   FridayWorkflowStartRunInput,
   FridayNodeOutcome,
+  FridayNodeCompletionVerification,
   RowMapper,
 } from "./model/friday-workflow.types.js";
 export type {

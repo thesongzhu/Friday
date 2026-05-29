@@ -191,6 +191,23 @@ export type FridayTaskWorkflowWorkflowRunEvidenceStatus =
   | "unavailable";
 
 /**
+ * Audit C: completion-verification truth of an upstream workflow run,
+ * ORTHOGONAL to its evidence-persistence durability above. Mirrors the
+ * workflow runtime's `FridayNodeCompletionVerification` (kept as a local
+ * string union so the task-workflow layer does not depend on the workflows
+ * module). Only `verified` can back a proof claim; any other value means the
+ * run was not a clean/verified completion (e.g. a side-effect node lacked
+ * deterministic evidence → `proof_pending`) and `verifyClaim` refuses it for
+ * a reason DISTINCT from persistence durability.
+ */
+export type FridayTaskWorkflowWorkflowRunCompletionVerification =
+  | "verified"
+  | "model_assessed_unverified"
+  | "proof_pending"
+  | "recovery_needed"
+  | "blocked";
+
+/**
  * Phase 14.5D module_28d: deterministic per-operation rollback class
  * surfaced on the task-workflow closeout receipt.
  *

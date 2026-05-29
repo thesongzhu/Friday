@@ -59,6 +59,19 @@ export interface FridayWorkflowRunRepository {
     context: Record<string, unknown>,
     nowIso: string,
   ): void;
+
+  /**
+   * Audit C Stage 2(B): persist the run-level completion-verification label so
+   * the orthogonal completion truth survives a hub restart (the runtime
+   * aggregate is otherwise process-lifetime in-memory). Best-effort caller:
+   * the runtime swallows a "no such column" error on legacy DBs predating
+   * v089. Only ever downgrades to a non-verified label (NULL = clean verified).
+   */
+  setCompletionVerification(
+    db: Database.Database,
+    id: UUID,
+    completionVerification: string,
+  ): void;
 }
 
 // ─── Row mapper ───
@@ -91,6 +104,10 @@ function mapRunRow(row: FridayWorkflowRunRow): FridayWorkflowRunEntity {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     proofRequired: row.proof_required === 1,
+    completionVerification:
+      (row.completion_verification ?? undefined) as
+        | FridayWorkflowRunEntity["completionVerification"]
+        | undefined,
   };
 }
 
@@ -253,6 +270,12 @@ export function createFridayWorkflowRunRepository(): FridayWorkflowRunRepository
       db.prepare(
         "UPDATE workflow_runs SET context_json = ?, updated_at = ? WHERE id = ?",
       ).run(JSON.stringify(merged), nowIso, id);
+    },
+
+    setCompletionVerification(db, id, completionVerification) {
+      db.prepare(
+        "UPDATE workflow_runs SET completion_verification = ? WHERE id = ?",
+      ).run(completionVerification, id);
     },
   };
 }

@@ -80,7 +80,14 @@ function createRuntime(db: FridaySqliteLayer): FridayWorkflowRuntime {
     idGenerator: createTestIdGenerator(),
     nowIso: () => NOW,
     computeChecksum: (content) => createHash("sha256").update(content).digest("hex"),
-    resolveSkill: () => ({ id: "rollback-matrix-skill" }),
+    // Audit C: this fixture tests ROLLBACK-CLASS disclosure (derived from the
+    // ref SOURCE type), orthogonal to completion-verification. Its placeholder
+    // action node is informational → read-only manifest → completion
+    // `verified`, so a workflow_run_evidence claim can still be verified here.
+    resolveSkill: () => ({
+      id: "rollback-matrix-skill",
+      manifest: { permissions: { grants: [{ action: "read" }] } },
+    }),
     invokeSkill: async () => ({ ok: true }),
   });
 }
@@ -215,6 +222,11 @@ describe("Phase 14.5D module_28d: rollback matrix closeout receipt acceptance", 
         nowIso: () => NOW,
         getWorkflowRunEvidenceStatus: (runId) =>
           runtime.evidence.getRunEvidenceStatus(runId),
+        // Audit C: wire the orthogonal completion lookup as the hub does
+        // (fail-closed requires it); the read-only run is `verified`, so the
+        // workflow_run_evidence claim still reaches verified here.
+        getWorkflowRunCompletionVerification: (runId) =>
+          runtime.evidence.getRunCompletionVerification(runId),
       });
       try {
         const { workflowId, versionId } = await publishWorkflowAndGetVersionId(

@@ -82,6 +82,11 @@ import { createFridayWorkflowRunMachine } from "../engine/friday-workflow-run-ma
 import { createFridayWorkflowNodeMachine } from "../engine/friday-workflow-node-machine.js";
 import { createFridayWorkflowRetryManager } from "../engine/friday-workflow-retry-manager.js";
 import { createFridayWorkflowNodeExecutor } from "../engine/friday-workflow-node-executor.js";
+import {
+  classifyWorkflowNodeSideEffect,
+  type FridayNodeCompletionVerification,
+  resolveNodeCompletionVerification,
+} from "./friday-workflow-node-acceptance.js";
 import { createFridayWorkflowArtifactWriter } from "../engine/friday-workflow-artifact-writer.js";
 import { createFridayWorkflowNodeRunnerFacade } from "../engine/friday-workflow-node-runner-facade.js";
 import { createFridayWorkflowAcceptanceGate } from "../engine/friday-workflow-acceptance-gate.js";
@@ -518,6 +523,107 @@ export function createFridayWorkflowRuntime(
     if (previous === "available") {
       evidenceStatusByRunId.set(runId, "degraded");
     }
+  };
+
+  // Audit C part-2: RUN-LEVEL completion-verification truth, ORTHOGONAL to
+  // evidence-persistence health (`evidenceStatus`). Tracks the worst (least
+  // verified) node completion-verification label observed for the run. This is
+  // the run-level enforcement surface for the workflow-node false-completion
+  // bypasses (arbitrary non-empty baseline pass, output==null skip, and the
+  // disabled-pipeline/legacy path): a run whose aggregate is not `verified`
+  // cannot be read as a clean/verified completion and is refused as proof
+  // backing by the task workflow verifier — as a reason DISTINCT from
+  // persistence durability. It NEVER downgrades `evidenceStatus`; conflating
+  // the two would falsely report a healthy-persistence run as "degraded"
+  // (a reverse lie). Stage 2(B): the worst label is ALSO persisted durably
+  // (workflow_runs.completion_verification, v089) so the truth survives a hub
+  // restart — the in-memory map is the per-process fast path; the read merges
+  // both (worst wins). NOTE: this is C ENFORCEMENT + persistence only; letting
+  // an honest side-effect node EARN `verified` from runtime-observed evidence
+  // is the separate contract-change (a) PR — until then any side-effect node
+  // stays `proof_pending` (no forgeable skill-output signal is accepted).
+  const runCompletionVerificationByRunId = new Map<
+    string,
+    FridayNodeCompletionVerification
+  >();
+  // Worst-first rank: a LOWER number is a stronger (worse) downgrade. The run
+  // aggregate keeps the worst label any node reported.
+  const COMPLETION_VERIFICATION_RANK: Record<FridayNodeCompletionVerification, number> = {
+    blocked: 0,
+    recovery_needed: 1,
+    proof_pending: 2,
+    model_assessed_unverified: 3,
+    verified: 4,
+  };
+
+  const isCompletionVerificationLabel = (
+    value: unknown,
+  ): value is FridayNodeCompletionVerification =>
+    typeof value === "string" && value in COMPLETION_VERIFICATION_RANK;
+
+  const worstCompletionVerification = (
+    a: FridayNodeCompletionVerification | undefined,
+    b: FridayNodeCompletionVerification | undefined,
+  ): FridayNodeCompletionVerification | undefined => {
+    if (a === undefined) return b;
+    if (b === undefined) return a;
+    return COMPLETION_VERIFICATION_RANK[a] <= COMPLETION_VERIFICATION_RANK[b] ? a : b;
+  };
+
+  // Stage 2(B): persist the run's worst label durably (best-effort). Only
+  // non-verified labels are written (NULL = clean verified default). Swallow
+  // errors (legacy DB with no v089 column, or the run row not yet inserted) —
+  // the in-memory aggregate still enforces this run for the process lifetime.
+  const persistCompletionVerification = (
+    runId: string,
+    label: FridayNodeCompletionVerification,
+  ): void => {
+    try {
+      deps.db.withWriteTransaction((db) => runRepo.setCompletionVerification(db, runId, label));
+    } catch {
+      /* legacy DB / pre-insert; in-memory aggregate remains authoritative */
+    }
+  };
+
+  const recordRunNodeCompletionVerification = (
+    runId: string,
+    label: FridayNodeCompletionVerification,
+  ): void => {
+    const previous = runCompletionVerificationByRunId.get(runId);
+    if (
+      previous === undefined
+      || COMPLETION_VERIFICATION_RANK[label] < COMPLETION_VERIFICATION_RANK[previous]
+    ) {
+      runCompletionVerificationByRunId.set(runId, label);
+      if (label !== "verified") {
+        persistCompletionVerification(runId, label);
+      }
+    }
+  };
+
+  const getRunCompletionVerification = (
+    runId: string,
+  ): FridayNodeCompletionVerification => {
+    const inMemory = runCompletionVerificationByRunId.get(runId);
+    const run = execution.getRun(runId);
+    // Stage 2(B): merge the in-memory aggregate with the persisted label
+    // (v089) — the WORST of the two — so the truth survives a hub restart
+    // (after which the in-memory map is empty but the column is not).
+    const persisted = isCompletionVerificationLabel(run?.completionVerification)
+      ? run?.completionVerification
+      : undefined;
+    const recorded = worstCompletionVerification(inMemory, persisted) ?? "verified";
+    // Fail-closed for non-settled runs: a run that is not terminally
+    // `completed` can NEVER be read as a clean `verified` completion — a
+    // still-executing run may yet run a side-effect node, and a failed /
+    // cancelled run did not complete. This closes the mid-flight
+    // time-of-check race at the source so the verifier observes
+    // `proof_pending` rather than a premature `verified`. A recorded stronger
+    // downgrade (proof_pending / recovery_needed / blocked) is preserved.
+    if (run?.status === "completed") {
+      return recorded;
+    }
+    return recorded === "verified" ? "proof_pending" : recorded;
   };
 
   const isRunProofRequired = (runId: string): boolean => {
@@ -1205,11 +1311,40 @@ export function createFridayWorkflowRuntime(
 
   const nodeExecutor = {
     async executeNode(input) {
+      // Audit C Stage 1: derive the orthogonal completion-verification label
+      // from the node's DECLARED capability (never from output). A side-effect
+      // node without deterministic evidence is `proof_pending` (not a clean /
+      // verified completion); informational nodes are verified / model_assessed.
+      // Applied in EVERY path — pipeline-on, output==null, and the legacy/
+      // pipeline-disabled bypass — so none of them can be read as verified.
+      const sideEffectClass = classifyWorkflowNodeSideEffect(input.node, deps.resolveSkill);
+      const completionVerification = resolveNodeCompletionVerification(input.node, sideEffectClass);
+      const withVerification = <T>(r: T): T => {
+        (r as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = completionVerification;
+        return r;
+      };
+
+      // Run-level enforcement (audit C part-2): record this node's
+      // completion-verification into the run-level aggregate (the worst label
+      // wins). A node that is NOT a clean `verified` completion — a side-effect
+      // node lacking deterministic evidence (`proof_pending`) or a
+      // model-assessed informational node (`model_assessed_unverified`) — makes
+      // the RUN aggregate non-`verified`, which the task workflow verifier
+      // refuses as proof backing. This closes the run-level bypasses (arbitrary
+      // non-empty baseline pass, output==null skipping the gate, and the
+      // disabled-pipeline/legacy path): none can leave the run readable as
+      // clean/verified. It does NOT block the node from running (no
+      // over-blocking) and is ORTHOGONAL to `evidenceStatus` — recording a
+      // non-verified completion must NOT touch evidence-persistence health.
+      recordRunNodeCompletionVerification(input.runId, completionVerification);
+
       if (!pipelineEnabled) {
-        return legacyNodeExecutor.executeNode(input);
+        // Legacy / pipeline-disabled bypass must still be truth-labeled — a
+        // disabled pipeline is not a verified completion.
+        return withVerification(await legacyNodeExecutor.executeNode(input));
       }
       try {
-        const result = await nodeRunnerFacade.executeNode(input);
+        const result = withVerification(await nodeRunnerFacade.executeNode(input));
 
         pipelineEventEmitter.emit(
           "pipeline.node.execution.completed",
@@ -2026,9 +2161,10 @@ export function createFridayWorkflowRuntime(
       });
 
     const evidenceStatus = getRunEvidenceStatus(runId);
+    const completionVerification = getRunCompletionVerification(runId);
     const rawRun = execution.getRun(runId);
     const run = rawRun
-      ? { ...rawRun, evidenceStatus }
+      ? { ...rawRun, evidenceStatus, completionVerification }
       : null;
     return {
       run,
@@ -2056,6 +2192,7 @@ export function createFridayWorkflowRuntime(
         items: correlationItems,
       },
       evidenceStatus,
+      completionVerification,
     };
   };
 
@@ -2276,6 +2413,9 @@ export function createFridayWorkflowRuntime(
     },
     getRunEvidenceStatus(runId: string): FridayWorkflowRunEvidenceStatus {
       return getRunEvidenceStatus(runId);
+    },
+    getRunCompletionVerification(runId: string): FridayNodeCompletionVerification {
+      return getRunCompletionVerification(runId);
     },
   };
 
