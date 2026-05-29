@@ -19,13 +19,15 @@ function redactAndTruncate(value: string, maxChars: number): string {
   return truncateString(piiRedactor.scanAndTransform(value).transformedContent, maxChars);
 }
 
-// Redact PII from the metadata object and tag array on read-back (defense in depth: items
-// stored before metadata/tag redaction existed must not leak PII when returned).
+// Strip PII from metadata + tags on read-back (defense in depth: items stored before
+// metadata/tag PII handling existed must not leak PII when returned). Metadata values are
+// free-form, so PII is redacted in place; a tag whose content is PII is dropped (a
+// "[EMAIL]"-style marker would not be a valid tag), mirroring the store path.
 function redactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   return piiRedactor.redactDeep(metadata).value as Record<string, unknown>;
 }
-function redactTags(tags: string[]): string[] {
-  return piiRedactor.redactDeep(tags).value as string[];
+function dropPiiTags(tags: string[]): string[] {
+  return tags.filter((tag) => piiRedactor.scanAndTransform(tag).matches.length === 0);
 }
 
 export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter {
@@ -35,7 +37,7 @@ export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter 
         ...item,
         content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
         metadata: redactMetadata(item.metadata),
-        tags: redactTags(item.tags),
+        tags: dropPiiTags(item.tags),
       };
     },
 
@@ -47,7 +49,7 @@ export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter 
           ...result.item,
           content: redactAndTruncate(result.item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
           metadata: redactMetadata(result.item.metadata),
-          tags: redactTags(result.item.tags),
+          tags: dropPiiTags(result.item.tags),
         },
         snippet: redactAndTruncate(result.snippet, FRIDAY_MEMORY_GUARD_MAX_RESULT_SNIPPET_CHARS),
       }));

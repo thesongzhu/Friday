@@ -558,15 +558,21 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
         (_, i) => `tag${i}`,
       );
 
-      vi.mocked(piiGuard.scanAndTransform).mockReturnValue({
-        matches: [
-          { type: "email", value: "a@b.com", start: 0, end: 7 },
-          { type: "phone_us", value: "555-1234", start: 10, end: 18 },
-        ],
-        distinctTypes: ["email", "phone_us"],
-        transformedContent: "a@b.com & 555-1234",
-        tagsToAdd: ["pii.email", "pii.phone-us"],
-      });
+      // Input-aware: only the email/phone-bearing content is PII; the clean tagN tags are not
+      // (scanAndTransform is now called per-tag). Content yields 2 pii.* tags → 31 + 2 = 33 > 32.
+      vi.mocked(piiGuard.scanAndTransform).mockImplementation((s: string) =>
+        s.includes("@")
+          ? {
+              matches: [
+                { type: "email", value: "a@b.com", start: 0, end: 7 },
+                { type: "phone_us", value: "555-1234", start: 10, end: 18 },
+              ],
+              distinctTypes: ["email", "phone_us"],
+              transformedContent: "a@b.com & 555-1234",
+              tagsToAdd: ["pii.email", "pii.phone-us"],
+            }
+          : { matches: [], distinctTypes: [], transformedContent: s, tagsToAdd: [] },
+      );
 
       await expect(
         guard.store("test-ns", "a@b.com & 555-1234", { tags: existingTags }),
@@ -585,12 +591,16 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
         (_, i) => `tag${i}`,
       );
 
-      vi.mocked(piiGuard.scanAndTransform).mockReturnValue({
-        matches: [{ type: "email", value: "a@b.com", start: 0, end: 7 }],
-        distinctTypes: ["email"],
-        transformedContent: "a@b.com",
-        tagsToAdd: ["pii.email"],
-      });
+      vi.mocked(piiGuard.scanAndTransform).mockImplementation((s: string) =>
+        s.includes("@")
+          ? {
+              matches: [{ type: "email", value: "a@b.com", start: 0, end: 7 }],
+              distinctTypes: ["email"],
+              transformedContent: "a@b.com",
+              tagsToAdd: ["pii.email"],
+            }
+          : { matches: [], distinctTypes: [], transformedContent: s, tagsToAdd: [] },
+      );
 
       await guard.store("test-ns", "a@b.com", { tags: existingTags });
       expect(core.store).toHaveBeenCalled();

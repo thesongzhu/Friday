@@ -505,23 +505,34 @@ export function createFridayMemoryGuardService(
         const contentBytes = byteLength(content);
         checkQuotaAndPrune(resolution.effectiveNamespace, contentBytes);
 
-        // 5. PII policy — scan/redact content AND caller-supplied metadata + tags (the
-        // metadata/tags reach the store via the HTTP route, so they must be covered too).
+        // 5. PII policy — scan/redact content AND caller-supplied metadata, and drop tags that
+        // themselves contain PII (metadata + tags reach the store via the HTTP route, so they
+        // must be covered too). Metadata values are free-form, so PII is redacted in place; a
+        // tag is a constrained-charset label, so a "[EMAIL]"-style redaction marker would be an
+        // invalid tag — instead a PII-bearing tag is dropped and its pii.* type tag surfaced.
         const piiResult = piiGuard.scanAndTransform(content);
         const metadataRedaction = piiGuard.redactDeep(metadata?.metadata);
-        const tagRedaction = piiGuard.redactDeep(metadata?.tags ?? []);
         const redactedMetadata = metadataRedaction.value as Record<string, unknown> | undefined;
-        const redactedTags = tagRedaction.value as string[];
+
+        const originalTags = metadata?.tags ?? [];
+        const tagPiiTypeTags = new Set<string>();
+        const cleanTags: string[] = [];
+        for (const tag of originalTags) {
+          const tagScan = piiGuard.scanAndTransform(tag);
+          if (tagScan.matches.length > 0) {
+            // Drop the PII-bearing tag (no PII at rest in tags); surface its pii.* type tags.
+            tagScan.tagsToAdd.forEach((t) => tagPiiTypeTags.add(t));
+          } else {
+            cleanTags.push(tag);
+          }
+        }
+
         const piiPresent =
           piiResult.matches.length > 0
           || metadataRedaction.tagsToAdd.length > 0
-          || tagRedaction.tagsToAdd.length > 0;
+          || tagPiiTypeTags.size > 0;
         const allPiiTags = [
-          ...new Set([
-            ...piiResult.tagsToAdd,
-            ...metadataRedaction.tagsToAdd,
-            ...tagRedaction.tagsToAdd,
-          ]),
+          ...new Set([...piiResult.tagsToAdd, ...metadataRedaction.tagsToAdd, ...tagPiiTypeTags]),
         ];
         // PII_MODE is compile-time "tag" by default, but test the variable as a runtime
         // string to support re-configuration without code changes.
@@ -533,15 +544,15 @@ export function createFridayMemoryGuardService(
           );
         }
 
-        // Merge PII tags (redacted tag strings + the discovered pii.* type tags)
-        const mergedTags = [...redactedTags, ...allPiiTags.filter((t) => !redactedTags.includes(t))];
+        // Merge surviving clean tags with discovered pii.* type tags (all charset-valid).
+        const mergedTags = [...cleanTags, ...allPiiTags.filter((t) => !cleanTags.includes(t))];
 
         // Re-validate tag limits after PII merge (PII tags could push over count limits)
         if (mergedTags.length > 0) {
           validateTags(mergedTags);
         }
 
-        // 6. Delegate to core — store redacted content, redacted metadata, redacted+tagged tags
+        // 6. Delegate to core — store redacted content, redacted metadata, PII-stripped tags
         const item = await core.store(resolution.effectiveNamespace, piiResult.transformedContent, {
           ...metadata,
           ...(metadata?.metadata !== undefined ? { metadata: redactedMetadata } : {}),
