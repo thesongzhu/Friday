@@ -4,7 +4,9 @@ import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import type { FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
+import { createFridaySkillRepository } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
+import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayWorkflowRuntime } from "#workflows";
 import type { FridayHubConfigManagerService } from "../../../../src/hub/services/friday-hub-config-manager.types.js";
@@ -14,6 +16,7 @@ import {
   createPersistentConfigManager,
   createStubMemoryState,
 } from "../../../../src/hub/bootstrap/index.js";
+import { createDurableMemoryState } from "../../../../src/hub/bootstrap/hub-helpers.js";
 import {
   buildFridayChannelDeliveryFailureText,
   buildFridayChannelMessageTooLongText,
@@ -262,7 +265,13 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
     });
   });
 
-  // ── self-heal skill-status durable persistence: capture-and-restore (residual E) ──
+  // ── self-heal skill-status durable persistence (residual E) ──
+  // Durable persistence is provided by createDurableMemoryState (audit E3, PR #406): its
+  // updateSkillStatus wrapper persists explicit transitions to the skills table (the source the
+  // workflow-exec safety gate reads). These tests verify self-heal writes the RIGHT status through
+  // that single wrapper — the regenerate_skill rollback restores the plan-captured prior status
+  // (capture-restore), never a default-enable and never promoting a not_installed candidate.
+  // (createDurableMemoryState's persistence itself is covered by friday-durable-memory-state.test.ts.)
   function makeRegistryWith(ids: readonly string[]): FridaySkillRegistry {
     const set = new Set(ids);
     return {
@@ -278,113 +287,107 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       close: async () => {},
     };
   }
-
-  // Simulated durable skills store: persist only succeeds for ids already present (mirrors the
-  // bootstrap's getSkillById existence check) — absent ids get NO write. Survives a "restart"
-  // (we discard memoryState but keep this map).
-  function makeDurableStore(seed: Record<string, SkillLifecycleStatus>) {
-    const store = new Map<string, SkillLifecycleStatus>(Object.entries(seed));
-    return {
-      store,
-      persistSkillLifecycleStatus: (skillId: string, status: SkillLifecycleStatus): boolean => {
-        if (!store.has(skillId)) return false;
-        store.set(skillId, status);
-        return true;
-      },
-      getPersistedSkillLifecycleStatus: (skillId: string): SkillLifecycleStatus | undefined => store.get(skillId),
-    };
-  }
-
   const skillGenStub = {
     startSession: async () => ({ session: { sessionId: "sess-1" } }),
     generateDraft: async () => ({ manifest: { name: "Skill X" } }),
     approveAndSave: async () => ({ candidateId: "cand-1" }),
   } as unknown as FridaySkillGeneratorService;
+  const E3_NOW = "2026-03-13T10:00:00.000Z";
+  const seedSkill = (
+    db: ReturnType<typeof createTestDb>,
+    repo: ReturnType<typeof createFridaySkillRepository>,
+    id: string,
+    status: SkillLifecycleStatus,
+  ) =>
+    db.withWriteTransaction((conn) =>
+      repo.upsertSkillFromCatalog(conn, { id, name: id, source: "local", origin: "workspace", status, nowIso: E3_NOW }),
+    );
+  const tableStatus = (
+    db: ReturnType<typeof createTestDb>,
+    repo: ReturnType<typeof createFridaySkillRepository>,
+    id: string,
+  ) => db.withReadConnection((conn) => repo.getSkillById(conn, id)?.status);
 
-  it("disable persists 'disabled' durably for an installed skill and survives a restart", async () => {
-    const durable = makeDurableStore({ "skill-x": "installed" });
-    const support = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-x"]),
-      memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T10:00:00.000Z",
-      ...durable,
-    });
-    const step = { stepId: "s1", kind: "disable_skill" as const, target: "skill-x", payload: {} as Record<string, unknown>, verify: { method: "error_absent" as const, timeoutMs: 5000 } };
-    await expect(support.stepExecutors.disable_skill?.(step)).resolves.toBe(true);
-    expect(durable.store.get("skill-x")).toBe("disabled");
-    expect(step.payload._skillStatusDurable).toBe(true);
-    // RESTART: fresh memoryState, same durable store → still disabled.
-    const afterRestart = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-x"]),
-      memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T11:00:00.000Z",
-      ...durable,
-    });
-    await expect(afterRestart.stepVerifiers.disable_skill?.(step)).resolves.toBe(true);
-    expect(durable.getPersistedSkillLifecycleStatus("skill-x")).toBe("disabled");
+  it("self-heal disable persists 'disabled' durably via the createDurableMemoryState wrapper (single path)", async () => {
+    const db = createTestDb();
+    try {
+      const repo = createFridaySkillRepository();
+      seedSkill(db, repo, "skill-x", "installed");
+      const support = createFridayHubAutoFixExecutionSupport({
+        registry: makeRegistryWith(["skill-x"]),
+        memoryState: createDurableMemoryState({ db, skillRepository: repo, nowIso: () => E3_NOW }),
+        nowIso: () => E3_NOW,
+      });
+      const step = { stepId: "d1", kind: "disable_skill" as const, target: "skill-x", payload: {} as Record<string, unknown>, verify: { method: "error_absent" as const, timeoutMs: 5000 } };
+      await expect(support.stepExecutors.disable_skill?.(step)).resolves.toBe(true);
+      expect(tableStatus(db, repo, "skill-x")).toBe("disabled"); // durable via the #406 wrapper
+      // No second persist path: the executor no longer accepts a persist dep, so there is exactly
+      // one durable write (the wrapper) and no _skillStatusDurable flag on the payload.
+      expect(step.payload).not.toHaveProperty("_skillStatusDurable");
+    } finally {
+      db.close();
+    }
   });
 
-  it("disable does NOT clobber a not_installed candidate (only installed skills are durably disabled)", async () => {
-    const durable = makeDurableStore({ "skill-cand": "not_installed" });
-    const memoryState = createStubMemoryState();
-    const support = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-cand"]),
-      memoryState,
-      nowIso: () => "2026-03-13T10:00:00.000Z",
-      ...durable,
-    });
-    const step = { stepId: "s2", kind: "disable_skill" as const, target: "skill-cand", payload: {} as Record<string, unknown>, verify: { method: "error_absent" as const, timeoutMs: 5000 } };
-    await expect(support.stepExecutors.disable_skill?.(step)).resolves.toBe(true);
-    // durable candidate status is UNTOUCHED (no promotion, no clobber); only in-memory reflects disable
-    expect(durable.store.get("skill-cand")).toBe("not_installed");
-    expect(step.payload._skillStatusDurable).toBe(false);
-    expect((await memoryState.listSkillStatuses())["skill-cand"]).toBe("disabled");
+  it("regenerate rollback restores the plan-captured prior status durably (installed/not_installed), never default-enable", async () => {
+    const db = createTestDb();
+    try {
+      const repo = createFridaySkillRepository();
+      seedSkill(db, repo, "skill-x", "installed");
+      seedSkill(db, repo, "skill-c", "not_installed");
+      const support = createFridayHubAutoFixExecutionSupport({
+        registry: makeRegistryWith(["skill-x", "skill-c"]),
+        memoryState: createDurableMemoryState({ db, skillRepository: repo, nowIso: () => E3_NOW }),
+        nowIso: () => E3_NOW,
+        skillGenerator: skillGenStub,
+      });
+      const rev = (id: string, restoreStatus: string) => ({ stepId: "r-" + id, kind: "regenerate_skill" as const, target: id, payload: { revert: true, skillId: id, restoreStatus } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } });
+      await expect(support.stepExecutors.regenerate_skill?.(rev("skill-x", "installed"))).resolves.toBe(true);
+      expect(tableStatus(db, repo, "skill-x")).toBe("installed"); // restored installed
+      await expect(support.stepExecutors.regenerate_skill?.(rev("skill-c", "not_installed"))).resolves.toBe(true);
+      expect(tableStatus(db, repo, "skill-c")).toBe("not_installed"); // restored candidate, NOT promoted
+    } finally {
+      db.close();
+    }
   });
 
-  it("regenerate rollback restores the plan-captured prior status (installed / not_installed), never default-enable", async () => {
-    // prior was installed → rollback restores installed
-    const dInstalled = makeDurableStore({ "skill-x": "installed" });
-    const s1 = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-x"]), memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T10:00:00.000Z", skillGenerator: skillGenStub, ...dInstalled,
-    });
-    const revInstalled = { stepId: "r1", kind: "regenerate_skill" as const, target: "skill-x", payload: { revert: true, skillId: "skill-x", restoreStatus: "installed" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
-    await expect(s1.stepExecutors.regenerate_skill?.(revInstalled)).resolves.toBe(true);
-    await expect(s1.stepVerifiers.regenerate_skill?.(revInstalled)).resolves.toBe(true);
-    expect(dInstalled.store.get("skill-x")).toBe("installed");
-
-    // prior was not_installed (candidate) → rollback restores not_installed (NO promotion)
-    const dCand = makeDurableStore({ "skill-c": "not_installed" });
-    const s2 = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-c"]), memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T10:00:00.000Z", skillGenerator: skillGenStub, ...dCand,
-    });
-    const revCand = { stepId: "r2", kind: "regenerate_skill" as const, target: "skill-c", payload: { revert: true, skillId: "skill-c", restoreStatus: "not_installed" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
-    await expect(s2.stepExecutors.regenerate_skill?.(revCand)).resolves.toBe(true);
-    expect(dCand.store.get("skill-c")).toBe("not_installed");
-  });
-
-  it("false-positive regenerate rollback does NOT re-enable a skill that was already disabled", async () => {
-    const durable = makeDurableStore({ "skill-x": "disabled" }); // prior captured status = disabled
-    const support = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-x"]), memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T10:00:00.000Z", skillGenerator: skillGenStub, ...durable,
-    });
-    const step = { stepId: "r3", kind: "regenerate_skill" as const, target: "skill-x", payload: { revert: true, skillId: "skill-x", restoreStatus: "disabled" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
-    await expect(support.stepExecutors.regenerate_skill?.(step)).resolves.toBe(true);
-    expect(durable.store.get("skill-x")).toBe("disabled"); // stayed disabled, not enabled
-    await expect(support.stepVerifiers.regenerate_skill?.(step)).resolves.toBe(true);
+  it("false-positive regenerate rollback keeps an already-disabled skill disabled (durable), never re-enabled", async () => {
+    const db = createTestDb();
+    try {
+      const repo = createFridaySkillRepository();
+      seedSkill(db, repo, "skill-x", "installed");
+      const support = createFridayHubAutoFixExecutionSupport({
+        registry: makeRegistryWith(["skill-x"]),
+        memoryState: createDurableMemoryState({ db, skillRepository: repo, nowIso: () => E3_NOW }),
+        nowIso: () => E3_NOW,
+        skillGenerator: skillGenStub,
+      });
+      // captured prior status was 'disabled' (a false-positive regenerate on an already-disabled skill)
+      const step = { stepId: "r-fp", kind: "regenerate_skill" as const, target: "skill-x", payload: { revert: true, skillId: "skill-x", restoreStatus: "disabled" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
+      await expect(support.stepExecutors.regenerate_skill?.(step)).resolves.toBe(true);
+      expect(tableStatus(db, repo, "skill-x")).toBe("disabled"); // stayed disabled, not re-enabled
+    } finally {
+      db.close();
+    }
   });
 
   it("regenerate rollback with no captured restoreStatus falls back to the safe 'disabled' (never enable)", async () => {
-    const durable = makeDurableStore({ "skill-x": "installed" });
-    const support = createFridayHubAutoFixExecutionSupport({
-      registry: makeRegistryWith(["skill-x"]), memoryState: createStubMemoryState(),
-      nowIso: () => "2026-03-13T10:00:00.000Z", skillGenerator: skillGenStub, ...durable,
-    });
-    const step = { stepId: "r4", kind: "regenerate_skill" as const, target: "skill-x", payload: { revert: true, skillId: "skill-x" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
-    await expect(support.stepExecutors.regenerate_skill?.(step)).resolves.toBe(true);
-    expect(durable.store.get("skill-x")).toBe("disabled"); // safe default, not enabled
+    const db = createTestDb();
+    try {
+      const repo = createFridaySkillRepository();
+      seedSkill(db, repo, "skill-x", "installed");
+      const support = createFridayHubAutoFixExecutionSupport({
+        registry: makeRegistryWith(["skill-x"]),
+        memoryState: createDurableMemoryState({ db, skillRepository: repo, nowIso: () => E3_NOW }),
+        nowIso: () => E3_NOW,
+        skillGenerator: skillGenStub,
+      });
+      const step = { stepId: "r-none", kind: "regenerate_skill" as const, target: "skill-x", payload: { revert: true, skillId: "skill-x" } as Record<string, unknown>, verify: { method: "skill_registry_available" as const, timeoutMs: 5000 } };
+      await expect(support.stepExecutors.regenerate_skill?.(step)).resolves.toBe(true);
+      expect(tableStatus(db, repo, "skill-x")).toBe("disabled"); // safe default, not enabled
+    } finally {
+      db.close();
+    }
   });
 
   it("Phase 14.5B module_28b: apply_config_patch is fail-closed when no real patch payload is provided", async () => {
