@@ -74,6 +74,10 @@ interface FridayHttpIdempotencyEntry {
   operationId: string;
   principalId: string;
   payloadHash: string;
+  // "in_flight" = a request with this key is currently executing (reservation set before the
+  // handler runs, so concurrent same-key requests are rejected instead of double-executing).
+  // "completed" = the handler finished and `data` holds the replayable response.
+  status: "in_flight" | "completed";
   data: unknown;
   expiresAtMs: number;
 }
@@ -516,6 +520,10 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const rawMethod = (req.method ?? "GET").toUpperCase();
     const isHead = rawMethod === "HEAD";
 
+    // Declared outside the request try so the catch block can release an in-flight idempotency
+    // reservation if the handler throws.
+    let idempotencyStoreKey: string | undefined;
+
     try {
       // Handle CORS preflight (before casting to FridayHttpMethod)
       if (rawMethod === "OPTIONS" && origin && isOriginAllowed(origin, corsOrigins)) {
@@ -785,7 +793,6 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         if (rateLimitResult.headers) Object.assign(middlewareHeaders, rateLimitResult.headers);
       }
 
-      let idempotencyStoreKey: string | undefined;
       const idempotencyKey = method === "GET" ? undefined : readIdempotencyKeyHeader(ctx.headers);
       if (idempotencyKey) {
         pruneExpiredIdempotencyEntries(Date.now());
@@ -813,6 +820,24 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             return;
           }
 
+          // A matching-payload request with this key is still executing (reservation set below
+          // before the handler runs). Reject the concurrent duplicate instead of running the
+          // handler a second time — closing the check-then-set race where two same-key requests
+          // both miss the store and both execute. Retryable: the caller can retry once the
+          // in-flight request completes and a replayable entry exists.
+          if (existing.status === "in_flight") {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_IN_PROGRESS",
+                message: `Idempotency-Key '${idempotencyKey}' is already being processed for operation '${route.operationId}'.`,
+                retryable: true,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
+
           const replayBody = JSON.stringify({
             ok: true,
             data: existing.data,
@@ -834,6 +859,17 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           }
           return;
         }
+
+        // Reserve the key BEFORE running the handler so a concurrent same-key request sees
+        // `in_flight` and is rejected above, rather than both requests executing the handler.
+        idempotencyStore.set(idempotencyStoreKey, {
+          operationId: route.operationId,
+          principalId,
+          payloadHash,
+          status: "in_flight",
+          data: undefined,
+          expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
+        });
       }
 
       // Inject raw response reference for SSE streaming routes
@@ -842,10 +878,18 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       // Call handler
       const result = await route.handler(ctx);
 
-      // If the handler already took over the response (e.g. SSE streaming), bail out
-      if (res.headersSent || res.writableEnded) return;
+      // If the handler already took over the response (e.g. SSE streaming), bail out.
+      // The handler owns the response, so there is no replayable JSON body to cache — drop the
+      // in-flight reservation so the key is not wedged until TTL.
+      if (res.headersSent || res.writableEnded) {
+        if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
+        return;
+      }
 
       if (isFridayHttpRawTextResponse(result)) {
+        // Raw-text responses are not cached for replay (original behavior); release the
+        // reservation so a later same-key request is not rejected against a never-completed entry.
+        if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
         const responseBody = result.body;
         const responseHeaders: Record<string, string | number> = {
           "Content-Type": result.contentType ?? "text/plain; charset=utf-8",
@@ -867,6 +911,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       assertSerializableJsonResponse(result, route.operationId);
 
       if (idempotencyStoreKey) {
+        // Upgrade the in-flight reservation to a completed, replayable entry.
         idempotencyStore.set(idempotencyStoreKey, {
           operationId: route.operationId,
           principalId: ctx.principal?.principalId ?? "anonymous",
@@ -877,6 +922,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             query,
             body,
           }),
+          status: "completed",
           data: result,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
@@ -903,6 +949,9 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         res.end(successBody);
       }
     } catch (error: unknown) {
+      // The handler threw, so no completed entry was written. Release the in-flight reservation
+      // so this idempotency key is retryable rather than wedged in_flight until TTL.
+      if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
       // If headers were already sent (e.g. SSE stream errored mid-flight), we cannot send JSON
       if (res.headersSent || res.writableEnded) {
         res.end();
