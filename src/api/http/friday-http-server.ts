@@ -26,6 +26,7 @@ import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
 import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
+import { isFridaySensitiveReadRoute } from "./friday-sensitive-read-routes.js";
 import {
   ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
   isUnauthenticatedPublicPrincipal,
@@ -733,6 +734,36 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             statusCode: 401,
             code: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
             message: `${route.operationId} requires a bound owner/session/channel principal; the synthetic public principal cannot approve mutating operations.`,
+          },
+          requestId,
+          { ...corsHeaders, ...middlewareHeaders },
+          isHead,
+        );
+        return;
+      }
+
+      // Sensitive-read auth floor (companion to the public-mutation floor above).
+      // The synthetic default-public principal is shared across ALL anonymous callers, so
+      // letting it READ sensitive surfaces (personal memory, secret metadata, security
+      // posture, fleet inventory, diagnosis, session details) both leaks data between
+      // anonymous callers and exposes those surfaces network-wide. Locked decision: sensitive
+      // reads require a bound principal; anonymous access is only for minimal
+      // setup/health/onboarding. A local user authenticates via the localhost bootstrap →
+      // login → bearer flow (untouched here) to reach these. Core no-login UX surfaces are
+      // intentionally not classified sensitive (see friday-sensitive-read-routes.ts).
+      if (
+        route.auth.public === true &&
+        method === "GET" && // HEAD is normalized to "GET" above (isHead flag), so this covers both
+        isFridaySensitiveReadRoute(route.path) &&
+        isUnauthenticatedPublicPrincipal(ctx.principal)
+      ) {
+        sendMiddlewareRejection(
+          res,
+          {
+            passed: false,
+            statusCode: 401,
+            code: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
+            message: `${route.operationId} reads sensitive data and requires a bound owner/session/channel principal; sign in (local passphrase) to access it.`,
           },
           requestId,
           { ...corsHeaders, ...middlewareHeaders },

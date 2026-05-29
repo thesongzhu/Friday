@@ -70,32 +70,35 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
     { label: "no space", header: (t: string) => `Bearer${t}` },
   ];
 
-  // Auth-boundary product invariant: under the no-login-required HTTP posture,
-  // a malformed Authorization header MUST NOT downgrade the request to 401.
-  // The HTTP server falls back to the synthetic default-public principal so the
-  // route still responds. Function-level bearer-scheme parsing remains pinned
-  // by test/unit/api/auth/friday-auth-middleware.test.ts and
-  // test/unit/api/auth/friday-token-validator.test.ts.
+  // Auth-boundary product invariant: under the no-login-required HTTP posture, a malformed
+  // Authorization header MUST NOT downgrade the request to 401 — it falls through to the
+  // synthetic default-public principal (never the real authenticated principal) so the route
+  // still responds. Exercised on /v1/health, a minimal-public (non-sensitive) route where the
+  // fallthrough invariant holds; sensitive-read surfaces (/v1/sessions etc.) instead require a
+  // bound principal — that gate is covered by friday-http-server-sensitive-read-gate.test.ts.
+  // The malformed-scheme → public:default (not the real principal, not 401) behavior is pinned
+  // by test/unit/api/http/friday-http-server-default-public-principal.test.ts (bearer-hydration
+  // cases), with requireAuth accept/reject in test/unit/api/auth/friday-auth-middleware.test.ts.
   it.each(caseVariants)(
     "auth-boundary: non-standard Authorization scheme '$label' falls through to public:default and returns 200",
     async ({ header }) => {
-      const res = await fetch(`${env.baseUrl}/v1/sessions`, {
+      const res = await fetch(`${env.baseUrl}/v1/health`, {
         headers: {
           Authorization: header(validToken),
           "Content-Type": "application/json",
         },
       });
 
-      // Non-standard Bearer formats fall back to the synthetic public:default
-      // principal; /v1/sessions GET handler runs and returns a success envelope.
+      // Non-standard Bearer formats are not accepted as valid auth; they fall back to the
+      // synthetic public:default principal, and the public /v1/health handler still responds.
       expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; data?: unknown; requestId?: string };
+      const json = (await res.json()) as { ok: boolean };
       expect(json.ok).toBe(true);
     },
   );
 
   it("accepts exact 'Bearer <token>' format — returns 200", async () => {
-    const res = await fetch(`${env.baseUrl}/v1/sessions`, {
+    const res = await fetch(`${env.baseUrl}/v1/health`, {
       headers: {
         Authorization: `Bearer ${validToken}`,
         "Content-Type": "application/json",
@@ -106,7 +109,7 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
   });
 
   it("auth-boundary: empty authorization header falls through to public:default and returns 200", async () => {
-    const res = await fetch(`${env.baseUrl}/v1/sessions`, {
+    const res = await fetch(`${env.baseUrl}/v1/health`, {
       headers: {
         Authorization: "",
         "Content-Type": "application/json",
@@ -119,7 +122,7 @@ describe("TEST-31: Bearer Scheme Case Sensitivity & Whitespace", () => {
   });
 
   it("auth-boundary: 'Basic' scheme with valid token value falls through to public:default and returns 200", async () => {
-    const res = await fetch(`${env.baseUrl}/v1/sessions`, {
+    const res = await fetch(`${env.baseUrl}/v1/health`, {
       headers: {
         Authorization: `Basic ${validToken}`,
         "Content-Type": "application/json",
