@@ -124,6 +124,13 @@ export interface FridayMemoryGuardQuotaRepository {
 
 export interface FridayMemoryGuardPiiGuard {
   scanAndTransform(content: string): FridayMemoryGuardPiiScanResult;
+  /**
+   * Recursively redact PII in the string leaves of an arbitrary structured value
+   * (memory metadata objects, tag arrays). Returns the redacted value (or the original
+   * when not in redact mode) plus the PII-type tags discovered, so callers can scan
+   * metadata/tags the same way `scanAndTransform` scans content.
+   */
+  redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] };
 }
 
 export interface FridayMemoryGuardOutputFilter {
