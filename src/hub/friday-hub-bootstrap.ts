@@ -4016,21 +4016,8 @@ export async function createFridayHub(
     workflowRuntime,
     skillGenerator,
     nowIso,
-    // Durably persist a self-heal disable of a currently-installed skill (survives restart) and
-    // restore a regenerate_skill rollback's captured prior status. Persists only for skills already
-    // in the durable store (getSkillById existence check) — built-in/registry-only skills are not
-    // upserted, so a 'not_installed' candidate is never promoted.
-    persistSkillLifecycleStatus: (skillId, status) => {
-      let persisted = false;
-      stateRuntime.sqlite.withWriteTransaction((db) => {
-        if (converterSkillRepo.getSkillById(db, skillId)) {
-          converterSkillRepo.updateLifecycleStatus(db, skillId, status, nowIso());
-          persisted = true;
-        }
-      });
-      return persisted;
-    },
-    getPersistedSkillLifecycleStatus,
+    // Durable persistence of self-heal skill-status is provided by createDurableMemoryState
+    // (audit E3, PR #406) via its updateSkillStatus wrapper — no second persist path is wired here.
   });
 
   const selfLearningRuntime = createFridaySelfLearningRuntime({
