@@ -369,6 +369,7 @@ import {
   buildFridayChannelDeliveryFailureText,
   buildFridayChannelMessageTooLongText,
   canResolveFridayChannelApprovalFromMessage,
+  createDurableMemoryState,
   createFridayChannelToolApprovalShortId,
   createFridayHubAutoFixExecutionSupport,
   createPersistentConfigManager,
@@ -1069,17 +1070,27 @@ export async function createFridayHub(
   //     snapshots/revisions in SQLite via `hub_settings`; `/v1/config/*`
   //     HTTP routes are wired into the API runtime; mutations are NOT
   //     silently dropped.
-  //   - memoryState (`createStubMemoryState`) remains partial-stub: 4 of
-  //     its 10 interface methods (skill statuses + audit log) are real and
-  //     production-used; the 4 session/memory-item methods remain no-ops
-  //     and currently have ZERO production consumers (interface narrowing
-  //     is a carry-forward code-hygiene item; see B5_B6_B8_VERIFIED.md
+  //   - memoryState (`createDurableMemoryState`, audit E3): EXPLICIT skill
+  //     lifecycle transitions (`updateSkillStatus`: install / disable /
+  //     enable / regenerate / not_installed) are now PERSISTED to the `skills`
+  //     table, so a self-heal disable survives a hub restart and the execution
+  //     safety gate (which reads that table) keeps blocking it. Discovery
+  //     (`upsertDiscoveredSkills`) + `listSkillStatuses` stay in-memory ON
+  //     PURPOSE — discovery must not write the table or its auto-installed
+  //     status would clobber the converter's `not_installed`. Audit-log writes
+  //     to disk; the 4 session/memory-item methods remain no-ops and have
+  //     ZERO production consumers (carry-forward; see B5_B6_B8_VERIFIED.md
   //     §"FRI-AUD-022").
   // Use env vars and `friday.config.yaml` for first-boot configuration;
   // `/v1/config/*` for live mutations.
   const configManager = createPersistentConfigManager({ ...config, workspaceRoot }, stateRuntime);
   const auditLogPath = resolveFridayAuditLogPath(stateRuntime.stateDir);
-  const memoryState = createStubMemoryState(auditLogPath);
+  const memoryState = createDurableMemoryState({
+    db: stateRuntime.sqlite,
+    skillRepository: createFridaySkillRepository(),
+    nowIso: () => new Date().toISOString(),
+    auditLogPath,
+  });
 
   // 3. Create skill registry
   const registry = new FridaySkillRegistryImpl({
