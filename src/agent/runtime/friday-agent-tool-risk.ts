@@ -99,10 +99,15 @@ const COMMAND_WRAPPER_OPTS: Record<string, { value: ReadonlySet<string>; flag: R
   },
   xargs: {
     value: new Set([
-      "-I", "--replace", "-i", "-n", "--max-args", "-P", "--max-procs", "-d", "--delimiter",
-      "-E", "-e", "--eof", "-L", "--max-lines", "-l", "-s", "--max-chars", "-a", "--arg-file",
+      "-I", "-n", "--max-args", "-P", "--max-procs", "-d", "--delimiter",
+      "-E", "-L", "--max-lines", "-s", "--max-chars", "-a", "--arg-file",
     ]),
-    flag: new Set(["-0", "--null", "-p", "--interactive", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit"]),
+    // -i/--replace, -e/--eof, -l take OPTIONAL (attached-only) arguments per getopt: a SEPARATE
+    // following token is the wrapped command, not the value, so they must be flags (skip 1).
+    flag: new Set([
+      "-0", "--null", "-p", "--interactive", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit",
+      "-i", "--replace", "-e", "--eof", "-l",
+    ]),
   },
   time: {
     value: new Set(["-o", "--output", "-f", "--format"]),
@@ -125,7 +130,14 @@ interface UnwrappedCommand {
 // `sudo env rm -rf` and `sudo bash -c …` resolve to their effective risk.
 function unwrapCommand(parts: readonly string[]): UnwrappedCommand {
   let toks: string[] = parts.slice();
-  for (let depth = 0; depth < 6 && toks.length > 0; depth++) {
+  for (let depth = 0; toks.length > 0; depth++) {
+    if (depth >= 8) {
+      // pathological wrapper nesting we cannot confidently resolve → fail safe.
+      return {
+        approve: "deeply nested command wrappers cannot be verified; requires explicit approval in the current run context.",
+        inner: toks,
+      };
+    }
     let s = 0;
     while (s < toks.length && INLINE_ENV_ASSIGNMENT_RE.test(toks[s]!)) s += 1;
     if (s > 0) {
@@ -157,6 +169,9 @@ function unwrapCommand(parts: readonly string[]): UnwrappedCommand {
       if (prog === "nice" && /^-\d+$/.test(opt)) { i += 1; continue; } // `nice -10` adjustment
       if (spec.value.has(opt)) { i += 2; continue; }
       if (spec.flag.has(opt)) { i += 1; continue; }
+      // attached-value short option, e.g. `-n10` / `-sKILL` / `-uroot` (value glued to a known
+      // short value-opt) — the value is in this token, so skip just the one token.
+      if (!opt.startsWith("--") && opt.length > 2 && spec.value.has(opt.slice(0, 2))) { i += 1; continue; }
       return {
         approve: `\`${prog}\` was invoked with an unrecognized option, so the wrapped command cannot be verified; requires explicit approval in the current run context.`,
         inner: toks,

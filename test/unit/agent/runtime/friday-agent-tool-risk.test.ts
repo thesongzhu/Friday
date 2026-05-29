@@ -166,6 +166,13 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("time rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
       // nested wrappers resolve to the effective risk.
       expect(classifyShellRisk("sudo env rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      // xargs optional-arg options (-i/--replace/-e/-l) take attached-only values → a separate
+      // token is the wrapped command, not the value.
+      expect(classifyShellRisk("xargs -i git reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("xargs --replace rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("xargs -I REPL rm")).toMatchObject({ level: "destructive", program: "rm" });
+      // attached-value short option (value glued to the flag) still finds the wrapped command.
+      expect(classifyShellRisk("nice -n10 rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
     });
 
     it("requires approval for shell -c strings and unparseable wrappers (fail-safe)", () => {
@@ -175,6 +182,8 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("zsh -c rm")).toMatchObject({ level: "destructive" });
       // an unrecognized wrapper option could hide the wrapped command → fail safe to approval.
       expect(classifyShellRisk("sudo --frobnicate rm -rf /data")).toMatchObject({ level: "destructive" });
+      // pathological deep wrapper nesting fails safe (cannot confidently resolve).
+      expect(classifyShellRisk(`${"env ".repeat(10)}rm -rf /data`)).toMatchObject({ level: "destructive" });
     });
 
     it("does not over-block benign wrapped commands", () => {
@@ -182,6 +191,9 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("env VAR=v node x.js")).toMatchObject({ level: "safe", program: "node" });
       expect(classifyShellRisk("sudo git status")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("nice -n 10 ls -la")).toMatchObject({ level: "safe", program: "ls" });
+      expect(classifyShellRisk("nice -n10 ls")).toMatchObject({ level: "safe", program: "ls" });
+      expect(classifyShellRisk("xargs -n1 echo hi")).toMatchObject({ level: "safe", program: "echo" });
+      expect(classifyShellRisk("xargs -P4 echo")).toMatchObject({ level: "safe", program: "echo" });
       expect(classifyShellRisk("env git status")).toMatchObject({ level: "safe", program: "git" });
       // `command -v rm` is a lookup, not an exec → not destructive.
       expect(classifyShellRisk("command -v rm")).toMatchObject({ level: "guarded", program: "command" });
