@@ -18,6 +18,7 @@ import {
   containsTokenMaterial as containsTokenMaterialShared,
   scrub as scrubShared,
 } from "./lib/token-redaction.mjs";
+import { acquireLocalBearerToken } from "./lib/phase24-local-auth.mjs";
 
 const PROBE_BODY_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
 const TELEGRAM_REDACTION_LABELS = Object.freeze({
@@ -81,8 +82,20 @@ function safeError(error, token) {
   return scrub(raw, token);
 }
 
+// Bearer token for the disposable listener hub, set after bootstrap-local-passphrase +
+// login. Session/run read endpoints require a bound principal
+// (OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED); this token is the legitimate principal.
+// SECURITY: never logged, never written to the proof artifact.
+let listenerBearerToken = null;
+
 function authlessJsonHeaders() {
   return { "Content-Type": "application/json" };
+}
+
+function authedJsonHeaders() {
+  return listenerBearerToken
+    ? { "Content-Type": "application/json", Authorization: `Bearer ${listenerBearerToken}` }
+    : { "Content-Type": "application/json" };
 }
 
 function findFreePort() {
@@ -119,7 +132,7 @@ function withTimeout(promise, ms, label) {
 async function apiFetch(baseUrl, method, pathname, body) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
-    headers: authlessJsonHeaders(),
+    headers: authedJsonHeaders(),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
@@ -587,6 +600,12 @@ async function main() {
     });
     await server.listen();
     const baseUrl = `http://127.0.0.1:${port}`;
+
+    // Session/run read endpoints require a bound principal
+    // (OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED). Authenticate as a legitimate local
+    // principal via the standard bootstrap-local-passphrase + login flow. The token is
+    // kept local and is never logged or written to the proof artifact.
+    listenerBearerToken = await acquireLocalBearerToken(baseUrl);
 
     await writeReport(report, config.botToken);
 
