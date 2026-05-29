@@ -1177,12 +1177,33 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   workflowRuntime?: FridayWorkflowRuntime;
   skillGenerator?: FridaySkillGeneratorService;
   nowIso: () => string;
+  // Durable skill-lifecycle persistence (optional). `persistSkillLifecycleStatus` returns true
+  // only when the skill exists in the durable skills store (installed/converter skills); for
+  // built-in / registry-only skills it returns false (no write). `getPersistedSkillLifecycleStatus`
+  // returns undefined for a not-in-store skill. Used to (a) durably persist a self-heal disable of
+  // a currently-'installed' skill so it survives restart, and (b) restore the plan-captured prior
+  // status on a regenerate_skill rollback — never to promote a 'not_installed' candidate.
+  persistSkillLifecycleStatus?: (skillId: string, status: SkillLifecycleStatus) => boolean;
+  getPersistedSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | undefined;
 }): FridayHubAutoFixExecutionSupport {
   // P2-07: External-state remediation must be backed by hub-level services.
   // The execution service fails closed for these kinds unless an executor is
   // injected here.
   const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
   const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
+
+  // Durable-aware skill-status read: prefer the durable store (authoritative + survives restart)
+  // when the skill exists there; otherwise fall back to the in-memory stub so built-in /
+  // registry-only skills report an honest (non-durable) result.
+  const resolveSkillLifecycleStatus = async (
+    skillId: string,
+  ): Promise<SkillLifecycleStatus | undefined> => {
+    const durable = deps.getPersistedSkillLifecycleStatus?.(skillId);
+    if (durable !== undefined) {
+      return durable;
+    }
+    return (await deps.memoryState.listSkillStatuses())[skillId];
+  };
 
   const readPayloadRecord = (payload: unknown): Record<string, unknown> | null =>
     typeof payload === "object" && payload !== null && !Array.isArray(payload)
@@ -1269,11 +1290,21 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         ? `auto-fix rollback @ ${nowIso}`
         : `auto-fix disable_skill @ ${nowIso}`,
     );
+    // Durably persist ONLY a disable of a currently-'installed' skill, so the disable survives a
+    // hub restart without clobbering a converter-managed 'not_installed' candidate or any other
+    // non-installed lifecycle state. The revert path stays in-memory only — the planner emits no
+    // disable_skill rollback, and re-promotion is the converter's job, so self-heal never writes a
+    // durable 'installed'.
+    let durablyPersisted = false;
+    if (!revert && deps.getPersistedSkillLifecycleStatus?.(step.target) === "installed") {
+      durablyPersisted = deps.persistSkillLifecycleStatus?.(step.target, "disabled") ?? false;
+    }
     if (payload) {
       payload._skillDisabled = !revert;
       payload._skillStatusAfter = nextStatus;
       payload._skillStatusTarget = step.target;
       payload._skillStatusAt = nowIso;
+      payload._skillStatusDurable = durablyPersisted;
     }
     return true;
   };
@@ -1282,9 +1313,9 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     if (!step.target) {
       return false;
     }
-    const revert = isRevertPayload(step.payload);
-    const statuses = await deps.memoryState.listSkillStatuses();
-    return statuses[step.target] === (revert ? "installed" : "disabled");
+    // Durable-aware so a disabled installed-skill verifies after a restart (fresh in-memory state).
+    const want = isRevertPayload(step.payload) ? "installed" : "disabled";
+    return (await resolveSkillLifecycleStatus(step.target)) === want;
   };
 
   stepExecutors.apply_config_patch = async (step) => {
@@ -1652,15 +1683,22 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
 
       const revert = isRevertPayload(step.payload);
       if (revert) {
+        // Restore the prior status captured at plan-build time (never default-enable). A
+        // 'not_installed' candidate is restored to 'not_installed', never promoted to 'installed';
+        // absent capture falls back to the safe 'disabled' (not an enable).
+        const restore = (readString(payload, "restoreStatus") as SkillLifecycleStatus | undefined) ?? "disabled";
         await deps.memoryState.updateSkillStatus(
           skillId,
-          "disabled",
+          restore,
           `auto-fix rollback regenerate_skill @ ${deps.nowIso()}`,
         );
+        const durablyPersisted = deps.persistSkillLifecycleStatus?.(skillId, restore) ?? false;
         if (payload) {
           payload._skillRegenerated = true;
           payload._regenerateRolledBack = true;
           payload._regeneratedAt = deps.nowIso();
+          payload._skillStatusAfter = restore;
+          payload._skillStatusDurable = durablyPersisted;
         }
         return true;
       }
@@ -1704,8 +1742,9 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         return false;
       }
       if (isRevertPayload(step.payload)) {
-        const statuses = await deps.memoryState.listSkillStatuses();
-        return statuses[skillId] === "disabled";
+        // Verify the captured prior status was restored (durable-aware so it reflects a restart).
+        const restore = (readString(payload, "restoreStatus") as SkillLifecycleStatus | undefined) ?? "disabled";
+        return (await resolveSkillLifecycleStatus(skillId)) === restore;
       }
       const statuses = await deps.memoryState.listSkillStatuses();
       return payload?._skillRegenerated === true && statuses[skillId] === "installed";
