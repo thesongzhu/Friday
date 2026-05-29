@@ -3370,4 +3370,138 @@ describe("FridayProviderService", () => {
       }
     });
   });
+
+  // D (ledger truth): an unrecognized model resolves to a 0 rate (pricing
+  // catalog fallback, qualityTier "unknown"), which silently looks identical to
+  // a genuinely-free model. recordUsage now persists metadata.pricingResolved so
+  // the usage ledger can tell "unpriced ⇒ cost under-reported" apart from "free".
+  // These tests round-trip through the REAL usageRepo.insert and read the marker
+  // back with json_extract — proving it is persisted AND queryable, not just
+  // present on the in-memory record object.
+  describe("recordUsage pricing-resolution truth marker (D)", () => {
+    function readUsageRow(model: string) {
+      return db.withReadConnection((conn) =>
+        conn.prepare(
+          `SELECT json_extract(metadata_json, '$.pricingResolved') AS resolved,
+                  provider_kind AS kind,
+                  cost_usd AS cost
+             FROM llm_usage_records
+            WHERE model = ?
+            ORDER BY created_at DESC
+            LIMIT 1`,
+        ).get(model) as { resolved: number | null; kind: string; cost: number } | undefined,
+      );
+    }
+
+    async function createOpenAiProvider(): Promise<string> {
+      await service.createProvider({
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-completions",
+        apiKey: "test-pricing-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
+        defaultModel: "gpt-4o",
+        validateOnSave: false,
+      });
+      return "test-id-0001";
+    }
+
+    it("marks a catalog-priced model pricingResolved=true (queryable via json_extract)", async () => {
+      const providerId = await createOpenAiProvider();
+      await service.recordUsage({
+        providerId,
+        providerApi: "openai-completions",
+        model: "gpt-4o",
+        routeStrategy: "configured",
+        taskComplexity: "medium",
+        usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500 },
+        costUsd: 0.05,
+      });
+
+      const row = readUsageRow("gpt-4o");
+      expect(row?.resolved).toBe(1);
+    });
+
+    it("marks an UNPRICED model pricingResolved=false so silent cost_usd=0 is not mistaken for free (the D defect)", async () => {
+      const providerId = await createOpenAiProvider();
+      await service.recordUsage({
+        providerId,
+        providerApi: "openai-completions",
+        // No catalog pattern is a substring of this name ⇒ getPricing falls back
+        // to qualityTier "unknown" ⇒ cost_usd computes to 0 at the call site.
+        model: "experimental-unpriced-model-zzz",
+        routeStrategy: "configured",
+        taskComplexity: "medium",
+        usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500 },
+        costUsd: 0,
+      });
+
+      const row = readUsageRow("experimental-unpriced-model-zzz");
+      expect(row?.cost).toBe(0);
+      expect(row?.resolved).toBe(0);
+    });
+
+    it("distinguishes a genuinely-free model (ollama @ $0, catalog-resolved) from an unpriced one", async () => {
+      await service.createProvider({
+        kind: "ollama",
+        name: "Ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        authMode: "api-key",
+        api: "ollama",
+        apiKey: "unused-local-key", // pragma: allowlist secret
+        supportedModels: ["llama3"],
+        defaultModel: "llama3",
+        validateOnSave: false,
+      });
+
+      await service.recordUsage({
+        providerId: "test-id-0001",
+        providerApi: "ollama",
+        model: "llama3",
+        routeStrategy: "configured",
+        taskComplexity: "simple",
+        usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500 },
+        costUsd: 0,
+      });
+
+      const row = readUsageRow("llama3");
+      expect(row?.cost).toBe(0); // same zero cost as the unpriced case above ...
+      expect(row?.resolved).toBe(1); // ... but truthfully marked resolved (genuinely free)
+    });
+
+    it("fails closed: provider profile gone ⇒ providerKind unknown ⇒ pricingResolved=false", async () => {
+      await service.recordUsage({
+        providerId: "does-not-exist",
+        providerApi: "openai-completions",
+        model: "gpt-4o",
+        routeStrategy: "configured",
+        taskComplexity: "medium",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+        costUsd: 0.01,
+      });
+
+      const row = readUsageRow("gpt-4o");
+      expect(row?.kind).toBe("unknown");
+      expect(row?.resolved).toBe(0);
+    });
+
+    it("cannot be spoofed: a caller-supplied metadata.pricingResolved is overridden by the computed truth", async () => {
+      const providerId = await createOpenAiProvider();
+      await service.recordUsage({
+        providerId,
+        providerApi: "openai-completions",
+        model: "experimental-unpriced-model-zzz",
+        routeStrategy: "configured",
+        taskComplexity: "medium",
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 },
+        costUsd: 0,
+        metadata: { pricingResolved: true, source: "spoof-attempt" },
+      });
+
+      const row = readUsageRow("experimental-unpriced-model-zzz");
+      expect(row?.resolved).toBe(0); // computed false wins over the caller's true
+    });
+  });
 });
