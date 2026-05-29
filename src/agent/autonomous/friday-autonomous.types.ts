@@ -129,7 +129,10 @@ export type FridayAutonomousVerificationMethod =
   | "deterministic_file"
   | "deterministic_browser"
   | "llm_text"
-  | "llm_vision";
+  | "llm_vision"
+  // A mutating step with no verification criteria (or only LLM self-judgment)
+  // is failed closed — its side effect cannot be proven.
+  | "fail_closed";
 
 /** Which deterministic file-phrase family matched, when applicable. */
 export type FridayAutonomousVerificationPatternFamily =
