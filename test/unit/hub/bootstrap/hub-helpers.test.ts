@@ -3,7 +3,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import type { FridaySkillRegistry } from "#skills";
+import type { FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
+import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridayProviderService } from "#providers";
 import type { FridayWorkflowRuntime } from "#workflows";
 import type { FridayHubConfigManagerService } from "../../../../src/hub/services/friday-hub-config-manager.types.js";
@@ -259,6 +260,136 @@ describe("createFridayHubAutoFixExecutionSupport", () => {
       _skillStatusTarget: "skill-x",
       _skillStatusAt: "2026-03-13T10:00:00.000Z",
     });
+  });
+
+  // ── self-heal skill-status durable persistence (residual E) ──
+  function makeRegistryWith(ids: readonly string[]): FridaySkillRegistry {
+    const set = new Set(ids);
+    return {
+      list: () => [],
+      get: (skillId: string) =>
+        (set.has(skillId) ? ({} as ReturnType<FridaySkillRegistry["get"]>) : null),
+      resolveByIntent: () => null,
+      validateAll: () => [],
+      reload: async () => {},
+      refresh: async () => {},
+      isCompatible: () => ({ compatible: true, reasons: [] }),
+      startWatching: async () => {},
+      stopWatching: async () => {},
+      close: async () => {},
+    };
+  }
+
+  // Simulated durable skills store: persist only succeeds for ids already present (mirrors the
+  // bootstrap wiring's `getSkillById` existence check); absent ids get NO fake write. The store
+  // survives a "restart" (we discard memoryState but keep this map) so we can assert durability.
+  function makeDurableStore(seed: Record<string, SkillLifecycleStatus>) {
+    const store = new Map<string, SkillLifecycleStatus>(Object.entries(seed));
+    return {
+      store,
+      persistSkillLifecycleStatus: (skillId: string, status: SkillLifecycleStatus): boolean => {
+        if (!store.has(skillId)) {
+          return false;
+        }
+        store.set(skillId, status);
+        return true;
+      },
+      getPersistedSkillLifecycleStatus: (skillId: string): SkillLifecycleStatus | undefined =>
+        store.get(skillId),
+    };
+  }
+
+  const makeStep = (kind: "disable_skill" | "regenerate_skill", target: string, payload: Record<string, unknown>) => ({
+    stepId: `step-${target}`,
+    kind: kind as typeof kind,
+    target,
+    payload,
+    verify: { method: "error_absent" as const, timeoutMs: 5000 },
+  });
+
+  it("persists self-heal disable durably for an in-store skill and survives a restart", async () => {
+    const durable = makeDurableStore({ "skill-x": "installed" });
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-x"]),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+      ...durable,
+    });
+    const step = makeStep("disable_skill", "skill-x", {});
+    await expect(support.stepExecutors.disable_skill?.(step)).resolves.toBe(true);
+    await expect(support.stepVerifiers.disable_skill?.(step)).resolves.toBe(true);
+    expect(durable.store.get("skill-x")).toBe("disabled");
+    expect((step.payload as Record<string, unknown>)._skillStatusDurable).toBe(true);
+
+    // RESTART: fresh (empty) memoryState, same durable store → still disabled.
+    const afterRestart = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-x"]),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T11:00:00.000Z",
+      ...durable,
+    });
+    await expect(afterRestart.stepVerifiers.disable_skill?.(step)).resolves.toBe(true);
+    expect(durable.getPersistedSkillLifecycleStatus("skill-x")).toBe("disabled");
+  });
+
+  it("regenerate/re-enable updates durable status with no stale 'disabled' after restart", async () => {
+    const durable = makeDurableStore({ "skill-x": "disabled" }); // previously self-heal-disabled
+    const skillGenerator = {
+      startSession: async () => ({ session: { sessionId: "sess-1" } }),
+      generateDraft: async () => ({ manifest: { name: "Skill X" } }),
+      approveAndSave: async () => ({ candidateId: "cand-1" }),
+    } as unknown as FridaySkillGeneratorService;
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-x"]),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+      skillGenerator,
+      ...durable,
+    });
+    const step = makeStep("regenerate_skill", "skill-x", { skillId: "skill-x" });
+    await expect(support.stepExecutors.regenerate_skill?.(step)).resolves.toBe(true);
+    await expect(support.stepVerifiers.regenerate_skill?.(step)).resolves.toBe(true);
+    expect(durable.store.get("skill-x")).toBe("installed");
+    expect((step.payload as Record<string, unknown>)._skillStatusDurable).toBe(true);
+
+    // RESTART: fresh memoryState → durable still 'installed' (NOT the stale 'disabled').
+    const afterRestart = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-x"]),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T11:00:00.000Z",
+      skillGenerator,
+      ...durable,
+    });
+    await expect(afterRestart.stepVerifiers.regenerate_skill?.(step)).resolves.toBe(true);
+    expect(durable.getPersistedSkillLifecycleStatus("skill-x")).toBe("installed");
+  });
+
+  it("does NOT fake-persist a built-in / not-in-store skill (honest non-durable result)", async () => {
+    const durable = makeDurableStore({}); // empty → 'skill-builtin' is registry-only, not durable
+    const memoryState = createStubMemoryState();
+    const support = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-builtin"]),
+      memoryState,
+      nowIso: () => "2026-03-13T10:00:00.000Z",
+      ...durable,
+    });
+    const step = makeStep("disable_skill", "skill-builtin", {});
+    await expect(support.stepExecutors.disable_skill?.(step)).resolves.toBe(true);
+    // In-process disable applied (the only store for a built-in) ...
+    expect((await memoryState.listSkillStatuses())["skill-builtin"]).toBe("disabled");
+    // ... but NO fake durable write, and the durability signal is honest.
+    expect(durable.store.has("skill-builtin")).toBe(false);
+    expect(durable.getPersistedSkillLifecycleStatus("skill-builtin")).toBeUndefined();
+    expect((step.payload as Record<string, unknown>)._skillStatusDurable).toBe(false);
+    // After a restart (fresh memoryState, durable empty) the disable did NOT persist — the
+    // verifier honestly reports false instead of a false-green durable success.
+    const afterRestart = createFridayHubAutoFixExecutionSupport({
+      registry: makeRegistryWith(["skill-builtin"]),
+      memoryState: createStubMemoryState(),
+      nowIso: () => "2026-03-13T11:00:00.000Z",
+      ...durable,
+    });
+    await expect(afterRestart.stepVerifiers.disable_skill?.(step)).resolves.toBe(false);
   });
 
   it("Phase 14.5B module_28b: apply_config_patch is fail-closed when no real patch payload is provided", async () => {

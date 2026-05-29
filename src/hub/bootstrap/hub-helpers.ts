@@ -1177,12 +1177,36 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
   workflowRuntime?: FridayWorkflowRuntime;
   skillGenerator?: FridaySkillGeneratorService;
   nowIso: () => string;
+  // Durable skill-lifecycle persistence (optional). When provided, self-heal status
+  // mutations (disable_skill / regenerate_skill) are persisted to the durable skills store
+  // so a disabled or re-enabled skill survives a hub restart instead of living only in the
+  // process-local memoryState stub. `persistSkillLifecycleStatus` returns true ONLY when the
+  // skill already exists in the durable store (installed/converter skills); for built-in /
+  // registry-only skills it returns false (no fake write), and the in-memory status remains
+  // the only record. `getPersistedSkillLifecycleStatus` returns undefined for a not-in-store
+  // skill so verifiers can report an honest (non-durable) result.
+  persistSkillLifecycleStatus?: (skillId: string, status: SkillLifecycleStatus) => boolean;
+  getPersistedSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | undefined;
 }): FridayHubAutoFixExecutionSupport {
   // P2-07: External-state remediation must be backed by hub-level services.
   // The execution service fails closed for these kinds unless an executor is
   // injected here.
   const stepExecutors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = {};
   const stepVerifiers: Partial<Record<FridayAutoFixStepKind, StepVerifier>> = {};
+
+  // Durable-aware skill-status read: prefer the durable store (authoritative + survives
+  // restart) when the skill exists there; otherwise fall back to the in-memory stub so
+  // built-in / registry-only skills report an honest (non-durable) result rather than a
+  // false "persisted" success.
+  const resolveSkillLifecycleStatus = async (
+    skillId: string,
+  ): Promise<SkillLifecycleStatus | undefined> => {
+    const durable = deps.getPersistedSkillLifecycleStatus?.(skillId);
+    if (durable !== undefined) {
+      return durable;
+    }
+    return (await deps.memoryState.listSkillStatuses())[skillId];
+  };
 
   const readPayloadRecord = (payload: unknown): Record<string, unknown> | null =>
     typeof payload === "object" && payload !== null && !Array.isArray(payload)
@@ -1269,11 +1293,15 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         ? `auto-fix rollback @ ${nowIso}`
         : `auto-fix disable_skill @ ${nowIso}`,
     );
+    // Durably persist for installed/converter skills so the status survives a hub restart;
+    // false for built-in/registry-only skills (no durable row, no fake write).
+    const durablyPersisted = deps.persistSkillLifecycleStatus?.(step.target, nextStatus) ?? false;
     if (payload) {
       payload._skillDisabled = !revert;
       payload._skillStatusAfter = nextStatus;
       payload._skillStatusTarget = step.target;
       payload._skillStatusAt = nowIso;
+      payload._skillStatusDurable = durablyPersisted;
     }
     return true;
   };
@@ -1282,9 +1310,8 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
     if (!step.target) {
       return false;
     }
-    const revert = isRevertPayload(step.payload);
-    const statuses = await deps.memoryState.listSkillStatuses();
-    return statuses[step.target] === (revert ? "installed" : "disabled");
+    const want = isRevertPayload(step.payload) ? "installed" : "disabled";
+    return (await resolveSkillLifecycleStatus(step.target)) === want;
   };
 
   stepExecutors.apply_config_patch = async (step) => {
@@ -1657,10 +1684,12 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
           "disabled",
           `auto-fix rollback regenerate_skill @ ${deps.nowIso()}`,
         );
+        const durablyPersisted = deps.persistSkillLifecycleStatus?.(skillId, "disabled") ?? false;
         if (payload) {
           payload._skillRegenerated = true;
           payload._regenerateRolledBack = true;
           payload._regeneratedAt = deps.nowIso();
+          payload._skillStatusDurable = durablyPersisted;
         }
         return true;
       }
@@ -1686,6 +1715,7 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         "installed",
         `auto-fix regenerate_skill @ ${deps.nowIso()}`,
       );
+      const durablyPersisted = deps.persistSkillLifecycleStatus?.(skillId, "installed") ?? false;
 
       if (payload) {
         payload._skillRegenerated = true;
@@ -1693,6 +1723,7 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         payload._regenerateSessionId = sessionId;
         payload._regenerateCandidateId = saved.candidateId;
         payload._regenerateDraftName = draft.manifest.name;
+        payload._skillStatusDurable = durablyPersisted;
       }
       return true;
     };
@@ -1704,11 +1735,10 @@ export function createFridayHubAutoFixExecutionSupport(deps: {
         return false;
       }
       if (isRevertPayload(step.payload)) {
-        const statuses = await deps.memoryState.listSkillStatuses();
-        return statuses[skillId] === "disabled";
+        return (await resolveSkillLifecycleStatus(skillId)) === "disabled";
       }
-      const statuses = await deps.memoryState.listSkillStatuses();
-      return payload?._skillRegenerated === true && statuses[skillId] === "installed";
+      return payload?._skillRegenerated === true
+        && (await resolveSkillLifecycleStatus(skillId)) === "installed";
     };
   }
 

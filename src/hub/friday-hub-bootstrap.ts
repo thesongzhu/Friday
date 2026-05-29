@@ -4002,6 +4002,21 @@ export async function createFridayHub(
     workflowRuntime,
     skillGenerator,
     nowIso,
+    // Persist self-heal skill-status changes (disable_skill / regenerate_skill) to the durable
+    // skills store so a disabled or re-enabled skill survives a hub restart. Returns true ONLY
+    // when the skill already exists in the durable store (installed/converter skills); built-in
+    // / registry-only skills are NOT upserted (no fake write) so the caller can report honestly.
+    persistSkillLifecycleStatus: (skillId, status) => {
+      let persisted = false;
+      stateRuntime.sqlite.withWriteTransaction((db) => {
+        if (converterSkillRepo.getSkillById(db, skillId)) {
+          converterSkillRepo.updateLifecycleStatus(db, skillId, status, nowIso());
+          persisted = true;
+        }
+      });
+      return persisted;
+    },
+    getPersistedSkillLifecycleStatus,
   });
 
   const selfLearningRuntime = createFridaySelfLearningRuntime({
