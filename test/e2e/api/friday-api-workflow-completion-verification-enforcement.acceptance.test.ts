@@ -20,6 +20,9 @@
  */
 
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -33,6 +36,7 @@ import {
   type FridayCompiledWorkflowGraphV2,
   type FridayWorkflowRuntime,
 } from "#workflows";
+import { FRIDAY_FS_WRITE_TARGET_ARG_KEY } from "../../../src/workflows/runtime/friday-workflow-fs-write-verifier.js";
 import type { FridaySqliteLayer } from "#state";
 
 import {
@@ -253,6 +257,180 @@ describe("Audit C part-2: workflow completion-verification run-level enforcement
       await settle(runtime, run.id);
     } finally {
       releaseGate();
+      db.close();
+    }
+  });
+});
+
+/**
+ * Audit C Stage 2A acceptance: a filesystem-WRITE run upgrades from
+ * `proof_pending` to `verified` end-to-end — a workflow node declares a binding
+ * write target, a faithful write-class skill ACTUALLY writes that file (a REAL
+ * fs delta), the runtime re-reads + checksums the declared target, the run-level
+ * completion becomes `verified`, and verifyClaim SUCCEEDS against it. The
+ * negative (skill writes nothing) stays `proof_pending` and verifyClaim is
+ * REFUSED with the distinct completion-unverified code — proving the upgrade is
+ * a real on-disk delta, never a label.
+ */
+describe("Audit C Stage 2A: filesystem-write evidence → verified, end-to-end through verifyClaim", () => {
+  let envEnable: string | undefined;
+  let envMode: string | undefined;
+  let workspaceDir: string;
+  let skillDir: string;
+
+  beforeEach(() => {
+    envEnable = process.env.FRIDAY_PIPELINE_ENABLE;
+    envMode = process.env.FRIDAY_PIPELINE_MODE;
+    process.env.FRIDAY_PIPELINE_ENABLE = "true";
+    process.env.FRIDAY_PIPELINE_MODE = "enforce";
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "s2a-e2e-ws-"));
+    skillDir = fs.mkdtempSync(path.join(os.tmpdir(), "s2a-e2e-skill-"));
+  });
+  afterEach(() => {
+    if (envEnable === undefined) delete process.env.FRIDAY_PIPELINE_ENABLE; else process.env.FRIDAY_PIPELINE_ENABLE = envEnable;
+    if (envMode === undefined) delete process.env.FRIDAY_PIPELINE_MODE; else process.env.FRIDAY_PIPELINE_MODE = envMode;
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    fs.rmSync(skillDir, { recursive: true, force: true });
+  });
+
+  // A faithful write-class skill manifest (read + write, scoped to out/, NO
+  // send/connect/capture/execute) — a valid fs-write verification candidate.
+  const WRITE_MANIFEST = {
+    permissions: {
+      grants: [
+        { resource: "filesystem", action: "read" },
+        { resource: "filesystem", action: "write", selectors: { pathPrefixes: ["${workspaceDir}/out"] } },
+      ],
+    },
+  };
+
+  function buildFsRuntime(db: FridaySqliteLayer, honest: boolean): FridayWorkflowRuntime {
+    return createFridayWorkflowRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      computeChecksum: (c) => createHash("sha256").update(c).digest("hex"),
+      workspaceDir,
+      resolveSkill: (skillId) =>
+        skillId === "fs-doc-writer" ? { id: skillId, skillDir, manifest: WRITE_MANIFEST } : null,
+      invokeSkill: async (_skillId, _runId, _nodeId, payload) => {
+        // The binding target reaches the skill as a LITERAL absolute path
+        // (it transits `resolveArgs` untouched — not `$`-prefixed).
+        const declared = String(payload[FRIDAY_FS_WRITE_TARGET_ARG_KEY] ?? "");
+        if (honest) {
+          // REAL fs delta: the skill actually writes the node-declared target.
+          fs.mkdirSync(path.dirname(declared), { recursive: true });
+          fs.writeFileSync(declared, JSON.stringify({ wrote: true }), "utf8");
+        }
+        // Untrusted output (echoing the changed path must NOT itself verify).
+        return { summary: "release docs updated", details: { changedPath: declared } };
+      },
+    });
+  }
+
+  function fsGraph(workflowId: string): FridayCompiledWorkflowGraphV2 {
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: "placeholder",
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [
+          { id: "trigger", type: "trigger", label: "Trigger", config: {} },
+          {
+            id: "fswrite",
+            type: "action",
+            label: "Write Doc",
+            // Binding target is an ABSOLUTE path (NOT `$`-prefixed) so it
+            // transits the node executor's `resolveArgs` untouched.
+            config: { skillId: "fs-doc-writer", args: { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: path.join(workspaceDir, "out", "RELEASE.md") } },
+          },
+        ],
+        edges: [{ id: "e1", sourceNodeId: "trigger", targetNodeId: "fswrite" }],
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "c-s2a-e2e",
+    };
+  }
+
+  function buildService(db: FridaySqliteLayer, runtime: FridayWorkflowRuntime) {
+    let nextId = 0;
+    return createFridayTaskWorkflowService({
+      db,
+      repository: createFridayTaskWorkflowRepository(),
+      idGenerator: () => {
+        nextId += 1;
+        return `tw-s2a-${String(nextId).padStart(6, "0")}`;
+      },
+      nowIso: () => NOW,
+      getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
+      getWorkflowRunCompletionVerification: (runId) => runtime.evidence.getRunCompletionVerification(runId),
+    });
+  }
+
+  function verify(
+    service: ReturnType<typeof buildService>,
+    runId: string,
+    claimText: string,
+  ): { error: FridayDomainError | null; verifiedStatus?: string } {
+    const tw = service.create({
+      charter: "audit C Stage 2A fs-write verification",
+      taskKind: "general",
+      contextPackage: { allowedFiles: ["src/x.ts"], allowedTools: [], allowedApis: [], boundaryIds: ["api.task_workflows.core"] },
+    });
+    const claim = service.draftClaim(tw.id, { claimText, claimKind: "runtime_evidence" });
+    service.attachEvidenceRef(tw.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: runId,
+      refSource: "workflow_run_evidence",
+    });
+    try {
+      const verified = service.verifyClaim(tw.id, claim.id, { verifierVerdict: "fresh-read" });
+      return { error: null, verifiedStatus: verified.status };
+    } catch (error) {
+      return { error: error as FridayDomainError };
+    }
+  }
+
+  async function runFs(runtime: FridayWorkflowRuntime): Promise<string> {
+    const wf = runtime.crud.createWorkflow({ slug: `fs-${Math.random().toString(16).slice(2)}`, name: "fs" });
+    const v = runtime.crud.createVersion(wf.id, fsGraph(wf.id));
+    runtime.crud.publishVersion(wf.id, v.versionNumber);
+    const run = await runtime.execution.startRun({ workflowId: wf.id, workflowVersionId: v.id, triggerType: "manual" });
+    expect(await settle(runtime, run.id)).toBe("completed");
+    return run.id;
+  }
+
+  it("REAL fs delta: honest write → run completion verified → verifyClaim SUCCEEDS", async () => {
+    const db = createTestDb();
+    const runtime = buildFsRuntime(db, /* honest */ true);
+    const service = buildService(db, runtime);
+    try {
+      const runId = await runFs(runtime);
+      expect(runtime.evidence.getRunCompletionVerification(runId)).toBe("verified");
+      expect(fs.existsSync(path.join(workspaceDir, "out", "RELEASE.md"))).toBe(true);
+      const { error, verifiedStatus } = verify(service, runId, "claim backed by a real fs-write run");
+      expect(error).toBeNull();
+      expect(verifiedStatus).toBe("verified");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("skill lies (writes nothing): run stays proof_pending → verifyClaim REFUSED (distinct code)", async () => {
+    const db = createTestDb();
+    const runtime = buildFsRuntime(db, /* honest */ false);
+    const service = buildService(db, runtime);
+    try {
+      const runId = await runFs(runtime);
+      expect(runtime.evidence.getRunCompletionVerification(runId)).toBe("proof_pending");
+      expect(fs.existsSync(path.join(workspaceDir, "out", "RELEASE.md"))).toBe(false);
+      const { error } = verify(service, runId, "claim backed by a skill that wrote nothing");
+      expect(error).toBeInstanceOf(FridayDomainError);
+      expect(error?.code).toBe("TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED");
+      expect(error?.code).not.toBe("TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE");
+    } finally {
       db.close();
     }
   });

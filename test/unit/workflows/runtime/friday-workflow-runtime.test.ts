@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -9,6 +12,7 @@ import {
   type FridayWorkflowRunEvidenceStatus,
   type FridayWorkflowRuntime,
 } from "#workflows";
+import { FRIDAY_FS_WRITE_TARGET_ARG_KEY } from "../../../../src/workflows/runtime/friday-workflow-fs-write-verifier.js";
 import type { FridaySqliteLayer } from "#state";
 
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
@@ -277,5 +281,236 @@ describe("Phase 14.5C module_28c — workflow runtime fail-closed evidence", () 
     );
     expect(error.code).toBe("WORKFLOW_EVIDENCE_UNAVAILABLE");
     expect(error.httpStatus).toBe(503);
+  });
+});
+
+// ─── Audit C Stage 2A: filesystem-write evidence → verified (real fs delta) ───
+
+/**
+ * End-to-end through the REAL runtime (no mock of the verifier): a workflow node
+ * declares a binding write target; a faithful write-class skill fixture ACTUALLY
+ * writes that file; the runtime re-reads + checksums the declared target and
+ * upgrades the node's deferred `proof_pending` to `verified`, which flows to the
+ * run-level `getRunCompletionVerification`. Negative cases prove the run stays
+ * `proof_pending` whenever a genuine, in-scope, non-self-receipt fs delta is
+ * absent.
+ */
+describe("audit C Stage 2A — runtime fs-write verification (real fs delta → verified)", () => {
+  let envEnable: string | undefined;
+  let envMode: string | undefined;
+  let workspaceDir: string;
+  let skillDir: string;
+
+  beforeEach(() => {
+    envEnable = process.env.FRIDAY_PIPELINE_ENABLE;
+    envMode = process.env.FRIDAY_PIPELINE_MODE;
+    process.env.FRIDAY_PIPELINE_ENABLE = "true";
+    process.env.FRIDAY_PIPELINE_MODE = "enforce";
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "s2a-rt-ws-"));
+    skillDir = fs.mkdtempSync(path.join(os.tmpdir(), "s2a-rt-skill-"));
+  });
+  afterEach(() => {
+    if (envEnable === undefined) delete process.env.FRIDAY_PIPELINE_ENABLE; else process.env.FRIDAY_PIPELINE_ENABLE = envEnable;
+    if (envMode === undefined) delete process.env.FRIDAY_PIPELINE_MODE; else process.env.FRIDAY_PIPELINE_MODE = envMode;
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    fs.rmSync(skillDir, { recursive: true, force: true });
+  });
+
+  // A faithful write-class skill manifest: read + write, scoped to `out` under
+  // the workspace, NO send/connect/capture/execute (a valid fs-write candidate).
+  const writeManifest = (extraActions: string[] = []) => ({
+    permissions: {
+      grants: [
+        { resource: "filesystem", action: "read" },
+        { resource: "filesystem", action: "write", selectors: { pathPrefixes: ["${workspaceDir}/out"] } },
+        ...extraActions.map((a) => ({ action: a })),
+      ],
+    },
+  });
+
+  type SkillSpec = {
+    manifest: ReturnType<typeof writeManifest>;
+    /** What the invocation actually does — controls the real fs delta. */
+    behavior:
+      | { kind: "write-target" } // honestly writes the declared target file
+      | { kind: "lie" } // returns a receipt but writes NOTHING
+      | { kind: "write-elsewhere"; rel: string } // writes a DIFFERENT file
+      | { kind: "self-receipt" }; // writes the target AND returns it as its own artifact uri
+  };
+
+  function buildRuntime(specs: Record<string, SkillSpec>): FridayWorkflowRuntime {
+    return createFridayWorkflowRuntime({
+      db: createTestDb(),
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      computeChecksum: (c) => createHash("sha256").update(c).digest("hex"),
+      workspaceDir,
+      resolveSkill: (skillId) =>
+        specs[skillId] ? { id: skillId, skillDir, manifest: specs[skillId]!.manifest } : null,
+      invokeSkill: async (skillId, _runId, _nodeId, payload) => {
+        const spec = specs[skillId];
+        if (!spec) return { ok: true };
+        // The binding target reaches the skill as a LITERAL absolute path (it
+        // transits the node executor's `resolveArgs` untouched — it is not
+        // `$`-prefixed). The skill resolves its own write location from it.
+        const declared = String(payload[FRIDAY_FS_WRITE_TARGET_ARG_KEY] ?? "");
+        const resolveDeclared = (d: string) => (path.isAbsolute(d) ? d : path.join(workspaceDir, d));
+        switch (spec.behavior.kind) {
+          case "write-target": {
+            const abs = resolveDeclared(declared);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, JSON.stringify({ wrote: true, at: NOW }), "utf8");
+            return { summary: "wrote managed doc", details: { changedPath: declared } };
+          }
+          case "lie":
+            // Returns a plausible receipt but writes NOTHING.
+            return { summary: "wrote managed doc", details: { changedPath: declared, runPath: path.join(workspaceDir, "out", "receipt.json") } };
+          case "write-elsewhere": {
+            const abs = resolveDeclared(spec.behavior.rel);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, "elsewhere", "utf8");
+            return { summary: "wrote elsewhere" };
+          }
+          case "self-receipt": {
+            const abs = resolveDeclared(declared);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, JSON.stringify({ receipt: true }), "utf8");
+            // The skill RETURNS the declared target as its own artifact — circular.
+            return { summary: "wrote receipt", details: { runPath: abs } };
+          }
+        }
+      },
+    });
+  }
+
+  function graph(
+    workflowId: string,
+    nodes: Array<{ id: string; skillId: string; target?: string }>,
+  ): FridayCompiledWorkflowGraphV2 {
+    const actionNodes = nodes.map((n) => ({
+      id: n.id,
+      type: "action" as const,
+      label: n.id,
+      config: { skillId: n.skillId, args: n.target ? { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: n.target } : {} },
+    }));
+    const edges = actionNodes.map((n, i) => ({
+      id: `e${i}`,
+      sourceNodeId: i === 0 ? "trigger" : actionNodes[i - 1]!.id,
+      targetNodeId: n.id,
+    }));
+    return {
+      schemaVersion: "2.0",
+      workflowId,
+      workflowVersionId: "placeholder",
+      sourceSpecSchemaVersion: "1.0",
+      graph: {
+        nodes: [{ id: "trigger", type: "trigger", label: "Trigger", config: {} }, ...actionNodes],
+        edges,
+      },
+      failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+      tests: [],
+      checksum: "s2a-rt",
+    };
+  }
+
+  async function runAndGetVerification(
+    runtime: FridayWorkflowRuntime,
+    nodes: Array<{ id: string; skillId: string; target?: string }>,
+  ): Promise<{ status: string; verification: string; runId: string }> {
+    const wf = runtime.crud.createWorkflow({ slug: `s2a-${Math.random().toString(16).slice(2)}`, name: "s2a" });
+    const v = runtime.crud.createVersion(wf.id, graph(wf.id, nodes));
+    runtime.crud.publishVersion(wf.id, v.versionNumber);
+    const run = await runtime.execution.startRun({ workflowId: wf.id, workflowVersionId: v.id, triggerType: "manual" });
+    const status = await waitForRunSettled(runtime, run.id);
+    return { status, verification: runtime.evidence.getRunCompletionVerification(run.id), runId: run.id };
+  }
+
+  it("POSITIVE: skill honestly writes the declared target → run completion verified", async () => {
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-target" } } });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.status).toBe("completed");
+    expect(r.verification).toBe("verified");
+    // Real fs delta really happened.
+    expect(fs.existsSync(path.join(workspaceDir, "out", "report.json"))).toBe(true);
+  });
+
+  it("NEGATIVE: skill lies (writes nothing) → proof_pending", async () => {
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "lie" } } });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.status).toBe("completed");
+    expect(r.verification).toBe("proof_pending");
+    expect(fs.existsSync(path.join(workspaceDir, "out", "report.json"))).toBe(false);
+  });
+
+  it("NEGATIVE: skill writes a DIFFERENT file than the declared target → proof_pending", async () => {
+    const runtime = buildRuntime({
+      "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-elsewhere", rel: path.join(workspaceDir, "out", "other.json") } },
+    });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.verification).toBe("proof_pending");
+  });
+
+  it("REFUSE: out-of-scope declared target (outside the manifest write scope) → proof_pending", async () => {
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-target" } } });
+    const r = await runAndGetVerification(runtime, [
+      // Target is under `escape/`, NOT the declared `out/` write scope.
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "escape", "report.json") },
+    ]);
+    expect(r.verification).toBe("proof_pending");
+  });
+
+  it("REFUSE: skill self-receipt (target == returned artifact uri) → proof_pending", async () => {
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "self-receipt" } } });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.verification).toBe("proof_pending");
+  });
+
+  it("NOT A CANDIDATE: write+send skill stays proof_pending (never verified)", async () => {
+    const runtime = buildRuntime({
+      "doc-sender": { manifest: writeManifest(["send"]), behavior: { kind: "write-target" } },
+    });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-sender", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.verification).toBe("proof_pending");
+  });
+
+  it("INERT: write skill with no declared binding target stays proof_pending", async () => {
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-target" } } });
+    const r = await runAndGetVerification(runtime, [{ id: "act", skillId: "doc-writer" }]);
+    expect(r.verification).toBe("proof_pending");
+  });
+
+  it("MIXED RUN: verified fs-write + a send-class node → run aggregate proof_pending (worst-wins)", async () => {
+    const runtime = buildRuntime({
+      "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-target" } },
+      "sender": { manifest: { permissions: { grants: [{ action: "send" }] } } as ReturnType<typeof writeManifest>, behavior: { kind: "lie" } },
+    });
+    const r = await runAndGetVerification(runtime, [
+      { id: "fswrite", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+      { id: "send", skillId: "sender" },
+    ]);
+    expect(r.status).toBe("completed");
+    expect(r.verification).toBe("proof_pending");
+    // The fs-write itself really happened — the run is only proof_pending
+    // because of the co-resident send node (worst-wins), not the fs node.
+    expect(fs.existsSync(path.join(workspaceDir, "out", "report.json"))).toBe(true);
+  });
+
+  it("!pipelineEnabled: an fs-write candidate run is proof_pending (legacy path, no re-read)", async () => {
+    process.env.FRIDAY_PIPELINE_ENABLE = "false";
+    const runtime = buildRuntime({ "doc-writer": { manifest: writeManifest(), behavior: { kind: "write-target" } } });
+    const r = await runAndGetVerification(runtime, [
+      { id: "act", skillId: "doc-writer", target: path.join(workspaceDir, "out", "report.json") },
+    ]);
+    expect(r.verification).toBe("proof_pending");
   });
 });
