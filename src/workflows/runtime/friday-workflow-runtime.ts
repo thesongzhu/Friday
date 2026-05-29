@@ -82,6 +82,11 @@ import { createFridayWorkflowRunMachine } from "../engine/friday-workflow-run-ma
 import { createFridayWorkflowNodeMachine } from "../engine/friday-workflow-node-machine.js";
 import { createFridayWorkflowRetryManager } from "../engine/friday-workflow-retry-manager.js";
 import { createFridayWorkflowNodeExecutor } from "../engine/friday-workflow-node-executor.js";
+import {
+  classifyWorkflowNodeSideEffect,
+  resolveNodeCompletionVerification,
+  type FridayNodeCompletionVerification,
+} from "./friday-workflow-node-acceptance.js";
 import { createFridayWorkflowArtifactWriter } from "../engine/friday-workflow-artifact-writer.js";
 import { createFridayWorkflowNodeRunnerFacade } from "../engine/friday-workflow-node-runner-facade.js";
 import { createFridayWorkflowAcceptanceGate } from "../engine/friday-workflow-acceptance-gate.js";
@@ -1205,11 +1210,26 @@ export function createFridayWorkflowRuntime(
 
   const nodeExecutor = {
     async executeNode(input) {
+      // Audit C Stage 1: derive the orthogonal completion-verification label
+      // from the node's DECLARED capability (never from output). A side-effect
+      // node without deterministic evidence is `proof_pending` (not a clean /
+      // verified completion); informational nodes are verified / model_assessed.
+      // Applied in EVERY path — pipeline-on, output==null, and the legacy/
+      // pipeline-disabled bypass — so none of them can be read as verified.
+      const sideEffectClass = classifyWorkflowNodeSideEffect(input.node, deps.resolveSkill);
+      const completionVerification = resolveNodeCompletionVerification(input.node, sideEffectClass);
+      const withVerification = <T>(r: T): T => {
+        (r as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = completionVerification;
+        return r;
+      };
+
       if (!pipelineEnabled) {
-        return legacyNodeExecutor.executeNode(input);
+        // Legacy / pipeline-disabled bypass must still be truth-labeled — a
+        // disabled pipeline is not a verified completion.
+        return withVerification(await legacyNodeExecutor.executeNode(input));
       }
       try {
-        const result = await nodeRunnerFacade.executeNode(input);
+        const result = withVerification(await nodeRunnerFacade.executeNode(input));
 
         pipelineEventEmitter.emit(
           "pipeline.node.execution.completed",
