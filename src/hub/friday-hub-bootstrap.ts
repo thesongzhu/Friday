@@ -7776,8 +7776,10 @@ export async function createFridayHub(
   // Stub services waste tokens: LLM tries to use the tool, gets an error, retries.
   // Skip registration entirely when no provider is available.
 
-  // 5. nodes — only register when nodes service is available (via FRIDAY_NODES_ENABLED).
-  // Same principle: don't register tools that can't work.
+  // 5. nodes — the satellite node/device-control tool is ALWAYS registered;
+  // it operates on paired satellites and returns "satellite not found" when
+  // none are paired. (There is no FRIDAY_NODES_ENABLED gate — that env var is
+  // not read by the runtime; the earlier comment naming it was inaccurate.)
   {
     const encodeNodeControlPayload = (payload: unknown): string =>
       Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
