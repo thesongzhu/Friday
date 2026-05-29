@@ -3531,6 +3531,14 @@ export async function createFridayHub(
       // repository or pretending unknown runs were healthy.
       getWorkflowRunEvidenceStatus: (runId) =>
         workflowRuntime.evidence.getRunEvidenceStatus(runId),
+      // Audit C: bridge the runtime's ORTHOGONAL run-level
+      // completion-verification truth (a side-effect node lacking
+      // deterministic evidence → `proof_pending`). verifyClaim refuses a proof
+      // claim backed by a non-verified run for a reason DISTINCT from
+      // persistence durability. Wiring it here makes the run-level enforcement
+      // live in production (the verifier is fail-closed once wired).
+      getWorkflowRunCompletionVerification: (runId) =>
+        workflowRuntime.evidence.getRunCompletionVerification(runId),
     });
     return { service, disabledReason: null };
   })();

@@ -3,6 +3,7 @@ import type { FridayWorkflowExecutionService } from "../services/friday-workflow
 import type { FridayWorkflowTriggerService } from "../services/friday-workflow-trigger-service.js";
 import type { FridayWorkflowApprovalService } from "../services/friday-workflow-approval-service.types.js";
 import type {
+  FridayNodeCompletionVerification,
   FridayWorkflowRunEntity,
   FridayWorkflowRunEvidenceStatus,
   ISODateTime,
@@ -126,6 +127,15 @@ export interface FridayWorkflowRunEvidenceResponse {
    * receipt — `degraded` and `unavailable` block any proof claim.
    */
   evidenceStatus: FridayWorkflowRunEvidenceStatus;
+  /**
+   * Audit C: orthogonal run-level completion-verification truth (worst node
+   * label observed). SEPARATE from `evidenceStatus` — a run can be
+   * `available` (healthy persistence) yet `proof_pending` (a side-effect node
+   * lacked deterministic evidence). A non-`verified` value means the run is
+   * not a clean/verified completion and cannot back a proof claim, for a
+   * reason distinct from persistence durability.
+   */
+  completionVerification: FridayNodeCompletionVerification;
 }
 
 export interface FridayWorkflowRunEvidenceExport {
@@ -187,6 +197,16 @@ export interface FridayWorkflowEvidenceService {
    * downstream verifier — there is no fallback that masks degraded state.
    */
   getRunEvidenceStatus(runId: UUID): FridayWorkflowRunEvidenceStatus;
+  /**
+   * Audit C: deterministic per-run completion-verification truth, ORTHOGONAL
+   * to `getRunEvidenceStatus`. Returns `verified` only for a terminally
+   * `completed` run whose every node was a clean/verified completion; a
+   * side-effect node lacking deterministic evidence yields `proof_pending`,
+   * and a non-settled run is never `verified` (fail-closed against the
+   * mid-flight race). The task workflow verifier reads this to refuse a
+   * non-verified run as proof backing — never conflated with persistence.
+   */
+  getRunCompletionVerification(runId: UUID): FridayNodeCompletionVerification;
 }
 
 /**

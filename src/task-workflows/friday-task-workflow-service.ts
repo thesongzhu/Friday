@@ -96,6 +96,7 @@ import type {
   FridayTaskWorkflowSupervisorMode,
   FridayTaskWorkflowSupervisorOverview,
   FridayTaskWorkflowVerifyClaimInput,
+  FridayTaskWorkflowWorkflowRunCompletionVerification,
   FridayTaskWorkflowWorkflowRunEvidenceStatus,
 } from "./friday-task-workflow.types.js";
 
@@ -149,6 +150,28 @@ export interface CreateFridayTaskWorkflowServiceDeps {
   readonly getWorkflowRunEvidenceStatus?: (
     runId: string,
   ) => FridayTaskWorkflowWorkflowRunEvidenceStatus | null;
+  /**
+   * Audit C: workflow run completion-verification lookup, ORTHOGONAL to
+   * `getWorkflowRunEvidenceStatus`. Returns the upstream run's
+   * completion-verification truth (or `null` when the run id cannot be
+   * resolved). The hub wires this to the workflow runtime's
+   * `evidence.getRunCompletionVerification`; tests inject a deterministic
+   * fake. FAIL-CLOSED and SYMMETRIC with the evidence-status lookup: a claim
+   * holding a `workflow_run_evidence` ref cannot reach verified unless this
+   * lookup is wired AND every referenced run is `verified`. `verifyClaim`
+   * refuses a non-`verified` run (a side-effect node lacking deterministic
+   * evidence → `proof_pending`) — and equally refuses when the lookup is
+   * absent (never-silent) — with an error code DISTINCT from the persistence
+   * path. Losing the hub wiring therefore becomes a LOUD refuse in production,
+   * never a silent non-enforcement. The check runs AFTER the persistence check
+   * so a missing-persistence-lookup refusal preserves its existing error code.
+   * (The wired runtime aggregate is process-lifetime in-memory — see
+   * `getRunCompletionVerification`; persisting the label is Stage 2, matching
+   * `evidenceStatus`.)
+   */
+  readonly getWorkflowRunCompletionVerification?: (
+    runId: string,
+  ) => FridayTaskWorkflowWorkflowRunCompletionVerification | null;
 }
 
 export interface FridayTaskWorkflowService {
@@ -773,6 +796,10 @@ export function createFridayTaskWorkflowService(
       );
     }
     assertWorkflowRunEvidenceRefsAvailable(claim.id, attachedRefs);
+    // Audit C: AFTER the persistence boundary (so a missing-persistence-lookup
+    // refusal keeps its existing code), refuse a non-verified upstream run
+    // completion as a DISTINCT reason from persistence durability.
+    assertWorkflowRunCompletionVerified(claim.id, attachedRefs);
     let resolvedVerifierLaneId: string | null = null;
     if (input.verifierLaneId !== undefined) {
       if (
@@ -1074,6 +1101,74 @@ export function createFridayTaskWorkflowService(
         details: {
           claimId,
           offending,
+        },
+      },
+    );
+  }
+
+  /**
+   * Audit C: refuse verified status when any workflow_run_evidence ref's
+   * source run is not a clean `verified` completion (a side-effect node lacked
+   * deterministic evidence → `proof_pending`, or the run did not terminally
+   * complete). ORTHOGONAL to evidence-persistence durability — this is a
+   * DISTINCT refusal (`TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED`),
+   * never "persistence degraded". Runs AFTER
+   * `assertWorkflowRunEvidenceRefsAvailable` so the persistence boundary keeps
+   * its own error code.
+   *
+   * FAIL-CLOSED and never-silent, symmetric with
+   * `assertWorkflowRunEvidenceRefsAvailable`: a `workflow_run_evidence`-backed
+   * claim cannot reach verified unless the completion lookup is wired (an
+   * absent lookup is itself a refusal — so losing the hub wiring is a LOUD
+   * refuse, not silent non-enforcement) AND every referenced run resolves to
+   * `verified` (an unknown lookup result is also a refusal). Claims without a
+   * `workflow_run_evidence` ref are unaffected.
+   */
+  function assertWorkflowRunCompletionVerified(
+    claimId: string,
+    attachedRefs: readonly FridayTaskWorkflowEvidenceRefRecord[],
+  ): void {
+    const workflowRunEvidenceRefs = attachedRefs.filter(
+      (ref) => ref.refSource === "workflow_run_evidence",
+    );
+    if (workflowRunEvidenceRefs.length === 0) return;
+    if (!deps.getWorkflowRunCompletionVerification) {
+      throw new FridayDomainError(
+        "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED",
+        `claim "${claimId}" cannot reach verified: no workflow_run completion-verification lookup is wired into the task workflow service, so the upstream run's completion truth cannot be confirmed.`,
+        {
+          httpStatus: 409,
+          details: {
+            claimId,
+            offendingRefIds: workflowRunEvidenceRefs.map((r) => r.id),
+            missingLookup: true,
+          },
+        },
+      );
+    }
+    const offending: Array<{ refId: string; runId: string; completion: string }> = [];
+    for (const ref of workflowRunEvidenceRefs) {
+      const completion = deps.getWorkflowRunCompletionVerification(ref.refId);
+      if (completion === null || completion === undefined) {
+        offending.push({ refId: ref.id, runId: ref.refId, completion: "unknown" });
+        continue;
+      }
+      if (completion !== "verified") {
+        offending.push({ refId: ref.id, runId: ref.refId, completion });
+      }
+    }
+    if (offending.length === 0) return;
+    throw new FridayDomainError(
+      "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED",
+      `claim "${claimId}" cannot reach verified: workflow_run_evidence ref(s) reference run(s) whose completion is not verified (e.g. a side-effect node lacked deterministic evidence): ${offending
+        .map((entry) => `${entry.refId}->${entry.runId}(${entry.completion})`)
+        .join(", ")}. This refusal is distinct from evidence persistence durability.`,
+      {
+        httpStatus: 409,
+        details: {
+          claimId,
+          offending,
+          completionUnverified: true,
         },
       },
     );

@@ -192,6 +192,24 @@ export type FridayWorkflowRunEvidenceStatus =
   | "degraded"
   | "unavailable";
 
+// Audit C: orthogonal RUN/NODE completion-verification truth. This is a
+// SEPARATE axis from `FridayWorkflowRunEvidenceStatus` (evidence-persistence
+// health) — a run can have fully-available persistence yet a non-`verified`
+// completion (a side-effect node lacking deterministic evidence). Conflating
+// the two would falsely report a healthy-persistence run as "degraded". A node
+// is `verified` only when it is deterministic pure-compute or a side-effect
+// backed by deterministic evidence; model/approval nodes are
+// `model_assessed_unverified` (never release proof); a side-effect node lacking
+// evidence is `proof_pending`. `recovery_needed`/`blocked` are stronger
+// downgrades. Defined here in the model layer so both the runtime and the run
+// entity can reference it without inverted layering.
+export type FridayNodeCompletionVerification =
+  | "verified"
+  | "model_assessed_unverified"
+  | "proof_pending"
+  | "recovery_needed"
+  | "blocked";
+
 // ─── Workflow Run Entity ───
 
 export interface FridayWorkflowRunEntity {
@@ -232,6 +250,14 @@ export interface FridayWorkflowRunEntity {
    * always see the current store health.
    */
   evidenceStatus?: FridayWorkflowRunEvidenceStatus;
+  /**
+   * Audit C: orthogonal run-level completion-verification truth (the worst node
+   * label observed for the run). Populated by the runtime on read paths;
+   * NEVER conflated with `evidenceStatus`. A value other than `verified` means
+   * the run cannot be read as a clean/verified completion and is refused as
+   * proof backing by the task workflow verifier (distinct from durability).
+   */
+  completionVerification?: FridayNodeCompletionVerification;
 }
 
 // ─── Workflow Run Node Row ───

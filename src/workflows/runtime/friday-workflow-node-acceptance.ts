@@ -24,14 +24,20 @@
  */
 
 import type { FridayWorkflowNode } from "../model/friday-workflow-graph.types.js";
+import type { FridayNodeCompletionVerification } from "../model/friday-workflow.types.js";
 
-/** Orthogonal completion-verification truth label (independent of run/node status). */
-export type FridayNodeCompletionVerification =
-  | "verified" // deterministic / pure-compute node; safe as proof
-  | "model_assessed_unverified" // informational model-driven node; NOT release proof
-  | "proof_pending" // side-effect node lacking deterministic evidence (Stage 2 upgrades)
-  | "recovery_needed"
-  | "blocked";
+/**
+ * Orthogonal completion-verification truth label (independent of run/node
+ * status AND of evidence-persistence health). Canonical definition lives in
+ * the model layer (`friday-workflow.types`); re-exported here so existing
+ * importers keep their `node-acceptance` import path. Label semantics:
+ * `verified` = deterministic pure-compute (or side-effect backed by
+ * deterministic evidence) — safe as proof; `model_assessed_unverified` =
+ * model/human-gated node — NOT release proof; `proof_pending` = side-effect
+ * node lacking deterministic evidence (Stage 2 upgrades when evidence plumbs
+ * through); `recovery_needed`/`blocked` = stronger downgrades.
+ */
+export type { FridayNodeCompletionVerification };
 
 export type FridayNodeSideEffectClass = "side_effect" | "informational";
 

@@ -69,7 +69,11 @@ function createRuntime(db: FridaySqliteLayer): FridayWorkflowRuntime {
     idGenerator: createTestIdGenerator(),
     nowIso: () => NOW,
     computeChecksum: (content: string) => createHash("sha256").update(content).digest("hex"),
-    resolveSkill: () => ({ id: "fail-closed-skill" }),
+    // Read-only (informational) skill: this suite tests evidence-PERSISTENCE
+    // fail-closed, not side-effect verification, so the action node is a benign
+    // read skill (audit C: read/receive grants → informational → verified, so the
+    // node-acceptance classifier does not downgrade these runs).
+    resolveSkill: () => ({ id: "fail-closed-skill", manifest: { permissions: { grants: [{ action: "read" }] } } }),
     invokeSkill: async () => ({ ok: true, data: ["sample"] }),
   });
 }

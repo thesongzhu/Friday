@@ -1138,6 +1138,12 @@ describe("Phase 14.5C module_28c — workflow evidence fail-closed", () => {
       },
       nowIso: () => frozenNow,
       getWorkflowRunEvidenceStatus: (runId) => statusByRunId.get(runId) ?? null,
+      // Audit C: these are persistence-fidelity tests; the orthogonal
+      // completion lookup is wired (fail-closed requires it) and returns
+      // `verified` for every run so it never interferes with the persistence
+      // assertions. Completion-specific refusals are covered by their own
+      // tests below.
+      getWorkflowRunCompletionVerification: () => "verified",
     });
   }
 
@@ -1246,6 +1252,82 @@ describe("Phase 14.5C module_28c — workflow evidence fail-closed", () => {
       verifierVerdict: "fresh-read verified",
     });
     expect(verified.status).toBe("verified");
+  });
+
+  // ── Audit C part-2: completion-verification FAIL-CLOSED guards ──
+  // These guard run-level completion enforcement the same way the persistence
+  // path is guarded, so production enforcement cannot be silently lost.
+
+  it("verifyClaim FAIL-CLOSED: refuses workflow_run_evidence ref when NO completion lookup is wired (even with persistence available)", () => {
+    // If the hub ever stops wiring getWorkflowRunCompletionVerification, a
+    // workflow_run_evidence claim must loudly refuse — never silently drop
+    // run-level completion enforcement.
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+      getWorkflowRunEvidenceStatus: () => "available", // persistence is healthy
+      // getWorkflowRunCompletionVerification intentionally omitted.
+    });
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "ref backed by run with no completion lookup",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-ok",
+      refSource: "workflow_run_evidence",
+    });
+    let err: FridayDomainError | null = null;
+    try {
+      service.verifyClaim(workflow.id, claim.id, { verifierVerdict: "fresh-read" });
+    } catch (e) {
+      err = e as FridayDomainError;
+    }
+    expect(err).toBeInstanceOf(FridayDomainError);
+    expect(err?.code).toBe("TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED");
+    expect((err?.details as { missingLookup?: boolean })?.missingLookup).toBe(true);
+  });
+
+  it("verifyClaim refuses workflow_run_evidence ref when source run completion is proof_pending (distinct from persistence)", () => {
+    const repository = createFridayTaskWorkflowRepository();
+    const service = createFridayTaskWorkflowService({
+      db,
+      repository,
+      idGenerator: () => {
+        nextId += 1;
+        return `id-${nextId.toString(16).padStart(8, "0")}`;
+      },
+      nowIso: () => frozenNow,
+      getWorkflowRunEvidenceStatus: () => "available", // persistence healthy
+      getWorkflowRunCompletionVerification: () => "proof_pending", // side-effect, no evidence
+    });
+    const workflow = service.create(makeCreateInput());
+    const claim = service.draftClaim(workflow.id, {
+      claimText: "ref backed by proof_pending run",
+      claimKind: "runtime_evidence",
+    });
+    service.attachEvidenceRef(workflow.id, claim.id, {
+      refKind: "workflow_run_evidence",
+      refId: "run-sideeffect",
+      refSource: "workflow_run_evidence",
+    });
+    let err: FridayDomainError | null = null;
+    try {
+      service.verifyClaim(workflow.id, claim.id, { verifierVerdict: "fresh-read" });
+    } catch (e) {
+      err = e as FridayDomainError;
+    }
+    expect(err?.code).toBe("TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_COMPLETION_UNVERIFIED");
+    expect(err?.httpStatus).toBe(409);
+    // Orthogonal: NOT the persistence code, even though persistence is available.
+    expect(err?.code).not.toBe("TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE");
   });
 
   it("closeout receipt: evidenceDurability=available and proofClaimable=true on a clean run", () => {
@@ -1409,6 +1491,7 @@ describe("Phase 14.5D module_28d — closeout receipt rollback disclosure", () =
       },
       nowIso: () => frozenNow,
       getWorkflowRunEvidenceStatus: (runId) => statusByRunId.get(runId) ?? null,
+      getWorkflowRunCompletionVerification: () => "verified",
     });
     const workflow = service.create(makeCreateInput());
     const claim = service.draftClaim(workflow.id, {

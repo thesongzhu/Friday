@@ -525,6 +525,62 @@ export function createFridayWorkflowRuntime(
     }
   };
 
+  // Audit C part-2: RUN-LEVEL completion-verification truth, ORTHOGONAL to
+  // evidence-persistence health (`evidenceStatus`). Tracks the worst (least
+  // verified) node completion-verification label observed for the run. This is
+  // the run-level enforcement surface for the workflow-node false-completion
+  // bypasses (arbitrary non-empty baseline pass, output==null skip, and the
+  // disabled-pipeline/legacy path): a run whose aggregate is not `verified`
+  // cannot be read as a clean/verified completion and is refused as proof
+  // backing by the task workflow verifier — as a reason DISTINCT from
+  // persistence durability. It NEVER downgrades `evidenceStatus`; conflating
+  // the two would falsely report a healthy-persistence run as "degraded"
+  // (a reverse lie). Runtime state is the source of truth; not persisted.
+  const runCompletionVerificationByRunId = new Map<
+    string,
+    FridayNodeCompletionVerification
+  >();
+  // Worst-first rank: a LOWER number is a stronger (worse) downgrade. The run
+  // aggregate keeps the worst label any node reported.
+  const COMPLETION_VERIFICATION_RANK: Record<FridayNodeCompletionVerification, number> = {
+    blocked: 0,
+    recovery_needed: 1,
+    proof_pending: 2,
+    model_assessed_unverified: 3,
+    verified: 4,
+  };
+
+  const recordRunNodeCompletionVerification = (
+    runId: string,
+    label: FridayNodeCompletionVerification,
+  ): void => {
+    const previous = runCompletionVerificationByRunId.get(runId);
+    if (
+      previous === undefined
+      || COMPLETION_VERIFICATION_RANK[label] < COMPLETION_VERIFICATION_RANK[previous]
+    ) {
+      runCompletionVerificationByRunId.set(runId, label);
+    }
+  };
+
+  const getRunCompletionVerification = (
+    runId: string,
+  ): FridayNodeCompletionVerification => {
+    const recorded = runCompletionVerificationByRunId.get(runId) ?? "verified";
+    // Fail-closed for non-settled runs: a run that is not terminally
+    // `completed` can NEVER be read as a clean `verified` completion — a
+    // still-executing run may yet run a side-effect node, and a failed /
+    // cancelled run did not complete. This closes the mid-flight
+    // time-of-check race at the source so the verifier observes
+    // `proof_pending` rather than a premature `verified`. A recorded stronger
+    // downgrade (proof_pending / recovery_needed / blocked) is preserved.
+    const run = execution.getRun(runId);
+    if (run?.status === "completed") {
+      return recorded;
+    }
+    return recorded === "verified" ? "proof_pending" : recorded;
+  };
+
   const isRunProofRequired = (runId: string): boolean => {
     const cached = proofRequiredByRunId.get(runId);
     if (cached !== undefined) return cached;
@@ -1222,6 +1278,20 @@ export function createFridayWorkflowRuntime(
         (r as { completionVerification?: FridayNodeCompletionVerification }).completionVerification = completionVerification;
         return r;
       };
+
+      // Run-level enforcement (audit C part-2): record this node's
+      // completion-verification into the run-level aggregate (the worst label
+      // wins). A node that is NOT a clean `verified` completion — a side-effect
+      // node lacking deterministic evidence (`proof_pending`) or a
+      // model-assessed informational node (`model_assessed_unverified`) — makes
+      // the RUN aggregate non-`verified`, which the task workflow verifier
+      // refuses as proof backing. This closes the run-level bypasses (arbitrary
+      // non-empty baseline pass, output==null skipping the gate, and the
+      // disabled-pipeline/legacy path): none can leave the run readable as
+      // clean/verified. It does NOT block the node from running (no
+      // over-blocking) and is ORTHOGONAL to `evidenceStatus` — recording a
+      // non-verified completion must NOT touch evidence-persistence health.
+      recordRunNodeCompletionVerification(input.runId, completionVerification);
 
       if (!pipelineEnabled) {
         // Legacy / pipeline-disabled bypass must still be truth-labeled — a
@@ -2046,9 +2116,10 @@ export function createFridayWorkflowRuntime(
       });
 
     const evidenceStatus = getRunEvidenceStatus(runId);
+    const completionVerification = getRunCompletionVerification(runId);
     const rawRun = execution.getRun(runId);
     const run = rawRun
-      ? { ...rawRun, evidenceStatus }
+      ? { ...rawRun, evidenceStatus, completionVerification }
       : null;
     return {
       run,
@@ -2076,6 +2147,7 @@ export function createFridayWorkflowRuntime(
         items: correlationItems,
       },
       evidenceStatus,
+      completionVerification,
     };
   };
 
@@ -2296,6 +2368,9 @@ export function createFridayWorkflowRuntime(
     },
     getRunEvidenceStatus(runId: string): FridayWorkflowRunEvidenceStatus {
       return getRunEvidenceStatus(runId);
+    },
+    getRunCompletionVerification(runId: string): FridayNodeCompletionVerification {
+      return getRunCompletionVerification(runId);
     },
   };
 

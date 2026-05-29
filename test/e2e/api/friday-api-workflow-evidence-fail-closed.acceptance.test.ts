@@ -89,7 +89,15 @@ function createRuntime(db: FridaySqliteLayer): FridayWorkflowRuntime {
     idGenerator: createTestIdGenerator(),
     nowIso: () => NOW,
     computeChecksum: (content) => createHash("sha256").update(content).digest("hex"),
-    resolveSkill: () => ({ id: "evidence-fail-closed-skill" }),
+    // Audit C: this fixture exercises evidence-PERSISTENCE fail-closed; its
+    // single action node is a benign informational placeholder, so it declares
+    // a read-only manifest → completion `verified`. (Without a manifest the
+    // node would fail-closed to a side-effect `proof_pending` run, which is
+    // correct behavior but orthogonal to what THIS test asserts.)
+    resolveSkill: () => ({
+      id: "evidence-fail-closed-skill",
+      manifest: { permissions: { grants: [{ action: "read" }] } },
+    }),
     invokeSkill: async () => ({ ok: true }),
   });
 }
@@ -242,6 +250,12 @@ describe("Phase 14.5C module_28c: workflow evidence fail-closed acceptance", () 
         nowIso: () => NOW,
         getWorkflowRunEvidenceStatus: (runId) =>
           runtime.evidence.getRunEvidenceStatus(runId),
+        // Audit C: wire the orthogonal completion lookup exactly as the hub
+        // does (fail-closed requires it). The fixture's run is read-only →
+        // `verified`, so the happy path still verifies; this only adds the
+        // run-level completion gate the production service enforces.
+        getWorkflowRunCompletionVerification: (runId) =>
+          runtime.evidence.getRunCompletionVerification(runId),
       });
       try {
         const { workflowId: wfId, versionId } = await publishWorkflowAndGetVersionId(
