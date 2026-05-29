@@ -220,20 +220,20 @@ export function useAgentRunEvents(
             return;
           } catch {
             setConnectionState("error");
-            setErrorMessage("Session expired");
+            setErrorMessage("Your session expired — please sign in again to continue.");
             return;
           }
         }
 
         if (res.status === 401) {
           setConnectionState("error");
-          setErrorMessage("Session expired");
+          setErrorMessage("Your session expired — please sign in again to continue.");
           return;
         }
 
         if (!res.ok || !res.body) {
           setConnectionState("error");
-          setErrorMessage(`HTTP ${res.status}`);
+          setErrorMessage(`Couldn't reach Friday (HTTP ${res.status}). Make sure the Friday server is running, then try again.`);
           return;
         }
 
@@ -614,7 +614,9 @@ export function useAgentRunEvents(
           const retryIdx = Math.min(retryCountRef.current, BACKOFF_MS.length - 1);
           retryCountRef.current++;
           setConnectionState("error");
-          setErrorMessage(err instanceof Error ? err.message : "Connection lost");
+          setErrorMessage(
+            `Lost connection to Friday — reconnecting automatically…${err instanceof Error && err.message ? ` (${err.message})` : ""}`,
+          );
 
           setTimeout(() => {
             if (!controller.signal.aborted && !terminalRef.current) {
