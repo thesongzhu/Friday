@@ -148,6 +148,56 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("/usr/bin/git status")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("/bin/ls -la")).toMatchObject({ level: "safe", program: "ls" });
     });
+
+    it("unwraps transparent command wrappers to classify the wrapped command (no wrapper bypass)", () => {
+      // env was in SAFE_PROGRAMS and re-execs its argument → must classify the WRAPPED command.
+      expect(classifyShellRisk("env rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("env FOO=bar rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("sudo rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("sudo git reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("sudo -u root rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("nice rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("nice -n 10 rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("nice -10 rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("timeout 5 rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("timeout -s KILL 5 git clean -fdx")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("xargs rm")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("command rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("time rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      // nested wrappers resolve to the effective risk.
+      expect(classifyShellRisk("sudo env rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      // xargs optional-arg options (-i/--replace/-e/-l) take attached-only values → a separate
+      // token is the wrapped command, not the value.
+      expect(classifyShellRisk("xargs -i git reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("xargs --replace rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("xargs -I REPL rm")).toMatchObject({ level: "destructive", program: "rm" });
+      // attached-value short option (value glued to the flag) still finds the wrapped command.
+      expect(classifyShellRisk("nice -n10 rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+    });
+
+    it("requires approval for shell -c strings and unparseable wrappers (fail-safe)", () => {
+      // a shell `-c` string is opaque (cannot be statically decomposed) → approval.
+      expect(classifyShellRisk('sh -c "rm -rf /data"')).toMatchObject({ level: "destructive" });
+      expect(classifyShellRisk('bash -c "rm -rf /data"')).toMatchObject({ level: "destructive" });
+      expect(classifyShellRisk("zsh -c rm")).toMatchObject({ level: "destructive" });
+      // an unrecognized wrapper option could hide the wrapped command → fail safe to approval.
+      expect(classifyShellRisk("sudo --frobnicate rm -rf /data")).toMatchObject({ level: "destructive" });
+      // pathological deep wrapper nesting fails safe (cannot confidently resolve).
+      expect(classifyShellRisk(`${"env ".repeat(10)}rm -rf /data`)).toMatchObject({ level: "destructive" });
+    });
+
+    it("does not over-block benign wrapped commands", () => {
+      expect(classifyShellRisk("env node app.js")).toMatchObject({ level: "safe", program: "node" });
+      expect(classifyShellRisk("env VAR=v node x.js")).toMatchObject({ level: "safe", program: "node" });
+      expect(classifyShellRisk("sudo git status")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("nice -n 10 ls -la")).toMatchObject({ level: "safe", program: "ls" });
+      expect(classifyShellRisk("nice -n10 ls")).toMatchObject({ level: "safe", program: "ls" });
+      expect(classifyShellRisk("xargs -n1 echo hi")).toMatchObject({ level: "safe", program: "echo" });
+      expect(classifyShellRisk("xargs -P4 echo")).toMatchObject({ level: "safe", program: "echo" });
+      expect(classifyShellRisk("env git status")).toMatchObject({ level: "safe", program: "git" });
+      // `command -v rm` is a lookup, not an exec → not destructive.
+      expect(classifyShellRisk("command -v rm")).toMatchObject({ level: "guarded", program: "command" });
+    });
   });
 
   // ─── getApprovalRequiredReasonForExecCommand ───
@@ -192,6 +242,17 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForExecCommand("./scripts/rm thing")).toContain("approval");
     });
 
+    it("requires approval for destructive commands behind transparent wrappers", () => {
+      expect(getApprovalRequiredReasonForExecCommand("env rm -rf /data")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("sudo rm -rf /data")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("sudo git reset --hard")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("nice -n 10 rm -rf /data")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("timeout 5 find . -delete")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("xargs rm")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand('sh -c "rm -rf /data"')).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("sudo --frobnicate rm")).toContain("approval");
+    });
+
     it("allows safe read-only commands", () => {
       expect(getApprovalRequiredReasonForExecCommand("ls -la")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("cat file.txt")).toBeNull();
@@ -201,6 +262,10 @@ describe("friday-agent-tool-risk", () => {
       // path-qualified safe programs stay safe (no over-block).
       expect(getApprovalRequiredReasonForExecCommand("/usr/bin/git status")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("/bin/ls -la")).toBeNull();
+      // benign wrapped commands stay safe (no over-block).
+      expect(getApprovalRequiredReasonForExecCommand("env node app.js")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("sudo git status")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("command -v rm")).toBeNull();
     });
 
     it("returns null for empty command", () => {
