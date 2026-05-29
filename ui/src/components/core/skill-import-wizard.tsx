@@ -224,8 +224,8 @@ export function SkillImportWizard({ open, onClose }: SkillImportWizardProps) {
           <p className="text-sm text-[color:var(--color-text-secondary)]">
             {localize(
               locale,
-              "桌面录制需要配套的桌面应用程序。请先安装并启动 Friday Recorder，然后在此导入录制文件。",
-              "Desktop recording requires the companion desktop app. Please install and launch Friday Recorder first, then import the recording file here.",
+              "Friday 未内置桌面录屏功能，也不提供配套录制应用。请使用任意录屏工具录制，然后导入录制文件（如支持）。",
+              "Desktop screen recording isn't bundled with Friday — no companion recorder app is shipped. Record with any screen recorder, then import the resulting recording file (where supported).",
             )}
           </p>
         ) : (
