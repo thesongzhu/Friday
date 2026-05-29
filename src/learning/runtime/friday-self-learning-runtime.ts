@@ -102,6 +102,7 @@ export function createFridaySelfLearningRuntime(
 
   const autoFixPlan = createFridayAutoFixPlanService({
     idGenerator: deps.idGenerator,
+    getSkillLifecycleStatus: deps.getSkillLifecycleStatus,
   });
 
   const autoFixRisk = createFridayAutoFixRiskAssessmentService({

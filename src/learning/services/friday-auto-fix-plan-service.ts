@@ -5,6 +5,7 @@ import type {
   JsonObject,
 } from "../model/friday-learning.types.js";
 import type { FridayAutoFixPlan, FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
+import type { SkillLifecycleStatus } from "#skills";
 import { buildAutoFixPlanTitle, normalizeAutoFixTitleBase } from "./friday-auto-fix-title-helpers.js";
 
 export interface FridayAutoFixPlanService {
@@ -19,6 +20,10 @@ export interface FridayAutoFixPlanService {
 export interface CreateAutoFixPlanServiceDeps {
   idGenerator: () => string;
   regenerateSkillRecurrenceThreshold?: number;
+  // Reads the current durable skill lifecycle status at PLAN-BUILD time so a regenerate_skill
+  // rollback can restore the prior status instead of blindly enabling. Optional: when absent the
+  // rollback restores the safe 'disabled' default (never a default-enable).
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | undefined;
 }
 
 const CATEGORY_STEP_MAP: Record<FridayErrorIncidentEntity["category"], FridayAutoFixStepKind | undefined> = {
@@ -275,6 +280,10 @@ export function createFridayAutoFixPlanService(
           ? incident.context.skillId.trim()
           : "";
         if (skillId.length > 0) {
+          // Capture the prior durable status now (plan-build time, before the forward regenerate
+          // runs) so the rollback can restore it exactly — never promoting a 'not_installed'
+          // candidate and never defaulting to enable.
+          const priorSkillLifecycleStatus = deps.getSkillLifecycleStatus?.(skillId);
           const regenPlan: FridayAutoFixPlan = {
             title: buildAutoFixPlanTitle(`Regenerate skill ${skillId}`),
             summary: `Recurrent failure (${recurrenceCount}x) for skill '${skillId}'. Generate improved replacement via skill generator, self-test, and supervised install.`,
@@ -309,6 +318,11 @@ export function createFridayAutoFixPlanService(
                     revert: true,
                     skillId,
                     ...basePayload,
+                    // Only set restoreStatus when known (payload is JSON; omit rather than store
+                    // undefined). Absent → executor falls back to the safe 'disabled', not enable.
+                    ...(priorSkillLifecycleStatus !== undefined
+                      ? { restoreStatus: priorSkillLifecycleStatus }
+                      : {}),
                   },
                 },
               ],

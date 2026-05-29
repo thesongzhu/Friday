@@ -16,6 +16,7 @@ import type { FridayAutoFixRollbackService } from "../services/friday-auto-fix-r
 import type { FridayApprovalWorkflowService } from "../services/friday-approval-workflow-service.js";
 import type { FridayAutoFixDispatcherService } from "../services/friday-auto-fix-dispatcher-service.js";
 import type { FridayAutoFixStepKind } from "../model/friday-auto-fix.types.js";
+import type { SkillLifecycleStatus } from "#skills";
 
 export interface FridaySelfLearningRuntime {
   events: FridayLearningEventCollectionService;
@@ -45,4 +46,10 @@ export interface CreateFridaySelfLearningRuntimeDeps {
   stepExecutors?: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
   /** Override auto-fix step verifiers for production use. */
   stepVerifiers?: Partial<Record<FridayAutoFixStepKind, StepVerifier>>;
+  /**
+   * Reads the current durable skill lifecycle status at plan-build time, so a regenerate_skill
+   * rollback can restore the prior status instead of blindly enabling. Wired in the hub bootstrap
+   * to the durable skills store; optional elsewhere.
+   */
+  getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | undefined;
 }

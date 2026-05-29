@@ -3,6 +3,7 @@ import { createTestIdGenerator } from "../../satellites/_helpers/create-test-db.
 import { createFridayAutoFixPlanService } from "#learning";
 import type { FridayAutoFixPlanService } from "#learning";
 import type { FridayErrorIncidentEntity, FridayDiagnosisRecordEntity, FridayLearnedLessonEntity } from "#learning";
+import type { SkillLifecycleStatus } from "#skills";
 
 describe("FridayAutoFixPlanService", () => {
   let service: FridayAutoFixPlanService;
@@ -64,6 +65,31 @@ describe("FridayAutoFixPlanService", () => {
     expect(plans[0]!.steps[0]!.kind).toBe("retry_node");
     expect(plans[0]!.evidence.fingerprint).toBe("sig-abc");
     expect(plans[0]!.evidence.matchedLessonIds).toEqual(["lesson-001"]);
+  });
+
+  it("captures the prior skill lifecycle status into the regenerate_skill rollback (restore-not-enable)", () => {
+    const skillIncident: FridayErrorIncidentEntity = {
+      ...baseIncident,
+      context: { source: "skills_lifecycle", skillId: "skill-x" },
+    };
+    const regenRollbackPayload = (status: SkillLifecycleStatus | undefined): Record<string, unknown> | undefined => {
+      const plans = createFridayAutoFixPlanService({
+        idGenerator: createTestIdGenerator(),
+        regenerateSkillRecurrenceThreshold: 1,
+        getSkillLifecycleStatus: () => status,
+      }).buildPlans({ incident: skillIncident, diagnosis: baseDiagnosis, matchedLessons: [], recurrenceCount: 5 });
+      return plans.find((p) => p.rollbackPlan?.steps[0]?.kind === "regenerate_skill")
+        ?.rollbackPlan?.steps[0]?.payload as Record<string, unknown> | undefined;
+    };
+
+    // prior installed -> rollback restores installed
+    expect(regenRollbackPayload("installed")).toMatchObject({ revert: true, restoreStatus: "installed" });
+    // prior not_installed candidate -> rollback restores not_installed (never promoted to installed)
+    expect(regenRollbackPayload("not_installed")).toMatchObject({ revert: true, restoreStatus: "not_installed" });
+    // unknown prior -> restoreStatus omitted (executor falls back to the safe 'disabled', not enable)
+    const unknown = regenRollbackPayload(undefined);
+    expect(unknown).toBeDefined();
+    expect(unknown).not.toHaveProperty("restoreStatus");
   });
 
   it("builds a fallback plan when no lessons match", () => {
