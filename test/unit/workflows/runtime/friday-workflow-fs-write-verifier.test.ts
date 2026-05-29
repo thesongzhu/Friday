@@ -92,6 +92,42 @@ describe("audit C Stage 2A — resolveFilesystemWriteTarget (binding target)", (
     }
   });
 
+  it("refuses (null) when the node co-declares a NON-filesystem side-effecting grant (memory.write is UNWITNESSED)", () => {
+    // BLOCKER fix (whitelist, not blacklist): `write` is resource-overloaded. A
+    // `memory.write` is a separate durable side effect a runtime fs re-read cannot witness,
+    // so a `filesystem.write` + `memory.write` node is NOT an fs-write verification candidate
+    // — every side-effecting grant must be EXACTLY `filesystem.write`.
+    const node = actionNode({ skillId: "s", args: { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: "out/x.json" } });
+    const t = resolveFilesystemWriteTarget(
+      node,
+      skillResolver(
+        [
+          { resource: "filesystem", action: "write", selectors: { pathPrefixes: ["out"] } },
+          { resource: "memory", action: "write" },
+        ],
+        SKILL_DIR,
+      ),
+    );
+    expect(t).toBeNull();
+  });
+
+  it("still returns a target when co-declared grants are READ-ONLY (read/receive do NOT disqualify)", () => {
+    const node = actionNode({ skillId: "s", args: { [FRIDAY_FS_WRITE_TARGET_ARG_KEY]: "out/x.json" } });
+    const t = resolveFilesystemWriteTarget(
+      node,
+      skillResolver(
+        [
+          { resource: "filesystem", action: "read" },
+          { resource: "memory", action: "read" },
+          { resource: "network", action: "receive" },
+          { resource: "filesystem", action: "write", selectors: { pathPrefixes: ["out"] } },
+        ],
+        SKILL_DIR,
+      ),
+    );
+    expect(t).not.toBeNull();
+  });
+
   it("is inert (null) for a write node with no binding target (no reserved key, multiple/glob prefixes)", () => {
     const node = actionNode({ skillId: "s" });
     // glob prefix → not concrete; and no reserved key → no binding target.
@@ -211,6 +247,23 @@ describe("audit C Stage 2A — snapshotTarget + verifyFsWriteEvidence (real fs d
     );
     expect(outcome.verified).toBe(false);
     expect((outcome as { reason: string }).reason).toBe("target-missing-post-exec");
+  });
+
+  it("refuses: target EXISTED but was UNREADABLE at snapshot (no provable content delta) → proof_pending", () => {
+    // LOW-nit fix: an existing-but-unreadable file (existed=true, checksum=null) must NOT be
+    // treated as newly-created — a mere permission/readability flip is not write evidence.
+    fs.mkdirSync(path.join(workspaceDir, "out"), { recursive: true });
+    const abs = path.join(workspaceDir, "out", "report.json");
+    fs.writeFileSync(abs, "preexisting", "utf8");
+    const t = target("${workspaceDir}/out/report.json", ["${workspaceDir}/out"]);
+    // Simulate "existed but unreadable at snapshot": existed=true, checksum=null.
+    const snap = { canonicalPath: abs, existed: true, checksum: null as string | null };
+    const outcome = verifyFsWriteEvidence(
+      { target: t, snapshot: snap, evidenceExportRootDir: evidenceRoot, workspaceDir, returnedArtifactUris: [] },
+      { computeChecksum: checksum },
+    );
+    expect(outcome.verified).toBe(false);
+    expect((outcome as { reason: string }).reason).toBe("target-existed-unreadable-pre-exec");
   });
 
   it("refuses: unchanged checksum (file existed, not modified) → proof_pending", () => {

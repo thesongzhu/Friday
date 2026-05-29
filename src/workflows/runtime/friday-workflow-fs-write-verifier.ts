@@ -42,11 +42,17 @@ import { validateFridayFilesystemScope } from "../../skills/validation/friday-sk
 export const FRIDAY_FS_WRITE_TARGET_ARG_KEY = "__fridayWriteTarget";
 
 /**
- * PermissionActions that, if present, DISQUALIFY a node from being an fs-write
- * verification candidate — a write that is co-declared with send/connect/
- * capture/execute can produce side effects a runtime fs re-read cannot witness.
+ * Permission `action`s that denote a real external side effect / state mutation
+ * (mirrors the Stage-1 classifier's danger set). The ONLY one a runtime
+ * filesystem re-read can independently witness is a `filesystem` `write`; every
+ * other side-effecting grant — including `memory` `write` (a separate durable,
+ * UNwitnessed mutation, since `write` is resource-overloaded), and
+ * connect/send/capture/execute — disqualifies the node from fs-write
+ * verification. We therefore WHITELIST (candidate ⇒ every side-effecting grant
+ * is exactly `filesystem.write`), never blacklist a fixed verb set.
  */
-const DISQUALIFYING_SIDE_EFFECT_ACTIONS: ReadonlySet<string> = new Set([
+const SIDE_EFFECTING_PERMISSION_ACTIONS: ReadonlySet<string> = new Set([
+  "write",
   "connect",
   "send",
   "capture",
@@ -158,14 +164,24 @@ export function resolveFilesystemWriteTarget(
   const shape = readSkillShape(resolveSkill(skillId));
   if (!shape) return null;
 
-  const actions = shape.grants
-    .map((g) => (typeof g.action === "string" ? g.action : undefined))
-    .filter((a): a is string => typeof a === "string");
-
-  // Must declare a write, and NOTHING that a runtime fs re-read cannot witness.
-  const hasWrite = actions.includes("write");
-  if (!hasWrite) return null;
-  if (actions.some((a) => DISQUALIFYING_SIDE_EFFECT_ACTIONS.has(a))) return null;
+  // WHITELIST gate (not blacklist): a runtime fs re-read can independently witness ONLY a
+  // filesystem WRITE. So a candidate must declare a `filesystem.write` grant AND every one of
+  // its side-effecting grants must be EXACTLY `filesystem.write`. Any other side-effecting
+  // grant — `memory.write` (resource-overloaded `write`, a separate UNwitnessed durable
+  // mutation), `network.connect`, `channel.send`, `device.capture`, `shell.execute`, or any
+  // future resource×side-effect-action — disqualifies the node (it stays proof_pending).
+  // Read-only grants (filesystem.read, *.receive, memory.read, …) do NOT disqualify.
+  const sideEffectingGrants = shape.grants.filter(
+    (g) => typeof g.action === "string" && SIDE_EFFECTING_PERMISSION_ACTIONS.has(g.action),
+  );
+  const hasFilesystemWrite = sideEffectingGrants.some(
+    (g) => g.resource === "filesystem" && g.action === "write",
+  );
+  if (!hasFilesystemWrite) return null;
+  const everySideEffectIsFilesystemWrite = sideEffectingGrants.every(
+    (g) => g.resource === "filesystem" && g.action === "write",
+  );
+  if (!everySideEffectIsFilesystemWrite) return null;
 
   // skillDir is required to anchor manifest-relative scope containment.
   if (!shape.skillDir) return null;
@@ -270,7 +286,14 @@ export function resolveCanonicalTargetPath(
 export interface FridaySnapshot {
   /** Canonical absolute target path the snapshot was taken at. */
   canonicalPath: string;
-  /** Content checksum, or null if the file did not exist at snapshot time. */
+  /**
+   * Whether the target EXISTED pre-exec (independent of readability). Used to
+   * distinguish a genuinely newly-created file (`!existed` → a real delta) from
+   * an existing-but-unreadable file (`existed && checksum==null` → no provable
+   * content delta → NOT verified), so a permission flip alone can't pass.
+   */
+  existed: boolean;
+  /** Content checksum, or null if the file did not exist / was unreadable at snapshot time. */
   checksum: string | null;
 }
 
@@ -293,8 +316,12 @@ export function snapshotTarget(
     target.targetSource,
   );
   const content = io.readFile!(canonicalPath);
+  // Existence is independent of readability: a file that exists but is unreadable
+  // (content==null yet realpath resolves) must NOT later look "newly created".
+  const existed = content != null || io.realpath!(canonicalPath) != null;
   return {
     canonicalPath,
+    existed,
     checksum: content == null ? null : deps.computeChecksum(content),
   };
 }
@@ -388,12 +415,17 @@ export function verifyFsWriteEvidence(
   }
   const canonicalPath = io.realpath!(snapshot.canonicalPath) ?? snapshot.canonicalPath;
 
-  // (b) content changed OR newly created.
+  // (b) content changed OR genuinely newly created. A non-null pre-checksum requires the
+  // content to differ. A null pre-checksum is only a real delta when the file did NOT exist
+  // pre-exec; if it EXISTED but was unreadable at snapshot, we cannot prove a content delta
+  // (a mere permission/readability flip is not evidence of a write) → refuse.
   if (snapshot.checksum != null) {
     const postChecksum = deps.computeChecksum(postContent);
     if (postChecksum === snapshot.checksum) {
       return { verified: false, reason: "target-unchanged" };
     }
+  } else if (snapshot.existed) {
+    return { verified: false, reason: "target-existed-unreadable-pre-exec" };
   }
 
   // (d) target not under the evidence-export mirror (circular proof).
