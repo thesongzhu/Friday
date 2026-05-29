@@ -46,6 +46,16 @@ const BLOCKED_SHELL_PATTERNS = [
   /[\u0000-\u001f\u007f-\u009f]/,   // control characters
 ];
 
+// Normalize a program token to its bare, lowercased basename so a path-qualified invocation
+// (`/usr/bin/git`, `./scripts/rm`, `"git"`) is identified the same as the bare program name.
+// Mirrors the exec tool's `commandBaseName` so the approval gate and the spawn path agree on
+// program identity — otherwise a path prefix silently defeats every program-keyed check
+// (DESTRUCTIVE_PROGRAMS, SAFE_PROGRAMS, and the dangerous-flag gate).
+function normalizeProgramName(token: string | undefined): string {
+  const normalized = (token ?? "").replace(/^["']+|["']+$/g, "").replace(/\\/g, "/");
+  return normalized.split("/").at(-1)?.toLowerCase() ?? "";
+}
+
 /**
  * Classify the risk level of a shell command.
  */
@@ -63,7 +73,7 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
   }
 
   const parts = trimmed.split(/\s+/);
-  const program = parts[0]?.toLowerCase() ?? "";
+  const program = normalizeProgramName(parts[0]);
 
   // Destructive programs always require approval
   // Also match mkfs.* variants (mkfs.ext4, mkfs.xfs, etc.)
@@ -289,7 +299,7 @@ export function getApprovalRequiredReasonForExecCommand(command: string): string
   }
 
   const parts = trimmed.split(/\s+/);
-  const program = parts[0]?.toLowerCase() ?? "";
+  const program = normalizeProgramName(parts[0]);
   const lowerCommand = trimmed.toLowerCase();
   const touchesProtectedArtifact = listPotentialFilePaths(trimmed)
     .some((filePath) => requiresApprovalForProtectedArtifactPath(filePath));

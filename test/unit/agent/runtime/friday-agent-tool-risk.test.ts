@@ -134,6 +134,20 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("git clean -n")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("find . -name pattern")).toMatchObject({ level: "safe", program: "find" });
     });
+
+    it("identifies path-qualified programs by basename (no path-prefix bypass)", () => {
+      // A path prefix must not defeat program identification — these used to classify as
+      // guarded/safe because parts[0] was not basename-normalized.
+      expect(classifyShellRisk("/usr/bin/git reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("/bin/git clean -fdx")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("/usr/bin/find . -delete")).toMatchObject({ level: "destructive", program: "find" });
+      expect(classifyShellRisk("/bin/rm -rf /data")).toMatchObject({ level: "destructive", program: "rm" });
+      expect(classifyShellRisk("/sbin/mkfs.ext4 /dev/sda1")).toMatchObject({ level: "destructive", program: "mkfs.ext4" });
+      expect(classifyShellRisk("./scripts/rm something")).toMatchObject({ level: "destructive", program: "rm" });
+      // ...but a path-qualified SAFE program stays safe (no over-block).
+      expect(classifyShellRisk("/usr/bin/git status")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("/bin/ls -la")).toMatchObject({ level: "safe", program: "ls" });
+    });
   });
 
   // ─── getApprovalRequiredReasonForExecCommand ───
@@ -171,12 +185,22 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForExecCommand("git --totally-unknown-opt val reset --hard")).toContain("approval");
     });
 
+    it("requires approval for path-qualified destructive programs (no path-prefix bypass)", () => {
+      expect(getApprovalRequiredReasonForExecCommand("/usr/bin/git reset --hard")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("/usr/bin/find . -delete")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("/bin/rm -rf /data")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("./scripts/rm thing")).toContain("approval");
+    });
+
     it("allows safe read-only commands", () => {
       expect(getApprovalRequiredReasonForExecCommand("ls -la")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("cat file.txt")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git status")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git reset HEAD file.txt")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git clean -n")).toBeNull();
+      // path-qualified safe programs stay safe (no over-block).
+      expect(getApprovalRequiredReasonForExecCommand("/usr/bin/git status")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("/bin/ls -la")).toBeNull();
     });
 
     it("returns null for empty command", () => {
