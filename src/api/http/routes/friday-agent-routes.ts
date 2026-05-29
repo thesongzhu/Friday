@@ -22,6 +22,7 @@ import type {
   FridayAgentRunStatus,
   FridayAgentRuntimeResult,
   FridayAgentTaskProfileInput,
+  FridayAgentToolCallRecord,
 } from "#agent";
 import { buildFridayAgentReplayableEvidenceReceipt, buildFridayAgentUnifiedTaskState } from "#agent";
 import type { FridayProviderTenantContext } from "#providers";
@@ -179,6 +180,52 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
   };
 }
 
+// D1 fix: reconstruct tool-call outcomes from the durable event stream so the
+// API-rebuilt receipt counts real tool failures. Without this, toolCalls was never
+// passed to the receipt builder, so countToolCalls(undefined).failed was always 0 and
+// every completed run with an artifactDir was misclassified as `verified_receipt` —
+// disagreeing with the on-disk receipt (which was built WITH the real tool calls).
+// Each terminal `agent.run.tool_end` event carries `isError`; a tool_start without a
+// matching tool_end is treated as a failure (it did not complete).
+function collectToolCallRecordsFromEvents(
+  auditEvents: FridayAgentRunEventRecord[],
+): FridayAgentToolCallRecord[] {
+  const startById = new Map<string, FridayAgentRunEventRecord>();
+  const endById = new Map<string, FridayAgentRunEventRecord>();
+  for (const event of auditEvents) {
+    const payload = asRecord(event.payload);
+    const toolCallId = readStringField(payload, "toolCallId");
+    if (!toolCallId) continue;
+    if (event.eventName === "agent.run.tool_start") {
+      startById.set(toolCallId, event);
+    } else if (event.eventName === "agent.run.tool_end") {
+      endById.set(toolCallId, event);
+    }
+  }
+  const toolCallIds = new Set<string>([...startById.keys(), ...endById.keys()]);
+  const records: FridayAgentToolCallRecord[] = [];
+  for (const toolCallId of toolCallIds) {
+    const startEvent = startById.get(toolCallId);
+    const endEvent = endById.get(toolCallId);
+    const endPayload = asRecord(endEvent?.payload);
+    const startPayload = asRecord(startEvent?.payload);
+    // No tool_end => the call never completed => treat as an error outcome.
+    const isError = endEvent ? endPayload?.isError === true : true;
+    const durationMs = typeof endPayload?.durationMs === "number" ? endPayload.durationMs : 0;
+    records.push({
+      toolCallId,
+      toolName: readStringField(endPayload, "toolName")
+        ?? readStringField(startPayload, "toolName")
+        ?? "unknown",
+      args: {},
+      result: { content: "", isError },
+      durationMs,
+      startedAt: (startEvent ?? endEvent)?.emittedAt ?? "",
+    });
+  }
+  return records;
+}
+
 function buildReplayableEvidenceReceiptForRun(
   run: FridayAgentRunRecord,
   auditEvents: FridayAgentRunEventRecord[],
@@ -196,6 +243,7 @@ function buildReplayableEvidenceReceiptForRun(
     usageOutput: run.usageOutput,
     costUsd: run.costUsd ?? run.actualExecution?.totalCostUsd,
     artifactDir: run.artifactDir,
+    toolCalls: collectToolCallRecordsFromEvents(auditEvents),
     testResults: run.testResults,
     artifacts: run.artifacts,
     auditEventCount: auditEvents.length,
