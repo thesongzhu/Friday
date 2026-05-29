@@ -1014,6 +1014,69 @@ describe("FridayAgentRoutes", () => {
     expect(result.replayReceipt.proofBoundary).toContain("not release proof");
   });
 
+  // D1 regression: a completed run whose audit events include a FAILED tool call must NOT be
+  // reported as verified_receipt by the API-rebuilt receipt. Before the fix, the route never
+  // passed toolCalls into the receipt builder, so failed tool calls were uncounted and every
+  // completed+artifactDir run was misclassified verified_receipt — disagreeing with the on-disk
+  // receipt that DID count the failures (live defect on run f1de7c3f).
+  it("does not report verified_receipt for a completed run with a failed tool call (D1)", async () => {
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      status: "completed",
+      completedAt: "2026-01-01T00:00:05.000Z",
+      artifactDir: "/tmp/friday/run-1",
+    }));
+    stubDeps.listRunEvents = vi.fn().mockReturnValue([
+      {
+        eventId: "evt-1",
+        runId: "run-1",
+        seq: 1,
+        eventName: "agent.run.tool_start",
+        payload: { runId: "run-1", toolCallId: "call-1", toolName: "read" },
+        emittedAt: "2026-01-01T00:00:01.000Z",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      },
+      {
+        eventId: "evt-2",
+        runId: "run-1",
+        seq: 2,
+        eventName: "agent.run.tool_end",
+        payload: { runId: "run-1", toolCallId: "call-1", toolName: "read", isError: true },
+        emittedAt: "2026-01-01T00:00:02.000Z",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      },
+      {
+        eventId: "evt-3",
+        runId: "run-1",
+        seq: 3,
+        eventName: "agent.run.completed",
+        payload: { runId: "run-1" },
+        emittedAt: "2026-01-01T00:00:05.000Z",
+        createdAt: "2026-01-01T00:00:05.000Z",
+      },
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.audit")!;
+    const result = await route.handler({
+      body: null,
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:06.000Z",
+    }) as {
+      unifiedTaskState: { state: string; evidence: { receiptStatus?: string } };
+      replayReceipt: { receiptStatus: string; blockers: string[] };
+    };
+
+    expect(result.replayReceipt.receiptStatus).toBe("blocked_or_failed");
+    expect(result.replayReceipt.blockers).toContain("1 tool call(s) reported an error.");
+    expect(result.unifiedTaskState.state).not.toBe("verified_receipt");
+    expect(result.unifiedTaskState.state).toBe("blocked_recoverable");
+    expect(result.unifiedTaskState.evidence.receiptStatus).toBe("blocked_or_failed");
+  });
+
   it("GET /v1/agent/runs/:runId/audit includes unified task state without raw tool approval params", async () => {
     stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({ status: "executing" }));
     stubDeps.listRunEvents = vi.fn().mockReturnValue([
