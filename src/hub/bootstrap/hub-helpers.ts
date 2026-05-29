@@ -43,7 +43,7 @@ import type { FridayHubConfigManagerService, FridaySkillRegistrySettings } from 
 import type { FridayDiscoveredSkillRecord, FridayHubMemoryStateService } from "../services/friday-hub-memory-state.types.js";
 import { appendFridayAuditLog } from "../services/friday-hub-audit-log-writer.js";
 import type { FridayStateRuntime } from "#state";
-import type { FridaySkillExecutor, FridaySkillRegistry, SkillLifecycleStatus } from "#skills";
+import type { FridaySkillExecutor, FridaySkillRegistry, FridaySkillRepository, SkillLifecycleStatus } from "#skills";
 import type { FridaySkillSecurityProfile } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillConverterService } from "#skills/converter";
@@ -1745,6 +1745,51 @@ export function createStubMemoryState(auditLogPath?: string): FridayHubMemorySta
     }),
     getMemoryItems: async () => [],
     putMemoryItem: async () => {},
+  };
+}
+
+/**
+ * Audit E (E3): durable memory-state whose EXPLICIT skill-lifecycle transitions
+ * (install / disable / enable / regenerate / error / not_installed via
+ * `updateSkillStatus`) are persisted to the durable `skills` table, so a
+ * self-heal disable (or any explicit transition) SURVIVES a hub restart. The
+ * workflow-execution safety gate (`getPersistedSkillLifecycleStatus`) reads the
+ * `skills` table, so persisting the explicit transition there is what makes the
+ * gate keep blocking a disabled skill after restart.
+ *
+ * DELIBERATELY NARROW — only `updateSkillStatus` is made durable:
+ *   - `upsertDiscoveredSkills` (registry discovery snapshot) and
+ *     `listSkillStatuses` stay IN-MEMORY (delegated to the stub). Discovery
+ *     must NOT write the table, or its auto-installed `installed` would CLOBBER
+ *     the converter's `not_installed` for an unpromoted candidate and defeat
+ *     the execution gate. Keeping discovery in-memory preserves the converter's
+ *     persisted lifecycle status as the source of truth.
+ *   - The durable write is best-effort: `updateLifecycleStatus` is an UPDATE,
+ *     so it persists only for skills that already have a `skills` row (the
+ *     converter-imported / promoted skills the gate actually governs). A
+ *     bundled skill that has no `skills` row is not gated by the table and
+ *     auto-reinstalls on discovery by design — its in-memory status is
+ *     unchanged from before (no regression).
+ */
+export function createDurableMemoryState(deps: {
+  db: FridaySqliteLayer;
+  skillRepository: FridaySkillRepository;
+  nowIso: () => string;
+  auditLogPath?: string;
+}): FridayHubMemoryStateService {
+  const base = createStubMemoryState(deps.auditLogPath);
+  return {
+    ...base,
+    updateSkillStatus: async (skillId: string, status: SkillLifecycleStatus, reason?: string) => {
+      // Keep the in-memory view (read by in-flight self-heal verifiers) current.
+      await base.updateSkillStatus(skillId, status, reason);
+      // Persist the explicit transition to the durable `skills` table (what the
+      // execution safety gate reads). Best-effort: a missing row (bundled skill
+      // not catalog-written) UPDATEs zero rows and is left to in-memory only.
+      deps.db.withWriteTransaction((conn) =>
+        deps.skillRepository.updateLifecycleStatus(conn, skillId, status, deps.nowIso()),
+      );
+    },
   };
 }
 

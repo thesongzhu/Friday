@@ -120,4 +120,53 @@ describe("FridayHttpServer idempotency", () => {
     expect(conflictBody.error.code).toBe("SECURITY_IDEMPOTENCY_KEY_CONFLICT");
     expect(createCount).toBe(1);
   });
+
+  it("rejects a concurrent duplicate (same key) instead of running the handler twice", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    let createCount = 0;
+    routes.register({
+      operationId: "test.idempotency.create.slow",
+      method: "POST",
+      path: "/v1/test/idempotency-slow",
+      auth: { public: true, allowUnauthenticatedMutation: true },
+      async handler(ctx) {
+        createCount += 1;
+        const id = createCount;
+        // Hold the request open so a concurrent same-key request overlaps the in-flight window.
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return { id, body: ctx.body };
+      },
+    });
+
+    server = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+    });
+    await server.listen();
+
+    const init = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "race-1" },
+      body: JSON.stringify({ value: "one" }),
+    };
+
+    // Fire two identical same-key requests concurrently. The reservation is set synchronously
+    // (no await between the store .get and the in-flight .set), so exactly one runs the handler
+    // and the other is rejected in-progress. Without the reservation both miss the store and
+    // both execute (createCount === 2).
+    const [a, b] = await Promise.all([
+      fetch(`${baseUrl}/v1/test/idempotency-slow`, init),
+      fetch(`${baseUrl}/v1/test/idempotency-slow`, init),
+    ]);
+
+    expect(createCount).toBe(1);
+    const statuses = [a.status, b.status].sort((x, y) => x - y);
+    expect(statuses).toEqual([200, 409]);
+    const conflict = a.status === 409 ? a : b;
+    const conflictBody = await conflict.json() as { ok: false; error: { code: string } };
+    expect(conflictBody.error.code).toBe("SECURITY_IDEMPOTENCY_IN_PROGRESS");
+  });
 });
