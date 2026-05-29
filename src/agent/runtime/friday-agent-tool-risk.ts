@@ -56,6 +56,140 @@ function normalizeProgramName(token: string | undefined): string {
   return normalized.split("/").at(-1)?.toLowerCase() ?? "";
 }
 
+// Inline env-assignment token (`FOO=bar cmd`), leading on a command or after `env`'s options.
+const INLINE_ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+// Shells/interpreters that execute an opaque code string passed via a flag. The string cannot
+// be statically decomposed (quoting / nesting), so the presence of the code flag forces
+// approval rather than an unsound parse. (Metacharacter-bearing strings are already blocked
+// upstream by BLOCKED_SHELL_PATTERNS; this catches the plain `sh -c "rm -rf /data"` form.)
+const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "csh", "tcsh"]);
+const SHELL_CODE_FLAG_RE = /^-[a-z]*c$/i; // -c and clustered forms like -lc / -ic
+
+// Transparent command wrappers that exec a child process — the wrapped command is what the
+// risk gate must actually classify. For each, `value` = options consuming a following token
+// (space-form); `flag` = value-less options. Any UNRECOGNIZED leading dash-option fails safe to
+// "requires approval" so an unmodeled value-option cannot shift the wrapped command out of view
+// (same fail-safe philosophy as the git global-option parse).
+const COMMAND_WRAPPER_OPTS: Record<string, { value: ReadonlySet<string>; flag: ReadonlySet<string> }> = {
+  env: {
+    value: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]),
+    flag: new Set(["-i", "--ignore-environment", "-", "-0", "--null", "-v", "--debug"]),
+  },
+  sudo: {
+    value: new Set([
+      "-u", "--user", "-g", "--group", "-C", "--close-from", "-h", "--host", "-p", "--prompt",
+      "-r", "--role", "-t", "--type", "-U", "--other-user", "-D", "--chdir", "-R", "--chroot",
+    ]),
+    flag: new Set([
+      "-A", "--askpass", "-b", "--background", "-E", "--preserve-env", "-H", "--set-home",
+      "-i", "--login", "-K", "--remove-timestamp", "-k", "--reset-timestamp", "-l", "--list",
+      "-n", "--non-interactive", "-P", "--preserve-groups", "-S", "--stdin", "-s", "--shell",
+      "-V", "--version", "-v", "--validate",
+    ]),
+  },
+  doas: { value: new Set(["-u", "-C"]), flag: new Set(["-L", "-n", "-s"]) },
+  command: { value: new Set([]), flag: new Set(["-p", "-v", "-V"]) },
+  nice: { value: new Set(["-n", "--adjustment"]), flag: new Set([]) },
+  nohup: { value: new Set([]), flag: new Set([]) },
+  setsid: { value: new Set([]), flag: new Set(["-c", "--ctty", "-f", "--fork", "-w", "--wait"]) },
+  timeout: {
+    value: new Set(["-s", "--signal", "-k", "--kill-after"]),
+    flag: new Set(["--preserve-status", "--foreground", "-v", "--verbose", "-f"]),
+  },
+  xargs: {
+    value: new Set([
+      "-I", "-n", "--max-args", "-P", "--max-procs", "-d", "--delimiter",
+      "-E", "-L", "--max-lines", "-s", "--max-chars", "-a", "--arg-file",
+    ]),
+    // -i/--replace, -e/--eof, -l take OPTIONAL (attached-only) arguments per getopt: a SEPARATE
+    // following token is the wrapped command, not the value, so they must be flags (skip 1).
+    flag: new Set([
+      "-0", "--null", "-p", "--interactive", "-r", "--no-run-if-empty", "-t", "--verbose", "-x", "--exit",
+      "-i", "--replace", "-e", "--eof", "-l",
+    ]),
+  },
+  time: {
+    value: new Set(["-o", "--output", "-f", "--format"]),
+    flag: new Set(["-p", "-v", "--verbose", "-a", "--append"]),
+  },
+};
+
+interface UnwrappedCommand {
+  /** Set when the wrapper form itself requires approval (shell `-c`, or an unparseable wrapper). */
+  approve?: string;
+  /** The innermost command tokens to risk-classify (the original tokens if there was no wrapper). */
+  inner: string[];
+}
+
+// Strip transparent command wrappers (`env`/`sudo`/`nice`/`timeout`/`xargs`/…) and inline
+// env-assignment prefixes so the INNERMOST command is what gets risk-classified, and force
+// approval when a shell/interpreter is handed an opaque code string. Recognized wrapper options
+// are skipped precisely; an unrecognized option (which might hide the wrapped command) forces
+// approval rather than a guess. Recurses (with a depth guard) so nested forms like
+// `sudo env rm -rf` and `sudo bash -c …` resolve to their effective risk.
+function unwrapCommand(parts: readonly string[]): UnwrappedCommand {
+  let toks: string[] = parts.slice();
+  for (let depth = 0; toks.length > 0; depth++) {
+    if (depth >= 8) {
+      // pathological wrapper nesting we cannot confidently resolve → fail safe.
+      return {
+        approve: "deeply nested command wrappers cannot be verified; requires explicit approval in the current run context.",
+        inner: toks,
+      };
+    }
+    let s = 0;
+    while (s < toks.length && INLINE_ENV_ASSIGNMENT_RE.test(toks[s]!)) s += 1;
+    if (s > 0) {
+      toks = toks.slice(s);
+      if (toks.length === 0) break;
+    }
+
+    const prog = normalizeProgramName(toks[0]);
+
+    if (SHELL_PROGRAMS.has(prog) && toks.slice(1).some((t) => SHELL_CODE_FLAG_RE.test(t))) {
+      return {
+        approve: `\`${prog} -c …\` executes an opaque command string that cannot be inspected and requires explicit approval in the current run context.`,
+        inner: toks,
+      };
+    }
+
+    // `command -v`/`-V` is a lookup (it does NOT exec the named program) → not a wrapper here.
+    if (prog === "command" && toks.slice(1).some((t) => t === "-v" || t === "-V")) break;
+
+    const spec = COMMAND_WRAPPER_OPTS[prog];
+    if (!spec) break; // not a transparent wrapper → this is the effective command
+
+    let i = 1;
+    while (i < toks.length) {
+      const opt = toks[i]!;
+      if (!opt.startsWith("-")) break; // reached operands / the wrapped command
+      if (opt === "--") { i += 1; break; } // explicit end of options
+      if (opt.includes("=")) { i += 1; continue; } // --opt=value
+      if (prog === "nice" && /^-\d+$/.test(opt)) { i += 1; continue; } // `nice -10` adjustment
+      if (spec.value.has(opt)) { i += 2; continue; }
+      if (spec.flag.has(opt)) { i += 1; continue; }
+      // attached-value short option, e.g. `-n10` / `-sKILL` / `-uroot` (value glued to a known
+      // short value-opt) — the value is in this token, so skip just the one token.
+      if (!opt.startsWith("--") && opt.length > 2 && spec.value.has(opt.slice(0, 2))) { i += 1; continue; }
+      return {
+        approve: `\`${prog}\` was invoked with an unrecognized option, so the wrapped command cannot be verified; requires explicit approval in the current run context.`,
+        inner: toks,
+      };
+    }
+    if (prog === "env") {
+      while (i < toks.length && INLINE_ENV_ASSIGNMENT_RE.test(toks[i]!)) i += 1;
+    }
+    if (prog === "timeout" && i < toks.length && !toks[i]!.startsWith("-")) {
+      i += 1; // positional DURATION precedes the wrapped command
+    }
+
+    if (i >= toks.length) return { inner: toks }; // wrapper with no wrapped command (e.g. `sudo -l`)
+    toks = toks.slice(i);
+  }
+  return { inner: toks };
+}
+
 /**
  * Classify the risk level of a shell command.
  */
@@ -73,7 +207,15 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
   }
 
   const parts = trimmed.split(/\s+/);
-  const program = normalizeProgramName(parts[0]);
+
+  // Unwrap transparent command wrappers (env/sudo/nice/timeout/xargs/…) so the WRAPPED command
+  // is what gets classified; a shell `-c` string or an unparseable wrapper requires approval.
+  const unwrapped = unwrapCommand(parts);
+  if (unwrapped.approve) {
+    return { level: "destructive", reason: unwrapped.approve, program: normalizeProgramName(parts[0]) };
+  }
+  const effectiveParts = unwrapped.inner;
+  const program = normalizeProgramName(effectiveParts[0]);
 
   // Destructive programs always require approval
   // Also match mkfs.* variants (mkfs.ext4, mkfs.xfs, etc.)
@@ -84,7 +226,7 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
 
   // Destructive FLAGS on otherwise-safe programs (git reset --hard, git clean -fdx,
   // find . -delete) — classification must key on flags, not just the program name.
-  const dangerousFlagReason = detectDangerousShellFlagReason(program, parts);
+  const dangerousFlagReason = detectDangerousShellFlagReason(program, effectiveParts);
   if (dangerousFlagReason) {
     return { level: "destructive", reason: dangerousFlagReason, program };
   }
@@ -299,7 +441,15 @@ export function getApprovalRequiredReasonForExecCommand(command: string): string
   }
 
   const parts = trimmed.split(/\s+/);
-  const program = normalizeProgramName(parts[0]);
+
+  // Unwrap transparent command wrappers so the WRAPPED command is what gates approval; a shell
+  // `-c` string or an unparseable wrapper requires approval outright.
+  const unwrapped = unwrapCommand(parts);
+  if (unwrapped.approve) {
+    return unwrapped.approve;
+  }
+  const effectiveParts = unwrapped.inner;
+  const program = normalizeProgramName(effectiveParts[0]);
   const lowerCommand = trimmed.toLowerCase();
   const touchesProtectedArtifact = listPotentialFilePaths(trimmed)
     .some((filePath) => requiresApprovalForProtectedArtifactPath(filePath));
@@ -312,7 +462,7 @@ export function getApprovalRequiredReasonForExecCommand(command: string): string
     return "Deleting files from the shell is destructive and requires explicit approval in the current run context.";
   }
 
-  const dangerousFlagReason = detectDangerousShellFlagReason(program, parts);
+  const dangerousFlagReason = detectDangerousShellFlagReason(program, effectiveParts);
   if (dangerousFlagReason) {
     return dangerousFlagReason;
   }
