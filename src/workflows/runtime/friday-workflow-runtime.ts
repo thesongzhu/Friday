@@ -84,8 +84,8 @@ import { createFridayWorkflowRetryManager } from "../engine/friday-workflow-retr
 import { createFridayWorkflowNodeExecutor } from "../engine/friday-workflow-node-executor.js";
 import {
   classifyWorkflowNodeSideEffect,
-  resolveNodeCompletionVerification,
   type FridayNodeCompletionVerification,
+  resolveNodeCompletionVerification,
 } from "./friday-workflow-node-acceptance.js";
 import { createFridayWorkflowArtifactWriter } from "../engine/friday-workflow-artifact-writer.js";
 import { createFridayWorkflowNodeRunnerFacade } from "../engine/friday-workflow-node-runner-facade.js";

@@ -1302,7 +1302,15 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
     idGenerator,
     nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
     computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
-    resolveSkill: () => ({ id: "rgg-evidence-fail-closed-skill" }),
+    // Audit C: this scenario exercises evidence-PERSISTENCE fail-closed; its
+    // action node is a benign informational placeholder, so it declares a
+    // read-only manifest → completion `verified` (without one it would
+    // fail-closed to a side-effect `proof_pending` run, which is correct but
+    // orthogonal to what this scenario proves).
+    resolveSkill: () => ({
+      id: "rgg-evidence-fail-closed-skill",
+      manifest: { permissions: { grants: [{ action: "read" }] } },
+    }),
     invokeSkill: async () => ({ ok: true }),
   });
   const taskWorkflowRepository = createFridayTaskWorkflowRepository();
@@ -1313,6 +1321,11 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
     idGenerator: () => `rgg-tw-${String(++taskWorkflowIdCounter).padStart(6, "0")}`,
     nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
     getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
+    // Audit C: wire the orthogonal completion lookup exactly as the hub does
+    // (verifyClaim is fail-closed and requires it). The read-only run is
+    // `verified`, so the workflow_run_evidence claim still reaches verified.
+    getWorkflowRunCompletionVerification: (runId) =>
+      runtime.evidence.getRunCompletionVerification(runId),
   });
 
   const failures = [];
@@ -1670,7 +1683,14 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
     idGenerator,
     nowIso: () => TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
     computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
-    resolveSkill: () => ({ id: "rgg-rollback-matrix-skill" }),
+    // Audit C: this scenario tests ROLLBACK-CLASS disclosure (derived from the
+    // ref SOURCE type), orthogonal to completion-verification. Its placeholder
+    // action node is informational → read-only manifest → completion
+    // `verified`, so a workflow_run_evidence claim can still be verified here.
+    resolveSkill: () => ({
+      id: "rgg-rollback-matrix-skill",
+      manifest: { permissions: { grants: [{ action: "read" }] } },
+    }),
     invokeSkill: async () => ({ ok: true }),
   });
   const taskWorkflowRepository = createFridayTaskWorkflowRepository();
@@ -1681,6 +1701,11 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
     idGenerator: () => `rgg-tw-rb-${String(++taskWorkflowIdCounter).padStart(6, "0")}`,
     nowIso: () => TASK_WORKFLOW_ROLLBACK_MATRIX_NOW,
     getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
+    // Audit C: wire the orthogonal completion lookup as the hub does
+    // (verifyClaim is fail-closed and requires it). The read-only run is
+    // `verified`, so the workflow_run_evidence claim still reaches verified.
+    getWorkflowRunCompletionVerification: (runId) =>
+      runtime.evidence.getRunCompletionVerification(runId),
   });
 
   const failures = [];
