@@ -535,7 +535,13 @@ export function createFridayWorkflowRuntime(
   // backing by the task workflow verifier — as a reason DISTINCT from
   // persistence durability. It NEVER downgrades `evidenceStatus`; conflating
   // the two would falsely report a healthy-persistence run as "degraded"
-  // (a reverse lie). Runtime state is the source of truth; not persisted.
+  // (a reverse lie). Stage 2(B): the worst label is ALSO persisted durably
+  // (workflow_runs.completion_verification, v089) so the truth survives a hub
+  // restart — the in-memory map is the per-process fast path; the read merges
+  // both (worst wins). NOTE: this is C ENFORCEMENT + persistence only; letting
+  // an honest side-effect node EARN `verified` from runtime-observed evidence
+  // is the separate contract-change (a) PR — until then any side-effect node
+  // stays `proof_pending` (no forgeable skill-output signal is accepted).
   const runCompletionVerificationByRunId = new Map<
     string,
     FridayNodeCompletionVerification
@@ -550,6 +556,35 @@ export function createFridayWorkflowRuntime(
     verified: 4,
   };
 
+  const isCompletionVerificationLabel = (
+    value: unknown,
+  ): value is FridayNodeCompletionVerification =>
+    typeof value === "string" && value in COMPLETION_VERIFICATION_RANK;
+
+  const worstCompletionVerification = (
+    a: FridayNodeCompletionVerification | undefined,
+    b: FridayNodeCompletionVerification | undefined,
+  ): FridayNodeCompletionVerification | undefined => {
+    if (a === undefined) return b;
+    if (b === undefined) return a;
+    return COMPLETION_VERIFICATION_RANK[a] <= COMPLETION_VERIFICATION_RANK[b] ? a : b;
+  };
+
+  // Stage 2(B): persist the run's worst label durably (best-effort). Only
+  // non-verified labels are written (NULL = clean verified default). Swallow
+  // errors (legacy DB with no v089 column, or the run row not yet inserted) —
+  // the in-memory aggregate still enforces this run for the process lifetime.
+  const persistCompletionVerification = (
+    runId: string,
+    label: FridayNodeCompletionVerification,
+  ): void => {
+    try {
+      deps.db.withWriteTransaction((db) => runRepo.setCompletionVerification(db, runId, label));
+    } catch {
+      /* legacy DB / pre-insert; in-memory aggregate remains authoritative */
+    }
+  };
+
   const recordRunNodeCompletionVerification = (
     runId: string,
     label: FridayNodeCompletionVerification,
@@ -560,13 +595,24 @@ export function createFridayWorkflowRuntime(
       || COMPLETION_VERIFICATION_RANK[label] < COMPLETION_VERIFICATION_RANK[previous]
     ) {
       runCompletionVerificationByRunId.set(runId, label);
+      if (label !== "verified") {
+        persistCompletionVerification(runId, label);
+      }
     }
   };
 
   const getRunCompletionVerification = (
     runId: string,
   ): FridayNodeCompletionVerification => {
-    const recorded = runCompletionVerificationByRunId.get(runId) ?? "verified";
+    const inMemory = runCompletionVerificationByRunId.get(runId);
+    const run = execution.getRun(runId);
+    // Stage 2(B): merge the in-memory aggregate with the persisted label
+    // (v089) — the WORST of the two — so the truth survives a hub restart
+    // (after which the in-memory map is empty but the column is not).
+    const persisted = isCompletionVerificationLabel(run?.completionVerification)
+      ? run?.completionVerification
+      : undefined;
+    const recorded = worstCompletionVerification(inMemory, persisted) ?? "verified";
     // Fail-closed for non-settled runs: a run that is not terminally
     // `completed` can NEVER be read as a clean `verified` completion — a
     // still-executing run may yet run a side-effect node, and a failed /
@@ -574,7 +620,6 @@ export function createFridayWorkflowRuntime(
     // time-of-check race at the source so the verifier observes
     // `proof_pending` rather than a premature `verified`. A recorded stronger
     // downgrade (proof_pending / recovery_needed / blocked) is preserved.
-    const run = execution.getRun(runId);
     if (run?.status === "completed") {
       return recorded;
     }

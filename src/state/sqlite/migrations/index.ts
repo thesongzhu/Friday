@@ -87,6 +87,7 @@ import { V085_TASK_WORKFLOW_CHANNEL_COMMANDS_MIGRATION } from "./v085-task-workf
 import { V086_WORKFLOW_EVIDENCE_FAIL_CLOSED_MIGRATION } from "./v086-workflow-evidence-fail-closed.js";
 import { V087_ROLLBACK_MATRIX_CLOSEOUT_RECEIPT_MIGRATION } from "./v087-rollback-matrix-closeout-receipt.js";
 import { V088_AUTO_FIX_ROLLBACK_RECEIPT_MIGRATION } from "./v088-auto-fix-rollback-receipt.js";
+import { V089_WORKFLOW_COMPLETION_VERIFICATION_MIGRATION } from "./v089-workflow-completion-verification.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -180,6 +181,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V086_WORKFLOW_EVIDENCE_FAIL_CLOSED_MIGRATION,
   V087_ROLLBACK_MATRIX_CLOSEOUT_RECEIPT_MIGRATION,
   V088_AUTO_FIX_ROLLBACK_RECEIPT_MIGRATION,
+  V089_WORKFLOW_COMPLETION_VERIFICATION_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

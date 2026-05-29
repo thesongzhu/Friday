@@ -175,6 +175,13 @@ export interface FridayWorkflowRunRow {
    * (ordinary workflow may degrade), 1 = true (must fail closed).
    */
   proof_required: number | null;
+  /**
+   * Audit C Stage 2(B): persisted run-level completion-verification label
+   * (v089). NULL = no non-verified node was ever recorded (clean verified run,
+   * incl. legacy rows). A non-verified run persists its worst label here so the
+   * truth survives a hub restart.
+   */
+  completion_verification: string | null;
 }
 
 // ─── Phase 14.5C: Workflow Run Evidence Status ───
