@@ -302,4 +302,83 @@ describe("FridayAgentFileTools", () => {
     expect(tools).toHaveLength(3);
     expect(tools.map((t) => t.name)).toEqual(["read", "write", "edit"]);
   });
+
+  // ─── Relative paths anchor at the workspace root (read/write parity) ───
+  // Regression for the write/edit bug where a bare relative path (e.g.
+  // "summary.json") resolved against process.cwd() (outside the workspace) and
+  // was rejected as "outside the allowed workspace root", forcing a failed retry.
+  // `read` always anchored at the workspace root; `write`/`edit` did not.
+  describe("relative paths anchor at the workspace root", () => {
+    let cwdDir: string;
+    let origCwd: string;
+
+    beforeEach(() => {
+      origCwd = process.cwd();
+      // CWD deliberately set to a dir that is NOT the workspace root.
+      cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-file-tools-cwd-"));
+      process.chdir(cwdDir);
+    });
+
+    afterEach(() => {
+      process.chdir(origCwd);
+      fs.rmSync(cwdDir, { recursive: true, force: true });
+    });
+
+    it("write resolves a bare relative path against the workspace root, not the CWD", async () => {
+      const result = await writeTool.execute(
+        { path: "summary.json", content: '{"count":12,"sum":216,"max":42}' },
+        signal(),
+      );
+
+      expect(result.isError).toBeUndefined();
+      // lands in the workspace root ...
+      expect(fs.existsSync(path.join(tmpDir, "summary.json"))).toBe(true);
+      expect(fs.readFileSync(path.join(tmpDir, "summary.json"), "utf8")).toBe(
+        '{"count":12,"sum":216,"max":42}',
+      );
+      // ... and NOT in the process CWD
+      expect(fs.existsSync(path.join(cwdDir, "summary.json"))).toBe(false);
+    });
+
+    it("write resolves a relative subdir path against the workspace root", async () => {
+      const result = await writeTool.execute(
+        { path: "out/data.json", content: "x" },
+        signal(),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(fs.existsSync(path.join(tmpDir, "out", "data.json"))).toBe(true);
+      expect(fs.existsSync(path.join(cwdDir, "out", "data.json"))).toBe(false);
+    });
+
+    it("edit resolves a relative path against the workspace root", async () => {
+      fs.writeFileSync(path.join(tmpDir, "note.txt"), "hello world");
+
+      const result = await editTool.execute(
+        { path: "note.txt", oldText: "world", newText: "friday" },
+        signal(),
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(fs.readFileSync(path.join(tmpDir, "note.txt"), "utf8")).toBe("hello friday");
+    });
+
+    it("still rejects absolute paths outside the workspace root", async () => {
+      const outside = path.join(cwdDir, "escape.json");
+      const result = await writeTool.execute({ path: outside, content: "x" }, signal());
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("outside the allowed workspace root");
+      expect(fs.existsSync(outside)).toBe(false);
+    });
+
+    it("still rejects '..' traversal segments in a relative path", async () => {
+      const result = await writeTool.execute({ path: "../escape.json", content: "x" }, signal());
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain('"." or ".." segments');
+      expect(fs.existsSync(path.join(cwdDir, "escape.json"))).toBe(false);
+      expect(fs.existsSync(path.join(path.dirname(tmpDir), "escape.json"))).toBe(false);
+    });
+  });
 });

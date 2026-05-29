@@ -236,7 +236,7 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
       "Automatically creates parent directories.",
     parameters: {
       properties: {
-        path: { type: "string", description: "Path to the file to write" },
+        path: { type: "string", description: "Path to the file to write. Relative paths (e.g. \"summary.json\") resolve against the workspace root; absolute paths must stay within it." },
         content: { type: "string", description: "Content to write to the file" },
       },
       required: ["path", "content"],
@@ -248,19 +248,36 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
       const filePath = readStringParam(args, "path", { required: true });
       const content = readStringParam(args, "content", { required: true });
 
-      // Security: validate path is within workspace
-      const pathError = validateFilePath(filePath, workspaceRoot);
+      // Anchor relative paths at the workspace root (read/write parity). `read`
+      // resolves `path.resolve(workspaceRoot, filePath)`; `write`/`edit` previously
+      // passed the raw relative path to validateFilePath and the write body, where
+      // it resolved against process.cwd() (the hub launch dir, outside the
+      // workspace). A bare name like "summary.json" was then rejected as "outside
+      // the allowed workspace root", forcing the agent to retry with an absolute
+      // path and recording a FAILED tool call. Resolve once and use the absolute
+      // target everywhere below (validation AND the dirname/basename write body —
+      // otherwise validation would pass but path.dirname("summary.json")==="."
+      // would write into the CWD, a worse silent bug).
+      if (hasTraversalSegments(filePath)) {
+        return errorResult(`Path "${filePath}" contains "." or ".." segments which are not allowed.`);
+      }
+      const resolvedTarget = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(workspaceRoot, filePath);
+
+      // Security: validate the anchored target is within the workspace
+      const pathError = validateFilePath(resolvedTarget, workspaceRoot);
       if (pathError) {
         return errorResult(pathError);
       }
 
-      const approvalReason = getApprovalRequiredReasonForFileMutation(filePath, [content]);
+      const approvalReason = getApprovalRequiredReasonForFileMutation(resolvedTarget, [content]);
       if (approvalReason) {
         return errorResult(`Approval required before execution. ${approvalReason}`);
       }
 
       try {
-        const dir = path.dirname(filePath);
+        const dir = path.dirname(resolvedTarget);
         await fs.mkdir(dir, { recursive: true });
 
         // Post-mkdir containment re-check: resolve the directory via realpath
@@ -280,7 +297,7 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
         }
 
         // Write via verified fd with O_NOFOLLOW to prevent final-component symlink swap
-        const safePath = path.join(resolvedDir, path.basename(filePath));
+        const safePath = path.join(resolvedDir, path.basename(resolvedTarget));
         let fd: number | null = null;
         try {
           fd = openWritableFileNoFollow(safePath, { create: true });
@@ -303,7 +320,7 @@ function createWriteTool(workspaceRoot: string): FridayAgentToolDefinition {
           }
         }
         const bytes = Buffer.byteLength(content, "utf8");
-        return textResult(`Wrote ${String(bytes)} bytes to ${filePath}`);
+        return textResult(`Wrote ${String(bytes)} bytes to ${resolvedTarget}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return errorResult(`Failed to write file: ${message}`);
@@ -322,7 +339,7 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
       "(including whitespace).",
     parameters: {
       properties: {
-        path: { type: "string", description: "Path to the file to edit" },
+        path: { type: "string", description: "Path to the file to edit. Relative paths resolve against the workspace root; absolute paths must stay within it." },
         oldText: { type: "string", description: "Exact text to find and replace" },
         newText: { type: "string", description: "New text to replace the old text with" },
       },
@@ -334,8 +351,18 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
     ): Promise<FridayAgentToolResult> {
       const filePath = readStringParam(args, "path", { required: true });
 
-      // Security: validate path is within workspace
-      const pathError = validateFilePath(filePath, workspaceRoot);
+      // Anchor relative paths at the workspace root (read/write parity) — see the
+      // write tool above for why the raw relative path resolved against process.cwd()
+      // and recorded a FAILED tool call.
+      if (hasTraversalSegments(filePath)) {
+        return errorResult(`Path "${filePath}" contains "." or ".." segments which are not allowed.`);
+      }
+      const resolvedTarget = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(workspaceRoot, filePath);
+
+      // Security: validate the anchored target is within the workspace
+      const pathError = validateFilePath(resolvedTarget, workspaceRoot);
       if (pathError) {
         return errorResult(pathError);
       }
@@ -347,7 +374,7 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
       const oldText = args.oldText;
       const newText = typeof args.newText === "string" ? args.newText : "";
 
-      const approvalReason = getApprovalRequiredReasonForFileMutation(filePath, [oldText, newText]);
+      const approvalReason = getApprovalRequiredReasonForFileMutation(resolvedTarget, [oldText, newText]);
       if (approvalReason) {
         return errorResult(`Approval required before execution. ${approvalReason}`);
       }
@@ -360,7 +387,7 @@ function createEditTool(workspaceRoot: string): FridayAgentToolDefinition {
           console.warn("[friday][file-tools] realpath-edit-root:", err instanceof Error ? err.message : String(err));
           resolvedRoot = path.resolve(workspaceRoot);
         }
-        const resolvedFile = fsSync.realpathSync(filePath);
+        const resolvedFile = fsSync.realpathSync(resolvedTarget);
         if (!isWithinBase(resolvedRoot, resolvedFile)) {
           return errorResult(`Path "${filePath}" escapes workspace root (possible symlink).`);
         }
