@@ -70,6 +70,21 @@ describe("FridayMemoryOutputFilter", () => {
     expect(filtered.content).not.toContain("123-45-6789");
   });
 
+  it("redacts PII in item metadata and drops PII-bearing tags on read-back", () => {
+    const item = makeItem({
+      metadata: { note: "reach me at owner@example.com", count: 3, nested: { ssn: "SSN 123-45-6789" } },
+      tags: ["keep-me", "123-45-6789"], // 2nd tag is an SSN-pattern (charset-valid)
+    });
+    const filtered = filter.filterItem(item);
+    const meta = filtered.metadata as { note: string; count: number; nested: { ssn: string } };
+    expect(meta.note).toContain("[EMAIL]");
+    expect(meta.note).not.toContain("owner@example.com");
+    expect(meta.nested.ssn).toContain("[SSN_US]"); // nested redaction
+    expect(meta.count).toBe(3); // non-string untouched
+    expect(filtered.tags).toContain("keep-me"); // clean tag kept
+    expect(filtered.tags).not.toContain("123-45-6789"); // PII-bearing tag dropped
+  });
+
   // ─── filterSearchResults ───
 
   it("returns results as-is when within limits", () => {
