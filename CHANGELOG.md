@@ -18,6 +18,30 @@ and this project follows Semantic Versioning.
   source repair (PR #377), C3/C4 live-provider routing proof (PR #378), and C4.5
   direct synthetic real-user intelligence proof (PR #379). These are GitHub-main
   closures, not npm `1.0.2` package truth.
+- Source truth after PR #379 further includes the strict-repair closure batch on
+  GitHub `main` through PR #412 (final `main` SHA `f1755825`): the B6
+  dangerous-command shell-risk gate was hardened across four bypass vectors
+  (PR #396, #397, #399, #402); workflow completion-truth was closed for the
+  deterministic core — declared side-effect nodes are labeled `proof_pending`,
+  the run-level workflow-completion verifier refuses unverified run evidence, and
+  the one concrete filesystem-write side-effect class is positively upgraded to
+  `verified` by an independent on-disk re-read (PR #398, #407) — while the
+  non-filesystem side-effect classes (send / connect / capture / execute /
+  memory.write) remain `proof_pending` by design with no positive verified path
+  yet; receipt / idempotency / usage-ledger truth was closed (PR #401, #403,
+  #408); truth-label defects were corrected (PR #405, #406, #411); and the
+  `write`/`edit` agent tools were fixed to anchor relative paths at the workspace
+  root for read/write parity (PR #412). These are deterministic GitHub-main
+  closures, exact-`main` proven via same-SHA CI + Real Green Gate; they are not
+  npm `1.0.2` package truth and add no published-release claim.
+- An isolated, operator-authorized live competence proof exercised the local
+  read → DeepSeek reasoning → canonical approval-gated write → oracle-verified
+  artifact loop end-to-end on the fixed build, DeepSeek-only (no fallback
+  provider), through the real canonical approval gate, and produced a clean
+  `verified_receipt`. This is a single bounded local proof. It does not claim
+  100% all-mechanisms-live, all-integrations-live, latest-SHA live
+  external-channel delivery, or broad live-provider quality; those remain
+  deferred operator-gated proofs.
 - C2.4 remains `source_closed_live_pending` / `proof_pending` until the deferred
   exact-SHA Telegram natural-trigger stress window passes. C4.5 live external-
   channel proof, npm publish, tag, and GitHub release remain deferred operator

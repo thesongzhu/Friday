@@ -1,6 +1,6 @@
 # Friday Public V1 Local Candidate
 
-Last reviewed: 2026-05-28
+Last reviewed: 2026-05-29
 
 This document summarizes the public v1 local candidate claim for the published
 `1.0.x` local-candidate line. The current public npm/source release is `1.0.2`.
@@ -120,9 +120,10 @@ The dogfood gate for `1.0.1` closed as `dogfood_partial_pass` with weighted UX
 score 7.78/10 (below the 8.0 `dogfood_pass` threshold). The published npm
 `1.0.2` package still carries the original proof-pending headlines.
 GitHub-visible source after `1.0.2` has narrowed several of them through PR
-#379 and is staged as an unpublished `1.0.3` package candidate, but those source
-changes are **not** npm package truth until a future authorized publish. Current
-source truth:
+#379 and the subsequent strict-repair closure batch (through PR #412) and is
+staged as an unpublished `1.0.3` package candidate, but those source changes are
+**not** npm package truth until a future authorized publish. Current source
+truth:
 
 1. Autonomous self-repair execute → rollback: deterministic skill-drift and
    route rollback receipt mechanics are closed on GitHub main by PR #351 and
@@ -168,6 +169,34 @@ Additional source-only closure after the nine dogfood headlines:
 - C4.5 direct synthetic real-user intelligence proof is closed on GitHub main
   by PR #379. C4.5 live external-channel proof remains deferred with the C2.4
   Telegram live stress window.
+
+Strict-repair closure batch on GitHub main (through PR #412, final source SHA
+`f1755825`), exact-`main` proven via same-SHA Real Green Gate:
+
+- B6 dangerous-command shell-risk gate hardened across four bypass vectors (PR
+  #396, #397, #399, #402).
+- Workflow completion-truth closed for the deterministic core: declared
+  side-effect nodes are labeled `proof_pending`, the run-level
+  workflow-completion verifier refuses unverified run evidence, and the
+  filesystem-write side-effect class is positively upgraded to `verified` by an
+  independent on-disk re-read (PR #398, #407). The send / connect / capture /
+  execute / memory.write side-effect classes remain `proof_pending` by design
+  with no positive verified path yet.
+- Receipt / idempotency / usage-ledger truth closed (PR #401, #403, #408).
+- Truth-label defects closed (PR #405, #406, #411).
+- `write`/`edit` agent tools fixed to anchor relative paths at the workspace root
+  for read/write parity (PR #412).
+
+These are deterministic GitHub-main closures and are not npm package truth until
+a future authorized publish.
+
+An isolated, operator-authorized live competence proof additionally exercised the
+local read → DeepSeek reasoning → canonical approval-gated write → oracle-verified
+artifact loop end-to-end on the fixed build, DeepSeek-only, through the real
+canonical approval gate, producing a clean `verified_receipt`. This is a single
+bounded local proof; it does not claim 100% all-mechanisms-live,
+all-integrations-live, latest-SHA live external-channel delivery, or broad
+live-provider quality, which remain deferred operator-gated proofs.
 
 These are truth-labeled, not silent passes. None contradict the safe claim
 above.
