@@ -72,6 +72,13 @@ export function classifyShellRisk(command: string): FridayShellRiskClassificatio
     return { level: "destructive", reason: `${program} is a destructive command`, program };
   }
 
+  // Destructive FLAGS on otherwise-safe programs (git reset --hard, git clean -fdx,
+  // find . -delete) — classification must key on flags, not just the program name.
+  const dangerousFlagReason = detectDangerousShellFlagReason(program, parts);
+  if (dangerousFlagReason) {
+    return { level: "destructive", reason: dangerousFlagReason, program };
+  }
+
   // Protected artifact + destructive keyword
   const touchesProtected = listPotentialFilePaths(trimmed)
     .some((fp) => requiresApprovalForProtectedArtifactPath(fp));
@@ -134,6 +141,60 @@ function listPotentialFilePaths(text: string): string[] {
   return [...new Set(text.match(/\b[\w./-]+\.[A-Za-z0-9]+\b/g) ?? [])];
 }
 
+// git global options that precede the subcommand; the value-taking ones (given without `=`)
+// also consume the following token. Used to locate the real subcommand for forms like
+// `git -C /repo reset --hard` or `git --no-pager clean -fdx`.
+const GIT_GLOBAL_OPTS_WITH_VALUE = new Set([
+  "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
+]);
+
+function gitSubcommandStart(parts: readonly string[]): number {
+  let i = 1;
+  while (i < parts.length) {
+    const tok = parts[i]!;
+    if (!tok.startsWith("-")) return i; // first non-option token is the subcommand
+    // `--opt=value` is a single token; `-C <v>` / `--git-dir <v>` consume the next token too.
+    i += GIT_GLOBAL_OPTS_WITH_VALUE.has(tok) ? 2 : 1;
+  }
+  return -1;
+}
+
+/**
+ * Detect destructive FLAG combinations on programs that are otherwise allow-listed as
+ * "safe" by name (e.g. git, find). Classification by program name alone let irreversible
+ * operations like `git reset --hard`, `git clean -fdx`, and `find . -delete` slip through
+ * without approval; this closes that flag-vs-program gap. Leading git global options
+ * (`git -C <path> …`, `git --no-pager …`) are skipped so the subcommand is found regardless
+ * of the invocation form. Returns an approval reason string when a dangerous flag combination
+ * is present, else null.
+ */
+function detectDangerousShellFlagReason(program: string, parts: readonly string[]): string | null {
+  if (program === "git") {
+    const subIdx = gitSubcommandStart(parts);
+    if (subIdx === -1) {
+      return null;
+    }
+    const sub = parts[subIdx]?.toLowerCase() ?? "";
+    const rest = parts.slice(subIdx + 1);
+    const hasForce = rest.some((a) => a === "-f" || a === "--force");
+    if (sub === "reset" && rest.some((a) => a === "--hard")) {
+      return "`git reset --hard` irreversibly discards uncommitted changes and requires explicit approval in the current run context.";
+    }
+    if (sub === "clean" && rest.some((a) => /^-[a-z]*f[a-z]*$/i.test(a) || a === "--force")) {
+      return "`git clean -f…` permanently deletes untracked files and requires explicit approval in the current run context.";
+    }
+    if ((sub === "checkout" || sub === "restore" || sub === "switch") && (hasForce || rest.some((a) => a === "--hard"))) {
+      return `\`git ${sub} --force\` discards local changes and requires explicit approval in the current run context.`;
+    }
+  }
+  if (program === "find") {
+    if (parts.slice(1).some((a) => a === "-delete")) {
+      return "`find … -delete` permanently removes matched files and requires explicit approval in the current run context.";
+    }
+  }
+  return null;
+}
+
 function readToolAction(args: Record<string, unknown>): string {
   return typeof args.action === "string" ? args.action.trim().toLowerCase() : "";
 }
@@ -185,6 +246,11 @@ export function getApprovalRequiredReasonForExecCommand(command: string): string
 
   if (DESTRUCTIVE_PROGRAMS.has(program)) {
     return "Deleting files from the shell is destructive and requires explicit approval in the current run context.";
+  }
+
+  const dangerousFlagReason = detectDangerousShellFlagReason(program, parts);
+  if (dangerousFlagReason) {
+    return dangerousFlagReason;
   }
 
   if (SENSITIVE_ASSIGNMENT_RE.test(trimmed)) {
