@@ -233,12 +233,15 @@ export function useAgentRunEvents(
 
         if (!res.ok || !res.body) {
           setConnectionState("error");
-          setErrorMessage(`Couldn't reach Friday (HTTP ${res.status}). Make sure the Friday server is running, then try again.`);
+          setErrorMessage(`Friday returned an error (HTTP ${res.status}). Please try again; if it persists, check the Friday server.`);
           return;
         }
 
         setConnectionState("streaming");
         retryCountRef.current = 0;
+        // Clear any prior transient connection error once the stream is (re)established, so a
+        // stale "lost connection" message can never persist into a later terminal panel.
+        setErrorMessage(undefined);
 
         const stream = res.body
           .pipeThrough(new TextDecoderStream())
@@ -614,8 +617,11 @@ export function useAgentRunEvents(
           const retryIdx = Math.min(retryCountRef.current, BACKOFF_MS.length - 1);
           retryCountRef.current++;
           setConnectionState("error");
+          // Phrased to read correctly even if the run then terminates and this message is
+          // shown in the failed panel (the hook's only render site) — no present-continuous
+          // "reconnecting…" claim, since retry may already have stopped.
           setErrorMessage(
-            `Lost connection to Friday — reconnecting automatically…${err instanceof Error && err.message ? ` (${err.message})` : ""}`,
+            `Lost connection to Friday. If this keeps happening, make sure the Friday server is running, then reload.${err instanceof Error && err.message ? ` (${err.message})` : ""}`,
           );
 
           setTimeout(() => {
