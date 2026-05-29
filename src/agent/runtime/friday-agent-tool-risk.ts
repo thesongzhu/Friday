@@ -141,22 +141,82 @@ function listPotentialFilePaths(text: string): string[] {
   return [...new Set(text.match(/\b[\w./-]+\.[A-Za-z0-9]+\b/g) ?? [])];
 }
 
-// git global options that precede the subcommand; the value-taking ones (given without `=`)
-// also consume the following token. Used to locate the real subcommand for forms like
-// `git -C /repo reset --hard` or `git --no-pager clean -fdx`.
+// git global options that precede the subcommand and, when given in their space-form
+// (without `=`), ALSO consume the following token. Used to locate the real subcommand for
+// forms like `git -C /repo reset --hard`. NOTE: this set is an optimization for the precise
+// path, not a security boundary — an option we forget to list does NOT open a bypass, because
+// `gitSubcommandStart` fails safe on anything it does not recognize (see below).
 const GIT_GLOBAL_OPTS_WITH_VALUE = new Set([
   "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
+  // plumbing options that take a separate-token value (Reviewer-A bypass class):
+  "--config-env", "--shallow-file", "--attr-source",
 ]);
+
+// git global options that take NO value, so the next token is still a global option or the
+// subcommand. Recognizing the common ones keeps the precise path in play; an unrecognized
+// flag simply falls through to the fail-safe scan below.
+const GIT_GLOBAL_FLAGS_NO_VALUE = new Set([
+  "--no-pager", "--paginate", "-p", "--bare", "--no-replace-objects", "--literal-pathspecs",
+  "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks",
+  "--no-lazy-fetch", "--no-advice", "--version", "--html-path", "--man-path", "--info-path",
+]);
+
+// Sentinel: a leading git global option we do NOT recognize. We cannot reliably locate the
+// subcommand by position (an unknown option might consume the next token, masquerading its
+// value as the subcommand — the exact `git --shallow-file <v> reset --hard` bypass class).
+// The caller must fail safe and scan the whole token list instead of trusting position.
+const GIT_SUBCOMMAND_UNKNOWN_OPT = -2;
 
 function gitSubcommandStart(parts: readonly string[]): number {
   let i = 1;
   while (i < parts.length) {
     const tok = parts[i]!;
     if (!tok.startsWith("-")) return i; // first non-option token is the subcommand
-    // `--opt=value` is a single token; `-C <v>` / `--git-dir <v>` consume the next token too.
-    i += GIT_GLOBAL_OPTS_WITH_VALUE.has(tok) ? 2 : 1;
+    if (tok.includes("=")) { // `--opt=value` carries its value inline — single token
+      i += 1;
+      continue;
+    }
+    if (GIT_GLOBAL_OPTS_WITH_VALUE.has(tok)) { // `-C <v>` / `--git-dir <v>` consume next token
+      i += 2;
+      continue;
+    }
+    if (GIT_GLOBAL_FLAGS_NO_VALUE.has(tok)) { // known value-less flag — skip just the flag
+      i += 1;
+      continue;
+    }
+    return GIT_SUBCOMMAND_UNKNOWN_OPT; // unrecognized global option → fail safe, do not guess
   }
   return -1;
+}
+
+// Precise per-subcommand check: given a known subcommand and the tokens that follow it,
+// return an approval reason for a destructive flag combination, else null.
+function gitDestructiveReason(sub: string, rest: readonly string[]): string | null {
+  const s = sub.toLowerCase();
+  const hasForce = rest.some((a) => a === "-f" || a === "--force");
+  if (s === "reset" && rest.some((a) => a === "--hard")) {
+    return "`git reset --hard` irreversibly discards uncommitted changes and requires explicit approval in the current run context.";
+  }
+  if (s === "clean" && rest.some((a) => /^-[a-z]*f[a-z]*$/i.test(a) || a === "--force")) {
+    return "`git clean -f…` permanently deletes untracked files and requires explicit approval in the current run context.";
+  }
+  if ((s === "checkout" || s === "restore" || s === "switch") && (hasForce || rest.some((a) => a === "--hard"))) {
+    return `\`git ${s} --force\` discards local changes and requires explicit approval in the current run context.`;
+  }
+  return null;
+}
+
+// Fail-safe scan used only when an unrecognized leading global option is present: treat each
+// token as a candidate subcommand and check the tokens after it, so a destructive combination
+// cannot hide behind an option we don't model. Because this only runs when a leading option is
+// unrecognized, it does NOT produce the `git commit -m "reset --hard"` false-positive (there the
+// subcommand `commit` is found by position and the scan is never reached).
+function gitDestructiveReasonByScan(tokens: readonly string[]): string | null {
+  for (let k = 0; k < tokens.length; k++) {
+    const reason = gitDestructiveReason(tokens[k]!, tokens.slice(k + 1));
+    if (reason) return reason;
+  }
+  return null;
 }
 
 /**
@@ -165,27 +225,21 @@ function gitSubcommandStart(parts: readonly string[]): number {
  * operations like `git reset --hard`, `git clean -fdx`, and `find . -delete` slip through
  * without approval; this closes that flag-vs-program gap. Leading git global options
  * (`git -C <path> …`, `git --no-pager …`) are skipped so the subcommand is found regardless
- * of the invocation form. Returns an approval reason string when a dangerous flag combination
- * is present, else null.
+ * of the invocation form; an UNRECOGNIZED leading option fails safe to a full-token scan so
+ * obscure plumbing options (`git --shallow-file <v> reset --hard`) cannot hide a destructive
+ * subcommand. Returns an approval reason string when a dangerous flag combination is present,
+ * else null.
  */
 function detectDangerousShellFlagReason(program: string, parts: readonly string[]): string | null {
   if (program === "git") {
     const subIdx = gitSubcommandStart(parts);
+    if (subIdx === GIT_SUBCOMMAND_UNKNOWN_OPT) {
+      return gitDestructiveReasonByScan(parts.slice(1));
+    }
     if (subIdx === -1) {
       return null;
     }
-    const sub = parts[subIdx]?.toLowerCase() ?? "";
-    const rest = parts.slice(subIdx + 1);
-    const hasForce = rest.some((a) => a === "-f" || a === "--force");
-    if (sub === "reset" && rest.some((a) => a === "--hard")) {
-      return "`git reset --hard` irreversibly discards uncommitted changes and requires explicit approval in the current run context.";
-    }
-    if (sub === "clean" && rest.some((a) => /^-[a-z]*f[a-z]*$/i.test(a) || a === "--force")) {
-      return "`git clean -f…` permanently deletes untracked files and requires explicit approval in the current run context.";
-    }
-    if ((sub === "checkout" || sub === "restore" || sub === "switch") && (hasForce || rest.some((a) => a === "--hard"))) {
-      return `\`git ${sub} --force\` discards local changes and requires explicit approval in the current run context.`;
-    }
+    return gitDestructiveReason(parts[subIdx] ?? "", parts.slice(subIdx + 1));
   }
   if (program === "find") {
     if (parts.slice(1).some((a) => a === "-delete")) {

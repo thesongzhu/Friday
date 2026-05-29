@@ -105,6 +105,29 @@ describe("friday-agent-tool-risk", () => {
       expect(classifyShellRisk("git -C repo status")).toMatchObject({ level: "safe", program: "git" });
     });
 
+    it("fails safe on UNRECOGNIZED git global options (no default-allow on unknown options)", () => {
+      // Reviewer-A bypass class: plumbing options taking a separate-token value were treated as
+      // single-token, shifting their value into the subcommand slot so `reset --hard` was never
+      // inspected. These known plumbing options must now classify destructive.
+      expect(classifyShellRisk("git --shallow-file snap reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git --config-env k=v reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git --attr-source tree clean -fdx")).toMatchObject({ level: "destructive", program: "git" });
+      // A genuinely unknown / future global option must NOT default-allow: the destructive
+      // subcommand behind it is still caught by the fail-safe scan (this is the core no-default-allow
+      // guarantee — not just an expanded allow-list of named options).
+      expect(classifyShellRisk("git --totally-unknown-opt val reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      // ...but an unrecognized option in front of a benign subcommand stays safe (no over-block).
+      expect(classifyShellRisk("git --shallow-file snap status")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git --totally-unknown-opt val status")).toMatchObject({ level: "safe", program: "git" });
+    });
+
+    it("does not false-positive on destructive tokens inside a benign subcommand's args", () => {
+      // The fail-safe scan only runs behind an UNRECOGNIZED leading option; `commit` is found by
+      // position, so a message that merely mentions reset --hard is not treated as a reset.
+      expect(classifyShellRisk('git commit -m "reset --hard"')).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git --no-pager commit -m wip")).toMatchObject({ level: "safe", program: "git" });
+    });
+
     it("keeps benign git/find invocations safe (no flag false-positives)", () => {
       expect(classifyShellRisk("git status")).toMatchObject({ level: "safe", program: "git" });
       expect(classifyShellRisk("git reset HEAD file.txt")).toMatchObject({ level: "safe", program: "git" });
@@ -143,6 +166,9 @@ describe("friday-agent-tool-risk", () => {
       // Behind git global options (the common agentic form) must also require approval.
       expect(getApprovalRequiredReasonForExecCommand("git -C repo reset --hard")).toContain("approval");
       expect(getApprovalRequiredReasonForExecCommand("git --no-pager clean -fdx")).toContain("approval");
+      // Behind obscure / unknown global options must ALSO require approval (no default-allow).
+      expect(getApprovalRequiredReasonForExecCommand("git --shallow-file snap reset --hard")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("git --totally-unknown-opt val reset --hard")).toContain("approval");
     });
 
     it("allows safe read-only commands", () => {
