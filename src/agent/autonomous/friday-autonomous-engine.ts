@@ -15,6 +15,8 @@ import * as path from "node:path";
 
 import { FridayDomainError } from "#errors";
 
+import { isMutatingToolCall } from "../runtime/friday-agent-tool-mutation.js";
+
 import type {
   CreateFridayAutonomousEngineDeps,
   FridayAutonomousActionResult,
@@ -1453,9 +1455,19 @@ export function createFridayAutonomousEngine(
     providerId: string | undefined,
     model: string | undefined,
     signal: AbortSignal,
+    stepMutated = false,
   ): Promise<FridayAutonomousStepVerificationResult> {
     if (!step.verification) {
-      // No verification defined — assume success
+      // A step that performed a real mutating side effect cannot be assumed
+      // successful without verification — fail closed (locked decision).
+      if (stepMutated) {
+        return {
+          passed: false,
+          actual: "Mutating step has no verification criteria; cannot prove the side effect succeeded (fail-closed).",
+          method: "fail_closed",
+        };
+      }
+      // No side effect recorded → benign step, assume success (no over-blocking).
       return { passed: true, actual: "No verification criteria defined" };
     }
 
@@ -1508,9 +1520,16 @@ export function createFridayAutonomousEngine(
         const jsonMatch = result.text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]) as { passed?: boolean; actual?: string };
+          // For a mutating step, LLM self-judgment with NO grounding observations
+          // (empty images + empty text context) is INVALID completion proof
+          // (locked decision). When real observations exist, the LLM is
+          // interpreting external state (grounded), which is allowed.
+          const ungroundedMutation = stepMutated && images.length === 0 && textContext.trim().length === 0;
           return {
-            passed: parsed.passed === true,
-            actual: parsed.actual ?? result.text,
+            passed: ungroundedMutation ? false : parsed.passed === true,
+            actual: ungroundedMutation && parsed.passed === true
+              ? `${parsed.actual ?? result.text} (LLM self-judgment without grounding observations is not valid proof for a mutating step; fail-closed.)`
+              : parsed.actual ?? result.text,
             method: "llm_vision",
           };
         }
@@ -1535,9 +1554,15 @@ export function createFridayAutonomousEngine(
       const jsonMatch = result.response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]) as { passed?: boolean; actual?: string };
+        // A mutating step verified only by LLM text with NO grounding
+        // observations is INVALID completion proof (locked decision); when real
+        // observations exist the LLM interprets external state (grounded → allowed).
+        const ungroundedMutation = stepMutated && images.length === 0 && textContext.trim().length === 0;
         return {
-          passed: parsed.passed === true,
-          actual: parsed.actual ?? result.response,
+          passed: ungroundedMutation ? false : parsed.passed === true,
+          actual: ungroundedMutation && parsed.passed === true
+            ? `${parsed.actual ?? result.response} (LLM self-judgment without grounding observations is not valid proof for a mutating step; fail-closed.)`
+            : parsed.actual ?? result.response,
           method: "llm_text",
         };
       }
@@ -1561,6 +1586,7 @@ export function createFridayAutonomousEngine(
     providerId: string | undefined,
     model: string | undefined,
     signal: AbortSignal,
+    stepMutated = false,
   ): Promise<{ step: FridayAutonomousStep; passed: boolean }> {
     const browserSessionId = buildAutonomousBrowserSessionId(goalId);
     updateGoal(goalId, { status: "verifying" });
@@ -1582,6 +1608,7 @@ export function createFridayAutonomousEngine(
       providerId,
       model,
       signal,
+      stepMutated,
     );
 
     emit("autonomous.verification.completed", {
@@ -1810,6 +1837,12 @@ export function createFridayAutonomousEngine(
       });
 
       // ─── Phase 2: Step-by-step execution ───
+      // Track which steps performed a successful *mutating* tool call. Such a
+      // step has produced a real side effect and therefore must not be marked
+      // completed without deterministic verification (locked decision: missing /
+      // LLM-self-judgment verification is INVALID completion proof for side
+      // effects). Mirrors the runtime side-effect gate (#388) discriminator.
+      const mutatedStepIds = new Set<string>();
       for (let si = startingStepIndex; si < stepIds.length; si++) {
         if (signal.aborted) break;
 
@@ -1887,6 +1920,11 @@ export function createFridayAutonomousEngine(
                 plannedAction: decision.action,
               });
               actionResult = await executeAction(decision, currentStep.domain, browserSessionId, timezone, principalId, tenantContext, providerId, model, signal);
+              if (actionResult.success && isMutatingToolCall(decision.action.toolName, decision.action.args ?? {})) {
+                // This step produced a real side effect — it now requires
+                // deterministic verification before it may be marked completed.
+                mutatedStepIds.add(stepId);
+              }
               if (actionResult.success && currentStep.domain === "browser") {
                 const checkpointObservations = await collectBrowserCheckpointObservations(currentStep, stepId, browserSessionId, signal);
                 if (checkpointObservations.length > 0) {
@@ -1915,6 +1953,7 @@ export function createFridayAutonomousEngine(
                   providerId,
                   model,
                   signal,
+                  mutatedStepIds.has(stepId),
                 );
                 if (verification.passed) {
                   stepCompleted = true;
@@ -1937,6 +1976,7 @@ export function createFridayAutonomousEngine(
                 providerId,
                 model,
                 signal,
+                mutatedStepIds.has(stepId),
               );
 
               if (verification.passed) {
@@ -1960,12 +2000,24 @@ export function createFridayAutonomousEngine(
                   providerId,
                   model,
                   signal,
+                  mutatedStepIds.has(stepId),
                 );
                 if (!verification.passed) {
                   stepRetries++;
                   currentStep = updateStep(stepId, { retryCount: stepRetries });
                   break;
                 }
+              } else if (mutatedStepIds.has(stepId)) {
+                // Fail closed: the model decided "complete" for a step that
+                // performed a real mutating side effect but carries NO
+                // verification criteria — not valid completion proof (locked
+                // decision). Retry instead of silently marking completed.
+                stepRetries++;
+                currentStep = updateStep(stepId, {
+                  retryCount: stepRetries,
+                  failureReason: "Mutating step marked complete without verification criteria; cannot prove the side effect succeeded (fail-closed).",
+                });
+                break;
               }
               stepCompleted = true;
               updateStep(stepId, { status: "completed", completedAt: nowIso() });
@@ -1981,7 +2033,18 @@ export function createFridayAutonomousEngine(
               const newStepIds = [...stepIds.slice(0, si + 1), ...newStepObjects.map((s) => s.id)];
               currentGoal = updateGoal(goal.id, { stepIds: newStepIds });
               stepCompleted = true;
-              updateStep(stepId, { status: "completed", completedAt: nowIso() });
+              if (mutatedStepIds.has(stepId)) {
+                // A step that performed a real mutating side effect must not be
+                // silently marked completed when replanned away without
+                // verification — record it as failed (fail-closed).
+                updateStep(stepId, {
+                  status: "failed",
+                  completedAt: nowIso(),
+                  failureReason: "Replanned away a mutating step without verifying its side effect (fail-closed).",
+                });
+              } else {
+                updateStep(stepId, { status: "completed", completedAt: nowIso() });
+              }
               break;
             }
 
