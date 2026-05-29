@@ -101,9 +101,20 @@ user-visible workflow retry receipt/final-state proof by PR #360. Later source
 also closes C2.4 parent-runtime natural-trigger source repair by PR #377, C3/C4
 live-provider routing proof by PR #378, and C4.5 direct synthetic real-user
 intelligence proof by PR #379. PR #380 prepares the unpublished `1.0.3` package
-candidate on GitHub main without npm publish, tag, or GitHub release. Package/npm
-truth stays separate. Do not read these source closures as already published npm
-`1.0.2` behavior or as a published `1.0.3` release.
+candidate on GitHub main without npm publish, tag, or GitHub release. GitHub main
+further closes the strict-repair batch through PR #412: the B6 dangerous-command
+shell-risk gate (PR #396/#397/#399/#402); workflow completion-truth for the
+deterministic core / filesystem-write — with the non-filesystem side-effect
+classes (send / connect / capture / execute / memory.write) remaining
+`proof_pending` by design (PR #398/#407); receipt / idempotency / usage-ledger
+truth (PR #401/#403/#408); and truth-label corrections (PR #405/#406/#411). An
+isolated, operator-authorized local DeepSeek competence proof additionally
+achieved a clean `verified_receipt` for the local read → reason → canonical
+approval-gated write → oracle-verified-artifact loop, DeepSeek-only — a single
+bounded local proof, not a claim of 100% all-mechanisms-live, all-integrations-
+live, latest-SHA live external-channel delivery, or broad live-provider quality.
+Package/npm truth stays separate. Do not read these source closures as already
+published npm `1.0.2` behavior or as a published `1.0.3` release.
 
 ### What Friday Can Do Today
 
