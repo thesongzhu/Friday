@@ -3453,6 +3453,21 @@ export function createFridayProviderService(
             + "recording providerKind=\"unknown\" (no provider attribution).",
         );
       }
+      // D (ledger truth): record whether pricing was actually RESOLVED for the
+      // attributed (providerKind, model). An unrecognized model resolves to
+      // qualityTier "unknown" with a 0 rate (friday-provider-pricing-catalog
+      // fallback), which is otherwise indistinguishable from a genuinely-free
+      // model (e.g. local ollama, tier "cheap" @ $0). Without this marker an
+      // unpriced paid model silently under-reports cost as $0. We persist an
+      // explicit boolean computed from the SAME single-source pricing catalog,
+      // consistent with the record's stored providerKind: if the provider could
+      // not be attributed (providerKind "unknown") pricing is unresolved by
+      // definition — a conservative fail-closed signal. NOTE: this means
+      // "pricing resolvable for the attributed provider/model", NOT a guarantee
+      // that the stored costUsd was itself computed from this exact resolution.
+      const pricingResolved =
+        providerKind !== "unknown"
+        && pricingCatalog.getPricing(providerKind, input.model).qualityTier !== "unknown";
       const now = deps.nowIso();
       const usageDay = now.slice(0, 10);
       const usageMonth = now.slice(0, 7);
@@ -3475,7 +3490,9 @@ export function createFridayProviderService(
         totalTokens: input.usage.total,
         costUsd: input.costUsd,
         currency: "USD",
-        metadata: input.metadata ?? {},
+        // Computed marker goes LAST so a caller-supplied metadata.pricingResolved
+        // cannot spoof the ledger's truth signal.
+        metadata: { ...(input.metadata ?? {}), pricingResolved },
         createdAt: now,
       };
 
