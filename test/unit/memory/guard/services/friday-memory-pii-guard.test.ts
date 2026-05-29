@@ -160,4 +160,47 @@ describe("FridayMemoryPiiGuard", () => {
     const result = guard.scanAndTransform("Call +1-555-234-5678");
     expect(result.distinctTypes).toContain("phone_us");
   });
+
+  // ─── redactDeep (metadata + tags) ───
+
+  describe("redactDeep", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts PII in string values of a metadata object (incl nested)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({
+        note: "reach me at user@example.com",
+        nested: { phone: "555-234-5678", count: 7 },
+        when: "tomorrow",
+      });
+      const meta = value as { note: string; nested: { phone: string; count: number }; when: string };
+      expect(meta.note).toContain("[EMAIL]");
+      expect(meta.note).not.toContain("user@example.com");
+      expect(meta.nested.phone).toContain("[PHONE_US]");
+      expect(meta.nested.count).toBe(7); // non-strings untouched
+      expect(meta.when).toBe("tomorrow"); // clean strings untouched
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us"]));
+    });
+
+    it("redacts PII in tag strings", () => {
+      const { value, tagsToAdd } = guard.redactDeep(["project-x", "ssn 123-45-6789"]);
+      const tags = value as string[];
+      expect(tags[0]).toBe("project-x");
+      expect(tags[1]).toContain("[SSN_US]");
+      expect(tags[1]).not.toContain("123-45-6789");
+      expect(tagsToAdd).toContain("pii.ssn_us");
+    });
+
+    it("returns clean values unchanged with no extra tags", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ a: "no pii", b: [1, 2, "also clean"] });
+      expect(value).toEqual({ a: "no pii", b: [1, 2, "also clean"] });
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("in tag mode, reports PII tags without altering values (non-redact)", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const { value, tagsToAdd } = tagGuard.redactDeep({ note: "user@example.com" });
+      expect((value as { note: string }).note).toBe("user@example.com"); // not redacted in tag mode
+      expect(tagsToAdd).toContain("pii.email");
+    });
+  });
 });

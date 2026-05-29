@@ -83,6 +83,21 @@ describe("friday-agent-tool-risk", () => {
       const result = classifyShellRisk("python delete database.dump");
       expect(result.level).toBe("destructive");
     });
+
+    it("classifies destructive FLAGS on otherwise-safe programs as destructive", () => {
+      expect(classifyShellRisk("git reset --hard")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git reset --hard origin/main")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git clean -fdx")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("git checkout --force main")).toMatchObject({ level: "destructive", program: "git" });
+      expect(classifyShellRisk("find . -delete")).toMatchObject({ level: "destructive", program: "find" });
+    });
+
+    it("keeps benign git/find invocations safe (no flag false-positives)", () => {
+      expect(classifyShellRisk("git status")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git reset HEAD file.txt")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("git clean -n")).toMatchObject({ level: "safe", program: "git" });
+      expect(classifyShellRisk("find . -name pattern")).toMatchObject({ level: "safe", program: "find" });
+    });
   });
 
   // ─── getApprovalRequiredReasonForExecCommand ───
@@ -108,10 +123,18 @@ describe("friday-agent-tool-risk", () => {
       ).toContain("token");
     });
 
+    it("requires approval for destructive flags on otherwise-safe programs", () => {
+      expect(getApprovalRequiredReasonForExecCommand("git reset --hard")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("git clean -fdx")).toContain("approval");
+      expect(getApprovalRequiredReasonForExecCommand("find . -delete")).toContain("approval");
+    });
+
     it("allows safe read-only commands", () => {
       expect(getApprovalRequiredReasonForExecCommand("ls -la")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("cat file.txt")).toBeNull();
       expect(getApprovalRequiredReasonForExecCommand("git status")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("git reset HEAD file.txt")).toBeNull();
+      expect(getApprovalRequiredReasonForExecCommand("git clean -n")).toBeNull();
     });
 
     it("returns null for empty command", () => {

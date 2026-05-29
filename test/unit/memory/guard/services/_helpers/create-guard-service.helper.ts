@@ -88,6 +88,8 @@ export function createMockPiiGuard(): FridayMemoryGuardPiiGuard {
       transformedContent: "Hello world",
       tagsToAdd: [],
     }),
+    // Default: passthrough (no PII found) — returns the value unchanged with no extra tags.
+    redactDeep: vi.fn().mockImplementation((value: unknown) => ({ value, tagsToAdd: [] })),
   };
 }
 

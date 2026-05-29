@@ -131,5 +131,35 @@ export function createFridayMemoryPiiGuard(
         tagsToAdd,
       };
     },
+
+    redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] } {
+      const tagSet = new Set<string>();
+      const MAX_DEPTH = 6;
+
+      const walk = (v: unknown, depth: number): unknown => {
+        if (depth > MAX_DEPTH) return v;
+        if (typeof v === "string") {
+          const matches = findMatches(v);
+          if (matches.length === 0) return v;
+          for (const m of matches) {
+            tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+          }
+          return effectiveMode === "redact" ? redactContent(v, matches) : v;
+        }
+        if (Array.isArray(v)) {
+          return v.map((entry) => walk(entry, depth + 1));
+        }
+        if (v && typeof v === "object") {
+          const out: Record<string, unknown> = {};
+          for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
+            out[k] = walk(entry, depth + 1);
+          }
+          return out;
+        }
+        return v;
+      };
+
+      return { value: walk(value, 0), tagsToAdd: [...tagSet] };
+    },
   };
 }

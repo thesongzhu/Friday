@@ -505,30 +505,46 @@ export function createFridayMemoryGuardService(
         const contentBytes = byteLength(content);
         checkQuotaAndPrune(resolution.effectiveNamespace, contentBytes);
 
-        // 5. PII policy
+        // 5. PII policy — scan/redact content AND caller-supplied metadata + tags (the
+        // metadata/tags reach the store via the HTTP route, so they must be covered too).
         const piiResult = piiGuard.scanAndTransform(content);
+        const metadataRedaction = piiGuard.redactDeep(metadata?.metadata);
+        const tagRedaction = piiGuard.redactDeep(metadata?.tags ?? []);
+        const redactedMetadata = metadataRedaction.value as Record<string, unknown> | undefined;
+        const redactedTags = tagRedaction.value as string[];
+        const piiPresent =
+          piiResult.matches.length > 0
+          || metadataRedaction.tagsToAdd.length > 0
+          || tagRedaction.tagsToAdd.length > 0;
+        const allPiiTags = [
+          ...new Set([
+            ...piiResult.tagsToAdd,
+            ...metadataRedaction.tagsToAdd,
+            ...tagRedaction.tagsToAdd,
+          ]),
+        ];
         // PII_MODE is compile-time "tag" by default, but test the variable as a runtime
         // string to support re-configuration without code changes.
-        if (piiResult.matches.length > 0 && (FRIDAY_MEMORY_GUARD_PII_MODE as string) === "block") {
+        if (piiPresent && (FRIDAY_MEMORY_GUARD_PII_MODE as string) === "block") {
           throw new FridayDomainError(
             FRIDAY_MEMORY_GUARD_ERROR_CODES.PII_BLOCKED,
-            `content contains PII: ${piiResult.distinctTypes.join(", ")}`,
+            `content/metadata/tags contain PII: ${[...new Set([...piiResult.distinctTypes, ...allPiiTags.map((t) => t.split(".").at(-1) ?? t)])].join(", ")}`,
             { httpStatus: 400 },
           );
         }
 
-        // Merge PII tags
-        const existingTags = metadata?.tags ?? [];
-        const mergedTags = [...existingTags, ...piiResult.tagsToAdd.filter((t) => !existingTags.includes(t))];
+        // Merge PII tags (redacted tag strings + the discovered pii.* type tags)
+        const mergedTags = [...redactedTags, ...allPiiTags.filter((t) => !redactedTags.includes(t))];
 
         // Re-validate tag limits after PII merge (PII tags could push over count limits)
         if (mergedTags.length > 0) {
           validateTags(mergedTags);
         }
 
-        // 6. Delegate to core
+        // 6. Delegate to core — store redacted content, redacted metadata, redacted+tagged tags
         const item = await core.store(resolution.effectiveNamespace, piiResult.transformedContent, {
           ...metadata,
+          ...(metadata?.metadata !== undefined ? { metadata: redactedMetadata } : {}),
           tags: mergedTags.length > 0 ? mergedTags : metadata?.tags,
         });
 
