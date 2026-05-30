@@ -612,7 +612,7 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(compiledNode?.config).toEqual({ mapping: { message: "version two" } });
     });
 
-    it("normalizes top-level expression fields into step.args.transform before compilation", async () => {
+    it("normalizes a JSON-object expression string into runnable data-node mapping", async () => {
       mockFetchForLlm([
         makeRequirementsResponse("ready_for_generation"),
         makeTransformSpecResponseWithTopLevelExpression(),
@@ -644,13 +644,16 @@ describe("FridayWorkflowGeneratorService", () => {
 
       expect(result.mode).toBe("preview_ready");
       expect(result.draft).toBeDefined();
+      // A JSON-object expression STRING is rewritten to runnable `mapping`
+      // form (the prior `transform: '{"message":...}'` shape threw
+      // EXPRESSION_PARSE_ERROR at run; mapping literals pass through cleanly).
       expect(result.draft!.spec.steps[0]).toEqual({
         id: "output_version_two",
         type: "transform",
-        args: { transform: '{"message":"version two"}' },
+        args: { mapping: { message: "version two" } },
       });
       const compiledNode = result.draft!.compiledGraph.graph.nodes.find((node) => node.id === "output_version_two");
-      expect(compiledNode?.config).toEqual({ transform: '{"message":"version two"}' });
+      expect(compiledNode?.config).toEqual({ mapping: { message: "version two" } });
     });
 
     it("falls back to deterministic visual and tests when auxiliary LLM calls fail", async () => {

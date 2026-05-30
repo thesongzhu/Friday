@@ -160,4 +160,73 @@ describe("FridayExpressionEvaluator", () => {
   it("handles escaped quotes in strings", () => {
     expect(evaluator.exec('"hello \\"world\\""', ctx)).toBe('hello "world"');
   });
+
+  // ─── Arithmetic (added for workflow-gen transform reliability) ───
+
+  it("evaluates numeric addition (both operands numbers)", () => {
+    expect(evaluator.exec("2 + 3", ctx)).toBe(5);
+    expect(evaluator.exec("$inputs.count + 8", ctx)).toBe(50);
+  });
+
+  it("evaluates subtraction / multiplication / division / modulo", () => {
+    expect(evaluator.exec("10 - 4", ctx)).toBe(6);
+    expect(evaluator.exec("3 * 4", ctx)).toBe(12);
+    expect(evaluator.exec("15 / 4", ctx)).toBe(3.75);
+    expect(evaluator.exec("17 % 5", ctx)).toBe(2);
+    expect(evaluator.exec("$inputs.count * 2", ctx)).toBe(84);
+  });
+
+  it("honors arithmetic precedence and parentheses", () => {
+    expect(evaluator.exec("2 + 3 * 4", ctx)).toBe(14);
+    expect(evaluator.exec("(2 + 3) * 4", ctx)).toBe(20);
+    expect(evaluator.exec("20 - 4 - 6", ctx)).toBe(10); // left-associative
+  });
+
+  it("evaluates unary minus / negation", () => {
+    expect(evaluator.exec("-5", ctx)).toBe(-5);
+    expect(evaluator.exec("0 - $inputs.count", ctx)).toBe(-42);
+    expect(evaluator.exec("-$inputs.count", ctx)).toBe(-42);
+    expect(evaluator.exec("$inputs.count > -1", ctx)).toBe(true);
+  });
+
+  // The "+" coercion rule is EXPLICIT (advisor trap: JS "+" overload):
+  // numeric add ONLY when both operands are numbers; otherwise string concat.
+  it("'+' is numeric add for numbers but concat when a string is involved", () => {
+    expect(evaluator.exec("5 + 3", ctx)).toBe(8); // both numbers → add
+    expect(evaluator.exec('"5" + "3"', ctx)).toBe("53"); // both strings → concat
+    expect(evaluator.exec("'Hello, ' + $inputs.name", ctx)).toBe("Hello, Alice");
+    expect(evaluator.exec("$inputs.name + '!'", ctx)).toBe("Alice!");
+    expect(evaluator.exec("$inputs.name + ' is ' + $inputs.count", ctx)).toBe("Alice is 42");
+  });
+
+  it("concat treats null/undefined as empty (no literal 'null'/'undefined')", () => {
+    expect(evaluator.exec("$steps.missing.output.x + 'tail'", ctx)).toBe("tail");
+    expect(evaluator.exec("'head ' + $steps.missing.output.x", ctx)).toBe("head ");
+  });
+
+  // ─── Condition AST identity (arithmetic insertion must be transparent) ───
+
+  it("pure comparison parses to the SAME AST (no arithmetic wrapper nodes)", () => {
+    expect(evaluator.parse("$inputs.count == 42")).toEqual({
+      kind: "binary",
+      op: "==",
+      left: { kind: "ref", path: ["inputs", "count"] },
+      right: { kind: "literal", value: 42 },
+    });
+    // "!" stays looser than comparison: `!$a == $b` ⇒ `!($a == $b)`
+    expect(evaluator.parse("!$steps.check.output.valid == $steps.check.output.result")).toEqual({
+      kind: "unary",
+      op: "!",
+      operand: {
+        kind: "binary",
+        op: "==",
+        left: { kind: "ref", path: ["steps", "check", "output", "valid"] },
+        right: { kind: "ref", path: ["steps", "check", "output", "result"] },
+      },
+    });
+  });
+
+  it("arithmetic still respects max nesting depth (unary minus chain)", () => {
+    expect(() => evaluator.parse("-".repeat(40) + "5")).toThrow("EXPRESSION_DEPTH_EXCEEDED");
+  });
 });

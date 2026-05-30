@@ -18,14 +18,37 @@ export interface FridayExprRef {
 
 export interface FridayExprBinaryOp {
   kind: "binary";
-  op: "==" | "!=" | ">" | "<" | ">=" | "<=" | "&&" | "||";
+  op:
+    | "=="
+    | "!="
+    | ">"
+    | "<"
+    | ">="
+    | "<="
+    | "&&"
+    | "||"
+    // Arithmetic / string-concat. "+" does numeric addition ONLY when BOTH
+    // operands are typeof "number"; for ANY other operand (string, null,
+    // boolean, object) it string-concatenates (so null + 5 => "5", not 5 —
+    // deliberately NOT JS "+" semantics; the rule is one clear branch). "- * /
+    // %" always Number()-coerce both operands (like the ordering comparisons).
+    // NOTE: binary "-" needs surrounding spaces ("$a - $b"); "-" is also a
+    // valid ref-name char (hyphenated step IDs like $steps.s3-csv), so "$a-$b"
+    // parses as a ref, not subtraction.
+    | "+"
+    | "-"
+    | "*"
+    | "/"
+    | "%";
   left: FridayExprNode;
   right: FridayExprNode;
 }
 
 export interface FridayExprUnaryOp {
   kind: "unary";
-  op: "!";
+  // "!" logical negation (boolean, loose precedence); "-" numeric negation
+  // (tight precedence, binds below multiplicative).
+  op: "!" | "-";
   operand: FridayExprNode;
 }
 
