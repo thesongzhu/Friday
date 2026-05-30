@@ -219,13 +219,22 @@ export function resolveClosureVerdict(entries) {
   };
 }
 
+function entryId(entry) {
+  return String(entry?.id ?? entry?.stage ?? "");
+}
+
 export function resolveReadinessReport(entries, mode = "local") {
-  const localEntries = entries.filter(
-    (entry) => String(entry?.id ?? entry?.stage ?? "").startsWith("local."),
+  const localEntries = entries.filter((entry) => entryId(entry).startsWith("local."));
+  // The live deep-proof lane (`local.deep-proof.*`) is a live-LLM/provider signal and
+  // is inherently nondeterministic. It is reported on its own readiness tier and still
+  // counts toward `overall` (so a real failure is never hidden), but it is excluded from
+  // the deterministic `productReadyLocal` so live-lane flake cannot randomly pollute the
+  // deterministic local product verdict.
+  const deepProofEntries = localEntries.filter((entry) => entryId(entry).startsWith("local.deep-proof."));
+  const deterministicLocalEntries = localEntries.filter(
+    (entry) => !entryId(entry).startsWith("local.deep-proof."),
   );
-  const cloudEntries = entries.filter(
-    (entry) => String(entry?.id ?? entry?.stage ?? "").startsWith("cloud."),
-  );
+  const cloudEntries = entries.filter((entry) => entryId(entry).startsWith("cloud."));
   const repoBackstopEntry = entries.find((entry) => entry?.id === "local.backstop.release-verify");
   const overall = resolveClosureVerdict(entries).verdict;
 
@@ -234,7 +243,11 @@ export function resolveReadinessReport(entries, mode = "local") {
     repoReady: repoBackstopEntry
       ? readinessVerdictFromEntries([repoBackstopEntry])
       : FRIDAY_READINESS_VERDICTS.NOT_RUN,
-    productReadyLocal: readinessVerdictFromEntries(localEntries),
+    productReadyLocal: readinessVerdictFromEntries(deterministicLocalEntries),
+    liveDeepProofReady:
+      deepProofEntries.length > 0
+        ? readinessVerdictFromEntries(deepProofEntries)
+        : FRIDAY_READINESS_VERDICTS.NOT_RUN,
     cloudReady: readinessVerdictFromEntries(cloudEntries),
     overall,
   };

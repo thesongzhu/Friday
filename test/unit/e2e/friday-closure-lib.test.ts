@@ -113,6 +113,7 @@ describe("friday closure lib", () => {
       mode: "local",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
+      liveDeepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       overall: "GO",
     });
@@ -129,6 +130,7 @@ describe("friday closure lib", () => {
       mode: "all",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
+      liveDeepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       cloudReady: FRIDAY_READINESS_VERDICTS.NO_GO,
       overall: "NO-GO",
     });
@@ -151,8 +153,46 @@ describe("friday closure lib", () => {
       mode: "local",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.NO_GO,
+      liveDeepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       overall: "NO-GO",
+    });
+  });
+
+  it("decouples the live deep-proof lane from the deterministic local product verdict", () => {
+    // A live deep-proof FAIL must NOT pollute repoReady or the deterministic
+    // productReadyLocal, but MUST surface on its own tier and still drive overall NO-GO
+    // (never hidden).
+    const readiness = resolveReadinessReport([
+      { id: "local.backstop.release-verify", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.workflows.generator", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.deep-proof.live", status: FRIDAY_CLOSURE_STATUSES.FAIL },
+    ], "local");
+
+    expect(readiness).toEqual({
+      mode: "local",
+      repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
+      liveDeepProofReady: FRIDAY_READINESS_VERDICTS.NO_GO,
+      cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
+      overall: "NO-GO",
+    });
+  });
+
+  it("reports Live Deep-Proof GO and overall GO when the live lane and repo-health both pass", () => {
+    const readiness = resolveReadinessReport([
+      { id: "local.backstop.release-verify", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.workflows.generator", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.deep-proof.live", status: FRIDAY_CLOSURE_STATUSES.PASS },
+    ], "local");
+
+    expect(readiness).toEqual({
+      mode: "local",
+      repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
+      liveDeepProofReady: FRIDAY_READINESS_VERDICTS.GO,
+      cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
+      overall: "GO",
     });
   });
 

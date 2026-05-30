@@ -30,6 +30,26 @@ const CLOUD_ONLY = process.argv.includes("--cloud-only");
 const CLOUD_CLOSURE_ENABLED = process.env.FRIDAY_E2E_CLOUD_ENABLED === "1";
 const SKIP_INSTALL = process.argv.includes("--skip-install") || process.env.FRIDAY_CLOSURE_SKIP_INSTALL === "1";
 const SKIP_BACKSTOP = process.argv.includes("--skip-backstop") || process.env.FRIDAY_CLOSURE_SKIP_BACKSTOP === "1";
+// Deep-proof gate flags (mirror of test/e2e/live/_helpers/deep-proof-env.ts). The
+// release-verify backstop must run with the gate CLOSED so its `npm test` exercises
+// only the deterministic repo-health lane (matches CI, which sets no live flags); the
+// live deep-proof suite is run as a SEPARATE, independently-reported required step so a
+// real live failure is never hidden but live-LLM/provider flake never randomly pollutes
+// the deterministic repo-health verdict.
+const DEEP_PROOF_LANE_FLAGS = [
+  "FRIDAY_E2E_LIVE_ANTHROPIC",
+  "FRIDAY_E2E_LIVE_DEEPSEEK",
+  "FRIDAY_E2E_LIVE_OPENAI",
+  "FRIDAY_E2E_LIVE_OLLAMA",
+];
+// Closing the gate only requires neutralizing the lane flags (readFlag === "1").
+const DEEP_PROOF_GATE_CLOSED_ENV = Object.freeze(
+  Object.fromEntries(DEEP_PROOF_LANE_FLAGS.map((flag) => [flag, ""])),
+);
+// The gate is "open" iff exactly one lane flag is set — same single-lane rule the
+// deep-proof helper enforces. Only then is a live deep-proof run meaningful.
+const DEEP_PROOF_GATE_OPEN =
+  DEEP_PROOF_LANE_FLAGS.filter((flag) => process.env[flag] === "1").length === 1;
 const LOCAL_PASSPHRASE = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE
   ?? process.env.FRIDAY_LOCAL_PASSPHRASE
   ?? "friday-closure-passphrase-123";
@@ -565,6 +585,9 @@ function formatReadinessReport(readiness) {
     if (readiness.repoReady !== "NOT_RUN") {
       lines.push(`Repo Ready: ${readiness.repoReady}`);
     }
+    if (readiness.liveDeepProofReady && readiness.liveDeepProofReady !== "NOT_RUN") {
+      lines.push(`Live Deep-Proof: ${readiness.liveDeepProofReady}`);
+    }
     return lines.join("\n");
   }
 
@@ -575,6 +598,9 @@ function formatReadinessReport(readiness) {
 
   lines.push(`Repo Ready: ${readiness.repoReady}`);
   lines.push(`Product Ready (Local): ${readiness.productReadyLocal}`);
+  if (readiness.liveDeepProofReady && readiness.liveDeepProofReady !== "NOT_RUN") {
+    lines.push(`Live Deep-Proof: ${readiness.liveDeepProofReady}`);
+  }
   lines.push(`Cloud Ready: ${readiness.cloudReady}`);
   lines.push(`Overall: ${readiness.overall}`);
   return lines.join("\n");
@@ -2702,7 +2728,7 @@ async function runLocalStage(ledger) {
       await runStep(ledger, {
         id: "local.backstop.release-verify",
         stage: `${stage}.backstop`,
-        description: "Run npm run release:verify:repo as a closure backstop",
+        description: "Run npm run release:verify:repo as a deterministic repo-health backstop (deep-proof gate closed)",
       }, async () => {
         const result = await runCommand({
           id: "local.backstop.release-verify",
@@ -2710,6 +2736,11 @@ async function runLocalStage(ledger) {
           description: "npm run release:verify:repo",
           command: "npm",
           args: ["run", "release:verify:repo"],
+          // Close the deep-proof gate so `npm test` inside release:verify:repo runs
+          // the deterministic repo-health lane only and skips the live deep-proof
+          // suite — this is what makes the backstop deterministic (matches CI) and
+          // stops live-lane load from flaking unrelated unit tests under concurrency.
+          env: DEEP_PROOF_GATE_CLOSED_ENV,
           logPath: path.join(ledger.paths.logs, "local-backstop-release-verify.log"),
           timeoutMs: 1_800_000,
         });
@@ -2718,6 +2749,37 @@ async function runLocalStage(ledger) {
         }
         return { evidence: { logPath: result.logPath } };
       });
+
+      // Separate, independently-reported live deep-proof lane. Runs only when the
+      // deep-proof gate is open (keyed closure). It exercises exactly the live suite
+      // the backstop used to conflate, in isolation (less concurrency pressure), and is
+      // a REQUIRED signal — a real failure still makes `overall` NO-GO — but it is
+      // reported on its own `Live Deep-Proof` readiness tier so its live-LLM/provider
+      // nondeterminism does not pollute the deterministic repo-health verdict.
+      if (DEEP_PROOF_GATE_OPEN) {
+        await runStep(ledger, {
+          id: "local.deep-proof.live",
+          stage: `${stage}.deep-proof`,
+          description: "Run the live deep-proof e2e suite (gate open) as a separate live-provider signal",
+        }, async () => {
+          const result = await runCommand({
+            id: "local.deep-proof.live",
+            stage: `${stage}.deep-proof`,
+            description: "npm run test:deep-proof:live",
+            command: "npm",
+            args: ["run", "test:deep-proof:live"],
+            logPath: path.join(ledger.paths.logs, "local-deep-proof-live.log"),
+            timeoutMs: 1_800_000,
+          });
+          if (result.code !== 0) {
+            throw new Error(`live deep-proof suite failed with code ${String(result.code)}`);
+          }
+          return {
+            evidence: { logPath: result.logPath },
+            details: { classification: "live-provider" },
+          };
+        });
+      }
     }
   } finally {
     const cleanupErrors = await cleanupRegistry.run();
