@@ -5,6 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { apiFetch } from "./_helpers/api.js";
 import {
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   ensureFridayDeepProofProviders,
@@ -13,6 +17,16 @@ import {
   FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+// The generated-skill candidate-staging approve route is gated by the canonical
+// approval gate (since the B0 carve-out). Drive the REAL approved path: take the
+// gate's computed actionDigest from the requires-approval response and return a
+// properly signed canonical approval bound to that exact digest. The hub is given
+// this same secret as its tokenSecret so the signature verifies. This does NOT
+// weaken the gate — an unsigned/forged/mismatched approval is still rejected.
+const SKILL_GENERATOR_SIGNING_MATERIAL =
+  "generator-maintenance-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface SkillGeneratorSessionEnvelope {
   ok: boolean;
@@ -326,12 +340,44 @@ async function approveSkillDraft(
   env: RealHubEnv,
   sessionId: string,
 ): Promise<SkillGeneratorApproveEnvelope["data"]> {
-  const approveRes = await apiFetch<SkillGeneratorApproveEnvelope>(
+  // Step 1: probe the canonical-approval gate (no approval) and read the
+  // gate-computed actionDigest from the requires-approval (403) response.
+  const gateProbe = await apiFetch<{
+    ok: boolean;
+    error?: { code?: string; details?: { canonicalGate?: { actionDigest?: string } } };
+  }>(
     env.baseUrl,
     env.accessToken,
     "POST",
     `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/approve`,
     undefined,
+    { timeoutMs: 240_000 },
+  );
+  expect(gateProbe.status).toBe(403);
+  expect(gateProbe.json.error?.code).toBe("SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED");
+  const actionDigest = gateProbe.json.error?.details?.canonicalGate?.actionDigest;
+  expect(typeof actionDigest).toBe("string");
+
+  // Step 2: build a properly signed canonical approval bound to that exact digest
+  // (the hub was given SKILL_GENERATOR_SIGNING_MATERIAL as its tokenSecret).
+  const canonicalApproval: FridayCanonicalApprovalResolution = signFridayCanonicalApproval(
+    {
+      decision: "approved",
+      approvalId: "generator-maintenance-live-stage",
+      decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+      actionDigest: actionDigest!,
+      expiresAt: "2027-05-07T00:00:00.000Z",
+    },
+    SKILL_GENERATOR_SIGNING_MATERIAL,
+  );
+
+  // Step 3: approve with the signed canonical approval — the real approved path.
+  const approveRes = await apiFetch<SkillGeneratorApproveEnvelope>(
+    env.baseUrl,
+    env.accessToken,
+    "POST",
+    `/v1/skills/generator/sessions/${encodeURIComponent(sessionId)}/approve`,
+    { canonicalApproval },
     { timeoutMs: 240_000 },
   );
   expect(approveRes.status).toBe(200);
@@ -402,7 +448,9 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Generator Maintenance Live (${
   const generatedSkillDirs = new Set<string>();
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
+    env = await createFridayDeepProofHubEnv({
+      hubConfig: { tokenSecret: SKILL_GENERATOR_SIGNING_MATERIAL },
+    });
     await ensureGeneratorMaintenanceDeepProofProviders(env);
   }, 120_000);
 
