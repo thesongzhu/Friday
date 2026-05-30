@@ -1013,6 +1013,29 @@ async function startSkillGenerator(baseUrl, token, userId, model) {
     timeoutMs: 300_000,
   });
 
+  // The generated-skill approve route now requires a canonical approval and
+  // returns 403 SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED (reason
+  // canonical_approval_required). That gate is working as designed: surface it
+  // as a verified proof-of-safety terminal state instead of throwing. We do NOT
+  // forge, sign, or auto-mint a canonical approval here.
+  const approvalCode = approval.json?.error?.code;
+  const approvalReason = approval.json?.error?.details?.canonicalGate?.decision
+    ?? approval.json?.error?.details?.reason;
+  const gateBlocked = approval.status === 403
+    && (approvalCode === "SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED"
+      || approvalReason === "canonical_approval_required"
+      || approvalReason === "requires_approval");
+  if (gateBlocked) {
+    return {
+      sessionId,
+      draft: generation.json.data?.draft,
+      test: test.json.data,
+      evidence: evidence.json.data,
+      gateBlocked: true,
+      approvalError: approval.json,
+    };
+  }
+
   if (approval.status !== 200 || !approval.json.ok) {
     throw new Error(`Skill generator approve failed: ${JSON.stringify(approval.json)}`);
   }
@@ -1026,7 +1049,7 @@ async function startSkillGenerator(baseUrl, token, userId, model) {
   };
 }
 
-async function startWorkflowGenerator(baseUrl, token, model) {
+async function startWorkflowGenerator(baseUrl, token, userId, model) {
   const attemptErrors = [];
   const attemptRecords = [];
 
@@ -1034,7 +1057,7 @@ async function startWorkflowGenerator(baseUrl, token, model) {
     const attemptRecord = { attempt };
     const start = await apiFetch(baseUrl, token, "POST", "/v1/workflows/generator/sessions", {
       goal: "A simple manual trigger workflow with one data node that outputs hello world",
-      userId: "closure-user",
+      userId,
       channel: "closure",
       requestedModel: model,
     }, { timeoutMs: 300_000 });
@@ -1292,7 +1315,17 @@ async function runLocalStage(ledger) {
     return;
   }
 
-  makeScratchWorkflowSkill(path.join(ledger.paths.skills, "closure-workflow-template"));
+  // Build a single closure-owned "bundled" skills root so slot-0 (the only
+  // origin the server auto-installs as `bundled`) carries the first-party
+  // starter catalog (skills/, including review-open-issues), the managed
+  // skills (managed-skills/, including output-current-date-time), AND the
+  // closure-workflow-template fixture. It is placed at the ledger root as a
+  // sibling of ledger.paths.skills (NOT nested inside it, which is slot-1).
+  const bundledSkillsDir = path.join(ledger.paths.root, "bundled-skills");
+  ensureDir(bundledSkillsDir);
+  fs.cpSync(path.join(REPO_ROOT, "skills"), bundledSkillsDir, { recursive: true });
+  fs.cpSync(path.join(REPO_ROOT, "managed-skills"), bundledSkillsDir, { recursive: true });
+  makeScratchWorkflowSkill(path.join(bundledSkillsDir, "closure-workflow-template"));
 
   const port = await findFreePort();
   const fridayEnv = buildClosureScratchEnv(process.env, ledger.paths);
@@ -1305,7 +1338,7 @@ async function runLocalStage(ledger) {
     "--port",
     String(port),
     "--skills-dir",
-    path.join(REPO_ROOT, "managed-skills"),
+    bundledSkillsDir,
     "--skills-dir",
     ledger.paths.skills,
   ], {
@@ -1377,7 +1410,7 @@ async function runLocalStage(ledger) {
         stage: `${stage}.cli`,
         description: "friday list",
         command: process.execPath,
-        args: [DIST_CLI, "list", "--skills-dir", path.join(REPO_ROOT, "managed-skills"), "--skills-dir", ledger.paths.skills],
+        args: [DIST_CLI, "list", "--skills-dir", bundledSkillsDir, "--skills-dir", ledger.paths.skills],
         logPath: path.join(ledger.paths.logs, "local-cli-list.log"),
         env: fridayEnv,
         timeoutMs: 30_000,
@@ -1529,18 +1562,20 @@ async function runLocalStage(ledger) {
         env: fridayEnv,
         timeoutMs: 30_000,
       });
+      // `friday import` is PREVIEW-ONLY by design: it refuses to stage a
+      // candidate (canonical approval is required) and exits 1 on the success
+      // path. The `--target`/`--no-refresh`/`--replace` flags are RETIRED, so
+      // we drop them and evaluate the refusal with a dedicated proof-of-safety
+      // assertion below (NOT through the generic non-zero-exit failure loop).
       const importRun = await runCommand({
         id: "local.cli.import",
         stage: `${stage}.cli`,
-        description: "friday import",
+        description: "friday import (preview-only refusal proof)",
         command: process.execPath,
         args: [
           DIST_CLI,
           "import",
           packedSkill,
-          "--target",
-          importTarget,
-          "--no-refresh",
         ],
         logPath: path.join(ledger.paths.logs, "local-cli-import.log"),
         env: fridayEnv,
@@ -1565,10 +1600,37 @@ async function runLocalStage(ledger) {
         timeoutMs: 30_000,
       });
 
-      for (const result of [convert, pack, importRun, runSkill]) {
+      // convert/pack/run still expect a clean exit; import is evaluated
+      // separately as a preview-only refusal proof (excluded here).
+      for (const result of [convert, pack, runSkill]) {
         if (result.code !== 0) {
           throw new Error(describeCommandFailure(result));
         }
+      }
+
+      // Dedicated proof-of-safety assertion for `friday import`. The refusal is
+      // verified only when ALL hold: exit code === 1, the import log carries the
+      // two canonical refusal markers, and no candidate was staged into the
+      // import target (the dir is absent or empty). We must NOT make import exit
+      // 0 or write to a target — that would restore a canonical-gate bypass.
+      const importOutput = importRun.output ?? "";
+      const importHasBlockedMarker = importOutput.includes("Candidate staging blocked");
+      const importHasNoCandidateMarker = importOutput.includes(
+        "No candidate was written, installed, promoted, or made available",
+      );
+      const importTargetStaged = fs.existsSync(importTarget)
+        && fs.readdirSync(importTarget).length > 0;
+      const importRefusalVerified = importRun.code === 1
+        && importHasBlockedMarker
+        && importHasNoCandidateMarker
+        && !importTargetStaged;
+      if (!importRefusalVerified) {
+        throw new Error(
+          `friday import did not produce a verified canonical-gate refusal: `
+          + `exitCode=${String(importRun.code)} blockedMarker=${String(importHasBlockedMarker)} `
+          + `noCandidateMarker=${String(importHasNoCandidateMarker)} targetStaged=${String(importTargetStaged)} `
+          + `(log: ${importRun.logPath})`,
+        );
       }
 
       return {
@@ -1578,6 +1640,11 @@ async function runLocalStage(ledger) {
           importLogPath: importRun.logPath,
           runLogPath: runSkill.logPath,
           packedSkill,
+        },
+        details: {
+          importRefusalVerified: true,
+          importExitCode: importRun.code,
+          importTargetStaged,
         },
       };
     });
@@ -1660,14 +1727,38 @@ async function runLocalStage(ledger) {
     await runStep(ledger, {
       id: "local.skills.generator",
       stage: `${stage}.skills`,
-      description: "Generate, approve, and persist a skill through Friday's public generator API",
+      description: "Drive the public skill generator up to the canonical-approval gate and prove it refuses to stage a candidate",
     }, async () => {
       const result = await startSkillGenerator(baseUrl, token, principalUserId, closureProvider.generationModel);
       const responsePath = writeResponseEvidence(ledger.paths, "local-skills-generator", result);
+      // PASS only as a verified proof-of-safety: the generator must produce an
+      // approval-ready draft (self-test + evidence already asserted above) and
+      // then the approve route must REFUSE with the canonical-approval gate so
+      // that NO candidate is staged or installed. We do NOT mint an approval.
+      const gateCode = result.approvalError?.error?.code ?? null;
+      if (result.gateBlocked !== true) {
+        throw new Error(
+          `Skill generator approve was expected to be blocked by the canonical-approval gate but was not (evidence: ${responsePath})`,
+        );
+      }
+      const expectedGateCode = "SKILL_GENERATOR_CANDIDATE_APPROVAL_REQUIRED";
+      if (gateCode !== expectedGateCode) {
+        throw new Error(
+          `Skill generator gate refusal returned unexpected error code ${String(gateCode)} (expected ${expectedGateCode}) (evidence: ${responsePath})`,
+        );
+      }
+      // No candidate may have been staged/installed when the gate refuses.
+      if (result.approval?.skillId) {
+        throw new Error(
+          `Skill generator staged a candidate despite the canonical-approval gate (skillId=${String(result.approval.skillId)}) (evidence: ${responsePath})`,
+        );
+      }
       return {
         evidence: { responsePath },
         details: {
-          skillId: result.approval?.skillId ?? null,
+          gateBlocked: true,
+          gateCode,
+          skillId: null,
         },
       };
     });
@@ -1678,7 +1769,7 @@ async function runLocalStage(ledger) {
       description: "Generate, approve, and run a workflow through Friday's public workflow generator API",
     }, async () => {
       try {
-        workflowGeneratorResult = await startWorkflowGenerator(baseUrl, token, closureProvider.generationModel);
+        workflowGeneratorResult = await startWorkflowGenerator(baseUrl, token, principalUserId, closureProvider.generationModel);
       } catch (error) {
         const responsePath = writeResponseEvidence(ledger.paths, "local-workflows-generator-failure", {
           attempts: error?.closureAttempts ?? [],
@@ -2065,7 +2156,14 @@ async function runLocalStage(ledger) {
         installPath: pluginRoot,
         userApproved: true,
       });
-      const enable = await apiFetch(baseUrl, token, "POST", `/v1/plugins/${manifest.id}/enable`, {});
+      // Plugin enable requires external lifecycle promotion; the raw
+      // POST /v1/plugins/:id/enable returns PLUGIN_LIFECYCLE_PROMOTION_REQUIRED.
+      // Use the approved review-enable lifecycle route, which performs the
+      // promotion and returns the active, compatible plugin payload. We do NOT
+      // also call the raw /enable afterward (that would hit ALREADY_ENABLED).
+      const enable = await apiFetch(baseUrl, token, "POST", `/v1/autonomy/plugins/${manifest.id}/review-enable`, {
+        providerModel: closureProvider.generationModel,
+      });
       const disable = await apiFetch(baseUrl, token, "POST", `/v1/plugins/${manifest.id}/disable`, {});
       const uninstall = await apiFetch(baseUrl, token, "DELETE", `/v1/plugins/${manifest.id}`);
       const responsePath = writeResponseEvidence(ledger.paths, "local-plugins-lifecycle", {
@@ -2077,8 +2175,15 @@ async function runLocalStage(ledger) {
       if (install.status !== 200 || !install.json.ok) {
         throw new Error(`Plugin install failed: ${JSON.stringify(install.json)}`);
       }
-      if (enable.status !== 200 || !enable.json.ok) {
-        throw new Error(`Plugin enable failed: ${JSON.stringify(enable.json)}`);
+      const enabledPlugin = enable.json?.data?.plugin;
+      if (
+        enable.status !== 200
+        || !enable.json.ok
+        || enabledPlugin?.enabled !== true
+        || enabledPlugin?.promotionChannel !== "active"
+        || enabledPlugin?.compatibilityStatus !== "compatible"
+      ) {
+        throw new Error(`Plugin review-enable did not promote to active/compatible: ${JSON.stringify(enable.json)}`);
       }
       if (disable.status !== 200 || !disable.json.ok) {
         throw new Error(`Plugin disable failed: ${JSON.stringify(disable.json)}`);
@@ -2439,10 +2544,13 @@ async function runLocalStage(ledger) {
       }
 
       const configActionId = configIncident.action.summary.actionId;
+      // The auto-fix execute already auto-runs rollback for this
+      // diagnostic-only config action, leaving the action `rolled_back`. We do
+      // NOT issue a second explicit rollback POST (it would fail with
+      // AUTOFIX_ACTION_INVALID_STATUS) and we do NOT relax any product rollback
+      // guard or fail-closed behavior — we simply assert execute auto-closed
+      // the rollback below.
       const execute = await apiFetch(baseUrl, token, "POST", `/v1/auto-fix/actions/${configActionId}/execute`, {});
-      const rollback = await apiFetch(baseUrl, token, "POST", `/v1/auto-fix/actions/${configActionId}/rollback`, {
-        reason: "Closure rollback path validation",
-      });
       const actionDetail = await apiFetch(baseUrl, token, "GET", `/v1/auto-fix/actions/${configActionId}`);
       const metrics = await apiFetch(baseUrl, token, "GET", "/v1/auto-fix/metrics");
       const responsePath = writeResponseEvidence(ledger.paths, "local-self-healing", {
@@ -2467,7 +2575,6 @@ async function runLocalStage(ledger) {
         deny: deny.json,
         approve: approve.json,
         execute: execute.json,
-        rollback: rollback.json,
         actionDetail: actionDetail.json,
       });
       if (approve.status !== 200 || !approve.json.ok) {
@@ -2479,11 +2586,14 @@ async function runLocalStage(ledger) {
       if (unexpectedPostDenyDeployProbeStatuses.length > 0) {
         throw new Error(`Post-deny workflow incident probes returned unexpected statuses: ${unexpectedPostDenyDeployProbeStatuses.join(", ")}`);
       }
-      if (execute.status !== 200 || !execute.json.ok) {
-        throw new Error(`Auto-fix execute failed: ${JSON.stringify(execute.json)}`);
-      }
-      if (rollback.status !== 200 || !rollback.json.ok) {
-        throw new Error(`Auto-fix rollback failed: ${JSON.stringify(rollback.json)}`);
+      // Accept the execute call's auto-rollback as the verified closed state:
+      // HTTP 2xx AND either the action fully succeeded or rollback was attempted
+      // and succeeded. The execute envelope is { ok, data: { action, result } }.
+      const executeResult = execute.json?.data?.result;
+      const executeRolledBackClosed = executeResult?.success === true
+        || (executeResult?.rollbackAttempted === true && executeResult?.rollbackSucceeded === true);
+      if (execute.status < 200 || execute.status >= 300 || !execute.json.ok || !executeRolledBackClosed) {
+        throw new Error(`Auto-fix execute did not close with success/auto-rollback: ${JSON.stringify(execute.json)}`);
       }
       return {
         evidence: { responsePath },
