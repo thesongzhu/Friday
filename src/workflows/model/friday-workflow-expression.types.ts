@@ -18,14 +18,32 @@ export interface FridayExprRef {
 
 export interface FridayExprBinaryOp {
   kind: "binary";
-  op: "==" | "!=" | ">" | "<" | ">=" | "<=" | "&&" | "||";
+  op:
+    | "=="
+    | "!="
+    | ">"
+    | "<"
+    | ">="
+    | "<="
+    | "&&"
+    | "||"
+    // Arithmetic / string-concat. "+" is JS-like (numeric add when both
+    // operands are numbers, else string concat); "- * / %" Number()-coerce
+    // both operands (consistent with the ordering comparison operators).
+    | "+"
+    | "-"
+    | "*"
+    | "/"
+    | "%";
   left: FridayExprNode;
   right: FridayExprNode;
 }
 
 export interface FridayExprUnaryOp {
   kind: "unary";
-  op: "!";
+  // "!" logical negation (boolean, loose precedence); "-" numeric negation
+  // (tight precedence, binds below multiplicative).
+  op: "!" | "-";
   operand: FridayExprNode;
 }
 

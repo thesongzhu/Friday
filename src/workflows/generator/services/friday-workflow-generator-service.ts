@@ -324,6 +324,27 @@ function normalizeGeneratedTests(
   return normalized.length > 0 ? normalized : buildFallbackTests(spec);
 }
 
+// Returns the parsed value iff `value` is a string that JSON-parses to a plain
+// (non-null, non-array) object; otherwise undefined. Used to rewrite a
+// JSON-object-literal `transform` string into runnable `mapping` form. Refs
+// (`$x`), arithmetic (`$a + $b`), and bare literals are not valid JSON and
+// return undefined (left as a `transform` for the expression evaluator).
+function tryParseJsonObjectTransform(value: string): Record<string, unknown> | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Not JSON (a ref/arithmetic/expression) — leave as a transform.
+  }
+  return undefined;
+}
+
 function normalizeGeneratedSpecStep(
   step: FridayWorkflowSpecStep,
 ): FridayWorkflowSpecStep {
@@ -363,6 +384,24 @@ function normalizeGeneratedSpecStep(
   ) {
     normalizedArgs.mapping = normalizedArgs.transform;
     delete normalizedArgs.transform;
+  }
+  // A `transform` STRING that is a JSON object literal (e.g.
+  // `'{"message":"version two"}'`) is NOT executable by the data-node
+  // expression evaluator (which evaluates a single expression, not an object
+  // literal). The runnable representation is `config.mapping`, whose values go
+  // through resolveArgs (literals pass through; `$`-prefixed values are
+  // evaluated). Rewrite it to mapping form so it RUNS instead of throwing
+  // EXPRESSION_PARSE_ERROR at execution. Refs/arithmetic strings (not valid
+  // JSON) are left untouched and handled by the evaluator.
+  if (
+    typeof normalizedArgs.transform === "string" &&
+    normalizedArgs.mapping === undefined
+  ) {
+    const parsedObject = tryParseJsonObjectTransform(normalizedArgs.transform);
+    if (parsedObject !== undefined) {
+      normalizedArgs.mapping = parsedObject;
+      delete normalizedArgs.transform;
+    }
   }
 
   return {
