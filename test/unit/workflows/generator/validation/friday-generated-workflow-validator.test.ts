@@ -324,6 +324,78 @@ describe("FridayGeneratedWorkflowValidator", () => {
     expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_MISSING_MAPPING")).toBe(true);
   });
 
+  function compileWithDataNodeConfig(config: Record<string, unknown>): void {
+    const mockComp = mockCompiler as { compile: ReturnType<typeof vi.fn> };
+    mockComp.compile.mockReturnValue({
+      schemaVersion: "2.0" as const,
+      workflowId: "test-wf",
+      workflowVersionId: "v-1",
+      sourceSpecSchemaVersion: "1.0" as const,
+      graph: {
+        nodes: [
+          { id: "__trigger__", type: "trigger" as const, label: "Trigger", config: {} },
+          { id: "output_step", type: "data" as const, label: "output_step", config },
+        ],
+        edges: [{ id: "e-1", sourceNodeId: "__trigger__", targetNodeId: "output_step" }],
+      },
+      failurePolicy: { onFailure: "fail_fast" as const, notifyUser: false },
+      tests: [],
+      checksum: "graph-data-expr",
+    });
+  }
+
+  function validateDataNode() {
+    return validator.validate({
+      spec: makeSpec({
+        startStepId: "output_step",
+        steps: [{ id: "output_step", type: "transform", args: {} }],
+        outputs: [{ key: "result", fromStep: "output_step", path: "message" }],
+      }),
+      visual: makeVisual({
+        nodes: [
+          { nodeId: "__trigger__", x: 100, y: 100 },
+          { nodeId: "output_step", x: 350, y: 100 },
+        ],
+      }),
+      tests: makeTests(),
+    });
+  }
+
+  // The data-node executor exec()'s config.transform and $-prefixed mapping
+  // values; an unparseable expression (e.g. `sum(...)` instead of `$sum(...)`)
+  // passes the old presence-only check then explodes at run with
+  // EXPRESSION_PARSE_ERROR. The validator must catch it pre-approval.
+  it("rejects a data node whose config.transform has an invalid expression", () => {
+    createValidator();
+    compileWithDataNodeConfig({ transform: "sum(1, 2)" });
+    const result = validateDataNode();
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_EXPRESSION_PARSE_ERROR")).toBe(true);
+  });
+
+  it("rejects a data node whose $-prefixed mapping value has an invalid expression", () => {
+    createValidator();
+    compileWithDataNodeConfig({ mapping: { total: "$a + + b" } });
+    const result = validateDataNode();
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_EXPRESSION_PARSE_ERROR")).toBe(true);
+  });
+
+  it("does NOT flag valid expressions or literal mapping strings (no false positive)", () => {
+    createValidator();
+    // valid $-ref (parses; unresolved at runtime is fine), and a literal string
+    // that the executor never evaluates (does not start with $) must be ignored.
+    compileWithDataNodeConfig({ mapping: { total: "$steps.a.value", label: "hello world" } });
+    const result = validateDataNode();
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_EXPRESSION_PARSE_ERROR")).toBe(false);
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_MISSING_MAPPING")).toBe(false);
+  });
+
+  it("does NOT flag a valid config.transform expression", () => {
+    createValidator();
+    compileWithDataNodeConfig({ transform: "$steps.a.value" });
+    const result = validateDataNode();
+    expect(result.issues.some((i) => i.code === "GRAPH_DATA_NODE_EXPRESSION_PARSE_ERROR")).toBe(false);
+  });
+
   it("spec with missing startStepId produces error", () => {
     createValidator();
     const spec = makeSpec({ startStepId: "nonexistent" });

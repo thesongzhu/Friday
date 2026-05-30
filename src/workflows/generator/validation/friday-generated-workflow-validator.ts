@@ -12,6 +12,7 @@ import {
   getFridayWorkflowStepIdFormatMessage,
   isFridayWorkflowStepIdExpressionSafe,
 } from "../../utils/friday-workflow-step-id.js";
+import { createFridayExpressionEvaluator } from "../../engine/friday-workflow-expression-evaluator.js";
 
 // ─── Interface ───
 
@@ -315,6 +316,27 @@ export function createFridayGeneratedWorkflowValidator(
       // ─── Graph validation (if compiled) ───
 
       if (compiledGraph) {
+        // Pure-syntax parser shared across data nodes. parse() tokenizes +
+        // parses WITHOUT evaluating, so valid-but-unresolved refs (e.g.
+        // $steps.x) pass — only true syntax errors throw. This catches the
+        // runtime EXPRESSION_PARSE_ERROR class (e.g. `sum(...)` instead of
+        // `$sum(...)`) at validation time so the generator repair loop can
+        // relay it, instead of approving a workflow that explodes at run.
+        const expressionEvaluator = createFridayExpressionEvaluator();
+        const parseCheck = (expr: string, nodeId: string, where: string): void => {
+          try {
+            expressionEvaluator.parse(expr);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            issues.push({
+              code: "GRAPH_DATA_NODE_EXPRESSION_PARSE_ERROR",
+              stage: "graph",
+              severity: "error",
+              message: `Data node "${nodeId}" ${where} has an invalid expression: ${message}`,
+              stepId: nodeId,
+            });
+          }
+        };
         for (const node of compiledGraph.graph.nodes) {
           if (node.type !== "data") {
             continue;
@@ -328,6 +350,21 @@ export function createFridayGeneratedWorkflowValidator(
               message: `Data node "${node.id}" must define config.mapping or config.transform`,
               stepId: node.id,
             });
+            continue;
+          }
+          // `config.transform` is always exec()'d by the data-node executor.
+          if (typeof config.transform === "string") {
+            parseCheck(config.transform, node.id, "config.transform");
+          }
+          // `config.mapping` values are exec()'d ONLY when they are strings that
+          // start with "$" (mirror of resolveArgs in the node executor); literal
+          // strings pass through unevaluated, so we must not parse-check them.
+          if (config.mapping && typeof config.mapping === "object") {
+            for (const [key, value] of Object.entries(config.mapping as Record<string, unknown>)) {
+              if (typeof value === "string" && value.startsWith("$")) {
+                parseCheck(value, node.id, `config.mapping.${key}`);
+              }
+            }
           }
         }
 
