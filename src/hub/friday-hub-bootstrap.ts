@@ -7647,6 +7647,13 @@ export async function createFridayHub(
 
     const autonomousRepo = createFridayAutonomousRepository();
     autonomousEngine = createFridayAutonomousEngine({
+      // Anchor the autonomous engine's deterministic file verifier to the same
+      // workspace root the agent write/edit tools use (createFridayAgentToolRegistry
+      // workdir above). Without this the engine fell back to process.cwd() and
+      // rejected files the agent legitimately wrote under the hub workspace as
+      // "Path is outside the autonomous workspace root", breaking autonomous
+      // file ops (self-repair, office-task writes) and the restart-resume proof.
+      workspaceRoot,
       agentRuntime: {
         executeRun: (params) =>
           agentRuntime.executeRun({
