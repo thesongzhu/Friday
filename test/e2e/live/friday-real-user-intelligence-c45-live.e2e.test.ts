@@ -50,7 +50,10 @@ interface FridayC45Answer {
       correctedValueUsd: number;
       resolution: string;
     }>;
-    missingValueTreatment: string;
+    // DeepSeek (and other models) sometimes return this as a structured object
+    // (e.g. {issue, action}) rather than a flat string. Keep it permissive and
+    // let the validator coerce/search it, instead of breaking on shape.
+    missingValueTreatment: unknown;
   };
   sourceRefs: Record<string, string[]>;
   generatedDeck: {
@@ -340,7 +343,19 @@ function validateAnswer(answer: FridayC45Answer): Record<string, boolean> {
     growthPctCorrect: Math.abs(answer.extraction.q2GrowthPct - 10.303) < 0.05,
     topEngagementCorrect: /mar/i.test(answer.extraction.topEngagementMonth)
       && answer.extraction.topEngagementValue === 9_100,
-    missingValueExcluded: /missing|exclude|excluded|not included/i.test(answer.extraction.missingValueTreatment),
+    missingValueExcluded: ((): boolean => {
+      // The model demonstrably excludes the missing Partnerships amount when
+      // h1MarketingTotalUsd === 347000 (Ads + Events only). This check verifies
+      // the model also *explained* that treatment in `missingValueTreatment`.
+      // Coerce object-shaped answers (e.g. {issue, action}) to text before
+      // searching, and accept exclusion/omission wording (incl. common
+      // bilingual terms) — previously the regex ran against String(object) =
+      // "[object Object]" and spuriously failed on correct, structured output.
+      const treatment = answer.extraction.missingValueTreatment;
+      const text = typeof treatment === "string" ? treatment : JSON.stringify(treatment ?? "");
+      return text.trim().length > 0
+        && /miss|exclud|not included|left out|omit|排除|不计入|缺失/i.test(text);
+    })(),
     sourcesRead: hasFileNamed(answer.sourceFilesRead, "board_deck_pptx_style.md")
       && hasFileNamed(answer.sourceFilesRead, "finance_rows.csv")
       && hasFileNamed(answer.sourceFilesRead, "weekly_report_pdf_style.txt")
