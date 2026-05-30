@@ -170,17 +170,22 @@ describe("run-real-green-gate-self-hosted", () => {
     expect(calls.some((url) => url.endsWith("/v1/model-routing"))).toBe(false);
   });
 
-  it("injects OPENAI_API_KEY only on the two explicitly gated OpenAI lanes", () => {
+  it("injects OPENAI_API_KEY only on the explicit C3/C4 fallback drill lane", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/real-green-gate.yml"), "utf8");
     const injections = workflow.match(/OPENAI_API_KEY: \$\{\{ secrets\.OPENAI_API_KEY \}\}/g) ?? [];
-    // Only c3c4-provider-routing-proof and c45-real-user-intelligence-proof.
-    expect(injections).toHaveLength(2);
+    // Only c3c4-provider-routing-proof carries OpenAI for the explicit fallback drill.
+    expect(injections).toHaveLength(1);
     // The default proof job must not carry an OpenAI key.
     const mainJobSection = workflow.slice(
       workflow.indexOf("real-green-gate:"),
       workflow.indexOf("phase24b-discord-trusted-inbound:"),
     );
     expect(mainJobSection).not.toContain("OPENAI_API_KEY");
+    const c45JobSection = workflow.slice(
+      workflow.indexOf("c45-real-user-intelligence-proof:"),
+      workflow.indexOf("phase24e-telegram-workflow-candidate:"),
+    );
+    expect(c45JobSection).not.toContain("OPENAI_API_KEY");
   });
 
   it("passes an explicit workspace root while keeping runtime state isolated", () => {

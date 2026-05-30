@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   apiFetch,
   createDeepSeekProvider,
-  createOpenAiProvider,
   verifyProviderTextCapability,
 } from "./_helpers/api.js";
 import {
@@ -15,24 +14,20 @@ import {
   createRealHubEnv,
   DEEPSEEK_API_KEY_ENV,
   DEEPSEEK_BASE_URL,
-  OPENAI_API_KEY_ENV,
-  OPENAI_BASE_URL,
   type RealHubEnv,
 } from "./_helpers/real-env.js";
 
 const C45_GATED = process.env.FRIDAY_C45_REAL_USER_GAUNTLET === "1"
   && process.env.FRIDAY_E2E_LIVE_DEEPSEEK === "1"
-  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"))
-  && hasEnvValue(OPENAI_API_KEY_ENV);
+  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"));
 const DEEPSEEK_MODEL = process.env.FRIDAY_C45_DEEPSEEK_MODEL ?? "deepseek-v4-pro";
-const OPENAI_MODEL = process.env.FRIDAY_C45_OPENAI_MODEL ?? "gpt-4o-mini";
 const REPORT_ROOT = process.env.FRIDAY_C45_REPORT_ROOT;
 const EXPECTED_SPEND_USD_CAP = 100;
 
 interface DirectProviderRun {
   id: string;
   status: "completed";
-  actualProviderKind: "openai";
+  actualProviderKind: "deepseek" | "openai";
   actualModel: string;
   responseText: string;
   totalCostUsd: number;
@@ -236,6 +231,7 @@ function assertDirectRunCostUnderCap(run: DirectProviderRun): number {
 
 async function callOpenAiCompatibleChatCompletion(
   input: {
+    providerKind: "deepseek" | "openai";
     apiKeyEnvName: string;
     baseUrl: string;
     model: string;
@@ -287,9 +283,9 @@ async function callOpenAiCompatibleChatCompletion(
     const outputTokens = json.usage?.completion_tokens ?? 0;
     const totalTokens = json.usage?.total_tokens ?? inputTokens + outputTokens;
     return {
-      id: json.id ?? `direct-openai-${Date.now().toString(36)}`,
+      id: json.id ?? `direct-${input.providerKind}-${Date.now().toString(36)}`,
       status: "completed",
-      actualProviderKind: "openai",
+      actualProviderKind: input.providerKind,
       actualModel: input.model,
       responseText,
       totalCostUsd: Math.max(0.000001, totalTokens * 0.000001),
@@ -364,7 +360,6 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
   let env: RealHubEnv;
   let fixture: FixtureBundle;
   let deepseekProviderId: string;
-  let openaiProviderId: string | undefined;
   const report: ProofReport = {
     schemaVersion: 1,
     gated: C45_GATED,
@@ -390,8 +385,8 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     },
     notes: [
       "Synthetic fixture sources are created under the temporary Friday E2E state directory, not inside the public package.",
-      "DeepSeek live text capability remains required; direct synthetic analysis uses the configured OpenAI live provider lane for bounded JSON generation.",
-      "This closes only direct API/live-provider C4.5 synthetic analysis proof; live external-channel C4.5, agent file-tool execution, actual PPTX rendering, and broad arbitrary-file quality remain pending.",
+      "DeepSeek live text capability is required; direct synthetic analysis uses the configured DeepSeek live provider lane for bounded JSON generation.",
+      "This closes only direct API/live-DeepSeek C4.5 synthetic analysis proof; live external-channel C4.5, agent file-tool execution, actual PPTX rendering, and broad arbitrary-file quality remain pending.",
     ],
   };
 
@@ -413,20 +408,12 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     });
     await verifyProviderTextCapability(env.baseUrl, env.accessToken, deepseekProviderId, DEEPSEEK_MODEL);
 
-    openaiProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
-      name: "C4.5 OpenAI Explicit Fallback",
-      openAiBaseUrl: OPENAI_BASE_URL,
-      models: [OPENAI_MODEL],
-      defaultModel: OPENAI_MODEL,
-      apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
-    });
-    report.models.openaiFallbackConfigured = true;
-    report.models.openai = OPENAI_MODEL;
+    report.models.openaiFallbackConfigured = false;
 
     await putRouting(env, {
       defaultProviderId: deepseekProviderId,
       defaultModel: DEEPSEEK_MODEL,
-      fallbackProviderIds: openaiProviderId ? [openaiProviderId] : [],
+      fallbackProviderIds: [],
     });
   }, 240_000);
 
@@ -480,17 +467,18 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     ].join("\n");
 
     const run = await callOpenAiCompatibleChatCompletion({
-      apiKeyEnvName: OPENAI_API_KEY_ENV,
-      baseUrl: OPENAI_BASE_URL,
-      model: OPENAI_MODEL,
+      providerKind: "deepseek",
+      apiKeyEnvName: DEEPSEEK_API_KEY_ENV,
+      baseUrl: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL,
       system: "Return valid JSON only. Do not reveal secrets. Do not claim to fetch external URLs.",
       user: task,
       timeoutMs: 180_000,
       jsonMode: true,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualProviderKind).toBe("openai");
-    expect(run.actualModel).toBe(OPENAI_MODEL);
+    expect(run.actualProviderKind).toBe("deepseek");
+    expect(run.actualModel).toBe(DEEPSEEK_MODEL);
     const intelligenceRunCostUsd = assertDirectRunCostUnderCap(run);
 
     const outputPath = path.join(env.stateDir!, fixture.outputFile);
@@ -544,15 +532,16 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
       "Return a short clarification question or a bounded plan. Do not provide any single final pipeline value as the answer.",
     ].join("\n");
     const run = await callOpenAiCompatibleChatCompletion({
-      apiKeyEnvName: OPENAI_API_KEY_ENV,
-      baseUrl: OPENAI_BASE_URL,
-      model: OPENAI_MODEL,
+      providerKind: "deepseek",
+      apiKeyEnvName: DEEPSEEK_API_KEY_ENV,
+      baseUrl: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL,
       system: "Answer concisely. Ask for clarification when a user request is ambiguous.",
       user: task,
       timeoutMs: 120_000,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualProviderKind).toBe("openai");
+    expect(run.actualProviderKind).toBe("deepseek");
     const ambiguityRunCostUsd = assertDirectRunCostUnderCap(run);
     const responseText = run.responseText;
     expect(/clarif|which|ambiguous|amount|units|pipeline/i.test(responseText)).toBe(true);

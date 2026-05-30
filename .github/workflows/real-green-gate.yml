@@ -273,13 +273,11 @@ jobs:
     timeout-minutes: 30
     environment: phase-24-live-channels
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY }}
       FRIDAY_C45_REAL_USER_GAUNTLET: "1"
       FRIDAY_E2E_LIVE_DEEPSEEK: "1"
       FRIDAY_C45_DEEPSEEK_MODEL: "deepseek-v4-pro"
-      FRIDAY_C45_OPENAI_MODEL: "gpt-4o-mini"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -300,7 +298,7 @@ jobs:
         run: |
           echo "C4.5 live real-user intelligence proof: synthetic deck/report/table extraction, analysis, ambiguity handling, deck-like generation, prompt-injection denial, and source immutability."
           echo "Primary provider/model: DeepSeek deepseek-v4-pro."
-          echo "Direct synthetic analysis provider/model: OpenAI gpt-4o-mini live lane."
+          echo "Direct synthetic analysis provider/model: DeepSeek deepseek-v4-pro live lane."
           echo "Expected spend: bounded under the separate USD 100 C4.5 cap."
           echo "No provider secret values, private user files, or real user data are printed or persisted by this job."
           echo "This dispatch intentionally does not start a live Telegram/Discord/Lark channel window."
@@ -311,11 +309,7 @@ jobs:
             echo "::error::C4.5 proof requires a DeepSeek credential secret."
             exit 1
           fi
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "::error::C4.5 proof requires an OpenAI credential secret for direct synthetic analysis."
-            exit 1
-          fi
-          echo "OpenAI credential present; C4.5 direct synthetic analysis lane will run."
+          echo "DeepSeek credential present; C4.5 direct synthetic analysis lane will run."
 
       - name: Run C4.5 real-user intelligence gauntlet
         run: FRIDAY_C45_REPORT_ROOT="$RUNNER_TEMP/c45-real-user-intelligence-proof" npx vitest run test/e2e/live/friday-real-user-intelligence-c45-live.e2e.test.ts
