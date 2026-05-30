@@ -2702,21 +2702,97 @@ async function runLocalStage(ledger) {
       await runStep(ledger, {
         id: "local.backstop.release-verify",
         stage: `${stage}.backstop`,
-        description: "Run npm run release:verify:repo as a closure backstop",
+        description: "Run npm run release:verify:repo as a DETERMINISTIC repo-health backstop (deep-proof live lane decoupled)",
       }, async () => {
+        // DECOUPLE (Step-1 of the clean-dogfood goal): the backstop must be the
+        // DETERMINISTIC repo-health signal, matching the CI `test` gate (which
+        // sets no FRIDAY_E2E_LIVE_* flag and is green on this SHA). When the
+        // operator runs the closure with a live lane flag + provider key in
+        // env, those inherit into `npm test` and silently activate the
+        // nondeterministic live deep-proof suite — conflating live-LLM flake
+        // with repo-health. Neutralize every live-lane flag + provider
+        // credential for THIS subprocess so the deep-proof gate stays CLOSED.
+        // The live deep-proof lane is run + reported SEPARATELY below
+        // (local.deep-proof.live) so the signal is not hidden, just attributed.
+        const deterministicEnv = Object.fromEntries(
+          [
+            "FRIDAY_E2E_LIVE_DEEPSEEK",
+            "FRIDAY_E2E_LIVE_OPENAI",
+            "FRIDAY_E2E_LIVE_ANTHROPIC",
+            "FRIDAY_E2E_LIVE_OLLAMA",
+            "FRIDAY_E2E_LIVE_VOICE",
+            "E2E_LIVE",
+            "DEEPSEEK_API_KEY",
+            "FRIDAY_DEEPSEEK_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "FRIDAY_ANTHROPIC_API_KEY",
+          ].map((k) => [k, ""]),
+        );
         const result = await runCommand({
           id: "local.backstop.release-verify",
           stage: `${stage}.backstop`,
-          description: "npm run release:verify:repo",
+          description: "npm run release:verify:repo (deep-proof gate closed)",
           command: "npm",
           args: ["run", "release:verify:repo"],
           logPath: path.join(ledger.paths.logs, "local-backstop-release-verify.log"),
           timeoutMs: 1_800_000,
+          env: deterministicEnv,
         });
         if (result.code !== 0) {
           throw new Error(`npm run release:verify:repo failed with code ${String(result.code)}`);
         }
-        return { evidence: { logPath: result.logPath } };
+        return { evidence: { logPath: result.logPath, deepProofGate: "closed", lane: "repo-health-deterministic" } };
+      });
+
+      // SEPARATE deep-proof live lane — required release-readiness signal,
+      // independently reported, bounded-retry for genuine live-LLM/provider
+      // flake. Runs the DeepSeek deep-proof core (autonomous-restart +
+      // self-upgrade ×5). Recorded as blocked_by_env (NOT a fail) when no
+      // DeepSeek key is available (keyless CI cannot run the live lane).
+      await runStep(ledger, {
+        id: "local.deep-proof.live",
+        stage: `${stage}.deep-proof`,
+        description: "Run the DeepSeek deep-proof live lane (decoupled from repo-health) with bounded retry",
+      }, async () => {
+        const deepSeekKey = process.env.FRIDAY_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY;
+        if (!deepSeekKey) {
+          // Honest: deep-proof cannot be proven without a key → BLOCKER (matches
+          // the provider-unavailable convention), NOT a silent skip. This keeps
+          // deep-proof a REQUIRED signal — a keyless closure is correctly NO-GO
+          // on this lane rather than hiding the gap.
+          return {
+            status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
+            details: { reason: "no DeepSeek credential; deep-proof live lane requires FRIDAY_DEEPSEEK_API_KEY/DEEPSEEK_API_KEY (no CI substitute — RGG runs ops:real-green-gate, not this suite)" },
+          };
+        }
+        const deepProofFiles = [
+          "test/e2e/live/friday-autonomous-restart.e2e.test.ts",
+          "test/e2e/live/friday-self-upgrade-mcp-server-live.e2e.test.ts",
+          "test/e2e/live/friday-self-upgrade-plugin-live.e2e.test.ts",
+          "test/e2e/live/friday-self-upgrade-workflow-live.e2e.test.ts",
+          "test/e2e/live/friday-self-upgrade-channel-adapter-live.e2e.test.ts",
+          "test/e2e/live/friday-self-upgrade-provider-profile-live.e2e.test.ts",
+        ];
+        const liveEnv = { FRIDAY_E2E_LIVE_DEEPSEEK: "1" };
+        const MAX_ATTEMPTS = 2; // bounded retry for genuine live-lane flake
+        let lastResult = null;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          lastResult = await runCommand({
+            id: "local.deep-proof.live",
+            stage: `${stage}.deep-proof`,
+            description: `deep-proof live (attempt ${attempt}/${MAX_ATTEMPTS})`,
+            command: "npx",
+            args: ["vitest", "run", "--reporter=dot", ...deepProofFiles],
+            logPath: path.join(ledger.paths.logs, `local-deep-proof-live-attempt-${attempt}.log`),
+            timeoutMs: 1_800_000,
+            env: liveEnv,
+          });
+          if (lastResult.code === 0) {
+            return { evidence: { logPath: lastResult.logPath, attempts: attempt, lane: "deepseek-deep-proof", files: deepProofFiles.length } };
+          }
+        }
+        throw new Error(`deep-proof live lane failed after ${MAX_ATTEMPTS} attempts (code ${String(lastResult?.code)}) — see attempt logs; this is a REQUIRED separately-reported signal, NOT repo-health`);
       });
     }
   } finally {
