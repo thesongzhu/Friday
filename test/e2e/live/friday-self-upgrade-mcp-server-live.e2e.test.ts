@@ -252,6 +252,12 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday MCP Server Self Upgrade Live (
         transport: "stdio",
         command: process.execPath,
         args: ["-e", buildStdioServerScript()],
+        // The MCP adapter fails CLOSED on tool/resource exposure (since #384):
+        // a server with no policy exposes nothing. Drive the real approved path
+        // with a least-privilege allowlist matching exactly what this proof's
+        // synthetic server advertises and the test exercises (echo tool,
+        // friday://status resource). Not allowAllTools/allowAllResources.
+        policy: { toolAllowlist: ["echo"], resourceAllowlist: ["friday://status"] },
       },
     ]);
     env = await createFridayDeepProofHubEnv({

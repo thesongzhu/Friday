@@ -6,6 +6,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { apiFetch } from "./_helpers/api.js";
 import { pollRunTerminal } from "./_helpers/workflow.js";
 import {
+  createFridayWorkflowLifecycleMutatingActionRequest,
+} from "../../../src/autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
+import {
+  createFridayMutatingActionDigest,
+  signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+} from "../../../src/security/friday-mutating-action-gate.js";
+import {
   cleanupFridayDeepProofHubEnv,
   createFridayDeepProofHubEnv,
   ensureFridayDeepProofProviders,
@@ -14,6 +22,11 @@ import {
   FRIDAY_DEEP_PROOF_PROVIDER_LABEL,
   type RealHubEnv,
 } from "./_helpers/deep-proof-env.js";
+
+const WORKFLOW_LIFECYCLE_PLAN_DIGEST = "workflow-live-proof-plan";
+const WORKFLOW_LIFECYCLE_SIGNING_MATERIAL =
+  "workflow-live-proof-signing-material"; // pragma: allowlist secret
+const LOCAL_LIVE_PRINCIPAL_ID = "admin-001";
 
 interface WorkflowCreateEnvelope {
   ok: boolean;
@@ -194,6 +207,46 @@ async function getRuntimeVersion(env: RealHubEnv): Promise<string> {
   expect(response.status).toBe(200);
   expect(response.json.ok).toBe(true);
   return response.json.data.version;
+}
+
+function makeWorkflowLifecycleApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  workflowId: string;
+  workflowVersionId?: string;
+  versionNumber?: number;
+  targetVersionNumber?: number;
+  success?: boolean;
+  runtimeVersion: string;
+  providerModel: string;
+}): FridayCanonicalApprovalResolution {
+  const rollback = input.action === "rollback"
+    ? { planned: true, planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST, actions: ["workflows.lifecycle.promote"] }
+    : undefined;
+  const request = createFridayWorkflowLifecycleMutatingActionRequest({
+    action: input.action,
+    workflowId: input.workflowId,
+    workflowVersionId: input.workflowVersionId,
+    versionNumber: input.versionNumber,
+    targetVersionNumber: input.targetVersionNumber,
+    success: input.success,
+    runtimeVersion: input.runtimeVersion,
+    providerModel: input.providerModel,
+    actor: {
+      kind: "user",
+      id: LOCAL_LIVE_PRINCIPAL_ID,
+      principalId: LOCAL_LIVE_PRINCIPAL_ID,
+    },
+    surface: `api:/v1/autonomy/workflows/${input.workflowId}/${input.action}`,
+    planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST,
+    rollback,
+  });
+  return signFridayCanonicalApproval({
+    decision: "approved",
+    approvalId: `workflow-live-${input.action}`,
+    decidedByPrincipalId: LOCAL_LIVE_PRINCIPAL_ID,
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2027-05-07T00:00:00.000Z",
+  }, WORKFLOW_LIFECYCLE_SIGNING_MATERIAL);
 }
 
 async function createBaseWorkflow(
@@ -407,7 +460,11 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${
   let env: RealHubEnv;
 
   beforeAll(async () => {
-    env = await createFridayDeepProofHubEnv();
+    env = await createFridayDeepProofHubEnv({
+      hubConfig: {
+        tokenSecret: WORKFLOW_LIFECYCLE_SIGNING_MATERIAL,
+      },
+    });
     await ensureWorkflowDeepProofProviders(env);
   }, 120_000);
 
@@ -453,6 +510,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${
           workflowVersionId: upgraded.versionId,
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeWorkflowLifecycleApproval({
+            action: "shadow",
+            workflowId: baseline.workflowId,
+            workflowVersionId: upgraded.versionId,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         },
       );
       expect(shadowRes.status).toBe(200);
@@ -473,6 +538,16 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${
         `/v1/autonomy/workflows/${encodeURIComponent(baseline.workflowId)}/canary`,
         {
           success: true,
+          runtimeVersion,
+          providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeWorkflowLifecycleApproval({
+            action: "canary",
+            workflowId: baseline.workflowId,
+            success: true,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         },
       );
       expect(canaryRes.status).toBe(200);
@@ -490,6 +565,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${
           versionNumber: upgraded.versionNumber,
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeWorkflowLifecycleApproval({
+            action: "promote",
+            workflowId: baseline.workflowId,
+            versionNumber: upgraded.versionNumber,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         },
       );
       expect(promoteRes.status).toBe(200);
@@ -511,6 +594,14 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Workflow Self Upgrade Live (${
           targetVersionNumber: 1,
           runtimeVersion,
           providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          planDigest: WORKFLOW_LIFECYCLE_PLAN_DIGEST,
+          canonicalApproval: makeWorkflowLifecycleApproval({
+            action: "rollback",
+            workflowId: baseline.workflowId,
+            targetVersionNumber: 1,
+            runtimeVersion,
+            providerModel: FRIDAY_DEEP_PROOF_MODEL,
+          }),
         },
       );
       expect(rollbackRes.status).toBe(200);
