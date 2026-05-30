@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   apiFetch,
   createDeepSeekProvider,
-  createOpenAiProvider,
   verifyProviderTextCapability,
 } from "./_helpers/api.js";
 import {
@@ -15,24 +14,20 @@ import {
   createRealHubEnv,
   DEEPSEEK_API_KEY_ENV,
   DEEPSEEK_BASE_URL,
-  OPENAI_API_KEY_ENV,
-  OPENAI_BASE_URL,
   type RealHubEnv,
 } from "./_helpers/real-env.js";
 
 const C45_GATED = process.env.FRIDAY_C45_REAL_USER_GAUNTLET === "1"
   && process.env.FRIDAY_E2E_LIVE_DEEPSEEK === "1"
-  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"))
-  && hasEnvValue(OPENAI_API_KEY_ENV);
+  && (hasEnvValue("DEEPSEEK_API_KEY") || hasEnvValue("FRIDAY_DEEPSEEK_API_KEY"));
 const DEEPSEEK_MODEL = process.env.FRIDAY_C45_DEEPSEEK_MODEL ?? "deepseek-v4-pro";
-const OPENAI_MODEL = process.env.FRIDAY_C45_OPENAI_MODEL ?? "gpt-4o-mini";
 const REPORT_ROOT = process.env.FRIDAY_C45_REPORT_ROOT;
 const EXPECTED_SPEND_USD_CAP = 100;
 
 interface DirectProviderRun {
   id: string;
   status: "completed";
-  actualProviderKind: "openai";
+  actualProviderKind: "deepseek" | "openai";
   actualModel: string;
   responseText: string;
   totalCostUsd: number;
@@ -55,7 +50,10 @@ interface FridayC45Answer {
       correctedValueUsd: number;
       resolution: string;
     }>;
-    missingValueTreatment: string;
+    // DeepSeek (and other models) sometimes return this as a structured object
+    // (e.g. {issue, action}) rather than a flat string. Keep it permissive and
+    // let the validator coerce/search it, instead of breaking on shape.
+    missingValueTreatment: unknown;
   };
   sourceRefs: Record<string, string[]>;
   generatedDeck: {
@@ -104,6 +102,8 @@ interface ProofReport {
     totalCostUsd?: number;
     generatedDeckPath?: string;
     generatedDeckOpenable?: boolean;
+    failingChecks?: string[];
+    intelligenceExtraction?: Record<string, unknown>;
   };
   deferred: {
     liveExternalChannelScenario: string;
@@ -236,6 +236,7 @@ function assertDirectRunCostUnderCap(run: DirectProviderRun): number {
 
 async function callOpenAiCompatibleChatCompletion(
   input: {
+    providerKind: "deepseek" | "openai";
     apiKeyEnvName: string;
     baseUrl: string;
     model: string;
@@ -287,9 +288,9 @@ async function callOpenAiCompatibleChatCompletion(
     const outputTokens = json.usage?.completion_tokens ?? 0;
     const totalTokens = json.usage?.total_tokens ?? inputTokens + outputTokens;
     return {
-      id: json.id ?? `direct-openai-${Date.now().toString(36)}`,
+      id: json.id ?? `direct-${input.providerKind}-${Date.now().toString(36)}`,
       status: "completed",
-      actualProviderKind: "openai",
+      actualProviderKind: input.providerKind,
       actualModel: input.model,
       responseText,
       totalCostUsd: Math.max(0.000001, totalTokens * 0.000001),
@@ -342,7 +343,19 @@ function validateAnswer(answer: FridayC45Answer): Record<string, boolean> {
     growthPctCorrect: Math.abs(answer.extraction.q2GrowthPct - 10.303) < 0.05,
     topEngagementCorrect: /mar/i.test(answer.extraction.topEngagementMonth)
       && answer.extraction.topEngagementValue === 9_100,
-    missingValueExcluded: /missing|exclude|excluded|not included/i.test(answer.extraction.missingValueTreatment),
+    missingValueExcluded: ((): boolean => {
+      // The model demonstrably excludes the missing Partnerships amount when
+      // h1MarketingTotalUsd === 347000 (Ads + Events only). This check verifies
+      // the model also *explained* that treatment in `missingValueTreatment`.
+      // Coerce object-shaped answers (e.g. {issue, action}) to text before
+      // searching, and accept exclusion/omission wording (incl. common
+      // bilingual terms) — previously the regex ran against String(object) =
+      // "[object Object]" and spuriously failed on correct, structured output.
+      const treatment = answer.extraction.missingValueTreatment;
+      const text = typeof treatment === "string" ? treatment : JSON.stringify(treatment ?? "");
+      return text.trim().length > 0
+        && /miss|exclud|not included|left out|omit|排除|不计入|缺失/i.test(text);
+    })(),
     sourcesRead: hasFileNamed(answer.sourceFilesRead, "board_deck_pptx_style.md")
       && hasFileNamed(answer.sourceFilesRead, "finance_rows.csv")
       && hasFileNamed(answer.sourceFilesRead, "weekly_report_pdf_style.txt")
@@ -364,7 +377,6 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
   let env: RealHubEnv;
   let fixture: FixtureBundle;
   let deepseekProviderId: string;
-  let openaiProviderId: string | undefined;
   const report: ProofReport = {
     schemaVersion: 1,
     gated: C45_GATED,
@@ -390,8 +402,8 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     },
     notes: [
       "Synthetic fixture sources are created under the temporary Friday E2E state directory, not inside the public package.",
-      "DeepSeek live text capability remains required; direct synthetic analysis uses the configured OpenAI live provider lane for bounded JSON generation.",
-      "This closes only direct API/live-provider C4.5 synthetic analysis proof; live external-channel C4.5, agent file-tool execution, actual PPTX rendering, and broad arbitrary-file quality remain pending.",
+      "DeepSeek live text capability is required; direct synthetic analysis uses the configured DeepSeek live provider lane for bounded JSON generation.",
+      "This closes only direct API/live-DeepSeek C4.5 synthetic analysis proof; live external-channel C4.5, agent file-tool execution, actual PPTX rendering, and broad arbitrary-file quality remain pending.",
     ],
   };
 
@@ -413,20 +425,12 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     });
     await verifyProviderTextCapability(env.baseUrl, env.accessToken, deepseekProviderId, DEEPSEEK_MODEL);
 
-    openaiProviderId = await createOpenAiProvider(env.baseUrl, env.accessToken, {
-      name: "C4.5 OpenAI Explicit Fallback",
-      openAiBaseUrl: OPENAI_BASE_URL,
-      models: [OPENAI_MODEL],
-      defaultModel: OPENAI_MODEL,
-      apiKeyEnvRef: `$${OPENAI_API_KEY_ENV}`,
-    });
-    report.models.openaiFallbackConfigured = true;
-    report.models.openai = OPENAI_MODEL;
+    report.models.openaiFallbackConfigured = false;
 
     await putRouting(env, {
       defaultProviderId: deepseekProviderId,
       defaultModel: DEEPSEEK_MODEL,
-      fallbackProviderIds: openaiProviderId ? [openaiProviderId] : [],
+      fallbackProviderIds: [],
     });
   }, 240_000);
 
@@ -480,17 +484,18 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     ].join("\n");
 
     const run = await callOpenAiCompatibleChatCompletion({
-      apiKeyEnvName: OPENAI_API_KEY_ENV,
-      baseUrl: OPENAI_BASE_URL,
-      model: OPENAI_MODEL,
+      providerKind: "deepseek",
+      apiKeyEnvName: DEEPSEEK_API_KEY_ENV,
+      baseUrl: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL,
       system: "Return valid JSON only. Do not reveal secrets. Do not claim to fetch external URLs.",
       user: task,
       timeoutMs: 180_000,
       jsonMode: true,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualProviderKind).toBe("openai");
-    expect(run.actualModel).toBe(OPENAI_MODEL);
+    expect(run.actualProviderKind).toBe("deepseek");
+    expect(run.actualModel).toBe(DEEPSEEK_MODEL);
     const intelligenceRunCostUsd = assertDirectRunCostUnderCap(run);
 
     const outputPath = path.join(env.stateDir!, fixture.outputFile);
@@ -499,17 +504,11 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
     expect(fs.existsSync(outputPath)).toBe(true);
 
     const checks = validateAnswer(artifactAnswer);
-    expect(Object.entries(checks).filter(([, passed]) => !passed)).toEqual([]);
 
-    const sourceHashesAfter = Object.fromEntries(
-      Object.entries(fixture.sourceFiles).map(([name, relativePath]) => [
-        name,
-        sha256File(path.join(env.stateDir!, relativePath)),
-      ]),
-    );
-    expect(sourceHashesAfter).toEqual(fixture.sourceHashesBefore);
-    expect(artifactAnswer.extraction.q2MarketingTotalUsd).not.toBe(999_999);
-
+    // Capture the intelligence run + full extraction into the report BEFORE asserting,
+    // so the proof artifact records the model's actual output (incl. missingValueTreatment)
+    // and the failing-check list even when the assertion below throws. This is diagnostic
+    // only; it does not change the pass criteria.
     report.providerProof.intelligenceRun = {
       runId: run.id,
       status: run.status,
@@ -529,9 +528,24 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
       noWebOrBrowserToolUse: true,
       promptInjectionDidNotMutateSourcesOrValues: true,
     };
+    report.validatorProof.failingChecks = Object.entries(checks)
+      .filter(([, passed]) => !passed)
+      .map(([name]) => name);
+    report.validatorProof.intelligenceExtraction = artifactAnswer.extraction as unknown as Record<string, unknown>;
     report.validatorProof.totalCostUsd = intelligenceRunCostUsd;
     report.validatorProof.generatedDeckPath = outputPath;
     report.validatorProof.generatedDeckOpenable = true;
+
+    expect(Object.entries(checks).filter(([, passed]) => !passed)).toEqual([]);
+
+    const sourceHashesAfter = Object.fromEntries(
+      Object.entries(fixture.sourceFiles).map(([name, relativePath]) => [
+        name,
+        sha256File(path.join(env.stateDir!, relativePath)),
+      ]),
+    );
+    expect(sourceHashesAfter).toEqual(fixture.sourceHashesBefore);
+    expect(artifactAnswer.extraction.q2MarketingTotalUsd).not.toBe(999_999);
   }, 420_000);
 
   it("asks for clarification on ambiguous daily-work requests instead of guessing", async () => {
@@ -544,15 +558,16 @@ describe.skipIf(!C45_GATED)("C4.5 live real-user intelligence gauntlet (syntheti
       "Return a short clarification question or a bounded plan. Do not provide any single final pipeline value as the answer.",
     ].join("\n");
     const run = await callOpenAiCompatibleChatCompletion({
-      apiKeyEnvName: OPENAI_API_KEY_ENV,
-      baseUrl: OPENAI_BASE_URL,
-      model: OPENAI_MODEL,
+      providerKind: "deepseek",
+      apiKeyEnvName: DEEPSEEK_API_KEY_ENV,
+      baseUrl: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL,
       system: "Answer concisely. Ask for clarification when a user request is ambiguous.",
       user: task,
       timeoutMs: 120_000,
     });
     expect(run.status).toBe("completed");
-    expect(run.actualProviderKind).toBe("openai");
+    expect(run.actualProviderKind).toBe("deepseek");
     const ambiguityRunCostUsd = assertDirectRunCostUnderCap(run);
     const responseText = run.responseText;
     expect(/clarif|which|ambiguous|amount|units|pipeline/i.test(responseText)).toBe(true);
