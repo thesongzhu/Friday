@@ -167,6 +167,20 @@ Rules:
    - references: $inputs.<key>, $steps.<stepId>.output.<key>
    - operators: == != > < >= <= && || !
 9. outputs[].fromStep must reference an existing step.
+9a. EVERY workflow MUST declare "outputs". For each value the user asked to output, add an entry
+    { "key": "<the EXACT field name the user requested>", "fromStep": "<the step that produces it>",
+    "path": "<path INTO that step's output to reach the value, or "." for the whole output>" }.
+    Do NOT wrap the result in an extra "result" key unless the user asked for one.
+9b. transform steps compute data via args. TWO forms:
+    - args.transform: "<expression>" — the WHOLE string is evaluated as a Friday expression and the
+      step's output IS that value. Use for one computed value: {"transform": "2 + 3"} outputs 5;
+      {"transform": "$inputs.a * $inputs.b"} multiplies inputs. Then map with path ".".
+    - args.mapping: { "<field>": <value> } — builds an object; each value is evaluated as an
+      expression ONLY if it is a $-reference or expression. A BARE QUOTED ARITHMETIC STRING IS A
+      LITERAL: {"sum": "2 + 3"} outputs the TEXT "2 + 3", NOT 5. So for computed fields either
+      reference inputs/steps ({"sum": "$inputs.a + $inputs.b"}) OR, for pure constants, put the
+      already-computed literal value ({"sum": 5}, {"greeting": "Hello, World"}). Never leave an
+      un-evaluated arithmetic string in a mapping.
 10. tests must be [] (generated separately in next stage).
 11. Keep graph acyclic and connected from startStepId.
 12. Return a complete FridayWorkflowSpecV1 object only.${maintenanceRuleBlock}
@@ -199,6 +213,22 @@ Example output (simple action workflow):
   "steps": [{ "id": "action-1", "type": "skill_call", "ref": "example-skill", "args": { "data": "$inputs.input_data" } }],
   "edges": [],
   "outputs": [{ "key": "result", "fromStep": "action-1", "path": "result" }],
+  "errorPolicy": { "onFailure": "fail_fast", "notifyUser": true },
+  "tests": []
+}
+
+Example output (compute a value with a transform step — note outputs maps the EXACT field name):
+{
+  "schemaVersion": "1.0",
+  "workflowId": "template-compute-sum",
+  "name": "Compute Sum",
+  "description": "Computes a + b and outputs it as sum",
+  "startStepId": "compute",
+  "trigger": { "type": "manual" },
+  "inputs": [{ "key": "a", "type": "number", "required": true }, { "key": "b", "type": "number", "required": true }],
+  "steps": [{ "id": "compute", "type": "transform", "args": { "mapping": { "sum": "$inputs.a + $inputs.b" } } }],
+  "edges": [],
+  "outputs": [{ "key": "sum", "fromStep": "compute", "path": "sum" }],
   "errorPolicy": { "onFailure": "fail_fast", "notifyUser": true },
   "tests": []
 }`;
