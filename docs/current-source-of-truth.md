@@ -264,7 +264,7 @@ This document is the current architecture reference for steady-state Friday runt
 
 - `friday://` is the canonical import protocol for provider templates, skill sources, MCP server configs, and workflow templates.
 - All deep link imports must go through `POST /v1/deeplink/preview` (parse + validate + permission summary) before `POST /v1/deeplink/apply`.
-- `POST /v1/deeplink/apply` currently performs real imports for `provider-template`, `skill-source`, and `workflow-template` bundle URLs. `mcp-server` payloads remain previewable but return an explicit unsupported apply result until dedicated install/config surfaces are wired.
+- `POST /v1/deeplink/apply` performs real imports for `skill-source` and `workflow-template` bundle URLs, and persists `mcp-server` stdio configs behind the canonical approval gate (signed approval required). `provider-template` apply is **preview-only** (returns `applied: false`) until provider lifecycle staging, validation, and promotion are wired.
 - Deep link payloads require `version: 1`, a valid resource type, and type-specific required fields. Incomplete or high-risk payloads are rejected by the validator.
 - Private/localhost URLs in deep link payloads produce warnings. Missing integrity hashes produce advisories.
 - The deep link parser accepts both URI format (`friday://skill-source?url=...`) and JSON payload format for POST bodies.
