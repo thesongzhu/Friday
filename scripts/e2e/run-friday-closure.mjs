@@ -1329,6 +1329,17 @@ async function runLocalStage(ledger) {
 
   const port = await findFreePort();
   const fridayEnv = buildClosureScratchEnv(process.env, ledger.paths);
+  // Isolate the closure hub's workspace root. Without this the hub falls back to
+  // workspaceRoot="." = cwd = REPO_ROOT, so the "workspace" skill origin scans
+  // the repo's own skills/ and (higher precedence than bundled) overrides the
+  // bundled review-open-issues to origin=workspace → not_installed, breaking the
+  // review-issues template. Pointing the workspace at an isolated, skill-free dir
+  // lets slot-0 (bundled) auto-install win. This is set ONLY on fridayEnv (the
+  // closure hub/CLI spawns); the release-verify backstop runs under process.env,
+  // so its e2e hubs (which set their own state dirs) are unaffected.
+  const closureWorkspaceRoot = path.join(ledger.paths.root, "workspace");
+  ensureDir(closureWorkspaceRoot);
+  fridayEnv.FRIDAY_WORKSPACE_ROOT = closureWorkspaceRoot;
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
     DIST_CLI,
