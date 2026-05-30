@@ -242,8 +242,13 @@ function parseExpr(tokens: Token[]): FridayExprNode {
   // not_expr = "!" not_expr | compare
   function notExpr(): FridayExprNode {
     if (peek().kind === "NOT") {
+      // checkDepth bounds the "!" recursion. Without it a long "!" chain (e.g.
+      // "!".repeat(4095)) recurses to stack-overflow within MAX_EXPR_LENGTH —
+      // a DoS the depth limit is meant to prevent (mirrors unaryMinus).
+      checkDepth();
       advance();
       const operand = notExpr();
+      depth--;
       return { kind: "unary", op: "!", operand };
     }
     return compare();
@@ -424,6 +429,14 @@ function evaluateNode(
           );
         }
         if (target == null || typeof target !== "object") {
+          return undefined;
+        }
+        // Only read OWN properties. Inherited members (valueOf, toString,
+        // hasOwnProperty, __defineGetter__, …) are not workflow data and must
+        // not be exposed — returning the inherited builtin function would leak
+        // prototype internals (e.g. into AI-node prompt interpolation). Own
+        // data reads (inputs/steps.output/env values) are unaffected.
+        if (!Object.prototype.hasOwnProperty.call(target, segment)) {
           return undefined;
         }
         target = (target as Record<string, unknown>)[segment];
