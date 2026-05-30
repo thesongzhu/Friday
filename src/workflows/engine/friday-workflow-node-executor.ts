@@ -86,6 +86,38 @@ function resolveArgs(
   return resolved;
 }
 
+/**
+ * The workflow generator legitimately emits object-valued data transforms as
+ * JSON-object *string* literals (e.g. `'{"text":"hello world"}'`,
+ * `'{"greeting":"$inputs.name"}'`). The expression evaluator only handles
+ * scalar/ref/comparison expressions and throws `EXPRESSION_PARSE_ERROR` on an
+ * object literal, so such transforms used to fail at run despite passing
+ * validation. If a transform string parses as a plain JSON object, return it so
+ * the caller can resolve it via the same already-tested mapping path ($-refs
+ * evaluated, literals passed through). Returns undefined for anything that is
+ * not an object literal (refs, quoted literals, scalars, arrays) so those fall
+ * through to expression evaluation exactly as before — zero behavior change for
+ * inputs that already worked (all object-literal strings previously threw).
+ */
+function tryParseJsonObjectTransform(
+  transform: string,
+): Record<string, unknown> | undefined {
+  const trimmed = transform.trim();
+  if (!trimmed.startsWith("{")) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 // ─── Factory ───
 
 export function createFridayWorkflowNodeExecutor(
@@ -169,6 +201,15 @@ export function createFridayWorkflowNodeExecutor(
           const transform = config.transform as string | undefined;
 
           if (transform) {
+            const objectTransform = tryParseJsonObjectTransform(transform);
+            if (objectTransform) {
+              const resolved = resolveArgs(
+                objectTransform,
+                expressionContext,
+                deps.expressionEvaluator,
+              );
+              return { output: resolved as unknown as JsonValue };
+            }
             const result = deps.expressionEvaluator.exec(
               transform,
               expressionContext,

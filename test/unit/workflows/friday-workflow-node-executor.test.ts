@@ -116,6 +116,78 @@ describe("FridayWorkflowNodeExecutor", () => {
     expect((result.output as Record<string, unknown>).name).toBe("Alice");
   });
 
+  it("executes data node — runs an object-literal STRING transform (constant) to a correct value", async () => {
+    // Regression: the generator emits object transforms as JSON-object strings
+    // (closure hello-world used `transform: '{"text":"hello world"}'`). These
+    // previously threw EXPRESSION_PARSE_ERROR at run; now they resolve via the
+    // mapping path. Oracle asserts the OUTPUT VALUE, not just run-to-completion.
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-str-const",
+      type: "data",
+      label: "Data",
+      config: {
+        transform: '{ "text": "hello world" }',
+      } as Record<string, JsonValue>,
+    };
+    const result = await executor.executeNode(makeInput(node));
+    expect(result.output).toEqual({ text: "hello world" });
+  });
+
+  it("executes data node — resolves $-refs inside an object-literal STRING transform", async () => {
+    // Proves real ref resolution (not a constant): the model retreating to
+    // constants would NOT satisfy this oracle.
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-str-ref",
+      type: "data",
+      label: "Data",
+      config: {
+        transform: '{"greeting": "$inputs.name", "static": "x"}',
+      } as Record<string, JsonValue>,
+    };
+    const ctx: FridayExpressionContext = {
+      inputs: { name: "Ada" },
+      steps: {},
+    };
+    const result = await executor.executeNode(makeInput(node, ctx));
+    expect(result.output).toEqual({ greeting: "Ada", static: "x" });
+  });
+
+  it("executes data node — preserves expression-string transform behavior (ref)", async () => {
+    // A plain ref-expression transform must keep evaluating as before (the
+    // JSON fast-path only intercepts object-literal strings).
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-expr-ref",
+      type: "data",
+      label: "Data",
+      config: {
+        transform: "$steps.prev.output.value",
+      } as Record<string, JsonValue>,
+    };
+    const ctx: FridayExpressionContext = {
+      inputs: {},
+      steps: { prev: { output: { value: 42 } } },
+    };
+    const result = await executor.executeNode(makeInput(node, ctx));
+    expect(result.output).toBe(42);
+  });
+
+  it("executes data node — preserves quoted-literal expression transform behavior", async () => {
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-expr-lit",
+      type: "data",
+      label: "Data",
+      config: {
+        transform: "'just a string'",
+      } as Record<string, JsonValue>,
+    };
+    const result = await executor.executeNode(makeInput(node));
+    expect(result.output).toBe("just a string");
+  });
+
   it("executes data node with empty config as a null-output no-op", async () => {
     const executor = createExecutor();
     const node: FridayWorkflowNode = {
