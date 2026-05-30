@@ -116,6 +116,49 @@ describe("FridayWorkflowNodeExecutor", () => {
     expect((result.output as Record<string, unknown>).name).toBe("Alice");
   });
 
+  it("evaluates NESTED mapping expressions (resolveArgs recursion) and arithmetic", async () => {
+    // Fail-before: resolveArgs only evaluated top-level "$"-strings, so a nested
+    // mapping value came back as the literal expression string. Pass-after: it
+    // recurses, and the (newly supported) arithmetic evaluates.
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-nested",
+      type: "data",
+      label: "Data",
+      config: {
+        mapping: {
+          outputs: { net: "$inputs.gross - $inputs.discount" },
+          total: "$inputs.a + $inputs.b",
+        },
+      } as Record<string, JsonValue>,
+    };
+    const ctx: FridayExpressionContext = {
+      inputs: { gross: 100, discount: 30, a: 7, b: 5 },
+      steps: {},
+    };
+    const result = await executor.executeNode(makeInput(node, ctx));
+    const out = result.output as Record<string, unknown>;
+    expect((out.outputs as Record<string, unknown>).net).toBe(70); // nested expr evaluated, not literal string
+    expect(out.total).toBe(12); // arithmetic evaluated
+  });
+
+  it("drops prototype-polluting mapping keys (resolveArgs safety)", async () => {
+    const executor = createExecutor();
+    const node: FridayWorkflowNode = {
+      id: "data-proto",
+      type: "data",
+      label: "Data",
+      config: {
+        mapping: { ["__proto__"]: { polluted: true }, safe: "$inputs.name" },
+      } as Record<string, JsonValue>,
+    };
+    const ctx: FridayExpressionContext = { inputs: { name: "ok" }, steps: {} };
+    const result = await executor.executeNode(makeInput(node, ctx));
+    const out = result.output as Record<string, unknown>;
+    expect(out.safe).toBe("ok");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined(); // no global pollution
+  });
+
   it("executes data node with empty config as a null-output no-op", async () => {
     const executor = createExecutor();
     const node: FridayWorkflowNode = {

@@ -57,9 +57,19 @@ function tokenize(expr: string): Token[] {
       continue;
     }
 
-    // Single-char operators
+    // Single-char operators (comparison + arithmetic). "-" is always an
+    // operator token here; numeric negation is handled in the parser
+    // (unaryMinus) so subtraction `$a - $b` and negation `-5` both work.
     const ch = expr[i]!;
-    if (ch === ">" || ch === "<") {
+    if (
+      ch === ">" ||
+      ch === "<" ||
+      ch === "+" ||
+      ch === "-" ||
+      ch === "*" ||
+      ch === "/" ||
+      ch === "%"
+    ) {
       tokens.push({ kind: "OP", value: ch });
       i++;
       continue;
@@ -120,13 +130,10 @@ function tokenize(expr: string): Token[] {
       continue;
     }
 
-    // Number literal
-    if (/[0-9]/.test(ch) || (ch === "-" && i + 1 < expr.length && /[0-9]/.test(expr[i + 1]!))) {
+    // Number literal (digits only; a leading "-" is a unary/binary operator
+    // token resolved by the parser, not part of the number token).
+    if (/[0-9]/.test(ch)) {
       let num = "";
-      if (ch === "-") {
-        num += ch;
-        i++;
-      }
       while (i < expr.length && /[0-9.]/.test(expr[i]!)) {
         num += expr[i];
         i++;
@@ -235,16 +242,25 @@ function parseExpr(tokens: Token[]): FridayExprNode {
   // not_expr = "!" not_expr | compare
   function notExpr(): FridayExprNode {
     if (peek().kind === "NOT") {
+      // checkDepth bounds the "!" recursion. Without it a long "!" chain (e.g.
+      // "!".repeat(4095)) recurses to stack-overflow within MAX_EXPR_LENGTH —
+      // a DoS the depth limit is meant to prevent (mirrors unaryMinus).
+      checkDepth();
       advance();
       const operand = notExpr();
+      depth--;
       return { kind: "unary", op: "!", operand };
     }
     return compare();
   }
 
-  // compare = primary ( OP primary )?
+  // compare = additive ( CMP_OP additive )?
+  // NOTE: additive/multiplicative/unaryMinus sit BELOW compare so that a pure
+  // comparison/logical expression (a workflow condition) with no arithmetic
+  // operators parses to the IDENTICAL AST as before this change — additive and
+  // multiplicative pass straight through to primary when no +,-,*,/,% appears.
   function compare(): FridayExprNode {
-    const left = primary();
+    const left = additive();
     const t = peek();
     if (
       t.kind === "OP" &&
@@ -256,7 +272,7 @@ function parseExpr(tokens: Token[]): FridayExprNode {
         t.value === "<=")
     ) {
       advance();
-      const right = primary();
+      const right = additive();
       return {
         kind: "binary",
         op: t.value as "==" | "!=" | ">" | "<" | ">=" | "<=",
@@ -265,6 +281,43 @@ function parseExpr(tokens: Token[]): FridayExprNode {
       };
     }
     return left;
+  }
+
+  // additive = multiplicative ( ("+"|"-") multiplicative )*   (left-assoc)
+  function additive(): FridayExprNode {
+    let left = multiplicative();
+    while (peek().kind === "OP" && (peek().value === "+" || peek().value === "-")) {
+      const op = advance().value as "+" | "-";
+      const right = multiplicative();
+      left = { kind: "binary", op, left, right };
+    }
+    return left;
+  }
+
+  // multiplicative = unaryMinus ( ("*"|"/"|"%") unaryMinus )*   (left-assoc)
+  function multiplicative(): FridayExprNode {
+    let left = unaryMinus();
+    while (
+      peek().kind === "OP" &&
+      (peek().value === "*" || peek().value === "/" || peek().value === "%")
+    ) {
+      const op = advance().value as "*" | "/" | "%";
+      const right = unaryMinus();
+      left = { kind: "binary", op, left, right };
+    }
+    return left;
+  }
+
+  // unaryMinus = "-" unaryMinus | primary   (numeric negation; tight binding)
+  function unaryMinus(): FridayExprNode {
+    if (peek().kind === "OP" && peek().value === "-") {
+      checkDepth();
+      advance();
+      const operand = unaryMinus();
+      depth--;
+      return { kind: "unary", op: "-", operand };
+    }
+    return primary();
   }
 
   // primary = ref | literal | "(" expr ")"
@@ -326,6 +379,24 @@ function parseExpr(tokens: Token[]): FridayExprNode {
 
 // ─── Evaluator ───
 
+// Concat coercion for "+" when at least one operand is not a number.
+// Explicit + predictable: null/undefined → "" (so a missing ref in
+// `$a + " " + $b` does not emit the literal text "null"/"undefined"),
+// objects/arrays → JSON, everything else → String().
+function stringifyOperand(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function evaluateNode(
   node: FridayExprNode,
   ctx: FridayExpressionContext,
@@ -358,6 +429,14 @@ function evaluateNode(
           );
         }
         if (target == null || typeof target !== "object") {
+          return undefined;
+        }
+        // Only read OWN properties. Inherited members (valueOf, toString,
+        // hasOwnProperty, __defineGetter__, …) are not workflow data and must
+        // not be exposed — returning the inherited builtin function would leak
+        // prototype internals (e.g. into AI-node prompt interpolation). Own
+        // data reads (inputs/steps.output/env values) are unaffected.
+        if (!Object.prototype.hasOwnProperty.call(target, segment)) {
           return undefined;
         }
         target = (target as Record<string, unknown>)[segment];
@@ -394,12 +473,33 @@ function evaluateNode(
           return Number(left) >= Number(right);
         case "<=":
           return Number(left) <= Number(right);
+        // Arithmetic / concat. Coercion rule is explicit and documented:
+        // "+" does numeric addition only when BOTH operands are numbers,
+        // otherwise string concatenation (String(left)+String(right));
+        // "- * / %" always Number()-coerce both operands (consistent with the
+        // ordering comparison operators above).
+        case "+":
+          if (typeof left === "number" && typeof right === "number") {
+            return left + right;
+          }
+          return `${stringifyOperand(left)}${stringifyOperand(right)}`;
+        case "-":
+          return Number(left) - Number(right);
+        case "*":
+          return Number(left) * Number(right);
+        case "/":
+          return Number(left) / Number(right);
+        case "%":
+          return Number(left) % Number(right);
       }
       break;
     }
 
     case "unary": {
       const operand = evaluateNode(node.operand, ctx);
+      if (node.op === "-") {
+        return -Number(operand);
+      }
       return !operand;
     }
   }

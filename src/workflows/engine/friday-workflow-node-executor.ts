@@ -70,6 +70,38 @@ export interface CreateNodeExecutorDeps {
 
 // ─── Expression arg resolution ───
 
+// Resolve a single mapping/arg value. `$`-prefixed strings are evaluated as
+// expressions; arrays and PLAIN OBJECTS are resolved RECURSIVELY so a nested
+// mapping like `{ outputs: { result: "$inputs.a - $inputs.b" } }` (a shape the
+// generator legitimately emits) has its inner expressions evaluated instead of
+// passed through as the literal expression string. Prototype-polluting keys are
+// dropped (defense-in-depth; the value object is built from model output).
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function resolveValue(
+  value: unknown,
+  expressionContext: FridayExpressionContext,
+  evaluator: FridayExpressionEvaluator,
+): unknown {
+  if (typeof value === "string") {
+    return value.startsWith("$") ? evaluator.exec(value, expressionContext) : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveValue(item, expressionContext, evaluator));
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      if (UNSAFE_KEYS.has(key)) {
+        continue;
+      }
+      out[key] = resolveValue(inner, expressionContext, evaluator);
+    }
+    return out;
+  }
+  return value;
+}
+
 function resolveArgs(
   args: Record<string, unknown>,
   expressionContext: FridayExpressionContext,
@@ -77,11 +109,10 @@ function resolveArgs(
 ): Record<string, unknown> {
   const resolved: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
-    if (typeof value === "string" && value.startsWith("$")) {
-      resolved[key] = evaluator.exec(value, expressionContext);
-    } else {
-      resolved[key] = value;
+    if (UNSAFE_KEYS.has(key)) {
+      continue;
     }
+    resolved[key] = resolveValue(value, expressionContext, evaluator);
   }
   return resolved;
 }
